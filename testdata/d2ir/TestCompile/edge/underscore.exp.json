@@ -1,29 +1,29 @@
 {
   "fields": [
     {
-      "name": "x",
+      "name": "p",
       "composite": {
         "fields": [
           {
-            "name": "_"
+            "name": "z"
           }
         ],
         "edges": null
       }
     },
     {
-      "name": "z"
+      "name": "x"
     }
   ],
   "edges": [
     {
       "edge_id": {
         "src_path": [
-          "x",
-          "_"
+          "x"
         ],
         "src_arrow": false,
         "dst_path": [
+          "p",
           "z"
         ],
         "dst_arrow": true,
