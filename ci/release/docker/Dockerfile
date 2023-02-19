@@ -7,7 +7,9 @@ RUN apt-get update && apt-get install -y ca-certificates curl dumb-init sudo
 
 RUN curl -fsSL https://deb.nodesource.com/setup_19.x | bash -s - && \
   apt-get install -y nodejs
-RUN npx playwright install-deps
+# https://github.com/microsoft/playwright/issues/18319
+# Hopefully soon.
+RUN if [ "$TARGETARCH" = amd64 ]; then npx playwright install-deps; fi
 
 RUN adduser --gecos '' --disabled-password debian \
   && echo "debian ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/nopasswd
@@ -19,14 +21,14 @@ RUN curl -fsSL "https://github.com/boxboat/fixuid/releases/download/v0.5/fixuid-
   && printf "user: debian\ngroup: debian\npaths: [/home/debian]\n" > /etc/fixuid/config.yml
 
 COPY ./d2-*-linux-$TARGETARCH.tar.gz /tmp
-ADD ./Dockerfile_entrypoint.sh /usr/local/bin/entrypoint.sh
+ADD ./entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN mkdir -p /usr/local/lib/d2 \
       && tar -C /usr/local/lib/d2 -xzf /tmp/d2-*-linux-"$TARGETARCH".tar.gz \
       && /usr/local/lib/d2/d2-*/scripts/install.sh \
       && rm -Rf /tmp/d2-*-linux-"$TARGETARCH".tar.gz
 
 USER debian:debian
-RUN d2 init-playwright
+RUN if [ "$TARGETARCH" = amd64 ]; then d2 init-playwright; fi
 
 WORKDIR /home/debian/src
 EXPOSE 8080
