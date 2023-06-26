@@ -111,46 +111,6 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2compiler/TestCompile2/nulls/reappear/shape.d2,1:0:1-1:1:2",
-              "path": [
-                {
-                  "unquoted_string": {
-                    "range": "d2/testdata/d2compiler/TestCompile2/nulls/reappear/shape.d2,1:0:1-1:1:2",
-                    "value": [
-                      {
-                        "string": "a",
-                        "raw_string": "a"
-                      }
-                    ]
-                  }
-                }
-              ]
-            },
-            "key_path_index": 0,
-            "map_key_edge_index": -1
-          },
-          {
-            "key": {
-              "range": "d2/testdata/d2compiler/TestCompile2/nulls/reappear/shape.d2,2:0:3-2:1:4",
-              "path": [
-                {
-                  "unquoted_string": {
-                    "range": "d2/testdata/d2compiler/TestCompile2/nulls/reappear/shape.d2,2:0:3-2:1:4",
-                    "value": [
-                      {
-                        "string": "a",
-                        "raw_string": "a"
-                      }
-                    ]
-                  }
-                }
-              ]
-            },
-            "key_path_index": 0,
-            "map_key_edge_index": -1
-          },
-          {
-            "key": {
               "range": "d2/testdata/d2compiler/TestCompile2/nulls/reappear/shape.d2,3:0:11-3:1:12",
               "path": [
                 {
@@ -172,7 +132,7 @@
         ],
         "attributes": {
           "label": {
-            "value": ""
+            "value": "a"
           },
           "labelDimensions": {
             "width": 0,
