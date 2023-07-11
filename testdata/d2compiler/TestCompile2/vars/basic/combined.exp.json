@@ -54,8 +54,7 @@
                           "range": "d2/testdata/d2compiler/TestCompile2/vars/basic/combined.d2,2:5:14-2:13:22",
                           "value": [
                             {
-                              "string": "im a var",
-                              "raw_string": "im a var"
+                              "string": "im a var"
                             }
                           ]
                         }
@@ -92,31 +91,7 @@
                 "range": "d2/testdata/d2compiler/TestCompile2/vars/basic/combined.d2,4:4:29-4:12:37",
                 "value": [
                   {
-                    "string": "1 ",
-                    "raw_string": "1 "
-                  },
-                  {
-                    "substitution": {
-                      "range": "d2/testdata/d2compiler/TestCompile2/vars/basic/combined.d2,4:6:31-4:10:35",
-                      "spread": false,
-                      "path": [
-                        {
-                          "unquoted_string": {
-                            "range": "d2/testdata/d2compiler/TestCompile2/vars/basic/combined.d2,4:8:33-4:9:34",
-                            "value": [
-                              {
-                                "string": "x",
-                                "raw_string": "x"
-                              }
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "string": " 2",
-                    "raw_string": "1  2"
+                    "string": "1 im a var 2"
                   }
                 ]
               }
@@ -177,7 +152,7 @@
         ],
         "attributes": {
           "label": {
-            "value": "1 "
+            "value": "1 im a var 2"
           },
           "labelDimensions": {
             "width": 0,
