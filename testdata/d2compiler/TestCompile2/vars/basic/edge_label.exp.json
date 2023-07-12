@@ -112,11 +112,26 @@
             "primary": {},
             "value": {
               "unquoted_string": {
-                "range": "d2/testdata/d2compiler/TestCompile2/vars/basic/edge_label.d2,2:5:14-2:13:22",
+                "range": "d2/testdata/d2compiler/TestCompile2/vars/basic/edge_label.d2,4:8:33-4:9:34",
                 "value": [
                   {
-                    "string": "im a var",
-                    "raw_string": "im a var"
+                    "substitution": {
+                      "range": "d2/testdata/d2compiler/TestCompile2/vars/basic/edge_label.d2,4:8:33-4:12:37",
+                      "spread": false,
+                      "path": [
+                        {
+                          "unquoted_string": {
+                            "range": "d2/testdata/d2compiler/TestCompile2/vars/basic/edge_label.d2,4:10:35-4:11:36",
+                            "value": [
+                              {
+                                "string": "x",
+                                "raw_string": "x"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
                   }
                 ]
               }
@@ -161,7 +176,7 @@
         ],
         "attributes": {
           "label": {
-            "value": "im a var"
+            "value": ""
           },
           "labelDimensions": {
             "width": 0,
