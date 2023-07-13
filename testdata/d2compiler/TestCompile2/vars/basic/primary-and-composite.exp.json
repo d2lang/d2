@@ -254,52 +254,6 @@
           "constraint": null
         },
         "zIndex": 0
-      },
-      {
-        "id": "vars",
-        "id_val": "vars",
-        "attributes": {
-          "label": {
-            "value": "vars"
-          },
-          "labelDimensions": {
-            "width": 0,
-            "height": 0
-          },
-          "style": {},
-          "near_key": null,
-          "shape": {
-            "value": "rectangle"
-          },
-          "direction": {
-            "value": ""
-          },
-          "constraint": null
-        },
-        "zIndex": 0
-      },
-      {
-        "id": "x",
-        "id_val": "x",
-        "attributes": {
-          "label": {
-            "value": "x"
-          },
-          "labelDimensions": {
-            "width": 0,
-            "height": 0
-          },
-          "style": {},
-          "near_key": null,
-          "shape": {
-            "value": "rectangle"
-          },
-          "direction": {
-            "value": ""
-          },
-          "constraint": null
-        },
-        "zIndex": 0
       }
     ]
   },
