@@ -3,7 +3,7 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,0:0:0-10:0:66",
+      "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,0:0:0-10:0:65",
       "nodes": [
         {
           "map_key": {
@@ -88,7 +88,7 @@
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,6:0:28-9:1:65",
+            "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,6:0:28-9:1:64",
             "key": {
               "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,6:0:28-6:1:29",
               "path": [
@@ -108,7 +108,7 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,6:3:31-9:1:65",
+                "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,6:3:31-9:1:64",
                 "nodes": [
                   {
                     "substitution": {
@@ -131,29 +131,27 @@
                   },
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:2:45-8:20:63",
+                      "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:2:45-8:19:62",
                       "key": {
-                        "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:2:45-8:15:58",
+                        "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:2:45-8:14:57",
                         "path": [
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:2:45-8:4:47",
+                              "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:2:45-8:3:46",
                               "value": [
                                 {
-                                  "string": "**",
-                                  "raw_string": "**"
+                                  "string": "*",
+                                  "raw_string": "*"
                                 }
                               ],
                               "pattern": [
-                                "*",
-                                "",
                                 "*"
                               ]
                             }
                           },
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:5:48-8:10:53",
+                              "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:4:47-8:9:52",
                               "value": [
                                 {
                                   "string": "style",
@@ -164,7 +162,7 @@
                           },
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:11:54-8:15:58",
+                              "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:10:53-8:14:57",
                               "value": [
                                 {
                                   "string": "fill",
@@ -178,7 +176,7 @@
                       "primary": {},
                       "value": {
                         "unquoted_string": {
-                          "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:17:60-8:20:63",
+                          "range": "d2/testdata/d2compiler/TestCompile/glob-spread-vars.d2,8:16:59-8:19:62",
                           "value": [
                             {
                               "string": "red",
@@ -299,7 +297,11 @@
             "width": 0,
             "height": 0
           },
-          "style": {},
+          "style": {
+            "fill": {
+              "value": "red"
+            }
+          },
           "near_key": null,
           "shape": {
             "value": "rectangle"
