@@ -98,6 +98,9 @@ func newSequenceDiagram(objects []*d2graph.Object, messages []*d2graph.Edge) (*s
 			}
 		} else {
 			actors = append(actors, obj)
+			if obj.IsSequenceDiagram() {
+				return nil, fmt.Errorf("actors in sequence diagrams cannot themselves be sequence diagrams: %s", obj.AbsID())
+			}
 		}
 	}
 
