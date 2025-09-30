@@ -1501,7 +1501,7 @@ func ConvertSVG(ms *xmain.State, page playwright.Page, svg []byte) ([]byte, erro
 	}, time.Second*5)
 	defer cancel()
 
-	return png.ConvertSVG(page, svg)
+	return png.ConvertSVG(page, svg, 0)
 }
 
 func AnimatePNGs(ms *xmain.State, pngs [][]byte, animIntervalMs int) ([]byte, error) {
