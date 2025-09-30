@@ -147,12 +147,26 @@ func ScreenshotSVG(page playwright.Page) ([]byte, error) {
 	return page.Locator("svg").First().Screenshot()
 }
 
-func ConvertSVG(page playwright.Page, svg []byte, t float64) ([]byte, error) {
+func ConvertSVG(browser playwright.Browser, svg []byte) ([]byte, error) {
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		DeviceScaleFactor: playwright.Float(2.0),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer context.Close()
+
+	page, err := context.NewPage()
+	if err != nil {
+		return nil, err
+	}
+	defer page.Close()
+
 	if err := MountSVG(page, string(svg)); err != nil {
 		return nil, err
 	}
 
-	if err := SetAnimationTime(page, t); err != nil {
+	if err := SetAnimationTime(page, 0); err != nil {
 		return nil, err
 	}
 	_, _ = page.Evaluate(`() => new Promise(r => requestAnimationFrame(() => r())))`)

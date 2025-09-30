@@ -26,6 +26,7 @@ require (
 	go.uber.org/multierr v1.11.0
 	golang.org/x/image v0.20.0
 	golang.org/x/net v0.35.0
+	golang.org/x/sync v0.11.0
 	golang.org/x/text v0.22.0
 	golang.org/x/tools v0.25.0
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da
