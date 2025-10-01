@@ -98,7 +98,13 @@ func InitPlaywrightWithPrompt() (Playwright, error) {
 		return InitPlaywright()
 	}
 
-	fmt.Print("D2 needs to install Chromium v130.0.6723.19 to render images. Continue? (y/N): ")
+	// Just try running first. This only works if drivers and browsers are already installed
+	pw, err := playwright.Run()
+	if err == nil {
+		return startPlaywright(pw)
+	}
+
+	fmt.Print("D2 needs to install Chromium v130.0.6723.19 to render non-SVG images. Continue? (y/N): ")
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
 	if err != nil {
