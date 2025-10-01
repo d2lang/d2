@@ -15,6 +15,7 @@ import (
 	pngstruct "github.com/dsoprea/go-png-image-structure/v2"
 	"github.com/playwright-community/playwright-go"
 
+	"oss.terrastruct.com/d2/lib/compression"
 	"oss.terrastruct.com/d2/lib/version"
 )
 
@@ -114,12 +115,13 @@ func InitPlaywrightWithPrompt() (Playwright, error) {
 const pngPrefix = "data:image/png;base64,"
 
 func MountSVG(page playwright.Page, svgMarkup string) error {
+	decompressed := compression.UnzipEmbeddedSVGImages([]byte(svgMarkup))
 	html := `<!doctype html><meta charset="utf-8">
 <style>
   html,body{margin:0;background:#fff}
   #stage{display:inline-block}
 </style>
-<div id="stage">` + svgMarkup + `</div>
+<div id="stage">` + string(decompressed) + `</div>
 <script>
   const s = document.querySelector('svg');
   if (s && s.pauseAnimations) s.pauseAnimations();
