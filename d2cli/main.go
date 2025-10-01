@@ -88,7 +88,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "if given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). Can only be used with SVG exports.")
+	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "if given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). Can only be used with SVG or GIF exports. For GIF exports, defaults to 1000ms if not specified.")
 	if err != nil {
 		return err
 	}
@@ -260,8 +260,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		outputPath = ms.AbsPath(outputPath)
 		if *animateIntervalFlag > 0 && !outputFormat.supportsAnimation() {
 			return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG or GIF.\nYou provided: %s", filepath.Ext(outputPath))
-		} else if *animateIntervalFlag <= 0 && outputFormat.requiresAnimationInterval() {
-			return xmain.UsageErrorf("--animate-interval must be greater than 0 for %s outputs.\nYou provided: %d", outputFormat, *animateIntervalFlag)
 		}
 	}
 
@@ -357,11 +355,16 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		if *targetFlag != "*" {
 			return xmain.UsageErrorf("-w[atch] cannot be combined with --target")
 		}
+		animateInterval := *animateIntervalFlag
+		if outputFormat == GIF && animateInterval == 0 {
+			animateInterval = 1000
+			ms.Log.Debug.Printf("GIF export: animate-interval not specified, defaulting to 1000ms")
+		}
 		w, err := newWatcher(ctx, ms, watcherOpts{
 			plugins:         plugins,
 			layout:          layoutFlag,
 			renderOpts:      renderOpts,
-			animateInterval: *animateIntervalFlag,
+			animateInterval: animateInterval,
 			host:            *hostFlag,
 			port:            *portFlag,
 			inputPath:       inputPath,
@@ -403,7 +406,13 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx, cancel := timelib.WithTimeout(ctx, time.Minute*2)
 	defer cancel()
 
-	_, written, err := compile(ctx, ms, plugins, nil, layoutFlag, renderOpts, fontFamily, monoFontFamily, *animateIntervalFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, *forceAppendixFlag, pw.Browser, outputFormat, *asciiModeFlag)
+	animateInterval := *animateIntervalFlag
+	if outputFormat == GIF && animateInterval == 0 {
+		animateInterval = 1000
+		ms.Log.Debug.Printf("GIF export: animate-interval not specified, defaulting to 1000ms")
+	}
+
+	_, written, err := compile(ctx, ms, plugins, nil, layoutFlag, renderOpts, fontFamily, monoFontFamily, animateInterval, inputPath, outputPath, boardPath, noChildren, *bundleFlag, *forceAppendixFlag, pw.Browser, outputFormat, *asciiModeFlag)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
