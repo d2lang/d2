@@ -15,6 +15,7 @@ import (
 	pngstruct "github.com/dsoprea/go-png-image-structure/v2"
 	"github.com/playwright-community/playwright-go"
 
+	"oss.terrastruct.com/d2/lib/compression"
 	"oss.terrastruct.com/d2/lib/version"
 )
 
@@ -59,7 +60,9 @@ func startPlaywright(pw *playwright.Playwright) (Playwright, error) {
 	if err != nil {
 		return Playwright{}, fmt.Errorf("failed to launch Chromium: %w", err)
 	}
-	context, err := browser.NewContext()
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		DeviceScaleFactor: playwright.Float(2.0),
+	})
 	if err != nil {
 		return Playwright{}, fmt.Errorf("failed to start new Playwright browser context: %w", err)
 	}
@@ -95,7 +98,13 @@ func InitPlaywrightWithPrompt() (Playwright, error) {
 		return InitPlaywright()
 	}
 
-	fmt.Print("D2 needs to install Chromium v130.0.6723.19 to render images. Continue? (y/N): ")
+	// Just try running first. This only works if drivers and browsers are already installed
+	pw, err := playwright.Run()
+	if err == nil {
+		return startPlaywright(pw)
+	}
+
+	fmt.Print("D2 needs to install Chromium v130.0.6723.19 to render non-SVG images. Continue? (y/N): ")
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
 	if err != nil {
@@ -109,32 +118,72 @@ func InitPlaywrightWithPrompt() (Playwright, error) {
 	return InitPlaywright()
 }
 
-//go:embed generate_png.js
-var genPNGScript string
-
 const pngPrefix = "data:image/png;base64,"
 
-// ConvertSVG converts the given SVG into a PNG.
-// Note that the resulting PNG has 2x the size (width and height) of the original SVG (see generate_png.js)
-func ConvertSVG(page playwright.Page, svg []byte) ([]byte, error) {
-	encodedSVG := base64.StdEncoding.EncodeToString(svg)
-	pngInterface, err := page.Evaluate(genPNGScript, map[string]interface{}{
-		"imgString": "data:image/svg+xml;charset=utf-8;base64," + encodedSVG,
-		"scale":     int(SCALE),
+func MountSVG(page playwright.Page, svgMarkup string) error {
+	decompressed := compression.UnzipEmbeddedSVGImages([]byte(svgMarkup))
+	html := `<!doctype html><meta charset="utf-8">
+<style>
+  html,body{margin:0;background:#fff}
+  #stage{display:inline-block}
+</style>
+<div id="stage">` + string(decompressed) + `</div>
+<script>
+  const s = document.querySelector('svg');
+  if (s && s.pauseAnimations) s.pauseAnimations();
+</script>`
+	_, err := page.Goto("data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(html)))
+	if err != nil {
+		return err
+	}
+	return page.Locator("svg").First().WaitFor()
+}
+
+func SetAnimationTime(page playwright.Page, t float64) error {
+	_, err := page.Evaluate(`(t) => {
+	  const s = document.querySelector('svg');
+	  if (!s) return;
+	  if (s.pauseAnimations) s.pauseAnimations();
+	  if (s.setCurrentTime) s.setCurrentTime(t);
+	  // Pause & scrub CSS/Web Animations too:
+	  for (const a of document.getAnimations()) { a.pause(); a.currentTime = t * 1000; }
+	}`, t)
+	return err
+}
+
+func ScreenshotSVG(page playwright.Page) ([]byte, error) {
+	return page.Locator("svg").First().Screenshot()
+}
+
+func ConvertSVG(browser playwright.Browser, svg []byte) ([]byte, error) {
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		DeviceScaleFactor: playwright.Float(2.0),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate png: %w", err)
+		return nil, err
+	}
+	defer context.Close()
+
+	page, err := context.NewPage()
+	if err != nil {
+		return nil, err
+	}
+	defer page.Close()
+
+	if err := MountSVG(page, string(svg)); err != nil {
+		return nil, err
 	}
 
-	pngString := pngInterface.(string)
-	if !strings.HasPrefix(pngString, pngPrefix) {
-		if len(pngString) > 50 {
-			pngString = pngString[0:50] + "..."
-		}
-		return nil, fmt.Errorf("invalid PNG: %q", pngString)
+	if err := SetAnimationTime(page, 0); err != nil {
+		return nil, err
 	}
-	splicedPNGString := pngString[len(pngPrefix):]
-	return base64.StdEncoding.DecodeString(splicedPNGString)
+	_, _ = page.Evaluate(`() => new Promise(r => requestAnimationFrame(() => r())))`)
+
+	png, err := ScreenshotSVG(page)
+	if err != nil {
+		return nil, err
+	}
+	return png, nil
 }
 
 func AddExif(png []byte) ([]byte, error) {
