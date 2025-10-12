@@ -119,7 +119,7 @@ func dimensions(diagram *d2target.Diagram, pad int) (left, top, width, height in
 					Text:     s.Label,
 					FontSize: LEGEND_FONT_SIZE,
 				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, nil)
+				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
 				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
 				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
 				itemCount++
@@ -133,7 +133,7 @@ func dimensions(diagram *d2target.Diagram, pad int) (left, top, width, height in
 					Text:     c.Label,
 					FontSize: LEGEND_FONT_SIZE,
 				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, nil)
+				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
 				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
 				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
 				itemCount++
@@ -205,7 +205,7 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 			FontSize: LEGEND_FONT_SIZE,
 		}
 
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, nil)
+		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
 		maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
 		totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
 		itemCount++
@@ -221,7 +221,7 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 			FontSize: LEGEND_FONT_SIZE,
 		}
 
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, nil)
+		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
 		maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
 		totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
 		itemCount++
@@ -296,7 +296,7 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 			FontSize: LEGEND_FONT_SIZE,
 		}
 
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, nil)
+		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
 
 		rowHeight := go2.IntMax(dims.Height, LEGEND_ICON_SIZE)
 		textY := currentY + rowHeight/2 + int(float64(dims.Height)*0.3)
@@ -343,7 +343,7 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 			FontSize: LEGEND_FONT_SIZE,
 		}
 
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, nil)
+		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
 
 		rowHeight := go2.IntMax(dims.Height, LEGEND_ICON_SIZE)
 		textY := currentY + rowHeight/2 + int(float64(dims.Height)*0.2)
@@ -2877,7 +2877,7 @@ func Render(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
 					Text:     s.Label,
 					FontSize: LEGEND_FONT_SIZE,
 				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, nil)
+				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
 				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
 				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
 				itemCount++
@@ -2891,7 +2891,7 @@ func Render(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
 					Text:     c.Label,
 					FontSize: LEGEND_FONT_SIZE,
 				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, nil)
+				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
 				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
 				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
 				itemCount++
@@ -3373,6 +3373,14 @@ func sortObjects(allObjects []DiagramObject) {
 		_, jIsConnection := allObjects[j].(d2target.Connection)
 		return iIsShape && jIsConnection
 	})
+}
+
+func fontToFamily(fontFamily string) *d2fonts.FontFamily {
+	ff, ok := d2fonts.D2_FONT_TO_FAMILY[fontFamily]
+	if !ok {
+		return nil
+	}
+	return &ff
 }
 
 func hash(s string) string {
