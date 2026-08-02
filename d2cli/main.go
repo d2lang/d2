@@ -1511,11 +1511,19 @@ func ConvertSVG(ms *xmain.State, browser playwright.Browser, svg []byte, animInt
 	}, time.Second*5)
 	defer cancel()
 
-	if animIntervalMs > 0 {
+	if animIntervalMs > 0 && svgLooksAnimated(svg) {
 		return xgif.ConvertAnimatedSVGToPNGs(browser, svg, animIntervalMs)
 	}
 	out, err := png.ConvertSVG(browser, svg)
 	return [][]byte{out}, err
+}
+
+func svgLooksAnimated(svg []byte) bool {
+	s := string(svg)
+	return strings.Contains(s, "<animate") ||
+		strings.Contains(s, "<animateTransform") ||
+		strings.Contains(s, "@keyframes") ||
+		strings.Contains(s, "animation:")
 }
 
 func AnimatePNGs(ms *xmain.State, pngs [][]byte, animIntervalMs int) ([]byte, error) {

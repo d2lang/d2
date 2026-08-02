@@ -33,3 +33,16 @@ func TestPngToGif(t *testing.T) {
 
 	assert.Equal(t, test_output, gifBytes)
 }
+
+func TestFrameCountForDuration(t *testing.T) {
+	assert.Equal(t, 1, frameCountForDuration(10))
+	assert.Equal(t, 1, frameCountForDuration(999/fps))
+	assert.Equal(t, 30, frameCountForDuration(1000))
+	assert.Equal(t, 31, frameCountForDuration(1001))
+}
+
+func TestFrameDelayForPNGs(t *testing.T) {
+	assert.Equal(t, 1, frameDelayForPNGs(10, 1))
+	assert.Equal(t, 1, frameDelayForPNGs(10, 4))
+	assert.Equal(t, 3, frameDelayForPNGs(1000, frameCountForDuration(1000)))
+}

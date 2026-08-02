@@ -35,7 +35,7 @@ const fps = 30
 const workers = 16
 
 func ConvertAnimatedSVGToPNGs(browser playwright.Browser, svg []byte, durationMs int) ([][]byte, error) {
-	totalFrames := (durationMs / 1000) * fps
+	totalFrames := frameCountForDuration(durationMs)
 	out := make([][]byte, totalFrames)
 
 	batchSize := int(math.Ceil(float64(totalFrames) / float64(workers)))
@@ -92,6 +92,10 @@ func ConvertAnimatedSVGToPNGs(browser playwright.Browser, svg []byte, durationMs
 	return out, nil
 }
 
+func frameCountForDuration(durationMs int) int {
+	return max(1, int(math.Ceil(float64(durationMs)*float64(fps)/1000.0)))
+}
+
 func AnimatePNGs(pngs [][]byte, animIntervalMs int) ([]byte, error) {
 	var width, height int
 	pngImgs := make([]image.Image, len(pngs))
@@ -106,7 +110,7 @@ func AnimatePNGs(pngs [][]byte, animIntervalMs int) ([]byte, error) {
 		height = go2.Max(height, bounds.Dy())
 	}
 
-	interval := int(math.Round(100.0 / float64(fps)))
+	interval := frameDelayForPNGs(animIntervalMs, len(pngs))
 	anim := &gif.GIF{
 		LoopCount: INFINITE_LOOP,
 		Config: image.Config{
@@ -184,6 +188,13 @@ func AnimatePNGs(pngs [][]byte, animIntervalMs int) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func frameDelayForPNGs(animIntervalMs, frameCount int) int {
+	if frameCount > 1 && frameCount == frameCountForDuration(animIntervalMs) {
+		return int(math.Round(100.0 / float64(fps)))
+	}
+	return max(1, int(math.Round(float64(animIntervalMs)/10.0)))
 }
 
 func findWhiteIndex(palette color.Palette) int {

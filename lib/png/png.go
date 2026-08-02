@@ -14,6 +14,7 @@ import (
 	exifcommon "github.com/dsoprea/go-exif/v3/common"
 	pngstruct "github.com/dsoprea/go-png-image-structure/v2"
 	"github.com/playwright-community/playwright-go"
+	"golang.org/x/term"
 
 	"oss.terrastruct.com/d2/lib/compression"
 	"oss.terrastruct.com/d2/lib/version"
@@ -102,6 +103,10 @@ func InitPlaywrightWithPrompt() (Playwright, error) {
 	pw, err := playwright.Run()
 	if err == nil {
 		return startPlaywright(pw)
+	}
+
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return InitPlaywright()
 	}
 
 	fmt.Print("D2 needs to install Chromium v130.0.6723.19 to render non-SVG images. Continue? (y/N): ")

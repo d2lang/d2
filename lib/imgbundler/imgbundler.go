@@ -2,6 +2,9 @@ package imgbundler
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -18,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"golang.org/x/xerrors"
 
 	"oss.terrastruct.com/d2/lib/simplelog"
@@ -235,9 +239,60 @@ func httpGet(ctx context.Context, l simplelog.Logger, href string) ([]byte, stri
 		return nil, "", err
 	}
 	contentType := resp.Header.Get("Content-Type")
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	if contentEncoding != "" {
+		buf, err = decodeContentEncoding(buf, contentEncoding)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to decode %q response for %s: %w", contentEncoding, href, err)
+		}
+	}
 	l.Debug(fmt.Sprintf("fetched content type: %s, Content length: %d bytes", contentType, len(buf)))
 
 	return buf, contentType, nil
+}
+
+func decodeContentEncoding(buf []byte, contentEncoding string) ([]byte, error) {
+	encodings := strings.Split(contentEncoding, ",")
+	for i := len(encodings) - 1; i >= 0; i-- {
+		encoding := strings.TrimSpace(strings.ToLower(encodings[i]))
+		if encoding == "" || encoding == "identity" {
+			continue
+		}
+		var err error
+		switch encoding {
+		case "gzip", "x-gzip":
+			buf, err = gunzip(buf)
+		case "br":
+			buf, err = io.ReadAll(brotli.NewReader(bytes.NewReader(buf)))
+		case "deflate":
+			buf, err = inflate(buf)
+		default:
+			return nil, fmt.Errorf("unsupported content encoding %q", encoding)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return buf, nil
+}
+
+func gunzip(buf []byte) ([]byte, error) {
+	r, err := gzip.NewReader(bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return io.ReadAll(r)
+}
+
+func inflate(buf []byte) ([]byte, error) {
+	if zr, err := zlib.NewReader(bytes.NewReader(buf)); err == nil {
+		defer zr.Close()
+		return io.ReadAll(zr)
+	}
+	fr := flate.NewReader(bytes.NewReader(buf))
+	defer fr.Close()
+	return io.ReadAll(fr)
 }
 
 // sniffMimeType sniffs the mime type of href based on its file extension and contents.
