@@ -159,21 +159,30 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 	if c.stopped() {
 		return g
 	}
-	// Graph compilation reads the IR. Nested boards still need an independent
-	// root for class lookup, and boards with children need a copy because the
-	// folder comparison below uses CopyBase, which also modifies its source.
-	if !ir.Root() || hasBoardFields(ir) {
+	// Nested boards need a local class root, and CopyBase mutates its source.
+	// V2 also hoists grouped actors and rewrites their IR references. Keep
+	// ordinary single-board diagrams on the read-only path.
+	previousScopes := c.sequenceScopes
+	c.sequenceScopes = nil
+	defer func() { c.sequenceScopes = previousScopes }()
+	if !ir.Root() || hasBoardFields(ir) || len(c.sequenceDiagramMaps(ir, nil)) != 0 {
 		if err := d2ir.ReserveVariableExpansionCopy(c.ctx, ir); err != nil {
 			c.fatalErr = err
 			return g
 		}
 		ir = ir.Copy(nil).(*d2ir.Map)
+		for _, diagram := range c.sequenceDiagramMaps(ir, nil) {
+			if c.sequenceScopes == nil {
+				c.sequenceScopes = make(map[string][]d2ast.String)
+			}
+			c.preprocessSequenceDiagram(diagram)
+		}
 	}
-	c.preprocessSeqDiagrams(ir)
 	c.compileMap(g.Root, ir)
 	if c.stopped() {
 		return g
 	}
+	c.compileSequenceDiagrams(g)
 	c.validateGridDimensions(g)
 	if c.stopped() {
 		return g
@@ -448,6 +457,7 @@ func _findFieldAST(ast *d2ast.Map, path []string) *d2ast.Map {
 type compiler struct {
 	err             *d2parser.ParseError
 	activeClassMaps map[*d2ir.Map]struct{}
+	sequenceScopes  map[string][]d2ast.String
 	classMapsByRoot map[*d2ir.Map]map[string]*d2ir.Map
 	explicitLabels  map[*d2graph.Attributes]struct{}
 	ctx             context.Context
@@ -546,6 +556,9 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 		} else {
 			c.compileField(obj, shape)
 		}
+	}
+	if obj.IsSequenceDiagramV2() {
+		c.compileSequenceOptions(obj, m)
 	}
 	for _, f := range m.Fields {
 		if c.stopped() {
@@ -776,6 +789,10 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 	if obj.Label.MapKey == nil {
 		obj.Label.MapKey = f.LastPrimaryKey()
 	}
+	if obj.OuterSequenceDiagram().IsSequenceDiagramV2() && f.ImportAST() != nil {
+		position := f.ImportAST().GetRange().Start
+		obj.SequenceImportPosition = &position
+	}
 	for _, fr := range f.References {
 		if c.stopped() {
 			return
@@ -797,7 +814,7 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 			IsVar:           d2ir.IsVar(fr.Context_.ScopeMap),
 		}
 		if fr.Context_.ScopeMap != nil && !d2ir.IsVar(fr.Context_.ScopeMap) {
-			scopeObjIDA := d2ir.BoardIDA(fr.Context_.ScopeMap)
+			scopeObjIDA := c.sequenceScope(fr.Context_.ScopeMap)
 			r.ScopeObj = obj.Graph.Root.EnsureChild(scopeObjIDA)
 		}
 		obj.References = append(obj.References, r)
@@ -1289,6 +1306,12 @@ func (c *compiler) compileEdge(obj *d2graph.Object, e *d2ir.Edge) {
 	}
 
 	edge.Label.MapKey = e.LastPrimaryKey()
+	if obj.IsSequenceDiagramV2() || obj.OuterSequenceDiagram().IsSequenceDiagramV2() {
+		if e.ImportAST() != nil {
+			position := e.ImportAST().GetRange().Start
+			edge.SequenceImportPosition = &position
+		}
+	}
 	for _, er := range e.References {
 		if c.stopped() {
 			return
@@ -1302,7 +1325,7 @@ func (c *compiler) compileEdge(obj *d2graph.Object, e *d2ir.Edge) {
 			ScopeObj:        obj,
 		}
 		if er.Context_.ScopeMap != nil && !d2ir.IsVar(er.Context_.ScopeMap) {
-			scopeObjIDA := d2ir.BoardIDA(er.Context_.ScopeMap)
+			scopeObjIDA := c.sequenceScope(er.Context_.ScopeMap)
 			r.ScopeObj = edge.Src.Graph.Root.EnsureChild(scopeObjIDA)
 		}
 		edge.References = append(edge.References, r)
@@ -1456,6 +1479,9 @@ func (c *compiler) compileClass(obj *d2graph.Object) {
 		if c.stopped() {
 			return
 		}
+		if sequenceStructuredTimelineItem(obj, f) {
+			continue
+		}
 		visibility := "public"
 		name := f.IDVal
 		// See https://www.uml-diagrams.org/visibility.html
@@ -1500,22 +1526,7 @@ func (c *compiler) compileClass(obj *d2graph.Object) {
 		}
 	}
 
-	for _, ch := range obj.ChildrenArray {
-		if c.stopped() {
-			return
-		}
-		for i := 0; i < len(obj.Graph.Objects); i++ {
-			if c.stopped() {
-				return
-			}
-			if obj.Graph.Objects[i] == ch {
-				obj.Graph.Objects = append(obj.Graph.Objects[:i], obj.Graph.Objects[i+1:]...)
-				i--
-			}
-		}
-	}
-	obj.Children = nil
-	obj.ChildrenArray = nil
+	c.removeStructuredMembers(obj)
 }
 
 func (c *compiler) compileSQLTable(obj *d2graph.Object) {
@@ -1526,6 +1537,9 @@ func (c *compiler) compileSQLTable(obj *d2graph.Object) {
 	for _, col := range obj.ChildrenArray {
 		if c.stopped() {
 			return
+		}
+		if sequenceStructuredTimelineItem(obj, col) {
+			continue
 		}
 		typ := col.Label.Value
 		// A column without an explicit label defaults it to its ID, which is not a type.
@@ -1540,22 +1554,36 @@ func (c *compiler) compileSQLTable(obj *d2graph.Object) {
 		obj.SQLTable.Columns = append(obj.SQLTable.Columns, d2Col)
 	}
 
-	for _, ch := range obj.ChildrenArray {
+	c.removeStructuredMembers(obj)
+}
+
+// Explicit shapes under structured v2 actors are timeline items. Unshaped
+// children retain the normal class-member and SQL-column syntax.
+func sequenceStructuredTimelineItem(actor, child *d2graph.Object) bool {
+	return actor.IsSequenceDiagramActor() && child.Shape.Value != ""
+}
+
+func (c *compiler) removeStructuredMembers(obj *d2graph.Object) {
+	members := make(map[*d2graph.Object]bool)
+	var timeline []*d2graph.Object
+	for _, child := range obj.ChildrenArray {
 		if c.stopped() {
 			return
 		}
-		for i := 0; i < len(obj.Graph.Objects); i++ {
-			if c.stopped() {
-				return
-			}
-			if obj.Graph.Objects[i] == ch {
-				obj.Graph.Objects = append(obj.Graph.Objects[:i], obj.Graph.Objects[i+1:]...)
-				i--
-			}
+		if sequenceStructuredTimelineItem(obj, child) {
+			timeline = append(timeline, child)
+		} else {
+			members[child] = true
+			delete(obj.Children, strings.ToLower(child.ID))
 		}
 	}
-	obj.Children = nil
-	obj.ChildrenArray = nil
+	obj.Graph.Objects = slices.DeleteFunc(obj.Graph.Objects, func(child *d2graph.Object) bool {
+		return members[child]
+	})
+	obj.ChildrenArray = timeline
+	if len(timeline) == 0 {
+		obj.Children = nil
+	}
 }
 
 func (c *compiler) validateKeys(obj *d2graph.Object, m *d2ir.Map) {
@@ -1878,122 +1906,6 @@ func init() {
 	}
 }
 
-// Unused for now until shape: edge_group
-func (c *compiler) preprocessSeqDiagrams(m *d2ir.Map) {
-	for _, f := range m.Fields {
-		if f.Name.ScalarString() == "shape" && f.Name.IsUnquoted() && f.Primary_.Value.ScalarString() == d2target.ShapeSequenceDiagram {
-			c.preprocessEdgeGroup(m, m)
-			return
-		}
-		if f.Map() != nil {
-			c.preprocessSeqDiagrams(f.Map())
-		}
-	}
-}
-
-func (c *compiler) preprocessEdgeGroup(seqDiagram, m *d2ir.Map) {
-	// Any child of a sequence diagram can be either an actor, edge group or a span.
-	// 1. Actors are shapes without edges inside them defined at the top level scope of a
-	//    sequence diagram.
-	// 2. Spans are the children of actors. For our purposes we can ignore them.
-	// 3. Edge groups are defined as having at least one connection within them and also not
-	//    being connected to anything. All direct children of an edge group are either edge
-	//    groups or top level actors.
-
-	// Go through all the fields and hoist actors from edge groups while also processing
-	// the edge groups recursively.
-	for _, f := range m.Fields {
-		if isEdgeGroup(f) {
-			if f.Map() != nil {
-				c.preprocessEdgeGroup(seqDiagram, f.Map())
-			}
-		} else {
-			if m == seqDiagram {
-				// Ignore for root.
-				continue
-			}
-			hoistActor(seqDiagram, f)
-		}
-	}
-
-	// We need to adjust all edges recursively to point to actual actors instead.
-	for _, e := range m.Edges {
-		if isCrossEdgeGroupEdge(m, e) {
-			c.errorf(e.References[0].AST(), "illegal edge between edge groups")
-			continue
-		}
-
-		if m == seqDiagram {
-			// Root edges between actors directly do not require hoisting.
-			continue
-		}
-
-		srcParent := seqDiagram
-		for i, el := range e.ID.SrcPath {
-			f := srcParent.GetField(el)
-			if !isEdgeGroup(f) {
-				for j := 0; j < i+1; j++ {
-					e.ID.SrcPath = append([]d2ast.String{d2ast.FlatUnquotedString("_")}, e.ID.SrcPath...)
-					e.ID.DstPath = append([]d2ast.String{d2ast.FlatUnquotedString("_")}, e.ID.DstPath...)
-				}
-				break
-			}
-			srcParent = f.Map()
-		}
-	}
-}
-
-func hoistActor(seqDiagram *d2ir.Map, f *d2ir.Field) {
-	f2 := seqDiagram.GetField(f.Name)
-	if f2 == nil {
-		seqDiagram.Fields = append(seqDiagram.Fields, f.Copy(seqDiagram).(*d2ir.Field))
-	} else {
-		d2ir.OverlayField(f2, f)
-		d2ir.ParentMap(f).DeleteField(f.Name.ScalarString())
-	}
-}
-
-func isCrossEdgeGroupEdge(m *d2ir.Map, e *d2ir.Edge) bool {
-	srcParent := m
-	for _, el := range e.ID.SrcPath {
-		f := srcParent.GetField(el)
-		if f == nil {
-			// Hoisted already.
-			break
-		}
-		if isEdgeGroup(f) {
-			return true
-		}
-		srcParent = f.Map()
-	}
-
-	dstParent := m
-	for _, el := range e.ID.DstPath {
-		f := dstParent.GetField(el)
-		if f == nil {
-			// Hoisted already.
-			break
-		}
-		if isEdgeGroup(f) {
-			return true
-		}
-		dstParent = f.Map()
-	}
-
-	return false
-}
-
-func isEdgeGroup(f *d2ir.Field) bool {
-	if f.Map() != nil {
-		for _, f := range f.Map().Fields {
-			if f.Name.ScalarString() == "shape" && f.Name.IsUnquoted() && f.Primary_.Value.ScalarString() == d2target.ShapeSequenceDiagramEdgeGroup {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 	f := ir.GetField(d2ast.FlatUnquotedString("vars"), d2ast.FlatUnquotedString("d2-config"))
 	if f == nil || f.Map() == nil {
@@ -2179,7 +2091,9 @@ func (c *compiler) setDefaultShapes(g *d2graph.Graph) {
 			return
 		}
 		if obj.Shape.Value == "" {
-			if obj.OuterSequenceDiagram() != nil {
+			if obj.IsSequenceDiagramSpan() {
+				continue
+			} else if obj.OuterSequenceDiagram() != nil {
 				obj.Shape.Value = d2target.ShapeRectangle
 			} else if obj.Language == "latex" {
 				obj.Shape.Value = d2target.ShapeText

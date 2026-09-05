@@ -48,6 +48,7 @@ func TestE2E(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"sanity", testSanity},
+		{"sequence_v2", testSequenceV2},
 		{"stable", testStable},
 		{"real_world", testRealWorld},
 		{"regression", testRegression},

@@ -107,6 +107,24 @@ func parseCopyOracleInput(t *testing.T, source string) (*d2ast.Map, *d2ir.Map) {
 	return ast, ir
 }
 
+func TestSequenceV2PreservesInputIR(t *testing.T) {
+	ast, ir := parseCopyOracleInput(t, `classes: {seq: {shape: sequence-diagram}}
+service: {class: seq; checkout: {shape: edge-group; client -> api.work}}`)
+	before := copyOracleJSON(t, ir)
+	for range 2 {
+		g, err := compileIR(ast, ir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(g.Edges) != 1 || g.Edges[0].Src.AbsID() != "service.client" {
+			t.Fatal("grouped message did not resolve to the same participant")
+		}
+		if string(before) != string(copyOracleJSON(t, ir)) {
+			t.Fatal("v2 group normalization mutated the input IR")
+		}
+	}
+}
+
 func TestCompileRootIROwnership(t *testing.T) {
 	const source = `vars: {d2-config: {theme-id: 100; pad: 42}}
 classes: {red: {style.fill: red}}

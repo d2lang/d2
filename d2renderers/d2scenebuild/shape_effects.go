@@ -296,7 +296,7 @@ func (b *builder) buildOrdinaryShapeOutline(targetShape d2target.Shape, fill d2s
 			Fill:    fill,
 			Stroke:  stroke,
 		}))
-	case d2target.ShapeRectangle, d2target.ShapeSquare, d2target.ShapeSequenceDiagram, d2target.ShapeHierarchy, "":
+	case d2target.ShapeRectangle, d2target.ShapeSquare, d2target.ShapeSequenceDiagram, d2target.ShapeSequenceDiagramV2, d2target.ShapeSequenceDiagramEdgeGroup, d2target.ShapeSequenceDiagramActorGroup, d2target.ShapeSequenceDiagramActor, d2target.ShapeHierarchy, "":
 		if targetShape.DrawingOutline() {
 			nodes = append(nodes, d2scene.NewNode(d2scene.Rect{Box: box, Fill: fill}))
 			points := targetShape.DrawnOutline()

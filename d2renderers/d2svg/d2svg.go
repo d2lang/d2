@@ -1843,7 +1843,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		fmt.Fprint(writer, el.Render())
 
 	// TODO should standardize "" to rectangle
-	case d2target.ShapeRectangle, d2target.ShapeSequenceDiagram, d2target.ShapeHierarchy, "":
+	case d2target.ShapeRectangle, d2target.ShapeSequenceDiagram, d2target.ShapeSequenceDiagramV2, d2target.ShapeSequenceDiagramEdgeGroup, d2target.ShapeSequenceDiagramActorGroup, d2target.ShapeSequenceDiagramActor, d2target.ShapeHierarchy, "":
 		if !sketch && targetShape.DrawingOutline() {
 			body := d2themes.NewThemableElement("rect", inlineTheme)
 			body.X, body.Y, body.Width, body.Height = tl.X, tl.Y, width, height

@@ -13,23 +13,33 @@ import (
 // an exact synthetic lifeline also confirms that scope. Z indices alone do
 // not classify unrelated shapes in a mixed ordinary/sequence diagram.
 func classifySequence(scene *Scene, indices map[string]int, parents []int) {
-	confirmed := map[int]bool{-1: scene.Root.Type == d2target.ShapeSequenceDiagram}
+	confirmed := map[int]bool{-1: scene.Root.Type == d2target.ShapeSequenceDiagram || scene.Root.SequenceRole == "container"}
 	scopes := make([]int, len(scene.Nodes))
+	// V2 exports semantic roles directly. Legacy diagrams use their original
+	// sequence type, synthetic endpoints, and paint indices below.
+	isContainer := func(node *Node) bool {
+		return node.Type == d2target.ShapeSequenceDiagram || node.Metadata.Original.SequenceRole == "container"
+	}
 	for i := range scene.Nodes {
+		scene.Nodes[i].SequenceRole = scene.Nodes[i].Metadata.Original.SequenceRole
 		scopes[i] = -1
 		for p := parents[i]; p >= 0; p = parents[p] {
-			if scene.Nodes[p].Type == d2target.ShapeSequenceDiagram {
+			if isContainer(&scene.Nodes[p]) {
 				scopes[i] = p
 				break
 			}
 		}
-		if scene.Nodes[i].Type == d2target.ShapeSequenceDiagram {
+		if isContainer(&scene.Nodes[i]) {
 			scene.Nodes[i].SequenceRole = "container"
 			confirmed[i] = true
 		}
 	}
 	for i := range scene.Edges {
 		edge := &scene.Edges[i]
+		if edge.Metadata.Original.SequenceRole != "" {
+			edge.SequenceRole = edge.Metadata.Original.SequenceRole
+			continue
+		}
 		actor, exists := indices[edge.Source]
 		_, realTarget := indices[edge.Target]
 		if !exists || realTarget || edge.Metadata.Original.ZIndex != d2sequence.LIFELINE_Z_INDEX ||
@@ -102,5 +112,5 @@ func classifySequence(scene *Scene, indices map[string]int, parents []int) {
 }
 
 func sequenceSemanticChild(role string) bool {
-	return role == "span" || role == "note" || role == "group"
+	return role == "span" || role == "note" || role == "group" || role == "repeat" || role == "event"
 }
