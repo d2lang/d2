@@ -16,6 +16,7 @@ func TestELKLayoutOptions(t *testing.T) {
 		NodeSpacing:     123,
 		Padding:         "[top=11,left=22,bottom=33,right=44]",
 		EdgeNodeSpacing: 67,
+		EdgeEdgeSpacing: 78,
 		SelfLoopSpacing: 89,
 	}
 	want := layoutGraphJSON(t, func(ctx context.Context, g *d2graph.Graph) error {
@@ -28,7 +29,8 @@ func TestELKLayoutOptions(t *testing.T) {
 	state := layoutOptionsState(t,
 		"--elk-algorithm=layered", "--elk-nodeNodeBetweenLayers=123",
 		"--elk-padding=[top=11,left=22,bottom=33,right=44]",
-		"--elk-edgeNodeBetweenLayers=67", "--elk-nodeSelfLoop=89")
+		"--elk-edgeNodeBetweenLayers=67", "--elk-edgeEdgeBetweenLayers=78",
+		"--elk-nodeSelfLoop=89")
 	resolve := LayoutResolver(t.Context(), state)
 	if err := state.Opts.Flags.Set("elk-nodeNodeBetweenLayers", "234"); err != nil {
 		t.Fatal(err)

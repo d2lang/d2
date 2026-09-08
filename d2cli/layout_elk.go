@@ -24,6 +24,7 @@ func registerELKFlags(opts *xmain.Opts) {
 	opts.Int64("", "elk-nodeNodeBetweenLayers", "", int64(d2elklayout.DefaultOpts.NodeSpacing), "the spacing to be preserved between any pair of nodes of two adjacent layers")
 	opts.String("", "elk-padding", "", d2elklayout.DefaultOpts.Padding, "the padding to be left to a parent element’s border when placing child elements")
 	opts.Int64("", "elk-edgeNodeBetweenLayers", "", int64(d2elklayout.DefaultOpts.EdgeNodeSpacing), "the spacing to be preserved between nodes and edges that are routed next to the node’s layer")
+	opts.Int64("", "elk-edgeEdgeBetweenLayers", "", int64(d2elklayout.DefaultOpts.EdgeEdgeSpacing), "the spacing to be preserved between pairs of edges routed between the same pair of layers")
 	opts.Int64("", "elk-nodeSelfLoop", "", int64(d2elklayout.DefaultOpts.SelfLoopSpacing), "spacing to be preserved between a node and its self loops")
 }
 
@@ -43,6 +44,10 @@ func elkLayout(ms *xmain.State) (d2graph.LayoutGraph, error) {
 		return nil, err
 	}
 	opts.EdgeNodeSpacing, err = layoutIntFlag(ms, "elk-edgeNodeBetweenLayers", opts.EdgeNodeSpacing)
+	if err != nil {
+		return nil, err
+	}
+	opts.EdgeEdgeSpacing, err = layoutIntFlag(ms, "elk-edgeEdgeBetweenLayers", opts.EdgeEdgeSpacing)
 	if err != nil {
 		return nil, err
 	}
