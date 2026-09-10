@@ -2,6 +2,8 @@
 
 #### Improvements 🧹
 
+- TALA better follows explicit directions when arranging small containers and selecting completed layouts.
+
 #### Bugfixes ⛑️
 
 ---

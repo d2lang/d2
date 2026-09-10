@@ -31,41 +31,59 @@ func orientationContext(ctx context.Context, g *layoutgraph.Graph) (context.Cont
 	return ctx, guard.Finish()
 }
 
-// orientSourceInterior aligns the internal flow of a small source container
-// with its surrounding flow, before the parent is fitted around the result.
+// orientSourceInterior aligns a small container with its explicit direction, or
+// aligns an otherwise unconstrained source with its surrounding vertical flow.
+// Nested containers remain upright and move as rigid boxes.
 // The optional move is local: it does not add another complete layout attempt.
 func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, obstacles []geo.Box) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if ctx.Value(containerOrientationDisabled{}) == true || root == nil || len(g.Nodes) < 3 || len(g.Nodes) > 16 || len(obstacles) != 0 || root.FixedTopLeft != nil || root.Cluster != nil || root.Sequence != nil || root.ForceHierarchy || root.Graph.Direction(root) != geo.NONE {
+	if ctx.Value(containerOrientationDisabled{}) == true || root == nil || len(obstacles) != 0 || root.FixedTopLeft != nil || root.Cluster != nil || root.Sequence != nil || root.ForceHierarchy {
 		return nil
 	}
-	direction := g.Direction(root.OwningContainer())
-	if !direction.IsVertical() || len(root.Edges) < 3 {
+	direction := root.Graph.Direction(root)
+	explicit := direction != geo.NONE
+	positionGraph := g
+	if explicit {
+		// Combined graphs also list descendants and cluster members. A scope
+		// orientation moves only its immediate blocks, preserving their interiors.
+		positionGraph = layoutgraph.NewGraph()
+		positionGraph.CopyEntitiesFrom(g)
+		positionGraph.Nodes = append([]*layoutgraph.Node(nil), g.Containers[root]...)
+		positionGraph.Edges = g.Edges
+		positionGraph.CellSize = g.CellSize
+	}
+	if len(positionGraph.Nodes) < 2 || len(positionGraph.Nodes) > 16 {
 		return nil
 	}
 	guard, err := limits.NewWorkGuard(ctx, "ContainerOrientation", limits.MaxEngineWorkUnits)
 	if err != nil {
 		return err
 	}
-	destinations := make(map[*layoutgraph.Node]struct{})
-	for _, e := range root.Edges {
-		if err := guard.Step(); err != nil {
-			return err
-		}
-		from, to, ok := e.DirectedEndpoints()
-		if !ok || from != root || to == root {
+	if !explicit {
+		direction = g.Direction(root.OwningContainer())
+		if !direction.IsVertical() || len(positionGraph.Nodes) < 3 || len(root.Edges) < 3 {
 			return nil
 		}
-		destinations[to] = struct{}{}
+		destinations := make(map[*layoutgraph.Node]struct{})
+		for _, e := range root.Edges {
+			if err := guard.Step(); err != nil {
+				return err
+			}
+			from, to, ok := e.DirectedEndpoints()
+			if !ok || from != root || to == root {
+				return nil
+			}
+			destinations[to] = struct{}{}
+		}
+		if len(destinations) < 2 {
+			return nil
+		}
 	}
-	if len(destinations) < 2 {
-		return nil
-	}
-	local := make(map[*layoutgraph.Node]bool, len(g.Nodes))
-	for _, n := range g.Nodes {
-		if n.IsContainer() || n.Hierarchy != nil || n.FixedTopLeft != nil || n.Sequence != nil || g.IsTreeSentinel(n) || g.IsSequenceVessel(n) || n.HerdAssignment != nil {
+	local := make(map[*layoutgraph.Node]bool, len(positionGraph.Nodes))
+	for _, n := range positionGraph.Nodes {
+		if (!explicit && n.IsContainer()) || n.Hierarchy != nil || hasFixedDescendant(n) || n.Sequence != nil || g.IsTreeSentinel(n) || g.IsSequenceVessel(n) || n.HerdAssignment != nil {
 			return nil
 		}
 		// Self-loop envelopes do not turn with the boxes. Keep their established
@@ -77,38 +95,52 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 		}
 		local[n] = true
 	}
-	for _, n := range g.Nodes {
+	for _, n := range positionGraph.Nodes {
 		for near := range n.Nears {
 			if !local[near] {
 				return nil
 			}
 		}
 	}
-	flow, err := interiorFlow(g, local, guard)
+	if explicit {
+		changed, err := orientExplicitFan(ctx, g, positionGraph, root, local, direction, guard)
+		if err != nil || changed {
+			return err
+		}
+	}
+	flow, err := orientationFlow(g, root, local, explicit, guard)
 	if err != nil {
 		return err
 	}
 	// A quarter-turn needs a clear transverse flow to improve. Disconnected
-	// contents, balanced cycles and already vertical compositions are left alone.
-	if flow.across <= flow.along+1e-9 || math.Abs(flow.x) <= 1e-9 {
+	// contents, balanced cycles and already aligned compositions are left alone.
+	transverse, aligned, cross := flow.across, flow.along, flow.x
+	if direction.IsHorizontal() {
+		transverse, aligned, cross = flow.along, flow.across, flow.y
+	}
+	if transverse <= aligned+1e-9 || math.Abs(cross) <= 1e-9 {
 		return nil
 	}
 	turn := 1.0
-	if (flow.x < 0) != (direction == geo.Top) {
+	if direction.IsHorizontal() {
+		if (cross < 0) == (direction == geo.Left) {
+			turn = -1
+		}
+	} else if (cross < 0) != (direction == geo.Top) {
 		turn = -1
 	}
 
-	beforeWidth, beforeHeight := orientationFootprintSize(g, root)
+	beforeWidth, beforeHeight := orientationFootprintSize(positionGraph, root)
 	txn, err := g.NewRequestTransaction(ctx, layoutgraph.TransactionOptions{IgnoreContainerEscape: true})
 	if err != nil {
 		return err
 	}
 	txn.AddOp(func() error {
-		centers := make(map[*layoutgraph.Node]geo.Point, len(g.Nodes))
-		for _, n := range g.Nodes {
+		centers := make(map[*layoutgraph.Node]geo.Point, len(positionGraph.Nodes))
+		for _, n := range positionGraph.Nodes {
 			centers[n] = *n.Center()
 		}
-		for _, n := range g.Nodes {
+		for _, n := range positionGraph.Nodes {
 			if err := guard.Step(); err != nil {
 				return err
 			}
@@ -121,20 +153,20 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 				c.Resize(n)
 			}
 			p := centers[n]
-			n.TopLeft = geo.NewPoint(math.Round(-turn*p.Y-n.Width/2), math.Round(turn*p.X-n.Height/2))
+			n.MoveAbsWithChildren(math.Round(-turn*p.Y-n.Width/2), math.Round(turn*p.X-n.Height/2))
 		}
-		g.SyncNestedGeometry()
-		oldCell := g.CellSize
-		g.CellSize = 1
-		defer func() { g.CellSize = oldCell }()
+		positionGraph.SyncNestedGeometry()
+		oldCell, oldGraphCell := positionGraph.CellSize, g.CellSize
+		positionGraph.CellSize, g.CellSize = 1, 1
+		defer func() { positionGraph.CellSize, g.CellSize = oldCell, oldGraphCell }()
 		for _, axis := range []layoutAxis{horizontalAxis, verticalAxis} {
-			if err := compaction(ctx, g, compactionOptions{axis: axis, includeSizes: true, factor: 1, transition: true}); err != nil {
+			if err := compaction(ctx, positionGraph, compactionOptions{axis: axis, includeSizes: true, factor: 1, transition: true}); err != nil {
 				return err
 			}
 		}
-		g.SyncNestedGeometry()
-		tl, br := g.BoundingBox()
-		width, height := orientationFootprintSize(g, root)
+		positionGraph.SyncNestedGeometry()
+		tl, br := positionGraph.BoundingBox()
+		width, height := orientationFootprintSize(positionGraph, root)
 		if br.X-tl.X > limits.MaxGraphSize || br.Y-tl.Y > limits.MaxGraphSize || !(width >= 0 && height >= 0 && width <= limits.MaxGraphSize && height <= limits.MaxGraphSize) {
 			return layoutgraph.ErrInvalidCandidate
 		}
@@ -145,15 +177,19 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 		if rejected {
 			return layoutgraph.ErrNonImprovingCandidate
 		}
-		after, err := interiorFlow(g, local, guard)
+		after, err := orientationFlow(g, root, local, explicit, guard)
 		if err != nil {
 			return err
 		}
 		sign := 1.0
-		if direction == geo.Top {
+		if direction == geo.Top || direction == geo.Left {
 			sign = -1
 		}
-		if sign*after.y <= sign*flow.y+1e-9 {
+		beforeForward, afterForward := flow.y, after.y
+		if direction.IsHorizontal() {
+			beforeForward, afterForward = flow.x, after.x
+		}
+		if sign*afterForward <= sign*beforeForward+1e-9 {
 			return layoutgraph.ErrNonImprovingCandidate
 		}
 		return guard.Finish()
@@ -174,12 +210,19 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 type containerFlow struct{ x, y, across, along float64 }
 
 func interiorFlow(g *layoutgraph.Graph, local map[*layoutgraph.Node]bool, guard *limits.WorkGuard) (flow containerFlow, err error) {
+	return orientationFlow(g, nil, local, false, guard)
+}
+
+func orientationFlow(g *layoutgraph.Graph, root *layoutgraph.Node, local map[*layoutgraph.Node]bool, project bool, guard *limits.WorkGuard) (flow containerFlow, err error) {
 	seen := make(map[[2]*layoutgraph.Node]bool)
 	for _, e := range g.Edges {
 		if err := guard.Step(); err != nil {
 			return containerFlow{}, err
 		}
 		from, to, ok := e.DirectedEndpoints()
+		if project {
+			from, to = orientationBlock(from, root, local), orientationBlock(to, root, local)
+		}
 		if !ok || from == to || !local[from] || !local[to] {
 			continue
 		}
@@ -217,4 +260,20 @@ func orientationFootprintSize(g *layoutgraph.Graph, root *layoutgraph.Node) (wid
 	defer func() { root.Width, root.Height = oldWidth, oldHeight }()
 	root.FitToGraph(g, g.ContainerPadding(root, false))
 	return root.Width, root.Height
+}
+
+// orientationBlock projects a semantic endpoint to its immediate placement
+// block without altering the edge. Edges wholly inside a nested box project
+// to one block and do not vote on their parent's orientation.
+func orientationBlock(node, root *layoutgraph.Node, local map[*layoutgraph.Node]bool) *layoutgraph.Node {
+	for node != nil && node != root {
+		if local[node] {
+			return node
+		}
+		if node.Cluster != nil && local[node.Cluster.Vessel] {
+			return node.Cluster.Vessel
+		}
+		node = node.OwningContainer()
+	}
+	return nil
 }
