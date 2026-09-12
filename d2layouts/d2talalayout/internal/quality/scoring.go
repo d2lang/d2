@@ -65,6 +65,11 @@ func evaluateWithAreaLimit(ctx context.Context, graph *layoutgraph.Graph, workLi
 		return 0, 0, guard.Used(), err
 	}
 	score += 1.0 - labelScore
+	flowScore, err := scoreAuthoredFlow(graph, guard)
+	if err != nil {
+		return 0, 0, guard.Used(), err
+	}
+	score += flowScore
 	if err := chargeEvaluationAreaWork(graph, guard); err != nil {
 		return 0, 0, guard.Used(), err
 	}
