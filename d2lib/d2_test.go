@@ -2,7 +2,11 @@ package d2lib
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2graph"
@@ -11,6 +15,68 @@ import (
 	d2log "github.com/d2lang/d2/lib/log"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
+
+func TestParseAndCompileHonorCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := Parse(ctx, "x", nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Parse() error = %v, want context.Canceled", err)
+	}
+	if _, _, err := Compile(ctx, "x", nil, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Compile() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestCompilePropagatesVariableExpansionLimit(t *testing.T) {
+	_, _, err := Compile(context.Background(), "vars: {x: 12345678}\nout: ${x}${x}${x}${x}${x}", &CompileOptions{
+		MaxVariableExpansion: 32,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "variable substitution expansion exceeds limit of 32 work units") {
+		t.Fatalf("Compile() error = %v, want variable expansion limit", err)
+	}
+}
+
+func TestCompilePropagatesGlobExpansionLimit(t *testing.T) {
+	_, _, err := Compile(context.Background(), "**.a\n**.b\n**.c\nx\n", &CompileOptions{
+		MaxGlobExpansion: 64,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "glob expansion exceeds limit of 64 work units") {
+		t.Fatalf("Compile() error = %v, want glob expansion limit", err)
+	}
+}
+
+func TestCompilePropagatesEdgeExpansionLimit(t *testing.T) {
+	_, _, err := Compile(context.Background(), "a\nb\nc\n* -> *\n", &CompileOptions{
+		MaxEdgeExpansion: 8,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "edge glob expansion exceeds limit of 8 endpoint pairs") {
+		t.Fatalf("Compile() error = %v, want edge expansion limit", err)
+	}
+}
+
+func TestCompilePropagatesEdgeExpansionWorkLimit(t *testing.T) {
+	_, _, err := Compile(context.Background(), "(* -> *)[*].style.opacity: 0\na\nb\nc\n", &CompileOptions{
+		MaxEdgeExpansion:     9,
+		MaxEdgeExpansionWork: 9,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "work limit of 9 endpoint-pair examinations") {
+		t.Fatalf("Compile() error = %v, want edge expansion work limit", err)
+	}
+}
+
+func TestNilFSDeniesImports(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "secret.d2"), []byte("disclosed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := Compile(context.Background(), "...@secret", &CompileOptions{
+		InputPath: filepath.Join(directory, "index.d2"),
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "imports are disabled") {
+		t.Fatalf("Compile error = %v, want imports-disabled error", err)
+	}
+}
 
 func TestGetLayoutDoesNotUseEnvironmentFallback(t *testing.T) {
 	t.Setenv("D2_LAYOUT", "dagre")
@@ -70,7 +136,7 @@ steps: {
 			return func(_ context.Context, graph *d2graph.Graph) error {
 				seeds := graph.Data["tala-seeds"].([]interface{})
 				seen = append(seen, append([]interface{}(nil), seeds...))
-				// Mutating one board's plugin data must not affect later boards.
+				// Mutating one board's layout data must not affect later boards.
 				seeds[0] = "mutated"
 				graph.Data["board-local"] = true
 				for i, object := range graph.Objects {

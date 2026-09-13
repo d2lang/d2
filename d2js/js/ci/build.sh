@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 . "$(dirname "$0")/../../../ci/sub/lib.sh"
+. "$(dirname "$0")/npm-auth.sh"
 cd -- "$(dirname "$0")/.."
 
 cd ../..
@@ -84,7 +85,7 @@ if [ -n "${NPM_VERSION:-}" ]; then
   fi
 
   restore_package_files() {
-    rm -f .npmrc
+    remove_npm_auth_config
     if [ -f package.json.bak ]; then
       mv package.json.bak package.json
     fi
@@ -357,9 +358,10 @@ NODE
         exit 1
       fi
 
-      # Create .npmrc file with auth token. Direct publishing is retained only
-      # for local bootstrap or recovery; GitHub Actions uses trusted publishing.
-      echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      # Direct publishing is retained only for local bootstrap or recovery;
+      # GitHub Actions uses trusted publishing. Keep its short-lived token out
+      # of the checkout and in a private temporary npm user configuration.
+      create_npm_auth_config
 
       # Preflight every target before publishing either one. A retry may skip a
       # version only when the registry tarball exactly matches this run's pack.
@@ -393,7 +395,7 @@ NODE
         fi
 
         echo "Publishing ${package_name}@${PUBLISH_VERSION} with tag '${NPM_TAG}'..."
-        npm publish "$PACKAGE_TARBALL" --tag "$NPM_TAG"
+        NPM_CONFIG_USERCONFIG="$NPM_AUTH_CONFIG" npm publish "$PACKAGE_TARBALL" --tag "$NPM_TAG"
 
         published_verified=0
         for verify_attempt in 1 2 3 4 5; do

@@ -165,7 +165,7 @@ func TestBuildLatexInputAndImportBudgets(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "label language latex without configured SVG import limits") {
 		t.Fatalf("missing import options error = %v", err)
 	}
-	_, err = Build(context.Background(), makeDiagram(strings.Repeat("x", maxLatexInputBytes+1)), Options{Assets: testAssetOptions(t)})
+	_, err = Build(context.Background(), makeDiagram(strings.Repeat("x", d2latex.MaxInputBytes+1)), Options{Assets: testAssetOptions(t)})
 	if err == nil || !strings.Contains(err.Error(), "latex input is 4097 bytes, exceeding limit 4096") {
 		t.Fatalf("input limit error = %v", err)
 	}

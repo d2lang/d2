@@ -138,6 +138,9 @@ Set the diagram layout engine to the passed string. For a list of available opti
 .It Fl b , -bundle Ar true
 Bundle all assets and layers into the output svg
 .Ns .
+.It Fl -allow-private-network Ar false
+Allow remote image assets to access private, loopback, and link-local networks. Only enable this for trusted diagrams
+.Ns .
 .It Fl -force-appendix Ar false
 An appendix for tooltips and links is added to PNG exports since they are not interactive. Setting this to true adds an appendix to SVG exports as well
 .Ns .
@@ -217,6 +220,8 @@ See --center flag.
 See -s[ketch] flag.
 .It Ev Sy D2_BUNDLE
 See -b[undle] flag.
+.It Ev Sy D2_ALLOW_PRIVATE_NETWORK
+See --allow-private-network flag.
 .It Ev Sy D2_FORCE_APPENDIX
 See --force-appendix flag.
 .It Ev Sy D2_FONT_REGULAR

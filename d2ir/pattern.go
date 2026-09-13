@@ -6,14 +6,14 @@ import (
 	"github.com/d2lang/d2/d2ast"
 )
 
-func (m *Map) multiGlob(pattern []string) ([]*Field, bool) {
+func (m *Map) multiGlob(pattern []string, visit func(*Field) bool) ([]*Field, bool) {
 	var fa []*Field
 	if d2ast.IsDoubleGlob(pattern) {
-		m._doubleGlob(&fa)
+		m._doubleGlob(&fa, visit)
 		return fa, true
 	}
 	if d2ast.IsTripleGlob(pattern) {
-		m._tripleGlob(&fa)
+		m._tripleGlob(&fa, visit)
 		return fa, true
 	}
 	return nil, false
@@ -53,43 +53,47 @@ func (m *Map) directChildToward(target *Field) *Field {
 // toward target that the existing recursive glob traversal would append. A
 // whole branch is replayed (rather than only the target path) so reference and
 // filter ordering remains identical within the affected branch.
-func (m *Map) multiGlobMatchesToward(target *Field, pattern []string) []*Field {
+func (m *Map) multiGlobMatchesToward(target *Field, pattern []string, visit func(*Field) bool) []*Field {
 	path := m.pathToField(target)
 	if len(path) == 0 {
 		return nil
 	}
 	var matches []*Field
 	if d2ast.IsDoubleGlob(pattern) {
-		_doubleGlobField(path[0], &matches)
+		_doubleGlobField(path[0], &matches, visit)
 		return matches
 	}
 	if d2ast.IsTripleGlob(pattern) {
-		_tripleGlobField(path[0], &matches)
+		_tripleGlobField(path[0], &matches, visit)
 		return matches
 	}
 	return nil
 }
 
-func _doubleGlobField(f *Field, matches *[]*Field) {
+func _doubleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool {
 	if f == nil || f.Name == nil {
-		return
+		return true
+	}
+	if visit != nil && !visit(f) {
+		return false
 	}
 	name := f.Name.ScalarString()
 	if _, reserved := d2ast.ReservedKeywords[name]; reserved && f.Name.IsUnquoted() {
 		if skipDoubleGlobSubtree(name) {
-			return
+			return true
 		}
 		if f.Map() != nil {
-			f.Map()._doubleGlob(matches)
+			return f.Map()._doubleGlob(matches, visit)
 		}
-		return
+		return true
 	}
 	if NodeBoardKind(f) == "" {
 		*matches = append(*matches, f)
 	}
 	if f.Map() != nil {
-		f.Map()._doubleGlob(matches)
+		return f.Map()._doubleGlob(matches, visit)
 	}
+	return true
 }
 
 func skipDoubleGlobSubtree(name string) bool {
@@ -101,30 +105,37 @@ func skipDoubleGlobSubtree(name string) bool {
 	return name == "classes" || name == "vars"
 }
 
-func _tripleGlobField(f *Field, matches *[]*Field) {
+func _tripleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool {
 	if f == nil || f.Name == nil {
-		return
+		return true
+	}
+	if visit != nil && !visit(f) {
+		return false
 	}
 	name := f.Name.ScalarString()
 	if _, reserved := d2ast.ReservedKeywords[name]; reserved && f.Name.IsUnquoted() {
 		if _, board := d2ast.BoardKeywords[name]; !board {
-			return
+			return true
 		}
 		if f.Map() != nil {
-			f.Map()._tripleGlob(matches)
+			return f.Map()._tripleGlob(matches, visit)
 		}
-		return
+		return true
 	}
 	if NodeBoardKind(f) == "" {
 		*matches = append(*matches, f)
 	}
 	if f.Map() != nil {
-		f.Map()._tripleGlob(matches)
+		return f.Map()._tripleGlob(matches, visit)
 	}
+	return true
 }
 
-func (m *Map) _doubleGlob(fa *[]*Field) {
+func (m *Map) _doubleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 	for _, f := range m.Fields {
+		if visit != nil && !visit(f) {
+			return false
+		}
 		if f.Name == nil {
 			continue
 		}
@@ -134,7 +145,9 @@ func (m *Map) _doubleGlob(fa *[]*Field) {
 				continue
 			}
 			if f.Map() != nil {
-				f.Map()._doubleGlob(fa)
+				if !f.Map()._doubleGlob(fa, visit) {
+					return false
+				}
 			}
 			continue
 		}
@@ -142,20 +155,31 @@ func (m *Map) _doubleGlob(fa *[]*Field) {
 			*fa = append(*fa, f)
 		}
 		if f.Map() != nil {
-			f.Map()._doubleGlob(fa)
+			if !f.Map()._doubleGlob(fa, visit) {
+				return false
+			}
 		}
 	}
+	return true
 }
 
-func (m *Map) _tripleGlob(fa *[]*Field) {
+func (m *Map) _tripleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 	for _, f := range m.Fields {
+		if visit != nil && !visit(f) {
+			return false
+		}
+		if f == nil || f.Name == nil {
+			continue
+		}
 		if _, ok := d2ast.ReservedKeywords[f.Name.ScalarString()]; ok && f.Name.IsUnquoted() {
 			if _, ok := d2ast.BoardKeywords[f.Name.ScalarString()]; !ok {
 				continue
 			}
 			// We don't ever want to append layers, scenarios or steps directly.
 			if f.Map() != nil {
-				f.Map()._tripleGlob(fa)
+				if !f.Map()._tripleGlob(fa, visit) {
+					return false
+				}
 			}
 			continue
 		}
@@ -163,9 +187,12 @@ func (m *Map) _tripleGlob(fa *[]*Field) {
 			*fa = append(*fa, f)
 		}
 		if f.Map() != nil {
-			f.Map()._tripleGlob(fa)
+			if !f.Map()._tripleGlob(fa, visit) {
+				return false
+			}
 		}
 	}
+	return true
 }
 
 func matchPattern(s string, pattern []string) bool {

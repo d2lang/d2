@@ -1,6 +1,25 @@
 import { expect, test, describe } from "bun:test";
 import { D2 } from "../../dist/node-esm/index.js";
 
+const excessiveLatexGroups = "{".repeat(129) + "x" + "}".repeat(129);
+const excessiveLatexGroupsError = "latex group nesting depth 129 exceeds limit 128";
+
+async function expectLatexGroupLimit(run) {
+  const d2 = new D2();
+  try {
+    let caught;
+    try {
+      await run(d2);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect(caught.message).toContain(excessiveLatexGroupsError);
+  } finally {
+    await d2.dispose();
+  }
+}
+
 describe("D2 Unit Tests", () => {
   test("basic compilation works", async () => {
     const d2 = new D2();
@@ -196,6 +215,32 @@ container.child -> outside
     expect(svg).toContain("<svg");
     expect(svg).toContain("</svg>");
     await d2.dispose();
+  }, 20000);
+
+  test("latex compile rejects excessive group nesting", async () => {
+    await expectLatexGroupLimit((d2) =>
+      d2.compile(`x: |latex
+  ${excessiveLatexGroups}
+|`)
+    );
+  }, 20000);
+
+  test("raw latex shape render rejects excessive group nesting", async () => {
+    await expectLatexGroupLimit(async (d2) => {
+      const result = await d2.compile("x");
+      result.diagram.shapes[0].label = excessiveLatexGroups;
+      result.diagram.shapes[0].language = "latex";
+      await d2.render(result.diagram);
+    });
+  }, 20000);
+
+  test("raw latex connection render rejects excessive group nesting", async () => {
+    await expectLatexGroupLimit(async (d2) => {
+      const result = await d2.compile("x -> y: label");
+      result.diagram.connections[0].label = excessiveLatexGroups;
+      result.diagram.connections[0].language = "latex";
+      await d2.render(result.diagram);
+    });
   }, 20000);
 
   test("unicode characters work", async () => {

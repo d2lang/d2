@@ -1,6 +1,7 @@
 package d2ir
 
 import (
+	"context"
 	"math/big"
 
 	"github.com/d2lang/d2/d2ast"
@@ -10,11 +11,50 @@ import (
 // place. Import caches therefore retain an immutable parsed tree and compile a
 // deep clone for each importer context.
 func cloneASTMap(src *d2ast.Map) *d2ast.Map {
+	dst, _ := cloneASTMapContext(context.Background(), src)
+	return dst
+}
+
+type astCloner struct {
+	ctx context.Context
+	err error
+}
+
+func cloneASTMapContext(ctx context.Context, src *d2ast.Map) (*d2ast.Map, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c := &astCloner{ctx: ctx}
+	dst := c.cloneMap(src)
+	if c.err != nil {
+		return nil, c.err
+	}
+	return dst, nil
+}
+
+func (c *astCloner) check() bool {
+	if c.err != nil {
+		return false
+	}
+	if err := c.ctx.Err(); err != nil {
+		c.err = err
+		return false
+	}
+	return true
+}
+
+func (c *astCloner) cloneMap(src *d2ast.Map) *d2ast.Map {
 	if src == nil {
+		return nil
+	}
+	if !c.check() {
 		return nil
 	}
 	dst := &d2ast.Map{Range: src.Range, Nodes: make([]d2ast.MapNodeBox, 0, len(src.Nodes))}
 	for _, box := range src.Nodes {
+		if !c.check() {
+			return nil
+		}
 		switch n := box.Unbox().(type) {
 		case *d2ast.Comment:
 			copy := *n
@@ -23,22 +63,43 @@ func cloneASTMap(src *d2ast.Map) *d2ast.Map {
 			copy := *n
 			dst.Nodes = append(dst.Nodes, d2ast.MakeMapNodeBox(&copy))
 		case *d2ast.Substitution:
-			dst.Nodes = append(dst.Nodes, d2ast.MakeMapNodeBox(cloneASTSubstitution(n)))
+			cloned := c.cloneSubstitution(n)
+			if c.err != nil {
+				return nil
+			}
+			dst.Nodes = append(dst.Nodes, d2ast.MakeMapNodeBox(cloned))
 		case *d2ast.Import:
-			dst.Nodes = append(dst.Nodes, d2ast.MakeMapNodeBox(cloneASTImport(n)))
+			cloned := c.cloneImport(n)
+			if c.err != nil {
+				return nil
+			}
+			dst.Nodes = append(dst.Nodes, d2ast.MakeMapNodeBox(cloned))
 		case *d2ast.Key:
-			dst.Nodes = append(dst.Nodes, d2ast.MakeMapNodeBox(cloneASTKey(n)))
+			cloned := c.cloneKey(n)
+			if c.err != nil {
+				return nil
+			}
+			dst.Nodes = append(dst.Nodes, d2ast.MakeMapNodeBox(cloned))
+		}
+		if c.err != nil {
+			return nil
 		}
 	}
 	return dst
 }
 
-func cloneASTArray(src *d2ast.Array) *d2ast.Array {
+func (c *astCloner) cloneArray(src *d2ast.Array) *d2ast.Array {
 	if src == nil {
+		return nil
+	}
+	if !c.check() {
 		return nil
 	}
 	dst := &d2ast.Array{Range: src.Range, Nodes: make([]d2ast.ArrayNodeBox, 0, len(src.Nodes))}
 	for _, box := range src.Nodes {
+		if !c.check() {
+			return nil
+		}
 		switch n := box.Unbox().(type) {
 		case *d2ast.Comment:
 			copy := *n
@@ -47,32 +108,61 @@ func cloneASTArray(src *d2ast.Array) *d2ast.Array {
 			copy := *n
 			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(&copy))
 		case *d2ast.Substitution:
-			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloneASTSubstitution(n)))
+			cloned := c.cloneSubstitution(n)
+			if c.err != nil {
+				return nil
+			}
+			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloned))
 		case *d2ast.Import:
-			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloneASTImport(n)))
+			cloned := c.cloneImport(n)
+			if c.err != nil {
+				return nil
+			}
+			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloned))
 		case *d2ast.Array:
-			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloneASTArray(n)))
+			cloned := c.cloneArray(n)
+			if c.err != nil {
+				return nil
+			}
+			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloned))
 		case *d2ast.Map:
-			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloneASTMap(n)))
+			cloned := c.cloneMap(n)
+			if c.err != nil {
+				return nil
+			}
+			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloned))
 		case d2ast.Scalar:
-			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloneASTScalar(n).(d2ast.ArrayNode)))
+			cloned := c.cloneScalar(n)
+			if c.err != nil {
+				return nil
+			}
+			dst.Nodes = append(dst.Nodes, d2ast.MakeArrayNodeBox(cloned.(d2ast.ArrayNode)))
+		}
+		if c.err != nil {
+			return nil
 		}
 	}
 	return dst
 }
 
-func cloneASTKey(src *d2ast.Key) *d2ast.Key {
+func (c *astCloner) cloneKey(src *d2ast.Key) *d2ast.Key {
 	if src == nil {
+		return nil
+	}
+	if !c.check() {
 		return nil
 	}
 	dst := &d2ast.Key{
 		Range:        src.Range,
 		Ampersand:    src.Ampersand,
 		NotAmpersand: src.NotAmpersand,
-		Key:          cloneASTKeyPath(src.Key),
-		EdgeKey:      cloneASTKeyPath(src.EdgeKey),
-		Primary:      cloneASTScalarBox(src.Primary),
-		Value:        cloneASTValueBox(src.Value),
+		Key:          c.cloneKeyPath(src.Key),
+		EdgeKey:      c.cloneKeyPath(src.EdgeKey),
+		Primary:      c.cloneScalarBox(src.Primary),
+		Value:        c.cloneValueBox(src.Value),
+	}
+	if c.err != nil {
+		return nil
 	}
 	if src.EdgeIndex != nil {
 		index := *src.EdgeIndex
@@ -84,83 +174,147 @@ func cloneASTKey(src *d2ast.Key) *d2ast.Key {
 	}
 	dst.Edges = make([]*d2ast.Edge, len(src.Edges))
 	for i, edge := range src.Edges {
+		if !c.check() {
+			return nil
+		}
 		dst.Edges[i] = &d2ast.Edge{
 			Range:    edge.Range,
-			Src:      cloneASTKeyPath(edge.Src),
+			Src:      c.cloneKeyPath(edge.Src),
 			SrcArrow: edge.SrcArrow,
-			Dst:      cloneASTKeyPath(edge.Dst),
+			Dst:      c.cloneKeyPath(edge.Dst),
 			DstArrow: edge.DstArrow,
+		}
+		if c.err != nil {
+			return nil
 		}
 	}
 	return dst
 }
 
-func cloneASTKeyPath(src *d2ast.KeyPath) *d2ast.KeyPath {
+func (c *astCloner) cloneKeyPath(src *d2ast.KeyPath) *d2ast.KeyPath {
 	if src == nil {
+		return nil
+	}
+	if !c.check() {
 		return nil
 	}
 	dst := &d2ast.KeyPath{Range: src.Range, Path: make([]*d2ast.StringBox, len(src.Path))}
 	for i, part := range src.Path {
-		dst.Path[i] = cloneASTStringBox(part)
+		if !c.check() {
+			return nil
+		}
+		dst.Path[i] = c.cloneStringBox(part)
 	}
 	return dst
 }
 
-func cloneASTStringBox(src *d2ast.StringBox) *d2ast.StringBox {
+func (c *astCloner) cloneStringBox(src *d2ast.StringBox) *d2ast.StringBox {
 	if src == nil || src.Unbox() == nil {
 		return nil
 	}
-	return d2ast.MakeValueBox(cloneASTScalar(src.Unbox())).StringBox()
+	if !c.check() {
+		return nil
+	}
+	cloned := c.cloneScalar(src.Unbox())
+	if c.err != nil {
+		return nil
+	}
+	return d2ast.MakeValueBox(cloned).StringBox()
 }
 
-func cloneASTSubstitution(src *d2ast.Substitution) *d2ast.Substitution {
+func (c *astCloner) cloneSubstitution(src *d2ast.Substitution) *d2ast.Substitution {
 	if src == nil {
+		return nil
+	}
+	if !c.check() {
 		return nil
 	}
 	dst := &d2ast.Substitution{Range: src.Range, Spread: src.Spread, Path: make([]*d2ast.StringBox, len(src.Path))}
 	for i, part := range src.Path {
-		dst.Path[i] = cloneASTStringBox(part)
+		if !c.check() {
+			return nil
+		}
+		dst.Path[i] = c.cloneStringBox(part)
 	}
 	return dst
 }
 
-func cloneASTImport(src *d2ast.Import) *d2ast.Import {
+func (c *astCloner) cloneImport(src *d2ast.Import) *d2ast.Import {
 	if src == nil {
+		return nil
+	}
+	if !c.check() {
 		return nil
 	}
 	dst := &d2ast.Import{Range: src.Range, Spread: src.Spread, Pre: src.Pre, Path: make([]*d2ast.StringBox, len(src.Path))}
 	for i, part := range src.Path {
-		dst.Path[i] = cloneASTStringBox(part)
+		if !c.check() {
+			return nil
+		}
+		dst.Path[i] = c.cloneStringBox(part)
 	}
 	return dst
 }
 
-func cloneASTScalarBox(src d2ast.ScalarBox) d2ast.ScalarBox {
+func (c *astCloner) cloneScalarBox(src d2ast.ScalarBox) d2ast.ScalarBox {
 	if src.Unbox() == nil {
 		return d2ast.ScalarBox{}
 	}
-	return d2ast.MakeValueBox(cloneASTScalar(src.Unbox())).ScalarBox()
+	if !c.check() {
+		return d2ast.ScalarBox{}
+	}
+	cloned := c.cloneScalar(src.Unbox())
+	if c.err != nil {
+		return d2ast.ScalarBox{}
+	}
+	return d2ast.MakeValueBox(cloned).ScalarBox()
 }
 
-func cloneASTValueBox(src d2ast.ValueBox) d2ast.ValueBox {
+func (c *astCloner) cloneValueBox(src d2ast.ValueBox) d2ast.ValueBox {
+	if !c.check() {
+		return d2ast.ValueBox{}
+	}
 	switch value := src.Unbox().(type) {
 	case nil:
 		return d2ast.ValueBox{}
 	case *d2ast.Map:
-		return d2ast.MakeValueBox(cloneASTMap(value))
+		cloned := c.cloneMap(value)
+		if c.err != nil {
+			return d2ast.ValueBox{}
+		}
+		return d2ast.MakeValueBox(cloned)
 	case *d2ast.Array:
-		return d2ast.MakeValueBox(cloneASTArray(value))
+		cloned := c.cloneArray(value)
+		if c.err != nil {
+			return d2ast.ValueBox{}
+		}
+		return d2ast.MakeValueBox(cloned)
 	case *d2ast.Import:
-		return d2ast.MakeValueBox(cloneASTImport(value))
+		cloned := c.cloneImport(value)
+		if c.err != nil {
+			return d2ast.ValueBox{}
+		}
+		return d2ast.MakeValueBox(cloned)
 	case d2ast.Scalar:
-		return d2ast.MakeValueBox(cloneASTScalar(value))
+		cloned := c.cloneScalar(value)
+		if c.err != nil {
+			return d2ast.ValueBox{}
+		}
+		return d2ast.MakeValueBox(cloned)
 	default:
 		panic("unhandled AST value")
 	}
 }
 
 func cloneASTScalar(src d2ast.Scalar) d2ast.Scalar {
+	return (&astCloner{ctx: context.Background()}).cloneScalar(src)
+}
+
+func (c *astCloner) cloneScalar(src d2ast.Scalar) d2ast.Scalar {
 	if src == nil {
+		return nil
+	}
+	if !c.check() {
 		return nil
 	}
 	switch value := src.(type) {
@@ -178,15 +332,18 @@ func cloneASTScalar(src d2ast.Scalar) d2ast.Scalar {
 		if value.Value != nil {
 			copy.Value = new(big.Rat).Set(value.Value)
 		}
+		if !c.check() {
+			return nil
+		}
 		return &copy
 	case *d2ast.UnquotedString:
 		copy := *value
 		copy.Pattern = append([]string(nil), value.Pattern...)
-		copy.Value = cloneASTInterpolation(value.Value)
+		copy.Value = c.cloneInterpolation(value.Value)
 		return &copy
 	case *d2ast.DoubleQuotedString:
 		copy := *value
-		copy.Value = cloneASTInterpolation(value.Value)
+		copy.Value = c.cloneInterpolation(value.Value)
 		return &copy
 	case *d2ast.SingleQuotedString:
 		copy := *value
@@ -199,9 +356,15 @@ func cloneASTScalar(src d2ast.Scalar) d2ast.Scalar {
 	}
 }
 
-func cloneASTInterpolation(src []d2ast.InterpolationBox) []d2ast.InterpolationBox {
+func (c *astCloner) cloneInterpolation(src []d2ast.InterpolationBox) []d2ast.InterpolationBox {
+	if !c.check() {
+		return nil
+	}
 	dst := make([]d2ast.InterpolationBox, len(src))
 	for i, box := range src {
+		if !c.check() {
+			return nil
+		}
 		if box.String != nil {
 			value := *box.String
 			dst[i].String = &value
@@ -210,7 +373,10 @@ func cloneASTInterpolation(src []d2ast.InterpolationBox) []d2ast.InterpolationBo
 			value := *box.StringRaw
 			dst[i].StringRaw = &value
 		}
-		dst[i].Substitution = cloneASTSubstitution(box.Substitution)
+		dst[i].Substitution = c.cloneSubstitution(box.Substitution)
+		if c.err != nil {
+			return nil
+		}
 	}
 	return dst
 }

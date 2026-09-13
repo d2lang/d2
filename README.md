@@ -33,7 +33,7 @@ https://user-images.githubusercontent.com/3120367/206125010-bd1fea8e-248a-43e7-8
 - [Fonts](#fonts)
 - [Export file types](#export-file-types)
 - [Language tooling](#language-tooling)
-- [Plugins](#plugins)
+- [Layout engines](#layout-engines)
 - [Comparison](#comparison)
 - [Contributing](#contributing)
 - [License](#license)
@@ -185,13 +185,11 @@ more. Good language tooling is necessary for creating and maintaining large diag
 
 The extensions for VSCode and Vim can be found in the [Related](#related) section.
 
-## Plugins
+## Layout engines
 
-D2 is designed to be extensible and composable. The plugin system allows you to
-change out layout engines and customize the rendering pipeline. Plugins can either be
-bundled with the build or separately installed as a standalone binary.
-
-**Layout engines**:
+D2 bundles three layout engines. Select one with `--layout=dagre`, `--layout=elk`, or
+`--layout=tala`. You can also set `D2_LAYOUT` or `vars.d2-config.layout-engine` in D2 source.
+Run `d2 layout` to list the engines or `d2 layout <name>` for their configuration options.
 
 - [Dagro](https://github.com/d2lang/dagro) (default, bundled): A native Go port of the
   Dagre directed graph layout engine that produces layered/hierarchical layouts. Based
@@ -203,9 +201,9 @@ bundled with the build or separately installed as a standalone binary.
   specifically for software architecture diagrams. Select it with `--layout=tala`,
   `D2_LAYOUT=tala`, or a `layout-engine: tala` setting under `vars.d2-config` in D2 source.
 
-D2 intends to integrate with a variety of layout engines, e.g. `dot`, as well as
-single-purpose layout types like sequence diagrams. You can choose whichever layout engine
-you like and works best for the diagram you're making.
+D2 also handles specialized layouts such as sequence diagrams and grids. Go applications
+can use the [layout packages](./d2layouts) directly or provide layout and routing functions
+through [d2lib](./d2lib).
 
 Sketch-mode rendering uses [rough-go](https://github.com/d2lang/rough-go), a native Go
 compatibility port of the Rough.js 4.6.6 rendering surface used by D2.

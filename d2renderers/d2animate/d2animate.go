@@ -44,15 +44,22 @@ func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash stri
 }
 
 func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, intervalMS int) ([]byte, error) {
+	if err := d2target.ValidateRenderTarget(rootDiagram); err != nil {
+		return nil, err
+	}
 	buf := &bytes.Buffer{}
 
 	// TODO account for stroke width of root border
 
+	pad := d2svg.DEFAULT_PADDING
+	if renderOpts.Pad != nil {
+		pad = int(*renderOpts.Pad)
+	}
 	tl, br := rootDiagram.NestedBoundingBox()
-	left := tl.X - int(*renderOpts.Pad)
-	top := tl.Y - int(*renderOpts.Pad)
-	width := br.X - tl.X + int(*renderOpts.Pad)*2
-	height := br.Y - tl.Y + int(*renderOpts.Pad)*2
+	left := tl.X - pad
+	top := tl.Y - pad
+	width := br.X - tl.X + pad*2
+	height := br.Y - tl.Y + pad*2
 
 	var dimensions string
 	if renderOpts.Scale != nil {

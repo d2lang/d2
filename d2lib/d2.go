@@ -22,7 +22,25 @@ import (
 )
 
 type CompileOptions struct {
-	UTF16Pos       bool
+	UTF16Pos bool
+	// MaxVariableExpansion bounds work added by variable substitutions and the
+	// automatic copies they induce. Zero uses the secure compiler default.
+	MaxVariableExpansion int64
+	// MaxGlobExpansion bounds work performed by glob matching and
+	// materialization. Zero uses the secure compiler default. Explicit source
+	// fields are not counted as materialization work.
+	MaxGlobExpansion int64
+	// MaxEdgeExpansion bounds distinct edge-segment and endpoint combinations
+	// considered by edge globs. Zero uses the secure compiler default. Explicit
+	// edges do not consume this budget.
+	MaxEdgeExpansion int64
+	// MaxEdgeExpansionWork bounds all endpoint-pair examinations performed by
+	// edge globs, including lazy replays. Zero uses the secure compiler default.
+	MaxEdgeExpansionWork int64
+	// FS is the file system used for resolving imports in the D2 text. Nil
+	// disables imports. Callers that accept untrusted input should prefer a
+	// filesystem constrained to the intended import root; lib/localfile provides
+	// rooted and explicit unrestricted host-filesystem policies.
 	FS             fs.FS
 	MeasuredTexts  []*d2target.MText
 	Ruler          *textmeasure.Ruler
@@ -56,7 +74,7 @@ func Parse(ctx context.Context, input string, compileOpts *CompileOptions) (*d2a
 		compileOpts = &CompileOptions{}
 	}
 
-	ast, err := d2parser.Parse(compileOpts.InputPath, strings.NewReader(input), &d2parser.ParseOptions{
+	ast, err := d2parser.ParseContext(ctx, compileOpts.InputPath, strings.NewReader(input), &d2parser.ParseOptions{
 		UTF16Pos: compileOpts.UTF16Pos,
 	})
 	return ast, err
@@ -75,8 +93,13 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 	}
 
 	g, config, err := d2compiler.Compile(compileOpts.InputPath, strings.NewReader(input), &d2compiler.CompileOptions{
-		UTF16Pos: compileOpts.UTF16Pos,
-		FS:       compileOpts.FS,
+		Context:              ctx,
+		UTF16Pos:             compileOpts.UTF16Pos,
+		MaxVariableExpansion: compileOpts.MaxVariableExpansion,
+		MaxGlobExpansion:     compileOpts.MaxGlobExpansion,
+		MaxEdgeExpansion:     compileOpts.MaxEdgeExpansion,
+		MaxEdgeExpansionWork: compileOpts.MaxEdgeExpansionWork,
+		FS:                   compileOpts.FS,
 	})
 	if err != nil {
 		return nil, nil, err

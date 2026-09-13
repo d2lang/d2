@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"io"
 	"strings"
 
 	"github.com/d2lang/util-go/xdefer"
 )
+
+const maxDecodedScriptSize int64 = 16 << 20
 
 // Encode takes a D2 script and encodes it as a compressed base64 string for embedding in URLs.
 func Encode(raw string) (_ string, err error) {
@@ -41,12 +45,18 @@ func Decode(encoded string) (_ string, err error) {
 	}
 
 	zr := flate.NewReaderDict(bytes.NewReader(b64Decoded), nil)
-	var b bytes.Buffer
-	if _, err := io.Copy(&b, zr); err != nil {
+	defer func() {
+		if closeErr := zr.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	decoded, err := io.ReadAll(io.LimitReader(zr, maxDecodedScriptSize+1))
+	if err != nil {
 		return "", err
 	}
-	if err := zr.Close(); err != nil {
-		return "", nil
+	if int64(len(decoded)) > maxDecodedScriptSize {
+		return "", fmt.Errorf("decoded D2 script exceeds maximum size of %d bytes", maxDecodedScriptSize)
 	}
-	return b.String(), nil
+	return string(decoded), nil
 }

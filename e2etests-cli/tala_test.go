@@ -21,20 +21,20 @@ func TestTALACLISelection(t *testing.T) {
 		imports    map[string]string
 		args       []string
 		envLayout  string
-		wantPlugin string
+		wantLayout string
 	}{
 		{
 			name:       "flag selects tala",
 			source:     "client -> service\n",
 			args:       []string{"--layout=tala", "--tala-seeds=1"},
-			wantPlugin: "tala",
+			wantLayout: "tala",
 		},
 		{
 			name:       "environment selects tala",
 			source:     "client -> service\n",
 			args:       []string{"--tala-seeds=1"},
 			envLayout:  "tala",
-			wantPlugin: "tala",
+			wantLayout: "tala",
 		},
 		{
 			name: "source selects tala",
@@ -48,7 +48,7 @@ func TestTALACLISelection(t *testing.T) {
 }
 client -> service
 `,
-			wantPlugin: "tala",
+			wantLayout: "tala",
 		},
 		{
 			name: "flag overrides source",
@@ -60,7 +60,7 @@ client -> service
 client -> service
 `,
 			args:       []string{"--layout=tala", "--tala-seeds=1"},
-			wantPlugin: "tala",
+			wantLayout: "tala",
 		},
 		{
 			name: "non-tala flag overrides source",
@@ -75,7 +75,7 @@ client -> service
 client -> service
 `,
 			args:       []string{"--layout=elk"},
-			wantPlugin: "elk",
+			wantLayout: "elk",
 		},
 		{
 			name: "source import and nested routing",
@@ -97,7 +97,7 @@ outside
 container.child -> outside
 `,
 			},
-			wantPlugin: "tala",
+			wantLayout: "tala",
 		},
 		{
 			name: "animation boards",
@@ -116,7 +116,7 @@ steps: {
 }
 `,
 			args:       []string{"--animate-interval=10"},
-			wantPlugin: "tala",
+			wantLayout: "tala",
 		},
 	}
 
@@ -144,8 +144,8 @@ steps: {
 			if err := state.Wait(ctx); err != nil {
 				t.Fatalf("CLI compile failed: %v\nstderr:\n%s", err, stderr.String())
 			}
-			if !strings.Contains(stderr.String(), "using layout plugin "+test.wantPlugin+" (bundled)") {
-				t.Fatalf("CLI plugin trace does not select %q:\n%s", test.wantPlugin, stderr.String())
+			if !strings.Contains(stderr.String(), "using layout engine "+test.wantLayout+" (built-in)") {
+				t.Fatalf("CLI layout trace does not select %q:\n%s", test.wantLayout, stderr.String())
 			}
 
 			svg := readFile(t, directory, "output.svg")
@@ -166,7 +166,7 @@ func TestTALACLIHelp(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "list", args: []string{"layout"}, want: "tala (bundled)"},
+		{name: "list", args: []string{"layout"}, want: "tala (built-in)"},
 		{name: "details", args: []string{"layout", "tala"}, want: "TALA is D2's native layout and edge-routing engine"},
 	}
 	for _, test := range tests {

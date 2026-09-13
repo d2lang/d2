@@ -2,7 +2,6 @@ package d2svg
 
 import (
 	"fmt"
-	"html"
 	"io"
 
 	"github.com/d2lang/d2/d2target"
@@ -22,7 +21,8 @@ func clipPathForBorderRadius(diagramHash string, shape d2target.Shape) string {
 	)
 	topX, topY := box.TopLeft.X+box.Width, box.TopLeft.Y
 
-	out := fmt.Sprintf(`<clipPath id="%v-%v">`, diagramHash, svg.SVGID(shape.ID))
+	id := borderRadiusClipPathID(diagramHash, shape.ID)
+	out := svg.OpenElement("clipPath", svg.Attr("id", id.String()))
 	out += fmt.Sprintf(`<path d="M %s %s L %s %s S %s %s %s %s `, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y), svg.FormatFloat(box.TopLeft.X+float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.Y))
 	out += fmt.Sprintf(`L %s %s L %s %s `, svg.FormatFloat(box.TopLeft.X+box.Width-float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.Y), svg.FormatFloat(topX-float64(shape.BorderRadius)), svg.FormatFloat(topY))
 
@@ -41,6 +41,10 @@ func clipPathForBorderRadius(diagramHash string, shape d2target.Shape) string {
 	return out + `fill="none" /> </clipPath>`
 }
 
+func borderRadiusClipPathID(diagramHash, shapeID string) svg.ID {
+	return svg.LiteralID(fmt.Sprintf("%s-%s", diagramHash, svg.SVGID(shapeID)))
+}
+
 func tableHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text string, textWidth, textHeight, fontSize float64, inlineTheme *d2themes.Theme) string {
 	rectEl := d2themes.NewThemableElement("rect", inlineTheme)
 	rectEl.X, rectEl.Y = box.TopLeft.X, box.TopLeft.Y
@@ -49,7 +53,7 @@ func tableHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text st
 	rectEl.FillPattern = shape.FillPattern
 	rectEl.ClassName = "class_header"
 	if shape.BorderRadius != 0 {
-		rectEl.ClipPath = fmt.Sprintf("%v-%v", diagramHash, shape.ID)
+		rectEl.SetClipPathID(borderRadiusClipPathID(diagramHash, shape.ID))
 	}
 	str := rectEl.Render()
 
@@ -69,7 +73,7 @@ func tableHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text st
 		textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx",
 			"start", 4+fontSize,
 		)
-		textEl.Content = svg.EscapeText(text)
+		textEl.SetText(text)
 		str += textEl.Render()
 	}
 	return str
@@ -91,18 +95,18 @@ func tableRow(shape d2target.Shape, box *geo.Box, nameText, typeText, constraint
 	textEl.Fill = shape.PrimaryAccentColor
 	textEl.ClassName = "text"
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "start", fontSize)
-	textEl.Content = svg.EscapeText(nameText)
+	textEl.SetText(nameText)
 	out := textEl.Render()
 
 	textEl.X += longestNameWidth + d2target.TypePadding
 	textEl.Fill = shape.NeutralAccentColor
-	textEl.Content = svg.EscapeText(typeText)
+	textEl.SetText(typeText)
 	out += textEl.Render()
 
 	textEl.X = box.TopLeft.X + (box.Width - d2target.NamePadding)
 	textEl.Fill = shape.SecondaryAccentColor
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "end", fontSize)
-	textEl.Content = constraintText
+	textEl.SetText(constraintText)
 	out += textEl.Render()
 
 	return out
@@ -171,12 +175,12 @@ func drawTable(writer io.Writer, diagramHash string, targetShape d2target.Shape,
 
 		tl := iconPosition.GetPointOnBox(box, label.PADDING, float64(iconSize), float64(iconSize))
 
-		fmt.Fprintf(writer, `<image href="%s" x="%s" y="%s" width="%d" height="%d" />`,
-			html.EscapeString(targetShape.Icon.String()),
-			svg.FormatFloat(tl.X),
-			svg.FormatFloat(tl.Y),
-			iconSize,
-			iconSize,
-		)
+		fmt.Fprint(writer, svg.EmptyElement("image",
+			svg.Attr("href", targetShape.Icon.String()),
+			svg.FloatAttr("x", tl.X),
+			svg.FloatAttr("y", tl.Y),
+			svg.IntAttr("width", iconSize),
+			svg.IntAttr("height", iconSize),
+		))
 	}
 }

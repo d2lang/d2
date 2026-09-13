@@ -2,6 +2,7 @@ package d2compiler_test
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +18,17 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 )
+
+func TestNilFSDeniesImports(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "secret.d2"), []byte("disclosed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := d2compiler.Compile(filepath.Join(directory, "index.d2"), strings.NewReader("...@secret"), nil)
+	if err == nil || !strings.Contains(err.Error(), "imports are disabled") {
+		t.Fatalf("Compile error = %v, want imports-disabled error", err)
+	}
+}
 
 func TestOpacityValidation(t *testing.T) {
 	t.Parallel()
@@ -46,6 +58,72 @@ func TestOpacityValidation(t *testing.T) {
 	}
 }
 
+func TestGridCapacityLimit(t *testing.T) {
+	t.Parallel()
+
+	maxInt := int(^uint(0) >> 1)
+	for _, tc := range []struct {
+		name    string
+		rows    int
+		columns int
+		wantErr string
+	}{
+		{name: "max_int_panic_regression", rows: maxInt, columns: maxInt, wantErr: fmt.Sprintf("exceeds the maximum of %d", d2graph.MaxGridDimension)},
+		{name: "allocator_amplification_regression", rows: 20_000_000, columns: 20_000_000, wantErr: fmt.Sprintf("exceeds the maximum of %d", d2graph.MaxGridDimension)},
+		{name: "exact_dimension_limit", rows: d2graph.MaxGridDimension, columns: 1},
+		{name: "over_dimension_limit", rows: d2graph.MaxGridDimension + 1, columns: 1, wantErr: fmt.Sprintf("exceeds the maximum of %d", d2graph.MaxGridDimension)},
+		{name: "exact_cell_limit", rows: 1_000, columns: 1_000},
+		{name: "over_cell_limit", rows: 1_000, columns: 1_001, wantErr: fmt.Sprintf("exceed the limit of %d cells", d2graph.MaxGridCells)},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			script := fmt.Sprintf("grid: {\n  grid-rows: %d\n  grid-columns: %d\n  cell\n}", tc.rows, tc.columns)
+			g, _, err := d2compiler.Compile("grid-capacity.d2", strings.NewReader(script), nil)
+			if tc.wantErr == "" {
+				assert.Success(t, err)
+				tassert.NotNil(t, g)
+				return
+			}
+			tassert.Nil(t, g)
+			tassert.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
+func TestSingleGridDimensionLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, keyword := range []string{"grid-rows", "grid-columns"} {
+		keyword := keyword
+		t.Run(keyword, func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct {
+				name    string
+				value   int
+				wantErr bool
+			}{
+				{name: "exact_limit", value: d2graph.MaxGridDimension},
+				{name: "over_limit", value: d2graph.MaxGridDimension + 1, wantErr: true},
+			} {
+				tc := tc
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					script := fmt.Sprintf("grid: {\n  %s: %d\n  cell\n}", keyword, tc.value)
+					g, _, err := d2compiler.Compile("grid-dimension.d2", strings.NewReader(script), nil)
+					if !tc.wantErr {
+						assert.Success(t, err)
+						tassert.NotNil(t, g)
+						return
+					}
+					tassert.Nil(t, g)
+					tassert.ErrorContains(t, err, fmt.Sprintf("%s %d exceeds the maximum of %d", keyword, tc.value, d2graph.MaxGridDimension))
+				})
+			}
+		})
+	}
+}
+
 func TestClassReferenceCycle(t *testing.T) {
 	t.Parallel()
 
@@ -56,6 +134,194 @@ func TestClassReferenceCycle(t *testing.T) {
 	)
 	assert.ErrorString(t, err, `class-cycle.d2:1:17: "class" cannot appear within "classes"
 class-cycle.d2:1:17: class "x" forms a reference cycle`)
+}
+
+func TestCompositeVariableCycles(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		dsl  string
+		want string
+	}{
+		{
+			name: "self_descendant",
+			dsl: `vars: {
+  x: {
+    y: ${x}
+  }
+}
+a: ${x}`,
+			want: `variable-cycle.d2:3:8: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "indirect",
+			dsl: `vars: {
+  x: {
+    through-y: ${y}
+  }
+  y: {
+    through-x: ${x}
+  }
+}
+a: ${x}`,
+			want: `variable-cycle.d2:6:16: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "edge",
+			dsl: `vars: {
+  x: {
+    a -> b: ${x}
+  }
+}`,
+			want: `variable-cycle.d2:3:13: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "map_self_spread",
+			dsl: `vars: {
+  x: {
+    ...${x}
+  }
+}
+a: ${x}`,
+			want: `variable-cycle.d2:3:5: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "map_indirect_spread",
+			dsl: `vars: {
+  x: {
+    ...${y}
+  }
+  y: {
+    ...${x}
+  }
+}
+a: ${x}`,
+			want: `variable-cycle.d2:3:5: cyclic composite variable reference "y"
+variable-cycle.d2:6:5: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "map_nested_indirect_spread",
+			dsl: `vars: {
+  x: {
+    nested: {
+      ...${y}
+    }
+  }
+  y: {
+    ...${x}
+  }
+}
+a: ${x}`,
+			want: `variable-cycle.d2:4:7: cyclic composite variable reference "y"
+variable-cycle.d2:8:5: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "edge_map_nested_indirect_spread",
+			dsl: `vars: {
+  x: {
+    a -> b: {
+      ...${y}
+    }
+  }
+  y: {
+    ...${x}
+  }
+}
+a: ${x}`,
+			want: `variable-cycle.d2:4:7: cyclic composite variable reference "y"
+variable-cycle.d2:8:5: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "array_self_spread",
+			dsl: `vars: {
+  x: [...${x}]
+}
+a.class: ${x}`,
+			want: `variable-cycle.d2:2:7: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "array_indirect_spread",
+			dsl: `vars: {
+  x: [...${y}]
+  y: [...${x}]
+}
+a.class: ${x}`,
+			want: `variable-cycle.d2:2:7: cyclic composite variable reference "y"
+variable-cycle.d2:3:7: cyclic composite variable reference "x"`,
+		},
+		{
+			name: "array_nested_indirect_spread",
+			dsl: `vars: {
+  x: [[...${y}]]
+  y: [...${x}]
+}
+a.class: ${x}`,
+			want: `variable-cycle.d2:3:7: cyclic composite variable reference "x"`,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := d2compiler.Compile("variable-cycle.d2", strings.NewReader(tc.dsl), nil)
+			assert.ErrorString(t, err, tc.want)
+		})
+	}
+}
+
+func TestCompositeVariableAliasingRemainsValid(t *testing.T) {
+	t.Parallel()
+
+	g, _, err := d2compiler.Compile("variable-alias.d2", strings.NewReader(`vars: {
+  x: {
+    child
+  }
+}
+a: ${x}
+b: ${x}`), nil)
+	assert.Success(t, err)
+	assert.Equal(t, 4, len(g.Objects))
+	assert.String(t, "a.child", g.Objects[1].AbsID())
+	assert.String(t, "b.child", g.Objects[3].AbsID())
+}
+
+func TestCompositeVariableSpreadsRemainValid(t *testing.T) {
+	t.Parallel()
+
+	g, _, err := d2compiler.Compile("variable-spread.d2", strings.NewReader(`vars: {
+  children: {
+    child
+  }
+  tags: [one; two]
+}
+a: {
+  ...${children}
+  class: [...${tags}]
+}`), nil)
+	assert.Success(t, err)
+	assert.Equal(t, 2, len(g.Objects))
+	assert.String(t, "a.child", g.Objects[1].AbsID())
+	assert.Equal(t, 2, len(g.Objects[0].Attributes.Classes))
+	assert.String(t, "one", g.Objects[0].Attributes.Classes[0])
+	assert.String(t, "two", g.Objects[0].Attributes.Classes[1])
+}
+
+func TestCompositeVariableForwardSpreadFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := d2compiler.Compile("variable-forward-spread.d2", strings.NewReader(`vars: {
+  x: {
+    ...${y}
+  }
+  y: {
+    ...${z}
+  }
+  z: {
+    leaf
+  }
+}
+a: ${x}`), nil)
+	assert.ErrorString(t, err, `variable-forward-spread.d2:3:5: cannot spread composite variable "y" before its spread substitutions are resolved`)
 }
 
 func TestEdgeLinkBecomesLabel(t *testing.T) {
@@ -100,6 +366,52 @@ func TestEdgeLinkBecomesLabel(t *testing.T) {
 			if g.Edges[0].Label.Value != tc.wantLabel || g.Edges[0].Link.Value != tc.link {
 				t.Fatalf("edge label/link = %q/%q, want %q/%q", g.Edges[0].Label.Value, g.Edges[0].Link.Value, tc.wantLabel, tc.link)
 			}
+		})
+	}
+}
+
+func TestCompileRejectsDangerousOrdinaryLinks(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		script string
+	}{
+		{name: "shape_javascript", script: `x.link: javascript:alert(1)`},
+		{name: "shape_encoded_javascript", script: `x.link: "j&#x61;va%73cript:alert(1)"`},
+		{name: "shape_unsafe_data", script: `x.link: "data:text/html,<script>alert(1)</script>"`},
+		{name: "connection_vbscript", script: `x -> y: {link: vbscript:msgbox(1)}`},
+		{name: "connection_obfuscated_javascript", script: "x -> y: {link: \"java\tscript:alert(1)\"}"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g, _, err := d2compiler.Compile("dangerous-link.d2", strings.NewReader(tc.script), nil)
+			tassert.Nil(t, g)
+			tassert.ErrorContains(t, err, "link uses an unsafe URL scheme")
+		})
+	}
+}
+
+func TestCompilePreservesSafeOrdinaryLinks(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		script string
+	}{
+		{name: "https_shape", script: `x.link: https://example.com`},
+		{name: "mailto_connection", script: `x -> y: {link: mailto:security@example.com}`},
+		{name: "app_scheme", script: `x.link: vscode://file/example.go:10:2`},
+		{name: "safe_raster_data", script: `x.link: "data:image/png;base64,iVBORw0KGgo="`},
+		{name: "board", script: `x.link: layers.details; layers: {details: {y}}`},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g, _, err := d2compiler.Compile("safe-link.d2", strings.NewReader(tc.script), nil)
+			tassert.NoError(t, err)
+			tassert.NotNil(t, g)
 		})
 	}
 }

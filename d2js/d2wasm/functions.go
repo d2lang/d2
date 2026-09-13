@@ -356,11 +356,15 @@ func Render(args []js.Value) (interface{}, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
 	}
+	if err := d2target.ValidateRenderTarget(input.Diagram); err != nil {
+		return nil, &WASMError{Message: fmt.Sprintf("invalid diagram: %s", err.Error()), Code: 400}
+	}
 
 	animateInterval := 0
 	if input.Opts != nil && input.Opts.AnimateInterval != nil && *input.Opts.AnimateInterval > 0 {
 		animateInterval = int(*input.Opts.AnimateInterval)
 	}
+	forceAppendix := input.Opts != nil && input.Opts.ForceAppendix != nil && *input.Opts.ForceAppendix
 
 	var boardPath []string
 	noChildren := true
@@ -479,7 +483,9 @@ func Render(args []js.Value) (interface{}, error) {
 		return out, nil
 	}
 
-	forceAppendix := input.Opts != nil && input.Opts.ForceAppendix != nil && *input.Opts.ForceAppendix
+	if animateInterval > 0 && forceAppendix {
+		return nil, &WASMError{Message: "forceAppendix is not supported for animated SVGs", Code: 400}
+	}
 
 	var boards [][]byte
 	if noChildren {

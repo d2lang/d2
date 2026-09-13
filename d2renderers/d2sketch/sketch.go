@@ -78,7 +78,7 @@ func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 	pathEl.Style = shape.CSSStyle()
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		pathEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		pathEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	for _, p := range paths {
@@ -92,7 +92,7 @@ func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 	sketchOEl.Height = float64(shape.Height)
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		sketchOEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		sketchOEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, pathEl.Fill).Render()
@@ -128,7 +128,7 @@ func DoubleRect(shape d2target.Shape, diagramHash string) (string, error) {
 	pathEl.Style = shape.CSSStyle()
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		pathEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		pathEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	for _, p := range pathsBigRect {
@@ -145,7 +145,7 @@ func DoubleRect(shape d2target.Shape, diagramHash string) (string, error) {
 	pathEl.Style = shape.CSSStyle()
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		pathEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		pathEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	for _, p := range pathsSmallRect {
@@ -159,7 +159,7 @@ func DoubleRect(shape d2target.Shape, diagramHash string) (string, error) {
 	sketchOEl.Height = float64(shape.Height)
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		sketchOEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		sketchOEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, shape.Fill).Render()
@@ -188,7 +188,7 @@ func Oval(shape d2target.Shape, diagramHash string) (string, error) {
 	pathEl.Style = shape.CSSStyle()
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		pathEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		pathEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	for _, p := range paths {
@@ -202,7 +202,7 @@ func Oval(shape d2target.Shape, diagramHash string) (string, error) {
 	soElement.Ry = float64(shape.Height / 2)
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		soElement.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		soElement.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	renderedSO, err := d2themes.NewThemableSketchOverlay(
@@ -244,7 +244,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 	pathEl.Style = shape.CSSStyle()
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		pathEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		pathEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	for _, p := range pathsBigCircle {
@@ -261,7 +261,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 	pathEl.Style = shape.CSSStyle()
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		pathEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		pathEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	for _, p := range pathsSmallCircle {
@@ -274,7 +274,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 	soElement.Ry = float64(shape.Height / 2)
 
 	if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-		soElement.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+		soElement.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
 	renderedSO, err := d2themes.NewThemableSketchOverlay(
@@ -305,7 +305,7 @@ func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, er
 		pathEl.Style = shape.CSSStyle()
 
 		if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-			pathEl.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+			pathEl.SetMaskID(svg.LiteralID(diagramHash))
 		}
 
 		for _, p := range sketchPaths {
@@ -316,7 +316,7 @@ func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, er
 		soElement := d2themes.NewThemableElement("path", nil)
 
 		if shape.Label != "" && label.FromString(shape.LabelPosition).IsBorder() {
-			soElement.Mask = fmt.Sprintf("url(#%s)", diagramHash)
+			soElement.SetMaskID(svg.LiteralID(diagramHash))
 		}
 
 		for _, p := range sketchPaths {
@@ -334,7 +334,36 @@ func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, er
 	return output, nil
 }
 
-func Connection(connection d2target.Connection, path, attrs string) (string, error) {
+// Connection is retained for source compatibility. Its legacy textual
+// attribute list is parsed and re-serialized before use.
+// Deprecated: use ConnectionWithAttributes.
+func Connection(connection d2target.Connection, path, attributes string) (string, error) {
+	parsed, err := svg.ParseAttributes(attributes)
+	if err != nil {
+		return "", err
+	}
+	return ConnectionWithAttributes(connection, path, parsed)
+}
+
+func ConnectionWithAttributes(connection d2target.Connection, path string, attributes []svg.Attribute) (string, error) {
+	seenAttributes := map[string]struct{}{
+		"class":  {},
+		"d":      {},
+		"fill":   {},
+		"stroke": {},
+		"style":  {},
+	}
+	for _, attribute := range attributes {
+		name, err := attribute.Name()
+		if err != nil {
+			return "", err
+		}
+		if _, exists := seenAttributes[name]; exists {
+			return "", fmt.Errorf("connection attribute %q conflicts with a renderer-controlled attribute", name)
+		}
+		seenAttributes[name] = struct{}{}
+	}
+
 	animatedClass := ""
 	if connection.Animated {
 		animatedClass = " animated-connection"
@@ -357,7 +386,7 @@ func Connection(connection d2target.Connection, path, attrs string) (string, err
 			pathEl1.ClassName = fmt.Sprintf("connection%s", animatedClass)
 			pathEl1.Style = connection.CSSStyle()
 			pathEl1.Style += "animation-direction: reverse;"
-			pathEl1.Attributes = attrs
+			pathEl1.AddAttributes(attributes...)
 
 			pathEl2 := d2themes.NewThemableElement("path", nil)
 			pathEl2.D = path2
@@ -365,7 +394,7 @@ func Connection(connection d2target.Connection, path, attrs string) (string, err
 			pathEl2.Stroke = connection.Stroke
 			pathEl2.ClassName = fmt.Sprintf("connection%s", animatedClass)
 			pathEl2.Style = connection.CSSStyle()
-			pathEl2.Attributes = attrs
+			pathEl2.AddAttributes(attributes...)
 			return pathEl1.Render() + " " + pathEl2.Render(), nil
 		} else {
 			pathEl := d2themes.NewThemableElement("path", nil)
@@ -374,7 +403,7 @@ func Connection(connection d2target.Connection, path, attrs string) (string, err
 			pathEl.Stroke = connection.Stroke
 			pathEl.ClassName = fmt.Sprintf("connection%s", animatedClass)
 			pathEl.Style = connection.CSSStyle()
-			pathEl.Attributes = attrs
+			pathEl.AddAttributes(attributes...)
 			return pathEl.Render(), nil
 		}
 	} else {
@@ -395,7 +424,7 @@ func Connection(connection d2target.Connection, path, attrs string) (string, err
 		pathEl.Stroke = connection.Stroke
 		pathEl.ClassName = fmt.Sprintf("connection%s", animatedClass)
 		pathEl.Style = connection.CSSStyle()
-		pathEl.Attributes = attrs
+		pathEl.AddAttributes(attributes...)
 		for _, p := range paths {
 			pathEl.D = p
 			output += pathEl.Render()
@@ -461,7 +490,7 @@ func Table(shape d2target.Shape) (string, error) {
 		textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx",
 			"start", 4+shape.FontSize,
 		)
-		textEl.Content = svg.EscapeText(shape.Label)
+		textEl.SetText(shape.Label)
 		output += textEl.Render()
 	}
 
@@ -492,19 +521,19 @@ func Table(shape d2target.Shape) (string, error) {
 		textEl.Fill = shape.PrimaryAccentColor
 		textEl.ClassName = "text"
 		textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "start", float64(shape.FontSize))
-		textEl.Content = svg.EscapeText(f.Name.Label)
+		textEl.SetText(f.Name.Label)
 		output += textEl.Render()
 
 		textEl.X = nameTL.X + float64(longestNameWidth) + 2*d2target.NamePadding
 		textEl.Fill = shape.NeutralAccentColor
-		textEl.Content = svg.EscapeText(f.Type.Label)
+		textEl.SetText(f.Type.Label)
 		output += textEl.Render()
 
 		textEl.X = constraintTR.X
 		textEl.Y = constraintTR.Y + float64(shape.FontSize)*3/4
 		textEl.Fill = shape.SecondaryAccentColor
 		textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx;letter-spacing:2px", "end", float64(shape.FontSize))
-		textEl.Content = f.ConstraintAbbr()
+		textEl.SetText(f.ConstraintAbbr())
 		output += textEl.Render()
 
 		rowBox.TopLeft.Y += rowHeight
@@ -606,7 +635,7 @@ func Class(shape d2target.Shape) (string, error) {
 			"middle",
 			4+shape.FontSize,
 		)
-		textEl.Content = svg.EscapeText(shape.Label)
+		textEl.SetText(shape.Label)
 		output += textEl.Render()
 	}
 
@@ -662,19 +691,19 @@ func classRow(shape d2target.Shape, box *geo.Box, prefix, nameText, typeText str
 	textEl.Fill = shape.PrimaryAccentColor
 	textEl.ClassName = "text-mono"
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "start", fontSize)
-	textEl.Content = prefix
+	textEl.SetText(prefix)
 	output += textEl.Render()
 
 	textEl.X = prefixTL.X + d2target.PrefixWidth
 	textEl.Fill = shape.Fill
-	textEl.Content = svg.EscapeText(nameText)
+	textEl.SetText(nameText)
 	output += textEl.Render()
 
 	textEl.X = typeTR.X
 	textEl.Y = typeTR.Y + fontSize*3/4
 	textEl.Fill = shape.SecondaryAccentColor
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "end", fontSize)
-	textEl.Content = svg.EscapeText(typeText)
+	textEl.SetText(typeText)
 	output += textEl.Render()
 
 	return output
@@ -814,7 +843,7 @@ func Arrowheads(connection d2target.Connection, srcAdj, dstAdj *geo.Point) (stri
 		startingVector := startingSegment.ToVector().Reverse()
 		angle := startingVector.Degrees()
 
-		transform := fmt.Sprintf(`transform="translate(%f %f) rotate(%v)"`,
+		transform := fmt.Sprintf("translate(%f %f) rotate(%v)",
 			startingSegment.Start.X+srcAdj.X, startingSegment.Start.Y+srcAdj.Y, angle,
 		)
 
@@ -825,7 +854,7 @@ func Arrowheads(connection d2target.Connection, srcAdj, dstAdj *geo.Point) (stri
 
 		pathEl := d2themes.NewThemableElement("path", nil)
 		pathEl.ClassName = "connection"
-		pathEl.Attributes = transform
+		pathEl.AddAttributes(svg.Attr("transform", transform))
 		for _, rp := range roughPaths {
 			pathEl.D = rp.Attrs.D
 			pathEl.Fill = rp.Style.Fill
@@ -847,7 +876,7 @@ func Arrowheads(connection d2target.Connection, srcAdj, dstAdj *geo.Point) (stri
 		endingVector := endingSegment.ToVector()
 		angle := endingVector.Degrees()
 
-		transform := fmt.Sprintf(`transform="translate(%f %f) rotate(%v)"`,
+		transform := fmt.Sprintf("translate(%f %f) rotate(%v)",
 			endingSegment.End.X+dstAdj.X, endingSegment.End.Y+dstAdj.Y, angle,
 		)
 
@@ -858,7 +887,7 @@ func Arrowheads(connection d2target.Connection, srcAdj, dstAdj *geo.Point) (stri
 
 		pathEl := d2themes.NewThemableElement("path", nil)
 		pathEl.ClassName = "connection"
-		pathEl.Attributes = transform
+		pathEl.AddAttributes(svg.Attr("transform", transform))
 		for _, rp := range roughPaths {
 			pathEl.D = rp.Attrs.D
 			pathEl.Fill = rp.Style.Fill

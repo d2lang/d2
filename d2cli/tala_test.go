@@ -4,13 +4,11 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/d2lang/d2/d2plugin"
 )
 
 func TestTALARouterResolverUsesBundledRouter(t *testing.T) {
 	ctx := context.Background()
-	resolve := RouterResolver(ctx, nil, []d2plugin.Plugin{&d2plugin.TALAPlugin})
+	resolve := RouterResolver(ctx, nil)
 	router, err := resolve("tala")
 	if err != nil {
 		t.Fatal(err)

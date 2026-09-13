@@ -100,7 +100,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             ci/release/docker
-            d2plugin
+            d2layouts/d2talalayout
       - name: Download and verify exact release archive
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,7 +120,7 @@ jobs:
           IMAGE: ${{ steps.image.outputs.image }}
           # Older release archives predate bundled TALA. Check the pinned source,
           # so a missing TALA binary in a native release cannot silently skip smoke.
-          REQUIRE_TALA: ${{ hashFiles('release-source/d2plugin/plugin_tala.go') != '' }}
+          REQUIRE_TALA: ${{ hashFiles('release-source/d2layouts/d2talalayout/layout.go') != '' }}
         run: ./ci/release/docker/image.sh smoke "$IMAGE"
       - name: Record verified architecture digest
         env:

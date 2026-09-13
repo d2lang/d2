@@ -3,6 +3,7 @@ package d2parser
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math/big"
@@ -17,6 +18,10 @@ import (
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/util-go/go2"
 )
+
+// MaxNestingDepth is the maximum number of nested maps and arrays accepted by
+// the parser.
+const MaxNestingDepth = 128
 
 type ParseOptions struct {
 	// UTF16Pos would be used with input received from a browser where the browser will send the text as UTF-8 but
@@ -40,13 +45,22 @@ type ParseOptions struct {
 // https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocuments
 // TODO: update godocs
 func Parse(path string, r io.Reader, opts *ParseOptions) (*d2ast.Map, error) {
+	return ParseContext(context.Background(), path, r, opts)
+}
+
+// ParseContext parses a .d2 Map in r and stops promptly when ctx is canceled.
+func ParseContext(ctx context.Context, path string, r io.Reader, opts *ParseOptions) (*d2ast.Map, error) {
 	if opts == nil {
 		opts = &ParseOptions{
 			UTF16Pos: false,
 		}
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	p := &parser{
+		ctx:  ctx,
 		path: path,
 
 		utf16Pos: opts.UTF16Pos,
@@ -77,6 +91,9 @@ func Parse(path string, r io.Reader, opts *ParseOptions) (*d2ast.Map, error) {
 	}
 
 	m := p.parseMap(true)
+	if p.contextErr != nil {
+		return m, p.contextErr
+	}
 	if !p.err.Empty() {
 		return m, p.err
 	}
@@ -140,6 +157,8 @@ func ParseValue(value string) (d2ast.Value, error) {
 //
 // TODO: ast struct that combines map & errors and pass that around
 type parser struct {
+	ctx context.Context
+
 	path     string
 	pos      d2ast.Position
 	utf16Pos bool
@@ -157,7 +176,11 @@ type parser struct {
 
 	inEdgeGroup bool
 
-	depth int
+	depth        int
+	nestingDepth int
+	readCount    uint
+	contextErr   error
+	halted       bool
 }
 
 // TODO: rename to Error and make existing Error a private type errorWithRange
@@ -195,6 +218,9 @@ func (pe *ParseError) Error() string {
 }
 
 func (p *parser) errorf(start d2ast.Position, end d2ast.Position, f string, v ...interface{}) {
+	if p.halted || p.contextErr != nil {
+		return
+	}
 	r := d2ast.Range{
 		Path:  p.path,
 		Start: start,
@@ -208,8 +234,32 @@ func (p *parser) errorf(start d2ast.Position, end d2ast.Position, f string, v ..
 	})
 }
 
+func (p *parser) enterNesting(start d2ast.Position) bool {
+	if p.nestingDepth >= MaxNestingDepth {
+		p.errorf(start, p.pos, "maximum nesting depth of %d exceeded", MaxNestingDepth)
+		p.halted = true
+		return false
+	}
+	p.nestingDepth++
+	return true
+}
+
+func (p *parser) leaveNesting() {
+	p.nestingDepth--
+}
+
 // _readRune reads the next rune from the underlying reader or from the p.readahead buffer.
 func (p *parser) _readRune() (r rune, eof bool) {
+	if p.halted || p.contextErr != nil {
+		return 0, true
+	}
+	p.readCount++
+	if p.ctx != nil && p.readCount%256 == 1 {
+		if err := p.ctx.Err(); err != nil {
+			p.contextErr = err
+			return 0, true
+		}
+	}
 	if p.readaheadIndex < len(p.readahead) {
 		r = p.readahead[p.readaheadIndex]
 		p.readaheadIndex++
@@ -401,6 +451,10 @@ func (p *parser) parseMap(isFileMap bool) *d2ast.Map {
 
 	if !isFileMap {
 		m.Range.Start = m.Range.Start.Subtract('{', p.utf16Pos)
+		if !p.enterNesting(m.Range.Start) {
+			return m
+		}
+		defer p.leaveNesting()
 		p.depth++
 		defer dec(&p.depth)
 	}
@@ -1554,6 +1608,10 @@ func (p *parser) parseArray() *d2ast.Array {
 		},
 	}
 	defer a.Range.End.From(&p.readerPos)
+	if !p.enterNesting(a.Range.Start) {
+		return a
+	}
+	defer p.leaveNesting()
 
 	p.depth++
 	defer dec(&p.depth)

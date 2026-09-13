@@ -182,7 +182,10 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 }
 
 func layoutGrid(g *d2graph.Graph, obj *d2graph.Object) (*gridDiagram, error) {
-	gd := newGridDiagram(obj)
+	gd, err := newGridDiagram(obj)
+	if err != nil {
+		return nil, err
+	}
 
 	// position labels and icons
 	for _, o := range gd.objects {
@@ -245,11 +248,12 @@ func (gd *gridDiagram) layoutEvenly(g *d2graph.Graph, obj *d2graph.Object) {
 		return nil
 	}
 
-	rowHeights := make([]float64, 0, gd.rows)
-	colWidths := make([]float64, 0, gd.columns)
-	for i := 0; i < gd.rows; i++ {
+	occupiedRows, occupiedColumns := gd.occupiedDimensions()
+	rowHeights := make([]float64, 0, occupiedRows)
+	colWidths := make([]float64, 0, occupiedColumns)
+	for i := 0; i < occupiedRows; i++ {
 		rowHeight := 0.
-		for j := 0; j < gd.columns; j++ {
+		for j := 0; j < occupiedColumns; j++ {
 			o := getObject(i, j)
 			if o == nil {
 				break
@@ -258,9 +262,9 @@ func (gd *gridDiagram) layoutEvenly(g *d2graph.Graph, obj *d2graph.Object) {
 		}
 		rowHeights = append(rowHeights, rowHeight)
 	}
-	for j := 0; j < gd.columns; j++ {
+	for j := 0; j < occupiedColumns; j++ {
 		columnWidth := 0.
-		for i := 0; i < gd.rows; i++ {
+		for i := 0; i < occupiedRows; i++ {
 			o := getObject(i, j)
 			if o == nil {
 				break
@@ -275,8 +279,8 @@ func (gd *gridDiagram) layoutEvenly(g *d2graph.Graph, obj *d2graph.Object) {
 
 	cursor := geo.NewPoint(0, 0)
 	if gd.rowDirected {
-		for i := 0; i < gd.rows; i++ {
-			for j := 0; j < gd.columns; j++ {
+		for i := 0; i < occupiedRows; i++ {
+			for j := 0; j < occupiedColumns; j++ {
 				o := getObject(i, j)
 				if o == nil {
 					break
@@ -290,8 +294,8 @@ func (gd *gridDiagram) layoutEvenly(g *d2graph.Graph, obj *d2graph.Object) {
 			cursor.Y += rowHeights[i] + verticalGap
 		}
 	} else {
-		for j := 0; j < gd.columns; j++ {
-			for i := 0; i < gd.rows; i++ {
+		for j := 0; j < occupiedColumns; j++ {
+			for i := 0; i < occupiedRows; i++ {
 				o := getObject(i, j)
 				if o == nil {
 					break
@@ -306,17 +310,28 @@ func (gd *gridDiagram) layoutEvenly(g *d2graph.Graph, obj *d2graph.Object) {
 		}
 	}
 
-	var totalWidth, totalHeight float64
+	totalWidth := float64(gd.columns-1) * horizontalGap
+	totalHeight := float64(gd.rows-1) * verticalGap
 	for _, w := range colWidths {
-		totalWidth += w + horizontalGap
+		totalWidth += w
 	}
 	for _, h := range rowHeights {
-		totalHeight += h + verticalGap
+		totalHeight += h
 	}
-	totalWidth -= horizontalGap
-	totalHeight -= verticalGap
 	gd.width = totalWidth
 	gd.height = totalHeight
+}
+
+// occupiedDimensions bounds temporary layout storage by the number of objects,
+// while the final dimensions still account for explicitly retained empty cells.
+func (gd *gridDiagram) occupiedDimensions() (rows, columns int) {
+	if len(gd.objects) == 0 {
+		return 0, 0
+	}
+	if gd.rowDirected {
+		return divideRoundUp(len(gd.objects), gd.columns), min(len(gd.objects), gd.columns)
+	}
+	return min(len(gd.objects), gd.rows), divideRoundUp(len(gd.objects), gd.rows)
 }
 
 func (gd *gridDiagram) layoutDynamic(g *d2graph.Graph, obj *d2graph.Object) {

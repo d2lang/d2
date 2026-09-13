@@ -1,325 +1,436 @@
+// Package imgbundler embeds generated SVG image references as data URIs.
+// Loading, validation, network and local-file policy, caching, and cumulative
+// resource budgets belong to the caller-provided imageasset.Resolver; this
+// package only scans generated SVG and performs bounded replacement.
 package imgbundler
 
 import (
-	"bytes"
-	"compress/flate"
-	"compress/gzip"
-	"compress/zlib"
 	"context"
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"html"
-	"io"
-	"mime"
 	"net/http"
 	"net/url"
-	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/andybalholm/brotli"
-
+	"github.com/d2lang/d2/lib/imageasset"
+	"github.com/d2lang/d2/lib/localfile"
+	"github.com/d2lang/d2/lib/netpolicy"
 	"github.com/d2lang/d2/lib/simplelog"
-	"github.com/d2lang/util-go/xdefer"
 )
 
-var imgCache sync.Map
+const (
+	maxImageSize    int64 = 1 << 25 // 33_554_432
+	maxImageWorkers       = 16
 
-const maxImageSize int64 = 1 << 25 // 33_554_432
+	// The resolver bounds fetched, decompressed, retained, and decoded bytes.
+	// These independent ceilings bound generated-SVG scanning and expansion.
+	maxImageReferences             = 4_096
+	maxImageReferenceBytes         = 64 << 10
+	maxBundledImageBytes     int64 = 512 << 20
+	maxBundledOutputBytes    int64 = 512 << 20
+	maxImageDecodedWidth           = 32_768
+	maxImageDecodedHeight          = 32_768
+	maxImageDecodedPixels    int64 = 64 << 20
+	maxReportedImageFailures       = 8
+	maxImageErrorLabelBytes        = 1_024
+	legacyCacheNamespace           = "imgbundler/imageasset/v2/default-http"
+)
 
 var imageRegex = regexp.MustCompile(`<image href="([^"]+)"`)
 
+// BundleOptions selects the references eligible for bundling. Resolver is one
+// cumulative-budget session, normally scoped to exactly one output document.
+type BundleOptions struct {
+	Resolver *imageasset.Resolver
+	Local    bool
+	Remote   bool
+}
+
+// BundleWithResolver embeds selected local and HTTP(S) references using one
+// imageasset resolver session. Successful replacements completed before a
+// failure are returned with that error, preserving D2's partial-SVG behavior.
+// Resolution is canceled after the first failure so failed resources cannot
+// multiply the resolver's per-resource I/O ceiling without bound.
+func BundleWithResolver(ctx context.Context, l simplelog.Logger, in []byte, options BundleOptions) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	matches, hrefs, err := findImageElementsForOptions(ctx, in, options)
+	if err != nil {
+		return in, fmt.Errorf("failed to bundle images: %w", err)
+	}
+	if len(hrefs) == 0 {
+		return in, nil
+	}
+	if options.Resolver == nil {
+		return in, errors.New("failed to bundle images: image resolver is required")
+	}
+	output, err := runResolverWorkers(ctx, l, in, matches, hrefs, options.Resolver, &bundleBudget{maxBundledBytes: maxBundledImageBytes})
+	if err != nil {
+		return output, fmt.Errorf("failed to bundle images: %w", err)
+	}
+	return output, nil
+}
+
+// BundleLocal bundles local image references using the deny-by-default local
+// file policy. Call BundleLocalWithPolicy to deliberately permit local files.
+//
+// Deprecated: construct an imageasset.Resolver and call BundleWithResolver so
+// one caller-owned session can cover local and remote references together.
 func BundleLocal(ctx context.Context, l simplelog.Logger, inputPath string, in []byte, cacheImages bool) ([]byte, error) {
-	return bundle(ctx, l, inputPath, in, false, cacheImages)
+	return BundleLocalWithPolicy(ctx, l, inputPath, in, localfile.Policy{}, cacheImages)
 }
 
+// BundleLocalWithPolicy bundles local image references allowed by localFiles.
+// Use localfile.Rooted for untrusted input. localfile.Unrestricted is intended
+// only for trusted local applications such as the D2 command-line interface.
+// cacheImages is retained for source compatibility and creates only a
+// per-invocation cache; use an explicit Resolver cache for cross-call reuse.
+//
+// Deprecated: construct an imageasset.Resolver and call BundleWithResolver so
+// one caller-owned session can cover local and remote references together.
+func BundleLocalWithPolicy(ctx context.Context, l simplelog.Logger, inputPath string, in []byte, localFiles localfile.Policy, cacheImages bool) ([]byte, error) {
+	baseDir := ""
+	if inputPath != "" && inputPath != "-" {
+		baseDir = filepath.Dir(inputPath)
+	}
+	resolver, err := newLegacyResolver(baseDir, localFiles, nil, netpolicy.Policy{}, cacheImages)
+	if err != nil {
+		return in, fmt.Errorf("failed to bundle local images: %w", err)
+	}
+	defer resolver.CloseIdleConnections()
+	output, err := BundleWithResolver(ctx, l, in, BundleOptions{Resolver: resolver, Local: true})
+	if err != nil {
+		return output, fmt.Errorf("failed to bundle local images: %w", err)
+	}
+	return output, nil
+}
+
+// BundleRemote bundles public HTTP(S) image references.
+//
+// Deprecated: construct an imageasset.Resolver and call BundleWithResolver.
 func BundleRemote(ctx context.Context, l simplelog.Logger, in []byte, cacheImages bool) ([]byte, error) {
-	return bundle(ctx, l, "", in, true, cacheImages)
+	return BundleRemoteWithPolicy(ctx, l, in, cacheImages, netpolicy.Policy{})
 }
 
-type repl struct {
-	from []byte
-	to   []byte
-}
-
-func bundle(ctx context.Context, l simplelog.Logger, inputPath string, svg []byte, isRemote, cacheImages bool) (_ []byte, err error) {
-	if isRemote {
-		defer xdefer.Errorf(&err, "failed to bundle remote images")
-	} else {
-		defer xdefer.Errorf(&err, "failed to bundle local images")
+// BundleRemoteWithPolicy bundles HTTP(S) images under policy. The zero policy
+// permits public destinations only; trusted callers may explicitly opt into
+// private-network assets. cacheImages is retained for source compatibility and
+// creates only a per-invocation cache; use an explicit Resolver cache for
+// cross-call reuse.
+//
+// Deprecated: construct an imageasset.Resolver and call BundleWithResolver so
+// one caller-owned session can cover local and remote references together.
+func BundleRemoteWithPolicy(ctx context.Context, l simplelog.Logger, in []byte, cacheImages bool, policy netpolicy.Policy) ([]byte, error) {
+	resolver, err := newLegacyResolver("", localfile.Policy{}, nil, policy, cacheImages)
+	if err != nil {
+		return in, fmt.Errorf("failed to bundle remote images: %w", err)
 	}
-	imgs := imageRegex.FindAllSubmatch(svg, -1)
-	imgs = filterImageElements(imgs, isRemote)
-
-	if len(imgs) == 0 {
-		return svg, nil
+	defer resolver.CloseIdleConnections()
+	output, err := BundleWithResolver(ctx, l, in, BundleOptions{Resolver: resolver, Remote: true})
+	if err != nil {
+		return output, fmt.Errorf("failed to bundle remote images: %w", err)
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, time.Minute*5)
-	defer cancel()
-
-	return runWorkers(ctx, l, inputPath, svg, imgs, isRemote, cacheImages)
+	return output, nil
 }
 
-// filterImageElements finds all unique image elements in imgs that are
-// eligible for bundling in the current context.
-func filterImageElements(imgs [][][]byte, isRemote bool) [][][]byte {
-	unq := make(map[string]struct{})
-	imgs2 := imgs[:0]
-	for _, img := range imgs {
-		href := string(img[1])
-		if _, ok := unq[href]; ok {
-			continue
-		}
-		unq[href] = struct{}{}
-
-		// Skip already bundled images.
-		if strings.HasPrefix(href, "data:") {
-			continue
-		}
-
-		u, err := url.Parse(html.UnescapeString(href))
-		isRemoteImg := err == nil && strings.HasPrefix(u.Scheme, "http")
-
-		if isRemoteImg == isRemote {
-			imgs2 = append(imgs2, img)
-		}
-	}
-	return imgs2
-}
-
-func runWorkers(ctx context.Context, l simplelog.Logger, inputPath string, svg []byte, imgs [][][]byte, isRemote, cacheImages bool) (_ []byte, err error) {
-	var wg sync.WaitGroup
-	replc := make(chan repl)
-
-	wg.Add(len(imgs))
-	go func() {
-		wg.Wait()
-		close(replc)
-	}()
-
-	// Limits the number of workers to 16.
-	sema := make(chan struct{}, 16)
-
-	var errhrefsMu sync.Mutex
-	var errhrefs []string
-
-	// Start workers as the sema allows.
-	go func() {
-		for _, img := range imgs {
-			img := img
-			sema <- struct{}{}
-			go func() {
-				defer func() {
-					wg.Done()
-					<-sema
-				}()
-
-				bundledImage, err := worker(ctx, l, inputPath, img[1], isRemote, cacheImages)
-				if err != nil {
-					l.Error(fmt.Sprintf("failed to bundle %s: %v", img[1], err))
-					errhrefsMu.Lock()
-					errhrefs = append(errhrefs, string(img[1]))
-					errhrefsMu.Unlock()
-					return
-				}
-				select {
-				case <-ctx.Done():
-				case replc <- repl{
-					from: img[0],
-					to:   bundledImage,
-				}:
-				}
-			}()
-		}
-	}()
-
-	t := time.NewTicker(time.Second * 5)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return svg, fmt.Errorf("failed to wait for workers: %w", ctx.Err())
-		case <-t.C:
-			l.Info("fetching images...")
-		case repl, ok := <-replc:
-			if !ok {
-				if len(errhrefs) > 0 {
-					return svg, fmt.Errorf("%v", errhrefs)
-				}
-				return svg, nil
-			}
-			svg = bytes.Replace(svg, repl.from, repl.to, -1)
-		}
-	}
-}
-
-func worker(ctx context.Context, l simplelog.Logger, inputPath string, href []byte, isRemote, cacheImages bool) ([]byte, error) {
+func newLegacyResolver(baseDir string, localFiles localfile.Policy, client *http.Client, policy netpolicy.Policy, cacheImages bool) (*imageasset.Resolver, error) {
+	var cache imageasset.Cache
+	cacheNamespace := ""
 	if cacheImages {
-		if hit, ok := imgCache.Load(string(href)); ok {
-			return hit.([]byte), nil
-		}
-	}
-	var buf []byte
-	var mimeType string
-	var err error
-	if isRemote {
-		l.Debug(fmt.Sprintf("fetching %s remotely", string(href)))
-		buf, mimeType, err = httpGet(ctx, l, html.UnescapeString(string(href)))
-	} else {
-		l.Debug(fmt.Sprintf("reading %s from disk", string(href)))
-		path := html.UnescapeString(string(href))
-		if inputPath != "-" && !filepath.IsAbs(path) {
-			path = filepath.Join(filepath.Dir(inputPath), path)
-		}
-		buf, err = os.ReadFile(path)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	if mimeType == "" {
-		mimeType = sniffMimeType(href, buf, isRemote)
-		l.Debug(fmt.Sprintf("no mimetype provided - sniffed MIME type for %s: %s", string(href), mimeType))
-	} else {
-		l.Debug(fmt.Sprintf("mimetype provided for %s: %s", string(href), mimeType))
-	}
-	mimeType = strings.Replace(mimeType, "text/xml", "image/svg+xml", 1)
-	if mimeType == "application/octet-stream" && bytes.Contains(buf, []byte("<svg")) {
-		l.Debug(fmt.Sprintf("octet-stream mimetype replaced with svg for %s", string(href)))
-		mimeType = "image/svg+xml"
-	}
-	b64 := base64.StdEncoding.EncodeToString(buf)
-
-	out := []byte(fmt.Sprintf(`<image href="data:%s;base64,%s"`, mimeType, b64))
-	if cacheImages {
-		imgCache.Store(string(href), out)
-	}
-	return out, nil
-}
-
-var httpClient = &http.Client{}
-
-func httpGet(ctx context.Context, l simplelog.Logger, href string) ([]byte, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", href, nil)
-	if err != nil {
-		return nil, "", err
-	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Set("DNT", "1")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
-	req.Header.Set("Sec-Fetch-Dest", "image")
-	req.Header.Set("Sec-Fetch-Mode", "no-cors")
-	req.Header.Set("Sec-Fetch-Site", "cross-site")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	l.Debug(fmt.Sprintf("fetched %s remotely - response code %v", string(href), resp.StatusCode))
-	if resp.StatusCode != 200 {
-		return nil, "", fmt.Errorf("expected status 200 but got %d %s", resp.StatusCode, resp.Status)
-	}
-	r := http.MaxBytesReader(nil, resp.Body, maxImageSize)
-	buf, err := io.ReadAll(r)
-	if err != nil {
-		return nil, "", err
-	}
-	contentType := resp.Header.Get("Content-Type")
-	contentEncoding := resp.Header.Get("Content-Encoding")
-	if contentEncoding != "" {
-		buf, err = decodeContentEncoding(buf, contentEncoding)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to decode %q response for %s: %w", contentEncoding, href, err)
-		}
-	}
-	l.Debug(fmt.Sprintf("fetched content type: %s, Content length: %d bytes", contentType, len(buf)))
-
-	return buf, contentType, nil
-}
-
-func decodeContentEncoding(buf []byte, contentEncoding string) ([]byte, error) {
-	encodings := strings.Split(contentEncoding, ",")
-	for i := len(encodings) - 1; i >= 0; i-- {
-		encoding := strings.TrimSpace(strings.ToLower(encodings[i]))
-		if encoding == "" || encoding == "identity" {
-			continue
-		}
-
 		var err error
-		switch encoding {
-		case "gzip", "x-gzip":
-			buf, err = gunzip(buf)
-		case "br":
-			buf, err = readDecoded(brotli.NewReader(bytes.NewReader(buf)))
-		case "deflate":
-			buf, err = inflate(buf)
-		default:
-			return nil, fmt.Errorf("unsupported content encoding %q", encoding)
-		}
+		cache, err = imageasset.NewMemoryCache(maxImageReferences, maxBundledImageBytes)
 		if err != nil {
 			return nil, err
 		}
+		cacheNamespace = legacyCacheNamespace
 	}
-	return buf, nil
+	return imageasset.New(imageasset.Options{
+		BaseDir:        baseDir,
+		LocalFiles:     localFiles,
+		HTTPClient:     client,
+		NetworkPolicy:  policy,
+		Cache:          cache,
+		CacheNamespace: cacheNamespace,
+		Limits: imageasset.Limits{
+			MaxFetchedBytes:           maxImageSize,
+			MaxEncodedBytes:           maxImageSize,
+			MaxDecompressedBytes:      maxImageSize,
+			MaxSVGBytes:               maxImageSize,
+			MaxDecodedWidth:           maxImageDecodedWidth,
+			MaxDecodedHeight:          maxImageDecodedHeight,
+			MaxDecodedPixels:          maxImageDecodedPixels,
+			MaxAssets:                 maxImageReferences,
+			MaxCumulativeEncodedBytes: maxBundledImageBytes,
+			MaxCumulativeDecodedBytes: maxBundledImageBytes,
+		},
+	})
 }
 
-func gunzip(buf []byte) ([]byte, error) {
-	r, err := gzip.NewReader(bytes.NewReader(buf))
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-	return readDecoded(r)
+type repl struct {
+	href string
+	to   []byte
+	err  error
 }
 
-func inflate(buf []byte) ([]byte, error) {
-	if zr, err := zlib.NewReader(bytes.NewReader(buf)); err == nil {
-		defer zr.Close()
-		return readDecoded(zr)
-	}
-	fr := flate.NewReader(bytes.NewReader(buf))
-	defer fr.Close()
-	return readDecoded(fr)
+type imageMatch struct {
+	start     int
+	end       int
+	hrefStart int
+	hrefEnd   int
 }
 
-func readDecoded(r io.Reader) ([]byte, error) {
-	buf, err := io.ReadAll(io.LimitReader(r, maxImageSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(buf)) > maxImageSize {
-		return nil, fmt.Errorf("decoded image exceeds maximum size of %d bytes", maxImageSize)
-	}
-	return buf, nil
+type bundleLimitError struct {
+	name   string
+	actual int64
+	limit  int64
 }
 
-// sniffMimeType sniffs the mime type of href based on its file extension and contents.
-func sniffMimeType(href, buf []byte, isRemote bool) string {
-	p := string(href)
-	if isRemote {
-		u, err := url.Parse(html.UnescapeString(p))
-		if err != nil {
-			p = ""
-		} else {
-			p = u.Path
+func (e *bundleLimitError) Error() string {
+	return fmt.Sprintf("%s exceeds maximum of %d bytes: %d", e.name, e.limit, e.actual)
+}
+
+type bundleBudget struct {
+	mu               sync.Mutex
+	bundledBytes     int64
+	maxBundledBytes  int64
+	exhaustedByError *bundleLimitError
+}
+
+func (b *bundleBudget) reserveBundled(byteCount int64) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.exhaustedByError != nil {
+		return b.exhaustedByError
+	}
+	if byteCount > b.maxBundledBytes-b.bundledBytes {
+		b.exhaustedByError = &bundleLimitError{
+			name: "cumulative bundled image bytes", actual: b.bundledBytes + byteCount, limit: b.maxBundledBytes,
+		}
+		return b.exhaustedByError
+	}
+	b.bundledBytes += byteCount
+	return nil
+}
+
+type referenceClass uint8
+
+const (
+	referenceLocal referenceClass = iota + 1
+	referenceRemote
+	referenceData
+)
+
+func classifyReference(href string) referenceClass {
+	decoded := html.UnescapeString(href)
+	if len(decoded) >= len("data:") && strings.EqualFold(decoded[:len("data:")], "data:") {
+		return referenceData
+	}
+	parsed, err := url.Parse(decoded)
+	if err == nil && strings.HasPrefix(strings.ToLower(parsed.Scheme), "http") {
+		return referenceRemote
+	}
+	return referenceLocal
+}
+
+// findImageElements is retained for focused scanner tests and the deprecated
+// split APIs. New callers use findImageElementsForOptions through
+// BundleWithResolver.
+func findImageElements(ctx context.Context, svg []byte, isRemote bool) ([]imageMatch, []string, error) {
+	return findImageElementsForOptions(ctx, svg, BundleOptions{Local: !isRemote, Remote: isRemote})
+}
+
+// findImageElementsForOptions records every eligible occurrence, but returns
+// each raw href only once for resolution. Iterative matching avoids allocating
+// an unbounded regexp result before the reference ceiling can be enforced.
+func findImageElementsForOptions(ctx context.Context, svg []byte, options BundleOptions) ([]imageMatch, []string, error) {
+	var matches []imageMatch
+	var hrefs []string
+	unique := make(map[string]struct{})
+	for offset := 0; offset < len(svg); {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		indices := imageRegex.FindSubmatchIndex(svg[offset:])
+		if indices == nil {
+			break
+		}
+		match := imageMatch{
+			start:     offset + indices[0],
+			end:       offset + indices[1],
+			hrefStart: offset + indices[2],
+			hrefEnd:   offset + indices[3],
+		}
+		offset = match.end
+		hrefBytes := svg[match.hrefStart:match.hrefEnd]
+		href := string(hrefBytes)
+		class := classifyReference(href)
+		if class == referenceData || class == referenceLocal && !options.Local || class == referenceRemote && !options.Remote {
+			continue
+		}
+		if len(hrefBytes) > maxImageReferenceBytes {
+			return nil, nil, &bundleLimitError{name: "image reference", actual: int64(len(hrefBytes)), limit: maxImageReferenceBytes}
+		}
+		if len(matches) == maxImageReferences {
+			return nil, nil, fmt.Errorf("image references exceed maximum of %d", maxImageReferences)
+		}
+		matches = append(matches, match)
+		if _, ok := unique[href]; !ok {
+			unique[href] = struct{}{}
+			hrefs = append(hrefs, href)
 		}
 	}
-	mimeType := mime.TypeByExtension(path.Ext(p))
-	if mimeType == "" {
-		mimeType = http.DetectContentType(buf)
+	return matches, hrefs, nil
+}
+
+func runResolverWorkers(ctx context.Context, l simplelog.Logger, svg []byte, matches []imageMatch, hrefs []string, resolver *imageasset.Resolver, budget *bundleBudget) ([]byte, error) {
+	return runResolverWorkersWithLimit(ctx, l, svg, matches, hrefs, resolver, budget, maxImageWorkers)
+}
+
+func runResolverWorkersWithLimit(ctx context.Context, l simplelog.Logger, svg []byte, matches []imageMatch, hrefs []string, resolver *imageasset.Resolver, budget *bundleBudget, maxWorkers int) ([]byte, error) {
+	workerCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	jobs := make(chan string)
+	results := make(chan repl, len(hrefs))
+	workerCount := min(maxWorkers, len(hrefs))
+	var wg sync.WaitGroup
+	wg.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer wg.Done()
+			for href := range jobs {
+				replacement, err := resolveReplacement(workerCtx, resolver, href, budget)
+				results <- repl{href: href, to: replacement, err: err}
+				if err != nil {
+					cancel(err)
+					return
+				}
+			}
+		}()
 	}
-	return mimeType
+	go func() {
+		defer close(jobs)
+		for _, href := range hrefs {
+			select {
+			case jobs <- href:
+			case <-workerCtx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	replacements := make(map[string][]byte, len(hrefs))
+	reportedFailures := 0
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	done := ctx.Done()
+	for results != nil {
+		select {
+		case result, ok := <-results:
+			if !ok {
+				results = nil
+				continue
+			}
+			if result.err != nil {
+				if reportedFailures < maxReportedImageFailures {
+					l.Error("failed to bundle image: " + boundedLabel(result.err.Error(), maxImageErrorLabelBytes))
+					reportedFailures++
+				}
+				continue
+			}
+			replacements[result.href] = result.to
+		case <-ticker.C:
+			l.Info("fetching images...")
+		case <-done:
+			cancel(ctx.Err())
+			done = nil
+		}
+	}
+
+	output, replacementErr := applyReplacements(ctx, svg, matches, replacements, maxBundledOutputBytes)
+	cause := context.Cause(workerCtx)
+	return output, errors.Join(replacementErr, cause)
+}
+
+func resolveReplacement(ctx context.Context, resolver *imageasset.Resolver, href string, budget *bundleBudget) ([]byte, error) {
+	resource, err := resolver.Resolve(ctx, html.UnescapeString(href))
+	if err != nil {
+		return nil, err
+	}
+	if resource == nil {
+		return nil, errors.New("image resolver returned nil")
+	}
+	dataURI, err := resource.DataURIContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	outputBytes := len(`<image href="`) + len(dataURI) + 1
+	if err := budget.reserveBundled(int64(outputBytes)); err != nil {
+		return nil, err
+	}
+	output := make([]byte, 0, outputBytes)
+	output = append(output, `<image href="`...)
+	output = append(output, dataURI...)
+	output = append(output, '"')
+	return output, nil
+}
+
+func boundedLabel(label string, maxBytes int) string {
+	if len(label) <= maxBytes {
+		return label
+	}
+	return label[:maxBytes-3] + "..."
+}
+
+func applyReplacements(ctx context.Context, svg []byte, matches []imageMatch, replacements map[string][]byte, maxOutputBytes int64) ([]byte, error) {
+	if len(replacements) == 0 {
+		return svg, nil
+	}
+	outputBytes := int64(len(svg))
+	for _, match := range matches {
+		if err := ctx.Err(); err != nil {
+			return svg, err
+		}
+		replacement, ok := replacements[string(svg[match.hrefStart:match.hrefEnd])]
+		if !ok {
+			continue
+		}
+		outputBytes += int64(len(replacement)) - int64(match.end-match.start)
+		if outputBytes > maxOutputBytes {
+			return svg, &bundleLimitError{name: "bundled SVG output", actual: outputBytes, limit: maxOutputBytes}
+		}
+	}
+	if outputBytes > maxOutputBytes {
+		return svg, &bundleLimitError{name: "bundled SVG output", actual: outputBytes, limit: maxOutputBytes}
+	}
+
+	output := make([]byte, 0, int(outputBytes))
+	previous := 0
+	for _, match := range matches {
+		if err := ctx.Err(); err != nil {
+			return svg, err
+		}
+		replacement, ok := replacements[string(svg[match.hrefStart:match.hrefEnd])]
+		if !ok {
+			continue
+		}
+		output = append(output, svg[previous:match.start]...)
+		output = append(output, replacement...)
+		previous = match.end
+	}
+	output = append(output, svg[previous:]...)
+	return output, nil
 }

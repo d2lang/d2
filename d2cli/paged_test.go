@@ -31,7 +31,7 @@ func TestPagedContainersEmbedEquivalentPixels(t *testing.T) {
 	root := simpleRasterDiagramWithLabel()
 	root.Name = "root"
 	opts := d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)}
-	expectedRenderer, err := newPagedRenderer(context.Background(), nil, "-", false, root, opts)
+	expectedRenderer, err := newPagedRenderer(context.Background(), "-", false, root, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestPagedContainersEmbedEquivalentPixels(t *testing.T) {
 
 	presentation := d2pptx.NewPresentation("pixels", "", "", "", "1", true)
 	preview, err := renderPPTX(
-		context.Background(), presentation, nil, opts, "-", false, nil, root,
+		context.Background(), presentation, opts, "-", false, nil, root,
 		[]d2pptx.BoardTitle{{Name: "root", BoardID: "root", LinkToSlide: 1}},
 		false,
 	)
@@ -74,7 +74,7 @@ func TestPagedContainersEmbedEquivalentPixels(t *testing.T) {
 	}
 	pdfPath := filepath.Join(t.TempDir(), "pixels.pdf")
 	if _, _, err := renderPDFWithStatus(
-		context.Background(), nil, opts, "-", pdfPath, false, ruler, root,
+		context.Background(), opts, "-", pdfPath, false, ruler, root,
 		[]pdf.BoardTitle{{Name: "root", BoardID: "root"}}, true, true,
 	); err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestPagedRendererPreservesPreorderScaleAndPreview(t *testing.T) {
 	layer := simpleRasterDiagramWithLabel()
 	root.Layers = []*d2target.Diagram{layer}
 	renderer, err := newPagedRenderer(
-		context.Background(), nil, "-", false, root,
+		context.Background(), "-", false, root,
 		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)},
 	)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestPagedRendererBoundsAggregatePixelsAndEncoding(t *testing.T) {
 	newRenderer := func(t *testing.T) *pagedRenderer {
 		t.Helper()
 		renderer, err := newPagedRenderer(
-			context.Background(), nil, "-", false, simpleRasterDiagram(),
+			context.Background(), "-", false, simpleRasterDiagram(),
 			d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)},
 		)
 		if err != nil {
@@ -329,23 +329,6 @@ func TestIndexPagedBoardsSkipsFoldersAndRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
-func TestPagedRendererRejectsMutatingPostprocessor(t *testing.T) {
-	plugin := &inPlacePostProcessPlugin{}
-	renderer, err := newPagedRenderer(
-		context.Background(), plugin, "-", false, simpleRasterDiagram(),
-		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := renderer.render(simpleRasterDiagram(), false); err == nil || !strings.Contains(err.Error(), "postprocessor") {
-		t.Fatalf("mutating postprocessor error = %v", err)
-	}
-	if !plugin.called || renderer.renderedBoards != 0 {
-		t.Fatalf("postprocessor called/rendered = %v/%d, want true/0", plugin.called, renderer.renderedBoards)
-	}
-}
-
 func TestRenderPPTXPreservesRenderablePreorder(t *testing.T) {
 	root := simpleRasterDiagram()
 	root.Name = "root"
@@ -365,7 +348,7 @@ func TestRenderPPTXPreservesRenderablePreorder(t *testing.T) {
 	}
 	presentation := d2pptx.NewPresentation("test", "", "", "", "1", true)
 	preview, err := renderPPTX(
-		context.Background(), presentation, nil,
+		context.Background(), presentation,
 		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)},
 		"-", false, nil, root,
 		[]d2pptx.BoardTitle{{Name: "root", BoardID: "root", LinkToSlide: indices["root"] + 1}},
@@ -414,7 +397,7 @@ func TestPagedTypedLinksExportToPDFAndPPTX(t *testing.T) {
 		}
 	}
 
-	renderer, err := newPagedRenderer(context.Background(), nil, "-", false, root, opts)
+	renderer, err := newPagedRenderer(context.Background(), "-", false, root, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +411,7 @@ func TestPagedTypedLinksExportToPDFAndPPTX(t *testing.T) {
 
 	presentation := d2pptx.NewPresentation("test", "", "", "", "1", true)
 	preview, err := renderPPTX(
-		context.Background(), presentation, nil, opts, "-", false, ruler, root,
+		context.Background(), presentation, opts, "-", false, ruler, root,
 		[]d2pptx.BoardTitle{{Name: "root", BoardID: "root"}},
 		true,
 	)
@@ -490,7 +473,7 @@ func TestPagedTypedLinksExportToPDFAndPPTX(t *testing.T) {
 
 	pdfPath := filepath.Join(t.TempDir(), "links.pdf")
 	preview, _, err = renderPDFWithStatus(
-		context.Background(), nil, opts, "-", pdfPath, false, ruler, root,
+		context.Background(), opts, "-", pdfPath, false, ruler, root,
 		[]pdf.BoardTitle{{Name: "root", BoardID: "root"}}, true, true,
 	)
 	if err != nil {
@@ -596,7 +579,7 @@ func TestRenderPPTXFolderOnlyPathsNeverTargetMissingSlides(t *testing.T) {
 
 	presentation := d2pptx.NewPresentation("folders", "", "", "", "1", true)
 	_, err := renderPPTX(
-		context.Background(), presentation, nil,
+		context.Background(), presentation,
 		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)},
 		"-", false, nil, root,
 		[]d2pptx.BoardTitle{{Name: "root", BoardID: "root"}},

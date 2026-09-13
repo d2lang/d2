@@ -1,6 +1,7 @@
 package urlenc
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/d2lang/util-go/assert"
@@ -20,6 +21,23 @@ I just forgot my whole philosophy of life!!!: {
 	assert.Success(t, err)
 
 	assert.String(t, script, decoded)
+}
+
+func TestDecodeRejectsOversizedScript(t *testing.T) {
+	script := strings.Repeat("x", int(maxDecodedScriptSize)+1)
+	encoded, err := Encode(script)
+	assert.Success(t, err)
+	if len(encoded) >= 1<<20 {
+		t.Fatalf("expected a compact decompression-bomb fixture, got %d encoded bytes", len(encoded))
+	}
+
+	decoded, err := Decode(encoded)
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("Decode() error = %v, want decoded-size limit", err)
+	}
+	if decoded != "" {
+		t.Fatalf("Decode() returned %d bytes after exceeding the limit", len(decoded))
+	}
 }
 
 // TestChanges makes it explicit in PRs when encoding changes

@@ -25,11 +25,11 @@ type markdownRenderer struct {
 }
 
 func newMarkdownRenderer(fontFamily, monoFontFamily *d2fonts.FontFamily, inlineTheme *d2themes.Theme) *markdownRenderer {
-	if fontFamily == nil {
+	if fontFamily == nil || *fontFamily == "" {
 		family := d2fonts.SourceSansPro
 		fontFamily = &family
 	}
-	if monoFontFamily == nil {
+	if monoFontFamily == nil || *monoFontFamily == "" {
 		family := d2fonts.SourceCodePro
 		monoFontFamily = &family
 	}

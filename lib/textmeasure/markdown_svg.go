@@ -2,6 +2,7 @@ package textmeasure
 
 import (
 	"fmt"
+	stdhtml "html"
 	"math"
 	"sort"
 	"strconv"
@@ -318,22 +319,102 @@ func (l *MarkdownLayout) SVG(opts MarkdownSVGOptions) string {
 // annotations use the same policy.
 func SafeMarkdownLink(link string) string {
 	link = strings.TrimSpace(link)
-	if link == "" {
-		return ""
-	}
-	// Browsers ignore ASCII controls and whitespace in URI schemes. Normalize
-	// them before applying goldmark's dangerous-URL policy so variants such as
-	// "java\tscript:" cannot become active links in an embedded SVG.
-	normalized := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.IsSpace(r) {
-			return -1
-		}
-		return r
-	}, link)
-	if goldmarkHTML.IsDangerousURL([]byte(normalized)) {
+	if link == "" || IsDangerousLink(link) {
 		return ""
 	}
 	return link
+}
+
+// IsDangerousLink reports whether link uses a URL scheme that must not be
+// exposed as interactive metadata. It intentionally shares Goldmark's
+// dangerous-URL policy with Markdown links while preserving relative URLs,
+// board targets, and opaque application schemes.
+func IsDangerousLink(link string) bool {
+	normalized, complete := normalizeLinkForSafety(link)
+	if !complete {
+		// Do not fail open on an excessively nested encoding. Normal links settle
+		// in one pass, and a URL with an already-valid scheme settles immediately.
+		return true
+	}
+	return goldmarkHTML.IsDangerousURL([]byte(normalized))
+}
+
+const maxLinkNormalizationPasses = 8
+
+func normalizeLinkForSafety(link string) (string, bool) {
+	normalized := strings.TrimSpace(link)
+	for range maxLinkNormalizationPasses {
+		next := stdhtml.UnescapeString(normalized)
+		next = decodeLinkPercentEscapes(next)
+		// URI consumers ignore controls and whitespace in or around schemes.
+		// Normalize them for classification only; safe links retain their
+		// original spelling when emitted.
+		next = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) || unicode.IsSpace(r) {
+				return -1
+			}
+			return r
+		}, next)
+		if hasURLScheme(next) || next == normalized {
+			return next, true
+		}
+		normalized = next
+	}
+	return normalized, false
+}
+
+func hasURLScheme(value string) bool {
+	colon := strings.IndexByte(value, ':')
+	if colon <= 0 || !isASCIIAlpha(value[0]) {
+		return false
+	}
+	for i := 1; i < colon; i++ {
+		c := value[i]
+		if !isASCIIAlpha(c) && (c < '0' || c > '9') && c != '+' && c != '-' && c != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIAlpha(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+func decodeLinkPercentEscapes(value string) string {
+	first := strings.IndexByte(value, '%')
+	if first < 0 {
+		return value
+	}
+	var out strings.Builder
+	out.Grow(len(value))
+	out.WriteString(value[:first])
+	for i := first; i < len(value); i++ {
+		if i+2 < len(value) {
+			hi, hiOK := hexValue(value[i+1])
+			lo, loOK := hexValue(value[i+2])
+			if value[i] == '%' && hiOK && loOK {
+				out.WriteByte(hi<<4 | lo)
+				i += 2
+				continue
+			}
+		}
+		out.WriteByte(value[i])
+	}
+	return out.String()
+}
+
+func hexValue(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 func defaultMarkdownSVGRolePaint() map[MarkdownColorRole]MarkdownSVGPaint {

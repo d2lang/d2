@@ -56,7 +56,7 @@ func newLayoutInputSignature(g *d2graph.Graph, engine string) (layoutInputSignat
 // for those graph types until their generated topology can be snapshotted too.
 func supportsLayoutReuse(g *d2graph.Graph, engine string) bool {
 	// The built-in Dagre and ELK adapters consume the geometry inputs encoded
-	// below. Arbitrary layout plugins receive the whole graph and may choose to
+	// below. Custom layout functions receive the whole graph and may choose to
 	// make render-only styling affect geometry, so they remain opt-out by
 	// default until the layout API exposes an explicit reuse capability.
 	if engine != "dagre" && engine != "elk" {

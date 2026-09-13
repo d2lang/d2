@@ -246,7 +246,11 @@ func (r *Resolver) classifySource(ctx context.Context, source string) (sourceSpe
 		return sourceSpec{}, err
 	}
 	absolute = filepath.Clean(absolute)
-	return sourceSpec{kind: sourceLocal, raw: raw, label: raw, key: "file:" + absolute, path: absolute}, nil
+	cacheKey, err := r.localFiles.CacheKey(absolute)
+	if err != nil {
+		return sourceSpec{}, err
+	}
+	return sourceSpec{kind: sourceLocal, raw: raw, label: raw, key: "file:" + cacheKey, path: absolute}, nil
 }
 
 func displaySource(source string) string {
@@ -361,26 +365,11 @@ func (r *Resolver) load(ctx context.Context, spec sourceSpec) (loadedSource, err
 	}
 }
 
-func (r *Resolver) loadLocal(ctx context.Context, spec sourceSpec) (loadedSource, error) {
+func (r *Resolver) loadLocal(ctx context.Context, spec sourceSpec) (_ loadedSource, err error) {
 	if err := checkContext(ctx); err != nil {
 		return loadedSource{}, err
 	}
-	info, err := os.Stat(spec.path)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			err = ctxErr
-		} else if errors.Is(err, os.ErrNotExist) {
-			err = unavailable(err)
-		}
-		return loadedSource{}, fmt.Errorf("stat local file %q: %w", spec.path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return loadedSource{}, fmt.Errorf("local path %q is not a regular file", spec.path)
-	}
-	if info.Size() > r.limits.MaxFetchedBytes {
-		return loadedSource{}, &LimitError{Name: "fetched bytes", Actual: info.Size(), Limit: r.limits.MaxFetchedBytes}
-	}
-	file, err := os.Open(spec.path)
+	file, err := r.localFiles.Open(spec.path)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = ctxErr
@@ -389,7 +378,11 @@ func (r *Resolver) loadLocal(ctx context.Context, spec sourceSpec) (loadedSource
 		}
 		return loadedSource{}, fmt.Errorf("open local file %q: %w", spec.path, err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close local file %q: %w", spec.path, closeErr))
+		}
+	}()
 	openedInfo, err := file.Stat()
 	if err != nil {
 		return loadedSource{}, fmt.Errorf("stat opened local file %q: %w", spec.path, err)

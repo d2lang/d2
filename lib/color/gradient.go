@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"math"
 	"regexp"
 	"strconv"
@@ -46,6 +47,7 @@ func ParseGradient(cssGradient string) (Gradient, error) {
 	}
 
 	firstParam := strings.TrimSpace(paramList[0])
+	var err error
 
 	if gradient.Type == "linear" && (strings.HasSuffix(firstParam, "deg") || strings.HasPrefix(firstParam, "to ")) {
 		gradient.Direction = firstParam
@@ -53,16 +55,19 @@ func ParseGradient(cssGradient string) (Gradient, error) {
 		if len(colorStops) == 0 {
 			return Gradient{}, errors.New("no color stops in gradient")
 		}
-		gradient.ColorStops = parseColorStops(colorStops)
+		gradient.ColorStops, err = parseColorStops(colorStops)
 	} else if gradient.Type == "radial" && (firstParam == "circle" || firstParam == "ellipse") {
 		gradient.Direction = firstParam
 		colorStops := paramList[1:]
 		if len(colorStops) == 0 {
 			return Gradient{}, errors.New("no color stops in gradient")
 		}
-		gradient.ColorStops = parseColorStops(colorStops)
+		gradient.ColorStops, err = parseColorStops(colorStops)
 	} else {
-		gradient.ColorStops = parseColorStops(paramList)
+		gradient.ColorStops, err = parseColorStops(paramList)
+	}
+	if err != nil {
+		return Gradient{}, err
 	}
 	gradient.ID = UniqueGradientID(cssGradient)
 
@@ -97,9 +102,9 @@ func splitParams(params string) []string {
 	return parts
 }
 
-func parseColorStops(params []string) []ColorStop {
+func parseColorStops(params []string) ([]ColorStop, error) {
 	var colorStops []ColorStop
-	for _, p := range params {
+	for i, p := range params {
 		p = strings.TrimSpace(p)
 		parts := strings.Fields(p)
 
@@ -107,12 +112,30 @@ func parseColorStops(params []string) []ColorStop {
 		case 1:
 			colorStops = append(colorStops, ColorStop{Color: parts[0]})
 		case 2:
-			colorStops = append(colorStops, ColorStop{Color: parts[0], Position: parts[1]})
+			position, err := canonicalGradientStopPosition(parts[1])
+			if err != nil {
+				return nil, fmt.Errorf("color stop %d position %q: %w", i, parts[1], err)
+			}
+			colorStops = append(colorStops, ColorStop{Color: parts[0], Position: position})
 		default:
-			continue
+			return nil, fmt.Errorf("invalid color stop %d %q", i, p)
 		}
 	}
-	return colorStops
+	return colorStops, nil
+}
+
+func canonicalGradientStopPosition(position string) (string, error) {
+	percentage := strings.HasSuffix(position, "%")
+	number := strings.TrimSuffix(position, "%")
+	value, err := strconv.ParseFloat(number, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return "", errors.New("must be a finite number or percentage")
+	}
+	canonical := strconv.FormatFloat(value, 'g', -1, 64)
+	if percentage {
+		canonical += "%"
+	}
+	return canonical, nil
 }
 
 func GradientToSVG(gradient Gradient) string {
@@ -130,14 +153,14 @@ func LinearGradientToSVG(gradient Gradient) string {
 	x1, y1, x2, y2 := parseLinearGradientDirection(gradient.Direction)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<linearGradient id="%s" `, gradient.ID))
-	sb.WriteString(fmt.Sprintf(`x1="%s" y1="%s" x2="%s" y2="%s">`, x1, y1, x2, y2))
+	sb.WriteString(fmt.Sprintf(`<linearGradient id="%s" `, html.EscapeString(gradient.ID)))
+	sb.WriteString(fmt.Sprintf(`x1="%s" y1="%s" x2="%s" y2="%s">`, html.EscapeString(x1), html.EscapeString(y1), html.EscapeString(x2), html.EscapeString(y2)))
 	sb.WriteString("\n")
 
 	totalStops := len(gradient.ColorStops)
 	for i, cs := range gradient.ColorStops {
 		offset := gradientStopOffset(cs.Position, i, totalStops)
-		sb.WriteString(fmt.Sprintf(`<stop offset="%s" stop-color="%s" />`, offset, cs.Color))
+		sb.WriteString(fmt.Sprintf(`<stop offset="%s" stop-color="%s" />`, html.EscapeString(offset), html.EscapeString(cs.Color)))
 		sb.WriteString("\n")
 	}
 	sb.WriteString(`</linearGradient>`)
@@ -214,12 +237,12 @@ func parseLinearGradientDirection(direction string) (x1, y1, x2, y2 string) {
 
 func RadialGradientToSVG(gradient Gradient) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<radialGradient id="%s">`, gradient.ID))
+	sb.WriteString(fmt.Sprintf(`<radialGradient id="%s">`, html.EscapeString(gradient.ID)))
 	sb.WriteString("\n")
 	totalStops := len(gradient.ColorStops)
 	for i, cs := range gradient.ColorStops {
 		offset := gradientStopOffset(cs.Position, i, totalStops)
-		sb.WriteString(fmt.Sprintf(`<stop offset="%s" stop-color="%s" />`, offset, cs.Color))
+		sb.WriteString(fmt.Sprintf(`<stop offset="%s" stop-color="%s" />`, html.EscapeString(offset), html.EscapeString(cs.Color)))
 		sb.WriteString("\n")
 	}
 	sb.WriteString(`</radialGradient>`)

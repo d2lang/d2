@@ -90,3 +90,35 @@ func TestRenderValidatesPaddingDimensions(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderRejectsDangerousOrdinaryLinks(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		link   string
+		shape  bool
+		object string
+	}{
+		{name: "shape", link: "java%0ascript:alert(1)", shape: true, object: `shape "unsafe-shape"`},
+		{name: "connection", link: "v&#x62;script:msgbox(1)", object: `connection "unsafe-connection"`},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diagram := d2target.NewDiagram()
+			if tc.shape {
+				diagram.Shapes = []d2target.Shape{{ID: "unsafe-shape", Link: tc.link}}
+			} else {
+				diagram.Connections = []d2target.Connection{{ID: "unsafe-connection", Link: tc.link}}
+			}
+			out, err := d2svg.Render(diagram, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.object+" uses an unsafe link URL scheme") {
+				t.Fatalf("Render() output/error = %q/%v", out, err)
+			}
+			if out != nil {
+				t.Fatalf("Render() returned output on error: %q", out)
+			}
+		})
+	}
+}

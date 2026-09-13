@@ -422,12 +422,12 @@ func TestFolderPNGExportMatchesStatelessOutput(t *testing.T) {
 		var err error
 		if productionPath {
 			_, written, err = render(
-				ctx, state, 0, nil, opts, "input.d2", filepath.Join(directory, "output.png"),
+				ctx, state, 0, opts, "input.d2", filepath.Join(directory, "output.png"),
 				false, false, nil, newFolder(), PNG, "", false,
 			)
 		} else {
 			_, written, err = renderWithPNGEncoder(
-				ctx, state, 0, nil, opts, "input.d2", filepath.Join(directory, "output.png"),
+				ctx, state, 0, opts, "input.d2", filepath.Join(directory, "output.png"),
 				false, false, nil, newFolder(), PNG, "", false, encoder,
 			)
 		}

@@ -2,16 +2,12 @@ package d2cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/d2lang/util-go/xmain"
 
-	"github.com/d2lang/d2/d2plugin"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/version"
 )
@@ -51,11 +47,11 @@ Playground runner at https://play.d2lang.com.
 `, filepath.Base(ms.Name), version.Version, ms.Opts.Defaults())
 }
 
-func layoutCmd(ctx context.Context, ms *xmain.State, ps []d2plugin.Plugin) error {
+func layoutCmd(ctx context.Context, ms *xmain.State) error {
 	if len(ms.Opts.Flags.Args()) == 1 {
-		return shortLayoutHelp(ctx, ms, ps)
+		return shortLayoutHelp(ctx, ms)
 	} else if len(ms.Opts.Flags.Args()) == 2 {
-		return longLayoutHelp(ctx, ms, ps)
+		return longLayoutHelp(ctx, ms)
 	} else {
 		return xmain.UsageErrorf("layout subcommand accepts at most one argument")
 	}
@@ -65,22 +61,13 @@ func themesCmd(_ context.Context, ms *xmain.State) {
 	fmt.Fprintf(ms.Stdout, "Available themes:\n%s", d2themescatalog.CLIString())
 }
 
-func shortLayoutHelp(ctx context.Context, ms *xmain.State, ps []d2plugin.Plugin) error {
-	var pluginLines []string
-	pinfos, err := d2plugin.ListPluginInfos(ctx, ps)
-	if err != nil {
-		return err
+func shortLayoutHelp(ctx context.Context, ms *xmain.State) error {
+	var layoutLines []string
+	for _, name := range builtinLayoutNames() {
+		shortHelp, _ := builtinLayoutHelp(name)
+		layoutLines = append(layoutLines, fmt.Sprintf("%s (built-in) - %s", name, shortHelp))
 	}
-	for _, p := range pinfos {
-		var l string
-		if p.Type == "bundled" {
-			l = fmt.Sprintf("%s (bundled) - %s", p.Name, p.ShortHelp)
-		} else {
-			l = fmt.Sprintf("%s (%s) - %s", p.Name, humanPath(p.Path), p.ShortHelp)
-		}
-		pluginLines = append(pluginLines, l)
-	}
-	fmt.Fprintf(ms.Stdout, `Available layout engines found:
+	fmt.Fprintf(ms.Stdout, `Available layout engines:
 
 %s
 
@@ -94,60 +81,38 @@ Subcommands:
   %s layout [layout name] - Display long help for a particular layout engine, including its configuration options
 
 See more docs at https://d2lang.com/tour/layouts
-`, strings.Join(pluginLines, "\n"), ms.Name)
+`, strings.Join(layoutLines, "\n"), ms.Name)
 	return nil
 }
 
-func longLayoutHelp(ctx context.Context, ms *xmain.State, ps []d2plugin.Plugin) error {
-	layout := ms.Opts.Flags.Arg(1)
-	plugin, err := d2plugin.FindPlugin(ctx, ps, layout)
-	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			return layoutNotFound(ctx, ps, layout)
-		}
-		return err
+func longLayoutHelp(ctx context.Context, ms *xmain.State) error {
+	name := strings.ToLower(ms.Opts.Flags.Arg(1))
+	if !isBuiltinLayout(name) {
+		return layoutNotFound(name)
 	}
-
-	pinfo, err := plugin.Info(ctx)
-	if err != nil {
-		return err
-	}
-
-	plocation := pinfo.Type
-	if pinfo.Type == "binary" {
-		plocation = fmt.Sprintf("executable plugin at %s", humanPath(pinfo.Path))
-	}
-
-	if !strings.HasSuffix(pinfo.LongHelp, "\n") {
-		pinfo.LongHelp += "\n"
-	}
-	fmt.Fprintf(ms.Stdout, `%s (%s):
-
-%s`, pinfo.Name, plocation, pinfo.LongHelp)
-
+	_, longHelp := builtinLayoutHelp(name)
+	fmt.Fprintf(ms.Stdout, "%s (built-in):\n\n%s", name, longHelp)
 	return nil
 }
 
-func layoutNotFound(ctx context.Context, ps []d2plugin.Plugin, layout string) error {
-	pinfos, err := d2plugin.ListPluginInfos(ctx, ps)
-	if err != nil {
-		return err
+func builtinLayoutHelp(name string) (shortHelp, longHelp string) {
+	opts := xmain.NewOpts(nil, nil)
+	switch name {
+	case "dagre":
+		shortHelp, longHelp = dagreShortHelp, dagreLongHelp
+		registerDagreFlags(opts)
+	case "elk":
+		shortHelp, longHelp = elkShortHelp, elkLongHelp
+		registerELKFlags(opts)
+	case "tala":
+		shortHelp, longHelp = talaShortHelp, talaLongHelp
+		registerTALAFlags(opts)
 	}
-	var names []string
-	for _, p := range pinfos {
-		names = append(names, p.Name)
-	}
+	return shortHelp, longHelp + "\nFlags:\n" + opts.Defaults() + "\n"
+}
 
-	return xmain.UsageErrorf(`D2_LAYOUT "%s" is not bundled and could not be found in your $PATH.
+func layoutNotFound(name string) error {
+	return xmain.UsageErrorf(`D2_LAYOUT "%s" is not a supported built-in layout engine.
 The available options are: %s. For details on each option, run "d2 layout".
-
-For more information on setup, please visit https://github.com/d2lang/d2.`,
-		layout, strings.Join(names, ", "))
-}
-
-func humanPath(fp string) string {
-	if strings.HasPrefix(fp, os.Getenv("HOME")) {
-		return filepath.Join("~", strings.TrimPrefix(fp, os.Getenv("HOME")))
-	}
-	return fp
+External d2plugin executables are no longer supported.`, name, strings.Join(builtinLayoutNames(), ", "))
 }

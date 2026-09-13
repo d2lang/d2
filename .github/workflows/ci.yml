@@ -22,10 +22,32 @@ jobs:
         with:
           go-version-file: ./go.mod
           cache: true
+      - name: Install verified Pandoc formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v pandoc >/dev/null; then
+            pandoc --version
+            exit 0
+          fi
+          PANDOC_VERSION="3.1"
+          PANDOC_DEB="$RUNNER_TEMP/pandoc-${PANDOC_VERSION}-1-amd64.deb"
+          curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL \
+            "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" \
+            -o "$PANDOC_DEB"
+          echo "3c9d3d992cb97591b404a31394d79dcca2e2e1d96095f15dfe18b32d6a95a551  $PANDOC_DEB" \
+            | sha256sum --check --strict
+          sudo dpkg -i "$PANDOC_DEB"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
           package-manager-cache: false
+      - name: Build the D2 formatter from this checkout
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/d2-ci-bin"
+          go build -trimpath -o "$RUNNER_TEMP/d2-ci-bin/d2" .
+          echo "$RUNNER_TEMP/d2-ci-bin" >> "$GITHUB_PATH"
       - run: COLOR=1 ./make.sh
         env:
           # Disable chat notifications from the shared CI helper.

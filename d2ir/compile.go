@@ -1,6 +1,8 @@
 package d2ir
 
 import (
+	"context"
+	"errors"
 	"html"
 	"io/fs"
 	"net/url"
@@ -29,7 +31,17 @@ type globContext struct {
 }
 
 type compiler struct {
-	err *d2parser.ParseError
+	err                *d2parser.ParseError
+	ctx                context.Context
+	contextErr         error
+	expansionErr       error
+	globExpansionErr   error
+	halted             bool
+	variableExpansion  *variableExpansionBudget
+	globExpansion      *globExpansionBudget
+	edgeExpansion      *edgeExpansionBudget
+	edgeExpansionWork  *edgeExpansionWorkBudget
+	edgeExpansionPairs map[edgeExpansionPair]struct{}
 
 	fs      fs.FS
 	imports []string
@@ -41,7 +53,10 @@ type compiler struct {
 	// and glob state cannot leak between import sites.
 	parsedImports   map[string]*d2ast.Map
 	importTemplates map[string]*importTemplate
-	utf16Pos        bool
+	// Composite maps may be revisited through valid variable aliases. Report a
+	// rejected cycle once at its source substitution rather than once per alias.
+	reportedCompositeCycles map[*d2ast.Substitution]struct{}
+	utf16Pos                bool
 
 	// Stack of globs that must be recomputed at each new object in and below the current scope.
 	globContextStack [][]*globContext
@@ -64,8 +79,26 @@ type compiler struct {
 }
 
 type CompileOptions struct {
+	// Context stops parsing and compilation when canceled. A nil Context is
+	// treated as context.Background().
+	Context  context.Context
 	UTF16Pos bool
-	// Pass nil to disable imports.
+	// MaxVariableExpansion bounds work added by substitutions and automatic
+	// copies. Zero uses DefaultMaxVariableExpansion.
+	MaxVariableExpansion int64
+	// MaxGlobExpansion bounds work performed by glob matching and
+	// materialization. Zero uses DefaultMaxGlobExpansion. Explicit source fields
+	// are not counted as materialization work.
+	MaxGlobExpansion int64
+	// MaxEdgeExpansion bounds distinct edge-segment and endpoint combinations
+	// considered by edge globs. Zero uses DefaultMaxEdgeExpansion. Explicit edges
+	// do not consume this budget.
+	MaxEdgeExpansion int64
+	// MaxEdgeExpansionWork bounds all endpoint-pair examinations performed by
+	// edge globs, including lazy replays. Zero uses DefaultMaxEdgeExpansionWork.
+	MaxEdgeExpansionWork int64
+	// FS resolves imports. Nil disables imports. The lib/localfile package
+	// provides rooted and explicit unrestricted host-filesystem policies.
 	FS fs.FS
 }
 
@@ -77,17 +110,47 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if opts == nil {
 		opts = &CompileOptions{}
 	}
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	variableExpansion, err := newVariableExpansionBudget(opts.MaxVariableExpansion)
+	if err != nil {
+		return nil, nil, err
+	}
+	globExpansion, err := newGlobExpansionBudget(opts.MaxGlobExpansion)
+	if err != nil {
+		return nil, nil, err
+	}
+	edgeExpansion, err := newEdgeExpansionBudget(opts.MaxEdgeExpansion)
+	if err != nil {
+		return nil, nil, err
+	}
+	edgeExpansionWork, err := newEdgeExpansionWorkBudget(opts.MaxEdgeExpansionWork)
+	if err != nil {
+		return nil, nil, err
+	}
 	c := &compiler{
-		err: &d2parser.ParseError{},
-		fs:  opts.FS,
+		err:               &d2parser.ParseError{},
+		ctx:               ctx,
+		fs:                opts.FS,
+		variableExpansion: variableExpansion,
+		globExpansion:     globExpansion,
+		edgeExpansion:     edgeExpansion,
+		edgeExpansionWork: edgeExpansionWork,
 
-		seenImports:     make(map[string]struct{}),
-		parsedImports:   make(map[string]*d2ast.Map),
-		importTemplates: make(map[string]*importTemplate),
-		utf16Pos:        opts.UTF16Pos,
+		seenImports:             make(map[string]struct{}),
+		parsedImports:           make(map[string]*d2ast.Map),
+		importTemplates:         make(map[string]*importTemplate),
+		reportedCompositeCycles: make(map[*d2ast.Substitution]struct{}),
+		utf16Pos:                opts.UTF16Pos,
 	}
 	m := &Map{}
 	m.initRoot()
+	m.variableExpansion = variableExpansion
 	m.parent.(*Field).References[0].Context_.Scope = ast
 	m.parent.(*Field).References[0].Context_.ScopeAST = ast
 
@@ -97,16 +160,62 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	defer c.popImportStack()
 
 	c.compileMap(m, ast, ast)
+	if c.contextErr != nil {
+		return nil, nil, c.contextErr
+	}
+	if err := c.compileLimitError(); err != nil {
+		return nil, nil, err
+	}
 	c.compileSubstitutions(m, nil)
+	if c.contextErr != nil {
+		return nil, nil, c.contextErr
+	}
+	if err := c.compileLimitError(); err != nil {
+		return nil, nil, err
+	}
 	c.overlayClasses(m)
+	if c.contextErr != nil {
+		return nil, nil, c.contextErr
+	}
+	if err := c.compileLimitError(); err != nil {
+		return nil, nil, err
+	}
+	// Substitutions can grow shared nodes after an earlier alias inserted them
+	// (for example through a forward scalar chain in an array spread). Recheck
+	// the fully resolved IR before cleanup or any public caller can observe it.
+	if err := ReserveVariableExpansionAliases(ctx, m); err != nil {
+		return nil, nil, err
+	}
 	m.removeSuspendedFields()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := c.compileLimitError(); err != nil {
+		return nil, nil, err
+	}
 	if !c.err.Empty() {
 		return nil, nil, c.err
 	}
 	return m, c.imports, nil
 }
 
+func (c *compiler) compileLimitError() error {
+	if c.expansionErr == nil && c.globExpansionErr == nil {
+		return nil
+	}
+	if !c.err.Empty() {
+		return c.err
+	}
+	if c.expansionErr != nil {
+		return c.expansionErr
+	}
+	return c.globExpansionErr
+}
+
 func (c *compiler) overlayClasses(m *Map) {
+	if c.stopped() {
+		return
+	}
 	classes := m.getFieldIndexed(d2ast.FlatUnquotedString("classes"))
 	if classes == nil || classes.Map() == nil {
 		return
@@ -122,6 +231,9 @@ func (c *compiler) overlayClasses(m *Map) {
 	}
 
 	for _, lf := range layers.Fields {
+		if c.stopped() {
+			return
+		}
 		if lf.Map() == nil || lf.Primary() != nil {
 			continue
 		}
@@ -129,10 +241,19 @@ func (c *compiler) overlayClasses(m *Map) {
 		lClasses := l.getFieldIndexed(d2ast.FlatUnquotedString("classes"))
 
 		if lClasses == nil {
+			if !c.reserveVariableCopy(lf.LastRef().AST(), classes) {
+				return
+			}
 			lClasses = classes.Copy(l).(*Field)
 			l.appendField(lClasses)
 		} else if lClasses.Map() != nil {
+			if !c.reserveVariableCopy(lf.LastRef().AST(), classes) {
+				return
+			}
 			base := classes.Copy(l).(*Field)
+			if !c.reserveVariableCopy(lf.LastRef().AST(), lClasses.Map()) {
+				return
+			}
 			overlayMapIndexed(base.Map(), lClasses.Map())
 			l.DeleteField("classes")
 			l.appendField(base)
@@ -143,7 +264,20 @@ func (c *compiler) overlayClasses(m *Map) {
 }
 
 func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
+	c.compileSubstitutionsWalk(m, varsStack, make(map[Node]struct{}), nil)
+}
+
+func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[Node]struct{}, source d2ast.Node) {
+	if c.stopped() {
+		return
+	}
+	if !c.visitSubstitutionNode(m, source, seen) {
+		return
+	}
 	for _, f := range m.Fields {
+		if c.stopped() {
+			return
+		}
 		if f.Name == nil {
 			continue
 		}
@@ -152,15 +286,30 @@ func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
 		}
 	}
 	for i := 0; i < len(m.Fields); i++ {
+		if c.stopped() {
+			return
+		}
 		f := m.Fields[i]
+		if !c.visitSubstitutionNode(f, f.LastRef().AST(), seen) {
+			return
+		}
 		if f.Primary() != nil {
+			if !c.visitSubstitutionNode(f.Primary(), f.LastRef().AST(), seen) {
+				return
+			}
 			removed := c.resolveSubstitutions(varsStack, f)
 			if removed {
 				i--
 			}
 		}
 		if arr, ok := f.Composite.(*Array); ok {
+			if !c.visitSubstitutionNode(arr, f.LastRef().AST(), seen) {
+				return
+			}
 			for _, val := range arr.Values {
+				if !c.visitSubstitutionNode(val, f.LastRef().AST(), seen) {
+					return
+				}
 				if scalar, ok := val.(*Scalar); ok {
 					removed := c.resolveSubstitutions(varsStack, scalar)
 					if removed {
@@ -170,21 +319,41 @@ func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
 			}
 		} else if f.Map() != nil {
 			if f.Name != nil && f.Name.ScalarString() == "vars" && f.Name.IsUnquoted() {
-				c.compileSubstitutions(f.Map(), varsStack)
+				c.compileSubstitutionsWalk(f.Map(), varsStack, seen, f.LastRef().AST())
 				c.validateConfigs(f.Map().getFieldIndexed(d2ast.FlatUnquotedString("d2-config")))
 			} else {
-				c.compileSubstitutions(f.Map(), varsStack)
+				c.compileSubstitutionsWalk(f.Map(), varsStack, seen, f.LastRef().AST())
 			}
 		}
 	}
 	for _, e := range m.Edges {
+		if c.stopped() {
+			return
+		}
+		if !c.visitSubstitutionNode(e, e.LastRef().AST(), seen) {
+			return
+		}
 		if e.Primary() != nil {
+			if !c.visitSubstitutionNode(e.Primary(), e.LastRef().AST(), seen) {
+				return
+			}
 			c.resolveSubstitutions(varsStack, e)
 		}
 		if e.Map() != nil {
-			c.compileSubstitutions(e.Map(), varsStack)
+			c.compileSubstitutionsWalk(e.Map(), varsStack, seen, e.LastRef().AST())
 		}
 	}
+}
+
+func (c *compiler) visitSubstitutionNode(node Node, source d2ast.Node, seen map[Node]struct{}) bool {
+	if node == nil {
+		return true
+	}
+	if _, ok := seen[node]; ok {
+		return c.reserveVariableExpansion(source, variableExpansionNodeUnits(node))
+	}
+	seen[node] = struct{}{}
+	return true
 }
 
 func (c *compiler) validateConfigs(configs *Field) {
@@ -244,14 +413,23 @@ func (c *compiler) validateConfigs(configs *Field) {
 }
 
 func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedField bool) {
+	if c.stopped() {
+		return false
+	}
 	var subbed bool
 	var resolvedField *Field
 
 	switch s := node.Primary().Value.(type) {
 	case *d2ast.UnquotedString:
 		for i, box := range s.Value {
+			if c.stopped() {
+				return
+			}
 			if box.Substitution != nil {
 				for i, vars := range varsStack {
+					if c.stopped() {
+						return
+					}
 					resolvedField = c.resolveSubstitution(vars, node, box.Substitution, i == 0)
 					if resolvedField != nil {
 						if resolvedField.Primary() != nil {
@@ -266,6 +444,13 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 					c.errorf(node.LastRef().AST(), `could not resolve variable "%s"`, strings.Join(box.Substitution.IDA(), "."))
 					return
 				}
+				if resolvedField.Composite != nil && substitutionUsesComposite(node, box.Substitution.Spread) {
+					if compositeContainsNode(resolvedField.Composite, node) ||
+						(box.Substitution.Spread && c.spreadCompositeReferencesNode(resolvedField.Composite, node, varsStack)) {
+						c.reportCompositeCycle(box.Substitution)
+						return
+					}
+				}
 				if box.Substitution.Spread {
 					if resolvedField.Composite == nil {
 						c.errorf(box.Substitution, "cannot spread non-composite")
@@ -279,6 +464,12 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 							continue
 						}
 						arr := n.parent.(*Array)
+						// The values remain shared in the IR, but public IR consumers may
+						// later copy or marshal every logical occurrence. Charge the full
+						// recursively reachable value cost before inserting the aliases.
+						if !c.reserveVariableCopy(box.Substitution, resolvedArr) {
+							return
+						}
 						for i, s := range arr.Values {
 							if s == n {
 								arr.Values = append(append(arr.Values[:i], resolvedArr.Values...), arr.Values[i+1:]...)
@@ -288,6 +479,13 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 					case *Field:
 						m := ParentMap(n)
 						if resolvedField.Map() != nil {
+							if hasUnresolvedMapSpread(resolvedField.Map()) {
+								c.errorf(box.Substitution, `cannot spread composite variable "%s" before its spread substitutions are resolved`, strings.Join(box.Substitution.IDA(), "."))
+								return
+							}
+							if !c.reserveVariableCopy(box.Substitution, resolvedField.Map()) {
+								return
+							}
 							expandSubstitutionIndexed(m, resolvedField.Map(), n)
 						}
 						// Remove the placeholder field
@@ -330,6 +528,9 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 					}
 				} else {
 					if i == 0 && len(s.Value) == 1 {
+						if !c.reserveVariableExpansion(box.Substitution, int64(len(resolvedField.Primary().Value.ScalarString()))) {
+							return
+						}
 						node.Primary().Value = resolvedField.Primary().Value
 					} else {
 						s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
@@ -351,12 +552,21 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 			}
 		}
 		if subbed {
+			if !c.reserveVariableExpansion(node.LastRef().AST(), interpolationBytes(s.Value)) {
+				return
+			}
 			s.Coalesce()
 		}
 	case *d2ast.DoubleQuotedString:
 		for i, box := range s.Value {
+			if c.stopped() {
+				return
+			}
 			if box.Substitution != nil {
 				for i, vars := range varsStack {
+					if c.stopped() {
+						return
+					}
 					resolvedField = c.resolveSubstitution(vars, node, box.Substitution, i == 0)
 					if resolvedField != nil {
 						break
@@ -375,14 +585,37 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 			}
 		}
 		if subbed {
+			if !c.reserveVariableExpansion(node.LastRef().AST(), interpolationBytes(s.Value)) {
+				return
+			}
 			s.Coalesce()
 		}
 	case *d2ast.BlockString:
-		variables := make(map[string]string)
-		for _, vars := range varsStack {
-			c.collectVariables(vars, variables)
+		if !strings.Contains(s.Value, "${") {
+			return
 		}
-		preprocessedValue := textmeasure.ReplaceSubstitutionsMarkdown(s.Value, variables)
+		variables := make(map[string]string)
+		seen := make(map[Node]struct{})
+		for _, vars := range varsStack {
+			c.collectVariables(vars, variables, seen, node.LastRef().AST())
+		}
+		if c.stopped() {
+			return
+		}
+		preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, s.Value, variables, c.variableExpansion.remaining())
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				c.contextErr = err
+				c.halted = true
+				return
+			}
+			c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
+			c.halted = true
+			return
+		}
+		if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
+			return
+		}
 
 		// Update the block string value
 		s.Value = preprocessedValue
@@ -390,22 +623,234 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 	return removedField
 }
 
-func (c *compiler) collectVariables(vars *Map, variables map[string]string) {
-	if vars == nil {
+func interpolationBytes(values []d2ast.InterpolationBox) int64 {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	var total int64
+	for _, box := range values {
+		if box.Substitution == nil || box.String == nil {
+			continue
+		}
+		n := int64(len(*box.String))
+		if n > maxInt64-total {
+			return maxInt64
+		}
+		total += n
+	}
+	return total
+}
+
+func (c *compiler) reportCompositeCycle(substitution *d2ast.Substitution) {
+	if _, reported := c.reportedCompositeCycles[substitution]; reported {
+		return
+	}
+	if c.reportedCompositeCycles == nil {
+		c.reportedCompositeCycles = make(map[*d2ast.Substitution]struct{})
+	}
+	c.reportedCompositeCycles[substitution] = struct{}{}
+	c.errorf(substitution, `cyclic composite variable reference "%s"`, strings.Join(substitution.IDA(), "."))
+}
+
+func substitutionUsesComposite(node Node, spread bool) bool {
+	switch node.(type) {
+	case *Field, *Edge:
+		return true
+	case *Scalar:
+		return spread
+	default:
+		return false
+	}
+}
+
+// spreadCompositeReferencesNode follows unresolved spread substitutions
+// anywhere below composite without mutating it. Map spread expansion copies
+// fields, while array spread expansion shares values, so a pointer-only
+// containment check cannot see an indirect cycle until after the first
+// expansion. Following the spread dependencies first keeps cycle rejection
+// ahead of every mutation.
+func (c *compiler) spreadCompositeReferencesNode(composite Composite, target Node, varsStack []*Map) bool {
+	stack := []Composite{composite}
+	seen := make(map[Composite]struct{})
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := seen[current]; ok {
+			continue
+		}
+		seen[current] = struct{}{}
+		if compositeContainsNode(current, target) {
+			return true
+		}
+
+		for _, candidate := range compositeSpreadNodes(current) {
+			primary := candidate.Primary()
+			if primary == nil {
+				continue
+			}
+			unquoted, ok := primary.Value.(*d2ast.UnquotedString)
+			if !ok {
+				continue
+			}
+			for _, box := range unquoted.Value {
+				if box.Substitution == nil || !box.Substitution.Spread {
+					continue
+				}
+				for i, vars := range varsStack {
+					resolved := c.resolveSubstitution(vars, candidate, box.Substitution, i == 0)
+					if resolved == nil {
+						continue
+					}
+					if resolved.Composite != nil {
+						stack = append(stack, resolved.Composite)
+					}
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
+func compositeSpreadNodes(composite Composite) (nodes []Node) {
+	walkComposite(composite, func(n Node) bool {
+		switch n := n.(type) {
+		case *Field:
+			if n != nil && n.Name == nil {
+				nodes = append(nodes, n)
+			}
+		case *Scalar:
+			if n != nil {
+				if _, ok := n.Parent().(*Array); ok {
+					nodes = append(nodes, n)
+				}
+			}
+		}
+		return false
+	})
+	return nodes
+}
+
+func hasUnresolvedMapSpread(m *Map) bool {
+	for _, field := range m.Fields {
+		if field == nil || field.Name == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// compositeContainsNode reports whether target is reachable through a
+// composite's child structure. Composite substitutions deliberately share the
+// resolved value, so attaching a composite below one of its own descendants
+// would turn the IR tree into a cycle. Use an iterative walk with a visited set
+// because earlier valid substitutions can make the structure a DAG, and the
+// check must also terminate defensively if handed an already-cyclic IR.
+func compositeContainsNode(composite Composite, target Node) bool {
+	return walkComposite(composite, func(n Node) bool {
+		return n == target
+	})
+}
+
+func walkComposite(composite Composite, visit func(Node) bool) bool {
+	stack := []Node{composite}
+	seen := make(map[Node]struct{})
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		if visit(n) {
+			return true
+		}
+
+		switch n := n.(type) {
+		case *Map:
+			if n == nil {
+				continue
+			}
+			for _, f := range n.Fields {
+				stack = append(stack, f)
+			}
+			for _, e := range n.Edges {
+				stack = append(stack, e)
+			}
+		case *Field:
+			if n != nil && n.Composite != nil {
+				stack = append(stack, n.Composite)
+			}
+		case *Edge:
+			if n != nil && n.Map_ != nil {
+				stack = append(stack, n.Map_)
+			}
+		case *Array:
+			if n == nil {
+				continue
+			}
+			for _, value := range n.Values {
+				stack = append(stack, value)
+			}
+		}
+	}
+	return false
+}
+
+func (c *compiler) collectVariables(vars *Map, variables map[string]string, seen map[Node]struct{}, source d2ast.Node) {
+	if vars == nil || c.stopped() {
+		return
+	}
+	if !c.visitSubstitutionNode(vars, source, seen) {
 		return
 	}
 	for _, f := range vars.Fields {
+		if c.stopped() {
+			return
+		}
+		if !c.visitSubstitutionNode(f, source, seen) {
+			return
+		}
 		if f.Primary() != nil {
-			variables[f.Name.ScalarString()] = f.Primary().Value.ScalarString()
+			name := f.Name.ScalarString()
+			if !c.reserveVariableExpansion(source, markdownVariablePatternBytes(int64(len(name)))) {
+				return
+			}
+			variables[name] = f.Primary().Value.ScalarString()
 		} else if f.Map() != nil {
 			nestedVars := make(map[string]string)
-			c.collectVariables(f.Map(), nestedVars)
-			for k, v := range nestedVars {
-				variables[f.Name.ScalarString()+"."+k] = v
+			c.collectVariables(f.Map(), nestedVars, seen, source)
+			if c.stopped() {
+				return
 			}
-			c.collectVariables(f.Map(), variables)
+			name := f.Name.ScalarString()
+			for k, v := range nestedVars {
+				if !c.reserveVariableExpansion(source, markdownVariablePatternBytes(joinedVariableNameBytes(name, k))) {
+					return
+				}
+				variables[name+"."+k] = v
+			}
+			c.collectVariables(f.Map(), variables, seen, source)
+			if c.stopped() {
+				return
+			}
 		}
 	}
+}
+
+func markdownVariablePatternBytes(nameBytes int64) int64 {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	if nameBytes >= maxInt64-3 {
+		return maxInt64
+	}
+	return nameBytes + 3 // "${" + name + "}"
+}
+
+func joinedVariableNameBytes(prefix, suffix string) int64 {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	total := int64(len(prefix))
+	if total == maxInt64 || int64(len(suffix)) >= maxInt64-total {
+		return maxInt64
+	}
+	return total + 1 + int64(len(suffix))
 }
 
 func (c *compiler) resolveSubstitution(vars *Map, node Node, substitution *d2ast.Substitution, isCurrentScopeVars bool) *Field {
@@ -455,10 +900,16 @@ func (c *compiler) overlay(base *Map, f *Field) {
 		return
 	}
 
+	if !c.reserveVariableCopy(f.LastRef().AST(), base) {
+		return
+	}
 	base = base.CopyBase(f)
 	// Certain fields should never carry forward.
 	// If you give your scenario a label, you don't want all steps in a scenario to be labeled the same.
 	base.DeleteField("label")
+	if !c.reserveVariableCopy(f.LastRef().AST(), f.Map()) {
+		return
+	}
 	overlayMapIndexed(base, f.Map())
 	f.Composite = base
 }
@@ -518,6 +969,9 @@ func (c *compiler) ampersandFilterMap(dst *Map, ast, scopeAST *d2ast.Map) bool {
 }
 
 func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
+	if c.stopped() {
+		return
+	}
 	var globs []*globContext
 	if len(c.globContextStack) > 0 {
 		previousGlobs := c.globContexts()
@@ -575,6 +1029,9 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 	}
 
 	for _, n := range ast.Nodes {
+		if c.stopped() {
+			return
+		}
 		switch {
 		case n.MapKey != nil:
 			c.compileKey(&RefContext{
@@ -585,6 +1042,11 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 			})
 		case n.Substitution != nil:
 			// placeholder field to be resolved at the end
+			if len(c.globRefContextStack) > 0 {
+				if !c.reserveGlobGeneratedFieldWork(dst, n.Substitution) || !c.reserveGlobField(n.Substitution) {
+					return
+				}
+			}
 			f := &Field{
 				parent: dst,
 				Primary_: &Scalar{
@@ -605,6 +1067,9 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 			// Spread import
 			impn, ok := c._import(n.Import, dst)
 			if !ok {
+				if c.stopped() {
+					return
+				}
 				continue
 			}
 			if impn.Map() == nil {
@@ -614,6 +1079,9 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 			impn.(Importable).SetImportAST(n.Import)
 
 			for _, gctx := range impn.Map().globs {
+				if c.stopped() {
+					return
+				}
 				if !gctx.refctx.Key.HasTripleGlob() {
 					continue
 				}
@@ -626,6 +1094,9 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 			scenariosField := impn.Map().getFieldIndexed(d2ast.FlatUnquotedString("scenarios"))
 			if scenariosField != nil && scenariosField.Map() != nil {
 				for _, sf := range scenariosField.Map().Fields {
+					if c.stopped() {
+						return
+					}
 					c.overlay(dst, sf)
 				}
 			}
@@ -633,10 +1104,16 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 			stepsField := impn.Map().getFieldIndexed(d2ast.FlatUnquotedString("steps"))
 			if stepsField != nil && stepsField.Map() != nil {
 				for _, sf := range stepsField.Map().Fields {
+					if c.stopped() {
+						return
+					}
 					c.overlay(dst, sf)
 				}
 			}
 
+			if !c.reserveVariableCopy(n.Import, impn.Map()) {
+				return
+			}
 			overlayMapIndexed(dst, impn.Map())
 			impDir := n.Import.Dir()
 			c.extendLinks(dst, ParentField(dst), impDir)
@@ -682,7 +1159,15 @@ func (c *compiler) ensureGlobContext(refctx *RefContext) *globContext {
 }
 
 func (c *compiler) compileKey(refctx *RefContext) {
+	if c.stopped() {
+		return
+	}
 	postTargetStart := len(c.lazyPostTargets)
+	if refctx.Key.HasGlob() || len(c.globRefContextStack) > 0 {
+		if !c.reserveGlobWork(refctx.Key, 1) {
+			return
+		}
+	}
 	if refctx.Key.HasGlob() {
 		for _, refctx2 := range c.globRefContextStack {
 			if refctx.Equal(refctx2) {
@@ -806,11 +1291,17 @@ func (c *compiler) applyLazyGlobs(created []*Field) {
 	c.enqueueLazyGlobFields(created...)
 
 	for len(c.lazyGlobWorklist) > 0 {
+		if c.stopped() {
+			return
+		}
 		target := c.lazyGlobWorklist[0]
 		c.lazyGlobWorklist = c.lazyGlobWorklist[1:]
 
 		var edgeGlobs []*globContext
 		for _, gctx := range c.globContexts() {
+			if c.stopped() {
+				return
+			}
 			if len(gctx.refctx.Key.Edges) > 0 {
 				edgeGlobs = append(edgeGlobs, gctx)
 				continue
@@ -828,8 +1319,14 @@ func (c *compiler) applyLazyGlobs(created []*Field) {
 		// already been applied to the precise changed fields above.
 		root := RootMap(target.parent.(*Map))
 		for len(edgeGlobs) > 0 {
+			if c.stopped() {
+				return
+			}
 			before := root.structureVersion
 			for _, gctx := range edgeGlobs {
+				if c.stopped() {
+					return
+				}
 				old := c.lazyGlobBeingApplied
 				c.lazyGlobBeingApplied = true
 				c.compileKey(gctx.refctx)
@@ -843,6 +1340,9 @@ func (c *compiler) applyLazyGlobs(created []*Field) {
 }
 
 func (c *compiler) compileField(dst *Map, kp *d2ast.KeyPath, refctx *RefContext) {
+	if c.stopped() {
+		return
+	}
 	if refctx.Key.Ampersand || refctx.Key.NotAmpersand {
 		return
 	}
@@ -854,6 +1354,9 @@ func (c *compiler) compileField(dst *Map, kp *d2ast.KeyPath, refctx *RefContext)
 	}
 
 	for _, f := range fa {
+		if c.stopped() {
+			return
+		}
 		c._compileField(f, refctx)
 	}
 }
@@ -1199,6 +1702,9 @@ func (c *compiler) _ampersandFilter(f *Field, refctx *RefContext) bool {
 }
 
 func (c *compiler) _compileField(f *Field, refctx *RefContext) {
+	if c.stopped() {
+		return
+	}
 	// In case of filters, we need to pass filters before continuing
 	if refctx.Key.Value.Map != nil && refctx.Key.Value.Map.HasFilter() {
 		if f.Map() == nil {
@@ -1209,6 +1715,9 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		c.mapRefContextStack = append(c.mapRefContextStack, refctx)
 		ok := c.ampersandFilterMap(f.Map(), refctx.Key.Value.Map, refctx.ScopeAST)
 		c.mapRefContextStack = c.mapRefContextStack[:len(c.mapRefContextStack)-1]
+		if c.stopped() {
+			return
+		}
 		if !ok {
 			return
 		}
@@ -1249,6 +1758,9 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			parent: f,
 		}
 		c.compileArray(a, refctx.Key.Value.Array, refctx.ScopeAST)
+		if c.stopped() {
+			return
+		}
 		f.Composite = a
 	} else if refctx.Key.Value.Map != nil {
 		scopeAST := refctx.Key.Value.Map
@@ -1259,6 +1771,9 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			switch NodeBoardKind(f) {
 			case BoardScenario:
 				c.overlay(ParentBoard(f).Map(), f)
+				if c.stopped() {
+					return
+				}
 			case BoardStep:
 				stepsMap := ParentMap(f)
 				for i := range stepsMap.Fields {
@@ -1267,6 +1782,9 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 							c.overlay(ParentBoard(f).Map(), f)
 						} else {
 							c.overlay(stepsMap.Fields[i-1].Map(), f)
+						}
+						if c.stopped() {
+							return
 						}
 						break
 					}
@@ -1282,9 +1800,15 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		c.mapRefContextStack = append(c.mapRefContextStack, refctx)
 		c.compileMap(f.Map(), refctx.Key.Value.Map, scopeAST)
 		c.mapRefContextStack = c.mapRefContextStack[:len(c.mapRefContextStack)-1]
+		if c.stopped() {
+			return
+		}
 		switch NodeBoardKind(f) {
 		case BoardScenario, BoardStep:
 			c.overlayClasses(f.Map())
+			if c.stopped() {
+				return
+			}
 		}
 	} else if refctx.Key.Value.Import != nil {
 		// Non-spread import
@@ -1297,6 +1821,9 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		if f.Map() != nil {
 			existingEdges = f.Map().Edges
 		}
+		if !c.reserveVariableCopy(refctx.Key.Value.Import, f) {
+			return
+		}
 		originalF := f.Copy(refctx.ScopeMap).(*Field)
 		switch n := n.(type) {
 		case *Field:
@@ -1304,6 +1831,9 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 				f.Primary_ = n.Primary_.Copy(f).(*Scalar)
 			}
 			if n.Composite != nil {
+				if !c.reserveVariableCopy(refctx.Key.Value.Import, n.Composite) {
+					return
+				}
 				beforeFields, beforeEdges := structureCounts(f.Map())
 				f.Composite = n.Composite.Copy(f).(Composite)
 				markStructureCountDelta(ParentMap(f), beforeFields, beforeEdges, f.Map())
@@ -1315,6 +1845,9 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			switch NodeBoardKind(f) {
 			case BoardScenario:
 				c.overlay(ParentBoard(f).Map(), f)
+				if c.stopped() {
+					return
+				}
 			case BoardStep:
 				stepsMap := ParentMap(f)
 				for i := range stepsMap.Fields {
@@ -1324,9 +1857,15 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 						} else {
 							c.overlay(stepsMap.Fields[i-1].Map(), f)
 						}
+						if c.stopped() {
+							return
+						}
 						break
 					}
 				}
+			}
+			if !c.reserveVariableCopy(refctx.Key.Value.Import, n) {
+				return
 			}
 			overlayMapIndexed(f.Map(), n)
 			impDir := refctx.Key.Value.Import.Dir()
@@ -1334,7 +1873,13 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			switch NodeBoardKind(f) {
 			case BoardScenario, BoardStep:
 				c.overlayClasses(f.Map())
+				if c.stopped() {
+					return
+				}
 			}
+		}
+		if !c.reserveVariableCopy(refctx.Key.Value.Import, originalF) {
+			return
 		}
 		overlayFieldIndexed(f, originalF)
 		if existingEdges != nil && f.Map() != nil {
@@ -1508,6 +2053,9 @@ func (c *compiler) compileLink(f *Field, refctx *RefContext) {
 }
 
 func (c *compiler) compileEdges(refctx *RefContext) {
+	if c.stopped() {
+		return
+	}
 	if refctx.Key.Key == nil {
 		c._compileEdges(refctx)
 		return
@@ -1519,6 +2067,9 @@ func (c *compiler) compileEdges(refctx *RefContext) {
 		return
 	}
 	for _, f := range fa {
+		if c.stopped() {
+			return
+		}
 		if _, ok := f.Composite.(*Array); ok {
 			c.errorf(refctx.Key.Key, "cannot index into array")
 			return
@@ -1535,8 +2086,14 @@ func (c *compiler) compileEdges(refctx *RefContext) {
 }
 
 func (c *compiler) _compileEdges(refctx *RefContext) {
+	if c.stopped() {
+		return
+	}
 	eida := NewEdgeIDs(refctx.Key)
 	for i, eid := range eida {
+		if c.stopped() {
+			return
+		}
 		if !eid.Glob && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
 			refctx.ScopeMap.DeleteEdge(eid)
 			continue
@@ -1555,6 +2112,9 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 				continue
 			}
 			for _, e := range ea {
+				if c.stopped() {
+					return
+				}
 				if refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil {
 					refctx.ScopeMap.DeleteEdge(e.ID)
 					continue
@@ -1569,6 +2129,9 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 					c.mapRefContextStack = append(c.mapRefContextStack, refctx)
 					ok := c.ampersandFilterMap(e.Map_, refctx.Key.Value.Map, refctx.ScopeAST)
 					c.mapRefContextStack = c.mapRefContextStack[:len(c.mapRefContextStack)-1]
+					if c.stopped() {
+						return
+					}
 					if !ok {
 						continue
 					}
@@ -1586,6 +2149,9 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 							c.mapRefContextStack = append(c.mapRefContextStack, refctx)
 							ok := c.ampersandFilterMap(e.Map_, refctx.Key.Value.Map, refctx.ScopeAST)
 							c.mapRefContextStack = c.mapRefContextStack[:len(c.mapRefContextStack)-1]
+							if c.stopped() {
+								return
+							}
 							if !ok {
 								continue
 							}
@@ -1670,6 +2236,9 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 		}
 
 		for _, e := range ea {
+			if c.stopped() {
+				return
+			}
 			if refctx.Key.EdgeKey != nil {
 				if e.Map_ == nil {
 					e.Map_ = &Map{
@@ -1714,20 +2283,36 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 }
 
 func (c *compiler) compileArray(dst *Array, a *d2ast.Array, scopeAST *d2ast.Map) {
+	if c.stopped() {
+		return
+	}
 	for _, an := range a.Nodes {
+		if c.stopped() {
+			return
+		}
+		arrayNode := an.Unbox()
+		if len(c.globRefContextStack) > 0 && !c.reserveGlobWork(arrayNode, 1) {
+			return
+		}
 		var irv Value
-		switch v := an.Unbox().(type) {
+		switch v := arrayNode.(type) {
 		case *d2ast.Array:
 			ira := &Array{
 				parent: dst,
 			}
 			c.compileArray(ira, v, scopeAST)
+			if c.stopped() {
+				return
+			}
 			irv = ira
 		case *d2ast.Map:
 			irm := &Map{
 				parent: dst,
 			}
 			c.compileMap(irm, v, scopeAST)
+			if c.stopped() {
+				return
+			}
 			irv = irm
 		case d2ast.Scalar:
 			irv = &Scalar{
@@ -1737,6 +2322,9 @@ func (c *compiler) compileArray(dst *Array, a *d2ast.Array, scopeAST *d2ast.Map)
 		case *d2ast.Import:
 			n, ok := c._import(v, dst)
 			if !ok {
+				if c.stopped() {
+					return
+				}
 				continue
 			}
 			n.(Importable).SetImportAST(v)
@@ -1747,6 +2335,9 @@ func (c *compiler) compileArray(dst *Array, a *d2ast.Array, scopeAST *d2ast.Map)
 					if !ok {
 						c.errorf(v, "can only spread import array into array")
 						continue
+					}
+					if !c.reserveVariableCopy(v, a) {
+						return
 					}
 					dst.Values = append(dst.Values, a.Values...)
 					continue
@@ -1774,6 +2365,9 @@ func (c *compiler) compileArray(dst *Array, a *d2ast.Array, scopeAST *d2ast.Map)
 			continue
 		}
 
+		if c.stopped() {
+			return
+		}
 		dst.Values = append(dst.Values, irv)
 	}
 }

@@ -252,9 +252,7 @@ export interface Graph {
    */
   rootLevel?: number /* int */;
   /**
-   * Currently this holds data embedded from source code configuration variables
-   * Plugins only have access to exported graph, so this data structure allows
-   * carrying arbitrary metadata that any plugin might handle
+   * Data embedded from source configuration variables, including layout options.
    */
   data?: { [key: string]: any };
 }

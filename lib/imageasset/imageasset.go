@@ -8,12 +8,16 @@ import (
 	"container/list"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/d2lang/d2/lib/localfile"
+	"github.com/d2lang/d2/lib/netpolicy"
 )
 
 // Preserve imgbundler's worker ceiling so per-resource byte limits also bound
@@ -157,6 +161,56 @@ func (r *Resource) BytesContext(ctx context.Context) ([]byte, error) {
 	return result, nil
 }
 
+// DataURIContext returns a data URI for the immutable resource while observing
+// cancellation between bounded encoding chunks. It encodes the resource's
+// private backing bytes directly, avoiding the full owned copy required by
+// BytesContext for callers that only need a self-contained representation.
+func (r *Resource) DataURIContext(ctx context.Context) ([]byte, error) {
+	if r == nil {
+		return nil, errors.New("imageasset: nil resource")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	prefix := []byte("data:" + r.mimeType + ";base64,")
+	dataBytes := int64(len(r.data))
+	if dataBytes > (int64(^uint64(0)>>1)-2)/4*3 {
+		return nil, errors.New("imageasset: data URI size overflows int64")
+	}
+	encodedBytes := (dataBytes + 2) / 3 * 4
+	totalBytes := int64(len(prefix)) + encodedBytes
+	maxInt := uint64(^uint(0) >> 1)
+	if totalBytes < 0 || uint64(totalBytes) > maxInt {
+		return nil, errors.New("imageasset: data URI is not representable")
+	}
+	result := make([]byte, int(totalBytes))
+	copy(result, prefix)
+	writeAt := len(prefix)
+	// A multiple of three lets each non-final chunk encode independently.
+	const chunkBytes = 48 << 10
+	for readAt := 0; readAt < len(r.data); readAt += chunkBytes {
+		if err := checkContext(ctx); err != nil {
+			return nil, err
+		}
+		end := readAt + chunkBytes
+		if end > len(r.data) {
+			end = len(r.data)
+		}
+		base64.StdEncoding.Encode(result[writeAt:], r.data[readAt:end])
+		writeAt += base64.StdEncoding.EncodedLen(end - readAt)
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	if writeAt != len(result) {
+		return nil, errors.New("imageasset: data URI size preflight mismatch")
+	}
+	return result, nil
+}
+
 // Cache is optional. Implementations must be safe for concurrent use. Only
 // Resources produced by this package can contain non-empty immutable data.
 type Cache interface {
@@ -246,14 +300,23 @@ func (c *MemoryCache) Put(key string, resource *Resource) {
 
 // Options configures one independent resolver.
 type Options struct {
-	// BaseDir resolves relative local paths. New makes it absolute; an empty
-	// value freezes the current working directory at construction time.
-	BaseDir    string
+	// BaseDir resolves relative local paths. New makes it absolute. When it is
+	// empty, rooted local-file policies use their configured root and other
+	// policies freeze the current working directory at construction time.
+	BaseDir string
+	// LocalFiles controls local-file access. Its zero value denies local files.
+	// Use localfile.Rooted for untrusted input. localfile.Unrestricted is an
+	// explicit opt-in intended only for trusted local applications.
+	LocalFiles localfile.Policy
 	HTTPClient *http.Client
-	Cache      Cache
+	// NetworkPolicy defaults to public addresses only. Trusted callers can
+	// explicitly allow private-network assets.
+	NetworkPolicy netpolicy.Policy
+	Cache         Cache
 	// CacheNamespace is required when Cache is set. Reusing a namespace asserts
 	// identical tenant, credentials, CookieJar, redirect policy, transport, and
-	// fetch semantics for every Resolver sharing that cache.
+	// fetch semantics for every Resolver sharing that cache. NetworkPolicy is
+	// automatically included in the effective namespace.
 	CacheNamespace string
 	Limits         Limits
 }
@@ -261,11 +324,16 @@ type Options struct {
 // Resolver is one cumulative-budget session (normally one output document). It
 // owns no global state and is safe for concurrent use.
 type Resolver struct {
-	baseDir     string
-	client      *http.Client
-	cache       Cache
-	cachePrefix string
-	limits      Limits
+	baseDir    string
+	localFiles localfile.Policy
+	client     *http.Client
+	// ownsHTTPTransport is true when New created or policy-cloned the
+	// transport. Injected transports deliberately allowed by a private-network
+	// policy remain caller-owned and are not closed by this resolver.
+	ownsHTTPTransport bool
+	cache             Cache
+	cachePrefix       string
+	limits            Limits
 
 	mu                     sync.Mutex
 	assetCount             int
@@ -285,7 +353,11 @@ func New(options Options) (*Resolver, error) {
 	}
 	baseDir := options.BaseDir
 	if baseDir == "" {
-		baseDir = "."
+		if root, ok := options.LocalFiles.RootPath(); ok {
+			baseDir = root
+		} else {
+			baseDir = "."
+		}
 	}
 	absolute, err := filepath.Abs(baseDir)
 	if err != nil {
@@ -298,28 +370,53 @@ func New(options Options) (*Resolver, error) {
 	// one-minute request ceiling.
 	defaultTransport := boundedDefaultTransport(http.DefaultTransport)
 	client := &http.Client{Transport: defaultTransport, Timeout: time.Minute}
+	ownsHTTPTransport := true
 	if options.HTTPClient != nil {
 		clone := *options.HTTPClient
 		if clone.Transport == nil {
 			clone.Transport = defaultTransport
+		} else if options.NetworkPolicy.AllowPrivateNetworks {
+			// The trusted policy preserves a caller-injected transport instead of
+			// cloning it, so its connection pool remains caller-owned.
+			ownsHTTPTransport = false
 		}
 		client = &clone
 	}
+	client, err = netpolicy.NewHTTPClient(client, options.NetworkPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("imageasset: configure HTTP network policy: %w", err)
+	}
 	cachePrefix := ""
 	if options.Cache != nil {
-		namespaceHash := sha256.Sum256([]byte(options.CacheNamespace))
+		networkNamespace := "public-only"
+		if options.NetworkPolicy.AllowPrivateNetworks {
+			networkNamespace = "private-network"
+		}
+		namespaceHash := sha256.Sum256([]byte(options.CacheNamespace + "\x00network-policy:" + networkNamespace))
 		cachePrefix = fmt.Sprintf("namespace:%x:", namespaceHash)
 	}
 	return &Resolver{
-		baseDir:         baseDir,
-		client:          client,
-		cache:           options.Cache,
-		cachePrefix:     cachePrefix,
-		limits:          options.Limits,
-		resolvedSources: make(map[string]*Resource),
-		inflight:        make(map[string]*resolveCall),
-		resolveSlots:    make(chan struct{}, maxConcurrentResolutions),
+		baseDir:           baseDir,
+		localFiles:        options.LocalFiles,
+		client:            client,
+		ownsHTTPTransport: ownsHTTPTransport,
+		cache:             options.Cache,
+		cachePrefix:       cachePrefix,
+		limits:            options.Limits,
+		resolvedSources:   make(map[string]*Resource),
+		inflight:          make(map[string]*resolveCall),
+		resolveSlots:      make(chan struct{}, maxConcurrentResolutions),
 	}, nil
+}
+
+// CloseIdleConnections releases idle connections held by the transport New
+// created for this resolver session. A trusted caller-injected transport is
+// borrowed and remains the caller's responsibility.
+func (r *Resolver) CloseIdleConnections() {
+	if r == nil || r.client == nil || !r.ownsHTTPTransport {
+		return
+	}
+	r.client.CloseIdleConnections()
 }
 
 func boundedDefaultTransport(base http.RoundTripper) *http.Transport {

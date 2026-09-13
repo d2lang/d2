@@ -1,0 +1,30 @@
+{
+  "format": "d2-board-output",
+  "version": 1,
+  "files": [
+    {
+      "path": "index.svg",
+      "sha256": "a86ced1b23dbbf0d00076782cc28b877ec5688b497b48e6767805cc2f78709eb"
+    },
+    {
+      "path": "layers/broker.svg",
+      "sha256": "f7f6713ea138c298f773169207dd721ffa006acf76a8be5255a3cada6e357471"
+    },
+    {
+      "path": "layers/core.svg",
+      "sha256": "da5ab99d2888214b390b10e6b81c1814666a928265aa65a5fa09eb45abbd06d4"
+    },
+    {
+      "path": "layers/stocks.svg",
+      "sha256": "a544e4fda113bdff13817cebf5364453e650e773275a59d4f516863193562c11"
+    },
+    {
+      "path": "scenarios/why.svg",
+      "sha256": "642b138de598279ae8da52d5d2a897b76f94236caea3e6e51453d1925a1cbd6d"
+    }
+  ],
+  "directories": [
+    "layers",
+    "scenarios"
+  ]
+}

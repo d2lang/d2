@@ -1,6 +1,7 @@
 package d2parser_test
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,43 @@ import (
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2parser"
 )
+
+func TestParseContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := d2parser.ParseContext(ctx, "canceled.d2", strings.NewReader("x"), nil)
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestParseNestingDepthLimit(t *testing.T) {
+	t.Parallel()
+
+	testCases := map[string]string{
+		"map":   strings.Repeat("a:{", d2parser.MaxNestingDepth+1) + strings.Repeat("}", d2parser.MaxNestingDepth+1),
+		"array": "a:" + strings.Repeat("[", d2parser.MaxNestingDepth+1) + "x" + strings.Repeat("]", d2parser.MaxNestingDepth+1),
+	}
+	for name, input := range testCases {
+		t.Run(name, func(t *testing.T) {
+			_, err := d2parser.Parse("deep.d2", strings.NewReader(input), nil)
+			if err == nil || !strings.Contains(err.Error(), "maximum nesting depth") {
+				t.Fatalf("expected maximum nesting depth error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestParseNestingDepthBoundary(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Repeat("a:{", d2parser.MaxNestingDepth) + strings.Repeat("}", d2parser.MaxNestingDepth)
+	if _, err := d2parser.Parse("deep.d2", strings.NewReader(input), nil); err != nil {
+		t.Fatalf("expected maximum supported nesting depth to parse, got %v", err)
+	}
+}
 
 type testCase struct {
 	name   string

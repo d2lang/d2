@@ -1,8 +1,7 @@
 package d2ir
 
 import (
-	"io/fs"
-	"os"
+	"errors"
 	"path"
 	"path/filepath"
 	"strings"
@@ -10,6 +9,14 @@ import (
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2parser"
 )
+
+// ErrImportsDisabled is returned when D2 source requests an import but the
+// caller did not provide CompileOptions.FS.
+var ErrImportsDisabled = errors.New("d2ir: imports are disabled; provide CompileOptions.FS to enable them")
+
+// MaxImportDepth is the maximum number of imported files permitted in one
+// active import chain. The root source file is not counted.
+const MaxImportDepth = 128
 
 func (c *compiler) pushImportStack(imp *d2ast.Import) (string, bool) {
 	impPath := imp.PathWithPre()
@@ -25,6 +32,11 @@ func (c *compiler) pushImportStack(imp *d2ast.Import) (string, bool) {
 		if !filepath.IsAbs(impPath) {
 			impPath = path.Join(path.Dir(c.importStack[len(c.importStack)-1]), impPath)
 		}
+	}
+
+	if len(c.importStack) > 0 && len(c.importStack)-1 >= MaxImportDepth {
+		c.errorf(imp, "maximum import depth of %d exceeded", MaxImportDepth)
+		return "", false
 	}
 
 	for i, p := range c.importStack {
@@ -72,6 +84,9 @@ func (c *compiler) selectImport(ir *Map, imp *d2ast.Import) (Node, bool) {
 }
 
 func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (Node, bool) {
+	if c.stopped() {
+		return nil, false
+	}
 	impPath, ok := c.pushImportStack(imp)
 	if !ok {
 		return nil, false
@@ -95,16 +110,22 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 					c.errorf(imp, "import key %q doesn't exist inside import", ida)
 					return nil, false
 				}
+				if !c.reserveVariableCopy(imp, selected) {
+					return nil, false
+				}
 				field := cloneImportField(selected)
 				nilScopeMap(field)
 				return field, true
+			}
+			if !c.reserveVariableCopy(imp, template.ir) {
+				return nil, false
 			}
 			return c.selectImport(cloneImportMap(template.ir), imp)
 		}
 	}
 
 	errCount := len(c.err.Errors)
-	ast, openErr, ok := c.loadImportAST(impPath, c.err)
+	ast, openErr, ok := c.loadImportAST(impPath, imp, c.err)
 	if !ok {
 		if openErr != nil {
 			c.errorf(imp, "failed to import %q: %v", impPath, openErr)
@@ -117,6 +138,9 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 	ir.parent.(*Field).References[0].Context_.Scope = ast
 
 	c.compileMap(ir, ast, ast)
+	if c.stopped() {
+		return nil, false
+	}
 
 	// We attempt to resolve variables in the imported file scope first
 	// But ignore errors, in case the variable is meant to be resolved at the
@@ -125,9 +149,15 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 	copy(savedErrors, c.err.Errors)
 	c.compileSubstitutions(ir, nil)
 	c.err.Errors = savedErrors
+	if c.stopped() {
+		return nil, false
+	}
 
 	c.seenImports[impPath] = struct{}{}
 	if cacheable && len(c.err.Errors) == errCount {
+		if !c.reserveVariableCopy(imp, ir) {
+			return nil, false
+		}
 		c.importTemplates[impPath] = &importTemplate{ir: cloneImportMap(ir)}
 	}
 
@@ -176,7 +206,7 @@ func (c *compiler) peekImport(imp *d2ast.Import) (*Map, bool) {
 
 	// Use a separate parse error to avoid polluting the main one
 	localErr := &d2parser.ParseError{}
-	ast, _, ok := c.loadImportAST(impPath, localErr)
+	ast, _, ok := c.loadImportAST(impPath, imp, localErr)
 	if !ok {
 		return nil, false
 	}
@@ -186,28 +216,36 @@ func (c *compiler) peekImport(imp *d2ast.Import) (*Map, bool) {
 	ir.parent.(*Field).References[0].Context_.Scope = ast
 
 	c.compileMap(ir, ast, ast)
+	if c.stopped() {
+		return nil, false
+	}
 
 	return ir, true
 }
 
-func (c *compiler) loadImportAST(impPath string, parseErr *d2parser.ParseError) (*d2ast.Map, error, bool) {
+func (c *compiler) loadImportAST(impPath string, source d2ast.Node, parseErr *d2parser.ParseError) (*d2ast.Map, error, bool) {
 	if ast := c.parsedImports[impPath]; ast != nil {
-		return cloneASTMap(ast), nil, true
+		if !c.reserveVariableASTCopy(source, ast) {
+			return nil, nil, false
+		}
+		cloned, err := cloneASTMapContext(c.ctx, ast)
+		if err != nil {
+			c.handleVariableExpansionWalkError(err)
+			return nil, nil, false
+		}
+		return cloned, nil, true
 	}
 
-	var f fs.File
-	var err error
 	if c.fs == nil {
-		f, err = os.Open(impPath)
-	} else {
-		f, err = c.fs.Open(impPath)
+		return nil, ErrImportsDisabled, false
 	}
+	f, err := c.fs.Open(impPath)
 	if err != nil {
 		return nil, err, false
 	}
 	defer f.Close()
 
-	ast, err := d2parser.Parse(impPath, f, &d2parser.ParseOptions{
+	ast, err := d2parser.ParseContext(c.ctx, impPath, f, &d2parser.ParseOptions{
 		UTF16Pos:   c.utf16Pos,
 		ParseError: parseErr,
 	})
@@ -215,7 +253,15 @@ func (c *compiler) loadImportAST(impPath string, parseErr *d2parser.ParseError) 
 		return nil, nil, false
 	}
 	c.parsedImports[impPath] = ast
-	return cloneASTMap(ast), nil, true
+	if !c.reserveVariableASTCopy(source, ast) {
+		return nil, nil, false
+	}
+	cloned, err := cloneASTMapContext(c.ctx, ast)
+	if err != nil {
+		c.handleVariableExpansionWalkError(err)
+		return nil, nil, false
+	}
+	return cloned, nil, true
 }
 
 func nilScopeMap(n Node) {

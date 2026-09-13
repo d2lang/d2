@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"image/color"
-	"unicode/utf8"
 
 	"github.com/d2lang/d2/d2renderers/d2latex"
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -13,8 +12,6 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
-
-const maxLatexInputBytes = 4 << 10
 
 type latexAssetKey struct {
 	formula string
@@ -91,11 +88,8 @@ func (b *builder) resolveLatexAsset(object, formula, rawColor string) (latexAsse
 }
 
 func (b *builder) validateLatexInput(object, formula string) error {
-	if !utf8.ValidString(formula) {
-		return invalidField(object, "label", nil, "must be valid UTF-8")
-	}
-	if len(formula) > maxLatexInputBytes {
-		return fmt.Errorf("scene: %s latex input is %d bytes, exceeding limit %d", object, len(formula), maxLatexInputBytes)
+	if err := d2latex.ValidateInput(formula); err != nil {
+		return fmt.Errorf("scene: %s %w", object, err)
 	}
 	return nil
 }

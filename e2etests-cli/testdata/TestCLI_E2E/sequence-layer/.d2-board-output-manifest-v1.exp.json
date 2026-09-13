@@ -1,0 +1,15 @@
+{
+  "format": "d2-board-output",
+  "version": 1,
+  "files": [
+    {
+      "path": "index.svg",
+      "sha256": "97c4961a95e15bc605ec47545d0cb27f20bc1416350af3c05ae496813dd3eba2"
+    },
+    {
+      "path": "seq.svg",
+      "sha256": "eb8ab85dabe8730f7d4f2556ccca6a2da8379503be2b9145cc790fa2881bfc69"
+    }
+  ],
+  "directories": []
+}

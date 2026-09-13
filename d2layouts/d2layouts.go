@@ -356,7 +356,7 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 		if err != nil {
 			return err
 		}
-		// need to update pointers if plugin performs edge routing
+		// need to update pointers if layout engine performs edge routing
 		for i, e := range extractedEdges {
 			ids := extractedEdgeIDs[i]
 			src, exists := idToObj[ids.srcID]
@@ -615,7 +615,7 @@ func (b *subgraphExtractionBatch) rollbackAfter(index int) {
 	}
 }
 
-// Clone JSON-shaped source configuration for nested layout calls so a plugin
+// Clone JSON-shaped source configuration for nested layout calls so a layout engine
 // cannot change the configuration of the parent or another nested diagram.
 func cloneGraphData(data map[string]interface{}) map[string]interface{} {
 	if data == nil {

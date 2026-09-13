@@ -24,12 +24,12 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2elklayout"
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2lib"
-	"github.com/d2lang/d2/d2plugin"
 	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2ascii"
 	"github.com/d2lang/d2/d2renderers/d2ascii/charset"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/internal/d2layoutfeatures"
 	"github.com/d2lang/d2/internal/testlog"
 	"github.com/d2lang/d2/lib/log"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -127,7 +127,6 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 
 	serde(t, tc, ruler)
 
-	plugin := &d2plugin.ELKPlugin
 	layoutResolver := func(engine string) (d2graph.LayoutGraph, error) {
 		return d2elklayout.DefaultLayout, nil
 	}
@@ -151,10 +150,7 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 	}
 	assert.Success(t, err)
 
-	pluginInfo, err := plugin.Info(ctx)
-	assert.Success(t, err)
-
-	err = d2plugin.FeatureSupportCheck(pluginInfo, g)
+	err = d2layoutfeatures.Check("elk", g)
 	if tc.elkFeatureError != "" {
 		assert.Error(t, err)
 		assert.ErrorString(t, err, tc.elkFeatureError)
@@ -304,7 +300,7 @@ func run(t *testing.T, tc testCase) {
 	}
 	talaOpts := d2talalayout.DefaultOptions()
 	// One deterministic attempt keeps the full cross-engine E2E matrix tractable.
-	// Multi-seed selection is covered by the TALA package and plugin tests.
+	// Multi-seed selection is covered by the TALA package and built-in engine tests.
 	talaOpts.Seeds = []int64{1}
 	talaOpts.MaxConcurrency = 1
 
@@ -354,15 +350,6 @@ func run(t *testing.T, tc testCase) {
 			continue
 		}
 
-		var plugin d2plugin.Plugin
-		if layoutName == "dagre" {
-			plugin = &d2plugin.DagrePlugin
-		} else if layoutName == "elk" {
-			plugin = &d2plugin.ELKPlugin
-		} else if layoutName == "tala" {
-			plugin = &d2plugin.TALAPlugin
-		}
-
 		compileOpts := &d2lib.CompileOptions{
 			Ruler:          ruler,
 			MeasuredTexts:  tc.mtexts,
@@ -392,10 +379,7 @@ func run(t *testing.T, tc testCase) {
 			assert.Success(t, err)
 		}
 
-		pluginInfo, err := plugin.Info(ctx)
-		assert.Success(t, err)
-
-		err = d2plugin.FeatureSupportCheck(pluginInfo, g)
+		err = d2layoutfeatures.Check(layoutName, g)
 		switch layoutName {
 		case "dagre":
 			if tc.dagreFeatureError != "" {

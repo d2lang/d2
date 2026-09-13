@@ -26,6 +26,9 @@ import (
 	"time"
 
 	"github.com/andybalholm/brotli"
+
+	"github.com/d2lang/d2/lib/localfile"
+	"github.com/d2lang/d2/lib/netpolicy"
 )
 
 func TestResolveLocalRelativeAbsoluteAndOwnedBytes(t *testing.T) {
@@ -56,6 +59,104 @@ func TestResolveLocalRelativeAbsoluteAndOwnedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertResource(t, absolute, KindRaster, "image/png", 2, 3)
+}
+
+func TestResourceDataURIContext(t *testing.T) {
+	resolver := newTestResolver(t, Options{})
+	raw := encodePNG(t, 2, 3)
+	resource, err := resolver.Resolve(context.Background(), dataURI("image/png", raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := resource.DataURIContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := dataURI("image/png", raw)
+	if string(encoded) != want {
+		t.Fatalf("data URI = %q, want %q", encoded, want)
+	}
+	encoded[0] = 'X'
+	again, err := resource.DataURIContext(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != want {
+		t.Fatal("mutating returned data URI changed the immutable resource")
+	}
+	chunked := &Resource{mimeType: "image/svg+xml", data: bytes.Repeat([]byte{0, 1, 2, 3, 4}, 20_000)}
+	chunkedURI, err := chunked.DataURIContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunkedWant := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(chunked.data)
+	if string(chunkedURI) != chunkedWant {
+		t.Fatal("chunked data URI encoding differs from canonical base64")
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := resource.DataURIContext(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled DataURIContext error = %v", err)
+	}
+	var nilResource *Resource
+	if _, err := nilResource.DataURIContext(context.Background()); err == nil {
+		t.Fatal("nil resource returned a data URI")
+	}
+}
+
+func TestResolverClosesOnlyOwnedHTTPTransport(t *testing.T) {
+	owned, err := New(Options{Limits: generousLimits()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owned.ownsHTTPTransport {
+		t.Fatal("default resolver did not own its HTTP transport")
+	}
+	owned.CloseIdleConnections()
+	owned.CloseIdleConnections()
+
+	borrowedTransport := &closeTrackingRoundTripper{}
+	borrowed, err := New(Options{
+		HTTPClient:    &http.Client{Transport: borrowedTransport},
+		NetworkPolicy: netpolicy.Policy{AllowPrivateNetworks: true},
+		Limits:        generousLimits(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if borrowed.ownsHTTPTransport {
+		t.Fatal("trusted injected HTTP transport became resolver-owned")
+	}
+	borrowed.CloseIdleConnections()
+	if borrowedTransport.closed.Load() != 0 {
+		t.Fatal("resolver closed its caller's borrowed HTTP transport")
+	}
+
+	ownedDefault, err := New(Options{
+		HTTPClient:    &http.Client{},
+		NetworkPolicy: netpolicy.Policy{AllowPrivateNetworks: true},
+		Limits:        generousLimits(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ownedDefault.ownsHTTPTransport {
+		t.Fatal("resolver did not own the default transport it supplied")
+	}
+	ownedDefault.CloseIdleConnections()
+
+	callerTransport := &http.Transport{}
+	ownedClone, err := New(Options{HTTPClient: &http.Client{Transport: callerTransport}, Limits: generousLimits()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ownedClone.ownsHTTPTransport || ownedClone.client.Transport == callerTransport {
+		t.Fatal("public-policy resolver did not own an isolated transport clone")
+	}
+	ownedClone.CloseIdleConnections()
+	var nilResolver *Resolver
+	nilResolver.CloseIdleConnections()
 }
 
 func TestResourceBytesContextReturnsOwnedBytesAndHonorsCancellation(t *testing.T) {
@@ -827,6 +928,13 @@ func TestLimitsMustBeCallerSupplied(t *testing.T) {
 
 func newTestResolver(t *testing.T, options Options) *Resolver {
 	t.Helper()
+	// Existing fixtures intentionally use loopback servers and custom in-memory
+	// transports. Tests of the default public-only policy construct a Resolver
+	// directly instead.
+	options.NetworkPolicy = netpolicy.Policy{AllowPrivateNetworks: true}
+	// Existing format, cache, and limit tests model a trusted local caller.
+	// Policy-denial and rooted behavior are covered with direct New calls.
+	options.LocalFiles = localfile.Unrestricted()
 	if options.Limits == (Limits{}) {
 		options.Limits = generousLimits()
 	}
@@ -977,6 +1085,18 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return function(request)
+}
+
+type closeTrackingRoundTripper struct {
+	closed atomic.Int32
+}
+
+func (*closeTrackingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("unexpected request")
+}
+
+func (transport *closeTrackingRoundTripper) CloseIdleConnections() {
+	transport.closed.Add(1)
 }
 
 func TestReadBoundedHandlesReaderErrors(t *testing.T) {

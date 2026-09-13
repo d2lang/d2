@@ -9,6 +9,8 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1156,8 +1158,8 @@ bank.Equities.app14522 -> bank.Fixed Income.app14500: security reference
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				writeFile(t, dir, "hello-world.d2", `...@asdf/x`)
 				writeFile(t, filepath.Join(dir, "asdf"), "x.d2", `y: { icon: ./blah.svg }; z: { icon: ../root.svg }`)
-				writeFile(t, filepath.Join(dir, "asdf"), "blah.svg", ``)
-				writeFile(t, dir, "root.svg", ``)
+				writeFile(t, filepath.Join(dir, "asdf"), "blah.svg", `<svg xmlns="http://www.w3.org/2000/svg"></svg>`)
+				writeFile(t, dir, "root.svg", `<svg xmlns="http://www.w3.org/2000/svg"></svg>`)
 				err := runTestMain(t, ctx, dir, env, filepath.Join(dir, "hello-world.d2"))
 				assert.Success(t, err)
 				svg := readFile(t, dir, "hello-world.svg")
@@ -1417,15 +1419,8 @@ layers: {
 				tms.Start(t, ctx)
 				defer stopWatch(t, tms)
 
-				// Wait for watch server to spin up and listen
-				urlRE := regexp.MustCompile(`127.0.0.1:([0-9]+)`)
-				watchURL, err := waitLogs(ctx, stderr, urlRE)
-				assert.Success(t, err)
+				watchURL, httpClient, c := connectWatchClient(ctx, t, stderr)
 				stderr.Reset()
-
-				// Start a client
-				c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/watch", watchURL), nil)
-				assert.Success(t, err)
 				defer c.CloseNow()
 
 				// Get the link
@@ -1436,7 +1431,7 @@ layers: {
 				assert.Equal(t, 2, len(match))
 				linkedPath := match[1]
 
-				err = getWatchPage(ctx, t, fmt.Sprintf("http://%s/%s", watchURL, linkedPath))
+				err = getWatchPage(ctx, t, httpClient, fmt.Sprintf("http://%s/%s", watchURL, linkedPath))
 				assert.Success(t, err)
 
 				successRE := regexp.MustCompile(`broadcasting update to 1 client`)
@@ -1464,16 +1459,8 @@ layers: {
 				tms.Start(t, ctx)
 				defer stopWatch(t, tms)
 
-				// Wait for watch server to spin up and listen
-				urlRE := regexp.MustCompile(`127.0.0.1:([0-9]+)`)
-				watchURL, err := waitLogs(ctx, stderr, urlRE)
-				assert.Success(t, err)
-
+				watchURL, httpClient, c := connectWatchClient(ctx, t, stderr)
 				stderr.Reset()
-
-				// Start a client
-				c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/watch", watchURL), nil)
-				assert.Success(t, err)
 				defer c.CloseNow()
 
 				// Get the link
@@ -1484,7 +1471,7 @@ layers: {
 				assert.Equal(t, 2, len(match))
 				linkedPath := match[1]
 
-				err = getWatchPage(ctx, t, fmt.Sprintf("http://%s/%s", watchURL, linkedPath))
+				err = getWatchPage(ctx, t, httpClient, fmt.Sprintf("http://%s/%s", watchURL, linkedPath))
 				assert.Success(t, err)
 
 				successRE := regexp.MustCompile(`broadcasting update to 1 client`)
@@ -1511,22 +1498,14 @@ layers: {
 				tms.Start(t, ctx)
 				defer stopWatch(t, tms)
 
-				// Wait for watch server to spin up and listen
-				urlRE := regexp.MustCompile(`127.0.0.1:([0-9]+)`)
-				watchURL, err := waitLogs(ctx, stderr, urlRE)
-				assert.Success(t, err)
-
+				watchURL, httpClient, c := connectWatchClient(ctx, t, stderr)
 				stderr.Reset()
-
-				// Start a client
-				c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/watch", watchURL), nil)
-				assert.Success(t, err)
 				defer c.CloseNow()
 
-				_, _, err = c.Read(ctx)
+				_, _, err := c.Read(ctx)
 				assert.Success(t, err)
 
-				err = getWatchPage(ctx, t, fmt.Sprintf("http://%s/%s", watchURL, "cream"))
+				err = getWatchPage(ctx, t, httpClient, fmt.Sprintf("http://%s/%s", watchURL, "cream"))
 				assert.Success(t, err)
 
 				// Get the link
@@ -1537,7 +1516,7 @@ layers: {
 
 				link := string(match[1])
 
-				err = getWatchPage(ctx, t, fmt.Sprintf("http://%s/%s", watchURL, link))
+				err = getWatchPage(ctx, t, httpClient, fmt.Sprintf("http://%s/%s", watchURL, link))
 				assert.Success(t, err)
 				_, _, err = c.Read(ctx)
 				assert.Success(t, err)
@@ -1573,16 +1552,8 @@ layers: {
 				tms.Start(t, ctx)
 				defer stopWatch(t, tms)
 
-				// Wait for watch server to spin up and listen
-				urlRE := regexp.MustCompile(`127.0.0.1:([0-9]+)`)
-				watchURL, err := waitLogs(ctx, stderr, urlRE)
-				assert.Success(t, err)
-
+				watchURL, httpClient, c := connectWatchClient(ctx, t, stderr)
 				stderr.Reset()
-
-				// Start a client
-				c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/watch", watchURL), nil)
-				assert.Success(t, err)
 				defer c.CloseNow()
 
 				// Get the link
@@ -1592,7 +1563,7 @@ layers: {
 				assert.Equal(t, 2, len(match))
 				link := string(match[1])
 
-				err = getWatchPage(ctx, t, fmt.Sprintf("http://%s/%s", watchURL, link))
+				err = getWatchPage(ctx, t, httpClient, fmt.Sprintf("http://%s/%s", watchURL, link))
 				assert.Success(t, err)
 				_, _, err = c.Read(ctx)
 				assert.Success(t, err)
@@ -1618,11 +1589,8 @@ x
 				tms.Start(t, ctx)
 				defer stopWatch(t, tms)
 
-				urlRE := regexp.MustCompile(`127.0.0.1:([0-9]+)`)
-				watchURL, err := waitLogs(ctx, stderr, urlRE)
-				assert.Success(t, err)
-				c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/watch", watchURL), nil)
-				assert.Success(t, err)
+				_, _, c := connectWatchClient(ctx, t, stderr)
+				var err error
 				defer c.CloseNow()
 
 				// Results are broadcast after the dependency watch list is updated.
@@ -1972,13 +1940,33 @@ func waitLogs(ctx context.Context, stream *stderrWrapper, pattern *regexp.Regexp
 	return match, nil
 }
 
-func getWatchPage(ctx context.Context, t *testing.T, page string) error {
+func connectWatchClient(ctx context.Context, t *testing.T, stderr *stderrWrapper) (string, *http.Client, *websocket.Conn) {
+	t.Helper()
+
+	accessURL, err := waitLogs(ctx, stderr, regexp.MustCompile(`http://127\.0\.0\.1:[0-9]+/\?token=[A-Za-z0-9_-]+`))
+	assert.Success(t, err)
+	parsed, err := url.Parse(accessURL)
+	assert.Success(t, err)
+	jar, err := cookiejar.New(nil)
+	assert.Success(t, err)
+	httpClient := &http.Client{Jar: jar}
+	assert.Success(t, getWatchPage(ctx, t, httpClient, accessURL))
+
+	websocketURL := *parsed
+	websocketURL.Scheme = "ws"
+	websocketURL.Path = "/watch"
+	websocketURL.RawQuery = ""
+	c, _, err := websocket.Dial(ctx, websocketURL.String(), &websocket.DialOptions{HTTPClient: httpClient})
+	assert.Success(t, err)
+	return parsed.Host, httpClient, c
+}
+
+func getWatchPage(ctx context.Context, t *testing.T, httpClient *http.Client, page string) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", page, nil)
 	if err != nil {
 		return err
 	}
 
-	var httpClient = &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err

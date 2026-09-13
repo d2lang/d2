@@ -154,7 +154,9 @@ func TestGridRowMeasurementsPreserveAdditionOrder(t *testing.T) {
 			}
 		}
 	}
-	large := newGridRowMeasurements(make([]float64, 100000), 40)
+	largeSizes := make([]float64, 100000)
+	largeSizes[0] = 0.5 // Fractional measurements retain the bounded cache.
+	large := newGridRowMeasurements(largeSizes, 40)
 	large.get(0, 2)
 	if got := len(large.cache); got != 32*1024 {
 		t.Fatalf("large grid cache has %d entries, want 32768", got)
@@ -181,7 +183,7 @@ func TestGridSingletonMeasurementsDoNotAllocateCache(t *testing.T) {
 				}
 			}
 		}
-		if measurements.cache != nil {
+		if measurements.cache != nil || measurements.integralPrefix != nil {
 			t.Fatal("empty and singleton measurements allocated a cache")
 		}
 		if allocations := testing.AllocsPerRun(100, func() {

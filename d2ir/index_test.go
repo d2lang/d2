@@ -95,6 +95,22 @@ func TestPublicMapLookupsRemainSafeAfterDirectMutation(t *testing.T) {
 	wg.Wait()
 }
 
+func TestEnsureFieldCreateWithoutCompiler(t *testing.T) {
+	m := &Map{}
+	m.initRoot()
+	key, err := d2parser.ParseKey("created")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields, err := m.EnsureField(key, nil, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 1 || fields[0].Name.ScalarString() != "created" {
+		t.Fatalf("EnsureField() = %#v, want newly created field", fields)
+	}
+}
+
 func compileIndexTestSource(t *testing.T, source string) *Map {
 	t.Helper()
 	ast, err := d2parser.Parse("index-test.d2", strings.NewReader(source), nil)

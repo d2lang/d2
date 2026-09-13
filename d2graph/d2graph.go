@@ -62,9 +62,7 @@ type Graph struct {
 	// Object.Level uses the location of a nested graph
 	RootLevel int `json:"rootLevel,omitempty"`
 
-	// Currently this holds data embedded from source code configuration variables
-	// Plugins only have access to exported graph, so this data structure allows
-	// carrying arbitrary metadata that any plugin might handle
+	// Data embedded from source configuration variables, including layout options.
 	Data map[string]interface{} `json:"data,omitempty"`
 }
 

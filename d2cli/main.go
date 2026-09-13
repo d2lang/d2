@@ -9,24 +9,21 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
-	"go.uber.org/multierr"
 
 	"github.com/d2lang/util-go/go2"
 	"github.com/d2lang/util-go/xmain"
 
 	"github.com/d2lang/d2/d2ast"
-	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2parser"
-	"github.com/d2lang/d2/d2plugin"
 	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2ascii"
 	"github.com/d2lang/d2/d2renderers/d2ascii/charset"
@@ -36,9 +33,12 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	"github.com/d2lang/d2/internal/d2layoutfeatures"
 	"github.com/d2lang/d2/lib/background"
 	"github.com/d2lang/d2/lib/imgbundler"
+	"github.com/d2lang/d2/lib/localfile"
 	"github.com/d2lang/d2/lib/log"
+	"github.com/d2lang/d2/lib/netpolicy"
 	"github.com/d2lang/d2/lib/pdf"
 	"github.com/d2lang/d2/lib/pptx"
 	"github.com/d2lang/d2/lib/simplelog"
@@ -46,6 +46,18 @@ import (
 	timelib "github.com/d2lang/d2/lib/time"
 	"github.com/d2lang/d2/lib/version"
 )
+
+func privateNetworkEnvDefault(ms *xmain.State) (bool, error) {
+	const key = "D2_ALLOW_PRIVATE_NETWORK"
+	switch value := ms.Env.Getenv(key); value {
+	case "", "0", "false":
+		return false, nil
+	case "1", "true":
+		return true, nil
+	default:
+		return false, xmain.UsageErrorf(`invalid environment variable %s. Expected bool. Found "%s".`, key, value)
+	}
+}
 
 func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx = log.WithDefault(ctx)
@@ -57,6 +69,14 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	hostFlag := ms.Opts.String("HOST", "host", "h", "localhost", "host listening address when used with watch")
 	portFlag := ms.Opts.String("PORT", "port", "p", "0", "port listening address when used with watch")
 	bundleFlag, err := ms.Opts.Bool("D2_BUNDLE", "bundle", "b", true, "when outputting SVG, bundle all assets and layers into the output file")
+	if err != nil {
+		return err
+	}
+	allowPrivateNetworkDefault, err := privateNetworkEnvDefault(ms)
+	if err != nil {
+		return err
+	}
+	allowPrivateNetworkFlag, err := ms.Opts.Bool("", "allow-private-network", "", allowPrivateNetworkDefault, "allow remote image assets to access private, loopback, and link-local networks. Only enable this for trusted diagrams. Can also be set with $D2_ALLOW_PRIVATE_NETWORK")
 	if err != nil {
 		return err
 	}
@@ -150,14 +170,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return err
 	}
 
-	plugins, err := d2plugin.ListPlugins(ctx)
-	if err != nil {
-		return err
-	}
-	err = populateLayoutOpts(ctx, ms, plugins)
-	if err != nil {
-		return err
-	}
+	populateLayoutOpts(ms)
 
 	err = ms.Opts.Flags.Parse(ms.Opts.Args)
 	if !errors.Is(err, pflag.ErrHelp) && err != nil {
@@ -168,6 +181,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		help(ms)
 		return nil
 	}
+	ctx = netpolicy.WithPolicy(ctx, netpolicy.Policy{AllowPrivateNetworks: *allowPrivateNetworkFlag})
 
 	fontFamily, monoFontFamily, err := loadFonts(ms, *fontRegularFlag, *fontItalicFlag, *fontBoldFlag, *fontSemiboldFlag, *fontMonoFlag, *fontMonoBoldFlag, *fontMonoItalicFlag, *fontMonoSemiboldFlag)
 	if err != nil {
@@ -177,7 +191,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if len(ms.Opts.Flags.Args()) > 0 {
 		switch ms.Opts.Flags.Arg(0) {
 		case "layout":
-			return layoutCmd(ctx, ms, plugins)
+			return layoutCmd(ctx, ms)
 		case "themes":
 			themesCmd(ctx, ms)
 			return nil
@@ -342,7 +356,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			ms.Log.Debug.Printf("GIF export: animate-interval not specified, defaulting to 1000ms")
 		}
 		w, err := newWatcher(ctx, ms, watcherOpts{
-			plugins:         plugins,
 			layout:          layoutFlag,
 			renderOpts:      renderOpts,
 			animateInterval: animateInterval,
@@ -392,7 +405,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		ms.Log.Debug.Printf("GIF export: animate-interval not specified, defaulting to 1000ms")
 	}
 
-	_, written, err := compile(ctx, ms, plugins, nil, layoutFlag, renderOpts, fontFamily, monoFontFamily, animateInterval, inputPath, outputPath, boardPath, noChildren, *bundleFlag, *forceAppendixFlag, outputFormat, *asciiModeFlag, false)
+	// The CLI is a trusted local application and intentionally preserves its
+	// historical ability to import arbitrary host files.
+	_, written, err := compile(ctx, ms, localfile.Unrestricted(), layoutFlag, renderOpts, fontFamily, monoFontFamily, animateInterval, inputPath, outputPath, boardPath, noChildren, *bundleFlag, *forceAppendixFlag, outputFormat, *asciiModeFlag, false)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
@@ -402,72 +417,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	return nil
 }
 
-func LayoutResolver(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin) func(engine string) (d2graph.LayoutGraph, error) {
-	cached := make(map[string]d2graph.LayoutGraph)
-	return func(engine string) (d2graph.LayoutGraph, error) {
-		if c, ok := cached[engine]; ok {
-			return c, nil
-		}
-
-		plugin, err := d2plugin.FindPlugin(ctx, plugins, engine)
-		if err != nil {
-			if errors.Is(err, exec.ErrNotFound) {
-				return nil, layoutNotFound(ctx, plugins, engine)
-			}
-			return nil, err
-		}
-
-		err = d2plugin.HydratePluginOpts(ctx, ms, plugin)
-		if err != nil {
-			return nil, err
-		}
-
-		cached[engine] = plugin.Layout
-		return plugin.Layout, nil
-	}
-}
-
-func RouterResolver(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin) func(engine string) (d2graph.RouteEdges, error) {
-	cached := make(map[string]d2graph.RouteEdges)
-	return func(engine string) (d2graph.RouteEdges, error) {
-		if c, ok := cached[engine]; ok {
-			return c, nil
-		}
-
-		plugin, err := d2plugin.FindPlugin(ctx, plugins, engine)
-		if err != nil {
-			if errors.Is(err, exec.ErrNotFound) {
-				return nil, layoutNotFound(ctx, plugins, engine)
-			}
-			return nil, err
-		}
-
-		pluginInfo, err := plugin.Info(ctx)
-		if err != nil {
-			return nil, err
-		}
-		hasRouter := false
-		for _, feat := range pluginInfo.Features {
-			if feat == d2plugin.ROUTES_EDGES {
-				hasRouter = true
-				break
-			}
-		}
-		if !hasRouter {
-			return nil, nil
-		}
-		routingPlugin, ok := plugin.(d2plugin.RoutingPlugin)
-		if !ok {
-			return nil, fmt.Errorf("plugin has routing feature but does not implement RoutingPlugin")
-		}
-
-		routeEdges := d2graph.RouteEdges(routingPlugin.RouteEdges)
-		cached[engine] = routeEdges
-		return routeEdges, nil
-	}
-}
-
-func compile(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin, fs fs.FS, layout *string, renderOpts d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateInterval int64, inputPath, outputPath string, boardPath []string, noChildren, bundle, forceAppendix bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
+func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOpts d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateInterval int64, inputPath, outputPath string, boardPath []string, noChildren, bundle, forceAppendix bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
 	// Use ELK layout for ascii outputs when layout is dagre or unspecified
 	if ext == TXT {
 		if layout == nil || *layout == "dagre" {
@@ -498,9 +448,9 @@ func compile(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin, fs
 		FontFamily:     fontFamily,
 		MonoFontFamily: monoFontFamily,
 		InputPath:      inputPath,
-		LayoutResolver: LayoutResolver(ctx, ms, plugins),
+		LayoutResolver: LayoutResolver(ctx, ms),
 		Layout:         layout,
-		RouterResolver: RouterResolver(ctx, ms, plugins),
+		RouterResolver: RouterResolver(ctx, ms),
 		FS:             fs,
 		LayoutReuse:    true,
 	}
@@ -545,8 +495,6 @@ func compile(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin, fs
 		diagram.Steps = nil
 	}
 
-	plugin, _ := d2plugin.FindPlugin(ctx, plugins, *opts.Layout)
-
 	if animateInterval > 0 {
 		masterID, err := diagram.HashID(renderOpts.Salt)
 		if err != nil {
@@ -555,30 +503,18 @@ func compile(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin, fs
 		renderOpts.MasterID = masterID
 	}
 
-	pinfo, err := plugin.Info(ctx)
-	if err != nil {
-		return nil, false, err
+	if !isBuiltinLayout(*opts.Layout) {
+		return nil, false, layoutNotFound(*opts.Layout)
 	}
-	plocation := pinfo.Type
-	if pinfo.Type == "binary" {
-		plocation = fmt.Sprintf("executable plugin at %s", humanPath(pinfo.Path))
-	}
-	ms.Log.Debug.Printf("using layout plugin %s (%s)", *opts.Layout, plocation)
-
-	pluginInfo, err := plugin.Info(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-
-	err = d2plugin.FeatureSupportCheck(pluginInfo, g)
-	if err != nil {
+	ms.Log.Debug.Printf("using layout engine %s (built-in)", strings.ToLower(*opts.Layout))
+	if err := d2layoutfeatures.Check(*opts.Layout, g); err != nil {
 		return nil, false, err
 	}
 
 	switch ext {
 	case GIF:
 		cacheImages := ms.Env.Getenv("IMG_CACHE") == "1"
-		out, previewSVG, err := renderGIF(ctx, plugin, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), wantPreview)
+		out, previewSVG, err := renderGIF(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), wantPreview)
 		if err != nil {
 			return nil, false, err
 		}
@@ -612,14 +548,14 @@ func compile(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin, fs
 		var outputWritten bool
 		if outputPath == "-" {
 			var output bytes.Buffer
-			preview, err = renderPDFTo(ctx, plugin, renderOpts, inputPath, &output, cacheImages, ruler, diagram, path, diagram.Root.Label != "", wantPreview)
+			preview, err = renderPDFTo(ctx, renderOpts, inputPath, &output, cacheImages, ruler, diagram, path, diagram.Root.Label != "", wantPreview)
 			if err == nil {
 				outputWritten, err = runStatusFinalizer(ctx, func() (bool, error) {
 					return writeStdout(ms.Stdout, output.Bytes())
 				})
 			}
 		} else {
-			preview, outputWritten, err = renderPDFWithStatus(ctx, plugin, renderOpts, inputPath, outputPath, cacheImages, ruler, diagram, path, diagram.Root.Label != "", wantPreview)
+			preview, outputWritten, err = renderPDFWithStatus(ctx, renderOpts, inputPath, outputPath, cacheImages, ruler, diagram, path, diagram.Root.Label != "", wantPreview)
 		}
 		if err != nil {
 			return preview, outputWritten, err
@@ -650,7 +586,7 @@ func compile(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin, fs
 			return nil, false, err
 		}
 		cacheImages := ms.Env.Getenv("IMG_CACHE") == "1"
-		preview, err := renderPPTX(ctx, p, plugin, renderOpts, inputPath, cacheImages, ruler, diagram, path, wantPreview)
+		preview, err := renderPPTX(ctx, p, renderOpts, inputPath, cacheImages, ruler, diagram, path, wantPreview)
 		if err != nil {
 			return preview, false, err
 		}
@@ -693,23 +629,43 @@ func compile(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin, fs
 		var boards [][]byte
 		var outputWritten bool
 		var err error
+		if animateInterval <= 0 && !noChildren {
+			if err := validateBoardOutputPaths(outputPath, diagram); err != nil {
+				return nil, false, err
+			}
+		}
+		outputPaths := newBoardOutputPaths(outputPath)
+		var outputWorkspace *boardOutputWorkspace
+		if animateInterval <= 0 && outputPath != "-" && (len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0) {
+			outputWorkspace, err = newBoardOutputWorkspace(outputPath)
+			if err != nil {
+				return nil, false, err
+			}
+			outputPaths = outputWorkspace.outputPaths(outputPath)
+		}
 		if noChildren {
-			boards, outputWritten, err = renderSingle(ctx, ms, compileDur, plugin, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview)
+			boards, outputWritten, err = renderSingle(ctx, ms, compileDur, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview)
 		} else {
-			boards, outputWritten, err = render(ctx, ms, compileDur, plugin, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview)
+			boards, outputWritten, err = renderToPaths(ctx, ms, compileDur, renderOpts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview)
 		}
 		if err != nil {
+			if outputWorkspace != nil {
+				err = errors.Join(err, outputWorkspace.discard())
+				outputWritten = false
+			}
 			return nil, outputWritten, err
+		}
+		if outputWorkspace != nil {
+			outputWritten, err = outputWorkspace.publish()
+			if err != nil {
+				return nil, outputWritten, err
+			}
 		}
 		var out []byte
 		if len(boards) > 0 {
 			out = boards[0]
 			if animateInterval > 0 {
 				out, err = d2animate.Wrap(diagram, boards, renderOpts, int(animateInterval))
-				if err != nil {
-					return nil, false, err
-				}
-				out, err = postProcess(ctx, plugin, out)
 				if err != nil {
 					return nil, false, err
 				}
@@ -733,47 +689,15 @@ func compile(ctx context.Context, ms *xmain.State, plugins []d2plugin.Plugin, fs
 }
 
 func resolveLinks(currDiagramPath, outputPath string, diagram *d2target.Diagram) (linkToOutput map[string]string, err error) {
-	if diagram.Name != "" {
-		ext := filepath.Ext(outputPath)
-		outputPath = strings.TrimSuffix(outputPath, ext)
-		outputPath = filepath.Join(outputPath, diagram.Name)
-		outputPath += ext
+	plan, err := planBoardOutput(newBoardOutputPaths(outputPath), diagram)
+	if err != nil {
+		return nil, err
 	}
 
-	boardOutputPath := outputPath
-	if len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0 {
-		ext := filepath.Ext(boardOutputPath)
-		boardOutputPath = strings.TrimSuffix(boardOutputPath, ext)
-		boardOutputPath = filepath.Join(boardOutputPath, "index")
-		boardOutputPath += ext
-	}
-
-	layersOutputPath := outputPath
-	if len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0 {
-		ext := filepath.Ext(layersOutputPath)
-		layersOutputPath = strings.TrimSuffix(layersOutputPath, ext)
-		layersOutputPath = filepath.Join(layersOutputPath, "layers")
-		layersOutputPath += ext
-	}
-	scenariosOutputPath := outputPath
-	if len(diagram.Layers) > 0 || len(diagram.Steps) > 0 {
-		ext := filepath.Ext(scenariosOutputPath)
-		scenariosOutputPath = strings.TrimSuffix(scenariosOutputPath, ext)
-		scenariosOutputPath = filepath.Join(scenariosOutputPath, "scenarios")
-		scenariosOutputPath += ext
-	}
-	stepsOutputPath := outputPath
-	if len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 {
-		ext := filepath.Ext(stepsOutputPath)
-		stepsOutputPath = strings.TrimSuffix(stepsOutputPath, ext)
-		stepsOutputPath = filepath.Join(stepsOutputPath, "steps")
-		stepsOutputPath += ext
-	}
-
-	linkToOutput = map[string]string{currDiagramPath: boardOutputPath}
+	linkToOutput = map[string]string{currDiagramPath: plan.board.displayPath}
 
 	for _, dl := range diagram.Layers {
-		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "layers", dl.Name}, "."), layersOutputPath, dl)
+		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "layers", dl.Name}, "."), plan.layers.displayPath, dl)
 		if err != nil {
 			return nil, err
 		}
@@ -782,7 +706,7 @@ func resolveLinks(currDiagramPath, outputPath string, diagram *d2target.Diagram)
 		}
 	}
 	for _, dl := range diagram.Scenarios {
-		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "scenarios", dl.Name}, "."), scenariosOutputPath, dl)
+		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "scenarios", dl.Name}, "."), plan.scenarios.displayPath, dl)
 		if err != nil {
 			return nil, err
 		}
@@ -791,7 +715,7 @@ func resolveLinks(currDiagramPath, outputPath string, diagram *d2target.Diagram)
 		}
 	}
 	for _, dl := range diagram.Steps {
-		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "steps", dl.Name}, "."), stepsOutputPath, dl)
+		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "steps", dl.Name}, "."), plan.steps.displayPath, dl)
 		if err != nil {
 			return nil, err
 		}
@@ -812,7 +736,21 @@ func relink(currDiagramPath string, d *d2target.Diagram, linkToOutput map[string
 					if err != nil {
 						return err
 					}
-					d.Shapes[i].Link = rel
+					d.Shapes[i].Link = boardOutputLink(rel)
+					break
+				}
+			}
+		}
+	}
+	for i, connection := range d.Connections {
+		if connection.Link != "" {
+			for k, v := range linkToOutput {
+				if connection.Link == k {
+					rel, err := filepath.Rel(filepath.Dir(linkToOutput[currDiagramPath]), v)
+					if err != nil {
+						return err
+					}
+					d.Connections[i].Link = boardOutputLink(rel)
 					break
 				}
 			}
@@ -839,71 +777,49 @@ func relink(currDiagramPath string, d *d2target.Diagram, linkToOutput map[string
 	return nil
 }
 
-func postProcess(ctx context.Context, plugin d2plugin.Plugin, in []byte) ([]byte, error) {
-	postProcessor, ok := plugin.(d2plugin.PostProcessor)
-	if !ok {
-		return in, nil
+func boardOutputLink(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i, part := range parts {
+		if part != "." && part != ".." {
+			parts[i] = url.PathEscape(part)
+		}
 	}
-	return postProcessor.PostProcess(ctx, in)
+	return strings.Join(parts, "/")
 }
 
-func render(ctx context.Context, ms *xmain.State, compileDur time.Duration, plugin d2plugin.Plugin, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool) (_ [][]byte, written bool, _ error) {
+func render(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool) (_ [][]byte, written bool, _ error) {
+	return renderToPaths(ctx, ms, compileDur, opts, inputPath, newBoardOutputPaths(outputPath), bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview)
+}
+
+func renderToPaths(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath string, outputPaths boardOutputPaths, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool) (_ [][]byte, written bool, _ error) {
 	if ext == PNG {
 		var encoder rasterPNGEncoder
 		defer encoder.close()
-		return renderWithPNGEncoder(ctx, ms, compileDur, plugin, opts, inputPath, outputPath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, &encoder)
+		return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, &encoder)
 	}
-	return renderWithPNGEncoder(ctx, ms, compileDur, plugin, opts, inputPath, outputPath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, nil)
+	return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, nil)
 }
 
-func renderWithPNGEncoder(ctx context.Context, ms *xmain.State, compileDur time.Duration, plugin d2plugin.Plugin, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool, pngEncoder *rasterPNGEncoder) (_ [][]byte, written bool, _ error) {
-	if diagram.Name != "" {
-		ext := filepath.Ext(outputPath)
-		outputPath = strings.TrimSuffix(outputPath, ext)
-		outputPath = filepath.Join(outputPath, diagram.Name)
-		outputPath += ext
-	}
+func renderWithPNGEncoder(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool, pngEncoder *rasterPNGEncoder) (_ [][]byte, written bool, _ error) {
+	return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, newBoardOutputPaths(outputPath), bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, pngEncoder)
+}
 
-	boardOutputPath := outputPath
+func renderWithPNGEncoderToPaths(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath string, outputPaths boardOutputPaths, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool, pngEncoder *rasterPNGEncoder) (_ [][]byte, written bool, _ error) {
+	plan, err := planBoardOutput(outputPaths, diagram)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0 {
-		if outputPath == "-" {
+		if plan.base.writePath == "-" {
 			// TODO it can if composed into one
 			return nil, false, fmt.Errorf("multiboard output cannot be written to stdout")
 		}
-		// Boards with subboards must be self-contained folders.
-		ext := filepath.Ext(boardOutputPath)
-		boardOutputPath = strings.TrimSuffix(boardOutputPath, ext)
-		os.RemoveAll(boardOutputPath)
-		boardOutputPath = filepath.Join(boardOutputPath, "index")
-		boardOutputPath += ext
-	}
-
-	layersOutputPath := outputPath
-	if len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0 {
-		ext := filepath.Ext(layersOutputPath)
-		layersOutputPath = strings.TrimSuffix(layersOutputPath, ext)
-		layersOutputPath = filepath.Join(layersOutputPath, "layers")
-		layersOutputPath += ext
-	}
-	scenariosOutputPath := outputPath
-	if len(diagram.Layers) > 0 || len(diagram.Steps) > 0 {
-		ext := filepath.Ext(scenariosOutputPath)
-		scenariosOutputPath = strings.TrimSuffix(scenariosOutputPath, ext)
-		scenariosOutputPath = filepath.Join(scenariosOutputPath, "scenarios")
-		scenariosOutputPath += ext
-	}
-	stepsOutputPath := outputPath
-	if len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 {
-		ext := filepath.Ext(stepsOutputPath)
-		stepsOutputPath = strings.TrimSuffix(stepsOutputPath, ext)
-		stepsOutputPath = filepath.Join(stepsOutputPath, "steps")
-		stepsOutputPath += ext
 	}
 
 	var boards [][]byte
 	for _, dl := range diagram.Layers {
 		childPreview := wantPreview && diagram.IsFolderOnly && len(boards) == 0
-		childrenBoards, childWritten, err := renderWithPNGEncoder(ctx, ms, compileDur, plugin, opts, inputPath, layersOutputPath, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
+		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.layers, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
 		written = written || childWritten
 		if err != nil {
 			return boards, written, err
@@ -912,7 +828,7 @@ func renderWithPNGEncoder(ctx context.Context, ms *xmain.State, compileDur time.
 	}
 	for _, dl := range diagram.Scenarios {
 		childPreview := wantPreview && diagram.IsFolderOnly && len(boards) == 0
-		childrenBoards, childWritten, err := renderWithPNGEncoder(ctx, ms, compileDur, plugin, opts, inputPath, scenariosOutputPath, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
+		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.scenarios, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
 		written = written || childWritten
 		if err != nil {
 			return boards, written, err
@@ -921,7 +837,7 @@ func renderWithPNGEncoder(ctx context.Context, ms *xmain.State, compileDur time.
 	}
 	for _, dl := range diagram.Steps {
 		childPreview := wantPreview && diagram.IsFolderOnly && len(boards) == 0
-		childrenBoards, childWritten, err := renderWithPNGEncoder(ctx, ms, compileDur, plugin, opts, inputPath, stepsOutputPath, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
+		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.steps, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
 		written = written || childWritten
 		if err != nil {
 			return boards, written, err
@@ -931,14 +847,14 @@ func renderWithPNGEncoder(ctx context.Context, ms *xmain.State, compileDur time.
 
 	if !diagram.IsFolderOnly {
 		start := time.Now()
-		out, boardWritten, err := _renderWithPNGEncoder(ctx, ms, plugin, opts, inputPath, boardOutputPath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, pngEncoder)
+		out, boardWritten, err := _renderWithPNGEncoder(ctx, ms, opts, inputPath, plan.board.writePath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, pngEncoder)
 		written = written || boardWritten
 		if err != nil {
 			return boards, written, err
 		}
 		dur := compileDur + time.Since(start)
 		if opts.MasterID == "" {
-			ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(boardOutputPath), dur)
+			ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(plan.board.displayPath), dur)
 		}
 		boards = append([][]byte{out}, boards...)
 	}
@@ -946,9 +862,9 @@ func renderWithPNGEncoder(ctx context.Context, ms *xmain.State, compileDur time.
 	return boards, written, nil
 }
 
-func renderSingle(ctx context.Context, ms *xmain.State, compileDur time.Duration, plugin d2plugin.Plugin, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, outputFormat exportExtension, asciiMode string, wantPreview bool) ([][]byte, bool, error) {
+func renderSingle(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, outputFormat exportExtension, asciiMode string, wantPreview bool) ([][]byte, bool, error) {
 	start := time.Now()
-	out, written, err := _renderWithPNGEncoder(ctx, ms, plugin, opts, inputPath, outputPath, bundle, forceAppendix, ruler, diagram, outputFormat, asciiMode, wantPreview, nil)
+	out, written, err := _renderWithPNGEncoder(ctx, ms, opts, inputPath, outputPath, bundle, forceAppendix, ruler, diagram, outputFormat, asciiMode, wantPreview, nil)
 	if err != nil {
 		return [][]byte{}, written, err
 	}
@@ -959,7 +875,7 @@ func renderSingle(ctx context.Context, ms *xmain.State, compileDur time.Duration
 	return [][]byte{out}, written, nil
 }
 
-func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, plugin d2plugin.Plugin, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, outputFormat exportExtension, asciiMode string, wantPreview bool, pngEncoder *rasterPNGEncoder) ([]byte, bool, error) {
+func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, outputFormat exportExtension, asciiMode string, wantPreview bool, pngEncoder *rasterPNGEncoder) ([]byte, bool, error) {
 	if outputFormat == TXT {
 		var charsetType charset.Type
 		switch asciiMode {
@@ -1008,7 +924,7 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, plugin d2plugin
 	}
 	if toPNG {
 		returnSVG := wantPreview || opts.MasterID != ""
-		svg, err := renderRasterSVG(ctx, plugin, diagram, *renderOpts, returnSVG, opts.MasterID == "")
+		svg, err := renderRasterSVG(diagram, *renderOpts, returnSVG)
 		if err != nil {
 			return svg, false, err
 		}
@@ -1031,20 +947,17 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, plugin d2plugin
 	if err != nil {
 		return nil, false, err
 	}
-	if opts.MasterID == "" {
-		svg, err = postProcess(ctx, plugin, svg)
-		if err != nil {
-			return svg, false, err
-		}
-	}
 
 	cacheImages := ms.Env.Getenv("IMG_CACHE") == "1"
 	l := simplelog.FromCmdLog(ms.Log)
-	svg, bundleErr := imgbundler.BundleLocal(ctx, l, inputPath, svg, cacheImages)
-	if bundle {
-		var bundleErr2 error
-		svg, bundleErr2 = imgbundler.BundleRemote(ctx, l, svg, cacheImages)
-		bundleErr = multierr.Combine(bundleErr, bundleErr2)
+	assetResolver, bundleErr := svgBundleResolver(ctx, inputPath, cacheImages)
+	if bundleErr == nil {
+		svg, bundleErr = imgbundler.BundleWithResolver(ctx, l, svg, imgbundler.BundleOptions{
+			Resolver: assetResolver,
+			Local:    true,
+			Remote:   bundle,
+		})
+		assetResolver.CloseIdleConnections()
 	}
 	if forceAppendix {
 		svg = appendix.Append(diagram, renderOpts, ruler, svg)
@@ -1085,21 +998,6 @@ func renameExt(fp string, newExt string) string {
 func getFileName(path string) string {
 	ext := filepath.Ext(path)
 	return strings.TrimSuffix(filepath.Base(path), ext)
-}
-
-func populateLayoutOpts(ctx context.Context, ms *xmain.State, ps []d2plugin.Plugin) error {
-	pluginFlags, err := d2plugin.ListPluginFlags(ctx, ps)
-	if err != nil {
-		return err
-	}
-
-	for _, f := range pluginFlags {
-		f.AddToOpts(ms.Opts)
-		// Don't pollute the main d2 flagset with these. It'll be a lot
-		ms.Opts.Flags.MarkHidden(f.Name)
-	}
-
-	return nil
 }
 
 func loadFont(ms *xmain.State, path string) ([]byte, error) {

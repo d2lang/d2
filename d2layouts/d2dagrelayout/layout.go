@@ -12,6 +12,7 @@ import (
 	"github.com/d2lang/util-go/go2"
 
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/internal/layoutguard"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
@@ -50,10 +51,16 @@ func DefaultLayout(ctx context.Context, g *d2graph.Graph) (err error) {
 }
 
 func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if opts == nil {
 		opts = &DefaultOpts
 	}
 	defer xdefer.Errorf(&err, "failed to dagre layout")
+	if err := layoutguard.CheckGraph(ctx, "dagre", g); err != nil {
+		return err
+	}
 
 	rootAttrs := dagreOpts{
 		ConfigurableOpts: ConfigurableOpts{
@@ -173,7 +180,15 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// dagro does not accept a context. Check immediately around the call; the
+	// topology preflight above bounds inputs before entering this section.
 	if err := dagro.Layout(dagreGraph); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 

@@ -1,6 +1,7 @@
 package d2grid
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/d2lang/d2/d2graph"
@@ -24,7 +25,7 @@ type gridDiagram struct {
 	horizontalGap int
 }
 
-func newGridDiagram(root *d2graph.Object) *gridDiagram {
+func newGridDiagram(root *d2graph.Object) (*gridDiagram, error) {
 	gd := gridDiagram{
 		objects:       root.ChildrenArray,
 		verticalGap:   DEFAULT_GAP,
@@ -32,13 +33,34 @@ func newGridDiagram(root *d2graph.Object) *gridDiagram {
 	}
 
 	if root.GridRows != nil {
-		gd.rows, _ = strconv.Atoi(root.GridRows.Value)
+		var err error
+		gd.rows, err = strconv.Atoi(root.GridRows.Value)
+		if err != nil || gd.rows <= 0 {
+			return nil, fmt.Errorf("invalid grid-rows %q", root.GridRows.Value)
+		}
+		if gd.rows > d2graph.MaxGridDimension {
+			return nil, fmt.Errorf("grid-rows %d exceeds the maximum of %d", gd.rows, d2graph.MaxGridDimension)
+		}
 	}
 	if root.GridColumns != nil {
-		gd.columns, _ = strconv.Atoi(root.GridColumns.Value)
+		var err error
+		gd.columns, err = strconv.Atoi(root.GridColumns.Value)
+		if err != nil || gd.columns <= 0 {
+			return nil, fmt.Errorf("invalid grid-columns %q", root.GridColumns.Value)
+		}
+		if gd.columns > d2graph.MaxGridDimension {
+			return nil, fmt.Errorf("grid-columns %d exceeds the maximum of %d", gd.columns, d2graph.MaxGridDimension)
+		}
+	}
+	if len(gd.objects) > d2graph.MaxGridCells {
+		return nil, fmt.Errorf("grid object count %d exceeds the limit of %d cells", len(gd.objects), d2graph.MaxGridCells)
 	}
 
 	if gd.rows != 0 && gd.columns != 0 {
+		capacity, err := d2graph.GridCapacity(gd.rows, gd.columns)
+		if err != nil {
+			return nil, err
+		}
 		// . row-directed  column-directed
 		// .  ┌───────┐    ┌───────┐
 		// .  │ a b c │    │ a d g │
@@ -46,7 +68,7 @@ func newGridDiagram(root *d2graph.Object) *gridDiagram {
 		// .  │ g h i │    │ c f i │
 		// .  └───────┘    └───────┘
 		// if keyword rows is first, make it row-directed, if columns is first it is column-directed
-		if root.GridRows.MapKey.Range.Before(root.GridColumns.MapKey.Range) {
+		if root.GridRows.MapKey == nil || root.GridColumns.MapKey == nil || root.GridRows.MapKey.Range.Before(root.GridColumns.MapKey.Range) {
 			gd.rowDirected = true
 		}
 
@@ -60,14 +82,14 @@ func newGridDiagram(root *d2graph.Object) *gridDiagram {
 		// .           └───────┘ ▲                          │           └───────┘ ▲
 		// .           ▲         └─existing objects modified│           ▲         └─existing columns preserved
 		// .           └─existing rows preserved            │           └─existing objects modified
-		capacity := gd.rows * gd.columns
-		for capacity < len(gd.objects) {
+		if capacity < len(gd.objects) {
 			if gd.rowDirected {
-				gd.rows++
-				capacity += gd.columns
+				gd.rows = divideRoundUp(len(gd.objects), gd.columns)
 			} else {
-				gd.columns++
-				capacity += gd.rows
+				gd.columns = divideRoundUp(len(gd.objects), gd.rows)
+			}
+			if _, err := d2graph.GridCapacity(gd.rows, gd.columns); err != nil {
+				return nil, fmt.Errorf("expanded grid: %w", err)
 			}
 		}
 	} else if gd.columns == 0 {
@@ -98,7 +120,15 @@ func newGridDiagram(root *d2graph.Object) *gridDiagram {
 		o.TopLeft = geo.NewPoint(0, 0)
 	}
 
-	return &gd
+	return &gd, nil
+}
+
+func divideRoundUp(numerator, denominator int) int {
+	quotient := numerator / denominator
+	if numerator%denominator != 0 {
+		quotient++
+	}
+	return quotient
 }
 
 func (gd *gridDiagram) shift(dx, dy float64) {

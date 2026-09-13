@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/xml"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,108 @@ func TestD2SourceBackslashParity(t *testing.T) {
 	}
 	if width != wantW || height != wantH {
 		t.Fatalf("Measure() = (%d, %d), want (%d, %d)", width, height, wantW, wantH)
+	}
+}
+
+func TestInputLimits(t *testing.T) {
+	if err := ValidateInput(strings.Repeat("x", MaxInputBytes)); err != nil {
+		t.Fatalf("ValidateInput() rejected exact byte limit: %v", err)
+	}
+	exactDepth := strings.Repeat("{", MaxGroupNestingDepth) + "x" + strings.Repeat("}", MaxGroupNestingDepth)
+	if _, err := Render(exactDepth); err != nil {
+		t.Fatalf("Render() rejected exact group depth: %v", err)
+	}
+	if _, _, err := Measure(exactDepth); err != nil {
+		t.Fatalf("Measure() rejected exact group depth: %v", err)
+	}
+
+	tooLarge := strings.Repeat("x", MaxInputBytes+1)
+	tooDeep := strings.Repeat("{", MaxGroupNestingDepth+1) + "x" + strings.Repeat("}", MaxGroupNestingDepth+1)
+	operations := []struct {
+		name string
+		run  func(string) error
+	}{
+		{name: "Render", run: func(input string) error {
+			_, err := Render(input)
+			return err
+		}},
+		{name: "Measure", run: func(input string) error {
+			_, _, err := Measure(input)
+			return err
+		}},
+	}
+	for _, operation := range operations {
+		operation := operation
+		t.Run(operation.name+"/bytes", func(t *testing.T) {
+			err := operation.run(tooLarge)
+			want := "latex input is 4097 bytes, exceeding limit 4096"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s() error = %v, want %q", operation.name, err, want)
+			}
+		})
+		t.Run(operation.name+"/groups", func(t *testing.T) {
+			err := operation.run(tooDeep)
+			want := "latex group nesting depth 129 exceeds limit 128"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s() error = %v, want %q", operation.name, err, want)
+			}
+		})
+	}
+}
+
+func TestValidateInputTeXEscapingAndComments(t *testing.T) {
+	atLimit := strings.Repeat("{", MaxGroupNestingDepth)
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:  "exact group depth",
+			input: atLimit + "x" + strings.Repeat("}", MaxGroupNestingDepth),
+		},
+		{
+			name:  "escaped braces",
+			input: strings.Repeat(`\{`, MaxGroupNestingDepth+1),
+		},
+		{
+			name:  "three backslashes escape brace",
+			input: atLimit + `\\\{`,
+		},
+		{
+			name:    "two backslashes leave group brace",
+			input:   atLimit + `\\{`,
+			wantErr: true,
+		},
+		{
+			name:  "braces inside comment",
+			input: atLimit + "%" + strings.Repeat("{", MaxGroupNestingDepth+1) + "\n" + strings.Repeat("}", MaxGroupNestingDepth),
+		},
+		{
+			name:  "even backslashes leave comment marker",
+			input: atLimit + `\\%{` + "\n" + strings.Repeat("}", MaxGroupNestingDepth),
+		},
+		{
+			name:    "escaped comment marker",
+			input:   atLimit + `\%{`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid UTF-8",
+			input:   string([]byte{0xff}),
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateInput(test.input)
+			if test.wantErr && err == nil {
+				t.Fatal("ValidateInput() unexpectedly succeeded")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("ValidateInput() error = %v", err)
+			}
+		})
 	}
 }
 

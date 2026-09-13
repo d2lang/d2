@@ -24,6 +24,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/imageasset"
+	"github.com/d2lang/d2/lib/netpolicy"
 )
 
 func TestResolvedJPEGEXIFOrientationRenders(t *testing.T) {
@@ -654,7 +655,7 @@ func newCountingAssetResolver(t *testing.T, failure error) (*imageasset.Resolver
 
 func newTestAssetResolver(t *testing.T, client *http.Client) *imageasset.Resolver {
 	t.Helper()
-	resolver, err := imageasset.New(imageasset.Options{HTTPClient: client, Limits: imageasset.Limits{
+	resolver, err := imageasset.New(imageasset.Options{HTTPClient: client, NetworkPolicy: netpolicy.Policy{AllowPrivateNetworks: true}, Limits: imageasset.Limits{
 		MaxFetchedBytes: 1 << 20, MaxEncodedBytes: 1 << 20, MaxDecompressedBytes: 1 << 20, MaxSVGBytes: 1 << 20,
 		MaxDecodedWidth: 1024, MaxDecodedHeight: 1024, MaxDecodedPixels: 1 << 20,
 		MaxAssets: 64, MaxCumulativeEncodedBytes: 8 << 20, MaxCumulativeDecodedBytes: 16 << 20,

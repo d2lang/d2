@@ -19,6 +19,7 @@ import (
 	"github.com/d2lang/util-go/go2"
 
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/internal/layoutguard"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
@@ -242,11 +243,14 @@ func DefaultLayout(ctx context.Context, g *d2graph.Graph) (err error) {
 }
 
 func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if opts == nil {
 		opts = &DefaultOpts
 	}
 	defer xdefer.Errorf(&err, "failed to ELK layout")
-	if err := ctx.Err(); err != nil {
+	if err := layoutguard.CheckGraph(ctx, "ELK", g); err != nil {
 		return err
 	}
 	graphStats := collectELKGraphStats(g)
@@ -478,9 +482,17 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		return err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// ELK does not accept a context. Check immediately around the call; the
+	// topology preflight above bounds inputs before entering this section.
 	jsonOut, err := elk.LayoutJSON(raw)
 	if err != nil {
 		return fmt.Errorf("native ELK layout failed: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	err = json.Unmarshal(jsonOut, &elkGraph)

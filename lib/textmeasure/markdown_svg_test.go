@@ -1006,6 +1006,39 @@ func TestMarkdownSVGRejectsDangerousLinks(t *testing.T) {
 	assert.NotContains(t, manual, "<a ")
 }
 
+func TestDangerousLinkPolicy(t *testing.T) {
+	t.Parallel()
+
+	for _, link := range []string{
+		"javascript:alert(1)",
+		"JAVA\tSCRIPT:alert(1)",
+		"vBsCrIpT:msgbox(1)",
+		"data:text/html,<script>alert(1)</script>",
+		"data:image/svg+xml,<svg onload=alert(1)>",
+		"file:///etc/passwd",
+		"j&#x61;vascript:alert(1)",
+		"java%0Ascript:alert(1)",
+		"java%250Ascript:alert(1)",
+	} {
+		assert.True(t, textmeasure.IsDangerousLink(link), link)
+		assert.Empty(t, textmeasure.SafeMarkdownLink(link), link)
+	}
+
+	for _, link := range []string{
+		"https://example.com/a?x=1&y=2",
+		"http://example.com",
+		"mailto:security@example.com",
+		"../docs/security",
+		"root.layers.details",
+		"vscode://file/example.go:10:2",
+		"obsidian://open?vault=notes",
+		"data:image/png;base64,iVBORw0KGgo=",
+	} {
+		assert.False(t, textmeasure.IsDangerousLink(link), link)
+		assert.Equal(t, link, textmeasure.SafeMarkdownLink(link), link)
+	}
+}
+
 func TestLayoutMarkdownOmitsImagesWithoutFetching(t *testing.T) {
 	t.Parallel()
 	ruler, err := textmeasure.NewRuler()

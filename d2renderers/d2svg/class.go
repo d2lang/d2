@@ -2,7 +2,6 @@ package d2svg
 
 import (
 	"fmt"
-	"html"
 	"io"
 	"math"
 
@@ -21,7 +20,7 @@ func classHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text st
 	rectEl.FillPattern = shape.FillPattern
 	rectEl.ClassName = "class_header"
 	if shape.BorderRadius != 0 {
-		rectEl.ClipPath = fmt.Sprintf("%v-%v", diagramHash, shape.ID)
+		rectEl.SetClipPathID(borderRadiusClipPathID(diagramHash, shape.ID))
 	}
 	str := rectEl.Render()
 
@@ -41,7 +40,7 @@ func classHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text st
 		textEl.Style = fmt.Sprintf(`text-anchor:%s;font-size:%vpx;`,
 			"middle", 4+fontSize,
 		)
-		textEl.Content = RenderText(text, textEl.X, textHeight)
+		textEl.SetInnerSVG(svg.TrustedFragment(RenderText(text, textEl.X, textHeight)))
 		str += textEl.Render()
 	}
 	return str
@@ -67,7 +66,7 @@ func classRow(shape d2target.Shape, box *geo.Box, prefix, nameText, typeText str
 	textEl.Fill = shape.PrimaryAccentColor
 	textEl.ClassName = "text-mono"
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "start", fontSize)
-	textEl.Content = prefix
+	textEl.SetText(prefix)
 	out := textEl.Render()
 
 	textEl.X = prefixTL.X + d2target.PrefixWidth
@@ -76,7 +75,7 @@ func classRow(shape d2target.Shape, box *geo.Box, prefix, nameText, typeText str
 	if underline {
 		textEl.ClassName += " text-underline"
 	}
-	textEl.Content = svg.EscapeText(nameText)
+	textEl.SetText(nameText)
 	out += textEl.Render()
 
 	textEl.X = typeTR.X
@@ -84,7 +83,7 @@ func classRow(shape d2target.Shape, box *geo.Box, prefix, nameText, typeText str
 	textEl.Fill = shape.SecondaryAccentColor
 	textEl.ClassName = "text-mono"
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "end", fontSize)
-	textEl.Content = svg.EscapeText(typeText)
+	textEl.SetText(typeText)
 	out += textEl.Render()
 
 	return out
@@ -153,12 +152,12 @@ func drawClass(writer io.Writer, diagramHash string, targetShape d2target.Shape,
 
 		tl := iconPosition.GetPointOnBox(box, label.PADDING, float64(iconSize), float64(iconSize))
 
-		fmt.Fprintf(writer, `<image href="%s" x="%s" y="%s" width="%d" height="%d" />`,
-			html.EscapeString(targetShape.Icon.String()),
-			svg.FormatFloat(tl.X),
-			svg.FormatFloat(tl.Y),
-			iconSize,
-			iconSize,
-		)
+		fmt.Fprint(writer, svg.EmptyElement("image",
+			svg.Attr("href", targetShape.Icon.String()),
+			svg.FloatAttr("x", tl.X),
+			svg.FloatAttr("y", tl.Y),
+			svg.IntAttr("width", iconSize),
+			svg.IntAttr("height", iconSize),
+		))
 	}
 }

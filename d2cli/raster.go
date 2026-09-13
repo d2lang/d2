@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/d2lang/d2/d2plugin"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -25,47 +24,16 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svgimport"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/imageasset"
+	"github.com/d2lang/d2/lib/localfile"
+	"github.com/d2lang/d2/lib/netpolicy"
 	"github.com/d2lang/d2/lib/xgif"
 )
 
-func validateRasterPostProcessor(ctx context.Context, plugin d2plugin.Plugin, sourceSVG []byte) error {
-	postProcessor, ok := plugin.(d2plugin.PostProcessor)
-	if !ok {
-		return nil
-	}
-	// A PostProcessor may mutate its argument and return the same slice. Give it
-	// an owned input so the pristine source remains a trustworthy comparison.
-	processed, err := postProcessor.PostProcess(ctx, bytes.Clone(sourceSVG))
-	if err != nil {
-		return fmt.Errorf("raster postprocessor validation: %w", err)
-	}
-	if !bytes.Equal(sourceSVG, processed) {
-		return fmt.Errorf("raster export cannot apply SVG changes made by the layout plugin postprocessor; disable the postprocessor for PNG, GIF, PDF, and PPTX output")
-	}
-	return nil
-}
-
-func renderRasterSVG(ctx context.Context, plugin d2plugin.Plugin, diagram *d2target.Diagram, opts d2svg.RenderOpts, returnSVG, checkPostProcessor bool) ([]byte, error) {
-	_, checksPostProcessor := plugin.(d2plugin.PostProcessor)
-	if !returnSVG && (!checkPostProcessor || !checksPostProcessor) {
+func renderRasterSVG(diagram *d2target.Diagram, opts d2svg.RenderOpts, returnSVG bool) ([]byte, error) {
+	if !returnSVG {
 		return nil, nil
 	}
-	sourceSVG, err := d2svg.Render(diagram, &opts)
-	if err != nil {
-		return nil, err
-	}
-	if checkPostProcessor && checksPostProcessor {
-		if err := validateRasterPostProcessor(ctx, plugin, sourceSVG); err != nil {
-			if returnSVG {
-				return sourceSVG, err
-			}
-			return nil, err
-		}
-	}
-	if returnSVG {
-		return sourceSVG, nil
-	}
-	return nil, nil
+	return d2svg.Render(diagram, &opts)
 }
 
 const (
@@ -162,6 +130,12 @@ const (
 	imageAssetMaxCount                        = rasterMaxAssets - fontAssetReserve
 	imageAssetMaxCumulativeEncodedBytes int64 = rasterMaxAssetBytes - fontAssetByteReserve
 	imageAssetMaxCumulativeDecodedBytes int64 = rasterMaxDecodedBytes
+	// SVG embedding uses the same strict PNG, JPEG, GIF, WebP, and SVG resolver
+	// as raster export. It has no retained-font reserve, so the complete image
+	// count and byte budget remain available to one output document.
+	svgBundleMaxAssets             = rasterMaxAssets
+	svgBundleMaxEncodedBytes int64 = rasterMaxAssetBytes
+	svgBundleMaxDecodedBytes int64 = rasterMaxDecodedBytes
 	// Paged exports render each board once, so earlier per-board key memos may be
 	// evicted. This cap still retains the complete 512 MiB decoded-raster
 	// budget, 64 MiB of parsed font sources, one maximum-size 32 MiB key memo,
@@ -265,10 +239,11 @@ func buildScene(ctx context.Context, inputPath string, cacheImages bool, diagram
 	if diagram == nil {
 		return nil, fmt.Errorf("raster export: nil diagram")
 	}
-	assetOptions, err := sceneAssetOptions(inputPath, cacheImages)
+	assetOptions, err := sceneAssetOptions(ctx, inputPath, cacheImages)
 	if err != nil {
 		return nil, err
 	}
+	defer assetOptions.Resolver.CloseIdleConnections()
 	return buildSceneWithAssets(ctx, diagram, opts, assetOptions)
 }
 
@@ -479,7 +454,7 @@ func renderGIFBoardFrames(
 	return nil
 }
 
-func renderGIF(ctx context.Context, plugin d2plugin.Plugin, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMs int, wantPreview bool) (encoded, previewSVG []byte, err error) {
+func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMs int, wantPreview bool) (encoded, previewSVG []byte, err error) {
 	session, err := newGIFRenderSession()
 	if err != nil {
 		return nil, nil, err
@@ -491,7 +466,7 @@ func renderGIF(ctx context.Context, plugin d2plugin.Plugin, inputPath string, ca
 	var incrementalEncoder *xgif.OpaquePalettedAnimationEncoder
 	var incrementalBounds image.Rectangle
 	summary, err := renderGIFWithSession(
-		ctx, plugin, inputPath, cacheImages, diagram, opts, intervalMs, session, &workspace, wantPreview,
+		ctx, inputPath, cacheImages, diagram, opts, intervalMs, session, &workspace, wantPreview,
 		func(totalBoards, totalFrames int, bounds image.Rectangle) error {
 			if totalBoards != 1 {
 				return nil
@@ -579,7 +554,6 @@ type gifRenderSummary struct {
 
 func renderGIFWithSession(
 	ctx context.Context,
-	plugin d2plugin.Plugin,
 	inputPath string,
 	cacheImages bool,
 	diagram *d2target.Diagram,
@@ -615,10 +589,11 @@ func renderGIFWithSession(
 	if len(boards) == 0 {
 		return summary, fmt.Errorf("GIF animation requires at least one renderable board")
 	}
-	assetOptions, err := gifSceneAssetOptions(inputPath, cacheImages, len(boards))
+	assetOptions, err := gifSceneAssetOptions(ctx, inputPath, cacheImages, len(boards))
 	if err != nil {
 		return summary, err
 	}
+	defer assetOptions.Resolver.CloseIdleConnections()
 	fontOptions, err := newFontFallbackOptions(len(boards))
 	if err != nil {
 		return summary, err
@@ -636,7 +611,7 @@ func renderGIFWithSession(
 		}
 		boardOpts := rasterRenderOptions(opts)
 		needsPreview := wantPreview && board == diagram && !diagram.IsFolderOnly
-		sourceSVG, err := renderRasterSVG(ctx, plugin, board, boardOpts, needsPreview, true)
+		sourceSVG, err := renderRasterSVG(board, boardOpts, needsPreview)
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
@@ -985,8 +960,8 @@ type assetSessionLimits struct {
 	svgImportBudget           d2scenebuild.SVGImportBudget
 }
 
-func sceneAssetOptions(inputPath string, cacheImages bool) (*d2scenebuild.AssetOptions, error) {
-	return newSceneAssetOptions(inputPath, cacheImages, assetSessionLimits{
+func sceneAssetOptions(ctx context.Context, inputPath string, cacheImages bool) (*d2scenebuild.AssetOptions, error) {
+	return newSceneAssetOptions(ctx, inputPath, cacheImages, assetSessionLimits{
 		maxDecodedPixels:          rasterMaxPixels,
 		maxAssets:                 imageAssetMaxCount,
 		maxCumulativeEncodedBytes: imageAssetMaxCumulativeEncodedBytes,
@@ -995,12 +970,12 @@ func sceneAssetOptions(inputPath string, cacheImages bool) (*d2scenebuild.AssetO
 	})
 }
 
-func gifSceneAssetOptions(inputPath string, cacheImages bool, boardCount int) (*d2scenebuild.AssetOptions, error) {
+func gifSceneAssetOptions(ctx context.Context, inputPath string, cacheImages bool, boardCount int) (*d2scenebuild.AssetOptions, error) {
 	budget, err := divideSVGImportBudget(svgImportBudget(), boardCount)
 	if err != nil {
 		return nil, err
 	}
-	return newSceneAssetOptions(inputPath, cacheImages, assetSessionLimits{
+	return newSceneAssetOptions(ctx, inputPath, cacheImages, assetSessionLimits{
 		maxDecodedPixels:          gifMaxFramePixels,
 		maxAssets:                 gifImageAssetMaxCount,
 		maxCumulativeEncodedBytes: gifImageEncodedBytes,
@@ -1009,42 +984,18 @@ func gifSceneAssetOptions(inputPath string, cacheImages bool, boardCount int) (*
 	})
 }
 
-func newSceneAssetOptions(inputPath string, cacheImages bool, limits assetSessionLimits) (*d2scenebuild.AssetOptions, error) {
-	baseDir := ""
-	if inputPath != "" && inputPath != "-" {
-		baseDir = filepath.Dir(inputPath)
-	}
-	var cache imageasset.Cache
-	if cacheImages {
-		assetCacheOnce.Do(func() {
-			assetCache, assetCacheErr = imageasset.NewMemoryCache(imageAssetMaxCount, assetCacheMaxBytes)
-		})
-		if assetCacheErr != nil {
-			return nil, fmt.Errorf("raster export: initialize image cache: %w", assetCacheErr)
-		}
-		cache = assetCache
-	}
-	cacheNamespace := ""
-	if cache != nil {
-		cacheNamespace = assetCacheNamespace
-	}
-	resolver, err := imageasset.New(imageasset.Options{
-		BaseDir:        baseDir,
-		HTTPClient:     assetHTTPClient,
-		Cache:          cache,
-		CacheNamespace: cacheNamespace,
-		Limits: imageasset.Limits{
-			MaxFetchedBytes:           min(imageAssetMaxBytes, limits.maxCumulativeEncodedBytes),
-			MaxEncodedBytes:           min(imageAssetMaxBytes, limits.maxCumulativeEncodedBytes),
-			MaxDecompressedBytes:      min(imageAssetMaxBytes, limits.maxCumulativeEncodedBytes),
-			MaxSVGBytes:               svgMaxBytes,
-			MaxDecodedWidth:           rasterMaxDimension,
-			MaxDecodedHeight:          rasterMaxDimension,
-			MaxDecodedPixels:          limits.maxDecodedPixels,
-			MaxAssets:                 limits.maxAssets,
-			MaxCumulativeEncodedBytes: limits.maxCumulativeEncodedBytes,
-			MaxCumulativeDecodedBytes: limits.maxCumulativeDecodedBytes,
-		},
+func newSceneAssetOptions(ctx context.Context, inputPath string, cacheImages bool, limits assetSessionLimits) (*d2scenebuild.AssetOptions, error) {
+	resolver, err := newImageAssetResolver(ctx, inputPath, cacheImages, imageasset.Limits{
+		MaxFetchedBytes:           min(imageAssetMaxBytes, limits.maxCumulativeEncodedBytes),
+		MaxEncodedBytes:           min(imageAssetMaxBytes, limits.maxCumulativeEncodedBytes),
+		MaxDecompressedBytes:      min(imageAssetMaxBytes, limits.maxCumulativeEncodedBytes),
+		MaxSVGBytes:               svgMaxBytes,
+		MaxDecodedWidth:           rasterMaxDimension,
+		MaxDecodedHeight:          rasterMaxDimension,
+		MaxDecodedPixels:          limits.maxDecodedPixels,
+		MaxAssets:                 limits.maxAssets,
+		MaxCumulativeEncodedBytes: limits.maxCumulativeEncodedBytes,
+		MaxCumulativeDecodedBytes: limits.maxCumulativeDecodedBytes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("raster export: initialize image resolver: %w", err)
@@ -1054,6 +1005,51 @@ func newSceneAssetOptions(inputPath string, cacheImages bool, limits assetSessio
 		SVGImportLimits: svgImportLimits(),
 		SVGImportBudget: limits.svgImportBudget,
 	}, nil
+}
+
+func svgBundleResolver(ctx context.Context, inputPath string, cacheImages bool) (*imageasset.Resolver, error) {
+	return newImageAssetResolver(ctx, inputPath, cacheImages, imageasset.Limits{
+		MaxFetchedBytes:           imageAssetMaxBytes,
+		MaxEncodedBytes:           imageAssetMaxBytes,
+		MaxDecompressedBytes:      imageAssetMaxBytes,
+		MaxSVGBytes:               imageAssetMaxBytes,
+		MaxDecodedWidth:           rasterMaxDimension,
+		MaxDecodedHeight:          rasterMaxDimension,
+		MaxDecodedPixels:          rasterMaxPixels,
+		MaxAssets:                 svgBundleMaxAssets,
+		MaxCumulativeEncodedBytes: svgBundleMaxEncodedBytes,
+		MaxCumulativeDecodedBytes: svgBundleMaxDecodedBytes,
+	})
+}
+
+func newImageAssetResolver(ctx context.Context, inputPath string, cacheImages bool, limits imageasset.Limits) (*imageasset.Resolver, error) {
+	baseDir := ""
+	if inputPath != "" && inputPath != "-" {
+		baseDir = filepath.Dir(inputPath)
+	}
+	var cache imageasset.Cache
+	if cacheImages {
+		assetCacheOnce.Do(func() {
+			assetCache, assetCacheErr = imageasset.NewMemoryCache(svgBundleMaxAssets, assetCacheMaxBytes)
+		})
+		if assetCacheErr != nil {
+			return nil, fmt.Errorf("initialize image cache: %w", assetCacheErr)
+		}
+		cache = assetCache
+	}
+	cacheNamespace := ""
+	if cache != nil {
+		cacheNamespace = assetCacheNamespace
+	}
+	return imageasset.New(imageasset.Options{
+		BaseDir:        baseDir,
+		LocalFiles:     localfile.Unrestricted(),
+		HTTPClient:     assetHTTPClient,
+		NetworkPolicy:  netpolicy.FromContext(ctx),
+		Cache:          cache,
+		CacheNamespace: cacheNamespace,
+		Limits:         limits,
+	})
 }
 
 func svgImportLimits() d2svgimport.Limits {

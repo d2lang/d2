@@ -97,9 +97,9 @@ def prepare(repo, output, base_ref):
     test = replace(test, "\tfor _, layoutName := range layoutsTested {",
                    "\tfor _, layoutName := range layoutsTested {\n"
                    'ctx = d2lib.NonlayoutCase(ctx, strings.TrimPrefix(t.Name(), "TestE2E/")+"/"+layoutName)')
-    test = replace(test, "\tplugin := &d2plugin.ELKPlugin",
-                   'ctx = d2lib.NonlayoutCase(ctx, strings.TrimPrefix(t.Name(), "TestE2E/")+"/elk")\n'
-                   "\tplugin := &d2plugin.ELKPlugin")
+    test = replace(test, "\n\tcompileOpts := &d2lib.CompileOptions{",
+                   '\nctx = d2lib.NonlayoutCase(ctx, strings.TrimPrefix(t.Name(), "TestE2E/")+"/elk")\n'
+                   "\tcompileOpts := &d2lib.CompileOptions{")
 
     # Two runners execute the real active cases: ordinary E2E and ASCII txtar.
     # Newline prefixes prevent matching a statement with deeper indentation.

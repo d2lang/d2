@@ -142,6 +142,14 @@ func TestBuildRejectsMalformedOrUnrepresentableLinkMetadata(t *testing.T) {
 		{name: "URL tooltip with link", mutate: func(d *d2target.Diagram) {
 			d.Shapes = []d2target.Shape{metadataShape("bad", 0, "https://example.com", "https://spoof.invalid")}
 		}, want: "must not be a URL when link is also set"},
+		{name: "dangerous shape link", mutate: func(d *d2target.Diagram) {
+			d.Shapes = []d2target.Shape{metadataShape("bad", 0, "java%0ascript:alert(1)", "")}
+		}, want: "uses an unsafe URL scheme"},
+		{name: "dangerous connection link", mutate: func(d *d2target.Diagram) {
+			connection := metadataConnection()
+			connection.Link = "v&#x62;script:msgbox(1)"
+			d.Connections = []d2target.Connection{connection}
+		}, want: "uses an unsafe URL scheme"},
 		{name: "orphan pretty link", mutate: func(d *d2target.Diagram) {
 			shape := metadataShape("bad", 0, "", "")
 			shape.PrettyLink = "derived label"

@@ -39,7 +39,7 @@ func fmtCmd(ctx context.Context, ms *xmain.State, check bool) (err error) {
 			return err
 		}
 
-		m, err := d2parser.Parse(inputPath, bytes.NewReader(input), nil)
+		m, err := d2parser.ParseContext(ctx, inputPath, bytes.NewReader(input), nil)
 		if err != nil {
 			return err
 		}
