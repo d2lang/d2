@@ -1779,6 +1779,10 @@ x: "" {
   a -> a
   a -> b
 }
+y: "" {
+  shape: cycle
+  a -> a
+}
 
 -- cycle-diagram --
 1: "" {

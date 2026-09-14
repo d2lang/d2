@@ -20,6 +20,20 @@ func TestARCStepsSamplesACubicPointCount(t *testing.T) {
 	}
 }
 
+// A cycle holding a single shape has no neighbours to make room for, and the
+// spacing formula is undefined there: sin(pi/1) rounds to 1.2e-16, which sends
+// the radius to about 1e17. Coordinates that large are spaced further apart
+// than the shapes are wide, so anything computed on the ring degenerates.
+func TestCalculateRadiusStaysFiniteForOneObject(t *testing.T) {
+	obj := boxedObject(0, 0, 100, 60)
+
+	radius := calculateRadius([]*d2graph.Object{obj})
+
+	if radius != MIN_RADIUS {
+		t.Fatalf("radius for a single object = %v, want %v", radius, MIN_RADIUS)
+	}
+}
+
 // A self loop shares one centre between source and destination, so the arc
 // geometry degenerates: the sweep is zero and both clipped endpoints land on
 // the same point. Routing it as a straight line therefore yields a zero length

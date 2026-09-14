@@ -100,6 +100,13 @@ func calculateRadius(objects []*d2graph.Object) float64 {
 		size := math.Max(obj.Box.Width, obj.Box.Height)
 		maxSize = math.Max(maxSize, size)
 	}
+	if numObjects < 2 {
+		// sin(pi/1) is zero to within rounding, so the expression below
+		// returns about 1e17. Every coordinate on the ring is then spaced
+		// further apart than the shapes themselves, and the arcs computed
+		// from them collapse. One shape needs no room for neighbours.
+		return MIN_RADIUS
+	}
 	minRadius := (maxSize/2.0 + PADDING) / math.Sin(math.Pi/numObjects)
 	return math.Max(minRadius, MIN_RADIUS)
 }

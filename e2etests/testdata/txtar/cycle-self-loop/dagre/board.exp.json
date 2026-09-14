@@ -136,6 +136,89 @@
       "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
+    },
+    {
+      "id": "y",
+      "type": "cycle",
+      "pos": {
+        "x": 287,
+        "y": 200
+      },
+      "width": 53,
+      "height": 106,
+      "opacity": 1,
+      "strokeDash": 0,
+      "strokeWidth": 2,
+      "borderRadius": 0,
+      "fill": "N7",
+      "stroke": "B1",
+      "animated": false,
+      "shadow": false,
+      "3d": false,
+      "multiple": false,
+      "double-border": false,
+      "tooltip": "",
+      "link": "",
+      "icon": null,
+      "iconPosition": "",
+      "blend": false,
+      "fields": null,
+      "methods": null,
+      "columns": null,
+      "label": "",
+      "fontSize": 28,
+      "fontFamily": "DEFAULT",
+      "language": "",
+      "color": "N1",
+      "italic": false,
+      "bold": false,
+      "underline": false,
+      "labelWidth": 0,
+      "labelHeight": 0,
+      "zIndex": 0,
+      "level": 1
+    },
+    {
+      "id": "y.a",
+      "type": "rectangle",
+      "pos": {
+        "x": 287,
+        "y": 240
+      },
+      "width": 53,
+      "height": 66,
+      "opacity": 1,
+      "strokeDash": 0,
+      "strokeWidth": 2,
+      "borderRadius": 0,
+      "fill": "B5",
+      "stroke": "B1",
+      "animated": false,
+      "shadow": false,
+      "3d": false,
+      "multiple": false,
+      "double-border": false,
+      "tooltip": "",
+      "link": "",
+      "icon": null,
+      "iconPosition": "",
+      "blend": false,
+      "fields": null,
+      "methods": null,
+      "columns": null,
+      "label": "a",
+      "fontSize": 16,
+      "fontFamily": "DEFAULT",
+      "language": "",
+      "color": "N1",
+      "italic": false,
+      "bold": true,
+      "underline": false,
+      "labelWidth": 8,
+      "labelHeight": 21,
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
+      "zIndex": 0,
+      "level": 2
     }
   ],
   "connections": [
@@ -443,6 +526,162 @@
         {
           "x": 53,
           "y": 471.2359924316406
+        }
+      ],
+      "isCurve": true,
+      "animated": false,
+      "tooltip": "",
+      "icon": null,
+      "zIndex": 0
+    },
+    {
+      "id": "y.(a -> a)[0]",
+      "src": "y.a",
+      "srcArrow": "none",
+      "dst": "y.a",
+      "dstArrow": "triangle",
+      "opacity": 1,
+      "strokeDash": 0,
+      "strokeWidth": 2,
+      "stroke": "B1",
+      "borderRadius": 10,
+      "label": "",
+      "fontSize": 16,
+      "fontFamily": "DEFAULT",
+      "language": "",
+      "color": "N2",
+      "italic": true,
+      "bold": false,
+      "underline": false,
+      "labelWidth": 0,
+      "labelHeight": 0,
+      "labelPosition": "",
+      "labelPercentage": 0,
+      "link": "",
+      "route": [
+        {
+          "x": 313.5,
+          "y": 240
+        },
+        {
+          "x": 309.34100341796875,
+          "y": 239.56199645996094
+        },
+        {
+          "x": 305.364990234375,
+          "y": 238.27000427246094
+        },
+        {
+          "x": 301.7439880371094,
+          "y": 236.17999267578125
+        },
+        {
+          "x": 298.6369934082031,
+          "y": 233.3820037841797
+        },
+        {
+          "x": 296.1789855957031,
+          "y": 230
+        },
+        {
+          "x": 294.4779968261719,
+          "y": 226.17999267578125
+        },
+        {
+          "x": 293.6090087890625,
+          "y": 222.08999633789062
+        },
+        {
+          "x": 293.6090087890625,
+          "y": 217.90899658203125
+        },
+        {
+          "x": 294.4779968261719,
+          "y": 213.81900024414062
+        },
+        {
+          "x": 296.1789855957031,
+          "y": 210
+        },
+        {
+          "x": 298.6369934082031,
+          "y": 206.61700439453125
+        },
+        {
+          "x": 301.7439880371094,
+          "y": 203.81900024414062
+        },
+        {
+          "x": 305.364990234375,
+          "y": 201.72900390625
+        },
+        {
+          "x": 309.34100341796875,
+          "y": 200.43699645996094
+        },
+        {
+          "x": 313.5,
+          "y": 200
+        },
+        {
+          "x": 317.6579895019531,
+          "y": 200.43699645996094
+        },
+        {
+          "x": 321.6340026855469,
+          "y": 201.72900390625
+        },
+        {
+          "x": 325.2550048828125,
+          "y": 203.81900024414062
+        },
+        {
+          "x": 328.36199951171875,
+          "y": 206.61700439453125
+        },
+        {
+          "x": 330.82000732421875,
+          "y": 210
+        },
+        {
+          "x": 332.52099609375,
+          "y": 213.81900024414062
+        },
+        {
+          "x": 333.3900146484375,
+          "y": 217.90899658203125
+        },
+        {
+          "x": 333.3900146484375,
+          "y": 222.08999633789062
+        },
+        {
+          "x": 332.52099609375,
+          "y": 226.17999267578125
+        },
+        {
+          "x": 330.82000732421875,
+          "y": 230
+        },
+        {
+          "x": 328.36199951171875,
+          "y": 233.3820037841797
+        },
+        {
+          "x": 325.2550048828125,
+          "y": 236.17999267578125
+        },
+        {
+          "x": 321.6340026855469,
+          "y": 238.27000427246094
+        },
+        {
+          "x": 317.6579895019531,
+          "y": 239.56199645996094
+        },
+        {
+          "x": 313.5,
+          "y": 240
         }
       ],
       "isCurve": true,
