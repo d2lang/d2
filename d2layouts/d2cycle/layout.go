@@ -15,6 +15,9 @@ const (
 	MIN_RADIUS = 200
 	PADDING    = 20
 	ARC_STEPS  = 30
+	// SELF_LOOP_MIN_RADIUS keeps the loop of a self edge visible even when the
+	// shape it hangs off is tiny.
+	SELF_LOOP_MIN_RADIUS = 20
 )
 
 // Layout arranges nodes in a circle and routes each edge as a circular arc
@@ -126,6 +129,11 @@ func createCircularArc(edge *d2graph.Edge, radius float64) {
 		return
 	}
 
+	if edge.Src == edge.Dst {
+		selfLoopRoute(edge)
+		return
+	}
+
 	srcCenter := edge.Src.Center()
 	dstCenter := edge.Dst.Center()
 	origin := geo.NewPoint(0, 0)
@@ -164,6 +172,48 @@ func createCircularArc(edge *d2graph.Edge, radius float64) {
 	// TraceToShapeBorder is a no-op for rectangular shapes.
 	path[0] = shape.TraceToShapeBorder(srcShape, path[0], srcCenter)
 	path[len(path)-1] = shape.TraceToShapeBorder(dstShape, path[len(path)-1], dstCenter)
+
+	edge.Route = path
+	edge.IsCurve = true
+}
+
+// selfLoopRoute routes an edge whose source and destination are the same shape
+// as a small circle sitting just outside that shape, on the far side from the
+// centre of the layout ring. The circular arc code cannot express a self loop:
+// the two centres coincide, so the sweep is zero and every clipped endpoint
+// collapses onto the same point. That leaves a zero length route, which the
+// renderer turns into NaN coordinates and the render target validator rejects.
+func selfLoopRoute(edge *d2graph.Edge) {
+	box := edge.Src.Box
+	center := edge.Src.Center()
+
+	// The ring is centred on the origin, so the shape centre already points
+	// away from it. A shape sitting exactly on the origin has no outward
+	// direction of its own; send its loop straight up.
+	outX, outY := center.X, center.Y
+	if norm := math.Hypot(outX, outY); norm > 0 {
+		outX, outY = outX/norm, outY/norm
+	} else {
+		outX, outY = 0, -1
+	}
+
+	reach := box.Width + box.Height
+	far := geo.NewPoint(center.X+outX*reach, center.Y+outY*reach)
+	anchor := clipToShapeBorder(edge.Src.ToShape(), box, center, far)
+
+	loopRadius := math.Max(SELF_LOOP_MIN_RADIUS, math.Min(box.Width, box.Height)/3)
+	loopCenter := geo.NewPoint(anchor.X+outX*loopRadius, anchor.Y+outY*loopRadius)
+	// anchor lies on the loop, so start and finish the sweep there.
+	startAngle := math.Atan2(anchor.Y-loopCenter.Y, anchor.X-loopCenter.X)
+
+	path := make([]*geo.Point, 0, ARC_STEPS+1)
+	for i := 0; i <= ARC_STEPS; i++ {
+		angle := startAngle + 2*math.Pi*float64(i)/float64(ARC_STEPS)
+		path = append(path, geo.NewPoint(
+			loopCenter.X+loopRadius*math.Cos(angle),
+			loopCenter.Y+loopRadius*math.Sin(angle),
+		))
+	}
 
 	edge.Route = path
 	edge.IsCurve = true
