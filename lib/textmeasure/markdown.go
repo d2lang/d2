@@ -135,7 +135,7 @@ func init() {
 }
 
 func MeasureMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, fontSize int) (width, height int, err error) {
-	layout, err := LayoutMarkdown(mdText, ruler, fontFamily, monoFontFamily, fontSize)
+	layout, err := layoutMarkdown(mdText, ruler, fontFamily, monoFontFamily, fontSize, false)
 	if err != nil {
 		return 0, 0, err
 	}

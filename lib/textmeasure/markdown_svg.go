@@ -136,6 +136,10 @@ type MarkdownSVGOptions struct {
 // LayoutMarkdown parses Markdown once, measures it with D2's existing box
 // model, and paints that same box model into native SVG primitives.
 func LayoutMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, fontSize int) (*MarkdownLayout, error) {
+	return layoutMarkdown(mdText, ruler, fontFamily, monoFontFamily, fontSize, true)
+}
+
+func layoutMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, fontSize int, paint bool) (*MarkdownLayout, error) {
 	render, err := RenderMarkdown(mdText)
 	if err != nil {
 		return nil, err
@@ -152,18 +156,23 @@ func LayoutMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily,
 	// measurement. Native painting normalizes whitespace to CSS semantics, but
 	// measuring that normalized tree would subtly resize old diagrams (notably
 	// a newline immediately after <br> in mixed-Unicode content).
-	legacyDoc, err := goquery.NewDocumentFromReader(strings.NewReader(render))
-	if err != nil {
-		return nil, err
-	}
-	legacyBody := legacyDoc.Find("body").First()
-	if len(legacyBody.Nodes) == 0 {
-		return &MarkdownLayout{}, nil
+	legacyBody := body
+	if paint {
+		legacyDoc, err := goquery.NewDocumentFromReader(strings.NewReader(render))
+		if err != nil {
+			return nil, err
+		}
+		legacyBody = legacyDoc.Find("body").First()
+		if len(legacyBody.Nodes) == 0 {
+			return &MarkdownLayout{}, nil
+		}
 	}
 	if err := validateMarkdownSVGNodes(body.Nodes[0]); err != nil {
 		return nil, err
 	}
-	normalizeMarkdownWhitespaceTree(body.Nodes[0])
+	if paint {
+		normalizeMarkdownWhitespaceTree(body.Nodes[0])
+	}
 
 	originalLineHeight := ruler.LineHeightFactor
 	originalBoundsWithDot := ruler.boundsWithDot
@@ -202,6 +211,9 @@ func LayoutMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily,
 	contentHeight := int(math.Ceil(rootAttrs.height))
 	p.layout.Width = contentWidth
 	p.layout.Height = contentHeight
+	if !paint {
+		return p.layout, nil
+	}
 	p.paintBlock(body.Nodes[0], 0, 0, ctx, float64(contentWidth))
 	var corpus strings.Builder
 	for _, primitive := range p.layout.Primitives {
