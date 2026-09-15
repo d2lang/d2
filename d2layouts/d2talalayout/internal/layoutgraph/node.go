@@ -1,6 +1,7 @@
 package layoutgraph
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
@@ -1060,8 +1061,8 @@ func sortNodesByID(nodes []*Node) {
 	if len(nodes) < 2 {
 		return
 	}
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].entityID() < nodes[j].entityID()
+	slices.SortFunc(nodes, func(a, b *Node) int {
+		return cmp.Compare(a.entityID(), b.entityID())
 	})
 }
 
