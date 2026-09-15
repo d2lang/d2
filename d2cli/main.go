@@ -909,6 +909,7 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.Rend
 		scale = go2.Pointer(1.)
 	}
 	renderOpts := &d2svg.RenderOpts{
+		Ruler:              ruler,
 		Pad:                opts.Pad,
 		Sketch:             opts.Sketch,
 		Center:             opts.Center,

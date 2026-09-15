@@ -181,7 +181,7 @@ func TestFontCorporaGeneratedCode(t *testing.T) {
 
 func TestFontCorporaNativeMarkdownPrimitives(t *testing.T) {
 	for _, baseFont := range []string{"", "mono"} {
-		renderer := newMarkdownRenderer(nil, nil, nil)
+		renderer := newMarkdownRenderer(newRenderMeasurements(nil), nil, nil, nil)
 		layout, err := renderer.layout("# Heading Ω\n\n- plain &amp; **bold** *italic* ***both***\n- `code` **`strong code`**\n\n| A | B |\n| - | - |\n| é | Ж |", baseFont, 16)
 		if err != nil {
 			t.Fatal(err)

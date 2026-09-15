@@ -23,7 +23,6 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 
 	"github.com/d2lang/d2/d2ast"
-	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2latex"
 	"github.com/d2lang/d2/d2renderers/d2sketch"
@@ -80,6 +79,13 @@ var dots string
 var lines string
 
 type RenderOpts struct {
+	// Ruler optionally reuses font measurements from compilation. Register fonts
+	// before creating it and keep the font configuration fixed through rendering.
+	// Keep Orig and LineHeightFactor at their defaults to match rendering with a
+	// nil ruler; custom settings can change text measurements such as legend rows.
+	// A supplied ruler must not be used concurrently. Nil creates private, lazy
+	// measurement state without modifying these options.
+	Ruler              *textmeasure.Ruler `json:"-"`
 	Pad                *int64
 	Sketch             *bool
 	Center             *bool
@@ -173,84 +179,39 @@ func expandDimensions(left, top, width, height, amount int) (int, int, int, int,
 	return int(left64), int(top64), int(width64), int(height64), true
 }
 
-func dimensions(diagram *d2target.Diagram, pad int, tl, br d2target.Point) (left, top, width, height int) {
+func dimensions(diagram *d2target.Diagram, pad int, tl, br d2target.Point, legend *legendMeasurements) (left, top, width, height int) {
 	left = tl.X - pad
 	top = tl.Y - pad
 	width = br.X - tl.X + pad*2
 	height = br.Y - tl.Y + pad*2
 
-	// Account for legend dimensions if present
-	if diagram.Legend != nil && (len(diagram.Legend.Shapes) > 0 || len(diagram.Legend.Connections) > 0) {
-		totalHeight := LEGEND_PADDING + LEGEND_FONT_SIZE + LEGEND_ITEM_SPACING
-		maxLabelWidth := 0
-		itemCount := 0
-
-		ruler, err := textmeasure.NewRuler()
-		if err == nil && ruler != nil {
-			for _, s := range diagram.Legend.Shapes {
-				if s.Label == "" {
-					continue
-				}
-				mtext := &d2target.MText{
-					Text:     s.Label,
-					FontSize: LEGEND_FONT_SIZE,
-				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
-				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-				itemCount++
+	if legend != nil {
+		totalHeight := legend.height(len(diagram.Legend.Connections) > 0)
+		maxLabelWidth := legend.maxLabelWidth
+		if totalHeight > 0 && maxLabelWidth > 0 {
+			legendWidth := LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
+			legendY := br.Y - totalHeight
+			if legendY < tl.Y {
+				legendY = tl.Y
 			}
 
-			for _, c := range diagram.Legend.Connections {
-				if c.Label == "" {
-					continue
-				}
-				mtext := &d2target.MText{
-					Text:     c.Label,
-					FontSize: LEGEND_FONT_SIZE,
-				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
-				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-				itemCount++
+			legendRight := br.X + LEGEND_CORNER_PADDING + legendWidth
+			if left+width < legendRight {
+				width = legendRight - left + pad/2
 			}
 
-			if itemCount > 0 {
-				totalHeight -= LEGEND_ITEM_SPACING / 2
+			if legendY < top {
+				diffY := top - legendY
+				top -= diffY
+				height += diffY
 			}
 
-			if itemCount > 0 && len(diagram.Legend.Connections) > 0 {
-				totalHeight += LEGEND_PADDING * 1.5
-			} else {
-				totalHeight += LEGEND_PADDING * 1.2
-			}
-
-			if totalHeight > 0 && maxLabelWidth > 0 {
-				legendWidth := LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
-				legendY := br.Y - totalHeight
-				if legendY < tl.Y {
-					legendY = tl.Y
-				}
-
-				legendRight := br.X + LEGEND_CORNER_PADDING + legendWidth
-				if left+width < legendRight {
-					width = legendRight - left + pad/2
-				}
-
-				if legendY < top {
-					diffY := top - legendY
-					top -= diffY
-					height += diffY
-				}
-
-				legendBottom := legendY + totalHeight
-				if top+height < legendBottom {
-					height = legendBottom - top + pad/2
-				}
+			legendBottom := legendY + totalHeight
+			if top+height < legendBottom {
+				height = legendBottom - top + pad/2
 			}
 		}
 	}
-
 	return left, top, width, height
 }
 
@@ -258,69 +219,33 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 	if diagram.Legend == nil || (len(diagram.Legend.Shapes) == 0 && len(diagram.Legend.Connections) == 0) {
 		return nil
 	}
-	for _, targetShape := range diagram.Legend.Shapes {
+	if err := validateLegendLinks(diagram.Legend); err != nil {
+		return err
+	}
+	tl, br := diagram.BoundingBox()
+	measurements := newRenderMeasurements(nil)
+	legend, err := measureLegend(diagram.Legend, measurements)
+	if err != nil {
+		return err
+	}
+	return renderLegend(buf, diagram, diagramHash, theme, tl, br, legend, measurements)
+}
+
+func validateLegendLinks(legend *d2target.Legend) error {
+	for _, targetShape := range legend.Shapes {
 		if textmeasure.IsDangerousLink(targetShape.Link) {
 			return fmt.Errorf("legend shape %q uses an unsafe link URL scheme", targetShape.ID)
 		}
 	}
+	return nil
+}
 
-	_, br := diagram.BoundingBox()
-
-	ruler, err := textmeasure.NewRuler()
-	if err != nil {
-		return err
-	}
-
-	totalHeight := LEGEND_PADDING + LEGEND_FONT_SIZE + LEGEND_ITEM_SPACING
-	maxLabelWidth := 0
-
-	itemCount := 0
-
-	for _, s := range diagram.Legend.Shapes {
-		if s.Label == "" {
-			continue
-		}
-
-		mtext := &d2target.MText{
-			Text:     s.Label,
-			FontSize: LEGEND_FONT_SIZE,
-		}
-
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
-		maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-		totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-		itemCount++
-	}
-
-	for _, c := range diagram.Legend.Connections {
-		if c.Label == "" {
-			continue
-		}
-
-		mtext := &d2target.MText{
-			Text:     c.Label,
-			FontSize: LEGEND_FONT_SIZE,
-		}
-
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
-		maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-		totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-		itemCount++
-	}
-
-	if itemCount > 0 {
-		totalHeight -= LEGEND_ITEM_SPACING / 2
-	}
-
-	if itemCount > 0 && len(diagram.Legend.Connections) > 0 {
-		totalHeight += LEGEND_PADDING * 1.5
-	} else {
-		totalHeight += LEGEND_PADDING * 1.2
-	}
+func renderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash string, theme *d2themes.Theme, tl, br d2target.Point, legend *legendMeasurements, measurements *renderMeasurements) error {
+	totalHeight := legend.height(len(diagram.Legend.Connections) > 0)
+	maxLabelWidth := legend.maxLabelWidth
 
 	legendWidth := LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
 	legendX := br.X + LEGEND_CORNER_PADDING
-	tl, _ := diagram.BoundingBox()
 	legendY := br.Y - totalHeight
 	if legendY < tl.Y {
 		legendY = tl.Y
@@ -358,7 +283,7 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 	currentY := legendY + LEGEND_PADDING*2 + LEGEND_FONT_SIZE
 
 	shapeCount := 0
-	for _, s := range diagram.Legend.Shapes {
+	for i, s := range diagram.Legend.Shapes {
 		if s.Label == "" {
 			continue
 		}
@@ -366,18 +291,13 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 		iconX := legendX + LEGEND_PADDING
 		iconY := currentY
 
-		shapeIcon, err := renderLegendShapeIcon(s, iconX, iconY, diagramHash, theme)
+		shapeIcon, err := renderLegendShapeIcon(s, iconX, iconY, diagramHash, theme, measurements)
 		if err != nil {
 			return err
 		}
 		fmt.Fprint(buf, shapeIcon)
 
-		mtext := &d2target.MText{
-			Text:     s.Label,
-			FontSize: LEGEND_FONT_SIZE,
-		}
-
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
+		dims := legend.shapes[i]
 
 		rowHeight := go2.IntMax(dims.Height, LEGEND_ICON_SIZE)
 		textY := currentY + rowHeight/2 + int(float64(dims.Height)*0.3)
@@ -405,7 +325,7 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 		currentY += LEGEND_ITEM_SPACING
 	}
 
-	for _, c := range diagram.Legend.Connections {
+	for i, c := range diagram.Legend.Connections {
 		if c.Label == "" {
 			continue
 		}
@@ -413,18 +333,13 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 		iconX := legendX + LEGEND_PADDING
 		iconY := currentY + LEGEND_ICON_SIZE/2
 
-		connIcon, err := renderLegendConnectionIcon(c, iconX, iconY, theme)
+		connIcon, err := renderLegendConnectionIcon(c, iconX, iconY, theme, measurements)
 		if err != nil {
 			return err
 		}
 		fmt.Fprint(buf, connIcon)
 
-		mtext := &d2target.MText{
-			Text:     c.Label,
-			FontSize: LEGEND_FONT_SIZE,
-		}
-
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
+		dims := legend.connections[i]
 
 		rowHeight := go2.IntMax(dims.Height, LEGEND_ICON_SIZE)
 		textY := currentY + rowHeight/2 + int(float64(dims.Height)*0.2)
@@ -439,7 +354,7 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 	return nil
 }
 
-func renderLegendShapeIcon(s d2target.Shape, x, y int, diagramHash string, theme *d2themes.Theme) (string, error) {
+func renderLegendShapeIcon(s d2target.Shape, x, y int, diagramHash string, theme *d2themes.Theme, measurements *renderMeasurements) (string, error) {
 	iconShape := s
 	const sizeFactor = 5
 	iconShape.Pos.X = 0
@@ -452,7 +367,7 @@ func renderLegendShapeIcon(s d2target.Shape, x, y int, diagramHash string, theme
 	finalBuf := &bytes.Buffer{}
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
-	_, err := drawShape(buf, appendixBuf, diagramHash, iconShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawShape(buf, appendixBuf, diagramHash, iconShape, false, theme, newMarkdownRenderer(measurements, nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -464,7 +379,7 @@ func renderLegendShapeIcon(s d2target.Shape, x, y int, diagramHash string, theme
 	return finalBuf.String(), nil
 }
 
-func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes.Theme) (string, error) {
+func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes.Theme, measurements *renderMeasurements) (string, error) {
 	finalBuf := &bytes.Buffer{}
 
 	buf := &bytes.Buffer{}
@@ -501,7 +416,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(buf, legendHash, legendConn, markers, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(buf, legendHash, legendConn, markers, idToShape, false, theme, newMarkdownRenderer(measurements, nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -2871,7 +2786,7 @@ func Render(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
 	if err := d2target.ValidateRenderTarget(diagram); err != nil {
 		return nil, err
 	}
-	return renderValidated(diagram, opts)
+	return renderValidated(diagram, opts, newRenderMeasurements(opts))
 }
 
 func validateRenderLinks(diagram *d2target.Diagram) error {
@@ -2891,7 +2806,7 @@ func validateRenderLinks(diagram *d2target.Diagram) error {
 // renderValidated renders one board after its complete target tree has been
 // validated. Keeping this internal lets RenderMultiboard avoid repeatedly
 // walking every descendant subtree.
-func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
+func renderValidated(diagram *d2target.Diagram, opts *RenderOpts, measurements *renderMeasurements) ([]byte, error) {
 	if err := validateRenderPaints(diagram, opts); err != nil {
 		return nil, err
 	}
@@ -2993,7 +2908,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		inlineTheme = go2.Pointer(d2themescatalog.Find(themeID))
 		inlineTheme.ApplyOverrides(opts.ThemeOverrides)
 	}
-	markdown := newMarkdownRenderer(diagram.FontFamily, diagram.MonoFontFamily, inlineTheme)
+	markdown := newMarkdownRenderer(measurements, diagram.FontFamily, diagram.MonoFontFamily, inlineTheme)
 	for _, obj := range allObjects {
 		if c, is := obj.(d2target.Connection); is {
 			labelMask, err := drawConnection(buf, isolatedDiagramHash, c, markers, idToShape, sketch, inlineTheme, markdown)
@@ -3017,9 +2932,17 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	// add all appendix items afterwards so they are always on top
 	fmt.Fprint(buf, appendixItemBuf)
 
+	var legend *legendMeasurements
 	if diagram.Legend != nil && (len(diagram.Legend.Shapes) > 0 || len(diagram.Legend.Connections) > 0) {
+		if err := validateLegendLinks(diagram.Legend); err != nil {
+			return nil, err
+		}
+		legend, err = measureLegend(diagram.Legend, measurements)
+		if err != nil {
+			return nil, err
+		}
 		legendBuf := &bytes.Buffer{}
-		err := RenderLegend(legendBuf, diagram, diagramHash, inlineTheme)
+		err := renderLegend(legendBuf, diagram, diagramHash, inlineTheme, tl, br, legend, measurements)
 		if err != nil {
 			return nil, err
 		}
@@ -3027,71 +2950,34 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	}
 
 	// Note: we always want this since we reference it on connections even if there end up being no masked labels
-	left, top, w, h := dimensions(diagram, pad, tl, br)
+	left, top, w, h := dimensions(diagram, pad, tl, br, legend)
 
-	if diagram.Legend != nil && (len(diagram.Legend.Shapes) > 0 || len(diagram.Legend.Connections) > 0) {
-		totalHeight := LEGEND_PADDING + LEGEND_FONT_SIZE + LEGEND_ITEM_SPACING
-		maxLabelWidth := 0
-		itemCount := 0
-		ruler, _ := textmeasure.NewRuler()
-		if ruler != nil {
-			for _, s := range diagram.Legend.Shapes {
-				if s.Label == "" {
-					continue
-				}
-				mtext := &d2target.MText{
-					Text:     s.Label,
-					FontSize: LEGEND_FONT_SIZE,
-				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
-				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-				itemCount++
+	if legend != nil {
+		// Preserve the separate viewport padding used by the existing renderer.
+		totalHeight := legend.totalHeight + LEGEND_PADDING
+		maxLabelWidth := legend.maxLabelWidth
+		if totalHeight > 0 && maxLabelWidth > 0 {
+			legendWidth := LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
+
+			legendY := br.Y - totalHeight
+			if legendY < tl.Y {
+				legendY = tl.Y
 			}
 
-			for _, c := range diagram.Legend.Connections {
-				if c.Label == "" {
-					continue
-				}
-				mtext := &d2target.MText{
-					Text:     c.Label,
-					FontSize: LEGEND_FONT_SIZE,
-				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
-				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-				itemCount++
+			legendRight := br.X + LEGEND_CORNER_PADDING + legendWidth
+			if left+w < legendRight {
+				w = legendRight - left + pad/2
 			}
 
-			if itemCount > 0 {
-				totalHeight -= LEGEND_ITEM_SPACING / 2
+			if legendY < top {
+				diffY := top - legendY
+				top -= diffY
+				h += diffY
 			}
 
-			totalHeight += LEGEND_PADDING
-
-			if totalHeight > 0 && maxLabelWidth > 0 {
-				legendWidth := LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
-
-				legendY := br.Y - totalHeight
-				if legendY < tl.Y {
-					legendY = tl.Y
-				}
-
-				legendRight := br.X + LEGEND_CORNER_PADDING + legendWidth
-				if left+w < legendRight {
-					w = legendRight - left + pad/2
-				}
-
-				if legendY < top {
-					diffY := top - legendY
-					top -= diffY
-					h += diffY
-				}
-
-				legendBottom := legendY + totalHeight
-				if top+h < legendBottom {
-					h = legendBottom - top + pad/2
-				}
+			legendBottom := legendY + totalHeight
+			if top+h < legendBottom {
+				h = legendBottom - top + pad/2
 			}
 		}
 	}
@@ -3571,27 +3457,27 @@ func RenderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, er
 	if err := d2target.ValidateRenderTarget(diagram); err != nil {
 		return nil, err
 	}
-	return renderMultiboard(diagram, opts)
+	return renderMultiboard(diagram, opts, newRenderMeasurements(opts))
 }
 
-func renderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, error) {
+func renderMultiboard(diagram *d2target.Diagram, opts *RenderOpts, measurements *renderMeasurements) ([][]byte, error) {
 	var boards [][]byte
 	for _, dl := range diagram.Layers {
-		childrenBoards, err := renderMultiboard(dl, opts)
+		childrenBoards, err := renderMultiboard(dl, opts, measurements)
 		if err != nil {
 			return nil, err
 		}
 		boards = append(boards, childrenBoards...)
 	}
 	for _, dl := range diagram.Scenarios {
-		childrenBoards, err := renderMultiboard(dl, opts)
+		childrenBoards, err := renderMultiboard(dl, opts, measurements)
 		if err != nil {
 			return nil, err
 		}
 		boards = append(boards, childrenBoards...)
 	}
 	for _, dl := range diagram.Steps {
-		childrenBoards, err := renderMultiboard(dl, opts)
+		childrenBoards, err := renderMultiboard(dl, opts, measurements)
 		if err != nil {
 			return nil, err
 		}
@@ -3602,7 +3488,7 @@ func renderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, er
 		if err := validateRenderLinks(diagram); err != nil {
 			return boards, err
 		}
-		out, err := renderValidated(diagram, opts)
+		out, err := renderValidated(diagram, opts, measurements)
 		if err != nil {
 			return boards, err
 		}

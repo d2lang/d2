@@ -11,20 +11,19 @@ import (
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
-// markdownRenderer owns the shared measurement state used while rendering a
+// markdownRenderer uses the shared measurement state while rendering one
 // diagram. LayoutMarkdown returns both the dimensions used by graph layout and
 // the primitives painted here, so native SVG output cannot drift onto a
 // separate browser layout path.
 type markdownRenderer struct {
-	ruler          *textmeasure.Ruler
-	rulerErr       error
+	measurements   *renderMeasurements
 	fontFamily     *d2fonts.FontFamily
 	monoFontFamily *d2fonts.FontFamily
 	inlineTheme    *d2themes.Theme
 	corpus         strings.Builder
 }
 
-func newMarkdownRenderer(fontFamily, monoFontFamily *d2fonts.FontFamily, inlineTheme *d2themes.Theme) *markdownRenderer {
+func newMarkdownRenderer(measurements *renderMeasurements, fontFamily, monoFontFamily *d2fonts.FontFamily, inlineTheme *d2themes.Theme) *markdownRenderer {
 	if fontFamily == nil || *fontFamily == "" {
 		family := d2fonts.SourceSansPro
 		fontFamily = &family
@@ -34,6 +33,7 @@ func newMarkdownRenderer(fontFamily, monoFontFamily *d2fonts.FontFamily, inlineT
 		monoFontFamily = &family
 	}
 	return &markdownRenderer{
+		measurements:   measurements,
 		fontFamily:     fontFamily,
 		monoFontFamily: monoFontFamily,
 		inlineTheme:    inlineTheme,
@@ -54,13 +54,11 @@ func (r *markdownRenderer) layout(markdown, fontName string, fontSize int) (*tex
 }
 
 func (r *markdownRenderer) layoutWithFont(markdown string, fontFamily, monoFontFamily *d2fonts.FontFamily, fontSize int) (*textmeasure.MarkdownLayout, error) {
-	if r.ruler == nil && r.rulerErr == nil {
-		r.ruler, r.rulerErr = textmeasure.NewRuler()
+	ruler, err := r.measurements.getRuler()
+	if err != nil {
+		return nil, err
 	}
-	if r.rulerErr != nil {
-		return nil, r.rulerErr
-	}
-	layout, err := textmeasure.LayoutMarkdown(markdown, r.ruler, fontFamily, monoFontFamily, fontSize)
+	layout, err := textmeasure.LayoutMarkdown(markdown, ruler, fontFamily, monoFontFamily, fontSize)
 	if err != nil {
 		return nil, err
 	}
