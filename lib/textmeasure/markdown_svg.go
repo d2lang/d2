@@ -101,8 +101,8 @@ type MarkdownPrimitive struct {
 }
 
 // MarkdownLayout contains the exact dimensions used by D2 layout and the
-// positioned primitives used to paint those dimensions. MeasureMarkdown calls
-// LayoutMarkdown, ensuring measurement and rendering share one code path.
+// positioned primitives used to paint those dimensions. MeasureMarkdown uses
+// the shared layout path with painting disabled.
 type MarkdownLayout struct {
 	Width, Height int
 	Primitives    []MarkdownPrimitive
