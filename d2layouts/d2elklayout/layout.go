@@ -205,7 +205,7 @@ func edgeEdgeSpacingOrDefault(opts *ConfigurableOpts) *int {
 	if opts.EdgeEdgeSpacing == nil {
 		return go2.Pointer(default_edge_edge_spacing)
 	}
-	return opts.EdgeEdgeSpacing
+	return go2.Pointer(*opts.EdgeEdgeSpacing)
 }
 
 func newRootLayoutOptions(opts *ConfigurableOpts) *elkOpts {
