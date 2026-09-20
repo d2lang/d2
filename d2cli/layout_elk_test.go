@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/d2lang/util-go/go2"
+
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2elklayout"
 )
@@ -16,7 +18,7 @@ func TestELKLayoutOptions(t *testing.T) {
 		NodeSpacing:     123,
 		Padding:         "[top=11,left=22,bottom=33,right=44]",
 		EdgeNodeSpacing: 67,
-		EdgeEdgeSpacing: 78,
+		EdgeEdgeSpacing: go2.Pointer(78),
 		SelfLoopSpacing: 89,
 	}
 	want := layoutGraphJSON(t, func(ctx context.Context, g *d2graph.Graph) error {

@@ -106,16 +106,18 @@ type ConfigurableOpts struct {
 	NodeSpacing     int    `json:"spacing.nodeNodeBetweenLayers,omitempty"`
 	Padding         string `json:"elk.padding,omitempty"`
 	EdgeNodeSpacing int    `json:"spacing.edgeNodeBetweenLayers,omitempty"`
-	EdgeEdgeSpacing int    `json:"spacing.edgeEdgeBetweenLayers"`
+	EdgeEdgeSpacing *int   `json:"spacing.edgeEdgeBetweenLayers,omitempty"`
 	SelfLoopSpacing int    `json:"elk.spacing.nodeSelfLoop"`
 }
+
+const default_edge_edge_spacing = 50
 
 var DefaultOpts = ConfigurableOpts{
 	Algorithm:       "layered",
 	NodeSpacing:     70.0,
 	Padding:         "[top=50,left=50,bottom=50,right=50]",
 	EdgeNodeSpacing: 40.0,
-	EdgeEdgeSpacing: 50.0,
+	EdgeEdgeSpacing: go2.Pointer(default_edge_edge_spacing),
 	SelfLoopSpacing: 50.0,
 }
 
@@ -197,6 +199,15 @@ type elkOpts struct {
 	ConfigurableOpts
 }
 
+func edgeEdgeSpacingOrDefault(opts *ConfigurableOpts) *int {
+	// Callers predating this option leave the field nil, and D2 sent 50 before
+	// it existed. Nil keeps that rather than dropping to ELK's default.
+	if opts.EdgeEdgeSpacing == nil {
+		return go2.Pointer(default_edge_edge_spacing)
+	}
+	return opts.EdgeEdgeSpacing
+}
+
 func newRootLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 	return &elkOpts{
 		Thoroughness:          8,
@@ -211,7 +222,7 @@ func newRootLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 			Algorithm:       opts.Algorithm,
 			NodeSpacing:     opts.NodeSpacing,
 			EdgeNodeSpacing: opts.EdgeNodeSpacing,
-			EdgeEdgeSpacing: opts.EdgeEdgeSpacing,
+			EdgeEdgeSpacing: edgeEdgeSpacingOrDefault(opts),
 			SelfLoopSpacing: opts.SelfLoopSpacing,
 		},
 	}
@@ -232,7 +243,7 @@ func newContainerLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 		ConfigurableOpts: ConfigurableOpts{
 			NodeSpacing:     opts.NodeSpacing,
 			EdgeNodeSpacing: opts.EdgeNodeSpacing,
-			EdgeEdgeSpacing: opts.EdgeEdgeSpacing,
+			EdgeEdgeSpacing: edgeEdgeSpacingOrDefault(opts),
 			SelfLoopSpacing: opts.SelfLoopSpacing,
 			Padding:         opts.Padding,
 		},

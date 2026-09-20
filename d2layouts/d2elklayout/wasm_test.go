@@ -4,8 +4,11 @@ package d2elklayout
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/d2lang/util-go/go2"
 
 	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/lib/geo"
@@ -24,7 +27,7 @@ func TestConvertGraphPreservesCustomELKProfile(t *testing.T) {
 		NodeSpacing:     123,
 		Padding:         "[top=11,left=22,bottom=33,right=44]",
 		EdgeNodeSpacing: 67,
-		EdgeEdgeSpacing: 78,
+		EdgeEdgeSpacing: go2.Pointer(78),
 		SelfLoopSpacing: 89,
 	}
 
@@ -39,7 +42,8 @@ func TestConvertGraphPreservesCustomELKProfile(t *testing.T) {
 	}
 	root := rootOpts.ConfigurableOpts
 	if root.Algorithm != opts.Algorithm || root.NodeSpacing != opts.NodeSpacing ||
-		root.EdgeNodeSpacing != opts.EdgeNodeSpacing || root.EdgeEdgeSpacing != opts.EdgeEdgeSpacing ||
+		root.EdgeNodeSpacing != opts.EdgeNodeSpacing ||
+		root.EdgeEdgeSpacing == nil || *root.EdgeEdgeSpacing != *opts.EdgeEdgeSpacing ||
 		root.SelfLoopSpacing != opts.SelfLoopSpacing {
 		t.Fatalf("root profile = %#v, want algorithm/spacing values from %#v", root, opts)
 	}
@@ -54,7 +58,8 @@ func TestConvertGraphPreservesCustomELKProfile(t *testing.T) {
 		t.Fatalf("container migration profile = consider %q, cycle %q, force model order %t; want NONE/GREEDY/false",
 			containerOpts.ConsiderModelOrder, containerOpts.CycleBreakingStrategy, containerOpts.ForceNodeModelOrder)
 	}
-	if containerOpts.ConfigurableOpts != (ConfigurableOpts{
+	// EdgeEdgeSpacing is a pointer, so compare by value rather than identity.
+	if !reflect.DeepEqual(containerOpts.ConfigurableOpts, ConfigurableOpts{
 		NodeSpacing:     opts.NodeSpacing,
 		Padding:         opts.Padding,
 		EdgeNodeSpacing: opts.EdgeNodeSpacing,
