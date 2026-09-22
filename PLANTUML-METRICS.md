@@ -76,9 +76,28 @@ Check what is actually being used with `d2 --version`. This fork reports
 `master` is untouched and tracks upstream, so a new release is:
 
 ```
-git fetch upstream
+git remote add upstream https://github.com/d2lang/d2.git   # once
+git fetch upstream --tags
 git rebase v0.10.0 plantuml-metrics
 ```
 
+Upstream's tags are mirrored into this fork, so `v0.10.0` resolves without
+the extra remote once it has been fetched here.
+
 Four one-line constant changes rarely conflict. The workflow re-checks all
-three values after every build and fails loudly if a rebase drops one.
+three values after every build and fails loudly if a rebase drops one. The
+one file that can conflict is `README.md`, which carries a four-line banner
+at the very top; keep it or drop it, it has no effect on the build.
+
+## Releases
+
+Tag with the version you want the binary to report, which also publishes a
+GitHub release with all four platforms attached:
+
+```
+git tag v0.9.0-plantuml-metrics.1
+git push origin v0.9.0-plantuml-metrics.1
+```
+
+Untagged pushes still produce artifacts, but those expire with the repo's
+retention policy, so tag anything you actually install.

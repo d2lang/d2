@@ -1,3 +1,8 @@
+> **This is a patched fork.** The `plantuml-metrics` branch makes shapes as
+> tight around their text as PlantUML's are, via three constants and no
+> syntax changes. See **[PLANTUML-METRICS.md](./PLANTUML-METRICS.md)**.
+> `master` is untouched and tracks upstream.
+
 <div align="center">
   <img src="./docs/assets/banner.png" alt="D2" />
   <h2>
