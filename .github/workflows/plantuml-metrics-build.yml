@@ -6,7 +6,7 @@ name: plantuml-metrics build
 
 on:
   push:
-    branches: [plantuml-metrics]
+    branches: [master]
     tags: ['v*-plantuml-metrics*']
   workflow_dispatch:
 

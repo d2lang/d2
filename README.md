@@ -1,7 +1,6 @@
-> **This is a patched fork.** The `plantuml-metrics` branch makes shapes as
-> tight around their text as PlantUML's are, via three constants and no
-> syntax changes. See **[PLANTUML-METRICS.md](./PLANTUML-METRICS.md)**.
-> `master` is untouched and tracks upstream.
+> **This is a patched fork.** It makes shapes as tight around their text as
+> PlantUML's are, via three constants and no syntax changes, and fixes an
+> upstream compiler panic. See **[PLANTUML-METRICS.md](./PLANTUML-METRICS.md)**.
 
 <div align="center">
   <img src="./docs/assets/banner.png" alt="D2" />

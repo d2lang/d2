@@ -18,6 +18,8 @@ its height to padding, which reads as a small font in a large rectangle.
 | `d2renderers/d2fonts/d2fonts_common.go` | `FONT_SIZE_M` | `16` | `14` |
 | `lib/version/version.go` | `Version` | `v0.8.1-HEAD` | `v0.9.0-plantuml-metrics.1` |
 
+Plus a fix for an unrelated upstream crash, described below.
+
 Every shape derives its padding from `defaultPadding` as a multiple or a
 fraction, for example cylinder and cloud use `defaultPadding, defaultPadding/2`
 and circle uses `defaultPadding/√2`. So the single constant rescales all
@@ -44,6 +46,32 @@ different fonts.
 
 TALA and ELK are unaffected: shape sizes are computed before layout runs, and
 both engines are still bundled in a source build.
+
+## A compiler crash fix, carried alongside
+
+Upstream panics with `invalid memory address or nil pointer dereference` on:
+
+```
+**.shape: rectangle
+b
+LINK -> b
+```
+
+A D2 reserved keyword used as a shape name, reachable only through an edge,
+in a file that also has a glob. `Field.LastPrimaryKey()` returns a nil
+`*d2ast.Key` for a field created that way rather than written as
+`KEY: value`; `compileReserved` passes it to `errorf`, and
+`d2parser.Errorf` calls `GetRange()` on the nil pointer. The crash happens
+inside the code that was trying to report an ordinary compile error, and
+about sixty call sites in `d2compiler` pass `LastPrimaryKey()` the same way.
+
+`errorf` now substitutes a zero-range node when handed a nil one, covering
+every call site, and the site in the traceback falls back to
+`LastRef().AST()` so the message keeps an accurate source position. The
+panic becomes `reserved field LINK does not accept composite`. Covered by a
+regression test in `d2compiler/compile_test.go`; `go vet` is clean.
+
+This is independent of the metrics change and is worth sending upstream.
 
 ## Binaries
 
@@ -73,21 +101,47 @@ Check what is actually being used with `d2 --version`. This fork reports
 
 ## Tracking upstream
 
-`master` is untouched and tracks upstream, so a new release is:
+Everything lives on `master`; there is no separate patch branch. Upstream's
+tags are mirrored here, so absorbing a new D2 release is:
 
 ```
 git remote add upstream https://github.com/d2lang/d2.git   # once
 git fetch upstream --tags
-git rebase v0.10.0 plantuml-metrics
+git rebase v0.10.0 master
 ```
 
-Upstream's tags are mirrored into this fork, so `v0.10.0` resolves without
-the extra remote once it has been fetched here.
+Four one-line constant changes and one compiler fix rarely conflict. The
+build workflow re-checks all three metric constants after every build and
+fails loudly if a rebase drops one. `README.md` carries a three-line banner
+at the top, which is the one file likely to conflict; keep it or drop it, it
+has no effect on the build.
 
-Four one-line constant changes rarely conflict. The workflow re-checks all
-three values after every build and fails loudly if a rebase drops one. The
-one file that can conflict is `README.md`, which carries a four-line banner
-at the very top; keep it or drop it, it has no effect on the build.
+To see exactly what this fork changes, diff against the release it is based
+on rather than against a mirror branch:
+
+```
+git diff v0.9.0..master -- lib/shape lib/textmeasure d2renderers/d2fonts d2compiler
+```
+
+## Upstream CI is removed
+
+This fork deliberately changes the geometry of every rendered diagram, so
+upstream's end-to-end tests, which compare against golden files built for
+D2's original proportions, cannot pass. Verified: they fail on exactly the
+coordinates the metrics change moves. Keeping those workflows would mean a
+permanently red `master` and a thirty-minute job burning Actions minutes on
+every push to prove something already known.
+
+So upstream's workflows are deleted here (`ci.yml`, `release-archives.yml`,
+`weekly-race.yml`, `tala-fuzz.yml`, the docker and npm staging jobs, and
+`windows-msi.yml`). Only `plantuml-metrics-build.yml` remains. Removing
+`release-archives.yml` also stops a second, differently named set of
+binaries being produced for every `v*` tag, which was a source of confusion
+about which download to install.
+
+What still guards correctness: the build workflow asserts the three
+constants on every run, and targeted Go tests remain runnable by hand.
+`go test ./d2compiler/` covers the panic fix and passes.
 
 ## Releases
 
@@ -99,5 +153,5 @@ git tag v0.9.0-plantuml-metrics.1
 git push origin v0.9.0-plantuml-metrics.1
 ```
 
-Untagged pushes still produce artifacts, but those expire with the repo's
-retention policy, so tag anything you actually install.
+Untagged pushes to `master` still produce artifacts, but those expire with
+the repo's retention policy, so tag anything you actually install.
