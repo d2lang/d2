@@ -1,0 +1,86 @@
+name: plantuml-metrics build
+
+# Cross-compiles the patched d2 so no Go toolchain is needed on the target
+# machine. Artifacts appear under the run's "Summary" page; a tag starting
+# with "plantuml-metrics-v" additionally publishes a release.
+
+on:
+  push:
+    branches: [plantuml-metrics]
+    tags: ['plantuml-metrics-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: windows, goarch: amd64, ext: .exe}
+          - {goos: windows, goarch: arm64, ext: .exe}
+          - {goos: linux,   goarch: amd64, ext: ''}
+          - {goos: darwin,  goarch: arm64, ext: ''}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The version is also the default in lib/version/version.go, so a plain
+      # `go build` reports it too. Set here as well for tagged builds.
+      - name: Resolve version
+        id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#plantuml-metrics-}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(sed -n 's/.*Version = "\(.*\)".*/\1/p' lib/version/version.go)+$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          out="d2-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/d2lang/d2/lib/version.Version=${{ steps.v.outputs.version }}" \
+            -o "$out" .
+          ls -l "$out"
+
+      # Guards the whole point of the fork: if these three constants ever come
+      # back from an upstream rebase, the build should fail loudly.
+      - name: Verify the patch is present
+        run: |
+          set -e
+          grep -q 'defaultPadding = 15\.'        lib/shape/shape.go
+          grep -q 'MarkdownLineHeight = 1\.36'   lib/textmeasure/markdown.go
+          grep -q 'FONT_SIZE_M    = 14'          d2renderers/d2fonts/d2fonts_common.go
+          echo "all three constants patched"
+
+      - name: Check the layout engines are bundled
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          ./d2-linux-amd64 --version
+          ./d2-linux-amd64 layout | tee /tmp/layouts
+          grep -q tala /tmp/layouts
+          grep -q elk  /tmp/layouts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: d2-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: d2-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          if-no-files-found: error
+
+      - name: Publish release on tag
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: d2-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}

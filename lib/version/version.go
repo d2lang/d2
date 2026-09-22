@@ -3,7 +3,7 @@ package version
 import "regexp"
 
 // Pre-built binaries will have version set correctly during build time.
-var Version = "v0.8.1-HEAD"
+var Version = "v0.9.0-plantuml-metrics.1"
 
 func OnlyNumbers() string {
 	re, err := regexp.Compile("[0-9]+.[0-9]+.[0-9]+")

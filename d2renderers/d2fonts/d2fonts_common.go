@@ -64,7 +64,7 @@ func (f Font) GetEncodedSubset(corpus string) string {
 const (
 	FONT_SIZE_XS   = 13
 	FONT_SIZE_S    = 14
-	FONT_SIZE_M    = 16
+	FONT_SIZE_M    = 14
 	FONT_SIZE_L    = 20
 	FONT_SIZE_XL   = 24
 	FONT_SIZE_XXL  = 28

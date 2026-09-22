@@ -34,7 +34,7 @@ const (
 	CODE_TYPE  = "Code"
 	IMAGE_TYPE = "Image"
 
-	defaultPadding = 40.
+	defaultPadding = 15.
 )
 
 type Shape interface {

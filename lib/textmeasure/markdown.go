@@ -21,7 +21,7 @@ var markdownRenderer goldmark.Markdown
 // these are css values from github-markdown.css so we can accurately compute the rendered dimensions
 const (
 	MarkdownFontSize   = d2fonts.FONT_SIZE_M
-	MarkdownLineHeight = 1.5
+	MarkdownLineHeight = 1.36
 
 	PaddingLeft_ul_ol_em = 2.
 	MarginBottom_ul      = 16.
