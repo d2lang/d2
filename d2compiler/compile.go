@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -273,7 +274,26 @@ type compiler struct {
 	activeClassMaps map[*d2ir.Map]struct{}
 }
 
+// isNilNode reports whether n is nil, including a nil pointer stored in a
+// non-nil interface. Field.LastPrimaryKey() returns a nil *d2ast.Key for a
+// field that was created only by an edge or a glob, and many call sites pass
+// its result straight to errorf.
+func isNilNode(n d2ast.Node) bool {
+	if n == nil {
+		return true
+	}
+	switch v := reflect.ValueOf(n); v.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice:
+		return v.IsNil()
+	}
+	return false
+}
+
 func (c *compiler) errorf(n d2ast.Node, f string, v ...interface{}) {
+	if isNilNode(n) {
+		// Carry on with a zero range rather than dereferencing nil.
+		n = &d2ast.Key{}
+	}
 	err := d2parser.Errorf(n, f, v...).(d2ast.Error)
 	if c.err.ErrorsLookup == nil {
 		c.err.ErrorsLookup = make(map[d2ast.Error]struct{})
@@ -594,7 +614,13 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			case "label", "icon", "tooltip":
 				c.compilePosition(attrs, f)
 			default:
-				c.errorf(f.LastPrimaryKey(), "reserved field %v does not accept composite", f.Name.ScalarString())
+				// LastPrimaryKey() is nil when the field came from an edge
+				// or a glob; LastRef() always exists, as used just below.
+				var n d2ast.Node = f.LastRef().AST()
+				if k := f.LastPrimaryKey(); k != nil {
+					n = k
+				}
+				c.errorf(n, "reserved field %v does not accept composite", f.Name.ScalarString())
 			}
 		} else {
 			c.errorf(f.LastRef().AST(), `reserved field "%v" must have a value`, f.Name.ScalarString())
