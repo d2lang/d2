@@ -3732,6 +3732,18 @@ object: {
 			expErr: `d2/testdata/d2compiler/TestCompile/reserved-composite.d2:1:1: reserved field shape does not accept composite`,
 		},
 		{
+			// A reserved keyword used as a shape name, reachable only
+			// through an edge, in a file with a glob. The field then has no
+			// primary key, so LastPrimaryKey() is nil. Reporting the error
+			// used to dereference it and panic.
+			name: "reserved-composite-glob-edge",
+			text: `**.shape: rectangle
+b
+LINK -> b
+`,
+			expErr: `d2/testdata/d2compiler/TestCompile/reserved-composite-glob-edge.d2:3:1: reserved field LINK does not accept composite`,
+		},
+		{
 			name: "text_no_label",
 			text: `a: "ok" {
 	shape: text

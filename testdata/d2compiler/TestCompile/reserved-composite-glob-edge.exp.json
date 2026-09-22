@@ -1,0 +1,11 @@
+{
+  "graph": null,
+  "err": {
+    "errs": [
+      {
+        "range": "d2/testdata/d2compiler/TestCompile/reserved-composite-glob-edge.d2,2:0:22-2:4:26",
+        "errmsg": "d2/testdata/d2compiler/TestCompile/reserved-composite-glob-edge.d2:3:1: reserved field LINK does not accept composite"
+      }
+    ]
+  }
+}
