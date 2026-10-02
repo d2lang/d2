@@ -1,5 +1,7 @@
 #### Features 🚀
 
+- d2layouts: add `shape: cycle` for circular diagram layouts with border-trimmed circular arc routing. [#1578](https://github.com/terrastruct/d2/issues/1578)
+
 #### Improvements 🧹
 
 - d2svg:
