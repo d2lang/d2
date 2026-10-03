@@ -1464,7 +1464,7 @@ func (c *compiler) compileSQLTable(obj *d2graph.Object) {
 			return
 		}
 		typ := col.Label.Value
-		if typ == col.IDVal {
+		if typ == col.IDVal && !hasExplicitScalarLabel(col.Label.MapKey) {
 			// Not great, AST should easily allow specifying alternate primary field
 			// as an explicit label should change the name.
 			typ = ""
@@ -1493,6 +1493,17 @@ func (c *compiler) compileSQLTable(obj *d2graph.Object) {
 	}
 	obj.Children = nil
 	obj.ChildrenArray = nil
+}
+
+func hasExplicitScalarLabel(mapKey *d2ast.Key) bool {
+	if mapKey == nil {
+		return false
+	}
+	if mapKey.Primary.Unbox() != nil {
+		return true
+	}
+	_, ok := mapKey.Value.Unbox().(d2ast.Scalar)
+	return ok
 }
 
 func (c *compiler) validateKeys(obj *d2graph.Object, m *d2ir.Map) {
