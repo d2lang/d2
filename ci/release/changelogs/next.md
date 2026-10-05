@@ -1,5 +1,8 @@
 #### Features 🚀
 
+- layouts: add `shape: cycle` which arranges its children on a circle and routes
+  their edges along it as circular arcs trimmed to the children's borders
+
 #### Improvements 🧹
 
 - d2svg:
