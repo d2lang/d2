@@ -2123,7 +2123,7 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 			)
 			gEl.SetTranslate(labelTL.X, labelTL.Y)
 
-			gEl.Color = targetShape.Stroke
+			gEl.Color = targetShape.GetFontColor()
 			gEl.SetInnerSVG(svg.TrustedFragment(render))
 			fmt.Fprint(writer, gEl.Render())
 		} else if targetShape.Language == "markdown" {
