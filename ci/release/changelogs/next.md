@@ -38,6 +38,8 @@
   - Honor cancellation during parsing and IR compilation, and prevent `d2 fmt`
     from writing output after cancellation. [#2894](https://github.com/d2lang/d2/pull/2894)
   - Limit active import chains to 128. [#2904](https://github.com/d2lang/d2/pull/2904)
+  - Resolve relative imports against the importing file's directory on Windows
+    instead of the working directory. [#2642](https://github.com/d2lang/d2/issues/2642)
   - Reject cyclic composite variables with source diagnostics instead of allowing
     unbounded recursion. [#2907](https://github.com/d2lang/d2/pull/2907)
   - Limit variable substitution output and automatic board, import, and class

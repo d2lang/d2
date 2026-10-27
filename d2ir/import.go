@@ -30,7 +30,7 @@ func (c *compiler) pushImportStack(imp *d2ast.Import) (string, bool) {
 		}
 
 		if !filepath.IsAbs(impPath) {
-			impPath = path.Join(path.Dir(c.importStack[len(c.importStack)-1]), impPath)
+			impPath = path.Join(path.Dir(filepath.ToSlash(c.importStack[len(c.importStack)-1])), impPath)
 		}
 	}
 
@@ -200,7 +200,7 @@ func (c *compiler) peekImport(imp *d2ast.Import) (*Map, bool) {
 		}
 
 		if !filepath.IsAbs(impPath) {
-			impPath = path.Join(path.Dir(c.importStack[len(c.importStack)-1]), impPath)
+			impPath = path.Join(path.Dir(filepath.ToSlash(c.importStack[len(c.importStack)-1])), impPath)
 		}
 	}
 
