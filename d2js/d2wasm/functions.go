@@ -306,6 +306,12 @@ func Compile(args []js.Value) (interface{}, error) {
 	if input.Opts != nil && input.Opts.DarkThemeID != nil {
 		renderOpts.DarkThemeID = input.Opts.DarkThemeID
 	}
+	if input.Opts != nil && input.Opts.ThemeOverrides != nil {
+		renderOpts.ThemeOverrides = input.Opts.ThemeOverrides
+	}
+	if input.Opts != nil && input.Opts.DarkThemeOverrides != nil {
+		renderOpts.DarkThemeOverrides = input.Opts.DarkThemeOverrides
+	}
 	if input.Opts != nil && input.Opts.Scale != nil {
 		renderOpts.Scale = input.Opts.Scale
 	}
