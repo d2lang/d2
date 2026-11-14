@@ -11,6 +11,27 @@ export class D2 {
   dispose(): Promise<void>;
 }
 
+export interface ThemeOverrides {
+  n1?: string;
+  n2?: string;
+  n3?: string;
+  n4?: string;
+  n5?: string;
+  n6?: string;
+  n7?: string;
+  b1?: string;
+  b2?: string;
+  b3?: string;
+  b4?: string;
+  b5?: string;
+  b6?: string;
+  aa2?: string;
+  aa4?: string;
+  aa5?: string;
+  ab4?: string;
+  ab5?: string;
+}
+
 export interface RenderOptions {
   /** Enable sketch mode [default: false] */
   sketch?: boolean;
@@ -20,6 +41,10 @@ export interface RenderOptions {
   themeID?: number;
   /** Theme ID to use when client is in dark mode */
   darkThemeID?: number;
+  /** Replace color codes for theme */
+  themeOverrides?: ThemeOverrides;
+  /** Replace color codes for dark theme */
+  darkThemeOverrides?: ThemeOverrides;
   /** Center the SVG in the containing viewbox [default: false] */
   center?: boolean;
   /** Pixels padded around the rendered diagram [default: 100] */
