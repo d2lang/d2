@@ -33,6 +33,7 @@
 
 #### Bugfixes ⛑️
 
+- d2.js: Fix the WASM failing to start in Safari 27 Web Workers, which left every call failing with `undefined is not an object (evaluating 'd2.encode')`. [#2956](https://github.com/d2lang/d2/issues/2956)
 - compiler:
   - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)
   - Honor cancellation during parsing and IR compilation, and prevent `d2 fmt`

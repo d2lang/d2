@@ -5,6 +5,9 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Fix initialization in Safari 27, where the WASM overflowed the Web Worker stack during startup and every call failed with `undefined is not an object (evaluating 'd2.encode')`.
+- Reject `ready` with `D2 WASM failed to initialize: <reason>` when the WASM fails to start, instead of resolving with no API.
+
 ## [0.1.34]
 ### September 7, 2026
 
