@@ -116,7 +116,23 @@ export function setupMessageHandler(isNode, port, initWasm) {
 async function initWasmNode(wasmBinary) {
   const go = new Go();
   const result = await WebAssembly.instantiate(wasmBinary, go.importObject);
-  go.run(result.instance);
+  let runError;
+  go.run(result.instance).catch((err) => {
+    runError = err;
+  });
+  // go.run executes main synchronously until it blocks, so d2 is registered by
+  // now unless the Go program failed during startup (for example, a JS stack
+  // overflow in package init). Let a startup rejection settle, then fail init
+  // instead of reporting ready with no API.
+  await Promise.resolve();
+  if (!global.d2) {
+    const reason = runError
+      ? `: ${runError.message || runError}`
+      : go.exited
+        ? " (Go program exited)"
+        : "";
+    throw new Error(`D2 WASM failed to initialize${reason}`);
+  }
   return global.d2;
 }
 

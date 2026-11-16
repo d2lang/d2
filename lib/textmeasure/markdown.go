@@ -7,13 +7,13 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
 	goldmarkHtml "github.com/yuin/goldmark/renderer/html"
 	"golang.org/x/net/html"
 
 	"github.com/d2lang/util-go/go2"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/lib/textmeasure/internal/gmext"
 )
 
 var markdownRenderer goldmark.Markdown
@@ -128,8 +128,8 @@ func init() {
 			goldmarkHtml.WithXHTML(),
 		),
 		goldmark.WithExtensions(
-			extension.Strikethrough,
-			extension.Table,
+			gmext.Strikethrough,
+			gmext.Table,
 		),
 	)
 }
