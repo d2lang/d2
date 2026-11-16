@@ -867,6 +867,22 @@ func (s Shape) GetID() string {
 	return s.ID
 }
 
+// AppendixLinkText returns the text listed in a static export's appendix for
+// the shape's link, or "" when the shape has no link. Every shape with a Link
+// gets a numbered link marker, so it must also get an appendix entry: when no
+// board label could be derived for PrettyLink (e.g. a link to the parent
+// board), the link itself is listed so the marker and appendix numbers stay in
+// one sequence.
+func (s Shape) AppendixLinkText() string {
+	if s.Link == "" {
+		return ""
+	}
+	if s.PrettyLink != "" {
+		return s.PrettyLink
+	}
+	return s.Link
+}
+
 type Text struct {
 	Label      string `json:"label"`
 	FontSize   int    `json:"fontSize"`
