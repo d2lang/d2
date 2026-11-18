@@ -81,7 +81,7 @@
 - d2ascii:
   - Measure label widths in runes instead of bytes, so multi-byte characters
     (e.g. Vietnamese) no longer get extra spaces inserted inside words and
-    labels are centered and sized correctly.
+    labels are centered and sized correctly. [#2963](https://github.com/d2lang/d2/pull/2963)
   - Encode and escape clip-path identifiers consistently in definitions and
     references. [#2906](https://github.com/d2lang/d2/pull/2906)
   - Escape color attributes across shapes, connections, labels, and themes. [#2909](https://github.com/d2lang/d2/pull/2909)
