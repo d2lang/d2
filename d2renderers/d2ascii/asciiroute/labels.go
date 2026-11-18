@@ -3,6 +3,7 @@ package asciiroute
 import (
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/d2lang/d2/lib/geo"
 )
@@ -71,8 +72,8 @@ func calculateBestLabelPosition(rd RouteDrawer, routes []*geo.Point, label strin
 	lines := strings.Split(label, "\n")
 	maxLineLen := 0
 	for _, line := range lines {
-		if len(line) > maxLineLen {
-			maxLineLen = len(line)
+		if utf8.RuneCountInString(line) > maxLineLen {
+			maxLineLen = utf8.RuneCountInString(line)
 		}
 	}
 
@@ -94,10 +95,12 @@ func drawConnectionLabel(rd RouteDrawer, labelPos *RouteLabelPosition, label, la
 			canvas.Set(x, y, " ")
 		}
 		for lineIdx, line := range lines {
-			for j, ch := range line {
-				if isInBounds(rd, labelPos.X+j, y+lineIdx) {
-					canvas.Set(labelPos.X+j, y+lineIdx, string(ch))
+			col := 0
+			for _, ch := range line {
+				if isInBounds(rd, labelPos.X+col, y+lineIdx) {
+					canvas.Set(labelPos.X+col, y+lineIdx, string(ch))
 				}
+				col++
 			}
 		}
 	} else if sx != 0 {
@@ -116,18 +119,20 @@ func drawConnectionLabel(rd RouteDrawer, labelPos *RouteLabelPosition, label, la
 		} else if strings.Contains(labelPosition, "RIGHT") {
 			maxLineLen := 0
 			for _, line := range lines {
-				if len(line) > maxLineLen {
-					maxLineLen = len(line)
+				if utf8.RuneCountInString(line) > maxLineLen {
+					maxLineLen = utf8.RuneCountInString(line)
 				}
 			}
 			xPos = int(routes[labelPos.I+((geo.Sign(sx)+1)/2)].X) - maxLineLen/2
 		}
 
 		for lineIdx, line := range lines {
-			for j, ch := range line {
-				if isInBounds(rd, xPos+j, y+yFactor+lineIdx) {
-					canvas.Set(xPos+j, y+yFactor+lineIdx, string(ch))
+			col := 0
+			for _, ch := range line {
+				if isInBounds(rd, xPos+col, y+yFactor+lineIdx) {
+					canvas.Set(xPos+col, y+yFactor+lineIdx, string(ch))
 				}
+				col++
 			}
 		}
 	}
@@ -141,8 +146,8 @@ func drawDestinationLabel(rd RouteDrawer, label string, cx, cy, sx, sy float64) 
 
 	maxLineLen := 0
 	for _, line := range lines {
-		if len(line) > maxLineLen {
-			maxLineLen = len(line)
+		if utf8.RuneCountInString(line) > maxLineLen {
+			maxLineLen = utf8.RuneCountInString(line)
 		}
 	}
 
@@ -159,8 +164,10 @@ func drawDestinationLabel(rd RouteDrawer, label string, cx, cy, sx, sy float64) 
 	}
 
 	for lineIdx, line := range lines {
-		for j, ch := range line {
-			canvas.Set(lx+j+LabelOffsetX, ly+lineIdx, string(ch))
+		col := 0
+		for _, ch := range line {
+			canvas.Set(lx+col+LabelOffsetX, ly+lineIdx, string(ch))
+			col++
 		}
 	}
 }
@@ -173,8 +180,8 @@ func drawSourceLabel(rd RouteDrawer, label string, ax, cy, cx, sx, sy float64) {
 
 	maxLineLen := 0
 	for _, line := range lines {
-		if len(line) > maxLineLen {
-			maxLineLen = len(line)
+		if utf8.RuneCountInString(line) > maxLineLen {
+			maxLineLen = utf8.RuneCountInString(line)
 		}
 	}
 
@@ -191,8 +198,10 @@ func drawSourceLabel(rd RouteDrawer, label string, ax, cy, cx, sx, sy float64) {
 	}
 
 	for lineIdx, line := range lines {
-		for j, ch := range line {
-			canvas.Set(lx+j, ly+lineIdx, string(ch))
+		col := 0
+		for _, ch := range line {
+			canvas.Set(lx+col, ly+lineIdx, string(ch))
+			col++
 		}
 	}
 }

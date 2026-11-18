@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"unicode/utf8"
 
 	"github.com/d2lang/d2/d2renderers/d2ascii/asciicanvas"
 	"github.com/d2lang/d2/d2renderers/d2ascii/asciiroute"
@@ -77,7 +78,7 @@ func (a *ASCIIartist) GetBoundary(s d2target.Shape) (Point, Point) {
 	preserveWidth := hasConnectionsAtRightEdge(s, a.diagram.Connections, a.FW)
 	preserveHeight := hasConnectionsAtTopEdge(s, a.diagram.Connections, a.FH)
 	if preserveWidth && s.Label != "" {
-		availableSpace := wC - len(s.Label)
+		availableSpace := wC - utf8.RuneCountInString(s.Label)
 		if availableSpace >= asciishapes.MinLabelPadding && availableSpace%2 == 1 {
 			// Adjust the original width before recalibrating
 			width += float64(int(a.FW / a.SCALE))
@@ -149,8 +150,8 @@ func (a *ASCIIartist) calculateExtendedBounds(diagram *d2target.Diagram) (tl, br
 					}
 				}
 			}
-			labelX := bestX - float64(len(conn.Label))/2*a.FW
-			labelX2 := bestX + float64(len(conn.Label))/2*a.FW
+			labelX := bestX - float64(utf8.RuneCountInString(conn.Label))/2*a.FW
+			labelX2 := bestX + float64(utf8.RuneCountInString(conn.Label))/2*a.FW
 			midY := (conn.Route[0].Y + conn.Route[len(conn.Route)-1].Y) / 2
 			labelY := midY - a.FH
 			labelY2 := midY + a.FH
@@ -170,8 +171,8 @@ func (a *ASCIIartist) calculateExtendedBounds(diagram *d2target.Diagram) (tl, br
 
 		if conn.DstLabel != nil && len(conn.Route) > 0 {
 			lastRoute := conn.Route[len(conn.Route)-1]
-			labelX := lastRoute.X - float64(len(conn.DstLabel.Label))*a.FW
-			labelX2 := lastRoute.X + float64(len(conn.DstLabel.Label))*a.FW
+			labelX := lastRoute.X - float64(utf8.RuneCountInString(conn.DstLabel.Label))*a.FW
+			labelX2 := lastRoute.X + float64(utf8.RuneCountInString(conn.DstLabel.Label))*a.FW
 			labelY := lastRoute.Y - a.FH
 			labelY2 := lastRoute.Y + a.FH
 			if int(labelX) < tl.X {
@@ -190,8 +191,8 @@ func (a *ASCIIartist) calculateExtendedBounds(diagram *d2target.Diagram) (tl, br
 
 		if conn.SrcLabel != nil && len(conn.Route) > 0 {
 			firstRoute := conn.Route[0]
-			labelX := firstRoute.X - float64(len(conn.SrcLabel.Label))*a.FW
-			labelX2 := firstRoute.X + float64(len(conn.SrcLabel.Label))*a.FW
+			labelX := firstRoute.X - float64(utf8.RuneCountInString(conn.SrcLabel.Label))*a.FW
+			labelX2 := firstRoute.X + float64(utf8.RuneCountInString(conn.SrcLabel.Label))*a.FW
 			labelY := firstRoute.Y - a.FH
 			labelY2 := firstRoute.Y + a.FH
 			if int(labelX) < tl.X {
@@ -254,8 +255,8 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 
 	maxLabelLen := 0
 	for _, shape := range diagram.Shapes {
-		if len(shape.Label) > maxLabelLen {
-			maxLabelLen = len(shape.Label)
+		if utf8.RuneCountInString(shape.Label) > maxLabelLen {
+			maxLabelLen = utf8.RuneCountInString(shape.Label)
 		}
 	}
 	padding := maxLabelLen + asciishapes.MinLabelPadding
@@ -289,8 +290,8 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 		adjustedWidth := shape.Width
 		if preserveWidth && shape.Label != "" {
 			wC := int(math.Round((float64(shape.Width) / a.FW) * a.SCALE))
-			availableSpace := wC - len(shape.Label)
-			log.Debug(ctx, "width preservation check", slog.Int("calibrated", wC), slog.Int("labelChars", len(shape.Label)), slog.Int("available", availableSpace))
+			availableSpace := wC - utf8.RuneCountInString(shape.Label)
+			log.Debug(ctx, "width preservation check", slog.Int("calibrated", wC), slog.Int("labelChars", utf8.RuneCountInString(shape.Label)), slog.Int("available", availableSpace))
 			if availableSpace >= asciishapes.MinLabelPadding && availableSpace%2 == 1 {
 				adjustedWidth += int(a.FW / a.SCALE)
 				log.Debug(ctx, "width adjusted", slog.Int("originalWidth", originalWidth), slog.Int("newWidth", adjustedWidth))

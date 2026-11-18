@@ -57,8 +57,13 @@ func (c *Canvas) DrawLabel(x, y int, label string) {
 	}
 	lines := strings.Split(label, "\n")
 	for lineIdx, line := range lines {
-		for i, ch := range line {
-			c.Set(x+i, y+lineIdx, string(ch))
+		// NOTE: range over a string yields byte indexes, not rune indexes.
+		// Use a rune counter so multi-byte characters (e.g. Vietnamese)
+		// occupy exactly one column each.
+		col := 0
+		for _, ch := range line {
+			c.Set(x+col, y+lineIdx, string(ch))
+			col++
 		}
 	}
 }
