@@ -77,14 +77,14 @@ export class D2 {
 
     const isNode = typeof window === "undefined";
     const wasmExecContent = isNode ? await loadFile("./wasm_exec.js") : null;
-    const wasmBinary = await loadFile("./d2.wasm");
+    const wasm = await loadFile("./d2.wasm");
 
     const messageHandler = this.setupMessageHandler();
 
     this.worker.postMessage({
       type: "init",
       data: {
-        wasm: wasmBinary,
+        wasm,
         wasmExecContent: isNode ? wasmExecContent.toString() : null,
       },
     });

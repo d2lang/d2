@@ -24,19 +24,9 @@ console.log(
   ).toFixed(2)}MB`
 );
 
-// Store compressed WASM as base64 and include brotli decoder in the loader
-// Don't decompress immediately - let the consumer decompress when needed
-const brotliDecoder = await readFile("./vendor/decode.min.js", "utf8");
-
 await writeFile(
   join(SRC_DIR, "wasm-loader.browser.js"),
-  `${brotliDecoder}
-
-export const wasmBinaryCompressed = "${Buffer.from(compressedWasm).toString("base64")}";
-export function getWasmBinary() {
-  const compressedBytes = Uint8Array.from(atob(wasmBinaryCompressed), c => c.charCodeAt(0));
-  return BrotliDecode(compressedBytes);
-}
+  `export const compressedWasmBase64 = "${compressedWasm.toString("base64")}";
 export const wasmExecJs = ${JSON.stringify(wasmExecJs)};`
 );
 
@@ -62,6 +52,7 @@ async function buildDynamicFiles(platform) {
   if (platform === "browser") {
     // The browser loads this worker from a blob URL, so bundle its imports first.
     const worker = await build({
+      ...commonConfig,
       entrypoints: [entrypoint],
       target: "browser",
       format: "esm",
