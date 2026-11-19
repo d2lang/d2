@@ -110,7 +110,7 @@ func writeSVGPaintCover(w *nativeSVGWriter, cover *svgPaintCover, camera rasterC
 	if material.Multiply {
 		blend = ` style="mix-blend-mode:multiply"`
 	}
-	w.write(`<path d="%s" fill="url(#%s)" fill-opacity="%s"%s/>`, svgPolygonPath(cover.polygons), name, svgNumber(float64(material.Color.A)/255), blend)
+	w.write(`<path d="%s" fill="url(#%s)" fill-opacity="%s"%s/>`, svgFillPath(cover.polygons), name, svgNumber(float64(material.Color.A)/255), blend)
 }
 
 // Offset a convex visible fragment's supporting edges by a fraction of a

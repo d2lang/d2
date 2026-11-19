@@ -7,6 +7,7 @@ import (
 	"html"
 	"image/color"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,10 +87,11 @@ func preflightSVGMetadata(ctx context.Context, diagram *d2target.Diagram, budget
 }
 
 type nativeSVGWriter struct {
-	ctx      context.Context
-	buf      bytes.Buffer
-	err      error
-	surfaces map[*nativeVectorSurface]string
+	ctx           context.Context
+	buf           bytes.Buffer
+	err           error
+	surfaces      map[*nativeVectorSurface]string
+	lightingStops map[string]string
 }
 
 func (w *nativeSVGWriter) write(format string, args ...any) {
@@ -116,52 +118,123 @@ func svgColor(r, g, b float64) string {
 	return fmt.Sprintf("#%02x%02x%02x", uint8(math.Round(rasterClamp(r)*255)), uint8(math.Round(rasterClamp(g)*255)), uint8(math.Round(rasterClamp(b)*255)))
 }
 
+// Normalize at the same precision used to serialize the SVG. Matching edges
+// may be cancelled only after their endpoints have been rounded and cleaned.
+func svgCanonicalLoop(polygon []svgPoint) []svgPoint {
+	p := make([]svgPoint, 0, len(polygon))
+	for _, v := range polygon {
+		v = svgPoint{x: math.Round(v.x*1e6) / 1e6, y: math.Round(v.y*1e6) / 1e6}
+		if len(p) == 0 || v != p[len(p)-1] {
+			p = append(p, v)
+		}
+	}
+	if len(p) > 1 && p[0] == p[len(p)-1] {
+		p = p[:len(p)-1]
+	}
+	p = svgOmitCollinearSplits(p)
+	if len(p) < 3 {
+		return nil
+	}
+	area := 2 * svgPolygonArea(p)
+	if math.Abs(area) < 1e-10 {
+		return nil
+	}
+	if area < 0 {
+		slices.Reverse(p)
+	}
+	first := 0
+	for i := range p {
+		if p[i].x < p[first].x || p[i].x == p[first].x && p[i].y < p[first].y {
+			first = i
+		}
+	}
+	return append(p[first:len(p):len(p)], p[:first]...)
+}
+
+func svgWriteLoop(s *strings.Builder, loop []svgPoint) {
+	for i, p := range loop {
+		if i == 0 {
+			s.WriteByte('M')
+		} else {
+			s.WriteByte('L')
+		}
+		s.WriteString(svgNumber(p.x))
+		s.WriteByte(' ')
+		s.WriteString(svgNumber(p.y))
+	}
+	if len(loop) > 0 {
+		s.WriteByte('Z')
+	}
+}
+
 func svgPolygonPath(polygons [][]svgPoint) string {
 	var s strings.Builder
 	for _, polygon := range polygons {
-		// Serialize a canonical loop. Clipping can retain a different starting
-		// vertex at an exactly shared edge, without changing its silhouette.
-		// Discard vertices that coincide at SVG precision before choosing it.
-		p := make([]svgPoint, 0, len(polygon))
-		for _, v := range polygon {
-			v = svgPoint{x: math.Round(v.x*1e6) / 1e6, y: math.Round(v.y*1e6) / 1e6}
-			if len(p) == 0 || v != p[len(p)-1] {
-				p = append(p, v)
+		svgWriteLoop(&s, svgCanonicalLoop(polygon))
+	}
+	return s.String()
+}
+
+// A nonzero fill depends only on the net directed edges. Two neighboring
+// fragments with a shared edge traverse it in opposite directions. Cancel
+// such edges before serializing large fills, keeping every exterior and hole
+// boundary at full precision. Stroked paths still need their interior edges.
+func svgFillPath(polygons [][]svgPoint) string {
+	if len(polygons) < 8 {
+		return svgPolygonPath(polygons)
+	}
+	// Bound the extra edge tables on large scenes. The ordinary compound
+	// path has the same fill and can be written one polygon at a time.
+	const maxEdges = 1 << 16
+	remaining := maxEdges
+	for _, polygon := range polygons {
+		if len(polygon) > remaining {
+			return svgPolygonPath(polygons)
+		}
+		remaining -= len(polygon)
+	}
+	type edge struct{ from, to svgPoint }
+	var edges []edge
+	pending := make(map[edge]int)
+	for _, polygon := range polygons {
+		p := svgCanonicalLoop(polygon)
+		for i, a := range p {
+			e := edge{a, p[(i+1)%len(p)]}
+			back := edge{e.to, e.from}
+			if pending[back] > 0 {
+				pending[back]--
+				continue
 			}
+			pending[e]++
+			edges = append(edges, e)
 		}
-		if len(p) > 1 && p[0] == p[len(p)-1] {
-			p = p[:len(p)-1]
+	}
+	// Build adjacency in input order. Avoid map iteration so snapshots and
+	// path winding remain deterministic even at point-touching components.
+	next := make(map[svgPoint][]svgPoint)
+	for _, e := range edges {
+		if pending[e] > 0 {
+			next[e.from] = append(next[e.from], e.to)
+			pending[e]--
 		}
-		p = svgOmitCollinearSplits(p)
-		if len(p) < 3 {
-			continue
-		}
-		area := 2 * svgPolygonArea(p)
-		if math.Abs(area) < 1e-10 {
-			continue
-		}
-		// A nonzero compound path is a union, including overlapping pieces.
-		first := 0
-		for i := range p {
-			if p[i].x < p[first].x || p[i].x == p[first].x && p[i].y < p[first].y {
-				first = i
+	}
+	var s strings.Builder
+	for _, e := range edges {
+		start := e.from
+		for len(next[start]) > 0 {
+			var loop []svgPoint
+			for at := start; ; {
+				loop = append(loop, at)
+				out := next[at]
+				atNext := out[len(out)-1]
+				next[at] = out[:len(out)-1]
+				at = atNext
+				if at == start {
+					break
+				}
 			}
+			svgWriteLoop(&s, loop)
 		}
-		for i := range p {
-			j := (first + i) % len(p)
-			if area < 0 {
-				j = (first + len(p) - i) % len(p)
-			}
-			if i == 0 {
-				s.WriteByte('M')
-			} else {
-				s.WriteByte('L')
-			}
-			s.WriteString(svgNumber(p[j].x))
-			s.WriteByte(' ')
-			s.WriteString(svgNumber(p[j].y))
-		}
-		s.WriteByte('Z')
 	}
 	return s.String()
 }
@@ -469,7 +542,7 @@ func writeSVGBatch(w *nativeSVGWriter, b *svgPaintBatch, id int, camera rasterCa
 		writeSVGPaintCover(w, b.cover, camera)
 		return
 	}
-	path := svgPolygonPath(b.polygons)
+	path := svgFillPath(b.polygons)
 	if path == "" {
 		return
 	}

@@ -5,6 +5,8 @@
 
 #### Improvements 🧹
 
+- renders: reduce isometric SVG size by sharing lighting gradients and removing interior edges from filled paths.
+
 - isometric: keep steep connection captions at the same reading angle as node labels and preserve clearance from their wires.
 - d2svg:
   - Prevent malformed diagram or raw render values from breaking out of SVG text

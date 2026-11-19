@@ -191,3 +191,21 @@ func TestSVGShadowUnionsEqualOpacityAndKeepsNearestCaster(t *testing.T) {
 		t.Fatal("vector shadow unexpectedly contains a bitmap")
 	}
 }
+
+func TestSVGRepeatedLightingStopsUseOneDefinition(t *testing.T) {
+	w := &nativeSVGWriter{ctx: context.Background()}
+	g := svgLightingGradient{end: svgPoint{x: 1}, valid: true, stops: []svgGradientStop{{0, nv(0, 0, 0)}, {1, nv(1, 1, 1)}}}
+	writeSVGLightingGradient(w, g, "first")
+	g.end.x = 10
+	if paint := writeSVGLightingGradient(w, g, "second"); paint != "url(#second)" {
+		t.Fatalf("second paint = %q", paint)
+	}
+	before := w.buf.String()
+	if strings.Count(before, "<stop ") != 2 || !strings.Contains(before, `x2="10" y2="0" xlink:href="#first"/>`) {
+		t.Fatalf("expected shared stops and independent gradient coordinates: %s", before)
+	}
+	g.stops[1].color = nv(.001, .001, .001)
+	if paint := writeSVGLightingGradient(w, g, "solid"); paint != "#000000" || before != w.buf.String() {
+		t.Fatalf("uniform gradient paint = %q, output = %s", paint, w.buf.String())
+	}
+}
