@@ -5,6 +5,7 @@ package d2ir
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -190,6 +191,10 @@ type Map struct {
 	// this map or any descendant. Lazy globs use it instead of recursively
 	// recounting the whole IR around every compiled key.
 	structureVersion uint64
+
+	// Compiler-owned fields whose subtrees have held an edge. Keeping those
+	// branches lets recursive selectors skip unrelated columns and shapes.
+	edgeFields []*Field
 }
 
 type fieldIndexKey struct {
@@ -331,6 +336,29 @@ func (m *Map) markStructureChanged() {
 	}
 }
 
+func (m *Map) mayHaveEdges() bool {
+	return m != nil && (len(m.Edges) > 0 || len(m.edgeFields) > 0)
+}
+
+func (f *Field) noteEdges() {
+	for f != nil && !f.inEdgeFields {
+		parent, ok := f.parent.(*Map)
+		if !ok {
+			return
+		}
+		parent.edgeFields = append(parent.edgeFields, f)
+		f.inEdgeFields = true
+		f, _ = parent.parent.(*Field)
+	}
+}
+
+func (f *Field) setComposite(value Composite) {
+	f.Composite = value
+	if f.Map().mayHaveEdges() {
+		f.noteEdges()
+	}
+}
+
 func (m *Map) appendField(f *Field) {
 	oldLen := len(m.Fields)
 	m.Fields = append(m.Fields, f)
@@ -343,6 +371,9 @@ func (m *Map) appendField(f *Field) {
 	} else {
 		m.fieldIndex = nil
 		m.fieldIndexSize = 0
+	}
+	if f.Map().mayHaveEdges() {
+		f.noteEdges()
 	}
 	m.markStructureChanged()
 }
@@ -362,11 +393,18 @@ func (m *Map) insertField(index int, f *Field) {
 		m.fieldIndex = nil
 		m.fieldIndexSize = 0
 	}
+	if f.Map().mayHaveEdges() {
+		f.noteEdges()
+	}
 	m.markStructureChanged()
 }
 
 func (m *Map) removeField(index int) *Field {
 	f := m.Fields[index]
+	if f != nil && f.inEdgeFields {
+		m.edgeFields = slices.DeleteFunc(m.edgeFields, func(child *Field) bool { return child == f })
+		f.inEdgeFields = false
+	}
 	copy(m.Fields[index:], m.Fields[index+1:])
 	m.Fields = m.Fields[:len(m.Fields)-1]
 	m.fieldIndex = nil
@@ -385,6 +423,9 @@ func (m *Map) appendEdge(e *Edge) {
 	} else {
 		m.edgeIndex = nil
 		m.edgeIndexSize = 0
+	}
+	if f, ok := m.parent.(*Field); ok {
+		f.noteEdges()
 	}
 	m.markStructureChanged()
 }
@@ -436,12 +477,18 @@ func (m *Map) Copy(newParent Node) Node {
 	m.edgeIndex = nil
 	m.edgeIndexSize = 0
 	m.structureVersion = 0
+	m.edgeFields = nil
 
 	m.parent = newParent
 	pfields := m.Fields
 	m.Fields = make([]*Field, 0, len(pfields))
 	for _, f := range pfields {
-		m.Fields = append(m.Fields, f.Copy(m).(*Field))
+		field := f.Copy(m).(*Field)
+		m.Fields = append(m.Fields, field)
+		if field.Map().mayHaveEdges() {
+			m.edgeFields = append(m.edgeFields, field)
+			field.inEdgeFields = true
+		}
 	}
 	m.Edges = append([]*Edge(nil), m.Edges...)
 	for i := range m.Edges {
@@ -595,9 +642,10 @@ var _ Importable = &Map{}
 
 type Field struct {
 	// *Map.
-	parent    Node
-	importAST d2ast.Node
-	suspended bool
+	parent       Node
+	importAST    d2ast.Node
+	suspended    bool
+	inEdgeFields bool
 
 	Name d2ast.String `json:"name"`
 
@@ -624,6 +672,7 @@ func (f *Field) Copy(newParent Node) Node {
 	tmp := *f
 	f = &tmp
 
+	f.inEdgeFields = false
 	f.parent = newParent
 	f.References = append([]*FieldReference(nil), f.References...)
 	if f.Primary_ != nil {
@@ -731,6 +780,12 @@ func edgePathEqual(p1, p2 []d2ast.String) bool {
 	return true
 }
 
+// A path segment containing a star stays part of the edge ID, even when
+// both endpoints share it. Only literal scope prefixes are trimmed.
+func canTrimEdgeScope(name d2ast.String) bool {
+	return !strings.Contains(name.ScalarString(), "*")
+}
+
 // resolve resolves both underscores and commons in eid.
 // It returns the new eid, containing map adjusted for underscores and common ida.
 func (eid *EdgeID) resolve(m *Map) (_ *EdgeID, _ *Map, common []d2ast.String, _ error) {
@@ -756,7 +811,7 @@ func (eid *EdgeID) resolve(m *Map) (_ *EdgeID, _ *Map, common []d2ast.String, _ 
 	}
 
 	for len(eid.SrcPath) > 1 && len(eid.DstPath) > 1 {
-		if !strings.EqualFold(eid.SrcPath[0].ScalarString(), eid.DstPath[0].ScalarString()) || strings.Contains(eid.SrcPath[0].ScalarString(), "*") {
+		if !strings.EqualFold(eid.SrcPath[0].ScalarString(), eid.DstPath[0].ScalarString()) || !canTrimEdgeScope(eid.SrcPath[0]) {
 			return eid, m, common, nil
 		}
 		common = append(common, eid.SrcPath[0])
@@ -1562,6 +1617,9 @@ func (m *Map) getEdgesMode(eid *EdgeID, refctx *RefContext, c *compiler, indexed
 	if refctx.Key.HasGlob() && c != nil {
 		gctx = c.ensureGlobContext(refctx)
 	}
+	if indexed && eid.Glob && gctx != nil && sameRecursiveEndpoints(refctx.Edge) {
+		return m.selectRecursiveEdges(eid, refctx, gctx, c)
+	}
 	var ea []*Edge
 	m.getEdges(eid, refctx, gctx, c, indexed, &ea)
 	return ea
@@ -1664,12 +1722,7 @@ func (m *Map) getEdges(eid *EdgeID, refctx *RefContext, gctx *globContext, c *co
 			}
 			for _, e := range ea2 {
 				if gctx != nil {
-					var ks string
-					if refctx.Key.HasTripleGlob() {
-						ks = d2format.FormatKeyPath(IDA(e))
-					} else {
-						ks = d2format.FormatKeyPath(BoardIDA(e))
-					}
+					ks := gctx.edgeKey(e)
 					if _, ok := gctx.appliedEdges[ks]; ok {
 						continue
 					}

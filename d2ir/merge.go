@@ -127,7 +127,7 @@ func overlayField(bf, of *Field, indexed bool) {
 			overlayMap(bf.Map(), of.Map(), indexed)
 		} else {
 			beforeFields, beforeEdges := structureCounts(bf.Map())
-			bf.Composite = of.Composite.Copy(bf).(Composite)
+			bf.setComposite(of.Composite.Copy(bf).(Composite))
 			markStructureCountDelta(ParentMap(bf), beforeFields, beforeEdges, bf.Map())
 		}
 	}
