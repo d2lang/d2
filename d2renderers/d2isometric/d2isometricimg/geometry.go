@@ -507,6 +507,10 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 	hierarchyBackground := "#f5f7fb"
 	b.routeCasingFloor = hierarchyCasingFloor(boards, nodes)
 	b.hierarchySupports = hierarchySupportOffsets(boards)
+	routes, err := b.prepareEdges(s.Edges, captions, s)
+	if err != nil {
+		return nil, err
+	}
 	headerNodes := hierarchyRenderNodes(s.Nodes, b.hierarchySupports)
 	if b.palettePaper != "" || !nativeToken(s.Root.Fill) {
 		hierarchyBackground = s.Background
@@ -564,7 +568,7 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 			surface := labelSurface{center: nadd(board.Position, nv(-w/2+.35+pw/2, .032, -d/2+hd/2)), width: pw, depth: pd, align: "left"}
 			if owner != nil {
 				surface.center.Y = hierarchySurfaceY(board) + .00006
-				surface = hierarchyBoardHeaderSurface(surface, board, *owner, headerNodes, b.scale, boards)
+				surface, _ = placeHierarchyHeader(surface, board, *owner, headerNodes, b.scale, boards, captions)
 			}
 			captions.Avoid(surface.center, pw, pd)
 			if owner != nil {
@@ -620,7 +624,7 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 			b.rememberArrowOwner(node, nil, first)
 		}
 	}
-	packets := b.edges(s.Edges, captions, s)
+	packets := b.drawEdges(s.Edges, captions, s, routes)
 	if b.err != nil {
 		return nil, b.err
 	}

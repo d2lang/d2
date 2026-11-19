@@ -8,6 +8,19 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2isometric"
 )
 
+func (b *meshBuilder) edges(edges []d2isometric.Edge, placer *routeCaptionPlacer, scenes ...*d2isometric.Scene) []packetRoute {
+	var scene *d2isometric.Scene
+	if len(scenes) != 0 {
+		scene = scenes[0]
+	}
+	routes, err := b.prepareEdges(edges, placer, scene)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return b.drawEdges(edges, placer, scene, routes)
+}
+
 func TestNativeComponentRetainsLayoutFootprint(t *testing.T) {
 	for _, size := range []Vec{nv(2.4, .7, 1.2), nv(.01, .7, .02), nv(25, .9, 13)} {
 		b := &meshBuilder{ctx: context.Background(), scale: .01}

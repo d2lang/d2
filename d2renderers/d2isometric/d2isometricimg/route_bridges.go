@@ -95,7 +95,7 @@ func nativeResolveBridgeRoutes(ctx context.Context, edges []d2isometric.Edge, li
 		for j := range parts[i] {
 			parts[i][j] = -1
 		}
-		if !bridgeVisible(edge) {
+		if !nativeRouteVisible(edge) {
 			continue
 		}
 		for j := 1; j < len(paths[i]); j++ {
@@ -248,7 +248,7 @@ func nativeResolveBridgeRoutes(ctx context.Context, edges []d2isometric.Edge, li
 
 func bridgeFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && math.Abs(v) <= 1e9 }
 
-func bridgeVisible(e d2isometric.Edge) bool {
+func nativeRouteVisible(e d2isometric.Edge) bool {
 	return e.Opacity > 0 && e.StrokeWidth > 0 && (!e.StrokeExplicit || nativePaint(e.Stroke, "#657e9e").A > 0)
 }
 

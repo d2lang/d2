@@ -329,20 +329,19 @@ func captionPosition(points []Vec, fraction float64) (center Vec, angle, length 
 	return center, math.Atan2(direction.Z, direction.X), length
 }
 
-func (b *meshBuilder) edges(edges []d2isometric.Edge, placer *routeCaptionPlacer, scenes ...*d2isometric.Scene) []packetRoute {
-	packets := []packetRoute{}
+type nativeConnectionPaths struct {
+	lanes, wires [][]Vec
+}
+
+func (b *meshBuilder) prepareEdges(edges []d2isometric.Edge, placer *routeCaptionPlacer, scene *d2isometric.Scene) (nativeConnectionPaths, error) {
 	var nodes []d2isometric.Node
 	var boards []d2isometric.Board
-	var scene *d2isometric.Scene
-	if len(scenes) > 0 && scenes[0] != nil {
-		scene = scenes[0]
-		nodes, boards = scenes[0].Nodes, scenes[0].Boards
+	if scene != nil {
+		nodes, boards = scene.Nodes, scene.Boards
 	}
-	captionPaint := nativeCaptionPaint(scene)
 	lanePaths, paths, err := nativeEdgeRoutes(b.ctx, edges, nodes, boards, b.hierarchySupports)
 	if err != nil {
-		b.err = err
-		return packets
+		return nativeConnectionPaths{}, err
 	}
 	// Reserve fixed source captions and all visible wires before placing any
 	// automatic caption. Edge order must not let an earlier automatic label
@@ -355,7 +354,7 @@ func (b *meshBuilder) edges(edges []d2isometric.Edge, placer *routeCaptionPlacer
 			b.reserveSequenceEdge(edge, paths[i], placer)
 			continue
 		}
-		if edge.StrokeWidth > 0 {
+		if nativeRouteVisible(edge) {
 			placer.AvoidRoute(paths[i], nativeRouteRadius(edge)*1.6)
 		}
 		hasIcon := edge.Icon != "" && edge.Metadata.Original.Icon != nil
@@ -370,6 +369,13 @@ func (b *meshBuilder) edges(edges []d2isometric.Edge, placer *routeCaptionPlacer
 			placer.reserve(captionRect(surface, true))
 		}
 	}
+	return nativeConnectionPaths{lanePaths, paths}, nil
+}
+
+func (b *meshBuilder) drawEdges(edges []d2isometric.Edge, placer *routeCaptionPlacer, scene *d2isometric.Scene, routes nativeConnectionPaths) []packetRoute {
+	var packets []packetRoute
+	lanePaths, paths := routes.lanes, routes.wires
+	captionPaint := nativeCaptionPaint(scene)
 	for edgeIndex, edge := range edges {
 		if b.err != nil {
 			return packets
