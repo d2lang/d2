@@ -1,7 +1,9 @@
 package d2isometricimg
 
 import (
+	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -86,7 +88,8 @@ func (b *meshBuilder) captureStackCaption(edge int, surface labelSurface) {
 
 type stackObstacle struct {
 	nativeLaneInterval
-	floor int
+	floor         int
+	upperEndpoint bool // encountered at an upper-floor port
 }
 
 func stackPathKey(path []string) string {
@@ -134,7 +137,7 @@ func (b *meshBuilder) addStackConnectors(decks []explodedDeck) error {
 			return err
 		}
 		for _, n := range deck.scene.Nodes {
-			if n.Opacity <= 0 || n.Link == "" || hierarchySpacer(n) {
+			if n.Opacity*255 < .5 || n.Link == "" || hierarchySpacer(n) {
 				continue
 			}
 			to, ok := index.destination(n.Link, i)
@@ -150,7 +153,7 @@ func (b *meshBuilder) addStackConnectors(decks []explodedDeck) error {
 		}
 		for j, wire := range deck.wires {
 			e := deck.scene.Edges[j]
-			if !wire.visible || e.Link == "" {
+			if !wire.visible || e.Opacity*255 < .5 || e.Link == "" {
 				continue
 			}
 			if to, ok := index.destination(e.Link, i); ok {
@@ -161,8 +164,12 @@ func (b *meshBuilder) addStackConnectors(decks []explodedDeck) error {
 	if len(links) == 0 {
 		return nil
 	}
-	front := max(0, decks[0].depth/2-.18)
-	side := max(0, decks[0].width/2-.17)
+	if err := b.reserveStackTransfers(links); err != nil {
+		return err
+	}
+	unit := stackOpticalScale(decks[0].width)
+	front := max(0, decks[0].depth/2-.18*unit)
+	side := max(0, decks[0].width/2-.17*unit)
 	right := nativeCameraAxes().right
 	column := func(p Vec) float64 { return p.X + (p.Z-front)*right.Z/right.X }
 	sort.SliceStable(links, func(i, j int) bool { return column(links[i].source) < column(links[j].source) })
@@ -176,7 +183,7 @@ func (b *meshBuilder) addStackConnectors(decks []explodedDeck) error {
 	sort.Slice(obstacles, func(i, j int) bool { return obstacles[i].lo < obstacles[j].lo })
 	var blocked []nativeLaneInterval
 	lastColumn := column(nv(side, 0, -front))
-	spacing := min(.28, (lastColumn+side)/float64(max(1, len(links)-1)))
+	spacing := min(.32*unit, (lastColumn+side)/float64(max(1, len(links)-1)))
 	previous := -side - spacing
 	for i, link := range links {
 		if err := b.ctx.Err(); err != nil {
@@ -187,7 +194,7 @@ func (b *meshBuilder) addStackConnectors(decks []explodedDeck) error {
 		upper, lower := min(link.from, link.to), max(link.from, link.to)
 		blocked = blocked[:0]
 		for _, o := range obstacles {
-			if o.floor <= upper || o.floor > lower {
+			if o.floor < upper || o.floor > lower || o.floor == upper && !o.upperEndpoint {
 				continue
 			}
 			last := len(blocked) - 1
@@ -199,7 +206,7 @@ func (b *meshBuilder) addStackConnectors(decks []explodedDeck) error {
 		}
 		port := stackGutterPort(link.source, side, front, lo, hi, blocked, column)
 		previous = column(port)
-		b.drawStackConnector(decks[link.from], decks[link.to], link, port)
+		b.drawStackConnector(decks[link.from], decks[link.to], link, port, decks[upper+1:lower]...)
 		if b.err != nil {
 			return b.err
 		}
@@ -251,6 +258,9 @@ func clearStackColumn(x, lo, hi float64, blocked []nativeLaneInterval) (float64,
 func appendStackObstacles(out []stackObstacle, deck explodedDeck, floor int, column func(Vec) float64) []stackObstacle {
 	// Express every obstacle on the common front row. A world point and
 	// its X on that row share the same screen X through the whole stack.
+	// Obstacles use equivalent X on the front row. Project the circular
+	// receiving iris (the widest optical part), plus a small air gap.
+	clearance := stackIrisRadius*stackOpticalScale(deck.width)/nativeCameraAxes().right.X + .025
 	add := func(surface labelSurface) {
 		if surface.width <= 0 || surface.depth <= 0 {
 			return
@@ -260,9 +270,13 @@ func appendStackObstacles(out []stackObstacle, deck explodedDeck, floor int, col
 			x := column(p)
 			lo, hi = min(lo, x), max(hi, x)
 		}
-		out = append(out, stackObstacle{nativeLaneInterval{lo - .125, hi + .125}, floor})
+		out = append(out, stackObstacle{nativeLaneInterval: nativeLaneInterval{lo - clearance, hi + clearance}, floor: floor})
 	}
+	start := len(out)
 	add(deck.title)
+	if len(out) > start {
+		out[start].upperEndpoint = true
+	}
 	for _, n := range deck.scene.Nodes {
 		if n.Opacity <= 0 || hierarchySpacer(n) {
 			continue
@@ -285,75 +299,166 @@ func appendStackObstacles(out []stackObstacle, deck explodedDeck, floor int, col
 		if wire.visible {
 			lo := column(nadd(wire.left, deck.offset))
 			hi := column(nadd(wire.right, deck.offset))
-			out = append(out, stackObstacle{nativeLaneInterval{lo - .125, hi + .125}, floor})
+			out = append(out, stackObstacle{nativeLaneInterval: nativeLaneInterval{lo - clearance, hi + clearance}, floor: floor})
 		}
 	}
 	return out
 }
 
-func (b *meshBuilder) drawStackConnector(from, to explodedDeck, link stackConnector, port Vec) {
-	ink := nativeMaterial("#bd492b", 1, 0, link.opacity)
-	ink.Unlit = true
-	x, z := port.X, port.Z
-	fromPort := nv(x, from.surfaceY+.008, z)
-	toPort := nv(x, to.surfaceY+.008, z)
-	// The short lead lies on the source floor. It disappears behind solids
-	// in the same visibility pass that clips the inter-floor shaft.
-	b.routeInk([]Vec{link.source, fromPort}, .020, ink)
-	b.stackSocket(fromPort, ink)
-	b.stackSocket(toPort, ink)
+// Optical transfers use a filled emitting lens and an open receiving iris.
+// A crossed board only has a plain through-collar, with no new connection.
+const (
+	stackTracePaint = "#956038"
+	stackLightPaint = "#e7b575"
+	stackRingSides  = 20
+	stackIrisRadius = .157
+	stackIrisCut    = .04
+	stackWaveStart  = .045
+	stackWaveEnd    = .59
+	stackBeamAlpha  = .61
+	stackGlintAlpha = .90
+)
 
-	// A world-Y line projects vertically. Use the camera's horizontal
-	// axis for its width: the usual horizontal wire normal degenerates
-	// when applied to a vertical shaft. Both faces still use real depth.
-	sign := math.Copysign(1, toPort.Y-fromPort.Y)
-	fromY, toY := fromPort.Y, toPort.Y
-	if sign < 0 {
-		fromY = from.surfaceY - from.thickness
-	} else {
-		toY = to.surfaceY - to.thickness
+// Reject stacks already over the common mesh limit before allocating any
+// transfer triangles. Reserve once for the surviving stack; at most three
+// wavefronts per link can be absent where they intersect another plate.
+func (b *meshBuilder) reserveStackTransfers(links []stackConnector) error {
+	minimum, maximum := 0, 0
+	for _, link := range links {
+		spans := max(link.from, link.to) - min(link.from, link.to)
+		// Emitter bezel and lens (3 triangles/sector), split iris
+		// (two arcs of nine sectors), receiver bore (3/sector), leader.
+		faces := 6*stackRingSides + 4*stackArcSteps(stackIrisCut, .5-stackIrisCut) + 2
+		faces += (spans - 1) * 2 * stackRingSides // plain collars
+		for _, alpha := range [...]float64{stackBeamAlpha, stackGlintAlpha} {
+			if link.opacity*255*alpha >= .5 {
+				faces += 2 * spans
+			}
+		}
+		minimum += faces
+		maximum += faces + 3*2*stackArcSteps(stackWaveStart, stackWaveEnd)
 	}
-	across := nativeCameraAxes().right
-	at := func(y, width float64) Vec {
-		return nadd(nv(x, y, z), nmul(across, width))
+	room := maxNativeTriangles - len(b.triangles)
+	if minimum > room {
+		return fmt.Errorf("isometric exploded transfers exceed %d triangles", maxNativeTriangles)
 	}
-	stem := func(start, end float64) {
-		a, c := at(start, -.018), at(start, .018)
-		d, e := at(end, .018), at(end, -.018)
-		b.flat(a, c, d, ink, false)
-		b.flat(a, d, e, ink, false)
-	}
-	// An upward tip at the underside is hidden by the lip. Put it just
-	// outside the lip's projected silhouette and continue the stem to
-	// the socket. Downward tips meet the destination socket directly.
-	tip := toY
-	if sign > 0 {
-		view := nativeViewDirection()
-		lip := min((to.depth/2-z)/view.Z, (to.width/2-x)/view.X) * view.Y
-		tip -= min(math.Abs(toY-fromY)*.32, lip+.035)
-	}
-	head := min(.24, math.Abs(tip-fromY)*.4)
-	stem(fromY, tip-sign*head*.76)
-	if sign > 0 {
-		stem(tip, toY)
-	}
-	left, right := at(tip-sign*head, -head*.39), at(tip-sign*head, head*.39)
-	notch := at(tip-sign*head*.76, 0)
-	b.flat(at(tip, 0), left, notch, ink, false)
-	b.flat(at(tip, 0), notch, right, ink, false)
+	b.triangles = slices.Grow(b.triangles, min(maximum, room))
+	return nil
 }
 
-func (b *meshBuilder) stackSocket(center Vec, ink *Material) {
-	// An open socket distinguishes a board destination from a node.
-	const sides = 16
-	point := func(i int, radius float64) Vec {
-		angle := 2 * math.Pi * float64(i%sides) / sides
-		return nadd(center, nv(radius*math.Cos(angle), 0, radius*math.Sin(angle)))
+func stackOpticalScale(width float64) float64 {
+	// Keep the apertures readable on wide plates without taking over
+	// the reserved gutter on smaller ones.
+	return max(1., min(2.5, width/8))
+}
+
+func (b *meshBuilder) drawStackConnector(from, to explodedDeck, link stackConnector, port Vec, crossed ...explodedDeck) {
+	paint := func(color string, alpha float64) *Material {
+		m := nativeMaterial(color, 1, 0, link.opacity*alpha)
+		m.Unlit = true
+		return m
 	}
-	for i := 0; i < sides; i++ {
-		a, c := point(i, .082), point(i+1, .082)
-		d, e := point(i+1, .053), point(i, .053)
-		b.flat(a, c, d, ink, false)
-		b.flat(a, d, e, ink, false)
+	copper := paint(stackTracePaint, 1)
+	gold := paint("#dab072", 1)
+	light := paint(stackLightPaint, stackBeamAlpha)
+	gleam := paint("#ffebbc", stackGlintAlpha)
+	wave := paint("#ac7447", .87)
+	unit := stackOpticalScale(from.width)
+	lens := paint("#fff0c3", 1)
+	throat := paint("#38494d", 1)
+
+	at := func(y float64) Vec { return nv(port.X, y, port.Z) }
+	const lift = .008
+	source := at(from.surfaceY + lift)
+	receiver := at(to.surfaceY + lift)
+	b.routeInk([]Vec{link.source, source}, .016*unit, copper)
+	// A single polished lens emits. Disjoint concentric surfaces keep
+	// authored translucency from accumulating in the glass and its bezel.
+	b.stackRing(source, .052*unit, .087*unit, 0, 1, copper)
+	b.stackRing(source, 0, .052*unit, 0, 1, lens)
+	// The brass-edged dark bore is surrounded by a two-piece receiving
+	// iris. The narrow breaks distinguish the outer rim at small sizes.
+	b.stackRing(receiver, .120*unit, stackIrisRadius*unit, stackIrisCut, .5-stackIrisCut, copper)
+	b.stackRing(receiver, .120*unit, stackIrisRadius*unit, .5+stackIrisCut, 1-stackIrisCut, copper)
+	b.stackRing(receiver, .053*unit, .085*unit, 0, 1, gold)
+	b.stackRing(receiver, 0, .053*unit, 0, 1, throat)
+
+	emitY, receiveY := from.surfaceY-from.thickness, to.surfaceY+lift
+	if from.surfaceY < to.surfaceY {
+		emitY, receiveY = from.surfaceY+lift, to.surfaceY-to.thickness
+	}
+	radius := func(y float64) float64 {
+		progress := max(0., min(1., (y-emitY)/(receiveY-emitY)))
+		return (.026 + .092*progress) * unit
+	}
+	top, bottom := from, to
+	if top.surfaceY < bottom.surfaceY {
+		top, bottom = bottom, top
+	}
+	// Each span inherits the global opening angle. A crossed floor
+	// interrupts the material without restarting the light's progression.
+	next := top
+	for _, d := range crossed {
+		b.stackLightSpan(port, d.surfaceY+lift, next.surfaceY-next.thickness, radius, light, gleam)
+		b.stackRing(at(d.surfaceY+lift), .068*unit, .101*unit, 0, 1, copper)
+		next = d
+	}
+	b.stackLightSpan(port, bottom.surfaceY+lift, next.surfaceY-next.thickness, radius, light, gleam)
+
+	// Short, increasingly broad wavefronts face the receiver. Omit a
+	// pulse at a crossed plate so only the distinct through-collar remains.
+	for _, t := range [...]float64{.33, .70, .87} {
+		y := emitY + (receiveY-emitY)*t
+		visible := true
+		for _, d := range crossed {
+			if y >= d.surfaceY-d.thickness-.08*unit && y <= d.surfaceY+.08*unit {
+				visible = false
+				break
+			}
+		}
+		if visible {
+			r := radius(y) * 1.30
+			b.stackRing(at(y), r-.019*unit, r, stackWaveStart, stackWaveEnd, wave)
+		}
+	}
+}
+
+// The main face diverges from the emitter. A narrow facet at its edge
+// catches the light. Both are unlit, so dark and light boards receive the
+// same optical material; neither relies on a background-specific gradient.
+func (b *meshBuilder) stackLightSpan(port Vec, low, high float64, radius func(float64) float64, light, gleam *Material) {
+	if high <= low {
+		return
+	}
+	right := nativeCameraAxes().right
+	at := func(y, x float64) Vec { return nadd(nv(port.X, y, port.Z), nmul(right, x*radius(y))) }
+	strip := func(left, right float64, material *Material) {
+		a, c, d, e := at(low, left), at(low, right), at(high, right), at(high, left)
+		b.flat(a, c, d, material, false)
+		b.flat(a, d, e, material, false)
+	}
+	strip(-1, .68, light)
+	strip(.68, 1, gleam)
+}
+
+// Distances are in the deck's physical plane; arc ends are fractions of a
+// turn. Facing the camera from above also retains translucent rings in SVG.
+func stackArcSteps(start, end float64) int { return int(math.Ceil(stackRingSides * (end - start))) }
+
+func (b *meshBuilder) stackRing(center Vec, inner, outer, start, end float64, m *Material) {
+	steps := stackArcSteps(start, end)
+	point := func(i int, r float64) Vec {
+		angle := 2 * math.Pi * (start + float64(i)/float64(steps)*(end-start))
+		return nadd(center, nv(r*math.Cos(angle), 0, r*math.Sin(angle)))
+	}
+	for i := 0; i < steps; i++ {
+		a, c := point(i, outer), point(i+1, outer)
+		if inner == 0 {
+			b.flat(c, a, center, m, false)
+			continue
+		}
+		d, e := point(i+1, inner), point(i, inner)
+		b.flat(c, a, d, m, false)
+		b.flat(d, a, e, m, false)
 	}
 }

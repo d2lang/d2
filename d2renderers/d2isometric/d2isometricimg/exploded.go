@@ -22,6 +22,7 @@ type explodedDeck struct {
 	wires                             []stackWire
 	width, depth, surfaceY, thickness float64
 	height                            float64 // tallest artwork above the plate
+	contentWidth, contentDepth        float64
 }
 
 func explodedLayers(ctx context.Context, root *d2target.Diagram, boardPath []string) ([]explodedDeck, error) {
@@ -176,12 +177,24 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 		}
 		deck.offset = nv(-bounds.X-bounds.Width/2, -floor, -bounds.Y-bounds.Height/2)
 		deck.height = ceiling - floor
+		deck.contentWidth, deck.contentDepth = bounds.Width, bounds.Height
 		width, depth = max(width, bounds.Width), max(depth, bounds.Height)
 	}
-	margin := max(.5, min(.72, width*.045))
+	// The widest receiving iris must fit between the plate edge and the
+	// artwork even on the wide boards where it is drawn at full scale.
+	margin := .25 + .34*stackOpticalScale(width)
 	width += 2 * margin
 	depth += 2 * margin
 	thickness := max(.055, min(.18, width*.012))
+	// Register captioned boards against the same front-left corner. Each
+	// compiled layout moves as a unit, including its routes and hit regions.
+	for i := range decks {
+		d := &decks[i]
+		if d.mesh.rootCaption.width > 0 {
+			d.offset.X -= (width-d.contentWidth)/2 - margin
+			d.offset.Z += (depth-d.contentDepth)/2 - margin
+		}
+	}
 	placeExplodedDecks(decks, width, depth, thickness)
 
 	b := &meshBuilder{ctx: ctx, scale: d2isometric.SceneScale, options: options}
@@ -205,7 +218,7 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 			// stretch a dark footprint across all the other levels.
 			b.triangles[j].ShadowGround = &d.surfaceY
 		}
-		d.title = d.mesh.rootTitle
+		d.title = d.mesh.rootCaption
 		d.title.center = nadd(d.title.center, d.offset)
 		if err := b.appendDeck(d, &packets); err != nil {
 			return nil, err

@@ -75,6 +75,52 @@ func TestExplodedLayerGapPreservesOtherPairs(t *testing.T) {
 	}
 }
 
+func TestExplodedRootCaptionAtFront(t *testing.T) {
+	d := captureDiagram()
+	d.Root.Label = "Detector calibration"
+	d.Root.FontSize = 48
+	scene, err := d2isometric.BuildScene(d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene.Root.Label = ""
+	art, err := newNativeSceneWithOptions(context.Background(), scene, 320, 240, nil, nil, nativeSceneOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounds := nativeMeshBounds(art.triangles)
+	scene.Description = "Bright objects trigger follow-up exposures."
+	description, err := newNativeSceneWithOptions(context.Background(), scene, 320, 240, nil, nil, nativeSceneOptions{stackWires: make([]stackWire, len(scene.Edges))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if description.rootCaption.width < bounds.Width || description.rootCaption.center.Z <= bounds.Y+bounds.Height {
+		t.Fatalf("untitled floor lost its description band: %+v", description.rootCaption)
+	}
+	scene.Description = ""
+	scene.Root.Label = d.Root.Label
+	for _, exploded := range []bool{false, true} {
+		options := nativeSceneOptions{}
+		if exploded {
+			options.stackWires = make([]stackWire, len(scene.Edges))
+		}
+		mesh, err := newNativeSceneWithOptions(context.Background(), scene, 320, 240, nil, nil, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		caption := mesh.rootCaption
+		if caption.width <= 0 || caption.depth < float64(d.Root.FontSize)*d2isometric.SceneScale {
+			t.Fatalf("missing or undersized board caption: %+v", caption)
+		}
+		if exploded && caption.center.Z-caption.depth/2 <= bounds.Y+bounds.Height {
+			t.Fatal("exploded caption overlaps the artwork from behind")
+		}
+		if !exploded && caption.center.Z+caption.depth/2 >= bounds.Y {
+			t.Fatal("ordinary board caption moved")
+		}
+	}
+}
+
 func TestExplodedSVGAndPNG(t *testing.T) {
 	root := &d2target.Diagram{IsFolderOnly: true}
 	for _, name := range []string{"Top", "Plain"} {

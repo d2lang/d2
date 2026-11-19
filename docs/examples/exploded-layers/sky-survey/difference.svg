@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="84" viewBox="0 0 150 84">
+<title>Difference image showing the positive residual at the registered position</title>
+<path d="M4 1H145L149 5V79L145 83H5L1 79V5Z" fill="#a5b1a4"/>
+<circle cx="27.4" cy="36.5" r="1.512" fill="#8e9e94"/>
+<circle cx="28.7" cy="35.75" r="1.4070000000000003" fill="#bdc8b7"/>
+<circle cx="41.4" cy="26.5" r="0.9359999999999999" fill="#8e9e94"/>
+<circle cx="42.7" cy="25.75" r="0.8710000000000001" fill="#bdc8b7"/>
+<circle cx="53.4" cy="14.5" r="0.9359999999999999" fill="#8e9e94"/>
+<circle cx="54.7" cy="13.75" r="0.8710000000000001" fill="#bdc8b7"/>
+<circle cx="59.4" cy="33.5" r="1.44" fill="#8e9e94"/>
+<circle cx="60.7" cy="32.75" r="1.34" fill="#bdc8b7"/>
+<circle cx="71.4" cy="52.5" r="1.08" fill="#8e9e94"/>
+<circle cx="72.7" cy="51.75" r="1.0050000000000001" fill="#bdc8b7"/>
+<circle cx="89.4" cy="67.5" r="1.728" fill="#8e9e94"/>
+<circle cx="90.7" cy="66.75" r="1.608" fill="#bdc8b7"/>
+<circle cx="123.4" cy="54.5" r="1.188" fill="#8e9e94"/>
+<circle cx="124.7" cy="53.75" r="1.1055" fill="#bdc8b7"/>
+<circle cx="106" cy="34" r="6.1" fill="#ccd2b7"/>
+<circle cx="106" cy="34" r="3.8" fill="#eee4c3"/>
+<circle cx="106" cy="34" r="1.8" fill="#fff6d6"/>
+<path d="M89 34h9 M114 34h9 M106 17v9 M106 42v9" fill="none" stroke="#465e5f" stroke-width="1.1"/>
+</svg>

@@ -22,6 +22,9 @@ import (
 func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily) (*d2target.Diagram, error) {
 	diagram := d2target.NewDiagram()
 	applyStyles(&diagram.Root, g.Root)
+	if g.Root.Style.FontSize != nil {
+		diagram.Root.FontSize, _ = strconv.Atoi(g.Root.Style.FontSize.Value)
+	}
 	if g.Root.Label.MapKey == nil {
 		diagram.Root.Label = g.Name
 	} else {

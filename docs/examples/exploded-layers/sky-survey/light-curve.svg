@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="84" viewBox="0 0 150 84">
+<title>Illustrative transient brightness measurements over successive visits</title>
+<path d="M4 1H145L149 5V79L145 83H5L1 79V5Z" fill="#223b48"/>
+<path d="M15 12V68H137" fill="none" stroke="#95a9a4" stroke-width="1.35"/>
+<path d="M15 27H136 M15 48H136" fill="none" stroke="#3e555c" stroke-width=".8"/>
+<path d="M36 68v3 M59 68v3 M82 68v3 M105 68v3 M128 68v3" fill="none" stroke="#95a9a4" stroke-width="1"/>
+<path d="M20 59 L31 61 L43 57 L54 49 L65 32 L78 19 L90 22 L101 30 L113 39 L125 47 L136 51" fill="none" stroke="#f1a266" stroke-width="2"/>
+<path d="M20 56v6 m-2 0h4 M18 56h4 M31 58v6 m-2 0h4 M29 58h4 M43 53v8 m-2 0h4 M41 53h4 M54 45v8 m-2 0h4 M52 45h4 M65 27v10 m-2 0h4 M63 27h4 M78 15v8 m-2 0h4 M76 15h4 M90 19v6 m-2 0h4 M88 19h4 M101 26v8 m-2 0h4 M99 26h4 M113 36v6 m-2 0h4 M111 36h4 M125 43v8 m-2 0h4 M123 43h4 M136 47v8 m-2 0h4 M134 47h4" fill="none" stroke="#92aaa5" stroke-width=".85"/>
+<circle cx="20" cy="59" r="1.9" fill="#f6e8c3"/>
+<circle cx="31" cy="61" r="1.9" fill="#f6e8c3"/>
+<circle cx="43" cy="57" r="1.9" fill="#f6e8c3"/>
+<circle cx="54" cy="49" r="1.9" fill="#f6e8c3"/>
+<circle cx="65" cy="32" r="1.9" fill="#f6e8c3"/>
+<circle cx="78" cy="19" r="1.9" fill="#f6e8c3"/>
+<circle cx="90" cy="22" r="1.9" fill="#f6e8c3"/>
+<circle cx="101" cy="30" r="1.9" fill="#f6e8c3"/>
+<circle cx="113" cy="39" r="1.9" fill="#f6e8c3"/>
+<circle cx="125" cy="47" r="1.9" fill="#f6e8c3"/>
+<circle cx="136" cy="51" r="1.9" fill="#f6e8c3"/>
+</svg>

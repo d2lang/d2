@@ -188,24 +188,41 @@ func (b *meshBuilder) rootDecorations(s *d2isometric.Scene, assets *d2scenebuild
 			}
 			h = max(h, float64(lines)*font*1.4)
 		}
+		// On a stack the caption sits at the front of the plate, where tall
+		// artwork cannot obscure it in the fixed camera. Reserve only the
+		// space actually occupied by an authored heading or description.
+		descHeight := 0.
+		if s.Description != "" {
+			descHeight = max(.25, math.Ceil(float64(len([]rune(s.Description)))*.085/w)*.25)
+		}
 		bottom := bounds.Y - .35
+		if b.options.stackWires != nil {
+			bottom = bounds.Y + bounds.Height + .35 + descHeight
+			if root.Label != "" || root.Icon != nil {
+				bottom += h
+				if descHeight > 0 {
+					bottom += .18
+				}
+			}
+		}
 		ink := readableSurfaceInk(s.Background, 1)
 		if !nativeToken(root.Color) {
 			ink = root.Color
 		}
+		var description labelSurface
 		if s.Description != "" {
 			style := root.Text
 			style.Label, style.Language, style.FontSize, style.Bold = s.Description, "", 16, false
 			style.LabelWidth, style.LabelHeight = 0, 0
-			dh := max(.25, math.Ceil(float64(len([]rune(style.Label)))*.085/w)*.25)
-			b.label(style.Label, labelSurface{center: nv(bounds.X+w/2, .066, bottom-dh/2), width: w, depth: dh, align: "left"}, style, ink, 1, "board")
-			bottom -= dh + .18
+			description = labelSurface{center: nv(bounds.X+w/2, .066, bottom-descHeight/2), width: w, depth: descHeight, align: "left"}
+			b.label(style.Label, description, style, ink, 1, "board")
+			bottom -= descHeight + .18
 		}
 		if root.Label != "" || root.Icon != nil {
 			surface := labelSurface{center: nv(bounds.X+w/2, .066, bottom-h/2), width: w, depth: h, align: "left"}
 			// Keep the occupied part of this left-aligned caption available
 			// to the inter-floor route planner. The texture itself spans w.
-			b.rootTitle = surface
+			b.rootCaption = surface
 			titleWidth := float64(root.LabelWidth) * b.scale
 			if titleWidth <= 0 {
 				titleWidth = float64(len([]rune(root.Label))) * font * .65
@@ -213,10 +230,21 @@ func (b *meshBuilder) rootDecorations(s *d2isometric.Scene, assets *d2scenebuild
 			if root.Icon != nil {
 				titleWidth += h
 			}
-			b.rootTitle.width = min(w, titleWidth)
-			b.rootTitle.center.X -= (w - b.rootTitle.width) / 2
+			b.rootCaption.width = min(w, titleWidth)
+			b.rootCaption.center.X -= (w - b.rootCaption.width) / 2
 			surface = b.shapeIcon(root, surface, 1, "board")
 			b.shapeLabel(root, surface, ink, 1, "board")
+		}
+		// A description can wrap across the full plate. Keep the whole
+		// caption band free of transfers, including on an untitled floor.
+		if description.depth > 0 {
+			front := description.center.Z + description.depth/2
+			if b.rootCaption.depth > 0 {
+				back := b.rootCaption.center.Z - b.rootCaption.depth/2
+				description.depth = front - back
+				description.center.Z = (front + back) / 2
+			}
+			b.rootCaption = description
 		}
 	}
 	// The ordinary background already uses Root.Fill. A framed/patterned root
@@ -269,7 +297,7 @@ func finishNativeScene(b *meshBuilder, s *d2isometric.Scene, width, height int, 
 		camera = *b.options.camera
 	}
 	width, height = camera.width, camera.height
-	result := &nativeScene{rootTitle: b.rootTitle, packets: packets, triangles: b.triangles, panels: b.panels, width: width, height: height, background: background, animatedNodes: b.animatedNodes, pixelScale: b.scale, links: b.links}
+	result := &nativeScene{rootCaption: b.rootCaption, packets: packets, triangles: b.triangles, panels: b.panels, width: width, height: height, background: background, animatedNodes: b.animatedNodes, pixelScale: b.scale, links: b.links}
 	if useBackground && libcolor.IsGradient(s.Background) {
 		var err error
 		result.backgroundPaint, err = scenepaint.Gradient(s.Background)

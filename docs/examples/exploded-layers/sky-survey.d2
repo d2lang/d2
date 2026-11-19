@@ -1,0 +1,117 @@
+# A night at a time-domain sky survey, from raw light to a follow-up request.
+vars: {
+  d2-config: {
+    layout-engine: tala
+    isometric-exploded: true
+    theme-overrides: {
+      N7: "#243744"
+      N1: "#263733"
+      B1: "#354b47"
+      B6: "#e5e5d6"
+    }
+  }
+  survey-classes: {
+    station: {
+      style: {
+        fill: "#faf0d9"
+        stroke: "#394c47"
+        stroke-width: 2
+        font-color: "#243b35"
+        font-size: 44
+      }
+    }
+    reference: {
+      shape: stored_data
+      style.fill: "#c7d4c3"
+    }
+    instrument: {
+      shape: hexagon
+      style.fill: "#d1dcd6"
+    }
+    handoff: {
+      style: {fill: "#65463d"; font-color: "#faf0d9"; bold: true}
+    }
+    exposure: {
+      shape: image
+      width: 378
+      height: 195
+      style: {stroke-width: 0; stroke: transparent; fill: transparent; font-size: 46; font-color: "#253a35"; bold: true}
+    }
+    flow: {style.stroke: "#405a52"; style.stroke-width: 3}
+  }
+}
+
+layers: {
+  Observing: Night observing {
+    classes: ${survey-classes}
+    direction: right
+    style: {fill: "#e6d8bb"; font-size: 56; bold: true; font-color: "#263a37"}
+    vars: {d2-config: {isometric-layer-gap: 35}}
+    field: Field list {class: station; shape: document}
+    sky: Sky monitor {class: [station; instrument]}
+    queue: Visit queue {class: station}
+    mount: Telescope {class: [station; instrument]}
+    camera: Camera {class: [station; instrument]}
+    # Each camera readout becomes a raw exposure ready for calibration.
+    raw: Raw frames {class: exposure; icon: "./sky-survey/raw.svg"; link: _.layers.Calibration}
+    field -> queue: {class: flow}
+    sky -> queue -> mount -> camera -> raw: {class: flow}
+  }
+
+  Calibration: Detector calibration {
+    classes: ${survey-classes}
+    direction: right
+    style: {fill: "#becfc4"; font-size: 56; bold: true; font-color: "#263a37"}
+    vars: {d2-config: {isometric-layer-gap: 35}}
+    bias: Bias model {class: [station; reference]}
+    flat: Master flat {class: [station; reference]}
+    correct: CCD correction {class: station}
+    stars: Reference stars {class: station; shape: document}
+    sky: Astrometry {class: station}
+    flux: Photometry {class: station}
+    visit: Calibrated visit {class: exposure; icon: "./sky-survey/calibrated.svg"; link: _.layers.Subtraction}
+    # Keep the correction bench and its output aligned across the deck.
+    # Reference stars supply both the position fit and the brightness scale.
+    correct: {left: 390; top: 80}
+    visit: {left: 1730; top: 62}
+    flat -> correct -> sky -> visit: {class: flow}
+    bias -> correct -> flux -> visit: {class: flow}
+    stars -> sky: {class: flow}
+    stars -> flux: {class: flow}
+  }
+
+  Subtraction: Difference imaging {
+    classes: ${survey-classes}
+    direction: right
+    style: {fill: "#aebfca"; font-size: 56; bold: true; font-color: "#263a37"}
+    vars: {d2-config: {isometric-layer-gap: 45}}
+    ref: Sky template {class: [station; reference]}
+    match: Warp and match {class: station}
+    image: Visit image {class: station}
+    subtract: Difference image {class: exposure; icon: "./sky-survey/difference.svg"}
+    # Brightening and fading sources leave residuals of opposite signs.
+    bright: Positive peaks {class: station}
+    faint: Negative peaks {class: station}
+    catalog: Detections {class: [station; handoff]; link: _.layers.Alerts}
+    ref -> match -> subtract: {class: flow}
+    image -> subtract -> bright -> catalog: {class: flow}
+    subtract -> faint -> catalog: {class: flow}
+  }
+
+  Alerts: Alert publication {
+    classes: ${survey-classes}
+    direction: left
+    style: {fill: "#c9b7b5"; font-size: 56; bold: true; font-color: "#263a37"}
+    objects: Object index {class: [station; reference]}
+    associate: Match objects {class: station}
+    cutouts: Image cutouts {class: station; shape: document}
+    packet: Alert packet {class: exposure; icon: "./sky-survey/light-curve.svg"}
+    broker: Alert broker {class: [station; instrument]}
+    archive: Packet archive {class: [station; reference]; shape: cylinder}
+    # A broker can send a candidate back to the telescope for another visit.
+    follow: Follow-up request {class: [station; handoff]; link: _.layers.Observing}
+    objects -> associate -> packet: {class: flow}
+    cutouts -> packet -> broker -> follow: {class: flow}
+    packet -> archive: {class: flow}
+  }
+}

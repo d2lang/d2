@@ -24,20 +24,40 @@ func paintTestDeckWires(t *testing.T, deck *explodedDeck) {
 	}
 }
 
-// Find the projected center X of each vertical stem crossing this world height.
-func connectorTestColumns(ts []Triangle, height float64) []float64 {
-	var columns []float64
-	for _, tri := range ts {
-		a, c, d := tri.V[0].Position, tri.V[1].Position, tri.V[2].Position
-		if min(a.Y, c.Y, d.Y) >= height || max(a.Y, c.Y, d.Y) <= height {
+// Slice each two-facet beam at a world height. The midpoint of its
+// projected width is the underlying registered X/Z transfer axis.
+func connectorTestCuts(ts []Triangle, height float64) []nativeLaneInterval {
+	var cuts []nativeLaneInterval
+	axis := nativeCameraAxes().right
+	field := nativePaint(stackLightPaint, "")
+	for i := 0; i+3 < len(ts); i++ {
+		m := ts[i].Material
+		if m.Color.R != field.R || m.Color.G != field.G || ts[i+1].Material != m {
 			continue
 		}
-		right := nativeCameraAxes().right
-		ax, cx, dx := ndot(a, right), ndot(c, right), ndot(d, right)
-		x := (min(ax, cx, dx) + max(ax, cx, dx)) / 2
-		if len(columns) == 0 || math.Abs(columns[len(columns)-1]-x) > 1e-8 {
-			columns = append(columns, x)
+		lo, hi := math.Inf(1), math.Inf(-1)
+		for _, tri := range ts[i : i+4] {
+			for j, vertex := range tri.V {
+				a, c := vertex.Position, tri.V[(j+1)%3].Position
+				if (a.Y < height) == (c.Y < height) {
+					continue
+				}
+				q := nlerp(a, c, (height-a.Y)/(c.Y-a.Y))
+				x := ndot(axis, q)
+				lo, hi = min(lo, x), max(hi, x)
+			}
 		}
+		if hi >= lo {
+			cuts = append(cuts, nativeLaneInterval{lo, hi})
+		}
+		i += 3
+	}
+	return cuts
+}
+func connectorTestColumns(ts []Triangle, height float64) []float64 {
+	var columns []float64
+	for _, cut := range connectorTestCuts(ts, height) {
+		columns = append(columns, (cut.lo+cut.hi)/2)
 	}
 	return columns
 }
@@ -126,33 +146,54 @@ func TestStackConnectorUsesSideGutterToClearAnInterveningRoute(t *testing.T) {
 	}
 }
 
-func TestStackConnectorArrowPointsTowardTheDestination(t *testing.T) {
-	top := connectorTestDeck(6, "root")
+func TestStackTransferEmitterReceiverAndTransitCollar(t *testing.T) {
+	top := connectorTestDeck(9, "root")
+	middle := connectorTestDeck(4.5, "root", "layers", "middle")
 	low := connectorTestDeck(0, "root", "layers", "floor")
 	port := nv(.2, 0, top.depth/2-.18)
 	for _, test := range []struct {
 		name     string
 		from, to explodedDeck
-		sign     float64
-	}{{"descending", top, low, -1}, {"ascending", low, top, 1}} {
+	}{{"descending", top, low}, {"ascending", low, top}} {
 		t.Run(test.name, func(t *testing.T) {
 			b := &meshBuilder{ctx: context.Background()}
-			b.drawStackConnector(test.from, test.to, stackConnector{source: nv(0, test.from.surfaceY+.012, 0), opacity: .6}, port)
-			tip := test.to.surfaceY + .008
-			if test.sign > 0 {
-				view := nativeViewDirection()
-				tip = test.to.surfaceY - test.to.thickness - (test.to.depth/2-port.Z)*view.Y/view.Z - .035
-			}
-			want := nv(port.X, tip, port.Z)
-			faces := 0
-			for _, tri := range b.triangles {
-				a, c, d := tri.V[0].Position, tri.V[1].Position, tri.V[2].Position
-				if nlen(nsub(a, want)) < 1e-8 && (tip-c.Y)*test.sign > .1 && (tip-d.Y)*test.sign > .1 {
-					faces++
+			b.drawStackConnector(test.from, test.to, stackConnector{source: nv(0, test.from.surfaceY+.012, 0), opacity: .6}, port, middle)
+			// Identify just the coplanar endpoint hardware; the source
+			// leader and vertical beam both have vertices off that plane.
+			extent := func(floor explodedDeck) (inner, outer float64) {
+				inner = math.Inf(1)
+				for _, tri := range b.triangles {
+					a, c, d := tri.V[0].Position, tri.V[1].Position, tri.V[2].Position
+					if math.Abs(a.Y-floor.surfaceY-.008) > 1e-8 || a.Y != c.Y || c.Y != d.Y {
+						continue
+					}
+					for _, v := range tri.V {
+						r := math.Hypot(v.Position.X-port.X, v.Position.Z-port.Z)
+						inner, outer = min(inner, r), max(outer, r)
+					}
 				}
+				return inner, outer
 			}
-			if faces != 2 || len(connectorTestColumns(b.triangles, 3)) != 1 {
-				t.Fatalf("could not find a single shaft and directed arrowhead at %+v", want)
+			fromInner, fromOuter := extent(test.from)
+			throughInner, throughOuter := extent(middle)
+			toInner, toOuter := extent(test.to)
+			if fromInner > 1e-8 || toInner > 1e-8 || throughInner <= .05 ||
+				!(fromOuter < throughOuter && throughOuter < toOuter && toOuter-fromOuter > .06) {
+				t.Fatalf("emitting lens [%g,%g], hollow collar [%g,%g], receiving iris [%g,%g]", fromInner, fromOuter, throughInner, throughOuter, toInner, toOuter)
+			}
+			if len(connectorTestColumns(b.triangles, middle.surfaceY-middle.thickness/2)) != 0 || len(connectorTestColumns(b.triangles, 2)) != 1 || len(connectorTestColumns(b.triangles, 7)) != 1 {
+				t.Fatal("the beam must be present on each side of the intermediate slab and absent inside it")
+			}
+			a, z := test.from.surfaceY, test.to.surfaceY
+			nearSource := connectorTestCuts(b.triangles, a+.12*(z-a))
+			nearReceiver := connectorTestCuts(b.triangles, a+.88*(z-a))
+			if len(nearSource) != 1 || len(nearReceiver) != 1 || (nearReceiver[0].hi-nearReceiver[0].lo) < 2*(nearSource[0].hi-nearSource[0].lo) {
+				t.Fatalf("beam must visibly diverge towards receiver: %v -> %v", nearSource, nearReceiver)
+			}
+			for _, tri := range b.triangles {
+				if tri.Material.Color.A > 153 {
+					t.Fatalf("optical material exceeded source opacity: %d", tri.Material.Color.A)
+				}
 			}
 		})
 	}
@@ -218,7 +259,7 @@ func TestStackLinksStartOnTheirPaintedParallelWires(t *testing.T) {
 	var leads []Vec
 	seen := map[*Material]bool{}
 	for _, tri := range b.triangles {
-		if !seen[tri.Material] {
+		if !seen[tri.Material] && tri.Material.Color == nativePaint(stackTracePaint, "") {
 			leads = append(leads, nlerp(tri.V[0].Position, tri.V[2].Position, .5))
 			seen[tri.Material] = true
 		}
@@ -277,5 +318,43 @@ func TestStackObstaclesRetainPlacedEdgeCaption(t *testing.T) {
 		if x <= obstacles[0].lo || x >= obstacles[0].hi {
 			t.Fatalf("caption corner %v outside %v", x, obstacles[0])
 		}
+	}
+}
+
+func TestStackWidePlateEndpointClearsUpperTitle(t *testing.T) {
+	upper := connectorTestDeck(8, "root")
+	lower := connectorTestDeck(0, "root", "layers", "lower")
+	upper.width, lower.width = 20, 20
+	u := stackOpticalScale(upper.width)
+	front := upper.depth/2 - .18*u
+	upper.scene.Nodes = []d2isometric.Node{{ID: "source", Link: "root.layers.lower", Opacity: 1, Position: nv(0, .2, front-.3), Size: nv(.2, .2, .2)}}
+	upper.title = labelSurface{center: nv(0, upper.surfaceY, front), width: .7, depth: .35}
+	b := &meshBuilder{ctx: context.Background()}
+	if err := b.addStackConnectors([]explodedDeck{upper, lower}); err != nil {
+		t.Fatal(err)
+	}
+	columns := connectorTestColumns(b.triangles, 4)
+	if len(columns) != 1 {
+		t.Fatal(columns)
+	}
+	right := nativeCameraAxes().right
+	lo, hi := math.Inf(1), math.Inf(-1)
+	for _, p := range surfaceCorners(upper.title) {
+		x := ndot(p, right)
+		lo, hi = min(lo, x), max(hi, x)
+	}
+	if x := columns[0]; x > lo-stackIrisRadius*u && x < hi+stackIrisRadius*u {
+		t.Fatalf("transfer column %g leaves insufficient aperture clearance at upper title [%g,%g]", x, lo, hi)
+	}
+}
+
+func TestStackTransferBudgetBeforeGeometry(t *testing.T) {
+	links := make([]stackConnector, MaxTimelineBoards*2)
+	for i := range links {
+		links[i] = stackConnector{from: 0, to: MaxTimelineBoards - 1, opacity: 1}
+	}
+	b := &meshBuilder{ctx: context.Background()}
+	if err := b.reserveStackTransfers(links); err == nil || cap(b.triangles) != 0 {
+		t.Fatalf("oversized multi-floor transfers admitted or allocated triangles: %v, %d", err, cap(b.triangles))
 	}
 }

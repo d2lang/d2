@@ -76,17 +76,32 @@ layers: {
 }
 ```
 
-A shape or connection linked to another displayed board gets a vertical
-arrow ending in a socket on that board. Both ends sit within the common
-plate footprint. An ordinary connection stays on its own plate. SVG retains
-clickable links to the displayed floors.
+A shape or connection linked to another displayed board emits a narrow
+beam from a lens at the edge of its artwork. The beam widens into a split
+brass ring on the destination plate. Its axis stays vertical within the
+shared footprint, including on upward links. A plain collar marks any
+intermediate plate it passes through. Connections within a floor keep
+their compiled routes. SVG links navigate to the destination plate.
 
 SVG and PNG produce one image, PDF one page, and PPTX one slide. GIF uses
 the same stack and preserves authored animation. The mode is also available
 as `D2_ISOMETRIC_EXPLODED=true`, `d2svg.RenderOpts.IsometricExploded`, and
 the D2.js `isometricExploded` option.
 
-[Three-floor print studio example](../../docs/examples/exploded-layers/edition.d2)
+The [night sky survey](../../docs/examples/exploded-layers/sky-survey.d2)
+uses TALA to lay out 27 objects on four plates. Follow one observation
+through calibration, difference imaging, and alert publication. A follow-up
+request returns to the observing floor.
+
+![Four survey plates with gold optical paths between exposures](../../docs/examples/exploded-layers/sky-survey.png)
+
+Render the example with its four local illustrations from the repository root.
+
+```sh
+d2 --layout tala docs/examples/exploded-layers/sky-survey.d2 survey.svg
+```
+
+The [print studio](../../docs/examples/exploded-layers/edition.d2) has a smaller three-floor example.
 
 ## Source geometry and presentation
 

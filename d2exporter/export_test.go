@@ -43,6 +43,20 @@ func TestExport(t *testing.T) {
 	t.Run("legend", testLegend)
 }
 
+func TestExplicitBoardCaptionSize(t *testing.T) {
+	g, _, err := d2compiler.Compile("", strings.NewReader(`layers: {Calibration: Detector calibration {style.font-size: 56}}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	board, err := d2exporter.Export(context.Background(), g.Layers[0], nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if board.Root.FontSize != 56 || board.Root.Label != "Detector calibration" {
+		t.Fatalf("unexpected board caption %q at %d", board.Root.Label, board.Root.FontSize)
+	}
+}
+
 func testShape(t *testing.T) {
 	tcs := []testCase{
 		{
