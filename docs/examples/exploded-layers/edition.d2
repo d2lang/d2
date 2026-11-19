@@ -1,0 +1,64 @@
+vars: {
+  d2-config: {
+    isometric-exploded: true
+    theme-overrides: {
+      N7: "#f7f3e8"
+      N1: "#26382f"
+      B1: "#465248"
+      B6: "#ede7d6"
+    }
+  }
+}
+
+classes: {
+  station: {
+    width: 185
+    height: 82
+    style: {
+      stroke: "#394b3e"
+      stroke-width: 2
+      fill: "#fff9e9"
+      font-color: "#26382f"
+      font-size: 27
+    }
+  }
+  ink: {
+    style.stroke: "#b3482c"
+    style.stroke-width: 3
+  }
+}
+
+layers: {
+  Composition: {
+    vars: {d2-config: {isometric-layer-gap: 90}}
+    style.fill: "#f0e5ca"
+    direction: right
+    Copy: {class: station; shape: document}
+    Type: {class: station; style.fill: "#bdc9b9"; style.3d: true}
+    Proof: {class: station; shape: page; link: _.layers.Pressroom}
+    Copy -> Type -> Proof: {class: ink}
+  }
+  Pressroom: {
+    vars: {d2-config: {isometric-layer-gap: 25}}
+    style.fill: "#e0e6d3"
+    direction: left
+    Plate: {class: station; style.fill: "#c2c9b7"}
+    Press: {
+      class: station
+      style: {3d: true; fill: "#365b4c"; font-color: "#fff9e9"}
+    }
+    Sheet: {class: station; shape: page; style.multiple: true; link: _.layers.Bindery}
+    Plate -> Press -> Sheet: {class: ink}
+  }
+  Bindery: {
+    style.fill: "#cfddc9"
+    direction: right
+    Fold: {class: station; shape: page}
+    Stitch: {class: station; style.fill: "#e4d8bb"}
+    Edition: {
+      class: station
+      style: {3d: true; fill: "#2d5346"; font-color: "#fff9e9"}
+    }
+    Fold -> Stitch -> Edition: {class: ink}
+  }
+}

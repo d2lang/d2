@@ -45,8 +45,11 @@ func RenderPage(ctx context.Context, diagram *d2target.Diagram, opts *Options) (
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := preflightPageMetadata(ctx, diagram, *o.LinkBudget); err != nil {
-		return nil, err
+	if !o.Exploded {
+		room := *o.LinkBudget
+		if err := preflightPageMetadata(ctx, diagram, &room, nil); err != nil {
+			return nil, err
+		}
 	}
 	s, err := openCapture(ctx, diagram, o)
 	if err != nil {
@@ -64,7 +67,7 @@ func RenderPage(ctx context.Context, diagram *d2target.Diagram, opts *Options) (
 	return &Page{PNG: data, Links: links, Width: s.opts.Width, Height: s.opts.Height}, nil
 }
 
-func preflightPageMetadata(ctx context.Context, diagram *d2target.Diagram, budget d2scenebuild.LinkBudget) error {
+func preflightPageMetadata(ctx context.Context, diagram *d2target.Diagram, budget *d2scenebuild.LinkBudget, connectsFloors func(string) bool) error {
 	if diagram == nil {
 		return fmt.Errorf("isometric page requires a diagram")
 	}
@@ -111,12 +114,16 @@ func preflightPageMetadata(ctx context.Context, diagram *d2target.Diagram, budge
 		if err := check(edge.Link, edge.Tooltip, edge.PrettyLink); err != nil {
 			return err
 		}
-		if edge.Link != "" || edge.Tooltip != "" {
-			if edge.Label == "" && edge.Icon == nil {
+		if edge.Label == "" && edge.Icon == nil && (edge.Link != "" || edge.Tooltip != "") {
+			// In a one-page exploded view the shaft already represents an
+			// internal board link. Only it can dispense with a caption region.
+			if connectsFloors == nil || !connectsFloors(edge.Link) {
 				return fmt.Errorf("isometric page connection %q needs a label or icon for its metadata hit region", edge.ID)
 			}
 		}
 	}
+	budget.MaxRegions -= regions
+	budget.MaxStringBytes -= bytes
 	return ctx.Err()
 }
 

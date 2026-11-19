@@ -115,6 +115,12 @@ Use --target to select a board or --target='' for the root without subboards.
 Cannot be combined with sketch or force-appendix. Isometric SVG currently rejects dark-theme
 and animated multi-board SVG; use separate themed SVGs or a GIF slideshow.
 .Ns .
+.It Fl -isometric-exploded Ar false
+Render the selected board and its layers together on vertically separated plates.
+A link to another displayed board becomes a vertical arrow inside the plates.
+Use vars: {d2-config: {isometric-exploded: true}} to select this mode in source.
+A board can specify its clear gap below with vars: {d2-config: {isometric-layer-gap: 90}}.
+.Ns .
 .It Fl -center Ar flag
 Center the SVG in the containing viewbox, such as your browser screen
 .Ns .
@@ -243,6 +249,8 @@ See --center flag.
 See -s[ketch] flag.
 .It Ev Sy D2_ISOMETRIC
 See --isometric flag.
+.It Ev Sy D2_ISOMETRIC_EXPLODED
+See --isometric-exploded flag.
 .It Ev Sy D2_BUNDLE
 See -b[undle] flag.
 .It Ev Sy D2_ALLOW_PRIVATE_NETWORK

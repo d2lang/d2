@@ -42,6 +42,7 @@ type RenderOptions struct {
 	Pad                *int64                   `json:"pad"`
 	Sketch             *bool                    `json:"sketch"`
 	Isometric          *bool                    `json:"isometric"`
+	IsometricExploded  *bool                    `json:"isometricExploded,omitempty"`
 	Center             *bool                    `json:"center"`
 	ThemeID            *int64                   `json:"themeID"`
 	DarkThemeID        *int64                   `json:"darkThemeID"`

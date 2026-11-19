@@ -24,6 +24,8 @@ import (
 // The native renderer turns the compiled scene into meshes with layout-sized
 // footprints and physical extrusion.
 type nativeScene struct {
+	rootTitle         labelSurface
+	deckIDs           map[*nativePaintOwner]string // SVG fragment identifiers for exploded layer targets.
 	raster            *Raster
 	camera            rasterCamera // logical output coordinates, also used by SVG
 	packets           []packetRoute
@@ -38,6 +40,7 @@ type nativeScene struct {
 	links             []nativeLink
 }
 type meshBuilder struct {
+	rootTitle         labelSurface
 	ctx               context.Context
 	triangles         []Triangle
 	err               error

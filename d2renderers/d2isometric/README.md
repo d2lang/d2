@@ -46,6 +46,48 @@ accepts `{sketch: true}`, including source-file-map compilation. Pass the return
 `renderOptions` into `render` to retain source configuration. The renderer also
 runs in WebAssembly.
 
+## Exploded layers
+
+Render a D2 `layers` tree as a single stack with `--isometric-exploded`.
+Each board keeps its compiled layout on its own plate. The first layer is at
+the top. A board with content also gets a plate, ahead of its descendants.
+Folder-only boards supply structure. Steps and scenarios keep their role as
+alternative views and can be selected as the root with `--target`.
+
+```sh
+d2 --isometric-exploded input.d2 stack.svg
+d2 --isometric-exploded --target='layers.studio.*' input.d2 studio.png
+```
+
+To author the view in the diagram, set the document mode and optionally set
+the gap below an individual board. Gaps are in source layout pixels, in
+addition to the clearance needed by the projected artwork. Omit a gap to use
+automatic spacing.
+
+```d2
+vars: {d2-config: {isometric-exploded: true}}
+layers: {
+  Composition: {
+    vars: {d2-config: {isometric-layer-gap: 90}}
+    Copy -> Proof
+    Proof.link: _.layers.Pressroom
+  }
+  Pressroom: {Plate -> Sheet}
+}
+```
+
+A shape or connection linked to another displayed board gets a vertical
+arrow ending in a socket on that board. Both ends sit within the common
+plate footprint. An ordinary connection stays on its own plate. SVG retains
+clickable links to the displayed floors.
+
+SVG and PNG produce one image, PDF one page, and PPTX one slide. GIF uses
+the same stack and preserves authored animation. The mode is also available
+as `D2_ISOMETRIC_EXPLODED=true`, `d2svg.RenderOpts.IsometricExploded`, and
+the D2.js `isometricExploded` option.
+
+[Three-floor print studio example](../../docs/examples/exploded-layers/edition.d2)
+
 ## Source geometry and presentation
 
 The renderer uses one fixed orthographic camera: 15 degrees of azimuth and

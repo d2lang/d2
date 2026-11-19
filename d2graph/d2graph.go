@@ -43,8 +43,9 @@ type Graph struct {
 	// IsFolderOnly indicates a board or scenario itself makes no modifications from its
 	// base. Folder only boards do not have a render and are used purely for organizing
 	// the board tree.
-	IsFolderOnly bool       `json:"isFolderOnly"`
-	AST          *d2ast.Map `json:"ast"`
+	IsFolderOnly      bool       `json:"isFolderOnly"`
+	IsometricLayerGap *int       `json:"isometricLayerGap,omitempty"`
+	AST               *d2ast.Map `json:"ast"`
 	// BaseAST is the AST of the original graph without inherited fields and edges
 	BaseAST *d2ast.Map `json:"-"`
 

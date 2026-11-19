@@ -25,6 +25,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2ascii"
 	"github.com/d2lang/d2/d2renderers/d2ascii/charset"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/d2renderers/d2isometric/d2isometricimg"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/d2svg/appendix"
 	"github.com/d2lang/d2/d2target"
@@ -291,8 +292,9 @@ func Compile(args []js.Value) (interface{}, error) {
 	if input.Opts != nil && input.Opts.Sketch != nil {
 		renderOpts.Sketch = input.Opts.Sketch
 	}
-	if input.Opts != nil && input.Opts.Isometric != nil {
+	if input.Opts != nil {
 		renderOpts.Isometric = input.Opts.Isometric
+		renderOpts.IsometricExploded = input.Opts.IsometricExploded
 	}
 	if input.Opts != nil && input.Opts.Pad != nil {
 		renderOpts.Pad = input.Opts.Pad
@@ -334,6 +336,7 @@ func Compile(args []js.Value) (interface{}, error) {
 			DarkThemeOverrides: renderOpts.DarkThemeOverrides,
 			Sketch:             renderOpts.Sketch,
 			Isometric:          renderOpts.Isometric,
+			IsometricExploded:  renderOpts.IsometricExploded,
 			Pad:                renderOpts.Pad,
 			Center:             renderOpts.Center,
 			Scale:              renderOpts.Scale,
@@ -370,10 +373,17 @@ func Render(args []js.Value) (interface{}, error) {
 	}
 	forceAppendix := input.Opts != nil && input.Opts.ForceAppendix != nil && *input.Opts.ForceAppendix
 
+	renderOpts := &d2svg.RenderOpts{}
+	if input.Opts != nil {
+		renderOpts.Isometric = input.Opts.Isometric
+		renderOpts.IsometricExploded = input.Opts.IsometricExploded
+	}
+	exploded := renderOpts.IsometricEnabled() && renderOpts.IsometricExploded != nil && *renderOpts.IsometricExploded
 	var boardPath []string
-	noChildren := true
+	noChildren := !exploded
 
-	if input.Opts.Target != nil {
+	if input.Opts != nil && input.Opts.Target != nil {
+		noChildren = true
 		switch *input.Opts.Target {
 		case "*":
 			noChildren = false
@@ -390,12 +400,12 @@ func Render(args []js.Value) (interface{}, error) {
 			}
 			boardPath = key.StringIDA()
 		}
-		if !noChildren && animateInterval <= 0 {
+		if !noChildren && animateInterval <= 0 && !exploded {
 			return nil, &WASMError{Message: fmt.Sprintf("target '%s' only supported for animated SVGs", *input.Opts.Target), Code: 500}
 		}
 	}
 
-	diagram := input.Diagram.GetBoard(boardPath)
+	diagram, canonicalPath := input.Diagram.GetBoardWithPath(boardPath)
 	if diagram == nil {
 		return nil, &WASMError{Message: fmt.Sprintf("render target '%s' not found", strings.Join(boardPath, ".")), Code: 400}
 	}
@@ -404,8 +414,6 @@ func Render(args []js.Value) (interface{}, error) {
 		diagram.Scenarios = nil
 		diagram.Steps = nil
 	}
-
-	renderOpts := &d2svg.RenderOpts{}
 
 	if input.Opts != nil && input.Opts.Salt != nil {
 		renderOpts.Salt = input.Opts.Salt
@@ -426,9 +434,6 @@ func Render(args []js.Value) (interface{}, error) {
 
 	if input.Opts != nil && input.Opts.Sketch != nil {
 		renderOpts.Sketch = input.Opts.Sketch
-	}
-	if input.Opts != nil && input.Opts.Isometric != nil {
-		renderOpts.Isometric = input.Opts.Isometric
 	}
 	if input.Opts != nil && input.Opts.Pad != nil {
 		renderOpts.Pad = input.Opts.Pad
@@ -455,7 +460,7 @@ func Render(args []js.Value) (interface{}, error) {
 		renderOpts.NoXMLTag = input.Opts.NoXMLTag
 	}
 
-	if renderOpts.Isometric != nil && *renderOpts.Isometric {
+	if renderOpts.IsometricEnabled() {
 		if input.Opts.ASCII != nil && *input.Opts.ASCII {
 			return nil, &WASMError{Message: "isometric rendering requires SVG output; ASCII cannot preserve its geometry", Code: 400}
 		}
@@ -502,6 +507,15 @@ func Render(args []js.Value) (interface{}, error) {
 		return out, nil
 	}
 
+	if exploded {
+		out, err := d2svg.RenderIsometric(context.Background(), diagram, renderOpts, &d2isometricimg.Options{
+			FitContent: true, BoardPath: canonicalPath,
+		})
+		if err != nil {
+			return nil, &WASMError{Message: fmt.Sprintf("render failed: %s", err.Error()), Code: 500}
+		}
+		return out, nil
+	}
 	var boards [][]byte
 	if noChildren {
 		var board []byte

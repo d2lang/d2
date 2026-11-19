@@ -106,13 +106,6 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 	}
 
 	applyConfigs(config, compileOpts, renderOpts)
-	// Disabled and absent isometric modes have the same appearance. Keep both
-	// out of existing diagram JSON/hash IDs while returning the effective false
-	// value to callers for precedence handling.
-	isometricConfig := renderOpts.Isometric
-	if isometricConfig != nil && !*isometricConfig {
-		isometricConfig = nil
-	}
 	applyDefaults(compileOpts, renderOpts)
 	if *renderOpts.Sketch && *renderOpts.Isometric {
 		return nil, nil, errors.New("sketch cannot be combined with isometric rendering")
@@ -132,7 +125,15 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 		config.ThemeID = renderOpts.ThemeID
 		config.DarkThemeID = renderOpts.DarkThemeID
 		config.Sketch = renderOpts.Sketch
-		config.Isometric = isometricConfig
+		// Keep disabled modes out of diagram hashes used by ordinary renders.
+		config.Isometric = nil
+		config.IsometricExploded = nil
+		if *renderOpts.Isometric {
+			config.Isometric = renderOpts.Isometric
+			if renderOpts.IsometricExploded != nil && *renderOpts.IsometricExploded {
+				config.IsometricExploded = renderOpts.IsometricExploded
+			}
+		}
 		d.Config = config
 	}
 	return d, g, err
@@ -307,7 +308,15 @@ func applyConfigs(config *d2target.Config, compileOpts *CompileOptions, renderOp
 		renderOpts.Sketch = config.Sketch
 	}
 	if renderOpts.Isometric == nil {
-		renderOpts.Isometric = config.Isometric
+		if renderOpts.IsometricEnabled() {
+			// An explicit exploded option also selects the renderer.
+			renderOpts.Isometric = renderOpts.IsometricExploded
+		} else {
+			renderOpts.Isometric = config.Isometric
+		}
+	}
+	if renderOpts.IsometricExploded == nil {
+		renderOpts.IsometricExploded = config.IsometricExploded
 	}
 	if renderOpts.Pad == nil {
 		renderOpts.Pad = config.Pad
@@ -335,7 +344,10 @@ func applyDefaults(compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts) {
 		renderOpts.Sketch = go2.Pointer(false)
 	}
 	if renderOpts.Isometric == nil {
-		renderOpts.Isometric = go2.Pointer(false)
+		renderOpts.Isometric = go2.Pointer(renderOpts.IsometricEnabled())
+	}
+	if !*renderOpts.Isometric && renderOpts.IsometricExploded != nil {
+		renderOpts.IsometricExploded = go2.Pointer(false)
 	}
 	if *renderOpts.Sketch && compileOpts.FontFamily == nil {
 		compileOpts.FontFamily = go2.Pointer(d2fonts.HandDrawn)

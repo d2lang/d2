@@ -142,3 +142,69 @@ func TestDisabledIsometricRendersIdenticallyToDefault(t *testing.T) {
 		})
 	}
 }
+
+func TestIsometricExplodedConfiguration(t *testing.T) {
+	const source = `vars: {d2-config: {isometric-exploded: true}}
+layers: {
+  upper: {vars: {d2-config: {isometric-layer-gap: 150}}; copy -> proof}
+  lower: {vars: {d2-config: {isometric-layer-gap: 0}}; paper -> book}
+}`
+	for _, tc := range []struct {
+		name                string
+		opts                d2svg.RenderOpts
+		isometric, exploded bool
+	}{
+		{"source", d2svg.RenderOpts{}, true, true},
+		{"disable renderer", d2svg.RenderOpts{Isometric: boolPointer(false)}, false, false},
+		{"disable exploded", d2svg.RenderOpts{IsometricExploded: boolPointer(false)}, false, false},
+		{"ordinary isometric", d2svg.RenderOpts{Isometric: boolPointer(true), IsometricExploded: boolPointer(false)}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ruler, err := textmeasure.NewRuler()
+			if err != nil {
+				t.Fatal(err)
+			}
+			diagram, _, err := Compile(context.Background(), source, &CompileOptions{
+				Ruler: ruler, LayoutResolver: func(string) (d2graph.LayoutGraph, error) { return d2dagrelayout.DefaultLayout, nil },
+			}, &tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.opts.IsometricEnabled() != tc.isometric || (tc.opts.IsometricExploded != nil && *tc.opts.IsometricExploded) != tc.exploded {
+				t.Fatalf("resolved modes = %+v", tc.opts)
+			}
+			if (diagram.Config.IsometricExploded != nil) != tc.exploded {
+				t.Fatalf("unexpected exploded mode in diagram hash config")
+			}
+			if len(diagram.Layers) != 2 || diagram.Layers[0].IsometricLayerGap == nil || *diagram.Layers[0].IsometricLayerGap != 150 || diagram.Layers[1].IsometricLayerGap == nil || *diagram.Layers[1].IsometricLayerGap != 0 {
+				t.Fatal("per-floor gaps did not survive compilation")
+			}
+			boards, err := d2svg.RenderMultiboard(diagram, &tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.exploded {
+				single, err := d2svg.Render(diagram, &d2svg.RenderOpts{IsometricExploded: boolPointer(true)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(boards) != 1 || !bytes.Equal(single, boards[0]) {
+					t.Fatal("expected a single stack from both SVG entry points")
+				}
+				if !bytes.Contains(single, []byte("-isometric-exploded-deck-")) {
+					t.Fatal("exploded SVG must namespace its floor anchors separately from ordinary isometric SVGs")
+				}
+			} else if len(boards) != 2 {
+				t.Fatalf("ordinary render returned %d boards", len(boards))
+			}
+		})
+	}
+}
+
+func TestInvalidIsometricLayerGap(t *testing.T) {
+	for _, v := range []string{"-1", "1.2", "1000000001", "tall"} {
+		if _, _, err := Compile(context.Background(), "layers: {book: {vars: {d2-config: {isometric-layer-gap: "+v+"}}}}", nil, nil); err == nil {
+			t.Errorf("accepted invalid gap %s", v)
+		}
+	}
+}

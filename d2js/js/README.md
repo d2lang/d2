@@ -137,13 +137,14 @@ All [RenderOptions](#renderoptions) properties in addition to:
 
 - `sketch`: Enable sketch mode [default: false]
 - `isometric`: Enable native isometric SVG rendering [default: false]. The compiled layout is preserved. Icons and images must be embedded as data URLs; the JavaScript renderer does not fetch external image URLs. Set this in compile options or `vars.d2-config.isometric`, then pass the returned `renderOptions` to `render`, just like sketch. This mode currently cannot be combined with sketch, ASCII, `darkThemeID`, `forceAppendix`, or `animateInterval`.
+- `isometricExploded`: Render the selected board and its D2 layers together on aligned, vertically separated plates. The default target includes the whole layer tree. Set `target: "layers.x.*"` for a subtree. The option implies isometric rendering unless `isometric: false` is explicit. To switch an already compiled flat diagram, pass `{ ...result.renderOptions, isometric: true, isometricExploded: true }` to `render`.
 - `themeID`: Theme ID to use [default: 0]
 - `darkThemeID`: Theme ID to use when client is in dark mode
 - `center`: Center the SVG in the containing viewbox [default: false]
 - `pad`: Pixels padded around the rendered diagram [default: 100]
 - `scale`: Scale the output. E.g., 0.5 to halve the default size. The default will render SVG's that will fit to screen. Setting to 1 turns off SVG fitting to screen.
 - `forceAppendix`: Adds an appendix for tooltips and links [default: false]
-- `target`: Target board/s to render. If target ends with '*', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. `target: 'layers.x.*'` to render layer 'x' with all of its children. Pass '*' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board outputs are currently only supported for animated SVGs and so `animateInterval` must be set to a value greater than 0 when targeting multiple boards.
+- `target`: Target board/s to render. If target ends with '*', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. `target: 'layers.x.*'` to render layer 'x' with all of its children. Pass '*' to render all scenarios, steps, and layers. By default, only the root board is rendered. A wildcard target is supported for exploded layers and for animated SVGs with a positive `animateInterval`.
 - `animateInterval`: If given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds).
 - `salt`: Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output.
 - `noXMLTag`: Omit XML tag `(<?xml ...?>)` from output SVG files. Useful when generating SVGs for direct HTML embedding.

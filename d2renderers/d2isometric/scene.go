@@ -3,6 +3,7 @@
 package d2isometric
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -138,10 +139,11 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 	}
 	// Admission precedes encoding, key parsing, graph traversal and allocations.
 	admission := budget{}
-	for _, v := range []any{diagram.Name, diagram.Description, diagram.Root, diagram.Legend, diagram.Shapes, diagram.Connections, opts} {
-		if err := admission.check(reflect.ValueOf(v)); err != nil {
-			return nil, err
-		}
+	if err := admission.board(diagram); err != nil {
+		return nil, err
+	}
+	if err := admission.check(reflect.ValueOf(opts)); err != nil {
+		return nil, err
 	}
 	for _, s := range diagram.Shapes {
 		if s.Width < 0 || s.Height < 0 || s.LabelWidth < 0 || s.LabelHeight < 0 || s.StrokeWidth < 0 || s.Opacity < 0 || s.Opacity > 1 {
@@ -365,7 +367,48 @@ func cloneURL(original *url.URL) *url.URL {
 	return &copy
 }
 
-type budget struct{ bytes, entries int }
+// ValidateSceneBudget applies the single-scene source limits across the
+// provided boards. It deliberately does not traverse any descendant boards.
+func ValidateSceneBudget(ctx context.Context, boards []*d2target.Diagram) error {
+	admission := budget{ctx: ctx}
+	nodes, edges := 0, 0
+	for _, board := range boards {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if board == nil {
+			return fmt.Errorf("isometric: nil diagram")
+		}
+		nodes += len(board.Shapes)
+		edges += len(board.Connections)
+		if nodes > MaxNodes || edges > MaxEdges {
+			return fmt.Errorf("isometric: scene exceeds %d nodes or %d edges", MaxNodes, MaxEdges)
+		}
+		if err := admission.board(board); err != nil {
+			return err
+		}
+		if board.Config != nil {
+			if err := admission.check(reflect.ValueOf(board.Config.ThemeOverrides)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type budget struct {
+	bytes, entries int
+	ctx            context.Context
+}
+
+func (b *budget) board(diagram *d2target.Diagram) error {
+	for _, v := range []any{diagram.Name, diagram.Description, diagram.Root, diagram.Legend, diagram.Shapes, diagram.Connections} {
+		if err := b.check(reflect.ValueOf(v)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (b *budget) check(v reflect.Value) error {
 	if !v.IsValid() {
@@ -398,6 +441,11 @@ func (b *budget) check(v reflect.Value) error {
 			return fmt.Errorf("isometric: collection entries exceed %d", maxEntries)
 		}
 		for i := 0; i < v.Len(); i++ {
+			if i%256 == 0 && b.ctx != nil {
+				if err := b.ctx.Err(); err != nil {
+					return err
+				}
+			}
 			if err := b.check(v.Index(i)); err != nil {
 				return err
 			}

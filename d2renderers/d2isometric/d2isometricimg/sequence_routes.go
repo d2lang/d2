@@ -172,7 +172,7 @@ func (b *meshBuilder) reserveSequenceEdge(edge d2isometric.Edge, points []Vec, p
 	}
 }
 
-func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d2isometric.Scene) []packetRoute {
+func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d2isometric.Scene, edgeIndex int) []packetRoute {
 	if len(points) < 2 || edge.Opacity <= 0 {
 		return nil
 	}
@@ -223,6 +223,7 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 			}
 		}
 	}
+	b.captureStackWire(edgeIndex, edge, mat, first, points, lengths)
 	markerStart := len(b.triangles)
 	b.arrowWithOpacity(string(edge.SourceArrow), points[0], nsub(points[0], points[1]), mat, edge.StrokeWidth, edge.Opacity)
 	b.arrowWithOpacity(string(edge.TargetArrow), points[len(points)-1], nsub(points[len(points)-1], points[len(points)-2]), mat, edge.StrokeWidth, edge.Opacity)
@@ -251,9 +252,11 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 		if caption.main {
 			b.addSurfaceLink(edge.Link, edge.Tooltip, caption.surface)
 		}
+		b.captureStackCaption(edgeIndex, caption.surface)
 		b.label(caption.style.Label, caption.surface, caption.style, ink, edge.Opacity, "edge")
 	}
 	if icon.width > 0 && icon.depth > 0 {
+		b.captureStackCaption(edgeIndex, icon)
 		b.shapeIcon(d2target.Shape{ID: edge.ID, Icon: edge.Metadata.Original.Icon}, icon, edge.Opacity, "edge", edge.Metadata.Original.IconBorderRadius)
 		b.addSurfaceLink(edge.Link, edge.Tooltip, icon)
 	}

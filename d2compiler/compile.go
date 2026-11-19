@@ -191,6 +191,12 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 		return g
 	}
 
+	// Unlike the document-wide renderer switch, spacing belongs to the board
+	// immediately above each gap and follows that board into subtree exports.
+	if f := ir.GetField(d2ast.FlatUnquotedString("vars"), d2ast.FlatUnquotedString("d2-config"), d2ast.FlatUnquotedString("isometric-layer-gap")); f != nil && f.Primary() != nil {
+		gap, _ := strconv.Atoi(f.Primary().Value.ScalarString())
+		g.IsometricLayerGap = &gap
+	}
 	c.compileLegend(g, ir)
 	if c.stopped() {
 		return g
@@ -1847,6 +1853,11 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 	if f != nil {
 		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
 		config.Isometric = &val
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("isometric-exploded"))
+	if f != nil {
+		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
+		config.IsometricExploded = &val
 	}
 
 	f = configMap.GetField(d2ast.FlatUnquotedString("theme-id"))

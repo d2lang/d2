@@ -21,6 +21,9 @@ import (
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
+// MaxIsometricLayerGap is the renderer's source-coordinate limit in layout pixels.
+const MaxIsometricLayerGap = 1_000_000_000
+
 const (
 	DEFAULT_ICON_SIZE = 32
 	MAX_ICON_SIZE     = 64
@@ -46,6 +49,7 @@ var BorderOffset = geo.NewVector(5, 5)
 type Config struct {
 	Sketch             *bool           `json:"sketch"`
 	Isometric          *bool           `json:"isometric,omitempty"`
+	IsometricExploded  *bool           `json:"isometricExploded,omitempty"`
 	ThemeID            *int64          `json:"themeID"`
 	DarkThemeID        *int64          `json:"darkThemeID"`
 	Pad                *int64          `json:"pad"`
@@ -82,7 +86,9 @@ type ThemeOverrides struct {
 type Diagram struct {
 	Name   string  `json:"name"`
 	Config *Config `json:"config,omitempty"`
-	// See docs on the same field in d2graph to understand what it means.
+	// IsometricLayerGap sets the clear air below this floor, in source layout pixels.
+	IsometricLayerGap *int `json:"isometricLayerGap,omitempty"`
+	// See d2graph.Graph.IsFolderOnly.
 	IsFolderOnly   bool                `json:"isFolderOnly"`
 	Description    string              `json:"description,omitempty"`
 	FontFamily     *d2fonts.FontFamily `json:"fontFamily,omitempty"`
@@ -107,62 +113,61 @@ type Legend struct {
 }
 
 func (d *Diagram) GetBoard(boardPath []string) *Diagram {
-	if len(boardPath) == 0 {
-		return d
-	}
+	board, _ := d.GetBoardWithPath(boardPath)
+	return board
+}
 
-	head := boardPath[0]
-
-	if len(boardPath) == 1 && d.Name == head {
-		return d
-	}
-
-	switch head {
-	case "layers":
-		if len(boardPath) < 2 {
-			return nil
+// GetBoardWithPath also returns the canonical path relative to d, expanding
+// shorthand names so links still identify boards when rendering a subtree.
+func (d *Diagram) GetBoardWithPath(boardPath []string) (*Diagram, []string) {
+	var canonical []string
+	for len(boardPath) > 0 && !(len(boardPath) == 1 && boardPath[0] == d.Name) {
+		head := boardPath[0]
+		groups := []struct {
+			kind   string
+			boards []*Diagram
+		}{{"layers", d.Layers}, {"scenarios", d.Scenarios}, {"steps", d.Steps}}
+		var next *Diagram
+		var kind string
+		consumed := 1
+		// An explicit group wins over a sibling named "layers", "scenarios",
+		// or "steps", matching GetBoard's historical lookup order.
+		for _, group := range groups {
+			if group.kind != head {
+				continue
+			}
+			if len(boardPath) < 2 {
+				return nil, nil
+			}
+			for _, child := range group.boards {
+				if child.Name == boardPath[1] {
+					next, kind, consumed = child, group.kind, 2
+					break
+				}
+			}
+			break
 		}
-		for _, b := range d.Layers {
-			if b.Name == boardPath[1] {
-				return b.GetBoard(boardPath[2:])
+		if next == nil {
+			for _, group := range groups {
+				for _, child := range group.boards {
+					if child.Name == head {
+						next, kind = child, group.kind
+						break
+					}
+				}
+				if next != nil {
+					break
+				}
 			}
 		}
-	case "scenarios":
-		if len(boardPath) < 2 {
-			return nil
+		if next == nil {
+			return nil, nil
 		}
-		for _, b := range d.Scenarios {
-			if b.Name == boardPath[1] {
-				return b.GetBoard(boardPath[2:])
-			}
-		}
-	case "steps":
-		if len(boardPath) < 2 {
-			return nil
-		}
-		for _, b := range d.Steps {
-			if b.Name == boardPath[1] {
-				return b.GetBoard(boardPath[2:])
-			}
-		}
+		canonical = append(canonical, kind, next.Name)
+		boardPath = boardPath[consumed:]
+		d = next
 	}
-
-	for _, b := range d.Layers {
-		if b.Name == head {
-			return b.GetBoard(boardPath[1:])
-		}
-	}
-	for _, b := range d.Scenarios {
-		if b.Name == head {
-			return b.GetBoard(boardPath[1:])
-		}
-	}
-	for _, b := range d.Steps {
-		if b.Name == head {
-			return b.GetBoard(boardPath[1:])
-		}
-	}
-	return nil
+	return d, canonical
 }
 
 func (diagram Diagram) Bytes() ([]byte, error) {
@@ -179,6 +184,10 @@ func (diagram Diagram) Bytes() ([]byte, error) {
 		return nil, err
 	}
 	base := append(append(b1, b2...), b3...)
+
+	if diagram.IsometricLayerGap != nil {
+		base = fmt.Appendf(base, "layer-gap=%d;", *diagram.IsometricLayerGap)
+	}
 
 	if diagram.Config != nil {
 		b, err := json.Marshal(diagram.Config)

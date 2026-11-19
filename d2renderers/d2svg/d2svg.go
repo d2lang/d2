@@ -83,7 +83,9 @@ type RenderOpts struct {
 	Pad    *int64
 	Sketch *bool
 	// Isometric uses the native vector renderer with the compiled layout preserved.
-	Isometric          *bool
+	Isometric *bool
+	// IsometricExploded arranges the selected board and its layers at distinct elevations.
+	IsometricExploded  *bool
 	Center             *bool
 	ThemeID            *int64
 	DarkThemeID        *int64
@@ -2898,7 +2900,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		return nil, err
 	}
 
-	if opts != nil && opts.Isometric != nil && *opts.Isometric {
+	if opts.IsometricEnabled() {
 		return renderIsometric(diagram, opts)
 	}
 	sketch := false
@@ -3573,6 +3575,13 @@ func hash(s string) string {
 }
 
 func RenderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, error) {
+	if opts.IsometricEnabled() && opts.IsometricExploded != nil && *opts.IsometricExploded {
+		stack, err := Render(diagram, opts)
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{stack}, nil
+	}
 	if err := d2target.ValidateRenderTarget(diagram); err != nil {
 		return nil, err
 	}

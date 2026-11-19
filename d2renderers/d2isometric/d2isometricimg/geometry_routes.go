@@ -389,7 +389,7 @@ func (b *meshBuilder) drawEdges(edges []d2isometric.Edge, placer *routeCaptionPl
 			return packets
 		}
 		if nativeSequenceEdge(edge) {
-			packets = append(packets, b.sequenceEdge(edge, paths[edgeIndex], scene)...)
+			packets = append(packets, b.sequenceEdge(edge, paths[edgeIndex], scene, edgeIndex)...)
 			continue
 		}
 		tint := nativeRouteTint(edge)
@@ -444,6 +444,7 @@ func (b *meshBuilder) drawEdges(edges []d2isometric.Edge, placer *routeCaptionPl
 				b.routeCaptionKnockout(wireFirst, surface)
 			}
 		}
+		b.captureStackWire(edgeIndex, edge, mat, wireFirst, points, lengths)
 		sourceDir := nsub(displayPoints[0], displayPoints[1])
 		targetDir := nsub(displayPoints[len(displayPoints)-1], displayPoints[len(displayPoints)-2])
 		b.arrowWithOpacity(string(edge.SourceArrow), displayPoints[0], sourceDir, mat, edge.StrokeWidth, edge.Opacity)
@@ -515,6 +516,7 @@ func (b *meshBuilder) drawEdges(edges []d2isometric.Edge, placer *routeCaptionPl
 				}
 				surface = placer.Place(captionPoints, caption.fraction, pw, pd)
 			}
+			b.captureStackCaption(edgeIndex, surface)
 			if captionIndex == 0 {
 				b.addSurfaceLink(edge.Link, edge.Tooltip, surface)
 			}

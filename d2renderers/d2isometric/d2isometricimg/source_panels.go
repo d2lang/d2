@@ -203,6 +203,18 @@ func (b *meshBuilder) rootDecorations(s *d2isometric.Scene, assets *d2scenebuild
 		}
 		if root.Label != "" || root.Icon != nil {
 			surface := labelSurface{center: nv(bounds.X+w/2, .066, bottom-h/2), width: w, depth: h, align: "left"}
+			// Keep the occupied part of this left-aligned caption available
+			// to the inter-floor route planner. The texture itself spans w.
+			b.rootTitle = surface
+			titleWidth := float64(root.LabelWidth) * b.scale
+			if titleWidth <= 0 {
+				titleWidth = float64(len([]rune(root.Label))) * font * .65
+			}
+			if root.Icon != nil {
+				titleWidth += h
+			}
+			b.rootTitle.width = min(w, titleWidth)
+			b.rootTitle.center.X -= (w - b.rootTitle.width) / 2
 			surface = b.shapeIcon(root, surface, 1, "board")
 			b.shapeLabel(root, surface, ink, 1, "board")
 		}
@@ -257,7 +269,7 @@ func finishNativeScene(b *meshBuilder, s *d2isometric.Scene, width, height int, 
 		camera = *b.options.camera
 	}
 	width, height = camera.width, camera.height
-	result := &nativeScene{packets: packets, triangles: b.triangles, panels: b.panels, width: width, height: height, background: background, animatedNodes: b.animatedNodes, pixelScale: b.scale, links: b.links}
+	result := &nativeScene{rootTitle: b.rootTitle, packets: packets, triangles: b.triangles, panels: b.panels, width: width, height: height, background: background, animatedNodes: b.animatedNodes, pixelScale: b.scale, links: b.links}
 	if useBackground && libcolor.IsGradient(s.Background) {
 		var err error
 		result.backgroundPaint, err = scenepaint.Gradient(s.Background)

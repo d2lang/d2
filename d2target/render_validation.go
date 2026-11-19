@@ -82,6 +82,9 @@ func ValidateRenderTarget(root *Diagram) error {
 }
 
 func validateRenderBoard(diagram *Diagram, path string) error {
+	if gap := diagram.IsometricLayerGap; gap != nil && (*gap < 0 || *gap > MaxIsometricLayerGap) {
+		return fmt.Errorf("render target %s.isometricLayerGap must be between 0 and %d", path, MaxIsometricLayerGap)
+	}
 	if err := validateRenderFontFamily(diagram.FontFamily, path+".fontFamily"); err != nil {
 		return err
 	}

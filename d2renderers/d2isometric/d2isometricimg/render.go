@@ -34,6 +34,10 @@ const (
 // caller deadline always wins.
 type Options struct {
 	Render d2isometric.RenderOpts
+	// Exploded renders the selected board and its layers on registered decks.
+	Exploded bool
+	// BoardPath is the selected board's absolute path after "root", if any.
+	BoardPath []string
 	// Assets explicitly supplies bounded image loading. Rendering does not
 	// otherwise read local files or fetch remote resources.
 	Assets *d2scenebuild.AssetOptions

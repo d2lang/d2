@@ -127,6 +127,10 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
+	isometricExplodedFlag, err := ms.Opts.Bool("D2_ISOMETRIC_EXPLODED", "isometric-exploded", "", false, "render the selected board and its layers as separated isometric floors, with arrows for links between floors")
+	if err != nil {
+		return err
+	}
 	stdoutFormatFlag := ms.Opts.String("", "stdout-format", "", "", "output format when writing to stdout (svg, png, ascii, txt, pdf, pptx, gif). Usage: d2 input.d2 --stdout-format svg - > output.svg")
 	if err != nil {
 		return err
@@ -186,10 +190,14 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return nil
 	}
 	ctx = netpolicy.WithPolicy(ctx, netpolicy.Policy{AllowPrivateNetworks: *allowPrivateNetworkFlag})
-	isometricFlag, err = resolveIsometricFlag(ms)
-	if err != nil {
-		return xmain.UsageErrorf("%v", err)
+	// Keep unset choices available to the source configuration during compilation.
+	if !ms.Opts.Flags.Changed("isometric") && ms.Env.Getenv("D2_ISOMETRIC") == "" {
+		isometricFlag = nil
 	}
+	if !ms.Opts.Flags.Changed("isometric-exploded") && ms.Env.Getenv("D2_ISOMETRIC_EXPLODED") == "" {
+		isometricExplodedFlag = nil
+	}
+	mode := d2svg.RenderOpts{Isometric: isometricFlag, IsometricExploded: isometricExplodedFlag}
 
 	fontFamily, monoFontFamily, err := loadFonts(ms, *fontRegularFlag, *fontItalicFlag, *fontBoldFlag, *fontSemiboldFlag, *fontMonoFlag, *fontMonoBoldFlag, *fontMonoItalicFlag, *fontMonoSemiboldFlag)
 	if err != nil {
@@ -206,7 +214,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		case "fmt":
 			return fmtCmd(ctx, ms, *checkFlag)
 		case "play":
-			if isometricFlag != nil && *isometricFlag {
+			if mode.IsometricEnabled() {
 				return xmain.UsageErrorf("isometric images are local exports; use an output filename instead of play")
 			}
 			return playCmd(ctx, ms)
@@ -276,7 +284,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return xmain.UsageErrorf("%v", err)
 	}
-	if isometricFlag != nil && *isometricFlag {
+	if mode.IsometricEnabled() {
 		if outputPath != "-" && *stdoutFormatFlag == "" && outputFormat == SVG && filepath.Ext(outputPath) != ".svg" {
 			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
 		}
@@ -371,16 +379,17 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		}
 	}
 	renderOpts := d2svg.RenderOpts{
-		Pad:         padFlag,
-		Sketch:      sketchFlag,
-		Isometric:   isometricFlag,
-		Center:      centerFlag,
-		ThemeID:     themeFlag,
-		DarkThemeID: darkThemeFlag,
-		Scale:       scale,
-		NoXMLTag:    noXMLTagFlag,
-		Salt:        saltFlag,
-		OmitVersion: omitVersionFlag,
+		Pad:               padFlag,
+		Sketch:            sketchFlag,
+		Isometric:         isometricFlag,
+		IsometricExploded: isometricExplodedFlag,
+		Center:            centerFlag,
+		ThemeID:           themeFlag,
+		DarkThemeID:       darkThemeFlag,
+		Scale:             scale,
+		NoXMLTag:          noXMLTagFlag,
+		Salt:              saltFlag,
+		OmitVersion:       omitVersionFlag,
 	}
 
 	if *watchFlag {
@@ -515,7 +524,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	if err != nil {
 		return nil, false, err
 	}
-	if renderOpts.Isometric != nil && *renderOpts.Isometric && !ext.isIsometric() {
+	if renderOpts.IsometricEnabled() && !ext.isIsometric() {
 		stdoutFormat, _ := ms.Opts.Flags.GetString("stdout-format")
 		if outputPath != "-" && stdoutFormat == "" && ext == SVG && filepath.Ext(outputPath) != ".svg" {
 			return nil, false, fmt.Errorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
@@ -547,16 +556,22 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}
 	cancel()
 
-	diagram := rootDiagram.GetBoard(boardPath)
+	diagram, canonicalBoardPath := rootDiagram.GetBoardWithPath(boardPath)
 	if diagram == nil {
 		return nil, false, fmt.Errorf(`render target "%s" not found`, strings.Join(boardPath, "."))
 	}
 	if noChildren {
+		selected := *diagram
+		diagram = &selected
 		diagram.Layers = nil
 		diagram.Scenarios = nil
 		diagram.Steps = nil
 	}
 
+	exploded := renderOpts.IsometricExploded != nil && *renderOpts.IsometricExploded
+	if exploded && animateInterval != 0 {
+		return nil, false, fmt.Errorf("--animate-interval requests a board slideshow; --isometric-exploded renders the boards together")
+	}
 	if animateInterval > 0 {
 		masterID, err := diagram.HashID(renderOpts.Salt)
 		if err != nil {
@@ -580,20 +595,32 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		// preview cannot leave the last successful output half-updated.
 		var preview []byte
 		if wantPreview {
-			preview, err = renderIsometricPreview(ctx, ms, diagram, renderOpts, inputPath, sourceRootID, rootDiagram)
+			switch {
+			case !exploded:
+				preview, err = renderIsometricPreview(ctx, ms, diagram, renderOpts, inputPath, sourceRootID, rootDiagram)
+			case ext != isometricSVG:
+				// File and browser use the same stack. For SVG output the exported
+				// bytes themselves serve as the preview.
+				previewOpts := renderOpts
+				previewOpts.DarkThemeID, previewOpts.DarkThemeOverrides = nil, nil
+				preview, err = isometricImageData(ctx, ms, diagram, previewOpts, inputPath, isometricSVG, canonicalBoardPath)
+			}
 			if err != nil {
 				return nil, false, err
 			}
 		}
 		var out []byte
 		var written bool
-		if ext == isometricPDF || ext == isometricPPTX {
-			out, written, err = renderIsometricPaged(ctx, ms, diagram, renderOpts, inputPath, outputPath, ext, sourceRootID)
-		} else {
+		switch {
+		case ext == isometricPDF || ext == isometricPPTX:
+			out, written, err = renderIsometricPaged(ctx, ms, diagram, renderOpts, inputPath, outputPath, ext, sourceRootID, canonicalBoardPath)
+		case exploded:
+			out, written, err = renderIsometricImage(ctx, ms, diagram, renderOpts, inputPath, outputPath, ext, canonicalBoardPath)
+		default:
 			out, written, err = renderIsometricImages(ctx, ms, diagram, renderOpts, inputPath, outputPath, ext, animateInterval, sourceRootID)
 		}
 		if err == nil {
-			if wantPreview {
+			if preview != nil {
 				out = preview
 			}
 			ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(outputPath), time.Since(start))
@@ -999,6 +1026,7 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.Rend
 		Pad:                opts.Pad,
 		Sketch:             opts.Sketch,
 		Isometric:          opts.Isometric,
+		IsometricExploded:  opts.IsometricExploded,
 		Center:             opts.Center,
 		MasterID:           opts.MasterID,
 		ThemeID:            opts.ThemeID,

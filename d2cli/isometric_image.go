@@ -54,25 +54,26 @@ func isometricImageQualityOptions(ext exportExtension, scale float64) (d2isometr
 	return isometricImageOptions(ext, scale)
 }
 
-func renderIsometricImage(ctx context.Context, ms *xmain.State, diagram *d2target.Diagram, render d2svg.RenderOpts, input, output string, ext exportExtension) ([]byte, bool, error) {
-	o, err := configuredIsometricImageOptions(ctx, ms, render, input, ext)
-	if err != nil {
-		return nil, false, err
-	}
-	defer o.Assets.Resolver.CloseIdleConnections()
-	var data []byte
-	if ext == isometricSVG {
-		// The shared SVG adapter applies Scale to the document dimensions. Keep
-		// its native quality canvas independent from that display scaling.
-		o.Width, o.Height = 1600, 1000
-		data, err = d2svg.RenderIsometric(ctx, diagram, &render, &o)
-	} else {
-		data, err = d2isometricimg.Render(ctx, diagram, &o)
-	}
+func renderIsometricImage(ctx context.Context, ms *xmain.State, diagram *d2target.Diagram, render d2svg.RenderOpts, input, output string, ext exportExtension, boardPath []string) ([]byte, bool, error) {
+	data, err := isometricImageData(ctx, ms, diagram, render, input, ext, boardPath)
 	if err != nil {
 		return nil, false, err
 	}
 	return writeIsometricImage(ctx, ms, output, data)
+}
+
+func isometricImageData(ctx context.Context, ms *xmain.State, diagram *d2target.Diagram, render d2svg.RenderOpts, input string, ext exportExtension, boardPath []string) ([]byte, error) {
+	o, err := configuredIsometricImageOptions(ctx, ms, render, input, ext)
+	if err != nil {
+		return nil, err
+	}
+	defer o.Assets.Resolver.CloseIdleConnections()
+	o.BoardPath = boardPath
+	if ext == isometricSVG {
+		// The SVG adapter applies display scale independently of the native canvas.
+		return d2svg.RenderIsometric(ctx, diagram, &render, &o)
+	}
+	return d2isometricimg.Render(ctx, diagram, &o)
 }
 
 func configuredIsometricImageOptions(ctx context.Context, ms *xmain.State, render d2svg.RenderOpts, input string, ext exportExtension) (d2isometricimg.Options, error) {
@@ -88,6 +89,7 @@ func configuredIsometricImageOptions(ctx context.Context, ms *xmain.State, rende
 		return o, err
 	}
 	o.FitContent = true
+	o.Exploded = render.IsometricExploded != nil && *render.IsometricExploded
 	o.Render.ThemeID = render.ThemeID
 	o.Render.ThemeOverrides = render.ThemeOverrides
 	o.Fonts, err = newFontFallbackOptions(1)
@@ -159,7 +161,7 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 				return nil, false, err
 			}
 		}
-		return renderIsometricImage(ctx, ms, board, render, input, output, ext)
+		return renderIsometricImage(ctx, ms, board, render, input, output, ext, nil)
 	}
 	// A selected leaf retains the requested filename, just as single-board isometric
 	// exports did before traversal support was added.
@@ -170,7 +172,7 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 				return nil, false, err
 			}
 		}
-		return renderIsometricImage(ctx, ms, diagram, render, input, output, ext)
+		return renderIsometricImage(ctx, ms, diagram, render, input, output, ext, nil)
 	}
 	if err := validateBoardOutputPaths(output, diagram); err != nil {
 		return nil, false, err
@@ -231,7 +233,7 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 		if err != nil {
 			return nil, false, err
 		}
-		data, _, err := renderIsometricImage(ctx, ms, board, render, input, filepath.Join(workspace.stageRoot, rel), ext)
+		data, _, err := renderIsometricImage(ctx, ms, board, render, input, filepath.Join(workspace.stageRoot, rel), ext, nil)
 		if err != nil {
 			return nil, false, fmt.Errorf("isometric board %s: %w", item.key, err)
 		}

@@ -28,6 +28,9 @@ func RenderTimeline(ctx context.Context, boards []*d2target.Diagram, opts *Optio
 	if err != nil {
 		return nil, err
 	}
+	if o.Exploded {
+		return nil, fmt.Errorf("isometric timeline renders a slideshow; use Render with GIF for an animated exploded view")
+	}
 	if o.Format != GIF || len(boards) == 0 || len(boards) > MaxTimelineBoards || interval <= 0 || interval > 10*time.Minute {
 		return nil, fmt.Errorf("isometric timeline requires GIF, 1..%d boards, and an interval in (0,10m]", MaxTimelineBoards)
 	}

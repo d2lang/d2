@@ -29,6 +29,7 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 	}
 	diagram.Name = g.Name
 	diagram.IsFolderOnly = g.IsFolderOnly
+	diagram.IsometricLayerGap = g.IsometricLayerGap
 	if fontFamily == nil {
 		fontFamily = go2.Pointer(d2fonts.SourceSansPro)
 	}

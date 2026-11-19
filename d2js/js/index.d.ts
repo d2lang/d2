@@ -16,6 +16,8 @@ export interface RenderOptions {
   sketch?: boolean;
   /** Enable native isometric SVG rendering, preserving the compiled layout [default: false]. Icons and images must use embedded data URLs. Cannot be combined with sketch, ASCII, darkThemeID, forceAppendix, or animateInterval. */
   isometric?: boolean;
+  /** Render D2 layers as vertically separated floors in one isometric SVG. */
+  isometricExploded?: boolean;
   /** Theme ID to use [default: 0] */
   themeID?: number;
   /** Theme ID to use when client is in dark mode */
@@ -28,7 +30,7 @@ export interface RenderOptions {
   scale?: number;
   /** Adds an appendix for tooltips and links [default: false] */
   forceAppendix?: boolean;
-  /** Target board/s to render. If target ends with '', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. target: 'layers.x.*' to render layer 'x' with all of its children. Pass '' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board outputs are currently only supported for animated SVGs and so animateInterval must be set to a value greater than 0 when targeting multiple boards. */
+  /** Select a board, or use "*" or "layers.x.*" to include descendants in an exploded or animated SVG. An empty string selects the root board alone. */
   target?: string;
   /** If given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). */
   animateInterval?: number;
@@ -81,6 +83,8 @@ export interface Diagram {
    * See docs on the same field in d2graph to understand what it means.
    */
   isFolderOnly: boolean;
+  /** Clear space below this floor in an exploded view, in layout pixels. */
+  isometricLayerGap?: number;
   description?: string;
   fontFamily?: any /* d2fonts.FontFamily */;
   shapes: Shape[];
@@ -240,6 +244,8 @@ export interface Graph {
    * the board tree.
    */
   isFolderOnly: boolean;
+  /** Clear space below this floor in an exploded view, in layout pixels. */
+  isometricLayerGap?: number;
   ast?: any /* d2ast.Map */;
   root?: Object;
   legend?: Legend;

@@ -34,6 +34,10 @@ Flags override environment variables, which override source configuration; --iso
 Isometric images preserve the compiled layout and render entirely in Go; no browser or GPU is required.
 Images fit the diagram within 1600x1000 pixels (1000x625 for GIF); --scale changes those maximum dimensions.
 Multiple boards export to SVG or PNG directories, PDF pages, PPTX slides or one GIF slideshow.
+Use --isometric-exploded to render the selected board and its layers as one stack with arrows between linked floors:
+  %[1]s --isometric-exploded file.d2 stack.svg
+  %[1]s --isometric-exploded --target='layers.production.*' file.d2 production.png
+You can also set D2_ISOMETRIC_EXPLODED=true or vars: {d2-config: {isometric-exploded: true}}.
 PDF and PPTX retain board navigation and clickable links. --animate-interval sets the GIF slide delay.
 Use --target to select a board, or --target='' for the root without its subboards.
 

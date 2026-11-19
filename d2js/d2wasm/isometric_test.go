@@ -78,3 +78,38 @@ func wasmJSONArgument(t *testing.T, value any) []js.Value {
 	}
 	return []js.Value{js.ValueOf(string(encoded))}
 }
+
+func TestExplodedWASMTargets(t *testing.T) {
+	const source = `vars: {d2-config: {isometric-exploded: true}}
+layers: {edition: {layers: {
+  upper: {a: {link: _.layers.lower}}
+  lower: {b -> c}
+}}}`
+	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": source}, Opts: &CompileOptions{}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := compiled.(CompileResponse)
+	if result.RenderOptions.IsometricExploded == nil || !*result.RenderOptions.IsometricExploded {
+		t.Fatal("compile lost exploded mode")
+	}
+	render := func(target *string) string {
+		t.Helper()
+		opts := result.RenderOptions
+		opts.Target = target
+		out, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: &opts}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out.([]byte))
+	}
+	if render(nil) != render(go2.Pointer("*")) {
+		t.Fatal("default exploded target should include layers")
+	}
+	if render(go2.Pointer("edition.*")) != render(go2.Pointer("layers.edition.*")) {
+		t.Fatal("shorthand subtree changed exploded output")
+	}
+	if render(go2.Pointer("edition.*")) == render(go2.Pointer("edition.upper")) {
+		t.Fatal("subtree rendered only one layer")
+	}
+}

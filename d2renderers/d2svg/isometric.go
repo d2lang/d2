@@ -16,6 +16,18 @@ import (
 	"github.com/d2lang/d2/lib/version"
 )
 
+// IsometricEnabled reports the selected presentation. Requesting an exploded
+// view implies isometric unless the caller explicitly disabled the renderer.
+func (opts *RenderOpts) IsometricEnabled() bool {
+	if opts == nil {
+		return false
+	}
+	if opts.Isometric != nil {
+		return *opts.Isometric
+	}
+	return opts.IsometricExploded != nil && *opts.IsometricExploded
+}
+
 func renderIsometric(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
 	return renderIsometricValidated(context.Background(), diagram, opts, nil)
 }
@@ -65,13 +77,40 @@ func renderIsometricValidated(ctx context.Context, diagram *d2target.Diagram, op
 	if native != nil {
 		o = *native
 	}
+	if opts.IsometricExploded != nil {
+		o.Exploded = *opts.IsometricExploded
+	}
+	if o.Exploded {
+		if err := validateIsometricLayers(ctx, diagram, opts); err != nil {
+			return nil, err
+		}
+	}
 	o.Format = d2isometricimg.SVG
 	o.Render.ThemeID, o.Render.ThemeOverrides = opts.ThemeID, opts.ThemeOverrides
 	data, err := d2isometricimg.Render(ctx, diagram, &o)
 	if err != nil {
 		return nil, err
 	}
-	return wrapIsometricSVG(diagram, data, opts)
+	return wrapIsometricSVG(diagram, data, opts, o.Exploded)
+}
+
+// Each displayed layer gets the same link and paint checks as a standalone SVG.
+func validateIsometricLayers(ctx context.Context, parent *d2target.Diagram, opts *RenderOpts) error {
+	for _, child := range parent.Layers {
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := validateRenderLinks(child); err != nil {
+			return err
+		}
+		if err := validateRenderPaints(child, opts); err != nil {
+			return err
+		}
+		if err := validateIsometricLayers(ctx, child, opts); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var isometricSVGRoot = regexp.MustCompile(`^<svg\b[^>]*>`)
@@ -101,7 +140,7 @@ func namespaceIsometricSVG(data []byte, prefix string) []byte {
 	return []byte(strings.NewReplacer(replacements...).Replace(string(data)))
 }
 
-func wrapIsometricSVG(diagram *d2target.Diagram, data []byte, opts *RenderOpts) ([]byte, error) {
+func wrapIsometricSVG(diagram *d2target.Diagram, data []byte, opts *RenderOpts, exploded bool) ([]byte, error) {
 	var root struct {
 		Width  int64 `xml:"width,attr"`
 		Height int64 `xml:"height,attr"`
@@ -158,7 +197,11 @@ func wrapIsometricSVG(diagram *d2target.Diagram, data []byte, opts *RenderOpts) 
 	if err != nil {
 		return nil, err
 	}
-	data = namespaceIsometricSVG(data, hash+"-isometric-")
+	resourcePrefix := hash + "-isometric-"
+	if exploded {
+		resourcePrefix += "exploded-"
+	}
+	data = namespaceIsometricSVG(data, resourcePrefix)
 	opening := isometricSVGRoot.FindIndex(data)
 	if opening == nil || !bytes.HasSuffix(data, []byte("</svg>")) {
 		return nil, fmt.Errorf("native isometric output has an invalid SVG envelope")

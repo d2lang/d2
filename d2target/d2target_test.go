@@ -3,6 +3,7 @@ package d2target
 import (
 	"bytes"
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
@@ -90,5 +91,20 @@ func TestHashIDStableAcrossURLFieldOrder(t *testing.T) {
 	const want = "d2-887368360"
 	if got != want {
 		t.Fatalf("HashID = %q, want %q", got, want)
+	}
+}
+
+func TestGetBoardWithPath(t *testing.T) {
+	leaf := &Diagram{Name: "second.floor"}
+	folder := &Diagram{Name: "cut", Layers: []*Diagram{leaf}}
+	root := &Diagram{Scenarios: []*Diagram{folder}}
+	for _, path := range [][]string{{"cut", "second.floor"}, {"scenarios", "cut", "layers", "second.floor"}, {"cut", "layers", "second.floor"}} {
+		board, canonical := root.GetBoardWithPath(path)
+		if board != leaf || !slices.Equal(canonical, []string{"scenarios", "cut", "layers", "second.floor"}) {
+			t.Errorf("lookup %v = %p %v", path, board, canonical)
+		}
+	}
+	if missing, path := root.GetBoardWithPath([]string{"cut", "layers", "missing"}); missing != nil || path != nil {
+		t.Fatal("expected missing path")
 	}
 }

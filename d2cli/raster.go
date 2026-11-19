@@ -867,6 +867,7 @@ func rasterRenderOptions(opts d2svg.RenderOpts) d2svg.RenderOpts {
 		Pad:                opts.Pad,
 		Sketch:             opts.Sketch,
 		Isometric:          opts.Isometric,
+		IsometricExploded:  opts.IsometricExploded,
 		Center:             opts.Center,
 		Scale:              scale,
 		ThemeID:            opts.ThemeID,

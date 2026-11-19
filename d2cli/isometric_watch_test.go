@@ -194,4 +194,10 @@ func TestIsometricWatchCLIRecompilesAndReloadsSourceMode(t *testing.T) {
 	if !bytes.Equal(changed, restored) {
 		t.Fatal("re-enabling source isometric mode did not restore the same render")
 	}
+	write("vars: {d2-config: {isometric-exploded: true}}\n" + explodedCLISource)
+	stack := waitFor(restored, true)
+	_, links := inspectIsometricSVG(t, stack)
+	if !containsIsometricString(links, "https://example.com/folio") || !containsIsometricString(links, "https://example.com/crate") {
+		t.Fatalf("watch omitted layers from the combined SVG: %v", links)
+	}
 }

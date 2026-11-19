@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2isometric/d2isometricimg"
@@ -23,6 +24,7 @@ import (
 // images and annotations remain in the PDF or presentation writer.
 type isometricPagedRenderer struct {
 	ctx                                context.Context
+	exploded                           *d2target.Diagram
 	opts                               d2isometricimg.Options
 	boardIDToPage                      map[string]int
 	sourceRootID                       string
@@ -94,17 +96,28 @@ func (r *isometricPagedRenderer) render(diagram *d2target.Diagram, wantsPreview 
 	}
 	board := *diagram
 	board.Layers, board.Scenarios, board.Steps = nil, nil, nil
+	target := &board
+	if r.exploded != nil {
+		target = r.exploded
+	}
 	o := r.opts
-	page, err := d2isometricimg.RenderPage(r.ctx, &board, &o)
+	page, err := d2isometricimg.RenderPage(r.ctx, target, &o)
 	if err != nil {
 		return nil, fmt.Errorf("isometric page %d: %w", r.renderedBoards+1, err)
 	}
 	if err := r.admitPage(page); err != nil {
 		return nil, err
 	}
-	links, err := rebaseIsometricPageLinks(page.Links, r.sourceRootID, r.boardIDToPage)
-	if err != nil {
-		return nil, err
+	links := page.Links
+	if r.exploded != nil {
+		// All floors already appear on this page. The native diagram draws
+		// their connectors; only real external destinations need annotations.
+		links = slices.DeleteFunc(links, func(link d2scene.LinkRegion) bool { return link.Target != "" })
+	} else {
+		links, err = rebaseIsometricPageLinks(links, r.sourceRootID, r.boardIDToPage)
+		if err != nil {
+			return nil, err
+		}
 	}
 	r.renderedBoards++
 	return &pagedBoard{png: page.PNG, links: links}, nil
@@ -176,14 +189,26 @@ func (r *isometricPagedRenderer) admitPage(page *d2isometricimg.Page) error {
 	return nil
 }
 
-func renderIsometricPaged(ctx context.Context, ms *xmain.State, diagram *d2target.Diagram, render d2svg.RenderOpts, input, output string, ext exportExtension, sourceRootID string) ([]byte, bool, error) {
+func renderIsometricPaged(ctx context.Context, ms *xmain.State, diagram *d2target.Diagram, render d2svg.RenderOpts, input, output string, ext exportExtension, sourceRootID string, boardPath []string) ([]byte, bool, error) {
 	if ext != isometricPDF && ext != isometricPPTX {
 		return nil, false, fmt.Errorf("isometric paged export requires PDF or PPTX")
+	}
+	var exploded *d2target.Diagram
+	if render.IsometricExploded != nil && *render.IsometricExploded {
+		// The document exporter sees one page; the native renderer sees the
+		// original compiled tree, including folder-only roots.
+		exploded = diagram
+		page := *diagram
+		page.IsFolderOnly = false
+		page.Layers, page.Scenarios, page.Steps = nil, nil, nil
+		diagram = &page
 	}
 	renderer, err := newIsometricPagedRenderer(ctx, ms, diagram, render, input, sourceRootID)
 	if err != nil {
 		return nil, false, err
 	}
+	renderer.exploded = exploded
+	renderer.opts.BoardPath = boardPath
 	var encoded bytes.Buffer
 	writer := &isometricDocumentWriter{ctx: renderer.ctx, output: &encoded, remaining: pagedMaxEncodedBytes}
 	includeNav := diagram.Root.Label != ""

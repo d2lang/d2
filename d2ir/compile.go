@@ -15,6 +15,7 @@ import (
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -378,7 +379,7 @@ func (c *compiler) validateConfigs(configs *Field) {
 		}
 
 		switch f.Name.ScalarString() {
-		case "sketch", "isometric", "center":
+		case "sketch", "isometric", "isometric-exploded", "center":
 			_, err := strconv.ParseBool(val)
 			if err != nil {
 				c.errorf(f.LastRef().AST(), `expected a boolean for "%s", got "%s"`, f.Name.ScalarString(), val)
@@ -398,6 +399,11 @@ func (c *compiler) validateConfigs(configs *Field) {
 			if d2themescatalog.Find(int64(valInt)) == (d2themes.Theme{}) {
 				c.errorf(f.LastRef().AST(), `%d is not a valid theme ID`, valInt)
 				continue
+			}
+		case "isometric-layer-gap":
+			pixels, err := strconv.Atoi(val)
+			if err != nil || pixels < 0 || pixels > d2target.MaxIsometricLayerGap {
+				c.errorf(f.LastRef().AST(), `"%s" needs an integer between 0 and %d layout pixels`, f.Name.ScalarString(), d2target.MaxIsometricLayerGap)
 			}
 		case "pad":
 			_, err := strconv.Atoi(val)

@@ -29,22 +29,29 @@ func openCapture(ctx context.Context, diagram *d2target.Diagram, o Options) (*ca
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
-	scene, err := d2isometric.BuildScene(diagram, &o.Render)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		cancel()
-		return nil, err
-	}
-	native, err := newNativeSceneWithOptions(ctx, scene, o.Width, o.Height, o.Assets, o.Fonts, nativeSceneOptions{fitContent: o.FitContent, camera: o.camera, outputDensity: sceneOutputDensity(scene, o.Width, o.Height, o.camera), links: o.LinkBudget})
+	native, err := buildOutputScene(ctx, diagram, o, false)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("initialize native isometric renderer: %w", err)
 	}
 	o.Width, o.Height = native.width, native.height
 	return &capture{ctx: ctx, opts: o, scene: native, close: cancel}, nil
+}
+
+func buildOutputScene(ctx context.Context, diagram *d2target.Diagram, o Options, vector bool) (*nativeScene, error) {
+	options := nativeSceneOptions{fitContent: o.FitContent, camera: o.camera, vector: vector, deferRaster: vector, links: o.LinkBudget}
+	if o.Exploded {
+		return buildExplodedScene(ctx, diagram, o, options)
+	}
+	scene, err := d2isometric.BuildScene(diagram, &o.Render)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	options.outputDensity = sceneOutputDensity(scene, o.Width, o.Height, o.camera)
+	return newNativeSceneWithOptions(ctx, scene, o.Width, o.Height, o.Assets, o.Fonts, options)
 }
 
 func (s *capture) frameImage(seconds float64, traffic bool) (*image.RGBA, error) {

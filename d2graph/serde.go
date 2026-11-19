@@ -10,11 +10,12 @@ import (
 )
 
 type SerializedGraph struct {
-	Root      SerializedObject       `json:"root"`
-	Edges     []SerializedEdge       `json:"edges"`
-	Objects   []SerializedObject     `json:"objects"`
-	RootLevel int                    `json:"rootLevel"`
-	Data      map[string]interface{} `json:"data,omitempty"`
+	Root              SerializedObject       `json:"root"`
+	Edges             []SerializedEdge       `json:"edges"`
+	Objects           []SerializedObject     `json:"objects"`
+	IsometricLayerGap *int                   `json:"isometricLayerGap,omitempty"`
+	RootLevel         int                    `json:"rootLevel"`
+	Data              map[string]interface{} `json:"data,omitempty"`
 }
 
 type SerializedObject map[string]interface{}
@@ -28,6 +29,7 @@ func DeserializeGraph(bytes []byte, g *Graph) error {
 		return err
 	}
 
+	g.IsometricLayerGap = sg.IsometricLayerGap
 	g.Data = sg.Data
 	var root Object
 	Convert(sg.Root, &root)
@@ -89,7 +91,7 @@ func DeserializeGraph(bytes []byte, g *Graph) error {
 }
 
 func SerializeGraph(g *Graph) ([]byte, error) {
-	sg := SerializedGraph{}
+	sg := SerializedGraph{IsometricLayerGap: g.IsometricLayerGap}
 
 	root, err := toSerializedObject(g.Root)
 	if err != nil {

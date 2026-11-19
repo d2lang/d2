@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/d2lang/d2/d2renderers/d2isometric"
 	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2target"
 )
@@ -32,24 +31,20 @@ func renderNativeSVG(ctx context.Context, diagram *d2target.Diagram, o Options) 
 	if o.LinkBudget == nil {
 		o.LinkBudget = &d2scenebuild.LinkBudget{MaxRegions: 4096, MaxStringBytes: 1 << 20}
 	}
-	if err := preflightSVGMetadata(ctx, diagram, *o.LinkBudget); err != nil {
-		return nil, err
+	if !o.Exploded {
+		room := *o.LinkBudget
+		if err := preflightSVGMetadata(ctx, diagram, &room); err != nil {
+			return nil, err
+		}
 	}
-	scene, err := d2isometric.BuildScene(diagram, &o.Render)
-	if err != nil {
-		return nil, err
-	}
-	native, err := newNativeSceneWithOptions(ctx, scene, o.Width, o.Height, o.Assets, o.Fonts, nativeSceneOptions{
-		deferRaster: true, vector: true, fitContent: o.FitContent, camera: o.camera,
-		outputDensity: sceneOutputDensity(scene, o.Width, o.Height, o.camera), links: o.LinkBudget,
-	})
+	native, err := buildOutputScene(ctx, diagram, o, true)
 	if err != nil {
 		return nil, fmt.Errorf("initialize native SVG: %w", err)
 	}
 	return nativeSceneSVG(ctx, native)
 }
 
-func preflightSVGMetadata(ctx context.Context, diagram *d2target.Diagram, budget d2scenebuild.LinkBudget) error {
+func preflightSVGMetadata(ctx context.Context, diagram *d2target.Diagram, budget *d2scenebuild.LinkBudget) error {
 	if diagram == nil {
 		return fmt.Errorf("native SVG requires a diagram")
 	}
@@ -83,6 +78,8 @@ func preflightSVGMetadata(ctx context.Context, diagram *d2target.Diagram, budget
 			return err
 		}
 	}
+	budget.MaxRegions -= regions
+	budget.MaxStringBytes -= bytes
 	return ctx.Err()
 }
 
@@ -503,7 +500,11 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 			closeLink = writeSVGLinkStart(w, *u.link, seenLinks[u.link])
 			seenLinks[u.link] = true
 		}
-		w.write(`<g opacity="%s">`, svgNumber(u.opacity))
+		if anchor := scene.deckIDs[u.batches[0].triangle.PaintOwner]; anchor != "" {
+			w.write(`<g id="%s" opacity="%s">`, anchor, svgNumber(u.opacity))
+		} else {
+			w.write(`<g opacity="%s">`, svgNumber(u.opacity))
+		}
 		for _, b := range u.batches {
 			id++
 			writeSVGBatch(w, b, id, camera)

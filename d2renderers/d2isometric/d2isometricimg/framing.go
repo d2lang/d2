@@ -10,6 +10,7 @@ import (
 )
 
 type nativeSceneOptions struct {
+	stackWires    []stackWire // optional capture of the visible ink on one exploded deck
 	fitContent    bool
 	deferRaster   bool
 	vector        bool          // retain solid cap coverage beneath vector face paint
