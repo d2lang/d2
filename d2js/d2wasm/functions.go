@@ -502,10 +502,6 @@ func Render(args []js.Value) (interface{}, error) {
 		return out, nil
 	}
 
-	if animateInterval > 0 && forceAppendix {
-		return nil, &WASMError{Message: "forceAppendix is not supported for animated SVGs", Code: 400}
-	}
-
 	var boards [][]byte
 	if noChildren {
 		var board []byte

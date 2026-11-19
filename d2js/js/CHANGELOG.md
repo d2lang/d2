@@ -5,6 +5,7 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Support `forceAppendix` with `animateInterval` to show each board's numbered tooltips and links in its animation frame.
 - Fix WebAssembly startup in Safari 27.2 workers. `D2.ready` now reports the startup error if Go exits before registering the API.
 
 ## [0.1.34]
