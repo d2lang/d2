@@ -83,11 +83,16 @@ jobs:
           # Use a recognizable older payload and distinct MSI product codes. PR packages use version 0.0.0.
           Set-Content -LiteralPath "$stage\d2.exe" -Value 'upgrade fixture'
           Set-Content -LiteralPath "$stage\THIRD_PARTY_NOTICES.txt" -Value 'upgrade fixture'
-          foreach ($suffix in '', '-user') {
-            wix build -acceptEula wix7 -arch x64 -d D2Version=0.0.0 -b $stage.FullName `
-              -o "$stage\previous$suffix.msi" "./ci/release/windows/d2$suffix.wxs"
-            if ($LASTEXITCODE -ne 0) { throw "Building the upgrade fixture failed" }
-            Copy-Item "$env:RUNNER_TEMP\windows-msi\d2-$env:VERSION-windows-amd64$suffix.msi" "$stage\d2$suffix.msi"
+          Push-Location $stage
+          try {
+            foreach ($suffix in '', '-user') {
+              wix build -acceptEula wix7 -arch x64 -d D2Version=0.0.0 -o "previous$suffix.msi" `
+                "$env:GITHUB_WORKSPACE\ci\release\windows\d2$suffix.wxs"
+              if ($LASTEXITCODE -ne 0) { throw "Building the upgrade fixture failed" }
+              Copy-Item "$env:RUNNER_TEMP\windows-msi\d2-$env:VERSION-windows-amd64$suffix.msi" "d2$suffix.msi"
+            }
+          } finally {
+            Pop-Location
           }
           $password = ConvertTo-SecureString ("T1!" + [guid]::NewGuid().ToString("N")) -AsPlainText -Force
           $user = New-LocalUser -Name 'D2MsiTest' -Password $password
