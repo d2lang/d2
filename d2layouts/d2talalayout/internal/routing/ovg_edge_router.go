@@ -56,6 +56,7 @@ type ovgEdgeRouter struct {
 	crossingCost      float64
 	nonCenterPortCost float64
 	edgeSet           *ovgEdgeSet
+	crossings         *ovgCrossingIndex
 	hasNearbyEdge     map[*OVGEdge]struct{}
 	overlappingRoutes map[*OVGEdge][]*Route
 	fixedOverlaps     map[*layoutgraph.Node]struct{}
@@ -170,6 +171,13 @@ func newOVGEdgeRouterWithWorkLimit(
 		hasNearbyEdge:     make(map[*OVGEdge]struct{}),
 		overlappingRoutes: make(map[*OVGEdge][]*Route),
 		work:              guard,
+	}
+
+	if ovg.sparse {
+		router.crossings, err = newOVGCrossingIndex(ovg, guard)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	for _, route := range existingRoutes {
@@ -1097,33 +1105,26 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 				overlappingEdges = overlappingEdges[:0]
 				isProhibitedSharing := false
 
-				if (leastDistanceNode != source) && (leastDistanceNode != target) {
-					routesOnEdge := router.overlappingRoutes[e]
-					for _, route := range routesOnEdge {
-						if err := router.work.reserveProduct(uint64(len(route.OVGNodes))+1, 2); err != nil {
+				if leastDistanceNode != source && leastDistanceNode != target {
+					routes := router.overlappingRoutes[e]
+					for _, route := range routes {
+						if err := router.work.step(); err != nil {
 							return nil, 0, err
 						}
 						overlappingEdges = append(overlappingEdges, route.GEdge)
-						if gEdge.IsDirected() && route.isOpposingColinear(leastDistanceNode, adjacentNode) {
-							isProhibitedSharing = true
-							break
-						}
-						if adjacentNode.IsTunnel {
-							// A tunnel route cannot overlap an entirely other route
-							if route.isEntireColinear(adjacentNode, leastDistanceNode) || route.isEntireColinear(leastDistanceNode, adjacentNode) {
-								isProhibitedSharing = true
-								break
-							}
-						}
 					}
-				}
-
-				if !isProhibitedSharing {
 					canOverlap, err := edgeCanOverlapEdgesGuarded(gEdge, overlappingEdges, sourceClusterNodes, targetClusterNodes, router.work)
 					if err != nil {
 						return nil, 0, err
 					}
-					isProhibitedSharing = len(overlappingEdges) > 0 && !canOverlap
+					// Only a shareable edge needs the more expensive geometric checks.
+					isProhibitedSharing = !canOverlap
+					if canOverlap {
+						isProhibitedSharing, err = router.routesBlockTraversal(routes, leastDistanceNode, adjacentNode, gEdge.IsDirected())
+						if err != nil {
+							return nil, 0, err
+						}
+					}
 				}
 
 				isAdjacentNodeOnRoute := false
@@ -1161,9 +1162,16 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 						//       |
 						//       |
 						//       +
-						isCrossing, err = router.edgeSet.intersectsWithGuarded(e, router.work)
-						if err != nil {
-							return nil, 0, err
+						if router.crossings != nil {
+							if err := router.work.step(); err != nil {
+								return nil, 0, err
+							}
+							_, isCrossing = router.crossings.crossed[e]
+						} else {
+							isCrossing, err = router.edgeSet.intersectsWithGuarded(e, router.work)
+							if err != nil {
+								return nil, 0, err
+							}
 						}
 					}
 
@@ -1368,6 +1376,34 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 	}
 
 	return nil, 0, fmt.Errorf("path not found for '%s'. Queue is empty", gEdge.DebugID())
+}
+
+func (router *ovgEdgeRouter) routesBlockTraversal(routes []*Route, from, to *OVGNode, directed bool) (bool, error) {
+	if !directed && !to.IsTunnel {
+		return false, nil
+	}
+	for _, route := range routes {
+		if err := router.work.step(); err != nil {
+			return false, err
+		}
+		if directed && route.GEdge.IsDirected() {
+			if err := router.work.add(uint64(len(route.OVGNodes))); err != nil {
+				return false, err
+			}
+			if route.isOpposingColinear(from, to) {
+				return true, nil
+			}
+		}
+		if to.IsTunnel {
+			if err := router.work.add(uint64(len(route.OVGNodes))); err != nil {
+				return false, err
+			}
+			if route.isEntireColinear(from, to) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // If two non-diagonal nodes are below (MinRouteNodeClearance+1) * 2 from each other and connected, there won't be a direct path, and it'll take a roundabout path which can block other paths.
@@ -1702,8 +1738,15 @@ func (router *ovgEdgeRouter) addRoute(route *Route) error {
 		if i > 0 && i < len(route.OVGNodes)-2 {
 			// only keep edges of the OVG path, ignore edges from port to center
 			end := route.OVGNodes[i+1]
-			if err := router.edgeSet.addGuarded(NewOVGEdge(start, end), router.work); err != nil {
+			segment := NewOVGEdge(start, end)
+			before := len(router.edgeSet.edges)
+			if err := router.edgeSet.addGuarded(segment, router.work); err != nil {
 				return err
+			}
+			if router.crossings != nil && before < len(router.edgeSet.edges) {
+				if err := router.crossings.add(segment, router.work); err != nil {
+					return err
+				}
 			}
 		}
 	}

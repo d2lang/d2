@@ -6,6 +6,8 @@
 
 #### Improvements 🧹
 
+- TALA routes larger diagrams with cross-container connections by building a smaller visibility graph and reusing crossing and spacing calculations. [#2891](https://github.com/d2lang/d2/issues/2891)
+
 - renders: reduce isometric SVG size by sharing lighting gradients and removing interior edges from filled paths.
 
 - isometric: keep steep connection captions at the same reading angle as node labels and preserve clearance from their wires.

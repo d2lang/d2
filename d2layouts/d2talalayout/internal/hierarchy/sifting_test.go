@@ -48,12 +48,12 @@ func TestSiftingDoesNotIncreaseCrossings(t *testing.T) {
 		for _, node := range queue {
 			siblings := nodeToSiblings[node]
 			segments := scratch.crossLevelSegments(siblings, true, true)
-			before := countCrossings(segments)
+			before := scratch.countCrossings(segments)
 			sawCrossing = sawCrossing || before > 0
 			if err := sifting(node, siblings, byLevel, improveIfEqual, &scratch); err != nil {
 				t.Fatal(err)
 			}
-			after := countCrossings(scratch.crossLevelSegments(siblings, true, true))
+			after := scratch.countCrossings(scratch.crossLevelSegments(siblings, true, true))
 			if after > before {
 				t.Fatalf("sifting node %s increased crossings from %d to %d", node.graphNode.DebugID(), before, after)
 			}

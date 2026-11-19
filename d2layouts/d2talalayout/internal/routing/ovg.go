@@ -28,6 +28,7 @@ type OVG struct {
 	fixedOverlapsMu    sync.Mutex
 	fixedOverlapsCache []fixedOverlapsCacheEntry
 	buildGuard         *ovgBuildGuard
+	sparse             bool
 }
 
 type fixedOverlapsCacheEntry struct {
@@ -138,13 +139,17 @@ func buildOVGFromGraphWithGuard(g *layoutgraph.Graph, nearbyNodes []*layoutgraph
 	orthogonalNodes := make([]*layoutgraph.Node, 0, orthogonalNodeCapacity)
 	orthogonalNodes = append(orthogonalNodes, nearbyNodes...)
 
+	sparse, err := preferSparseOVG(g, nearbyNodes, guard)
+	if err != nil {
+		return nil, err
+	}
 	var hierarchyOVGs []*OVG
 	seenHierarchies := make(map[*layoutgraph.Hierarchy]struct{})
 	for _, n := range g.Nodes {
 		if err := guard.step(); err != nil {
 			return nil, err
 		}
-		if n.Hierarchy == nil {
+		if sparse || n.Hierarchy == nil {
 			orthogonalNodes = append(orthogonalNodes, n)
 		} else if _, seen := seenHierarchies[n.Hierarchy]; !seen {
 			seenHierarchies[n.Hierarchy] = struct{}{}
@@ -157,6 +162,7 @@ func buildOVGFromGraphWithGuard(g *layoutgraph.Graph, nearbyNodes []*layoutgraph
 	}
 
 	ovg := newBuildOVG(orthogonalNodes, guard)
+	ovg.sparse = sparse
 	if err := ovg.addPorts(g, guard); err != nil {
 		return nil, err
 	}
@@ -168,7 +174,11 @@ func buildOVGFromGraphWithGuard(g *layoutgraph.Graph, nearbyNodes []*layoutgraph
 			return nil, err
 		}
 	}
-	if err := ovg.addNodesIntersections(g, guard); err != nil {
+	if sparse {
+		if err := ovg.addSparseIntersections(g, guard); err != nil {
+			return nil, err
+		}
+	} else if err := ovg.addNodesIntersections(g, guard); err != nil {
 		return nil, err
 	}
 	for _, hOVG := range hierarchyOVGs {
@@ -180,7 +190,7 @@ func buildOVGFromGraphWithGuard(g *layoutgraph.Graph, nearbyNodes []*layoutgraph
 		}
 	}
 
-	if err := ovg.addEdgesNodes(g, guard); err != nil {
+	if err := ovg.addEdgesNodes(g, len(hierarchyOVGs) > 0, guard); err != nil {
 		return nil, err
 	}
 	if err := ovg.addTreeNodes(g, guard); err != nil {
@@ -229,21 +239,20 @@ func buildOVGFromGraphWithGuard(g *layoutgraph.Graph, nearbyNodes []*layoutgraph
 	return ovg, nil
 }
 
-// For each tala.Node, get the ports and add them as OVG Nodes
-func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
+func nodesWithoutRoutingPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) (map[*layoutgraph.Node]struct{}, error) {
 	if err := guard.check(); err != nil {
-		return err
+		return nil, err
 	}
 	// If all of a container's children have no connections, there's no need to consider them for pathing
 	skipPathing := make(map[*layoutgraph.Node]struct{})
 	for _, children := range g.Containers {
 		if err := guard.step(); err != nil {
-			return err
+			return nil, err
 		}
 		has := false
 		for _, child := range children {
 			if err := guard.step(); err != nil {
-				return err
+				return nil, err
 			}
 			if len(child.Edges) > 0 {
 				has = true
@@ -253,11 +262,20 @@ func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 		if !has {
 			for _, child := range children {
 				if err := guard.step(); err != nil {
-					return err
+					return nil, err
 				}
 				skipPathing[child] = struct{}{}
 			}
 		}
+	}
+
+	return skipPathing, nil
+}
+
+func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
+	skipPathing, err := nodesWithoutRoutingPorts(g, guard)
+	if err != nil {
+		return err
 	}
 
 	// Add ports
@@ -278,7 +296,8 @@ func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 				if err := guard.step(); err != nil {
 					return err
 				}
-				port, err := guard.addPoint(ovg, geo.NewPoint(node.TopLeft.X+math.Round(node.Width*point.XPercentage), node.TopLeft.Y+math.Round(node.Height*point.YPercentage)))
+				position := portPosition(node, point)
+				port, err := guard.addPoint(ovg, &position)
 				if err != nil {
 					return err
 				}
@@ -306,6 +325,13 @@ func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 		}
 	}
 	return guard.check()
+}
+
+func portPosition(node *layoutgraph.Node, point *geo.RelativePoint) geo.Point {
+	return geo.Point{
+		X: node.TopLeft.X + math.Round(node.Width*point.XPercentage),
+		Y: node.TopLeft.Y + math.Round(node.Height*point.YPercentage),
+	}
 }
 
 // For all OVG Nodes added from ports, take their x/y cartesian product to create a grid of OVG Nodes
@@ -430,7 +456,7 @@ func (ovg *OVG) addIntersections(g *layoutgraph.Graph, xs, ys map[float64]struct
 }
 
 // For each edge in tala.Edges, add nodes on the edge perimeter (bounding box) and half-way through the bounding box
-func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
+func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, hasHierarchyGrid bool, guard *ovgBuildGuard) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
@@ -450,7 +476,7 @@ func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error 
 		if edge.IsLoop() {
 			continue
 		}
-		if edge.From.Hierarchy != nil && edge.To.Hierarchy != nil && edge.To.Hierarchy == edge.From.Hierarchy {
+		if hasHierarchyGrid && edge.From.Hierarchy != nil && edge.To.Hierarchy != nil && edge.To.Hierarchy == edge.From.Hierarchy {
 			// if the edge is between two nodes in the same hierarchy, it was already handled
 			// by the hierarchical OVG routine
 			// though, there can be edges between nodes in two different hierarchies

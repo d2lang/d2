@@ -29,13 +29,38 @@ func TestCountLevelCrossings(t *testing.T) {
 
 	// crossings between level 0-1 from top-down
 	segments := scratch.crossLevelSegments(byLevel[1], true, false)
-	crossings := countCrossings(segments)
+	crossings := scratch.countCrossings(segments)
 	assert.Equal(t, int64(2), crossings)
 
 	// crossings between level 1-0 from bottom-up
 	segments = scratch.crossLevelSegments(byLevel[0], false, true)
-	crossings = countCrossings(segments)
+	crossings = scratch.countCrossings(segments)
 	assert.Equal(t, int64(2), crossings)
+}
+
+func TestCountRankCrossingsMatchesGeometry(t *testing.T) {
+	var levels [3][]*placementNode
+	for level := range levels {
+		for rank := range 24 {
+			node := newPlacementNode(level, nil)
+			node.rank = rank
+			levels[level] = append(levels[level], node)
+		}
+	}
+	for rank, node := range levels[1] {
+		for offset := range 5 {
+			node.connect(levels[0][(rank*7+offset)%24])
+			levels[2][(rank*11+offset)%24].connect(node)
+		}
+	}
+	var scratch crossingScratch
+	for _, sides := range [][2]bool{{true, true}, {false, true}, {true, false}} {
+		segments := scratch.crossLevelSegments(levels[1], sides[0], sides[1])
+		want := layoutgraph.CountSegmentCrossings(segments)
+		if got := scratch.countCrossings(segments); got != want {
+			t.Fatalf("sides %v: counted %d crossings, want %d", sides, got, want)
+		}
+	}
 }
 
 func TestBestSwap(t *testing.T) {
@@ -78,7 +103,7 @@ func TestBestSwap(t *testing.T) {
 	initializeRanks(byLevel)
 
 	segments := scratch.crossLevelSegments(byLevel[0], true, true)
-	crossings := countCrossings(segments)
+	crossings := scratch.countCrossings(segments)
 	length := addLengths(segments)
 	bestCrossings, bestLength, bestIndex := bestIndexBySwappingNeighbors(byLevel[0], 0, byLevel, &scratch)
 
@@ -129,11 +154,11 @@ func TestMinimizeCrossings(t *testing.T) {
 	minimizeHierarchyCrossings(byLevel)
 
 	segments := scratch.crossLevelSegments(byLevel[0], true, true)
-	crossings := countCrossings(segments)
+	crossings := scratch.countCrossings(segments)
 	assert.Equal(t, int64(0), crossings)
 
 	segments = scratch.crossLevelSegments(byLevel[1], true, true)
-	crossings = countCrossings(segments)
+	crossings = scratch.countCrossings(segments)
 	assert.Equal(t, int64(0), crossings)
 }
 

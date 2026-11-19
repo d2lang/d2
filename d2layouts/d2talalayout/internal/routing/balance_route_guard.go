@@ -85,6 +85,28 @@ func edgeSegmentsGuarded(edges layoutgraph.Edges, isHorizontal bool, guard *rout
 	return out, nil
 }
 
+type balanceSegmentBounds struct {
+	position    [2]geo.Point
+	floor, ceil float64
+}
+
+func (bounds *balanceSegmentBounds) update(segment geo.Segment, locked []*geo.Segment, known int, guard *routeWorkGuard) (float64, float64, error) {
+	position := [2]geo.Point{*segment.Start, *segment.End}
+	if bounds.position != position {
+		known = 0
+	}
+	floor, ceil, err := routeSegmentBounds(segment, locked[known:], segmentSpacingBuffer, guard)
+	if err != nil {
+		return 0, 0, err
+	}
+	if known > 0 {
+		floor = max(floor, bounds.floor)
+		ceil = min(ceil, bounds.ceil)
+	}
+	bounds.position, bounds.floor, bounds.ceil = position, floor, ceil
+	return floor, ceil, nil
+}
+
 // routeSegmentBounds is the cancellable equivalent of geo.Segment.GetBounds.
 // Keep its comparisons byte-for-byte equivalent so successful layouts do not
 // change while long locked-segment scans become interruptible.
