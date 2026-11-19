@@ -208,9 +208,6 @@ func (r *Resolver) classifySource(ctx context.Context, source string) (sourceSpe
 		}
 		return sourceSpec{kind: sourceData, raw: raw, label: displaySource(raw), key: "data:" + digest}, nil
 	}
-	if r.loadExternal == nil {
-		return sourceSpec{}, errors.New("data-only resolver requires a data URI")
-	}
 	if len(raw) > maxLocatorBytes {
 		return sourceSpec{}, &LimitError{Name: "source locator bytes", Actual: int64(len(raw)), Limit: maxLocatorBytes}
 	}
@@ -358,6 +355,9 @@ func hasPrefixFold(value, prefix string) bool {
 func (r *Resolver) load(ctx context.Context, spec sourceSpec) (loadedSource, error) {
 	if spec.kind == sourceData {
 		return r.loadData(ctx, spec)
+	}
+	if r.loadExternal == nil {
+		return loadedSource{}, errors.New("data-only resolver requires a data URI")
 	}
 	return r.loadExternal(ctx, spec)
 }

@@ -522,10 +522,11 @@ func TestDataOnlyResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	for _, source := range []string{"icon.png", "https://example.invalid/icon.png"} {
-		if _, err := resolver.Resolve(ctx, source); err == nil || !strings.Contains(err.Error(), "requires a data URI") {
-			t.Fatalf("Resolve(%q) error = %v, want a data URI error", source, err)
-		}
+	if _, err := resolver.Resolve(ctx, "icon.png"); !errors.Is(err, localfile.ErrDenied) {
+		t.Fatalf("local path error = %v, want localfile.ErrDenied", err)
+	}
+	if _, err := resolver.Resolve(ctx, "https://example.invalid/icon.png"); err == nil || !strings.Contains(err.Error(), "requires a data URI") {
+		t.Fatalf("HTTP URL error = %v, want a data URI error", err)
 	}
 	uri := dataURI("image/png", encodePNG(t, 2, 3))
 	first := mustResolve(t, resolver, uri)
