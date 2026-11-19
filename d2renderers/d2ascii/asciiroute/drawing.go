@@ -36,6 +36,12 @@ func drawSegmentBetweenPoints(ctx context.Context, rd RouteDrawer, start, end *g
 	x := int(math.Round(ax))
 	y := int(math.Round(ay))
 
+	// The label is drawn after the whole segment so later route characters
+	// cannot overwrite it. Route drawing skips alphanumeric cells but not
+	// spaces, so drawing mid-segment lets a "-" land on a space in the label.
+	labelX, labelY := 0, 0
+	drawLabel := false
+
 	for {
 		attempt++
 		if x == int(math.Round(cx)) && y == int(math.Round(cy)) || attempt == MaxRouteAttempts {
@@ -67,13 +73,18 @@ func drawSegmentBetweenPoints(ctx context.Context, rd RouteDrawer, start, end *g
 		drawRoutePoint(rd, x, y, sx, sy, segmentIndex, len(conn.Route), ax, ay, cx, cy,
 			conn, corners, arrows, turnDir, frmBoundary, toBoundary)
 
-		// Draw label if we're at the right position
+		// Remember where the label belongs; it is drawn once the segment is done
 		if labelPos != nil && labelPos.ShouldDrawAt(segmentIndex-1, x, y, ax, ay, sx, sy) {
-			drawConnectionLabel(rd, labelPos, label, conn.LabelPosition, x, y, sx, sy, conn.Route, segmentIndex)
+			labelX, labelY = x, y
+			drawLabel = true
 		}
 
 		fx += sx
 		fy += sy
+	}
+
+	if drawLabel {
+		drawConnectionLabel(rd, labelPos, label, conn.LabelPosition, labelX, labelY, sx, sy, conn.Route, segmentIndex)
 	}
 }
 
