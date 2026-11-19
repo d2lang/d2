@@ -103,7 +103,7 @@ func (b *meshBuilder) planStackHatches(nodes []d2isometric.Node, boards []d2isom
 		for _, child := range children[id] {
 			visit(child)
 		}
-		b.stackBoardCuts[id] = ordered[start:len(ordered)]
+		b.stackBoardCuts[id] = ordered[start:]
 	}
 	for _, board := range boards {
 		if _, hasParent := byID[board.ParentID]; !hasParent {
