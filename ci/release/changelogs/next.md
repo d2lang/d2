@@ -75,6 +75,7 @@
     render targets. [#2916](https://github.com/d2lang/d2/pull/2916)
   - Apply the dangerous-link policy to legend shapes. [#2917](https://github.com/d2lang/d2/pull/2917)
 - d2svg:
+  - Extend isometric root gradients across the padded or cropped SVG viewport.
   - Escape custom shape and connection classes. [#2895](https://github.com/d2lang/d2/pull/2895)
   - Sanitize bundled-image media types and escape serialized image URLs. [#2898](https://github.com/d2lang/d2/pull/2898)
   - Escape SQL-table constraint text. [#2903](https://github.com/d2lang/d2/pull/2903)
