@@ -354,7 +354,7 @@ func (b *meshBuilder) prepareEdges(edges []d2isometric.Edge, placer *routeCaptio
 			b.reserveSequenceEdge(edge, paths[i], placer)
 			continue
 		}
-		if edge.StrokeWidth > 0 {
+		if nativeRouteVisible(edge) {
 			placer.AvoidRoute(paths[i], nativeRouteRadius(edge)*1.6)
 		}
 		hasIcon := edge.Icon != "" && edge.Metadata.Original.Icon != nil

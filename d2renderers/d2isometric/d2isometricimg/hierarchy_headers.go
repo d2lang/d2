@@ -150,7 +150,7 @@ func placeHierarchyHeader(surface labelSurface, board d2isometric.Board, owner d
 	if placed, ok := clearStrip(surface, x0, x1, z0, z1, vertical); ok {
 		return placed, true
 	}
-	// At most eleven additional interval searches. Bottom strips are less
+	// Search a bounded set of additional strips. Bottom strips are less
 	// likely to be hidden because this fixed camera projects bodies upward.
 	for _, fraction := range []float64{1, 0, .5, .25, .75, .125, .875, .375, .625} {
 		candidate := surface
@@ -159,9 +159,11 @@ func placeHierarchyHeader(surface labelSurface, board d2isometric.Board, owner d
 			return placed, true
 		}
 	}
-	for _, x := range []float64{x0, x1} {
+	// A wire can run through the entire footprint. Check interior columns
+	// as well as the two sides so headings can use the gaps between wires.
+	for _, fraction := range []float64{0, 1, .5, .25, .75, .125, .875, .375, .625} {
 		candidate := surface
-		candidate.center.X = x
+		candidate.center.X = x0 + (x1-x0)*fraction
 		if placed, ok := clearStrip(candidate, x0, x1, z0, z1, true); ok {
 			return placed, true
 		}

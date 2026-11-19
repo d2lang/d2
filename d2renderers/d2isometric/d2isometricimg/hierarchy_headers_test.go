@@ -182,17 +182,42 @@ func TestGroupHeaderClearsFixedEdgeCaption(t *testing.T) {
 	}
 	// Even a connection without visible linework reserves its authored label.
 	owner.Metadata.Original.LabelPosition = "INSIDE_MIDDLE_CENTER"
-	edge.StrokeWidth = 0
-	reservations = newRouteCaptionPlacer()
-	if _, err := b.prepareEdges([]d2isometric.Edge{edge}, reservations, nil); err != nil {
-		t.Fatal(err)
+	for _, stroke := range []struct {
+		width int
+		color string
+	}{
+		{0, "#123456"}, {2, "transparent"},
+	} {
+		edge.StrokeWidth, edge.Stroke, edge.StrokeExplicit = stroke.width, stroke.color, true
+		reservations = newRouteCaptionPlacer()
+		if _, err := b.prepareEdges([]d2isometric.Edge{edge}, reservations, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(reservations.rects) != 1 || !captionOverlap(captionRect(header, false), reservations.rects[0]) {
+			t.Fatalf("only the visible caption should reserve space for stroke %+v", stroke)
+		}
+		got, ok = placeHierarchyHeader(header, board, owner, nil, .01, nil, reservations)
+		if !ok || captionOverlap(captionRect(got, false), reservations.rects[0]) {
+			t.Fatal("group header still overlaps the fixed edge caption")
+		}
 	}
-	if len(reservations.rects) != 1 || !captionOverlap(captionRect(header, false), reservations.rects[0]) {
-		t.Fatal("fixture must put the fixed edge caption on the original group title")
-	}
-	got, ok = placeHierarchyHeader(header, board, owner, nil, .01, nil, reservations)
-	if !ok || captionOverlap(captionRect(got, false), reservations.rects[0]) {
-		t.Fatal("group header still overlaps the fixed edge caption")
-	}
+}
 
+func TestGroupHeaderSearchesAlongStripBetweenWires(t *testing.T) {
+	board := d2isometric.Board{Size: nv(10, .14, 4)}
+	owner := d2isometric.Node{Metadata: d2isometric.NodeMetadata{Original: d2target.Shape{LabelPosition: "INSIDE_TOP_CENTER"}}}
+	header := labelSurface{width: 1, depth: .4, center: nv(0, .03, 0)}
+	reservations := newRouteCaptionPlacer()
+	for _, x := range []float64{-4.5, 0, 4.5} {
+		reservations.AvoidRoute([]Vec{nv(x, .03, -2), nv(x, .03, 2)}, .06)
+	}
+	got, ok := placeHierarchyHeader(header, board, owner, nil, .01, nil, reservations)
+	if !ok || math.Abs(got.center.X) < .5 || got.center.Z > -1.7 {
+		t.Fatalf("expected a clear top strip between two wires, got %+v (clear %t)", got, ok)
+	}
+	for _, obstacle := range reservations.rects {
+		if captionOverlap(captionRect(got, false), obstacle) {
+			t.Fatal("group heading still covers a reserved wire")
+		}
+	}
 }

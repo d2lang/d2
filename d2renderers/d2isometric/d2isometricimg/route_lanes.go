@@ -104,7 +104,7 @@ func nativeResolveLaneRoutes(ctx context.Context, edges []d2isometric.Edge, node
 		for j := range parts[i] {
 			parts[i][j] = -1
 		}
-		if !bridgeVisible(edge) {
+		if !nativeRouteVisible(edge) {
 			continue
 		}
 		for j := 1; j < len(paths[i]); j++ {

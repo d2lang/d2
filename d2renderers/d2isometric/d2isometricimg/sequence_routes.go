@@ -160,7 +160,7 @@ func nativeSequenceCaptionData(edge d2isometric.Edge, scale float64) ([]nativeSe
 }
 
 func (b *meshBuilder) reserveSequenceEdge(edge d2isometric.Edge, points []Vec, placer *routeCaptionPlacer) {
-	if edge.StrokeWidth > 0 {
+	if nativeRouteVisible(edge) {
 		placer.AvoidRoute(points, float64(edge.StrokeWidth)*b.scale/2)
 	}
 	captions, icon := nativeSequenceCaptionData(edge, b.scale)
