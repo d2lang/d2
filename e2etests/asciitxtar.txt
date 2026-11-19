@@ -274,3 +274,7 @@ dang_nhap: Đăng nhập
 csdl: Cơ sở dữ liệu
 nguoi_dung -> dang_nhap: gửi yêu cầu
 dang_nhap -> csdl
+
+-- vietnamese-horizontal-edge-label --
+direction: right
+a -> b: sang Mỹ
