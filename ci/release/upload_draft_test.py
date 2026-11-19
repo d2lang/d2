@@ -106,6 +106,8 @@ class DraftUploadTests(unittest.TestCase):
         (self.archives / "SHA256SUMS").write_text("".join(lines))
         self.msi = self.root / f"d2-{VERSION}-windows-amd64.msi"
         self.msi.write_bytes(b"verified installer")
+        self.user_msi = self.root / f"d2-{VERSION}-windows-amd64-user.msi"
+        self.user_msi.write_bytes(b"verified per-user installer")
         self.sbom = self.root / "d2.spdx.json"
         self.sbom.write_text('{"spdxVersion":"SPDX-2.3"}')
         self.assets = self.read_assets()
@@ -143,9 +145,14 @@ class DraftUploadTests(unittest.TestCase):
     def test_upload_and_retry_preserve_exact_bytes(self):
         fake = FakeGitHub()
         self.run_upload(fake)
-        self.assertEqual(len(fake.writes), 9)
+        self.assertEqual(len(fake.writes), 10)
         self.run_upload(fake)
-        self.assertEqual(len(fake.writes), 9)
+        self.assertEqual(len(fake.writes), 10)
+
+    def test_requires_per_user_installer(self):
+        self.user_msi.unlink()
+        with self.assertRaisesRegex(ValueError, "nonempty regular file"):
+            self.read_assets()
 
     def test_conflict_preflight_prevents_partial_upload(self):
         fake = FakeGitHub([self.assets[-1]])
@@ -168,7 +175,7 @@ class DraftUploadTests(unittest.TestCase):
         self.run_upload(fake)
         self.assertEqual(fake.writes, writes)
         self.assertEqual(fake.release["assets"][:2], completed)
-        self.assertEqual(len(fake.release["assets"]), 9)
+        self.assertEqual(len(fake.release["assets"]), 10)
         self.assertEqual([call[3] for call in fake.writes if call[:3] == ("api", "--method", "DELETE")],
                          [f"repos/test/repo/releases/assets/{first_id}", f"repos/test/repo/releases/assets/{second_id}"])
 

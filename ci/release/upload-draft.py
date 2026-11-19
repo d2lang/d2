@@ -49,7 +49,8 @@ def local_assets(version, archives, msi, sbom):
             raise ValueError(f"archive checksum mismatch: {name}")
     if msi.name != f"d2-{version}-windows-amd64.msi" or sbom.name != "d2.spdx.json":
         raise ValueError("unexpected MSI or SBOM filename")
-    paths = [archives / name for name in sorted(names)] + [manifest, msi, sbom]
+    user_msi = msi.with_name(f"d2-{version}-windows-amd64-user.msi")
+    paths = [archives / name for name in sorted(names)] + [manifest, msi, user_msi, sbom]
     return [(path, digest(path), path.stat().st_size) for path in paths]
 
 

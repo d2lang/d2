@@ -87,11 +87,11 @@ Pushing the tag starts one `Release archives` dependency graph:
    stripped binaries and normalized archives, enforces size budgets, and generates an SBOM.
 2. Each archive runs natively on its supported platform, checking its version, SVG, and PNG.
 3. The reusable `Windows MSI` workflow consumes that run's Windows amd64 archive, verifies
-   its checksum, and builds and verifies the installer on `windows-2022`. It always packages
+   its checksum, and builds and verifies both installers on `windows-2022`. It always packages
    notices from the new archive, so an old published release is no longer a PR test fixture.
 4. After tests, native smoke, and MSI verification succeed, the workflow attests the archive
    provenance, SBOM, and checksum manifest. A separate write-scoped job creates or resumes a
-   draft and uploads the same archives, `SHA256SUMS`, MSI, and `d2.spdx.json`.
+   draft and uploads the same archives, `SHA256SUMS`, both MSIs, and `d2.spdx.json`.
 
 The uploader rechecks the tag commit and draft identity/state before uploads and verifies
 all final asset digests. Existing assets are accepted only when their bytes match; nothing
@@ -113,6 +113,16 @@ within that window. Run recovery without another uploader modifying the same dra
 Release-related PRs exercise the same archive and native smoke jobs and, when the WiX gate
 below is enabled, the MSI build. PRs never attest or write release assets. CI is called
 directly by the tag workflow, so it does not depend on another token-generated event.
+
+After publishing a release, update `manifests/t/Terrastruct/D2/<version>/Terrastruct.D2.installer.yaml`
+in `microsoft/winget-pkgs`. Add both x64 installers, each with its own URL, SHA-256,
+ProductCode, and AppsAndFeaturesEntries. Set Scope and DefaultInstallLocation on each
+entry so WinGet can select the requested installer.
+
+| Release file | WinGet scope | Install location |
+| --- | --- | --- |
+| `d2-<version>-windows-amd64.msi` | `machine` | `%ProgramFiles%\D2` |
+| `d2-<version>-windows-amd64-user.msi` | `user` | `%LOCALAPPDATA%\Programs\D2` |
 
 Every release produced by this workflow includes `SHA256SUMS`. To verify archive
 provenance and its checksum:
