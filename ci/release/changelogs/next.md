@@ -33,8 +33,8 @@
 
 #### Bugfixes ⛑️
 
-- watch: embed local images in PNG watch previews instead of treating their URLs
-  as board navigation. [#2945](https://github.com/d2lang/d2/issues/2945)
+- renders: honor the selected theme and its canvas color in isometric exports.
+
 - d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
 - compiler:
   - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)
@@ -58,6 +58,8 @@
     `date: date`, instead of rendering an empty type. [#2950](https://github.com/d2lang/d2/pull/2950)
   - Keep `class` field types and method return types that match the name, such
     as `date: date`, instead of dropping them. [#2952](https://github.com/d2lang/d2/pull/2952)
+- watch: embed local images in PNG watch previews instead of treating their URLs
+  as board navigation. [#2945](https://github.com/d2lang/d2/issues/2945)
 - decoding and assets:
   - Cap decompressed URL-encoded D2 input at 16 MiB. [#2902](https://github.com/d2lang/d2/pull/2902)
   - Bound image references, locators, fetched and decoded bytes, cached data, and
