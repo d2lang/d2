@@ -1,6 +1,7 @@
 package d2isometricimg
 
 import (
+	"context"
 	"math"
 	"reflect"
 	"testing"
@@ -8,6 +9,22 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2isometric"
 	"github.com/d2lang/d2/d2target"
 )
+
+// hierarchyBoardHeaderSurface places the existing print area at the compiled
+// container label position. Outside and border labels are brought onto the
+// physical surface; the container and its descendants are never resized.
+func hierarchyBoardHeaderSurface(surface labelSurface, board d2isometric.Board, owner d2isometric.Node, nodes []d2isometric.Node, pixelScale float64, boards ...[]d2isometric.Board) labelSurface {
+	placed, _ := hierarchyBoardHeaderPlacement(surface, board, owner, nodes, pixelScale, boards...)
+	return placed
+}
+
+func hierarchyBoardHeaderPlacement(surface labelSurface, board d2isometric.Board, owner d2isometric.Node, nodes []d2isometric.Node, pixelScale float64, boards ...[]d2isometric.Board) (labelSurface, bool) {
+	var visibleBoards []d2isometric.Board
+	if len(boards) > 0 {
+		visibleBoards = boards[0]
+	}
+	return placeHierarchyHeader(surface, board, owner, nodes, pixelScale, visibleBoards, nil)
+}
 
 func TestHierarchyHeaderSourcePositionsAndOwnership(t *testing.T) {
 	board := d2isometric.Board{ID: "parent", Position: nv(20, 0, 20), Size: nv(10, .14, 6)}
@@ -132,5 +149,75 @@ func TestHierarchyHeaderCompiledWorkspaceMargin(t *testing.T) {
 	}
 	if got.center.Z < 8 || got.center.Z+got.depth/2 > 8.30 || got.center.Z-got.depth/2 < 7.83 {
 		t.Fatalf("header is not in the clear source bottom margin: %+v", got)
+	}
+}
+
+func TestGroupHeaderClearsFixedEdgeCaption(t *testing.T) {
+	board := d2isometric.Board{Size: nv(2, .14, 4)}
+	owner := d2isometric.Node{Metadata: d2isometric.NodeMetadata{Original: d2target.Shape{LabelPosition: "OUTSIDE_TOP_CENTER"}}}
+	header := labelSurface{width: 1.8, depth: .4, center: nv(0, .03, 0)}
+	// This route crosses every interior header strip. Its endpoints leave
+	// the authored outside anchor clear.
+	edge := d2isometric.Edge{
+		ID: "dispatch", Label: "dispatch", Opacity: 1, StrokeWidth: 2,
+		Points: []Vec{nv(0, .08, -1.65), nv(0, .08, 1.65)},
+		Metadata: d2isometric.EdgeMetadata{Original: d2target.Connection{
+			LabelPosition: "INSIDE_MIDDLE_CENTER",
+			Text:          d2target.Text{Label: "dispatch", LabelWidth: 60, LabelHeight: 20},
+		}},
+	}
+	b := meshBuilder{ctx: context.Background(), scale: .01}
+	reservations := newRouteCaptionPlacer()
+	if _, err := b.prepareEdges([]d2isometric.Edge{edge}, reservations, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := placeHierarchyHeader(header, board, owner, nil, .01, nil, reservations)
+	if !ok || got.center.Z+got.depth/2 >= -board.Size.Z/2 {
+		t.Fatalf("header did not use the clear compiled outside anchor: %+v", got)
+	}
+	for _, obstacle := range reservations.rects {
+		if captionOverlap(captionRect(got, false), obstacle) {
+			t.Fatal("group header covers a wire or its fixed label")
+		}
+	}
+	// Even a connection without visible linework reserves its authored label.
+	owner.Metadata.Original.LabelPosition = "INSIDE_MIDDLE_CENTER"
+	for _, stroke := range []struct {
+		width int
+		color string
+	}{
+		{0, "#123456"}, {2, "transparent"},
+	} {
+		edge.StrokeWidth, edge.Stroke, edge.StrokeExplicit = stroke.width, stroke.color, true
+		reservations = newRouteCaptionPlacer()
+		if _, err := b.prepareEdges([]d2isometric.Edge{edge}, reservations, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(reservations.rects) != 1 || !captionOverlap(captionRect(header, false), reservations.rects[0]) {
+			t.Fatalf("only the visible caption should reserve space for stroke %+v", stroke)
+		}
+		got, ok = placeHierarchyHeader(header, board, owner, nil, .01, nil, reservations)
+		if !ok || captionOverlap(captionRect(got, false), reservations.rects[0]) {
+			t.Fatal("group header still overlaps the fixed edge caption")
+		}
+	}
+}
+
+func TestGroupHeaderSearchesAlongStripBetweenWires(t *testing.T) {
+	board := d2isometric.Board{Size: nv(10, .14, 4)}
+	owner := d2isometric.Node{Metadata: d2isometric.NodeMetadata{Original: d2target.Shape{LabelPosition: "INSIDE_TOP_CENTER"}}}
+	header := labelSurface{width: 1, depth: .4, center: nv(0, .03, 0)}
+	reservations := newRouteCaptionPlacer()
+	for _, x := range []float64{-4.5, 0, 4.5} {
+		reservations.AvoidRoute([]Vec{nv(x, .03, -2), nv(x, .03, 2)}, .06)
+	}
+	got, ok := placeHierarchyHeader(header, board, owner, nil, .01, nil, reservations)
+	if !ok || math.Abs(got.center.X) < .5 || got.center.Z > -1.7 {
+		t.Fatalf("expected a clear top strip between two wires, got %+v (clear %t)", got, ok)
+	}
+	for _, obstacle := range reservations.rects {
+		if captionOverlap(captionRect(got, false), obstacle) {
+			t.Fatal("group heading still covers a reserved wire")
+		}
 	}
 }

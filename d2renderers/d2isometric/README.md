@@ -87,8 +87,9 @@ strengthening that treatment. Framing includes projected ground shadows.
 
 Labels and icons lie flat on their physical surfaces. Their source dimensions,
 anchors, line breaks and whitespace are retained. Outside captions clear visible
-sidewalls in projection. Container labels can move to a clear area within their
-original container when raised components obscure the source anchor. Authored
+sidewalls in projection. Container labels avoid projected component silhouettes, wires and positioned
+connection captions. If the container has no clear interior strip, a title with
+an outside source anchor can use that spot. Authored
 light ink gets a small contrasting backing when a translucent group wash needs
 it. Dense source layouts can still leave too little space for every projected
 label.
@@ -124,6 +125,8 @@ the original ports and avoid components and headers. Crowded runs, shallow
 crossings and crossings too near a corner or port retain their geometry. Wires,
 dashes, arrows and animated traffic share the resolved path. Default connections
 use stable muted colors, matching caption ink and a narrow paper-colored casing.
+Connection captions follow shallow routes and use the node-label orientation
+on routes steeper than 45 degrees in the projected image.
 Authored colors, opacity, dashes and font colors remain intact. Authored caption
 positions and percentages are retained. Captions without a position seek free
 space beside the route; on-edge labels use a gap in their own wire without adding

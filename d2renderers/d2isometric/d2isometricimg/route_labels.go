@@ -89,23 +89,24 @@ func (p *routeCaptionPlacer) Place(points []Vec, fraction, width, depth float64)
 		}
 		return math.Max(l.length*.15, math.Min(l.length*.85, target-l.start))
 	}
-	normalOffset := math.Max(.25, depth/2+.075)
-	fallback := captionOnLeg(legs[0], anchor(legs[0]), normalOffset, width, depth, points[0].Y)
+	fallback := legs[0].defaultCaption(anchor(legs[0]), width, depth, points[0].Y)
 	best, bestScore := fallback, math.Inf(1)
 	candidates := 0
 	for legIndex, leg := range legs {
 		if legIndex >= 8 || candidates >= maxRouteCaptionCandidates || p.work >= maxRouteCaptionWork {
 			break
 		}
+		angle, alongSize, acrossSize := leg.printAxis(width, depth)
+		normalOffset := math.Max(.25, acrossSize/2+.075)
 		inset := math.Min(.035, leg.length*.03)
-		lo, hi := width/2+inset, leg.length-width/2-inset
+		lo, hi := alongSize/2+inset, leg.length-alongSize/2-inset
 		if lo > hi {
 			continue
 		}
 		preferred := math.Max(lo, math.Min(hi, anchor(leg)))
-		step := width + 2*routeCaptionGap
+		step := alongSize + 2*routeCaptionGap
 		positions := []float64{preferred, preferred - step, preferred + step, preferred - 2*step, preferred + 2*step, lo, hi}
-		for _, offset := range []float64{normalOffset, -normalOffset, normalOffset + depth + .1, -normalOffset - depth - .1} {
+		for _, offset := range []float64{normalOffset, -normalOffset, normalOffset + acrossSize + .1, -normalOffset - acrossSize - .1} {
 			for _, along := range positions {
 				if along < lo || along > hi || candidates >= maxRouteCaptionCandidates {
 					continue
@@ -117,7 +118,7 @@ func (p *routeCaptionPlacer) Place(points []Vec, fraction, width, depth float64)
 				if fraction < .25 && arc > .4 || fraction > .75 && arc < .6 {
 					continue
 				}
-				candidate := captionOnLeg(leg, along, offset, width, depth, points[0].Y)
+				candidate := leg.caption(along, offset, angle, width, depth, points[0].Y)
 				candidates++
 				score, complete := p.score(captionRect(candidate, false))
 				if !complete {
@@ -190,20 +191,51 @@ func captionFallback(points []Vec, fraction, width, depth float64) labelSurface 
 		a, b := points[i], points[i+1]
 		length := math.Hypot(b.X-a.X, b.Z-a.Z)
 		if length > 1e-9 && captionFinite(a.X, a.Z, b.X, b.Z) {
-			return captionOnLeg(routeCaptionLeg{a: a, b: b, length: length}, length/2, math.Max(.25, depth/2+.075), width, depth, points[0].Y)
+			return (routeCaptionLeg{a: a, b: b, length: length}).defaultCaption(length/2, width, depth, points[0].Y)
 		}
 	}
 	return labelSurface{}
 }
 
-func captionOnLeg(l routeCaptionLeg, along, offset, width, depth, y float64) labelSurface {
+// Use the node-label baseline when a route is steeper than 45 degrees on
+// screen. Return the print area's spans along and across the route so that
+// an upright label still clears its wire and ports.
+func captionPrintAxis(ux, uz, width, depth float64) (angle, along, across float64) {
+	camera := nativeCameraAxes()
+	direction := nv(ux, 0, uz)
+	x := ndot(direction, camera.right)
+	if math.Abs(ndot(direction, camera.up)) > math.Abs(x) {
+		along, across = uprightCaptionSpan(ux, uz, width, depth)
+		return 0, along, across
+	}
+	if x < 0 {
+		ux, uz = -ux, -uz
+	}
+	return math.Atan2(uz, ux), width, depth
+}
+
+func uprightCaptionSpan(ux, uz, width, depth float64) (along, across float64) {
+	x, z := math.Abs(ux), math.Abs(uz)
+	return x*width + z*depth, z*width + x*depth
+}
+
+func (l routeCaptionLeg) printAxis(width, depth float64) (angle, along, across float64) {
+	return captionPrintAxis((l.b.X-l.a.X)/l.length, (l.b.Z-l.a.Z)/l.length, width, depth)
+}
+
+func (l routeCaptionLeg) defaultCaption(along, width, depth, y float64) labelSurface {
+	angle, _, across := l.printAxis(width, depth)
+	return l.caption(along, math.Max(.25, across/2+.075), angle, width, depth, y)
+}
+
+func (l routeCaptionLeg) caption(along, offset, angle, width, depth, y float64) labelSurface {
 	ux, uz := (l.b.X-l.a.X)/l.length, (l.b.Z-l.a.Z)/l.length
 	x, z := l.a.X+ux*along, l.a.Z+uz*along
-	// Reversing an edge does not turn its text upside down.
+	// Keep the preferred side stable when the edge is reversed.
 	if ux < -1e-6 || math.Abs(ux) < 1e-6 && uz < 0 {
 		ux, uz = -ux, -uz
 	}
-	return labelSurface{center: Vec{X: x + uz*offset, Y: y + .006, Z: z - ux*offset}, width: width, depth: depth, angle: math.Atan2(uz, ux)}
+	return labelSurface{center: Vec{X: x + uz*offset, Y: y + .006, Z: z - ux*offset}, width: width, depth: depth, angle: angle}
 }
 
 func captionRect(s labelSurface, hard bool) routeCaptionRect {

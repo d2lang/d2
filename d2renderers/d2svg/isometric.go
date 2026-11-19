@@ -164,8 +164,10 @@ func wrapIsometricSVG(diagram *d2target.Diagram, data []byte, opts *RenderOpts) 
 		return nil, fmt.Errorf("native isometric output has an invalid SVG envelope")
 	}
 	body := data[opening[1] : len(data)-len("</svg>")]
-	background := "<rect" + svg.RenderAttributes(svg.IntAttr("x", int(-pad)), svg.IntAttr("y", int(-pad)), svg.IntAttr("width", int(width)), svg.IntAttr("height", int(height)))
-	body = bytes.Replace(body, []byte(`<rect width="100%" height="100%"`), []byte(background), 1)
+	// The first full-viewport element is the solid background rect or the
+	// viewport holding both layers of a translucent gradient.
+	background := svg.RenderAttributes(svg.IntAttr("x", int(-pad)), svg.IntAttr("y", int(-pad)), svg.IntAttr("width", int(width)), svg.IntAttr("height", int(height)))
+	body = bytes.Replace(body, []byte(` width="100%" height="100%"`), []byte(background), 1)
 	var output bytes.Buffer
 	if opts.NoXMLTag == nil || !*opts.NoXMLTag {
 		output.WriteString(`<?xml version="1.0" encoding="utf-8"?>`)
