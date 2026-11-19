@@ -158,6 +158,25 @@ Browser executable that watch opens. Setting to 0 opens no browser
 Set the diagram layout engine to the passed string. For a list of available options, run
 .Ar layout
 .Ns .
+.It Fl -elk-algorithm Ar algorithm
+Select the ELK layout algorithm. The default is layered.
+Other choices for connected diagrams are force, stress, mrtree and radial.
+.It Fl -elk-forceModel Ar model
+Use the fruchterman_reingold (default) or eades force model.
+.It Fl -elk-forceRepulsion Ar strength
+Set repulsion between unconnected nodes in the eades force model. The default is 5.
+.It Fl -elk-stressDesiredEdgeLength Ar distance
+Set the target center-to-center distance between connected nodes in stress layout. The default is 100.
+.It Fl -elk-mrtreeSearchOrder Ar order
+Build the spanning tree depth-first (dfs, the default) or breadth-first (bfs).
+.It Fl -elk-mrtreeWeighting Ar order
+Order sibling branches by model_order (the default), descendants or fan.
+.It Fl -elk-radialRadius Ar distance
+Set the initial spacing between tree levels in radial layout. The default, 0, chooses it automatically.
+.It Fl -elk-radialWedgeCriteria Ar criterion
+Divide angular space between radial branches by node_size (the default) or leaf_number.
+.It Fl -elk-radialCompactor Ar mode
+Pack radial rings with radial_compaction or individual branches with wedge_compaction. The default is none.
 .It Fl -elk-nodeNode , -elk-edgeNode , -elk-edgeEdge Ar distance
 Minimum spacing between nodes, between edges and nodes, or between edges in the same ELK layer.
 .It Fl -elk-edgeRouting Ar style

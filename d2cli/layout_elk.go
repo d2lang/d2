@@ -16,12 +16,12 @@ import (
 )
 
 const elkEnabled = true
-const elkShortHelp = "Eclipse Layout Kernel (ELK) with the Layered algorithm."
+const elkShortHelp = "Eclipse Layout Kernel (ELK), using the layered algorithm by default."
 const elkLongHelp = `ELK is a layout engine offered by Eclipse.
 Originally written in Java, D2's ELK.js 0.12.0 layout profile is bundled through the native Go elk-go port. Layered remains the default.
 See https://d2lang.com/tour/elk for more.
 
-Set spacing, routing, wrapping, ordering and edge merging in vars.d2-config.data
+Set the algorithm and its layout options in vars.d2-config.data
 using the flag name without "--" (for example, elk-mergeEdges: true).
 Diagram data takes precedence over the flag. These option values are case-insensitive.
 Set elk-layer-constraint on an individual shape to first, last or none.
@@ -29,7 +29,7 @@ Set elk-layer-constraint on an individual shape to first, last or none.
 Flags correspond to ones found at https://eclipse.dev/elk/reference.html.
 `
 
-var elkLayeredFlags = []struct {
+var elkLayoutFlags = []struct {
 	name  string
 	value any
 	help  string
@@ -42,6 +42,14 @@ var elkLayeredFlags = []struct {
 	{"elk-forceNodeModelOrder", false, "keep declaration order within layers at the diagram root"},
 	{"elk-feedbackEdges", false, "route backward edges around the main flow"},
 	{"elk-mergeEdges", false, "share attachment points for ordinary incoming or outgoing edges"},
+	{"elk-forceModel", "fruchterman_reingold", "force model: fruchterman_reingold or eades"},
+	{"elk-forceRepulsion", 5., "repulsion between unconnected nodes in the eades force model"},
+	{"elk-stressDesiredEdgeLength", 100., "target center-to-center distance for adjacent nodes in stress layout"},
+	{"elk-mrtreeSearchOrder", "dfs", "spanning tree traversal for mrtree: dfs or bfs"},
+	{"elk-mrtreeWeighting", "model_order", "sibling ordering for mrtree: model_order, descendants or fan"},
+	{"elk-radialRadius", 0., "initial distance between tree levels in radial layout (0 chooses automatically)"},
+	{"elk-radialWedgeCriteria", "node_size", "divide angular space in radial layout by node_size or leaf_number"},
+	{"elk-radialCompactor", "none", "radial layout compaction: none, radial_compaction or wedge_compaction"},
 }
 
 // pflag's bool parser accepts only some capitalizations of true and false.
@@ -51,13 +59,13 @@ func (v elkBoolValue) Set(s string) error { return v.Value.Set(strings.ToLower(s
 func (elkBoolValue) IsBoolFlag() bool     { return true }
 
 func registerELKFlags(opts *xmain.Opts) {
-	opts.String("", "elk-algorithm", "", d2elklayout.DefaultOpts.Algorithm, "layout algorithm")
+	opts.String("", "elk-algorithm", "", d2elklayout.DefaultOpts.Algorithm, "layout algorithm (for connected diagrams: layered, force, stress, mrtree or radial)")
 	opts.Int64("", "elk-nodeNodeBetweenLayers", "", int64(d2elklayout.DefaultOpts.NodeSpacing), "the spacing to be preserved between any pair of nodes of two adjacent layers")
 	opts.String("", "elk-padding", "", d2elklayout.DefaultOpts.Padding, "the padding to be left to a parent element’s border when placing child elements")
 	opts.Int64("", "elk-edgeNodeBetweenLayers", "", int64(d2elklayout.DefaultOpts.EdgeNodeSpacing), "the spacing to be preserved between nodes and edges that are routed next to the node’s layer")
 	opts.Int64("", "elk-edgeEdgeBetweenLayers", "", int64(*d2elklayout.DefaultOpts.EdgeEdgeSpacing), "the spacing to be preserved between pairs of edges routed between the same pair of layers")
 	opts.Int64("", "elk-nodeSelfLoop", "", int64(d2elklayout.DefaultOpts.SelfLoopSpacing), "spacing to be preserved between a node and its self loops")
-	for _, f := range elkLayeredFlags {
+	for _, f := range elkLayoutFlags {
 		switch v := f.value.(type) {
 		case float64:
 			opts.Flags.Float64(f.name, v, f.help)
@@ -99,7 +107,7 @@ func elkLayout(ms *xmain.State) (d2graph.LayoutGraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, f := range elkLayeredFlags {
+	for _, f := range elkLayoutFlags {
 		if hasLayoutFlag(ms, f.name) && ms.Opts.Flags.Changed(f.name) {
 			if err := opts.SetOption(f.name, ms.Opts.Flags.Lookup(f.name).Value.String()); err != nil {
 				return nil, xmain.UsageErrorf("%v", err)

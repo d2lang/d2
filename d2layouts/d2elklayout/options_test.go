@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -261,6 +262,73 @@ func TestLayeredOptionScopesAndZero(t *testing.T) {
 	} {
 		if _, err := graphOptions(&d2graph.Graph{Data: map[string]any{key: val}}, nil); err == nil || !strings.Contains(err.Error(), key) {
 			t.Errorf("expected an error naming %s for %q, got %v", key, val, err)
+		}
+	}
+}
+
+func TestAlgorithmOptionsAtRoot(t *testing.T) {
+	defaults := DefaultOpts
+	defaults.Algorithm = "force"
+	defaults.ForceModel = "eAdEs"
+	defaults.StressDesiredEdgeLength = go2.Pointer(60.)
+	data := map[string]any{
+		"elk-algorithm": "OrG.ECLIPSE.Elk.StReSs", "elk-stressDesiredEdgeLength": 200,
+		"elk-forceRepulsion": 0, "elk-mrtreeSearchOrder": "BfS", "elk-mrtreeWeighting": "FaN",
+		"elk-radialRadius": 0, "elk-radialWedgeCriteria": "LeAf_NuMbEr", "elk-radialCompactor": "WeDgE_CoMpAcTiOn",
+	}
+	opts, err := graphOptions(&d2graph.Graph{Data: data}, &defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := newRootLayoutOptions(opts)
+	if root.Algorithm != "org.eclipse.elk.stress" || defaults.Algorithm != "force" || *defaults.StressDesiredEdgeLength != 60 {
+		t.Fatalf("unexpected algorithm or mutation of caller options: %q, %+v", root.Algorithm, defaults)
+	}
+	raw, err := json.Marshal(root.AlgorithmOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"elk.force.model": "EADES", "elk.force.repulsion": 0., "elk.stress.desiredEdgeLength": 200.,
+		"elk.mrtree.searchOrder": "BFS", "elk.mrtree.weighting": "FAN",
+		"elk.radial.radius": 0., "elk.radial.wedgeCriteria": "LEAF_NUMBER", "elk.radial.compactor": "WEDGE_COMPACTION",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("serialized algorithm options = %s, want %v", raw, want)
+	}
+	for _, settings := range []*elkOpts{newContainerLayoutOptions(opts), newRootLayoutOptions(&DefaultOpts)} {
+		if settings.AlgorithmOptions != (AlgorithmOptions{}) {
+			t.Errorf("unexpected explicit algorithm settings: %+v", settings.AlgorithmOptions)
+		}
+	}
+}
+
+func TestAlgorithmOptionValidation(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"elk-stressDesiredEdgeLength", "0"}, {"elk-stressDesiredEdgeLength", "-1"},
+		{"elk-forceRepulsion", "NaN"}, {"elk-radialRadius", "+Inf"}, {"elk-radialRadius", "-1"},
+		{"elk-forceModel", "spring"}, {"elk-mrtreeSearchOrder", "shortest"}, {"elk-mrtreeWeighting", "constraint"},
+		{"elk-radialWedgeCriteria", "area"}, {"elk-radialCompactor", "tight"},
+	} {
+		opts := DefaultOpts
+		if err := opts.SetOption(tc.key, tc.value); err == nil || !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("%s=%s: expected a diagnostic naming the option, got %v", tc.key, tc.value, err)
+		}
+	}
+	opts := DefaultOpts
+	opts.StressDesiredEdgeLength = go2.Pointer(0.)
+	if _, err := graphOptions(&d2graph.Graph{}, &opts); err == nil || !strings.Contains(err.Error(), "elk-stressDesiredEdgeLength") {
+		t.Errorf("invalid typed stress length: %v", err)
+	}
+	for input, want := range map[string]string{
+		"RaDiAl": "radial", "SPoReOvErLaP": "sporeOverlap", "ORG.ECLIPSE.ELK.SPORECOMPACTION": "org.eclipse.elk.sporeCompaction",
+	} {
+		if got := algorithmName(input); got != want {
+			t.Errorf("algorithm %q = %q, want %q", input, got, want)
 		}
 	}
 }

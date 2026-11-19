@@ -102,6 +102,7 @@ type ELKGraph struct {
 
 type ConfigurableOpts struct {
 	LayeredOptions
+	AlgorithmOptions
 	Algorithm       string `json:"elk.algorithm,omitempty"`
 	NodeSpacing     int    `json:"spacing.nodeNodeBetweenLayers,omitempty"`
 	Padding         string `json:"elk.padding,omitempty"`
@@ -218,12 +219,13 @@ func newRootLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 		NodeSizeConstraints:   "MINIMUM_SIZE",
 		ContentAlignment:      "H_CENTER V_CENTER",
 		ConfigurableOpts: ConfigurableOpts{
-			LayeredOptions:  opts.parentOptions(true),
-			Algorithm:       opts.Algorithm,
-			NodeSpacing:     opts.NodeSpacing,
-			EdgeNodeSpacing: opts.EdgeNodeSpacing,
-			EdgeEdgeSpacing: edgeEdgeSpacingOrDefault(opts),
-			SelfLoopSpacing: opts.SelfLoopSpacing,
+			LayeredOptions:   opts.parentOptions(true),
+			AlgorithmOptions: opts.AlgorithmOptions,
+			Algorithm:        opts.Algorithm,
+			NodeSpacing:      opts.NodeSpacing,
+			EdgeNodeSpacing:  opts.EdgeNodeSpacing,
+			EdgeEdgeSpacing:  edgeEdgeSpacingOrDefault(opts),
+			SelfLoopSpacing:  opts.SelfLoopSpacing,
 		},
 	}
 }

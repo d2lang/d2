@@ -24,6 +24,19 @@ type LayeredOptions struct {
 	MergeEdges          bool     `json:"elk.layered.mergeEdges,omitempty"`
 }
 
+// AlgorithmOptions tune the algorithm selected at the diagram root.
+// An omitted value lets the selected ELK provider use its own default.
+type AlgorithmOptions struct {
+	ForceModel              string   `json:"elk.force.model,omitempty"`
+	ForceRepulsion          *float64 `json:"elk.force.repulsion,omitempty"`
+	StressDesiredEdgeLength *float64 `json:"elk.stress.desiredEdgeLength,omitempty"`
+	MrTreeSearchOrder       string   `json:"elk.mrtree.searchOrder,omitempty"`
+	MrTreeWeighting         string   `json:"elk.mrtree.weighting,omitempty"`
+	RadialRadius            *float64 `json:"elk.radial.radius,omitempty"`
+	RadialWedgeCriteria     string   `json:"elk.radial.wedgeCriteria,omitempty"`
+	RadialCompactor         string   `json:"elk.radial.compactor,omitempty"`
+}
+
 func (opts *ConfigurableOpts) parentOptions(root bool) LayeredOptions {
 	o := opts.LayeredOptions
 	if o.EdgeNode == nil {
@@ -35,6 +48,8 @@ func (opts *ConfigurableOpts) parentOptions(root bool) LayeredOptions {
 }
 
 var diagramOptions = []string{
+	"elk-algorithm", "elk-forceModel", "elk-forceRepulsion", "elk-stressDesiredEdgeLength",
+	"elk-mrtreeSearchOrder", "elk-mrtreeWeighting", "elk-radialRadius", "elk-radialWedgeCriteria", "elk-radialCompactor",
 	"elk-nodeNode", "elk-edgeNode", "elk-edgeEdge", "elk-edgeRouting",
 	"elk-wrappingStrategy", "elk-forceNodeModelOrder", "elk-feedbackEdges", "elk-mergeEdges",
 	"elk-nodeNodeBetweenLayers", "elk-edgeNodeBetweenLayers", "elk-edgeEdgeBetweenLayers",
@@ -46,12 +61,30 @@ func (options *ConfigurableOpts) SetOption(name, value string) error {
 	opts := *options
 	var err error
 	switch name {
+	case "elk-algorithm":
+		opts.Algorithm = algorithmName(value)
+	case "elk-forceModel":
+		opts.ForceModel, err = optionEnum(value, "fruchterman_reingold", "eades")
+	case "elk-forceRepulsion":
+		opts.ForceRepulsion, err = parseNumber(name, value)
+	case "elk-stressDesiredEdgeLength":
+		opts.StressDesiredEdgeLength, err = parseNumber(name, value)
+	case "elk-mrtreeSearchOrder":
+		opts.MrTreeSearchOrder, err = optionEnum(value, "dfs", "bfs")
+	case "elk-mrtreeWeighting":
+		opts.MrTreeWeighting, err = optionEnum(value, "model_order", "descendants", "fan")
+	case "elk-radialRadius":
+		opts.RadialRadius, err = parseNumber(name, value)
+	case "elk-radialWedgeCriteria":
+		opts.RadialWedgeCriteria, err = optionEnum(value, "node_size", "leaf_number")
+	case "elk-radialCompactor":
+		opts.RadialCompactor, err = optionEnum(value, "none", "radial_compaction", "wedge_compaction")
 	case "elk-nodeNode":
-		opts.NodeNode, err = parseSpacing(value)
+		opts.NodeNode, err = parseNumber(name, value)
 	case "elk-edgeNode":
-		opts.EdgeNode, err = parseSpacing(value)
+		opts.EdgeNode, err = parseNumber(name, value)
 	case "elk-edgeEdge":
-		opts.EdgeEdge, err = parseSpacing(value)
+		opts.EdgeEdge, err = parseNumber(name, value)
 	case "elk-edgeRouting":
 		opts.EdgeRouting, err = optionEnum(value, "orthogonal", "polyline")
 	case "elk-wrappingStrategy":
@@ -95,12 +128,41 @@ func (options *ConfigurableOpts) SetOption(name, value string) error {
 	return nil
 }
 
-func parseSpacing(value string) (*float64, error) {
+func parseNumber(name, value string) (*float64, error) {
 	n, err := strconv.ParseFloat(value, 64)
-	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
-		return nil, fmt.Errorf("expected a finite, nonnegative spacing")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateNumber(name, n); err != nil {
+		return nil, err
 	}
 	return &n, nil
+}
+
+func validateNumber(name string, n float64) error {
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return fmt.Errorf("expected a finite number")
+	}
+	if name == "elk-stressDesiredEdgeLength" && n <= 0 {
+		return fmt.Errorf("desired edge length must be positive")
+	}
+	if n < 0 {
+		return fmt.Errorf("expected a nonnegative number")
+	}
+	return nil
+}
+
+func algorithmName(value string) string {
+	id := strings.ToLower(value)
+	// ELK accepts short names and qualified IDs. Its two SPOrE IDs use camel case.
+	start := strings.LastIndexByte(id, '.') + 1
+	switch id[start:] {
+	case "sporeoverlap":
+		return id[:start] + "sporeOverlap"
+	case "sporecompaction":
+		return id[:start] + "sporeCompaction"
+	}
+	return id
 }
 
 func optionEnum(value string, allowed ...string) (string, error) {
@@ -129,12 +191,27 @@ func graphOptions(g *d2graph.Graph, defaults *ConfigurableOpts) (*ConfigurableOp
 		}
 	}
 	// Go callers can also set the typed fields directly.
-	for _, v := range []*float64{opts.NodeNode, opts.EdgeNode, opts.EdgeEdge} {
-		if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0) {
-			return nil, fmt.Errorf("ELK spacing must be finite and nonnegative")
+	for _, opt := range []struct {
+		name  string
+		value *float64
+	}{
+		{"elk-nodeNode", opts.NodeNode},
+		{"elk-edgeNode", opts.EdgeNode},
+		{"elk-edgeEdge", opts.EdgeEdge},
+		{"elk-forceRepulsion", opts.ForceRepulsion},
+		{"elk-stressDesiredEdgeLength", opts.StressDesiredEdgeLength},
+		{"elk-radialRadius", opts.RadialRadius},
+	} {
+		if opt.value != nil {
+			if err := validateNumber(opt.name, *opt.value); err != nil {
+				return nil, fmt.Errorf("%s: %w", opt.name, err)
+			}
 		}
 	}
 	for _, option := range []struct{ name, value string }{
+		{"elk-algorithm", opts.Algorithm}, {"elk-forceModel", opts.ForceModel},
+		{"elk-mrtreeSearchOrder", opts.MrTreeSearchOrder}, {"elk-mrtreeWeighting", opts.MrTreeWeighting},
+		{"elk-radialWedgeCriteria", opts.RadialWedgeCriteria}, {"elk-radialCompactor", opts.RadialCompactor},
 		{"elk-edgeRouting", opts.EdgeRouting}, {"elk-wrappingStrategy", opts.WrappingStrategy},
 	} {
 		if option.value != "" {

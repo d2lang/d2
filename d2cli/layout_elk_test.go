@@ -88,45 +88,7 @@ func TestELKMergeEdgesDiagramPrecedence(t *testing.T) {
 	const fan = "direction: right\nGateway -> Orders\nGateway -> Billing\nGateway -> Events\n"
 	render := func(config string, flags ...string) []string {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, "diagram.d2"), []byte(config+fan), 0600); err != nil {
-			t.Fatal(err)
-		}
-		args := append([]string{"--layout=elk"}, flags...)
-		svg, err := runLayoutCLI(t, dir, nil, append(args, "diagram.d2", "-")...)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var paths []string
-		decoder := xml.NewDecoder(strings.NewReader(svg))
-		for {
-			token, err := decoder.Token()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			start, ok := token.(xml.StartElement)
-			if !ok || start.Name.Local != "path" {
-				continue
-			}
-			var class, d string
-			for _, attr := range start.Attr {
-				switch attr.Name.Local {
-				case "class":
-					class = attr.Value
-				case "d":
-					d = attr.Value
-				}
-			}
-			if slices.Contains(strings.Fields(class), "connection") {
-				paths = append(paths, d)
-			}
-		}
-		if len(paths) != 3 {
-			t.Fatalf("got %d connection paths, want 3", len(paths))
-		}
-		return paths
+		return renderELKPaths(t, dir, config+fan, 3, flags...)
 	}
 	const enable = "vars: {d2-config: {data: {elk-mergeEdges: \"tRuE\"}}}\n"
 	const disable = "vars: {d2-config: {data: {elk-mergeEdges: \"FaLsE\"}}}\n"
@@ -144,4 +106,66 @@ func TestELKMergeEdgesDiagramPrecedence(t *testing.T) {
 	if _, err := runLayoutCLI(t, dir, nil, "--layout=elk", "--elk-edgeRouting=unsupported", "diagram.d2", "-"); err == nil || !strings.Contains(err.Error(), "elk-edgeRouting") || !strings.Contains(err.Error(), "expected orthogonal or polyline") {
 		t.Fatalf("invalid routing diagnostic: %v", err)
 	}
+}
+
+func TestELKAlgorithmAndStressLengthFromDiagram(t *testing.T) {
+	dir := t.TempDir()
+	const chain = "Client -> API -> Store\n"
+	const config = "vars: {d2-config: {data: {elk-algorithm: StReSs; elk-stressDesiredEdgeLength: 200}}}\n"
+	layered := renderELKPaths(t, dir, chain, 2)
+	standard := renderELKPaths(t, dir, chain, 2, "--elk-algorithm=stress")
+	long := renderELKPaths(t, dir, chain, 2, "--elk-algorithm=ORG.ECLIPSE.ELK.STRESS", "--elk-stressDesiredEdgeLength=200")
+	if slices.Equal(layered, standard) || slices.Equal(standard, long) {
+		t.Fatal("selecting stress and doubling its edge length should each change the rendered connections")
+	}
+	fromData := renderELKPaths(t, dir, config+chain, 2, "--elk-algorithm=force", "--elk-stressDesiredEdgeLength=60")
+	if !slices.Equal(fromData, long) {
+		t.Fatal("the diagram's algorithm and stress length should override both CLI flags")
+	}
+	if got := renderELKPaths(t, dir, chain, 2, "--elk-stressDesiredEdgeLength=200"); !slices.Equal(got, layered) {
+		t.Fatal("a stress option changed the default layered layout")
+	}
+}
+
+func renderELKPaths(t *testing.T, dir, source string, wantEdges int, flags ...string) []string {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "diagram.d2"), []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"--layout=elk"}, flags...)
+	svg, err := runLayoutCLI(t, dir, nil, append(args, "diagram.d2", "-")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	decoder := xml.NewDecoder(strings.NewReader(svg))
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok || start.Name.Local != "path" {
+			continue
+		}
+		var class, d string
+		for _, attr := range start.Attr {
+			switch attr.Name.Local {
+			case "class":
+				class = attr.Value
+			case "d":
+				d = attr.Value
+			}
+		}
+		if slices.Contains(strings.Fields(class), "connection") {
+			paths = append(paths, d)
+		}
+	}
+	if len(paths) != wantEdges {
+		t.Fatalf("got %d connection paths, want %d", len(paths), wantEdges)
+	}
+	return paths
 }
