@@ -162,7 +162,7 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 			renderOrder = append(renderOrder, appendixIcon{i, true, s})
 			i++
 		}
-		if s.Link != "" {
+		if s.AppendixLinkText() != "" {
 			renderOrder = append(renderOrder, appendixIcon{i, false, s})
 			i++
 		}
@@ -210,7 +210,9 @@ func generateAppendix(diagram *d2target.Diagram, ruler *textmeasure.Ruler, svg s
 	i := 1
 
 	for _, s := range diagram.Shapes {
-		for _, txt := range []string{s.Tooltip, s.PrettyLink} {
+		// Must list exactly the icons numbered in Append: one sequence, tooltip
+		// before link, in diagram.Shapes order.
+		for _, txt := range []string{s.Tooltip, s.AppendixLinkText()} {
 			if txt != "" {
 				line, w, h := generateLine(i, br.Y+(PAD_TOP*2)+totalHeight, txt, ruler)
 				i++

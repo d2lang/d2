@@ -81,6 +81,10 @@
   - Encode and escape clip-path identifiers consistently in definitions and
     references. [#2906](https://github.com/d2lang/d2/pull/2906)
   - Escape color attributes across shapes, connections, labels, and themes. [#2909](https://github.com/d2lang/d2/pull/2909)
+- appendix:
+  - Keep numbered link and tooltip markers in one sequence with the appendix:
+    every link marker now has an entry, falling back to the link when no board
+    label is available (e.g. `link: _` in a scenario). [#2961](https://github.com/d2lang/d2/issues/2961)
 
 ---
 
