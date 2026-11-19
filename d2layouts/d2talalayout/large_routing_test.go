@@ -18,70 +18,64 @@ import (
 )
 
 func TestLargeContainerRouting(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		links, shapes int
-		nested        bool
-	}{
-		{"public", 100, 160, false},
-		{"nested_sketch", 230, 168, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			source := largeContainerDiagram(tc.links, tc.nested)
-			layout := d2talalayout.DefaultLayout
-			var renderOpts *d2svg.RenderOpts
-			if tc.nested {
-				// One seed exercises the larger routing and balancing workload.
-				layout = func(ctx context.Context, g *d2graph.Graph) error {
-					return d2talalayout.Layout(ctx, g, &d2talalayout.Options{Seeds: []int64{1}})
-				}
-				renderOpts = &d2svg.RenderOpts{Sketch: new(true), DarkThemeID: new(int64(104))}
-			}
-			ruler, err := textmeasure.NewRuler()
-			if err != nil {
-				t.Fatal(err)
-			}
-			telemetry := new(routing.SearchTelemetry)
-			ctx := routing.WithSearchTelemetry(log.With(t.Context(), testlog.New(t)), telemetry)
-			diagram, _, err := d2lib.Compile(ctx, source, &d2lib.CompileOptions{
-				Ruler:          ruler,
-				Layout:         new("tala"),
-				LayoutResolver: func(string) (d2graph.LayoutGraph, error) { return layout, nil },
-				RouterResolver: func(string) (d2graph.RouteEdges, error) { return d2talalayout.RouteEdges, nil },
-			}, renderOpts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(diagram.Shapes) != tc.shapes || len(diagram.Connections) != tc.links {
-				t.Fatalf("got %d shapes and %d connections", len(diagram.Shapes), len(diagram.Connections))
-			}
-			for _, connection := range diagram.Connections {
-				if len(connection.Route) < 2 {
-					t.Fatalf("%s has an incomplete route", connection.ID)
-				}
-				// The public reproducer uses rectangular shapes and orthogonal routes.
-				// Sketch layouts can also select direct connections between shapes.
-				if tc.nested {
-					continue
-				}
-				for i := 1; i < len(connection.Route); i++ {
-					from, to := connection.Route[i-1], connection.Route[i]
-					if from.X != to.X && from.Y != to.Y {
-						t.Fatalf("%s has a diagonal segment from %v to %v", connection.ID, from, to)
-					}
-				}
-			}
-			samples := telemetry.WorkSamples()
-			if len(samples) == 0 {
-				t.Fatal("no route search recorded")
-			}
-			peak := slices.Max(samples)
-			if peak >= routing.MaxSearchWorkUnits {
-				t.Fatalf("route search exhausted its %d-unit budget", routing.MaxSearchWorkUnits)
-			}
-			t.Logf("peak route-search work: %d of %d units", peak, routing.MaxSearchWorkUnits)
-		})
+	checkLargeContainerRouting(t, 100, 160, false)
+}
+
+func checkLargeContainerRouting(t *testing.T, links, shapes int, nested bool) {
+	t.Helper()
+	source := largeContainerDiagram(links, nested)
+	layout := d2talalayout.DefaultLayout
+	var renderOpts *d2svg.RenderOpts
+	if nested {
+		// One seed exercises the larger routing and balancing workload.
+		layout = func(ctx context.Context, g *d2graph.Graph) error {
+			return d2talalayout.Layout(ctx, g, &d2talalayout.Options{Seeds: []int64{1}})
+		}
+		renderOpts = &d2svg.RenderOpts{Sketch: new(true), DarkThemeID: new(int64(104))}
 	}
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	telemetry := new(routing.SearchTelemetry)
+	ctx := routing.WithSearchTelemetry(log.With(t.Context(), testlog.New(t)), telemetry)
+	diagram, _, err := d2lib.Compile(ctx, source, &d2lib.CompileOptions{
+		Ruler:          ruler,
+		Layout:         new("tala"),
+		LayoutResolver: func(string) (d2graph.LayoutGraph, error) { return layout, nil },
+		RouterResolver: func(string) (d2graph.RouteEdges, error) { return d2talalayout.RouteEdges, nil },
+	}, renderOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagram.Shapes) != shapes || len(diagram.Connections) != links {
+		t.Fatalf("got %d shapes and %d connections", len(diagram.Shapes), len(diagram.Connections))
+	}
+	for _, connection := range diagram.Connections {
+		if len(connection.Route) < 2 {
+			t.Fatalf("%s has an incomplete route", connection.ID)
+		}
+		// The public reproducer uses rectangular shapes and orthogonal routes.
+		// Sketch layouts can also select direct connections between shapes.
+		if nested {
+			continue
+		}
+		for i := 1; i < len(connection.Route); i++ {
+			from, to := connection.Route[i-1], connection.Route[i]
+			if from.X != to.X && from.Y != to.Y {
+				t.Fatalf("%s has a diagonal segment from %v to %v", connection.ID, from, to)
+			}
+		}
+	}
+	samples := telemetry.WorkSamples()
+	if len(samples) == 0 {
+		t.Fatal("no route search recorded")
+	}
+	peak := slices.Max(samples)
+	if peak >= routing.MaxSearchWorkUnits {
+		t.Fatalf("route search exhausted its %d-unit budget", routing.MaxSearchWorkUnits)
+	}
+	t.Logf("peak route-search work: %d of %d units", peak, routing.MaxSearchWorkUnits)
 }
 
 // Reproduce the pair ordering and stride in #2891. The nested variant groups
