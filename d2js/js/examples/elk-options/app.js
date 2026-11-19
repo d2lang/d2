@@ -86,7 +86,9 @@ function navList(container, query, mobile = false) {
   let count = 0;
   for (const group of groups) {
     const matches = catalog.filter(
-      (c) => c.group === group && [c.title, c.key, c.group, c.option].join(" ").toLowerCase().includes(term),
+      (c) =>
+        c.group === group &&
+        [c.title, c.key, c.group, c.option].join(" ").toLowerCase().includes(term)
     );
     if (!matches.length) continue;
     const section = el("div", "navgroup");
@@ -114,7 +116,12 @@ $("dialog-close").onclick = () => dialog.close();
 dialog.addEventListener("click", (event) => {
   if (event.target !== dialog) return;
   const r = dialog.getBoundingClientRect();
-  if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom)
+  if (
+    event.clientX < r.left ||
+    event.clientX > r.right ||
+    event.clientY < r.top ||
+    event.clientY > r.bottom
+  )
     dialog.close();
 });
 dialog.addEventListener("close", () => {
@@ -148,7 +155,8 @@ $("filter").addEventListener("keydown", (event) => {
   }
 });
 function fullSource(c, s, index) {
-  if (c.target && !s.target.trim()) throw Error("Enter the D2 ID of the constrained shape.");
+  if (c.target && !s.target.trim())
+    throw Error("Enter the D2 ID of the constrained shape.");
   const pick = s.chosen[index];
   let val = c.values[pick];
   if (pick === "custom") {
@@ -156,7 +164,8 @@ function fullSource(c, s, index) {
     if (!entered) throw Error("Enter a custom option value.");
     if (typeof c.values[0] === "number") {
       val = Number(entered);
-      if (!Number.isFinite(val) || val < 0) throw Error("Enter a finite, nonnegative number.");
+      if (!Number.isFinite(val) || val < 0)
+        throw Error("Enter a finite, nonnegative number.");
     } else val = entered;
   }
   return diagramSource(c, val, s.source, s.target);
@@ -170,7 +179,8 @@ async function live(source) {
 }
 function geometry(svg) {
   const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
-  if (doc.documentElement.localName !== "svg") throw Error("D2 returned an unreadable SVG.");
+  if (doc.documentElement.localName !== "svg")
+    throw Error("D2 returned an unreadable SVG.");
   const box = doc.documentElement.getAttribute("viewBox").split(/\s+/).map(Number);
   const nodes = new Map(),
     edges = [];
@@ -186,18 +196,31 @@ function geometry(svg) {
     if (rect)
       nodes.set(
         name,
-        Object.fromEntries(["x", "y", "width", "height"].map((k) => [k, Number(rect.getAttribute(k))])),
+        Object.fromEntries(
+          ["x", "y", "width", "height"].map((k) => [k, Number(rect.getAttribute(k))])
+        )
       );
     if (path) edges.push({ name, d: path.getAttribute("d") });
   }
-  const signature = [...doc.querySelectorAll("path,rect,text,circle,ellipse,polygon,line,polyline")].map(
-    (n) => [
-      n.localName,
-      ...["x", "y", "width", "height", "d", "cx", "cy", "r", "rx", "ry", "points", "transform"].map((k) =>
-        n.getAttribute(k),
-      ),
-    ],
-  );
+  const signature = [
+    ...doc.querySelectorAll("path,rect,text,circle,ellipse,polygon,line,polyline"),
+  ].map((n) => [
+    n.localName,
+    ...[
+      "x",
+      "y",
+      "width",
+      "height",
+      "d",
+      "cx",
+      "cy",
+      "r",
+      "rx",
+      "ry",
+      "points",
+      "transform",
+    ].map((k) => n.getAttribute(k)),
+  ]);
   return { w: box[2], h: box[3], nodes, edges, signature: JSON.stringify(signature) };
 }
 function measure(g) {
@@ -216,7 +239,11 @@ function measure(g) {
     const peers = ["Billing", "Events", "Orders"].map((id) => g.nodes.get(id));
     if (peers.every(Boolean)) {
       peers.sort((a, b) => a.y - b.y);
-      return fmt(Math.min(...peers.slice(1).map((p, i) => p.y - peers[i].y - peers[i].height))) + " peer gap";
+      return (
+        fmt(
+          Math.min(...peers.slice(1).map((p, i) => p.y - peers[i].y - peers[i].height))
+        ) + " peer gap"
+      );
     }
   }
   if (current.id === "layer-node-spacing") {
@@ -225,7 +252,9 @@ function measure(g) {
     if (a && b && b.x >= a.x + a.width) return fmt(b.x - a.x - a.width) + " after Read";
   }
   if (current.id === "wrapping" && g.nodes.has("Get") && g.nodes.has("Ship")) {
-    const rows = new Set([...g.nodes.values()].map((n) => Math.round(n.y + n.height / 2)));
+    const rows = new Set(
+      [...g.nodes.values()].map((n) => Math.round(n.y + n.height / 2))
+    );
     return rows.size + (rows.size === 1 ? " row" : " rows") + " of stages";
   }
   const n = g.edges.length;
@@ -262,7 +291,8 @@ function showResult(i, result) {
   }
   results[i] = result;
   const ok = Boolean(result.svg && result.geo);
-  for (const sel of [".save-action", ".expand-action"]) pane.querySelector(sel).disabled = !ok;
+  for (const sel of [".save-action", ".expand-action"])
+    pane.querySelector(sel).disabled = !ok;
   pane.querySelector(".input-action").disabled = !result.source;
   if (ok) {
     const image = el("img");
@@ -271,13 +301,18 @@ function showResult(i, result) {
     image.src = imageURLs[i];
     slot.append(image);
     pane.querySelector(".metric").textContent = measure(result.geo);
-    pane.querySelector(".bounds").textContent = result.geo.w + " × " + result.geo.h + " px";
+    pane.querySelector(".bounds").textContent =
+      result.geo.w + " × " + result.geo.h + " px";
   } else {
     const box = el("div", "notice-box");
-    box.append(el("strong", "", result.loading ? "Rendering with D2…" : "Render unavailable"));
+    box.append(
+      el("strong", "", result.loading ? "Rendering with D2…" : "Render unavailable")
+    );
     if (result.error) box.append(el("code", "", result.error));
     slot.append(box);
-    pane.querySelector(".metric").textContent = result.loading ? "Compiling" : "No SVG produced";
+    pane.querySelector(".metric").textContent = result.loading
+      ? "Compiling"
+      : "No SVG produced";
     pane.querySelector(".bounds").textContent = "";
   }
 }
@@ -291,7 +326,9 @@ async function renderBoth() {
     s = state;
   const edited = s.source !== c.source || s.target !== c.target;
   $("fixture").textContent = edited ? "Edited diagram" : c.example;
-  $("reading-title").textContent = edited ? "In the original example" : "What to look for";
+  $("reading-title").textContent = edited
+    ? "In the original example"
+    : "What to look for";
   const plans = s.chosen.map((_, i) => {
     try {
       const source = fullSource(c, s, i);
@@ -304,7 +341,8 @@ async function renderBoth() {
   const needsCompiler = plans.some((p) => !p.now);
   $("same").hidden = true;
   if (needsCompiler) status("Rendering with D2…");
-  for (const [i, p] of plans.entries()) showResult(i, { ...(p.now || { loading: true }), source: p.source });
+  for (const [i, p] of plans.entries())
+    showResult(i, { ...(p.now || { loading: true }), source: p.source });
   resize();
   await Promise.all(
     plans.map(async (plan, i) => {
@@ -318,26 +356,32 @@ async function renderBoth() {
       if (ticket !== serial) return;
       showResult(i, { ...out, source: plan.source });
       resize();
-    }),
+    })
   );
   if (ticket !== serial) return;
-  const identical = results.every((r) => r.geo) && results[0].geo.signature === results[1].geo.signature;
+  const identical =
+    results.every((r) => r.geo) && results[0].geo.signature === results[1].geo.signature;
   $("same").hidden = !identical;
-  if (identical) $("same").textContent = "Both settings produced identical geometry for this diagram.";
+  if (identical)
+    $("same").textContent = "Both settings produced identical geometry for this diagram.";
   const failed = results.some((r) => r.error);
   status(failed ? "A render diagnostic is shown above." : "Rendered with D2.");
   updateAvailability();
 }
 function updateAvailability() {
   const c = current;
-  const value = state.chosen[1] === "custom" ? state.custom[1] : c.values[state.chosen[1]];
+  const value =
+    state.chosen[1] === "custom" ? state.custom[1] : c.values[state.chosen[1]];
   $("availability").textContent = c.target
     ? "Set this property directly on the shape you want to place."
     : "Use this flag on the command line, or set the same key in vars.d2-config.data. The value in the diagram takes precedence.";
   $("cli").hidden = false;
   $("cli").textContent = c.target
     ? `${state.target}.${c.option}: ${value}`
-    : `d2 --layout=elk --${c.option}='${String(value).replaceAll("'", "'\\''")}' diagram.d2 diagram.svg`;
+    : `d2 --layout=elk --${c.option}='${String(value).replaceAll(
+        "'",
+        "'\\''"
+      )}' diagram.d2 diagram.svg`;
 }
 function selectCase() {
   const id = location.hash.slice(1);
@@ -361,7 +405,9 @@ function selectCase() {
   panes.forEach((pane, i) => {
     const select = pane.querySelector("select"),
       input = pane.querySelector(".custom");
-    select.replaceChildren(...current.values.map((_, n) => new Option(valueLabel(current, n), String(n))));
+    select.replaceChildren(
+      ...current.values.map((_, n) => new Option(valueLabel(current, n), String(n)))
+    );
     if (typeof current.values[0] === "number" || current.id === "container-padding")
       select.add(new Option("Custom…", "custom"));
     select.value = String(state.chosen[i]);
@@ -384,8 +430,11 @@ function showInput(i) {
   bar.append(
     copy,
     button("Download .d2", () =>
-      download(new Blob([text], { type: "text/plain" }), current.id + "-" + labels[i].toLowerCase() + ".d2"),
-    ),
+      download(
+        new Blob([text], { type: "text/plain" }),
+        current.id + "-" + labels[i].toLowerCase() + ".d2"
+      )
+    )
   );
   body.append(pre, bar);
 }
@@ -408,7 +457,7 @@ function expand(i) {
   viewer.append(img);
   actions.append(
     zoom,
-    button("Download SVG", () => saveSvg(i)),
+    button("Download SVG", () => saveSvg(i))
   );
   body.append(viewer, actions);
 }
@@ -488,7 +537,11 @@ $("reset").onclick = () => {
   renderBoth();
 };
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && document.activeElement === $("editor")) {
+  if (
+    e.key === "Enter" &&
+    (e.metaKey || e.ctrlKey) &&
+    document.activeElement === $("editor")
+  ) {
     e.preventDefault();
     applyEdits();
   }
@@ -515,8 +568,8 @@ $("build").onclick = () => {
     " for both the CLI and browser compiler. ",
     link(
       "ELK Layered documentation",
-      "https://eclipse.dev/elk/reference/algorithms/org-eclipse-elk-layered.html",
-    ),
+      "https://eclipse.dev/elk/reference/algorithms/org-eclipse-elk-layered.html"
+    )
   );
   prose.append(method, upstream);
   body.append(prose);

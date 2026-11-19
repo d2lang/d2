@@ -1031,8 +1031,6 @@ dialog.wide {
 @media (prefers-reduced-motion: no-preference) {
   button,
   a {
-    transition:
-      background-color 0.12s,
-      color 0.12s;
+    transition: background-color 0.12s, color 0.12s;
   }
 }

@@ -110,8 +110,10 @@ export default [
     group: "Spacing",
     key: "elk.layered.spacing.edgeNodeBetweenLayers",
     values: [8, 88, 140],
-    source: 'direction: right\n\nQueue -> Store\nBatch -> Store\n\nStore.style.fill: "#f7d6bb"\n',
-    description: "Set the clearance between a node layer and a connection routed alongside it.",
+    source:
+      'direction: right\n\nQueue -> Store\nBatch -> Store\n\nStore.style.fill: "#f7d6bb"\n',
+    description:
+      "Set the clearance between a node layer and a connection routed alongside it.",
     insight:
       "The bend joining these two producers to Store needs room between the layers. Increasing clearance pushes the layers apart.",
     example: "Shared destination",
@@ -126,7 +128,8 @@ export default [
     values: [5, 65, 110],
     source:
       'direction: right\n\nAPI -> East\nAPI -> West\nWeb -> East\nWeb -> West\nJob -> East\nJob -> West\n\nWeb.style.fill: "#f7d6bb"\n',
-    description: "Set the gap between parallel edge segments in the channel between two layers.",
+    description:
+      "Set the gap between parallel edge segments in the channel between two layers.",
     insight:
       "Three producers connect to both destinations. Increase the setting to spread the vertical segments across a wider channel.",
     example: "Shared destinations",
@@ -144,7 +147,8 @@ export default [
       "[top=100,left=100,bottom=100,right=100]",
     ],
     labels: ["12 px on all sides", "65 px on all sides", "100 px on all sides"],
-    source: 'direction: right\n\nWorker: {\n  Read -> Write\n}\nWorker.style.stroke: "#2c574d"\n',
+    source:
+      'direction: right\n\nWorker: {\n  Read -> Write\n}\nWorker.style.stroke: "#2c574d"\n',
     description: "Change the inset between a container’s border and its children.",
     insight:
       "Compare the space around Read and Write inside Worker. D2 also reserves room for the container label, so a small requested inset can grow on the label side.",
@@ -158,7 +162,8 @@ export default [
     group: "Spacing",
     key: "elk.spacing.nodeSelfLoop",
     values: [20, 90, 150],
-    source: 'direction: right\n\nWorker -> Worker: retry\n\nWorker.style.fill: "#f7d6bb"\n',
+    source:
+      'direction: right\n\nWorker -> Worker: retry\n\nWorker.style.fill: "#f7d6bb"\n',
     description: "Change how far a self-loop travels away from its node.",
     insight:
       "Follow the retry arrow around Worker. More spacing gives the loop a larger footprint while the node keeps its size.",

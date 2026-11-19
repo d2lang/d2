@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -39,11 +39,19 @@
         <circle cx="12" cy="12" r="9" />
         <path d="M12 11v6m0-11v1" />
       </symbol>
-      <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16" /></symbol>
-      <symbol id="i-frame" viewBox="0 0 24 24"><path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5" /></symbol>
-      <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3" /></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24">
+        <path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16" />
+      </symbol>
+      <symbol id="i-frame" viewBox="0 0 24 24">
+        <path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5" />
+      </symbol>
+      <symbol id="i-save" viewBox="0 0 24 24">
+        <path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3" />
+      </symbol>
       <symbol id="i-link" viewBox="0 0 24 24">
-        <path d="m9 15 6-6m-7 3-1 1a3.5 3.5 0 0 0 5 5l2-2m-4-8 2-2a3.5 3.5 0 0 1 5 5l-1 1" />
+        <path
+          d="m9 15 6-6m-7 3-1 1a3.5 3.5 0 0 0 5 5l2-2m-4-8 2-2a3.5 3.5 0 0 1 5 5l-1 1"
+        />
       </symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" /></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></symbol>
@@ -80,9 +88,12 @@
           </div>
           <label class="search"
             ><svg class="icon"><use href="#i-filter" /></svg
-            ><input type="search" id="filter" placeholder="Find an option" aria-label="Find an option" /><kbd
-              >/</kbd
-            ></label
+            ><input
+              type="search"
+              id="filter"
+              placeholder="Find an option"
+              aria-label="Find an option"
+            /><kbd>/</kbd></label
           >
         </div>
         <nav id="menu" aria-label="Options by topic"></nav>
@@ -94,7 +105,8 @@
         </button>
         <section class="intro" aria-labelledby="case-title">
           <div class="metarow">
-            <span id="group-name"></span><span class="meta-rule"></span><span>ELK Layered</span>
+            <span id="group-name"></span><span class="meta-rule"></span
+            ><span>ELK Layered</span>
           </div>
           <h1 id="case-title">Merge edges</h1>
           <p class="description" id="description"></p>
@@ -105,7 +117,9 @@
             <div class="fixture">
               <svg class="icon"><use href="#i-brand" /></svg><span id="fixture"></span>
             </div>
-            <span class="scale-tag" title="Both diagrams use the same number of screen pixels per D2 unit"
+            <span
+              class="scale-tag"
+              title="Both diagrams use the same number of screen pixels per D2 unit"
               ><svg class="icon small"><use href="#i-link" /></svg> Same scale</span
             >
           </div>
@@ -128,11 +142,15 @@
             </div>
             <h2 id="source-title">D2 source</h2>
           </div>
-          <p class="section-intro">Edit the diagram, then render both values with D2 in your browser.</p>
+          <p class="section-intro">
+            Edit the diagram, then render both values with D2 in your browser.
+          </p>
           <div class="editor">
             <div class="ed-toolbar">
               <span class="filename">example.d2</span
-              ><button class="text-button" id="reset" type="button">Restore example</button>
+              ><button class="text-button" id="reset" type="button">
+                Restore example
+              </button>
             </div>
             <div class="editor-body">
               <div id="gutter" aria-hidden="true"></div>
@@ -146,7 +164,8 @@
               ></textarea>
             </div>
             <div class="target-field" id="target-box" hidden>
-              <label for="target">Constrained shape ID</label><input id="target" spellcheck="false" />
+              <label for="target">Constrained shape ID</label
+              ><input id="target" spellcheck="false" />
             </div>
             <div class="ed-footer">
               <span id="render-status" role="status" aria-live="polite"></span
@@ -188,7 +207,9 @@
         </div>
         <div class="stage"><div class="diagram-slot"></div></div>
         <div class="pane-foot">
-          <div class="measures"><strong class="metric"></strong><span class="bounds"></span></div>
+          <div class="measures">
+            <strong class="metric"></strong><span class="bounds"></span>
+          </div>
           <div class="pane-actions">
             <button
               type="button"

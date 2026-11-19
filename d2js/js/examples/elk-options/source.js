@@ -1,6 +1,13 @@
 // Both comparison panes use the same theme, graph and renderer settings.
-export function diagramSource(example, value, diagram = example.source, target = example.target) {
-  const setting = example.target ? "" : `    data: {${example.option}: ${JSON.stringify(value)}}\n`;
+export function diagramSource(
+  example,
+  value,
+  diagram = example.source,
+  target = example.target
+) {
+  const setting = example.target
+    ? ""
+    : `    data: {${example.option}: ${JSON.stringify(value)}}\n`;
   const constraint = example.target ? `\n${target}.${example.option}: ${value}\n` : "";
   return `vars: {
   d2-config: {
