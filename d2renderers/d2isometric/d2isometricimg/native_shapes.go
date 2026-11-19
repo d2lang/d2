@@ -457,7 +457,9 @@ func (b *meshBuilder) clearOutsideCaption(n d2isometric.Node, first int, relief 
 	case label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight:
 		dz = height * horizontal / (direction.Y * direction.Z)
 	case label.OutsideRightTop, label.OutsideRightMiddle, label.OutsideRightBottom:
-		dx = height * horizontal / (direction.Y * direction.X)
+		// Project the right wall's foot onto the caption plane along the
+		// camera ray. Only its X displacement crosses a right-side label.
+		dx = (height - b.nodeSupportDrop*relief) * direction.X / direction.Y
 	default:
 		return
 	}
