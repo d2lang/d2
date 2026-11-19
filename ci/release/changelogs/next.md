@@ -5,6 +5,8 @@
 
 #### Improvements 🧹
 
+- renders: reduce isometric SVG size by sharing lighting gradients and removing interior edges from filled paths.
+
 - d2svg:
   - Prevent malformed diagram or raw render values from breaking out of SVG text
     and attributes. [#2919](https://github.com/d2lang/d2/pull/2919)

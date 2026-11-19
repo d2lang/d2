@@ -1,9 +1,13 @@
 package d2isometricimg
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/d2lang/d2/d2renderers/d2scene"
+	"github.com/d2lang/d2/d2renderers/d2svgimport"
 )
 
 func TestSVGPolygonPathOmitsSubprecisionCollinearSplits(t *testing.T) {
@@ -51,6 +55,65 @@ func TestSVGPolygonPathKeepsRealCornersAndTriangles(t *testing.T) {
 		path := svgPolygonPath([][]svgPoint{polygon})
 		if got := strings.Count(path, "L") + strings.Count(path, "M"); got != len(polygon) {
 			t.Fatalf("serialization erased a real corner or triangle: %s", path)
+		}
+	}
+}
+
+func TestSVGFillPathPreservesHolesOverlapsAndPointContacts(t *testing.T) {
+	var cells [][]svgPoint
+	square := func(x, y float64) []svgPoint {
+		return []svgPoint{{x, y, 0}, {x + 1, y, 0}, {x + 1, y + 1, 0}, {x, y + 1, 0}}
+	}
+	for y := range 3 {
+		for x := range 3 {
+			if x != 1 || y != 1 {
+				cells = append(cells, square(float64(x), float64(y)))
+			}
+		}
+	}
+	// A second layer in the first cell and a square touching one corner.
+	cells = append(cells, square(0, 0), square(3, 3))
+	path := svgFillPath(cells)
+	if len(path) >= len(svgPolygonPath(cells)) || path != svgFillPath(cells) {
+		t.Fatalf("expected a smaller deterministic path: %s", path)
+	}
+	cmds, err := d2svgimport.ParsePath(context.Background(), "fill", path, d2svgimport.PathLimits{MaxBytes: 4096, MaxCommands: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Count oriented crossings of a ray to the right of each sample center.
+	for _, sample := range []struct {
+		x, y float64
+		want int
+	}{
+		{.5, .5, 2}, {1.5, .5, 1}, {.5, 1.5, 1}, {1.5, 1.5, 0}, {2.5, 2.5, 1},
+		{3.5, 3.5, 1}, {3.5, 2.5, 0}, {2.5, 3.5, 0}, {-.5, .5, 0},
+	} {
+		var start, prev d2scene.Point
+		winding := 0
+		for _, cmd := range cmds {
+			end := cmd.P1
+			switch cmd.Kind {
+			case d2scene.MoveCommand:
+				start, prev = end, end
+				continue
+			case d2scene.CloseCommand:
+				end = start
+			case d2scene.LineCommand:
+			default:
+				t.Fatalf("unexpected command %v", cmd.Kind)
+			}
+			if prev.X == end.X && end.X > sample.x {
+				if prev.Y <= sample.y && end.Y > sample.y {
+					winding++
+				} else if end.Y <= sample.y && prev.Y > sample.y {
+					winding--
+				}
+			}
+			prev = end
+		}
+		if winding != sample.want {
+			t.Errorf("winding at (%g,%g) = %d, want %d", sample.x, sample.y, winding, sample.want)
 		}
 	}
 }

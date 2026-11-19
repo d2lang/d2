@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // A texture's sampled linear RGB modulates diffuse light. Specular light and
@@ -186,11 +187,35 @@ func writeSVGLightingGradient(w *nativeSVGWriter, gradient svgLightingGradient, 
 		c := gradient.stops[0].color
 		return svgColor(c.X, c.Y, c.Z)
 	}
-	w.write(`<linearGradient id="%s" gradientUnits="userSpaceOnUse" color-interpolation="sRGB" x1="%s" y1="%s" x2="%s" y2="%s">`, id, svgNumber(gradient.start.x), svgNumber(gradient.start.y), svgNumber(gradient.end.x), svgNumber(gradient.end.y))
+	var stops strings.Builder
+	first := gradient.stops[0].color
+	solid := svgColor(first.X, first.Y, first.Z)
+	uniform := true
 	for _, stop := range gradient.stops {
-		w.write(`<stop offset="%s" stop-color="%s"/>`, svgNumber(stop.offset), svgColor(stop.color.X, stop.color.Y, stop.color.Z))
+		color := svgColor(stop.color.X, stop.color.Y, stop.color.Z)
+		if color != solid {
+			uniform = false
+		}
+		fmt.Fprintf(&stops, `<stop offset="%s" stop-color="%s"/>`, svgNumber(stop.offset), color)
 	}
-	w.write(`</linearGradient>`)
+	if uniform {
+		return solid
+	}
+	key := stops.String()
+	w.write(`<linearGradient id="%s" gradientUnits="userSpaceOnUse" color-interpolation="sRGB" x1="%s" y1="%s" x2="%s" y2="%s"`, id, svgNumber(gradient.start.x), svgNumber(gradient.start.y), svgNumber(gradient.end.x), svgNumber(gradient.end.y))
+	// Each gradient retains its own coordinates. SVG inherits only the stop list.
+	if shared := w.lightingStops[key]; shared != "" {
+		w.write(` xlink:href="#%s"/>`, shared)
+	} else {
+		if w.lightingStops == nil {
+			w.lightingStops = make(map[string]string)
+		}
+		// Keep auxiliary memory bounded when every ramp has different colors.
+		if len(w.lightingStops) < 8192 {
+			w.lightingStops[key] = id
+		}
+		w.write(`>%s</linearGradient>`, key)
+	}
 	return "url(#" + id + ")"
 }
 
@@ -342,7 +367,7 @@ func writeSVGGroundShadow(w *nativeSVGWriter, scene *nativeScene) {
 		// Retained vector alpha still cuts genuine holes in image artwork.
 		w.write(`<g opacity="%s">`, svgNumber(.11*float64(alpha)/255))
 		if len(polygons) != 0 {
-			w.write(`<path d="%s" fill="#243754"/>`, svgPolygonPath(polygons))
+			w.write(`<path d="%s" fill="#243754"/>`, svgFillPath(polygons))
 		}
 		sort.SliceStable(textures, func(a, b int) bool {
 			depth := func(i int) float64 {
@@ -376,7 +401,7 @@ func writeSVGGroundShadow(w *nativeSVGWriter, scene *nativeScene) {
 				w.err = err
 				return
 			}
-			w.write(`<defs><clipPath id="shadow-clip-%d"><path d="%s"/></clipPath><filter id="shadow-ink-%d" color-interpolation-filters="sRGB"><feColorMatrix values="0 0 0 0 0.14117647 0 0 0 0 0.21568627 0 0 0 0 0.32941176 0 0 0 1 0"/></filter></defs>`, i, svgPolygonPath(visible[i]), i)
+			w.write(`<defs><clipPath id="shadow-clip-%d"><path d="%s"/></clipPath><filter id="shadow-ink-%d" color-interpolation-filters="sRGB"><feColorMatrix values="0 0 0 0 0.14117647 0 0 0 0 0.21568627 0 0 0 0 0.32941176 0 0 0 1 0"/></filter></defs>`, i, svgFillPath(visible[i]), i)
 			w.write(`<g clip-path="url(#shadow-clip-%d)"><g transform="matrix(%s %s %s %s %s %s)" filter="url(#shadow-ink-%d)"><use xlink:href="#%s"/></g></g>`, i, svgNumber(affine[0]), svgNumber(affine[1]), svgNumber(affine[2]), svgNumber(affine[3]), svgNumber(affine[4]), svgNumber(affine[5]), i, surfaceID)
 		}
 		w.write(`</g>`)
