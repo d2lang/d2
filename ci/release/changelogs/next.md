@@ -6,7 +6,7 @@
 
 #### Improvements 🧹
 
-- TALA routes larger diagrams with cross-container connections by building a smaller visibility graph and reusing crossing and spacing calculations. [#2891](https://github.com/d2lang/d2/issues/2891)
+- TALA routes larger diagrams with cross-container connections with its standard orthogonal router by keeping hierarchy lanes local to each container and indexing existing route segments. [#2891](https://github.com/d2lang/d2/issues/2891)
 
 - renders: reduce isometric SVG size by sharing lighting gradients and removing interior edges from filled paths.
 

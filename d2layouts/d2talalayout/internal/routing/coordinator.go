@@ -1209,6 +1209,9 @@ func edgeCanOverlapEdges(edge *layoutgraph.Edge, otherEdges []*layoutgraph.Edge,
 	if len(otherEdges) == 0 {
 		return true
 	}
+	if edge.IsDirected() {
+		return directedEdgesCanOverlap(edge, otherEdges)
+	}
 	if edge.TargetArrowheadLabel != nil || edge.SourceArrowheadLabel != nil {
 		return false
 	}
@@ -1253,28 +1256,6 @@ func edgeCanOverlapEdges(edge *layoutgraph.Edge, otherEdges []*layoutgraph.Edge,
 
 	// TODO find a better solution for edge routing with labels. Shared edges with
 	// labels require special handling unless they belong to clusters.
-
-	// if directed edges share a source or target, they can share an edge
-	allMatchingDirected := edge.IsDirected()
-	if allMatchingDirected {
-		for _, otherEdge := range otherEdges {
-			if !otherEdge.IsDirected() {
-				allMatchingDirected = false
-				break
-			}
-			if !(edge.To == otherEdge.To || edge.From == otherEdge.From) {
-				allMatchingDirected = false
-				break
-			}
-			if edge.TargetArrowhead != otherEdge.TargetArrowhead || edge.SourceArrowhead != otherEdge.SourceArrowhead {
-				allMatchingDirected = false
-				break
-			}
-		}
-	}
-	if allMatchingDirected {
-		return true
-	}
 
 	// bidirectional / undirected edges can overlap as long as source/target arrowheads match and
 	// if they are part of the same cluster or if all edges share a node
@@ -1325,6 +1306,22 @@ func edgeCanOverlapEdges(edge *layoutgraph.Edge, otherEdges []*layoutgraph.Edge,
 		}
 	}
 	return hasSharedNode
+}
+
+// Directed edges may share a segment when their styles, arrowheads and
+// corresponding source or target agree. Each existing edge is examined once.
+func directedEdgesCanOverlap(edge *layoutgraph.Edge, others []*layoutgraph.Edge) bool {
+	if edge.TargetArrowheadLabel != nil || edge.SourceArrowheadLabel != nil {
+		return false
+	}
+	for _, other := range others {
+		if !other.IsDirected() || (edge.From != other.From && edge.To != other.To) ||
+			edge.SourceArrowhead != other.SourceArrowhead || edge.TargetArrowhead != other.TargetArrowhead ||
+			other.SourceArrowheadLabel != nil || other.TargetArrowheadLabel != nil || !edge.EquivalentStyles(other) {
+			return false
+		}
+	}
+	return true
 }
 
 func isVerticalOrHorizontalOverlap(start, end, otherStart, otherEnd *geo.Point) bool {

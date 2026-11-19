@@ -596,12 +596,15 @@ func (router *ovgEdgeRouter) slingshot(ctx context.Context, gEdge *layoutgraph.E
 			return false, err
 		}
 		for _, route := range overlappingRoutes {
-			if err := router.work.reserveProduct(uint64(len(route.OVGNodes))+1, 2); err != nil {
+			if err := router.work.step(); err != nil {
 				return false, err
 			}
 			overlappingEdges = append(overlappingEdges, route.GEdge)
-			if gEdge.IsDirected() && route.isOpposingColinear(from, to) {
-				return true, nil
+			if gEdge.IsDirected() && route.GEdge.IsDirected() {
+				opposing, err := router.hasOpposingSegment(route, from, to)
+				if err != nil || opposing {
+					return opposing, err
+				}
 			}
 		}
 		canOverlap, err := edgeCanOverlapEdgesGuarded(gEdge, overlappingEdges, nil, nil, router.work)
@@ -1061,22 +1064,32 @@ func (router *ovgEdgeRouter) findSShapedRoute(
 			}
 		})
 
+		// Only aligned anchors can form the middle segment. Keep the target
+		// order on each line so equal-cost routes get the same tie break.
+		targetByAxis := make(map[float64][]*OVGNode)
+		axisOf := func(n *OVGNode) float64 {
+			if isVerticalLaunch {
+				return n.Y
+			}
+			return n.X
+		}
+		for _, n := range tAnchorOrder {
+			if err := router.work.step(); err != nil {
+				return nil, 0, err
+			}
+			axis := axisOf(n)
+			targetByAxis[axis] = append(targetByAxis[axis], n)
+		}
 		for _, sAnchor := range sAnchorOrder {
 			if err := router.work.step(); err != nil {
 				return nil, 0, err
 			}
 			sPort := sourceAnchors[sAnchor]
-			for _, tAnchor := range tAnchorOrder {
+			for _, tAnchor := range targetByAxis[axisOf(sAnchor)] {
 				if err := router.work.step(); err != nil {
 					return nil, 0, err
 				}
 				tPort := targetAnchors[tAnchor]
-				if isVerticalLaunch && sAnchor.Y != tAnchor.Y {
-					continue
-				}
-				if !isVerticalLaunch && sAnchor.X != tAnchor.X {
-					continue
-				}
 				d := 0.0
 				pairs := [][]*OVGNode{
 					{sPort, sAnchor},

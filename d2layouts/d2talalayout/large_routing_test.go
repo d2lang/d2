@@ -18,19 +18,19 @@ import (
 )
 
 func TestLargeContainerRouting(t *testing.T) {
-	checkLargeContainerRouting(t, 100, 160, false)
+	for _, seed := range d2talalayout.DefaultOptions().Seeds {
+		t.Run(fmt.Sprintf("seed-%d", seed), func(t *testing.T) { checkLargeContainerRouting(t, 100, 160, false, seed) })
+	}
 }
 
-func checkLargeContainerRouting(t *testing.T, links, shapes int, nested bool) {
+func checkLargeContainerRouting(t *testing.T, links, shapes int, nested bool, seed int64) {
 	t.Helper()
 	source := largeContainerDiagram(links, nested)
-	layout := d2talalayout.DefaultLayout
+	layout := func(ctx context.Context, g *d2graph.Graph) error {
+		return d2talalayout.Layout(ctx, g, &d2talalayout.Options{Seeds: []int64{seed}})
+	}
 	var renderOpts *d2svg.RenderOpts
 	if nested {
-		// One seed exercises the larger routing and balancing workload.
-		layout = func(ctx context.Context, g *d2graph.Graph) error {
-			return d2talalayout.Layout(ctx, g, &d2talalayout.Options{Seeds: []int64{1}})
-		}
 		renderOpts = &d2svg.RenderOpts{Sketch: new(true), DarkThemeID: new(int64(104))}
 	}
 	ruler, err := textmeasure.NewRuler()
@@ -64,6 +64,18 @@ func checkLargeContainerRouting(t *testing.T, links, shapes int, nested bool) {
 			from, to := connection.Route[i-1], connection.Route[i]
 			if from.X != to.X && from.Y != to.Y {
 				t.Fatalf("%s has a diagonal segment from %v to %v", connection.ID, from, to)
+			}
+			for _, shape := range diagram.Shapes {
+				if !strings.Contains(shape.ID, ".") || shape.ID == connection.Src || shape.ID == connection.Dst {
+					continue
+				}
+				left, top := float64(shape.Pos.X), float64(shape.Pos.Y)
+				right, bottom := left+float64(shape.Width), top+float64(shape.Height)
+				horizontalHit := from.Y == to.Y && top < from.Y && from.Y < bottom && max(left, min(from.X, to.X)) < min(right, max(from.X, to.X))
+				verticalHit := from.X == to.X && left < from.X && from.X < right && max(top, min(from.Y, to.Y)) < min(bottom, max(from.Y, to.Y))
+				if horizontalHit || verticalHit {
+					t.Fatalf("%s crosses the interior of %s between %v and %v", connection.ID, shape.ID, from, to)
+				}
 			}
 		}
 	}

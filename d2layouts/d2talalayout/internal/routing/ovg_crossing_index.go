@@ -1,92 +1,134 @@
 package routing
 
 import (
+	"cmp"
+	"math"
 	"math/bits"
 	"slices"
+	"sort"
 )
 
-// A router only adds routes. Mark the fixed OVG edges crossed by a new route
-// segment once so every later search can query that edge in constant time.
-type ovgCrossingIndex struct {
-	ovg          *OVG
-	xAxes, yAxes []float64
-	crossed      map[*OVGEdge]struct{}
+// Grid edges stay fixed as routes are added. Each coordinate has a sorted list
+// of intervals. Prefix maxima let us skip intervals ending before the query,
+// including on lines where long center-to-port edges overlap shorter grid edges.
+type gridInterval struct {
+	edge               *OVGEdge
+	start, end, maxEnd float64
 }
 
-func newOVGCrossingIndex(ovg *OVG, guard *routeSearchWorkGuard) (*ovgCrossingIndex, error) {
-	sortedAxes := func(lines map[float64][]*OVGEdge) ([]float64, error) {
-		if err := guard.reserveSort(len(lines)); err != nil {
+type gridLine struct {
+	coordinate float64
+	intervals  []gridInterval
+}
+
+type gridLines []gridLine
+
+type ovgCrossingIndex struct {
+	horizontal, vertical gridLines
+	crossed              map[*OVGEdge]struct{}
+}
+
+func indexGridLines(lines map[float64][]*OVGEdge, vertical bool, guard *routeSearchWorkGuard) (gridLines, error) {
+	if err := guard.reserveSort(len(lines)); err != nil {
+		return nil, err
+	}
+	index := make(gridLines, 0, len(lines))
+	for coordinate, edges := range lines {
+		if err := guard.reserveSort(len(edges)); err != nil {
 			return nil, err
 		}
-		axes := make([]float64, 0, len(lines))
-		for axis := range lines {
+		intervals := make([]gridInterval, len(edges))
+		for i, edge := range edges {
 			if err := guard.step(); err != nil {
 				return nil, err
 			}
-			axes = append(axes, axis)
+			a, b := edge.From.X, edge.To.X
+			if vertical {
+				a, b = edge.From.Y, edge.To.Y
+			}
+			intervals[i] = gridInterval{edge: edge, start: min(a, b), end: max(a, b)}
 		}
-		slices.Sort(axes)
-		return axes, guard.check()
+		slices.SortFunc(intervals, func(a, b gridInterval) int { return cmp.Compare(a.start, b.start) })
+		maxEnd := math.Inf(-1)
+		for i := range intervals {
+			if err := guard.step(); err != nil {
+				return nil, err
+			}
+			maxEnd = max(maxEnd, intervals[i].end)
+			intervals[i].maxEnd = maxEnd
+		}
+		index = append(index, gridLine{coordinate, intervals})
 	}
-	xAxes, err := sortedAxes(ovg.VerticalEdges)
-	if err != nil {
-		return nil, err
-	}
-	yAxes, err := sortedAxes(ovg.HorizontalEdges)
-	if err != nil {
-		return nil, err
-	}
-	return &ovgCrossingIndex{ovg: ovg, xAxes: xAxes, yAxes: yAxes, crossed: make(map[*OVGEdge]struct{})}, nil
+	slices.SortFunc(index, func(a, b gridLine) int { return cmp.Compare(a.coordinate, b.coordinate) })
+	return index, guard.check()
 }
 
-func (index *ovgCrossingIndex) add(segment *OVGEdge, guard *routeSearchWorkGuard) error {
-	vertical := segment.isVertical()
-	if !vertical && !segment.isHorizontal() {
-		return nil
+func newOVGCrossingIndex(ovg *OVG, guard *routeSearchWorkGuard) (*ovgCrossingIndex, error) {
+	h, err := indexGridLines(ovg.HorizontalEdges, false, guard)
+	if err != nil {
+		return nil, err
 	}
-	axis, start, end := segment.From.Y, segment.From.X, segment.To.X
-	parallel, perpendicular, axes := index.ovg.HorizontalEdges, index.ovg.VerticalEdges, index.xAxes
-	if vertical {
-		axis, start, end = segment.From.X, segment.From.Y, segment.To.Y
-		parallel, perpendicular, axes = index.ovg.VerticalEdges, index.ovg.HorizontalEdges, index.yAxes
+	v, err := indexGridLines(ovg.VerticalEdges, true, guard)
+	if err != nil {
+		return nil, err
 	}
-	lo, hi := min(start, end), max(start, end)
-	for _, edge := range parallel[axis] {
-		if err := guard.step(); err != nil {
-			return err
-		}
-		a, b := edge.From.X, edge.To.X
-		if vertical {
-			a, b = edge.From.Y, edge.To.Y
-		}
-		if lo < max(a, b) && min(a, b) < hi && !edge.sharePoints(*segment) {
-			index.crossed[edge] = struct{}{}
-		}
-	}
+	return &ovgCrossingIndex{horizontal: h, vertical: v, crossed: make(map[*OVGEdge]struct{})}, nil
+}
 
-	if err := guard.add(uint64(bits.Len(uint(len(axes))))); err != nil {
+// visit reports all grid edges in the closed coordinate and interval ranges.
+func (lines gridLines) visit(first, last, start, end float64, guard *routeSearchWorkGuard, match func(float64, gridInterval)) error {
+	if err := guard.add(uint64(bits.Len(uint(len(lines))))); err != nil {
 		return err
 	}
-	first, _ := slices.BinarySearch(axes, lo)
-	for _, coordinate := range axes[first:] {
+	i := sort.Search(len(lines), func(i int) bool { return lines[i].coordinate >= first })
+	for _, line := range lines[i:] {
 		if err := guard.step(); err != nil {
 			return err
 		}
-		if coordinate > hi {
+		if line.coordinate > last {
 			break
 		}
-		for _, edge := range perpendicular[coordinate] {
+		intervals := line.intervals
+		if err := guard.add(uint64(bits.Len(uint(len(intervals))))); err != nil {
+			return err
+		}
+		j := sort.Search(len(intervals), func(j int) bool { return intervals[j].maxEnd >= start })
+		for _, interval := range intervals[j:] {
 			if err := guard.step(); err != nil {
 				return err
 			}
-			a, b := edge.From.Y, edge.To.Y
-			if vertical {
-				a, b = edge.From.X, edge.To.X
+			if interval.start > end {
+				break
 			}
-			if min(a, b) <= axis && axis <= max(a, b) && !edge.sharePoints(*segment) {
-				index.crossed[edge] = struct{}{}
+			if interval.end >= start {
+				match(line.coordinate, interval)
 			}
 		}
 	}
 	return guard.check()
+}
+
+func (index *ovgCrossingIndex) add(segment *OVGEdge, guard *routeSearchWorkGuard) error {
+	axis, a, b := segment.From.Y, segment.From.X, segment.To.X
+	parallel, perpendicular := index.horizontal, index.vertical
+	if segment.isVertical() {
+		axis, a, b = segment.From.X, segment.From.Y, segment.To.Y
+		parallel, perpendicular = perpendicular, parallel
+	} else if !segment.isHorizontal() {
+		return nil
+	}
+	start, end := min(a, b), max(a, b)
+	err := parallel.visit(axis, axis, start, end, guard, func(_ float64, i gridInterval) {
+		if start < i.end && i.start < end && !i.edge.sharePoints(*segment) {
+			index.crossed[i.edge] = struct{}{}
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return perpendicular.visit(start, end, axis, axis, guard, func(_ float64, i gridInterval) {
+		if !i.edge.sharePoints(*segment) {
+			index.crossed[i.edge] = struct{}{}
+		}
+	})
 }

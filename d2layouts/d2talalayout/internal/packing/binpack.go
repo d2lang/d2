@@ -872,7 +872,15 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 			return err
 		}
 	}
-	if originalScore < afterBinPackScore {
+	if !failed && edgesPlaced && root != nil && afterBinPackScore <= originalScore {
+		// A wire can cross this container (or the space it expands into) with
+		// both endpoints elsewhere. Its geometry stays fixed during this pack.
+		failed, err = packedLeavesBlockFixedRoutes(g, originalPosOrder, originalPos, originalRoute, guard)
+		if err != nil {
+			return err
+		}
+	}
+	if failed || originalScore < afterBinPackScore {
 		for _, node := range originalPosOrder {
 			if err := guard.Step(); err != nil {
 				return err
@@ -1010,6 +1018,36 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 		}
 	}
 	return guard.Finish()
+}
+
+// Check the proposed positions once, before accepting a routed compaction.
+// originalRoutes contains exactly the edges translated with the moving nodes.
+func packedLeavesBlockFixedRoutes(g *layoutgraph.Graph, nodes layoutgraph.Nodes, originalPos map[*layoutgraph.Node]pointerSnapshot[geo.Point], originalRoutes map[*layoutgraph.Edge][]*geo.Point, guard *limits.WorkGuard) (bool, error) {
+	for _, node := range nodes {
+		if err := guard.Step(); err != nil {
+			return false, err
+		}
+		if node.IsContainer() || node.IsInvisible || *node.TopLeft == originalPos[node].value {
+			continue
+		}
+		for _, edge := range g.Edges {
+			if err := guard.Step(); err != nil {
+				return false, err
+			}
+			if _, moves := originalRoutes[edge]; moves {
+				continue
+			}
+			for i := 1; i < len(edge.Points); i++ {
+				if err := guard.Step(); err != nil {
+					return false, err
+				}
+				if node.PassesThrough(edge.Points[i-1], edge.Points[i]) {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, guard.Finish()
 }
 
 // placementCandidates returns the candidate points in the graph that are suitable to pack more nodes/subgraphs at

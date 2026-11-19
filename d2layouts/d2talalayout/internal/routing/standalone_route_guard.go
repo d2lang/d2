@@ -190,6 +190,12 @@ func edgeCanOverlapEdgesGuarded(edge *layoutgraph.Edge, otherEdges []*layoutgrap
 			return true, nil
 		}
 	}
+	if len(otherEdges) > 0 && edge.IsDirected() {
+		if err := guard.add(uint64(len(otherEdges))); err != nil {
+			return false, err
+		}
+		return directedEdgesCanOverlap(edge, otherEdges), guard.check()
+	}
 	// edgeCanOverlapEdges makes a bounded number of full passes over otherEdges.
 	// Reserve its worst-case comparisons before calling it so ordinary output and
 	// unstable-order behavior remain byte-for-byte unchanged.
