@@ -220,3 +220,25 @@ func TestOutsideCaptionHasSeparatePageRegionAndPaintedSVGLink(t *testing.T) {
 		t.Fatal("SVG link must contain the rendered cylinder and its separately clipped caption")
 	}
 }
+
+func TestSVGKeyboardStopsFollowShapesAcrossPaintGroups(t *testing.T) {
+	d := captureDiagram()
+	d.Connections = nil
+	parent, child := &d.Shapes[0], &d.Shapes[1]
+	parent.Width, parent.Height = 400, 300
+	child.ID, child.Pos.X, child.Pos.Y = parent.ID+".child", 75, 85
+	// Each shape must keep its own keyboard stop even with a shared URL.
+	const href = "https://example.test/details"
+	parent.Link, child.Link = href, href
+	data, err := Render(context.Background(), d, &Options{Format: SVG, Width: 400, Height: 250, FitContent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchors := bytes.Count(data, []byte(`<a xlink:href="`+href+`"`))
+	if anchors <= 2 {
+		t.Fatalf("fixture must split the parent across paint groups, got %d anchors", anchors)
+	}
+	if focusable := anchors - bytes.Count(data, []byte(`tabindex="-1"`)); focusable != 2 {
+		t.Errorf("%d keyboard stops for two linked shapes", focusable)
+	}
+}

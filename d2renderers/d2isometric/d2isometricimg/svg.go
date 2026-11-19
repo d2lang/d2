@@ -418,10 +418,14 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 	}
 	writeSVGGroundShadow(w, scene)
 	id := 0
+	seenLinks := make(map[*nativeLink]bool)
 	for _, u := range units {
 		var closeLink string
 		if u.link != nil {
-			closeLink = writeSVGLinkStart(w, *u.link)
+			// Depth ordering can split one shape into several paint groups.
+			// All groups respond to clicks, but only the first is a tab stop.
+			closeLink = writeSVGLinkStart(w, *u.link, seenLinks[u.link])
+			seenLinks[u.link] = true
 		}
 		w.write(`<g opacity="%s">`, svgNumber(u.opacity))
 		for _, b := range u.batches {
@@ -527,19 +531,23 @@ func writeSVGLinks(w *nativeSVGWriter, s *nativeScene) {
 	sort.SliceStable(links, func(i, j int) bool { return links[i].area > links[j].area })
 	for _, projected := range links {
 		link, points := projected.link, projected.points
-		closeLink := writeSVGLinkStart(w, link)
+		closeLink := writeSVGLinkStart(w, link, false)
 		w.write(`<path d="%s" fill="transparent" pointer-events="all"/>%s`, svgPolygonPath([][]svgPoint{points}), closeLink)
 	}
 }
 
-func writeSVGLinkStart(w *nativeSVGWriter, link nativeLink) string {
+func writeSVGLinkStart(w *nativeSVGWriter, link nativeLink, continued bool) string {
 	destination := link.region.URL
 	if destination == "" && link.region.Target != "" {
 		destination = "#" + link.region.Target
 	}
 	closeTag := "</g>"
 	if destination != "" {
-		w.write(`<a xlink:href="%s">`, html.EscapeString(destination))
+		tabIndex := ""
+		if continued {
+			tabIndex = ` tabindex="-1"`
+		}
+		w.write(`<a xlink:href="%s"%s>`, html.EscapeString(destination), tabIndex)
 		closeTag = "</a>"
 	} else {
 		w.write(`<g>`)
