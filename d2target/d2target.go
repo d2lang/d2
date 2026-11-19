@@ -875,6 +875,7 @@ type Shape struct {
 
 	Fill                 string                `json:"fill"`
 	FillPattern          string                `json:"fillPattern,omitempty"`
+	FillPatternColor     string                `json:"fillPatternColor,omitempty"`
 	SketchFillTransition *SketchFillTransition `json:"sketchFillTransition,omitempty"`
 	Stroke               string                `json:"stroke"`
 

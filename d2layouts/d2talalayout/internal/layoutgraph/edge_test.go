@@ -84,7 +84,7 @@ func TestEquivalentStylesClassifiesEveryOwnedStyleField(t *testing.T) {
 		"Opacity": {}, "Stroke": {}, "StrokeWidth": {}, "StrokeDash": {}, "Animated": {},
 	}
 	ignored := map[string]struct{}{
-		"Fill": {}, "FillPattern": {}, "BorderRadius": {}, "Shadow": {}, "ThreeDee": {},
+		"Fill": {}, "FillPattern": {}, "FillPatternColor": {}, "BorderRadius": {}, "Shadow": {}, "ThreeDee": {},
 		"Multiple": {}, "Font": {}, "FontSize": {}, "FontColor": {}, "Bold": {},
 		"Italic": {}, "Underline": {}, "Filled": {}, "DoubleBorder": {}, "TextTransform": {},
 	}

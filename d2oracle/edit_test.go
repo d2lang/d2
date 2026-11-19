@@ -1264,6 +1264,32 @@ hey.top: 200
 `,
 		},
 		{
+			name:  "set_fill_pattern_color",
+			text:  `square: {style.fill-pattern: dots}`,
+			key:   `square.style.fill-pattern.color`,
+			value: go2.Pointer(`white`),
+			exp: `square: {
+  style.fill-pattern: dots
+  style.fill-pattern.color: white
+}
+`,
+		},
+		{
+			name: "replace_fill_pattern_color",
+			text: `square: {
+  style.fill-pattern: dots
+  style.fill-pattern.color: white
+}
+`,
+			key:   `square.style.fill-pattern.color`,
+			value: go2.Pointer(`red`),
+			exp: `square: {
+  style.fill-pattern: dots
+  style.fill-pattern.color: red
+}
+`,
+		},
+		{
 			name: "classes-style",
 			text: `classes: {
   a: {

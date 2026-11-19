@@ -277,6 +277,9 @@ func applyStyles(shape *d2target.Shape, obj *d2graph.Object) {
 	if obj.Style.FillPattern != nil {
 		shape.FillPattern = obj.Style.FillPattern.Value
 	}
+	if obj.Style.FillPatternColor != nil {
+		shape.FillPatternColor = obj.Style.FillPatternColor.Value
+	}
 	if obj.Style.Stroke != nil {
 		shape.Stroke = obj.Style.Stroke.Value
 	}

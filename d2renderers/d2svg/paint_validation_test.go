@@ -25,8 +25,16 @@ func TestRenderRejectsExternalPaintServersFromRawJSON(t *testing.T) {
 		configure func(*d2target.Diagram, *d2svg.RenderOpts)
 	}{
 		{name: "root fill", wantField: "root fill", configure: func(d *d2target.Diagram, _ *d2svg.RenderOpts) { d.Root.Fill = externalPaintServer }},
+		{name: "root fill pattern color", wantField: "root fill pattern color", configure: func(d *d2target.Diagram, _ *d2svg.RenderOpts) {
+			d.Root.FillPattern = "dots"
+			d.Root.FillPatternColor = externalPaintServer
+		}},
 		{name: "root stroke", wantField: "root stroke", configure: func(d *d2target.Diagram, _ *d2svg.RenderOpts) { d.Root.Stroke = externalPaintServer }},
 		{name: "shape fill", wantField: `shape "source" fill`, configure: func(d *d2target.Diagram, _ *d2svg.RenderOpts) { d.Shapes[0].Fill = externalPaintServer }},
+		{name: "shape fill pattern color", wantField: `shape "source" fill pattern color`, configure: func(d *d2target.Diagram, _ *d2svg.RenderOpts) {
+			d.Shapes[0].FillPattern = "dots"
+			d.Shapes[0].FillPatternColor = externalPaintServer
+		}},
 		{name: "shape stroke", wantField: `shape "source" stroke`, configure: func(d *d2target.Diagram, _ *d2svg.RenderOpts) { d.Shapes[0].Stroke = externalPaintServer }},
 		{name: "shape font color", wantField: `shape "source" font color`, configure: func(d *d2target.Diagram, _ *d2svg.RenderOpts) { d.Shapes[0].Color = externalPaintServer }},
 		{name: "shape label fill", wantField: `shape "source" label fill`, configure: func(d *d2target.Diagram, _ *d2svg.RenderOpts) { d.Shapes[0].LabelFill = externalPaintServer }},

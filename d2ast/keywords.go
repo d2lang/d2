@@ -61,6 +61,7 @@ var CompositeReservedKeywords = map[string]struct{}{
 	"icon":             {},
 	"tooltip":          {},
 	"annotation":       {},
+	"fill-pattern":     {},
 }
 
 // StyleKeywords are reserved keywords which cannot exist outside of the "style" keyword
