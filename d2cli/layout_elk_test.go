@@ -37,10 +37,10 @@ func TestELKLayoutOptions(t *testing.T) {
 	}
 	state := layoutOptionsState(t,
 		"--elk-algorithm=layered", "--elk-nodeNodeBetweenLayers=123",
-		"--elk-padding=[top=11,left=22,bottom=33,right=44]",
+		"--elk-padding=[tOp=11,LEFT=22,Bottom=33,rIgHt=44]",
 		"--elk-edgeNodeBetweenLayers=67", "--elk-edgeEdgeBetweenLayers=78",
 		"--elk-nodeSelfLoop=89", "--elk-nodeNode=35.5", "--elk-edgeNode=16", "--elk-edgeEdge=22",
-		"--elk-edgeRouting=polyline", "--elk-wrappingStrategy=off", "--elk-forceNodeModelOrder", "--elk-feedbackEdges", "--elk-mergeEdges")
+		"--elk-edgeRouting=pOlYliNe", "--elk-wrappingStrategy=oFf", "--elk-forceNodeModelOrder=tRuE", "--elk-feedbackEdges=TrUe", "--elk-mergeEdges")
 	resolve := LayoutResolver(t.Context(), state)
 	if err := state.Opts.Flags.Set("elk-nodeNodeBetweenLayers", "234"); err != nil {
 		t.Fatal(err)
@@ -128,17 +128,20 @@ func TestELKMergeEdgesDiagramPrecedence(t *testing.T) {
 		}
 		return paths
 	}
-	const enable = "vars: {d2-config: {data: {elk-mergeEdges: true}}}\n"
-	const disable = "vars: {d2-config: {data: {elk-mergeEdges: false}}}\n"
+	const enable = "vars: {d2-config: {data: {elk-mergeEdges: \"tRuE\"}}}\n"
+	const disable = "vars: {d2-config: {data: {elk-mergeEdges: \"FaLsE\"}}}\n"
 	separate := render("")
 	shared := render("", "--elk-mergeEdges")
 	if slices.Equal(shared, separate) {
 		t.Fatal("merge flag did not change SVG paths")
 	}
-	if !slices.Equal(render(enable, "--elk-mergeEdges=false"), shared) || !slices.Equal(render(disable, "--elk-mergeEdges"), separate) {
+	if !slices.Equal(render("", "--elk-mergeEdges=tRuE"), shared) || !slices.Equal(render("", "--elk-mergeEdges=fAlSe"), separate) {
+		t.Fatal("mixed-case merge flags produced different paths")
+	}
+	if !slices.Equal(render(enable, "--elk-mergeEdges=fAlSe"), shared) || !slices.Equal(render(disable, "--elk-mergeEdges=tRuE"), separate) {
 		t.Fatal("diagram configuration did not override the CLI flag")
 	}
-	if _, err := runLayoutCLI(t, dir, nil, "--layout=elk", "--elk-edgeRouting=unsupported", "diagram.d2", "-"); err == nil || !strings.Contains(err.Error(), "elk-edgeRouting") {
+	if _, err := runLayoutCLI(t, dir, nil, "--layout=elk", "--elk-edgeRouting=unsupported", "diagram.d2", "-"); err == nil || !strings.Contains(err.Error(), "elk-edgeRouting") || !strings.Contains(err.Error(), "expected orthogonal or polyline") {
 		t.Fatalf("invalid routing diagnostic: %v", err)
 	}
 }

@@ -364,7 +364,7 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 			}
 		}
 
-		n.LayoutOptions.LayerConstraint = obj.ELKLayerConstraint
+		n.LayoutOptions.LayerConstraint = strings.ToUpper(obj.ELKLayerConstraint)
 		if obj.IsContainer() {
 			n.LayoutOptions.Padding = adjustPadding(obj, width, height, padding).String()
 		}
@@ -1046,7 +1046,7 @@ func readPadding(value string) (shapePadding, error) {
 		if !ok || err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
 			return p, fmt.Errorf("invalid elk-padding field %q: expected side=nonnegative-number", part)
 		}
-		switch strings.TrimSpace(name) {
+		switch strings.ToLower(strings.TrimSpace(name)) {
 		case "top":
 			p.top = n
 		case "left":

@@ -238,7 +238,7 @@ func TestLayeredOptionScopesAndZero(t *testing.T) {
 	opts, err := graphOptions(&d2graph.Graph{Data: map[string]any{
 		"elk-nodeNode": "0", "elk-edgeEdge": "2.5", "elk-edgeNode": 0,
 		"elk-forceNodeModelOrder": true, "elk-wrappingStrategy": "single_edge", "elk-edgeRouting": "polyline",
-		"elk-feedbackEdges": true, "elk-mergeEdges": true,
+		"elk-feedbackEdges": "TrUe", "elk-mergeEdges": true,
 	}}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestLayeredOptionScopesAndZero(t *testing.T) {
 }
 
 func TestELKPaddingWithOmittedSides(t *testing.T) {
-	for _, input := range []string{"[top=12.5,left=9]", "(top=12.5; left=9)", "top=12.5,left=9"} {
+	for _, input := range []string{"[top=12.5,left=9]", "(top=12.5; left=9)", "top=12.5,left=9", "[ToP=12.5,LeFt=9]"} {
 		opts := DefaultOpts
 		if err := opts.SetOption("elk-padding", input); err != nil || opts.Padding != "[top=12.5,left=9,bottom=0,right=0]" {
 			t.Errorf("partial padding %q: %s, %v", input, opts.Padding, err)
@@ -280,10 +280,14 @@ func TestShapeLayerConstraint(t *testing.T) {
 		return layoutOptionFixture(t, src+extra, func(*ConfigurableOpts) {})
 	}
 	before := layout("")
-	after := layout("audit.elk-layer-constraint: last")
-	if objectByID(t, before, "audit").TopLeft.X >= objectByID(t, before, "ship").TopLeft.X ||
-		objectByID(t, after, "audit").TopLeft.X != objectByID(t, after, "ship").TopLeft.X {
-		t.Fatal("LAST should move audit into the final layer")
+	if objectByID(t, before, "audit").TopLeft.X >= objectByID(t, before, "ship").TopLeft.X {
+		t.Fatal("audit should precede ship by default")
+	}
+	for _, last := range []string{"last", "LAST", "lAsT"} {
+		after := layout("audit.elk-layer-constraint: " + last)
+		if objectByID(t, after, "audit").TopLeft.X != objectByID(t, after, "ship").TopLeft.X {
+			t.Errorf("%q should move audit into the final layer", last)
+		}
 	}
 	for _, src := range []string{"elk-layer-constraint: first", "a -> b: {elk-layer-constraint: last}", "a.elk-layer-constraint: middle"} {
 		if _, _, err := d2compiler.Compile("", strings.NewReader(src), nil); err == nil {

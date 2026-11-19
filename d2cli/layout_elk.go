@@ -4,6 +4,9 @@ package d2cli
 
 import (
 	"context"
+	"strings"
+
+	"github.com/spf13/pflag"
 
 	"github.com/d2lang/util-go/go2"
 	"github.com/d2lang/util-go/xmain"
@@ -20,8 +23,8 @@ See https://d2lang.com/tour/elk for more.
 
 Set spacing, routing, wrapping, ordering and edge merging in vars.d2-config.data
 using the flag name without "--" (for example, elk-mergeEdges: true).
-Diagram data takes precedence over the flag. Set elk-layer-constraint on an
-individual shape to FIRST, LAST or NONE.
+Diagram data takes precedence over the flag. These option values are case-insensitive.
+Set elk-layer-constraint on an individual shape to first, last or none.
 
 Flags correspond to ones found at https://eclipse.dev/elk/reference.html.
 `
@@ -34,12 +37,18 @@ var elkLayeredFlags = []struct {
 	{"elk-nodeNode", 20., "minimum spacing between nodes in the same layer"},
 	{"elk-edgeNode", 40., "minimum clearance between a passing edge and a node in the same layer"},
 	{"elk-edgeEdge", 10., "minimum spacing between edges passing through the same layer"},
-	{"elk-edgeRouting", "ORTHOGONAL", "edge routing style: ORTHOGONAL or POLYLINE"},
-	{"elk-wrappingStrategy", "OFF", "graph wrapping strategy: OFF, SINGLE_EDGE or MULTI_EDGE"},
+	{"elk-edgeRouting", "orthogonal", "edge routing style: orthogonal or polyline"},
+	{"elk-wrappingStrategy", "off", "graph wrapping strategy: off, single_edge or multi_edge"},
 	{"elk-forceNodeModelOrder", false, "keep declaration order within layers at the diagram root"},
 	{"elk-feedbackEdges", false, "route backward edges around the main flow"},
 	{"elk-mergeEdges", false, "share attachment points for ordinary incoming or outgoing edges"},
 }
+
+// pflag's bool parser accepts only some capitalizations of true and false.
+type elkBoolValue struct{ pflag.Value }
+
+func (v elkBoolValue) Set(s string) error { return v.Value.Set(strings.ToLower(s)) }
+func (elkBoolValue) IsBoolFlag() bool     { return true }
 
 func registerELKFlags(opts *xmain.Opts) {
 	opts.String("", "elk-algorithm", "", d2elklayout.DefaultOpts.Algorithm, "layout algorithm")
@@ -54,6 +63,8 @@ func registerELKFlags(opts *xmain.Opts) {
 			opts.Flags.Float64(f.name, v, f.help)
 		case bool:
 			opts.Flags.Bool(f.name, v, f.help)
+			flag := opts.Flags.Lookup(f.name)
+			flag.Value = elkBoolValue{flag.Value}
 		case string:
 			opts.Flags.String(f.name, v, f.help)
 		}

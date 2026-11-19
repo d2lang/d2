@@ -699,14 +699,15 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 			return
 		}
 		if f.Primary() == nil || f.Composite != nil {
-			c.errorf(f.LastRef().AST(), "elk-layer-constraint expects FIRST, LAST or NONE")
+			c.errorf(f.LastRef().AST(), "elk-layer-constraint expects first, last or none")
 			return
 		}
-		switch v := strings.ToUpper(f.Primary().Value.ScalarString()); v {
+		value := f.Primary().Value.ScalarString()
+		switch v := strings.ToUpper(value); v {
 		case "FIRST", "LAST", "NONE":
 			obj.ELKLayerConstraint = v
 		default:
-			c.errorf(f.Primary().Value, "elk-layer-constraint expects FIRST, LAST or NONE, got %q", v)
+			c.errorf(f.Primary().Value, "elk-layer-constraint expects first, last or none, got %q", value)
 		}
 		return
 	} else if isReserved {

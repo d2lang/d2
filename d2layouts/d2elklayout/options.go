@@ -53,15 +53,15 @@ func (options *ConfigurableOpts) SetOption(name, value string) error {
 	case "elk-edgeEdge":
 		opts.EdgeEdge, err = parseSpacing(value)
 	case "elk-edgeRouting":
-		opts.EdgeRouting, err = optionEnum(value, "ORTHOGONAL", "POLYLINE")
+		opts.EdgeRouting, err = optionEnum(value, "orthogonal", "polyline")
 	case "elk-wrappingStrategy":
-		opts.WrappingStrategy, err = optionEnum(value, "OFF", "SINGLE_EDGE", "MULTI_EDGE")
+		opts.WrappingStrategy, err = optionEnum(value, "off", "single_edge", "multi_edge")
 	case "elk-forceNodeModelOrder":
-		opts.ForceNodeModelOrder, err = strconv.ParseBool(value)
+		opts.ForceNodeModelOrder, err = strconv.ParseBool(strings.ToLower(value))
 	case "elk-feedbackEdges":
-		opts.FeedbackEdges, err = strconv.ParseBool(value)
+		opts.FeedbackEdges, err = strconv.ParseBool(strings.ToLower(value))
 	case "elk-mergeEdges":
-		opts.MergeEdges, err = strconv.ParseBool(value)
+		opts.MergeEdges, err = strconv.ParseBool(strings.ToLower(value))
 	case "elk-nodeNodeBetweenLayers", "elk-edgeNodeBetweenLayers", "elk-edgeEdgeBetweenLayers", "elk-nodeSelfLoop":
 		n, parseErr := strconv.Atoi(value)
 		if parseErr != nil || n < 0 {
@@ -104,9 +104,9 @@ func parseSpacing(value string) (*float64, error) {
 }
 
 func optionEnum(value string, allowed ...string) (string, error) {
-	v := strings.ToUpper(value)
+	v := strings.ToLower(value)
 	if slices.Contains(allowed, v) {
-		return v, nil
+		return strings.ToUpper(v), nil // ELK's layout API uses uppercase enum names.
 	}
 	return "", fmt.Errorf("expected %s", strings.Join(allowed, " or "))
 }

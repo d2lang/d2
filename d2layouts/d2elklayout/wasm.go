@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/lib/geo"
@@ -124,7 +125,7 @@ func ConvertGraph(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts)
 			}
 		}
 
-		n.LayoutOptions.LayerConstraint = obj.ELKLayerConstraint
+		n.LayoutOptions.LayerConstraint = strings.ToUpper(obj.ELKLayerConstraint)
 		if obj.IsContainer() {
 			n.LayoutOptions.Padding = adjustPadding(obj, width, height, padding).String()
 		}
