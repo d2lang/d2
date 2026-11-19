@@ -61,7 +61,7 @@ func (e *projectedExtent) animatedMesh(ts []Triangle, nodes []nativeAnimatedNode
 
 // The ground receiver is implicit raster content, so its directional shadows
 // have no mesh vertices for ordinary framing to see. Project caster vertices
-// onto that same receiver, then reserve the shadow map's 3x3 sampling footprint.
+// onto that same receiver, then reserve the full ground filter's support.
 // This changes framing only; the source geometry and output density stay intact.
 func (e *projectedExtent) groundShadows(ts []Triangle, nodes []nativeAnimatedNode, scale float64, shadowCamera ...rasterCamera) {
 	if len(ts) == 0 {
@@ -123,13 +123,14 @@ func (e *projectedExtent) preparedGroundShadows(ts []Triangle, nodes []nativeAni
 	if !shadow.valid {
 		return
 	}
-	// A caster sample at a pixel center can influence receiver samples up to
-	// 1.5 shadow texels away: floor-to-integer sampling plus the ±1 filter.
+	// The broad full cast has the greatest reach. Include its soft tail
+	// and the final light-atlas sample used for bilinear reconstruction.
 	// Move both light-camera basis vectors onto the ground to derive the
 	// corresponding footprint in the final camera's coordinates.
 	u := nsub(light.right, nmul(light.direction, light.right.Y/light.direction.Y))
 	v := nsub(light.up, nmul(light.direction, light.up.Y/light.direction.Y))
-	radius, camera := 1.5/light.scale, nativeCameraAxes()
+	radius := 3*max(groundShadowLayers[0].sigma, math.Sqrt(2./3)/light.scale) + 1/light.scale
+	camera := nativeCameraAxes()
 	expand := func(axis Vec) float64 { return radius * (math.Abs(ndot(u, axis)) + math.Abs(ndot(v, axis))) }
 	dx, dy, dz := expand(camera.right), expand(camera.up), expand(camera.direction)
 	shadow.minX, shadow.maxX = shadow.minX-dx, shadow.maxX+dx

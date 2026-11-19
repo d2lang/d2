@@ -8,6 +8,7 @@
 
 #### Improvements 🧹
 
+- isometric: draw interior creases with a finer line and soften ground shadows away from the object's foot.
 - renders: reduce isometric SVG size by sharing lighting gradients and removing interior edges from filled paths.
 
 - isometric: keep steep connection captions at the same reading angle as node labels and preserve clearance from their wires.
