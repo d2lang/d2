@@ -18,10 +18,12 @@ var commonAttributes = func() map[string]struct{} {
 var elementAttributes = map[string]map[string]struct{}{
 	"svg": {
 		"width": {}, "height": {}, "viewBox": {}, "preserveAspectRatio": {},
-		"version": {}, "x": {}, "y": {}, "enable-background": {},
+		"version": {}, "x": {}, "y": {},
 	},
 	"g": {}, "defs": {}, "style": {"type": {}},
 	"title":     {"id": {}},
+	"desc":      {"id": {}},
+	"dc:title":  {},
 	"metadata":  {"id": {}},
 	"rdf:RDF":   {},
 	"cc:Work":   {},
@@ -33,19 +35,27 @@ var elementAttributes = map[string]map[string]struct{}{
 		"fit-margin-bottom": {}, "fit-margin-left": {}, "fit-margin-right": {}, "fit-margin-top": {},
 		"showgrid": {},
 	},
-	"path":     {"d": {}},
-	"rect":     {"x": {}, "y": {}, "width": {}, "height": {}, "rx": {}, "ry": {}},
-	"circle":   {"cx": {}, "cy": {}, "r": {}},
-	"ellipse":  {"cx": {}, "cy": {}, "rx": {}, "ry": {}},
-	"line":     {"x1": {}, "y1": {}, "x2": {}, "y2": {}},
-	"polyline": {"points": {}},
-	"polygon":  {"points": {}},
-	"image":    {"x": {}, "y": {}, "width": {}, "height": {}, "href": {}, "preserveAspectRatio": {}},
-	"text":     {"font-size": {}, "font-family": {}},
-	"use":      {"href": {}, "x": {}, "y": {}, "overflow": {}},
-	"clipPath": {"id": {}, "clipPathUnits": {}},
+	"path":           {"d": {}},
+	"rect":           {"x": {}, "y": {}, "width": {}, "height": {}, "rx": {}, "ry": {}},
+	"circle":         {"cx": {}, "cy": {}, "r": {}},
+	"ellipse":        {"cx": {}, "cy": {}, "rx": {}, "ry": {}},
+	"line":           {"x1": {}, "y1": {}, "x2": {}, "y2": {}},
+	"polyline":       {"points": {}},
+	"polygon":        {"points": {}},
+	"image":          {"x": {}, "y": {}, "width": {}, "height": {}, "href": {}, "preserveAspectRatio": {}, "overflow": {}},
+	"text":           {"x": {}, "y": {}},
+	"tspan":          {"x": {}, "y": {}},
+	"use":            {"href": {}, "x": {}, "y": {}, "overflow": {}},
+	"clipPath":       {"id": {}, "clipPathUnits": {}},
+	"mask":           {"maskUnits": {}, "maskContentUnits": {}, "x": {}, "y": {}, "width": {}, "height": {}, "mask-type": {}},
+	"filter":         {"id": {}, "x": {}, "y": {}, "width": {}, "height": {}, "filterUnits": {}, "primitiveUnits": {}, "color-interpolation-filters": {}},
+	"feGaussianBlur": {"stdDeviation": {}, "in": {}, "color-interpolation-filters": {}},
 	"linearGradient": {
 		"id": {}, "x1": {}, "y1": {}, "x2": {}, "y2": {},
+		"gradientUnits": {}, "gradientTransform": {}, "spreadMethod": {},
+	},
+	"radialGradient": {
+		"id": {}, "cx": {}, "cy": {}, "r": {}, "fx": {}, "fy": {}, "fr": {},
 		"gradientUnits": {}, "gradientTransform": {}, "spreadMethod": {},
 	},
 	"stop": {"offset": {}, "class": {}, "style": {}, "stop-color": {}, "stop-opacity": {}},
@@ -168,14 +178,14 @@ func (i *svgImporter) validateStyleTree(root *svgElement) error {
 		}
 		current := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if isNonRenderingElement(current.element.name) || isGradientResourceElement(current.element.name) || isClipPathResourceElement(current.element.name) {
+		if isNonRenderingElement(current.element.name) || isGradientResourceElement(current.element.name) || isFilterElement(current.element.name) || isClipPathResourceElement(current.element.name) {
 			continue
 		}
 		style, err := i.computeStyle(current.parent, current.element)
 		if err != nil {
 			return err
 		}
-		if current.element.name == "text" {
+		if current.element.name == "text" && i.frozenText(current.element) {
 			if err := i.validateFrozenMathJaxTextStyle(current.element, style); err != nil {
 				return err
 			}
@@ -192,7 +202,7 @@ func (i *svgImporter) validateStyleTree(root *svgElement) error {
 
 func (i *svgImporter) validateDegenerateStrokeCaps(element *svgElement, style svgStyle) error {
 	if element.geometry.kind != geometryPath || style.lineCap == d2scene.CapButt || style.strokeWidth <= 0 ||
-		(style.stroke == nil && !style.strokeCurrent) {
+		style.stroke == nil {
 		return nil
 	}
 	var current, start d2scene.Point
@@ -247,6 +257,9 @@ func (i *svgImporter) compileElement(element *svgElement) error {
 	if isGradientResourceElement(element.name) {
 		return i.compileGradientElement(element)
 	}
+	if isFilterElement(element.name) {
+		return i.compileFilterElement(element, allowed)
+	}
 	for _, name := range element.attrOrder {
 		if err := i.ctx.Err(); err != nil {
 			return err
@@ -262,7 +275,7 @@ func (i *svgImporter) compileElement(element *svgElement) error {
 		element.transform = d2scene.Identity()
 		return nil
 	}
-	if element.name != "svg" && element.name != "g" && element.name != "defs" && element.name != "clipPath" && hasRenderingChildren(element) {
+	if element.name != "svg" && element.name != "g" && element.name != "defs" && element.name != "clipPath" && element.name != "mask" && element.name != "text" && hasRenderingChildren(element) {
 		return i.errorf("element <%s> cannot contain child elements", element.name)
 	}
 	if element.name == "style" {
@@ -276,8 +289,6 @@ func (i *svgImporter) compileElement(element *svgElement) error {
 			}
 		} else if _, ok := element.attrs["version"]; ok {
 			return i.errorf("nested <svg> version is unsupported")
-		} else if _, ok := element.attrs["enable-background"]; ok {
-			return i.errorf("nested <svg> enable-background is unsupported")
 		}
 	}
 
@@ -330,6 +341,9 @@ func (i *svgImporter) compileElement(element *svgElement) error {
 		element.viewportY = y
 	}
 
+	if element.name == "mask" {
+		return i.compileMask(element)
+	}
 	element.geometry, err = i.compileGeometry(element)
 	if err != nil {
 		return err
@@ -355,11 +369,14 @@ func (i *svgImporter) compileUse(element *svgElement) error {
 	if !valid {
 		return i.errorf("element <use> href must be one local #id reference; external references are forbidden")
 	}
-	target := i.ids[raw[1:]]
+	target, declared := i.ids[raw[1:]]
+	if declared && target == nil {
+		return i.errorf("element <use> references an ambiguous local id")
+	}
 	if target == nil {
 		return i.errorf("element <use> references an unknown local id")
 	}
-	if target.name == "svg" || target.name == "defs" || isNonRenderingElement(target.name) || isGradientResourceElement(target.name) || isClipPathResourceElement(target.name) {
+	if target.name == "svg" || target.name == "defs" || target.name == "mask" || isFilterElement(target.name) || isNonRenderingElement(target.name) || isGradientResourceElement(target.name) || isClipPathResourceElement(target.name) {
 		return i.errorf("element <use> references unsupported <%s> resource", target.name)
 	}
 	element.href = raw[1:]
@@ -377,7 +394,7 @@ func (i *svgImporter) compileUse(element *svgElement) error {
 			return err
 		}
 		if value != "visible" {
-			return i.errorf("element <use> supports only overflow=\"visible\" inside a clipping resource")
+			return i.errorf("element <use> supports only overflow=\"visible\"")
 		}
 	}
 	return nil
@@ -431,12 +448,11 @@ func (i *svgImporter) instantiate(root *svgElement, inherited svgStyle, prefix s
 					node.Classes = append([]string(nil), parent.element.classes...)
 					node.Transform = parent.element.transform.Mul(d2scene.Translate(parent.element.useX, parent.element.useY))
 					node.Opacity = parent.style.opacity
-					node.Clip, err = i.instantiateClipPath(parent.style.clipPathID)
+					node.Children = []*d2scene.Node{returned}
+					returned, err = i.applySVGEffects(node, parent.style)
 					if err != nil {
 						return nil, err
 					}
-					node.Children = []*d2scene.Node{returned}
-					returned = node
 				}
 				stack = stack[:len(stack)-1]
 				continue
@@ -448,7 +464,7 @@ func (i *svgImporter) instantiate(root *svgElement, inherited svgStyle, prefix s
 		current := &stack[len(stack)-1]
 		switch current.phase {
 		case phaseEnter:
-			if isNonRenderingElement(current.element.name) || isGradientResourceElement(current.element.name) || isClipPathResourceElement(current.element.name) {
+			if (current.element.name == "mask" && current.element != root) || isNonRenderingElement(current.element.name) || isGradientResourceElement(current.element.name) || isFilterElement(current.element.name) || isClipPathResourceElement(current.element.name) {
 				stack = stack[:len(stack)-1]
 				returned, returning = nil, true
 				continue
@@ -498,11 +514,18 @@ func (i *svgImporter) instantiate(root *svgElement, inherited svgStyle, prefix s
 			if current.element.name == "svg" && current.referenced {
 				return nil, i.errorf("referenced <svg> resources are unsupported")
 			}
-			primitive, commands, err := current.element.geometry.primitive(i.ctx, style)
+			geometry := current.element.geometry
+			if geometry.kind == geometryText {
+				geometry, err = i.textGeometry(current.element, style)
+				if err != nil {
+					return nil, err
+				}
+			}
+			primitive, commands, err := geometry.primitive(i.ctx, style)
 			if err != nil {
 				return nil, err
 			}
-			if current.element.name != "svg" && current.element.name != "g" && primitive == nil {
+			if current.element.name != "svg" && current.element.name != "g" && current.element.name != "mask" && current.element.name != "text" && primitive == nil {
 				stack = stack[:len(stack)-1]
 				returned, returning = nil, true
 				continue
@@ -541,10 +564,7 @@ func (i *svgImporter) instantiate(root *svgElement, inherited svgStyle, prefix s
 				current.childNode = content
 			} else {
 				node.Transform = current.element.transform
-				node.Clip, err = i.instantiateClipPath(style.clipPathID)
-				if err != nil {
-					return nil, err
-				}
+
 				current.childNode = node
 			}
 			current.node = node
@@ -552,7 +572,11 @@ func (i *svgImporter) instantiate(root *svgElement, inherited svgStyle, prefix s
 
 		case phaseChildren:
 			if current.nextChild == len(current.element.children) {
-				returned = current.node
+				var err error
+				returned, err = i.applySVGEffects(current.node, current.style)
+				if err != nil {
+					return nil, err
+				}
 				stack = stack[:len(stack)-1]
 				returning = true
 				continue
@@ -598,14 +622,13 @@ func (geometry svgGeometry) primitive(ctx context.Context, style svgStyle) (d2sc
 	if !style.visible {
 		return nil, 0, nil
 	}
+	if geometry.kind == geometryUnavailableImage {
+		return nil, 0, fmt.Errorf("external image references are forbidden")
+	}
 	if geometry.kind == geometryImage {
 		return d2scene.Image{Asset: geometry.asset, Box: geometry.box, Aspect: geometry.aspect}, 0, nil
 	}
-	fillPaint := style.fill
-	if style.fillCurrent {
-		fillPaint = d2scene.SolidPaint{Color: style.color}
-	}
-	fill, err := paintWithOpacity(ctx, fillPaint, style.fillOpacity)
+	fill, err := style.fill.resolve(ctx, style, style.fillOpacity)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -613,11 +636,7 @@ func (geometry svgGeometry) primitive(ctx context.Context, style svgStyle) (d2sc
 		fill = nil
 	}
 	var stroke *d2scene.Stroke
-	strokeSource := style.stroke
-	if style.strokeCurrent {
-		strokeSource = d2scene.SolidPaint{Color: style.color}
-	}
-	strokePaint, err := paintWithOpacity(ctx, strokeSource, style.strokeOpacity)
+	strokePaint, err := style.stroke.resolve(ctx, style, style.strokeOpacity)
 	if err != nil {
 		return nil, 0, err
 	}

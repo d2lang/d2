@@ -59,6 +59,19 @@ func (i *svgImporter) compileEmbeddedImage(element *svgElement) (svgGeometry, er
 	if err != nil {
 		return svgGeometry{}, err
 	}
+	if raw, ok := element.declarations["overflow"]; ok && (strings.TrimSpace(raw) != "visible" || aspect.Fit == d2scene.AspectSlice) {
+		return svgGeometry{}, i.errorf("unsupported overflow on <image>")
+	}
+	if !strings.HasPrefix(raw, "data:") {
+		// Hidden editor layers often retain a link to the original artwork.
+		// Keep a sentinel so a visible <use> of this image still reports the
+		// unavailable resource. The importer never opens an external image.
+		for ancestor := element; ancestor != nil; ancestor = ancestor.parent {
+			if equalASCIIEqualFold(ancestor.declarations["display"], "none") {
+				return svgGeometry{kind: geometryUnavailableImage}, nil
+			}
+		}
+	}
 	assetID, err := i.resolveEmbeddedRaster(raw)
 	if err != nil {
 		return svgGeometry{}, err
@@ -115,7 +128,7 @@ func (i *svgImporter) resolveEmbeddedRaster(raw string) (d2scene.AssetID, error)
 		}
 		return assetID, nil
 	}
-	if len(i.ids)+len(i.assets) >= i.limits.MaxResources {
+	if i.declaredIDs+len(i.assets) >= i.limits.MaxResources {
 		return "", i.errorf("declared resource count exceeds limit %d", i.limits.MaxResources)
 	}
 	if len(data) > i.limits.MaxBytes-i.rasterBytes {
@@ -142,8 +155,12 @@ func (i *svgImporter) resolveEmbeddedRaster(raw string) (d2scene.AssetID, error)
 	if err != nil {
 		return "", i.errorf("element <image> has invalid decoded dimensions: %v", err)
 	}
-	if decodedBytes > int64(i.limits.MaxBytes)-i.rasterDecodedBytes {
-		return "", i.errorf("embedded raster decoded bytes exceed limit %d", i.limits.MaxBytes)
+	decodedLimit := i.limits.MaxDecodedRasterBytes
+	if decodedLimit == 0 {
+		decodedLimit = int64(i.limits.MaxBytes)
+	}
+	if decodedBytes > decodedLimit-i.rasterDecodedBytes {
+		return "", i.errorf("embedded raster decoded bytes exceed limit %d", decodedLimit)
 	}
 
 	if err := i.ctx.Err(); err != nil {
@@ -230,6 +247,24 @@ func (i *svgImporter) parseEmbeddedRasterDataURI(raw string) (mimeType, payload 
 		mimeType = parts[0]
 	default:
 		return "", "", i.errorf("element <image> has unsupported data URI MIME type; expected image/png, image/jpeg, image/gif, or image/webp")
+	}
+	// SVG authors commonly wrap base64 attributes across multiple lines.
+	// XML normalizes those line breaks to spaces. Validate the canonical
+	// alphabet and padding after removing only ASCII whitespace.
+	if strings.ContainsAny(payload, " \t\r\n\f") {
+		var compact strings.Builder
+		compact.Grow(len(payload))
+		for n := 0; n < len(payload); n++ {
+			if n&4095 == 0 {
+				if err := i.ctx.Err(); err != nil {
+					return "", "", err
+				}
+			}
+			if !isXMLSpace(payload[n]) && payload[n] != '\f' {
+				compact.WriteByte(payload[n])
+			}
+		}
+		payload = compact.String()
 	}
 	if payload == "" {
 		return "", "", i.errorf("element <image> data payload is empty")

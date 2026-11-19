@@ -122,7 +122,7 @@ func TestImportNodeFrozenMathJaxTextStrictSubset(t *testing.T) {
 		{"wrong transform", strings.Replace(minimalFrozenMathJaxTextSVG, `transform="scale(1,-1)" font-size="884px"`, `transform="translate(1)" font-size="884px"`, 1), "must use scale"},
 		{"wrong size", strings.Replace(minimalFrozenMathJaxTextSVG, `font-size="884px"`, `font-size="16px"`, 1), "must use scale"},
 		{"wrong family", strings.Replace(minimalFrozenMathJaxTextSVG, `font-family="serif"`, `font-family="sans-serif"`, 1), "must use scale"},
-		{"position attribute", strings.Replace(minimalFrozenMathJaxTextSVG, `<text `, `<text x="0" `, 1), "unsupported attribute"},
+		{"position attribute", strings.Replace(minimalFrozenMathJaxTextSVG, `<text `, `<text x="0" `, 1), "unsupported layout"},
 		{"paint attribute", strings.Replace(minimalFrozenMathJaxTextSVG, `<text `, `<text fill="red" `, 1), "unsupported layout"},
 		{"nested child", strings.Replace(minimalFrozenMathJaxTextSVG, `>µ</text>`, `><path d="M0 0"/></text>`, 1), "cannot contain child"},
 	}

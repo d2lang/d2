@@ -5,11 +5,11 @@ import (
 	"strings"
 )
 
-// stylesheetRule is deliberately smaller than CSS. Every rule has exactly
-// one simple class selector, so source order is the only specificity tie that
-// needs to be represented here.
+// stylesheetRule is deliberately smaller than CSS. Every rule has
+// one or more simple class selectors. All have equal specificity, so source order
+// determines the cascade.
 type stylesheetRule struct {
-	class        string
+	classes      []string
 	declarations map[string]string
 }
 
@@ -109,9 +109,17 @@ func (i *svgImporter) parseStylesheet(input string) ([]stylesheetRule, error) {
 		if err != nil {
 			return nil, err
 		}
-		class, err := i.simpleClassSelector(selector)
-		if err != nil {
-			return nil, err
+		var classes []string
+		for part := range strings.SplitSeq(selector, ",") {
+			part, err = trimSVGSpace(i.ctx, part)
+			if err != nil {
+				return nil, err
+			}
+			class, err := i.simpleClassSelector(part)
+			if err != nil {
+				return nil, err
+			}
+			classes = append(classes, class)
 		}
 		offset++
 		declarationStart := offset
@@ -133,7 +141,7 @@ func (i *svgImporter) parseStylesheet(input string) ([]stylesheetRule, error) {
 		if err != nil {
 			return nil, err
 		}
-		rules = append(rules, stylesheetRule{class: class, declarations: declarations})
+		rules = append(rules, stylesheetRule{classes: classes, declarations: declarations})
 		offset++
 	}
 }
@@ -298,4 +306,13 @@ func (i *svgImporter) classTokens(element *svgElement) ([]string, map[string]str
 func elementHasClass(element *svgElement, class string) bool {
 	_, ok := element.classSet[class]
 	return ok
+}
+
+func (rule stylesheetRule) matches(element *svgElement) bool {
+	for _, class := range rule.classes {
+		if elementHasClass(element, class) {
+			return true
+		}
+	}
+	return false
 }

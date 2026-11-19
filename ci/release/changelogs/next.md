@@ -37,6 +37,7 @@
 
 #### Bugfixes ⛑️
 
+- PNG, GIF, PDF and PPTX exports now render SVG icons that use default gradients, masks, Gaussian blur and common editor metadata. [#2937](https://github.com/d2lang/d2/issues/2937)
 - renders: honor the selected theme and its canvas color in isometric exports.
 
 - d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)

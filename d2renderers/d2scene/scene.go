@@ -95,8 +95,10 @@ type Filter interface {
 }
 
 type GaussianBlur struct {
-	SigmaX float64
-	SigmaY float64
+	// LinearRGB selects linear-light color interpolation for SVG filter primitives.
+	LinearRGB bool
+	SigmaX    float64
+	SigmaY    float64
 }
 
 func (GaussianBlur) isFilter() {}

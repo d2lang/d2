@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
 )
@@ -33,6 +34,7 @@ type blurPass struct {
 
 type preparedFilter struct {
 	kind        preparedFilterKind
+	linearRGB   bool
 	passes      []blurPass
 	output      image.Rectangle
 	offsetX     float64
@@ -42,6 +44,7 @@ type preparedFilter struct {
 
 type normalizedFilter struct {
 	kind        preparedFilterKind
+	linearRGB   bool
 	sigmaX      float64
 	sigmaY      float64
 	offsetX     float64
@@ -79,11 +82,13 @@ func normalizeNodeFilters(ctx context.Context, nodeID string, filters []d2scene.
 		switch value := raw.(type) {
 		case d2scene.GaussianBlur:
 			filter.kind, filter.sigmaX, filter.sigmaY = preparedGaussianBlur, value.SigmaX, value.SigmaY
+			filter.linearRGB = value.LinearRGB
 		case *d2scene.GaussianBlur:
 			if value == nil {
 				return nil, fmt.Errorf("d2raster: node %q filter %d is a nil Gaussian blur", nodeID, index)
 			}
 			filter.kind, filter.sigmaX, filter.sigmaY = preparedGaussianBlur, value.SigmaX, value.SigmaY
+			filter.linearRGB = value.LinearRGB
 		case d2scene.DropShadow:
 			filter.kind = preparedDropShadow
 			filter.sigmaX, filter.sigmaY = value.SigmaX, value.SigmaY
@@ -161,7 +166,7 @@ func (p *preflight) prepareFilters(nodeID string, filters []normalizedFilter, tr
 			return nil, image.Rectangle{}, fmt.Errorf("d2raster: node %q filter %d vertical deviation: %w", nodeID, filter.sourceIndex, err)
 		}
 
-		prepared := preparedFilter{kind: filter.kind, shadowColor: filter.shadowColor}
+		prepared := preparedFilter{kind: filter.kind, shadowColor: filter.shadowColor, linearRGB: filter.linearRGB}
 		switch filter.kind {
 		case preparedGaussianBlur:
 			if current.Empty() || radiusX == 0 && radiusY == 0 {
@@ -452,7 +457,48 @@ func applyPreparedFilter(ctx context.Context, input *ownedRGBA, filter preparedF
 	}
 }
 
+// SVG blur interpolates in linear light by default. Tables convert the
+// premultiplied byte channels of a filter layer in place.
+type filterColorTable [256][256]uint8
+
+var filterColorTables = sync.OnceValues(func() (*filterColorTable, *filterColorTable) {
+	decode, encode := new(filterColorTable), new(filterColorTable)
+	for alpha := 1; alpha < 256; alpha++ {
+		for value := 0; value <= alpha; value++ {
+			channel := float64(value) / float64(alpha)
+			decode[alpha][value] = roundedByte(srgbToLinear(channel) * float64(alpha))
+			encode[alpha][value] = roundedByte(linearToSRGB(channel) * float64(alpha))
+		}
+	}
+	return decode, encode
+})
+
+func convertFilterColorSpace(ctx context.Context, layer *image.RGBA, table *filterColorTable) error {
+	for y := layer.Rect.Min.Y; y < layer.Rect.Max.Y; y++ {
+		row := layer.Pix[layer.PixOffset(layer.Rect.Min.X, y):][:layer.Rect.Dx()*4]
+		for x := 0; x < len(row); x += 4 {
+			if x&4095 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			channels := &table[row[x+3]]
+			row[x], row[x+1], row[x+2] = channels[row[x]], channels[row[x+1]], channels[row[x+2]]
+		}
+	}
+	return ctx.Err()
+}
+
 func applyGaussianFilter(ctx context.Context, current *ownedRGBA, filter preparedFilter, scratch *rasterScratch) error {
+	var encode *filterColorTable
+	if filter.linearRGB {
+		var decode *filterColorTable
+		decode, encode = filterColorTables()
+		if err := convertFilterColorSpace(ctx, current.image, decode); err != nil {
+			current.release()
+			return err
+		}
+	}
 	for index, pass := range filter.passes {
 		output, err := reserveRGBA(scratch, pass.bounds, "Gaussian blur pass")
 		if err != nil {
@@ -466,6 +512,12 @@ func applyGaussianFilter(ctx context.Context, current *ownedRGBA, filter prepare
 		}
 		current.release()
 		*current = output
+	}
+	if encode != nil {
+		if err := convertFilterColorSpace(ctx, current.image, encode); err != nil {
+			current.release()
+			return err
+		}
 	}
 	return nil
 }
