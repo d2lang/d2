@@ -102,9 +102,10 @@ jobs:
               Add-LocalGroupMember -Group $users -Member $user
             }
             $credential = [pscredential]::new("$env:COMPUTERNAME\$($user.Name)", $password)
-            $arguments = "-NoProfile -NonInteractive -File `"$stage\test-install.ps1`" -Scope User -Version $env:VERSION"
+            $arguments = "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File `"$stage\test-install.ps1`" -Scope User -Version $env:VERSION"
+            # Give msiexec the test user's profile and temp directory.
             $test = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments `
-              -Credential $credential -LoadUserProfile -WorkingDirectory $stage -Wait -PassThru `
+              -Credential $credential -LoadUserProfile -UseNewEnvironment -WorkingDirectory $stage -Wait -PassThru `
               -RedirectStandardOutput "$env:RUNNER_TEMP\d2-user.out" -RedirectStandardError "$env:RUNNER_TEMP\d2-user.err"
             Get-Content -LiteralPath "$env:RUNNER_TEMP\d2-user.out", "$env:RUNNER_TEMP\d2-user.err"
             if ($test.ExitCode -ne 0) { throw "Standard-user test exited with $($test.ExitCode)" }
