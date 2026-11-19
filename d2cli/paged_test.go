@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/gif"
 	"image/png"
 	"io"
 	"os"
@@ -26,6 +27,76 @@ import (
 	d2pptx "github.com/d2lang/d2/lib/pptx"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
+
+// Exercise the SVG icon through the normal CLI in each native export format.
+func TestSVGIconAcrossNativeExports(t *testing.T) {
+	dir := t.TempDir()
+	icon := `<svg viewBox="0 0 40 20"><linearGradient id="g">
+    <stop stop-color="red"/><stop offset="100%" stop-color="blue"/></linearGradient>
+    <rect width="40" height="20" fill="url(#g)"/></svg>`
+	if err := os.WriteFile(filepath.Join(dir, "icon.svg"), []byte(icon), 0600); err != nil {
+		t.Fatal(err)
+	}
+	const source = `x: {shape: image; icon: ./icon.svg; style.multiple: true}`
+	export := func(format string, extra ...string) []byte {
+		t.Helper()
+		args := append([]string{"--pad=0", "--scale=1", "--stdout-format=" + format}, extra...)
+		content, err := imageCLI(t, dir, source, append(args, "-")...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return content
+	}
+	checkGradient := func(img image.Image) {
+		t.Helper()
+		// Sample the two sides of the painted icon, clear of layout margins.
+		bounds := img.Bounds()
+		for _, side := range []struct {
+			fraction int
+			red      bool
+		}{{2, true}, {8, false}} {
+			x := bounds.Min.X + bounds.Dx()*side.fraction/10
+			r, g, b, _ := img.At(x, bounds.Min.Y+bounds.Dy()/2).RGBA()
+			if g > 0x2000 || (side.red && (r < 0x9000 || r < b*2)) || (!side.red && (b < 0x9000 || b < r*2)) {
+				t.Fatalf("gradient pixel at %d: (%d,%d,%d)", x, r, g, b)
+			}
+		}
+	}
+	pngBytes := export("png")
+	bitmap, err := png.Decode(bytes.NewReader(pngBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGradient(bitmap)
+	animation, err := gif.DecodeAll(bytes.NewReader(export("gif", "--animate-interval=100")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(animation.Image) == 0 {
+		t.Fatalf("got %d GIF frames", len(animation.Image))
+	}
+	checkGradient(animation.Image[0])
+	pdf, err := testutil.InspectD2PDF(export("pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pdf.Images) != 1 {
+		t.Fatalf("PDF has %d embedded images", len(pdf.Images))
+	}
+	checkGradient(pdf.Images[0].Pixels)
+	slides, err := testutil.ExtractPPTXImages(export("pptx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slides) != 1 {
+		t.Fatalf("PPTX has %d embedded images", len(slides))
+	}
+	slide, err := png.Decode(bytes.NewReader(slides[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGradient(slide)
+}
 
 func TestPagedContainersEmbedEquivalentPixels(t *testing.T) {
 	root := simpleRasterDiagramWithLabel()

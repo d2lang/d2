@@ -152,19 +152,18 @@ const (
 	rasterMaxLinkRegions     = 4_096
 	rasterMaxLinkStringBytes = 1 * 1024 * 1024
 
-	// Measured from the checked-in icon and frozen MathJax fixtures.
-	// The largest distinct board used 202 SVG elements and 1,786 path commands;
-	// the largest formula used 122 elements and 1,943 commands. These ceilings
-	// retain user-SVG headroom while bounding the work for each import.
-	svgMaxBytes              = 64 * 1024
+	// Per-icon ceilings cover the hosted SVG catalog, including detailed paths
+	// and embedded raster thumbnails. Diagrams also share the totals below.
+	svgMaxBytes              = 256 * 1024
+	svgMaxDecodedRasterBytes = 1 << 20
 	svgMaxDepth              = 32
-	svgMaxElements           = 256
-	svgMaxAttributes         = 512
-	svgMaxAttributeBytes     = 64 * 1024
-	svgMaxPathCommands       = 4_096
-	svgMaxTransformFunctions = 128
+	svgMaxElements           = 2_048
+	svgMaxAttributes         = 4_096
+	svgMaxAttributeBytes     = 256 * 1024
+	svgMaxPathCommands       = 16_384
+	svgMaxTransformFunctions = 512
 	svgMaxUseDepth           = 8
-	svgMaxResources          = 64
+	svgMaxResources          = 512
 
 	svgDocumentMaxSourceBytes          = 1 * 1024 * 1024
 	svgDocumentMaxElements             = 4_096
@@ -1032,6 +1031,7 @@ func newImageAssetResolver(ctx context.Context, inputPath string, cacheImages bo
 func svgImportLimits() d2svgimport.Limits {
 	return d2svgimport.Limits{
 		MaxBytes:              svgMaxBytes,
+		MaxDecodedRasterBytes: svgMaxDecodedRasterBytes,
 		MaxDepth:              svgMaxDepth,
 		MaxElements:           svgMaxElements,
 		MaxAttributes:         svgMaxAttributes,

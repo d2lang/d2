@@ -7,6 +7,7 @@ import (
 	"image"
 	"math"
 	"math/bits"
+	"sort"
 
 	"github.com/d2lang/d2/d2renderers/d2raster/internal/scanline"
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -485,6 +486,29 @@ func evenOddMaskWork(bounds image.Rectangle, edges int64) (int64, error) {
 	if bounds.Empty() || edges == 0 {
 		return 0, nil
 	}
+	if useEvenOddTiles(bounds.Dx(), edges) {
+		// At each of four sample rows, visit each edge and binary-search at
+		// most one tile of horizontal samples. Then sweep all pixel samples.
+		tiles := int64(1 + (bounds.Dx()-1)/evenOddTileWidth)
+		work, ok := checkedMultiply(edges, int64(1+bits.Len(uint(evenOddTileWidth*evenOddSamplesPerAxis))))
+		if ok {
+			work, ok = checkedMultiply(work, tiles)
+		}
+		samples, valid := checkedMultiply(int64(bounds.Dx()), evenOddSamplesPerAxis)
+		if ok && valid {
+			work, ok = checkedAdd(work, samples)
+			if ok {
+				work, ok = checkedMultiply(work, evenOddSamplesPerAxis)
+			}
+			if ok {
+				work, ok = checkedMultiply(work, int64(bounds.Dy()))
+			}
+			if ok {
+				return work, nil
+			}
+		}
+		return 0, fmt.Errorf("d2raster: even-odd clip work exceeds the int64 domain")
+	}
 	pixels, ok := checkedMultiply(int64(bounds.Dx()), int64(bounds.Dy()))
 	if !ok {
 		return 0, fmt.Errorf("d2raster: even-odd clip work exceeds the int64 domain")
@@ -777,7 +801,7 @@ func applyClip(ctx context.Context, layer *image.RGBA, clip *preparedClip, scrat
 	}
 	defer scratch.offscreen.recycleAlpha(mask, maskBytes)
 	if !clip.bounds.Intersect(bounds).Empty() {
-		if err := rasterizeEvenOddMask(ctx, mask, bounds.Min, clip.subpaths); err != nil {
+		if err := rasterizeEvenOddCoverage(ctx, mask, bounds.Min, clip.subpaths, clip.edges); err != nil {
 			return err
 		}
 	}
@@ -927,6 +951,71 @@ func scaleLayerCoverageSpan(ctx context.Context, row []byte, first, last int, co
 		scalePremultiplied(row[offset:offset+4], coverage)
 	}
 	return nil
+}
+
+const evenOddTileWidth = 128
+
+func useEvenOddTiles(width int, edges int64) bool {
+	return width >= 16 && edges >= 32
+}
+
+func rasterizeEvenOddCoverage(ctx context.Context, mask *image.Alpha, origin image.Point, paths []subpath, edges int64) error {
+	if !useEvenOddTiles(mask.Bounds().Dx(), edges) {
+		return rasterizeEvenOddMask(ctx, mask, origin, paths)
+	}
+	// Each bit marks a parity change at one of a pixel's 4x4 samples.
+	// A fixed-size tile bounds scratch space independently of the icon size.
+	var toggles [evenOddTileWidth]uint16
+	for y := 0; y < mask.Bounds().Dy(); y++ {
+		for x := 0; x < mask.Bounds().Dx(); x += evenOddTileWidth {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			width := min(evenOddTileWidth, mask.Bounds().Dx()-x)
+			clear(toggles[:width])
+			for sy := range evenOddSamplesPerAxis {
+				sampleY := float64(origin.Y+y) + (float64(sy)+0.5)/evenOddSamplesPerAxis
+				for _, path := range paths {
+					if len(path.points) < 2 {
+						continue
+					}
+					previous := path.points[len(path.points)-1]
+					for j, point := range path.points {
+						if j&255 == 0 {
+							if err := ctx.Err(); err != nil {
+								return err
+							}
+						}
+						if (point.Y > sampleY) != (previous.Y > sampleY) {
+							crossing := (previous.X-point.X)*(sampleY-point.Y)/(previous.Y-point.Y) + point.X
+							// Use the scalar sampler's strict crossing test, including
+							// samples lying exactly on an edge. Sweep from the right.
+							end := sort.Search(width*evenOddSamplesPerAxis, func(n int) bool {
+								sampleX := float64(origin.X+x+n/4) + (float64(n%4)+0.5)/evenOddSamplesPerAxis
+								return !(sampleX < crossing)
+							})
+							if end > 0 {
+								last := end - 1
+								toggles[last/4] ^= 1 << (4*sy + last%4)
+							}
+						}
+						previous = point
+					}
+				}
+			}
+			var parity uint16
+			row := mask.Pix[y*mask.Stride+x:][:width]
+			for j := width - 1; j >= 0; j-- {
+				inside := 0
+				for sx := 3; sx >= 0; sx-- {
+					parity ^= (toggles[j] >> sx) & 0x1111
+					inside += bits.OnesCount16(parity)
+				}
+				row[j] = uint8((inside*255 + 8) / 16)
+			}
+		}
+	}
+	return ctx.Err()
 }
 
 // Even-odd fills and clips use bounded 4x4 supersampling over already-flattened

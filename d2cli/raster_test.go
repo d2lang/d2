@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/gif"
 	"image/png"
+	"io/fs"
 	"math"
 	"net"
 	"net/http"
@@ -38,6 +39,53 @@ import (
 	"github.com/d2lang/d2/lib/pptx"
 	"github.com/d2lang/d2/lib/xgif"
 )
+
+// An unpacked copy of icons.d2lang.com can be checked without network access.
+func TestHostedSVGIconCatalog(t *testing.T) {
+	catalog := os.Getenv("D2_ICON_CATALOG_DIR")
+	if catalog == "" {
+		t.Skip("set D2_ICON_CATALOG_DIR to a directory of SVG icons")
+	}
+	dir := t.TempDir()
+	var count int
+	err := filepath.WalkDir(catalog, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(path), ".svg") {
+			return nil
+		}
+		count++
+		name, err := filepath.Rel(catalog, path)
+		if err != nil {
+			return err
+		}
+		t.Run(filepath.ToSlash(name), func(t *testing.T) {
+			icon, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "icon.svg"), icon, 0600); err != nil {
+				t.Fatal(err)
+			}
+			const source = `x: {shape: image; icon: ./icon.svg}`
+			output, err := imageCLI(t, dir, source, "--stdout-format=png", "-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := png.Decode(bytes.NewReader(output)); err != nil {
+				t.Fatal(err)
+			}
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count == 0 {
+		t.Fatal("catalog contains no SVG files")
+	}
+}
 
 func TestPagedCLIProducesOutput(t *testing.T) {
 	tests := []struct {

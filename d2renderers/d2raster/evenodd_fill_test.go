@@ -202,3 +202,33 @@ func nestedRectanglePath(outer, inner d2scene.Box, fill d2scene.Paint) d2scene.P
 	}
 	return d2scene.Path{Commands: commands, FillRule: d2scene.EvenOdd, Fill: fill}
 }
+
+func TestTiledEvenOddCoverageMatchesIndependentSamples(t *testing.T) {
+	// Include sample-aligned edges, self-intersections, multiple contours
+	// crossing tile boundaries, a partial final tile and a nonzero origin.
+	origin := image.Pt(-21, 3)
+	bounds := image.Rect(0, 0, 269, 13)
+	var paths []subpath
+	for n := range 24 {
+		x := float64(11*n) - 25 + .125
+		paths = append(paths, subpath{points: []d2scene.Point{{X: x, Y: 1.125}, {X: x + 97.5, Y: 16.125}, {X: x, Y: 16.125}, {X: x + 64.5, Y: 1.125}}})
+	}
+	got, want := image.NewAlpha(bounds), image.NewAlpha(bounds)
+	edges := int64(len(paths) * 4)
+	if err := rasterizeEvenOddCoverage(context.Background(), got, origin, paths, edges); err != nil {
+		t.Fatal(err)
+	}
+	if err := rasterizeEvenOddMaskIndependentSamples(context.Background(), want, origin, paths); err != nil {
+		t.Fatal(err)
+	}
+	for y := range bounds.Dy() {
+		for x := range bounds.Dx() {
+			if got.AlphaAt(x, y) != want.AlphaAt(x, y) {
+				t.Fatalf("pixel (%d,%d) = %v, want %v", x, y, got.AlphaAt(x, y), want.AlphaAt(x, y))
+			}
+		}
+	}
+	if err := rasterizeEvenOddCoverage(&evenOddCancelContext{remaining: 3}, got, origin, paths, edges); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled tiled fill: %v", err)
+	}
+}

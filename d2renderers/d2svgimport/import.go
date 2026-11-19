@@ -26,15 +26,15 @@ const (
 	xmlnsURI       = "http://www.w3.org/2000/xmlns/"
 )
 
-// Limits are required caller-selected hard limits for one SVG import. Every
-// field must be positive. MaxElements and MaxPathCommands independently cap
-// both parsed source and emitted scene totals. MaxResources caps declared IDs
-// plus distinct embedded raster assets, and independently caps expanded
-// local-use instances. MaxBytes also caps the retained encoded and decoded
-// raster-asset totals so callers gain a finite image budget without a
-// new required limit.
+// Limits bound one SVG import. MaxElements and MaxPathCommands each cap
+// both source and emitted scene totals. MaxResources bounds declared IDs
+// plus embedded assets, and separately limits expanded use instances.
+// All limits except MaxDecodedRasterBytes must be positive.
 type Limits struct {
-	MaxBytes              int
+	MaxBytes int
+	// MaxDecodedRasterBytes caps decoded pixels separately from SVG source bytes.
+	// Zero uses MaxBytes for callers that supply only the original limits.
+	MaxDecodedRasterBytes int64
 	MaxDepth              int
 	MaxElements           int
 	MaxAttributes         int
@@ -93,20 +93,12 @@ type Metrics struct {
 
 // ImportNode imports a strict SVG subset. It never reads files, resolves a
 // URL, or performs network I/O. On every error it returns a nil result.
-// Nested svg viewports are limited to finite absolute placement and dimensions
-// with an explicit viewBox. Paint servers other than bounded local user-space
-// linear gradients, clipping outside the bounded local user-space subset,
-// masking, general painted text, nested SVG images, and external references
-// are intentionally rejected rather than silently approximated. Embedded
-// images are restricted to canonical base64 data URIs containing one static
-// PNG, JPEG, GIF, or WebP resource. The sole painted
-// text exception is the exact U+00B5 fallback emitted by D2's frozen MathJax
-// renderer; it is converted to a pinned deterministic outline. Root ex lengths
-// are accepted only with MathJax's exact inert vertical-align form, where one
-// ex is deterministically eight CSS pixels.
-// Non-painting title and corpus-bounded editor metadata are ignored after
-// strict validation. Stylesheets are limited to a bounded simple
-// class-selector subset; see stylesheet.go.
+// Supported icon content includes vector geometry, positioned text in bundled
+// fonts, local linear and radial gradients, clips, masks, Gaussian blur, and
+// embedded static PNG, JPEG, GIF and WebP images. Nested viewports require a
+// viewBox and finite absolute dimensions. The importer validates simple class
+// stylesheets and non-painting editor metadata before emitting the scene.
+// Frozen MathJax uses its own text outline and ex measurement rules.
 func ImportNode(ctx context.Context, source string, data []byte, limits Limits) (*Result, error) {
 	return ImportNodeWithOptions(ctx, source, data, limits, ImportOptions{})
 }
@@ -150,7 +142,9 @@ func ImportNodeWithOptions(ctx context.Context, source string, data []byte, limi
 	if err != nil {
 		return nil, err
 	}
-	node, err := importer.instantiate(root, defaultSVGStyleWithColor(rootCurrentColor), "", 0, false)
+	rootStyle := defaultSVGStyleWithColor(rootCurrentColor)
+	rootStyle.viewport = viewport.viewBox
+	node, err := importer.instantiate(root, rootStyle, "", 0, false)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +174,7 @@ func ImportNodeWithOptions(ctx context.Context, source string, data []byte, limi
 			ParsedAttributeBytes: importer.parsedAttrBytes,
 			ParsedPathCommands:   importer.parsedPathCommand,
 			ParsedTransformFuncs: importer.parsedTransforms,
-			DeclaredResources:    len(importer.ids) + len(importer.assets),
+			DeclaredResources:    importer.declaredIDs + len(importer.assets),
 			ExpandedUseInstances: importer.useInstances,
 			EmittedElements:      importer.emittedElements,
 			EmittedPathCommands:  importer.emittedCommands,
@@ -191,11 +185,8 @@ func ImportNodeWithOptions(ctx context.Context, source string, data []byte, limi
 	}, nil
 }
 
-// validateImportedBounds is iterative so a caller-selected depth limit cannot
-// turn otherwise bounded input into a Go call-stack failure. Primitive and
-// clip bounds under their composed affine transforms form the complete
-// finite-value preflight; this importer does not produce masks, filters, or
-// animations.
+// Validate composed primitive, clip and mask bounds without recursing into
+// caller-selected SVG depths. The rasterizer budgets transformed filters.
 func validateImportedBounds(ctx context.Context, root *d2scene.Node, viewport d2scene.Matrix) error {
 	type entry struct {
 		node      *d2scene.Node
@@ -231,6 +222,9 @@ func validateImportedBounds(ctx context.Context, root *d2scene.Node, viewport d2
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if mask := current.node.Mask; mask != nil {
+			stack = append(stack, entry{node: mask.Root, transform: transform.Mul(mask.Transform)})
 		}
 		for index := len(current.node.Children) - 1; index >= 0; index-- {
 			stack = append(stack, entry{node: current.node.Children[index], transform: transform})
@@ -312,7 +306,7 @@ func validatePrimitiveBounds(ctx context.Context, primitive d2scene.Primitive, t
 }
 
 func validateImportLimits(limits Limits) error {
-	if limits.MaxBytes <= 0 || limits.MaxDepth <= 0 || limits.MaxElements <= 0 ||
+	if limits.MaxBytes <= 0 || limits.MaxDecodedRasterBytes < 0 || limits.MaxDepth <= 0 || limits.MaxElements <= 0 ||
 		limits.MaxAttributes <= 0 || limits.MaxAttributeBytes <= 0 || limits.MaxPathCommands <= 0 ||
 		limits.MaxTransformFunctions <= 0 || limits.MaxUseDepth <= 0 || limits.MaxResources <= 0 {
 		return fmt.Errorf("d2svgimport: all import limits must be positive")
@@ -339,7 +333,10 @@ type svgElement struct {
 	href         string
 	useX         float64
 	useY         float64
-	gradient     *d2scene.LinearGradient
+	maskRegion   *svgEffectRegion
+	filterRegion *svgEffectRegion
+	blur         d2scene.GaussianBlur
+	gradient     *svgGradient
 	gradientStop *d2scene.GradientStop
 	clipPath     *compiledClipPath
 	viewport     *svgViewport
@@ -356,7 +353,11 @@ type svgImporter struct {
 	stylesheetRules  []stylesheetRule
 	elementNamespace string
 	namespaceSet     bool
+	buildingMask     bool
+	textFonts        *svgTextFonts
+	shapedRunes      int
 
+	declaredIDs        int
 	parsedElements     int
 	parsedAttributes   int
 	parsedAttrBytes    int
@@ -440,13 +441,22 @@ func (i *svgImporter) parse(data []byte) (*svgElement, error) {
 			}
 			element := &svgElement{name: name, id: id, isRoot: root == nil, attrs: attributes, metadata: metadata, attrOrder: attributeOrder}
 			if id != "" {
-				if _, exists := i.ids[id]; exists {
-					return nil, i.errorf("duplicate id")
-				}
-				if len(i.ids) >= i.limits.MaxResources {
+				if i.declaredIDs >= i.limits.MaxResources {
 					return nil, i.errorf("ID resource count exceeds limit %d", i.limits.MaxResources)
 				}
-				i.ids[id] = element
+				i.declaredIDs++
+				if previous, exists := i.ids[id]; exists {
+					// Editors reuse descriptive IDs on unrelated paths. Neither
+					// node needs an ID in the scene unless it is referenced.
+					// Keep ambiguous fragment targets unresolvable.
+					if previous != nil {
+						previous.id = ""
+					}
+					element.id = ""
+					i.ids[id] = nil
+				} else {
+					i.ids[id] = element
+				}
 			}
 			if len(stack) == 0 {
 				root = element
@@ -483,7 +493,7 @@ func (i *svgImporter) parse(data []byte) (*svgElement, error) {
 				}
 				continue
 			}
-			if len(stack) != 0 && stack[len(stack)-1].name == "title" {
+			if len(stack) != 0 && isDescription(stack[len(stack)-1].name) {
 				if err := checkpointXMLText(i.ctx, token); err != nil {
 					return nil, err
 				}
@@ -501,7 +511,7 @@ func (i *svgImporter) parse(data []byte) (*svgElement, error) {
 				}
 				continue
 			}
-			if len(stack) != 0 && stack[len(stack)-1].name == "text" {
+			if len(stack) != 0 && (stack[len(stack)-1].name == "text" || stack[len(stack)-1].name == "tspan") {
 				if err := i.appendPaintedText(stack[len(stack)-1], token); err != nil {
 					return nil, err
 				}
@@ -738,11 +748,11 @@ func (i *svgImporter) elementName(name xml.Name) (string, error) {
 			return "", i.errorf("element <%s> mixes SVG and empty namespaces", displayXMLName(name.Local))
 		}
 		switch name.Local {
-		case "svg", "g", "defs", "style", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "image", "text", "use", "clipPath", "linearGradient", "stop", "title", "metadata":
+		case "svg", "g", "defs", "style", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "image", "text", "tspan", "use", "mask", "filter", "feGaussianBlur", "clipPath", "linearGradient", "radialGradient", "stop", "title", "desc", "metadata":
 			return name.Local, nil
 		case "script", "foreignObject":
 			return "", i.errorf("forbidden element <%s>", name.Local)
-		case "radialGradient", "pattern":
+		case "pattern":
 			return "", i.errorf("unsupported paint server <%s>", name.Local)
 		default:
 			return "", i.errorf("unknown element <%s>", displayXMLName(name.Local))
@@ -756,7 +766,7 @@ func (i *svgImporter) elementName(name xml.Name) (string, error) {
 			return "cc:Work", nil
 		}
 	case dublinCoreNamespace:
-		if name.Local == "format" || name.Local == "type" {
+		if name.Local == "format" || name.Local == "type" || name.Local == "title" {
 			return "dc:" + name.Local, nil
 		}
 	case sodipodiNamespace:
@@ -804,6 +814,8 @@ func (i *svgImporter) attributes(element string, input []xml.Attr) (map[string]s
 		if ignored {
 			if attribute.Name.Space == "" {
 				metadata[attribute.Name.Local] = attribute.Value
+			} else if attribute.Name.Space == xmlNamespace && attribute.Name.Local == "space" {
+				metadata["xml:space"] = strings.TrimSpace(attribute.Value)
 			}
 			continue
 		}

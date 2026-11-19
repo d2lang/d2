@@ -18,14 +18,36 @@ var presentationProperties = map[string]struct{}{
 	"fill": {}, "stroke": {}, "opacity": {}, "fill-opacity": {}, "stroke-opacity": {},
 	"stroke-width": {}, "stroke-linecap": {}, "stroke-linejoin": {}, "stroke-miterlimit": {},
 	"stroke-dasharray": {}, "stroke-dashoffset": {}, "fill-rule": {}, "clip-rule": {}, "clip-path": {}, "color": {},
+	"font-size": {}, "font-family": {}, "mask": {}, "filter": {}, "overflow": {}, "vector-effect": {}, "enable-background": {}, "isolation": {}, "mix-blend-mode": {},
 	"display": {}, "visibility": {}, "transform": {}, "stop-color": {}, "stop-opacity": {},
 }
 
+type svgPaint struct {
+	color        color.NRGBA
+	currentColor bool
+	gradient     *svgGradient
+}
+
+func (p *svgPaint) resolve(ctx context.Context, style svgStyle, opacity float64) (d2scene.Paint, error) {
+	if p == nil {
+		return nil, nil
+	}
+	if p.gradient != nil {
+		return p.gradient.paint(ctx, style.viewport, opacity)
+	}
+	c := p.color
+	if p.currentColor {
+		c = style.color
+	}
+	c.A = uint8(math.Round(float64(c.A) * opacity))
+	return d2scene.SolidPaint{Color: c}, nil
+}
+
 type svgStyle struct {
-	fill          d2scene.Paint
-	stroke        d2scene.Paint
-	fillCurrent   bool
-	strokeCurrent bool
+	fill, stroke  *svgPaint
+	viewport      d2scene.Box
+	fontSize      float64
+	fontFamily    string
 	color         color.NRGBA
 	fillOpacity   float64
 	strokeOpacity float64
@@ -38,6 +60,8 @@ type svgStyle struct {
 	fillRule      d2scene.FillRule
 	clipRule      d2scene.FillRule
 	clipPathID    string
+	maskID        string
+	filterID      string
 	opacity       float64
 	display       bool
 	visible       bool
@@ -50,7 +74,7 @@ func defaultSVGStyle() svgStyle {
 func defaultSVGStyleWithColor(currentColor color.NRGBA) svgStyle {
 	black := color.NRGBA{A: 255}
 	return svgStyle{
-		fill: d2scene.SolidPaint{Color: black}, color: currentColor,
+		fill: &svgPaint{color: black}, color: currentColor, fontSize: 16,
 		fillOpacity: 1, strokeOpacity: 1, strokeWidth: 1,
 		lineCap: d2scene.CapButt, lineJoin: d2scene.JoinMiter, miterLimit: 4,
 		fillRule: d2scene.NonZero, clipRule: d2scene.NonZero, opacity: 1, display: true, visible: true,
@@ -77,7 +101,7 @@ func (i *svgImporter) declarationsFor(element *svgElement) (map[string]string, e
 				return nil, err
 			}
 		}
-		if !elementHasClass(element, rule.class) {
+		if !rule.matches(element) {
 			continue
 		}
 		for property, value := range rule.declarations {
@@ -153,18 +177,6 @@ func (i *svgImporter) declarationsFor(element *svgElement) (map[string]string, e
 		property = strings.ToLower(property)
 		if !validCSSPropertyName(property) || value == "" {
 			return nil, i.errorf("element <%s> has malformed inline style", element.name)
-		}
-		if property == "enable-background" {
-			if !element.isRoot {
-				return nil, i.errorf("element <%s> has unsupported enable-background outside the root <svg>", element.name)
-			}
-			if err := validateEnableBackground(i.ctx, value); err != nil {
-				if contextErr := i.ctx.Err(); contextErr != nil {
-					return nil, contextErr
-				}
-				return nil, i.errorf("root <svg> has invalid enable-background: %v", err)
-			}
-			continue
 		}
 		if property == "vertical-align" {
 			if !element.isRoot {
@@ -265,14 +277,48 @@ func validCSSPropertyName(value string) bool {
 
 func (i *svgImporter) computeStyle(parent svgStyle, element *svgElement) (svgStyle, error) {
 	style := parent
+	if element.viewport != nil {
+		style.viewport = element.viewport.viewBox
+	}
 	// Opacity and display do not inherit in SVG. Visibility and all of the
 	// paint/stroke properties represented here do. clip-path is also reset:
 	// unlike clip-rule, it is not inherited.
 	style.opacity = 1
 	style.display = true
 	style.clipPathID = ""
+	style.maskID = ""
+	style.filterID = ""
 
 	declarations := element.declarations
+	// Normal source-over painting does not read the backdrop. Isolation and
+	// legacy background buffers have no effect for the supported paint modes.
+	if value, ok := declarations["overflow"]; ok && (value != "visible" || (element.name != "use" && element.name != "image" && element.name != "style")) {
+		return svgStyle{}, i.propertyError(element, "overflow", fmt.Errorf("only overflow=\"visible\" on <use> or <image> is supported"))
+	}
+	if family, ok := declarations["font-family"]; ok && !equalASCIIEqualFold(family, "inherit") {
+		style.fontFamily = family
+	}
+	if value, ok := declarations["font-size"]; ok && !equalASCIIEqualFold(value, "inherit") {
+		size, err := parseSVGLength(value, true)
+		if err != nil || size < 0 || size > 32767 {
+			return svgStyle{}, i.propertyError(element, "font-size", fmt.Errorf("expected a finite absolute length between 0 and 32767px"))
+		}
+		style.fontSize = size
+	}
+	if value, ok := declarations["vector-effect"]; ok && !equalASCIIEqualFold(value, "none") {
+		return svgStyle{}, i.propertyError(element, "vector-effect", fmt.Errorf("only none is supported"))
+	}
+	if value, ok := declarations["isolation"]; ok && !equalASCIIEqualFold(value, "auto") && !equalASCIIEqualFold(value, "isolate") && !equalASCIIEqualFold(value, "inherit") {
+		return svgStyle{}, i.propertyError(element, "isolation", fmt.Errorf("expected auto or isolate"))
+	}
+	if value, ok := declarations["mix-blend-mode"]; ok && !equalASCIIEqualFold(value, "normal") && !equalASCIIEqualFold(value, "inherit") {
+		return svgStyle{}, i.propertyError(element, "mix-blend-mode", fmt.Errorf("only normal blending is supported"))
+	}
+	if value, ok := declarations["enable-background"]; ok {
+		if err := validateEnableBackground(i.ctx, value); err != nil {
+			return svgStyle{}, i.propertyError(element, "enable-background", err)
+		}
+	}
 	if value, ok := declarations["color"]; ok {
 		if equalASCIIEqualFold(value, "inherit") || equalASCIIEqualFold(value, "currentColor") {
 			style.color = parent.color
@@ -285,34 +331,20 @@ func (i *svgImporter) computeStyle(parent svgStyle, element *svgElement) (svgSty
 		}
 	}
 
-	if value, ok := declarations["fill"]; ok {
-		if equalASCIIEqualFold(value, "inherit") {
-			style.fill = parent.fill
-			style.fillCurrent = parent.fillCurrent
-		} else {
-			paint, current, err := i.parseSVGPaint(value)
-			if err != nil {
-				return svgStyle{}, i.propertyError(element, "fill", err)
-			}
-			style.fill = paint
-			style.fillCurrent = current
+	var err error
+	if value, ok := declarations["fill"]; ok && !equalASCIIEqualFold(value, "inherit") {
+		style.fill, err = i.parseSVGPaint(value)
+		if err != nil {
+			return svgStyle{}, i.propertyError(element, "fill", err)
 		}
 	}
-	if value, ok := declarations["stroke"]; ok {
-		if equalASCIIEqualFold(value, "inherit") {
-			style.stroke = parent.stroke
-			style.strokeCurrent = parent.strokeCurrent
-		} else {
-			paint, current, err := i.parseSVGPaint(value)
-			if err != nil {
-				return svgStyle{}, i.propertyError(element, "stroke", err)
-			}
-			style.stroke = paint
-			style.strokeCurrent = current
+	if value, ok := declarations["stroke"]; ok && !equalASCIIEqualFold(value, "inherit") {
+		style.stroke, err = i.parseSVGPaint(value)
+		if err != nil {
+			return svgStyle{}, i.propertyError(element, "stroke", err)
 		}
 	}
 
-	var err error
 	if style.fillOpacity, err = i.inheritedOpacity(element, declarations, "fill-opacity", parent.fillOpacity); err != nil {
 		return svgStyle{}, err
 	}
@@ -442,10 +474,22 @@ func (i *svgImporter) computeStyle(parent svgStyle, element *svgElement) (svgSty
 		if equalASCIIEqualFold(value, "none") {
 			style.clipPathID = ""
 		} else {
-			style.clipPathID, err = i.localClipPathID(value)
+			style.clipPathID, err = i.localResourceID(value, "clipPath")
 			if err != nil {
 				return svgStyle{}, i.propertyError(element, "clip-path", err)
 			}
+		}
+	}
+	if value, ok := declarations["mask"]; ok && !equalASCIIEqualFold(value, "none") {
+		style.maskID, err = i.localResourceID(value, "mask")
+		if err != nil {
+			return svgStyle{}, i.propertyError(element, "mask", err)
+		}
+	}
+	if value, ok := declarations["filter"]; ok && !equalASCIIEqualFold(value, "none") {
+		style.filterID, err = i.localResourceID(value, "filter")
+		if err != nil {
+			return svgStyle{}, i.propertyError(element, "filter", err)
 		}
 	}
 	if value, ok := declarations["opacity"]; ok {
@@ -516,25 +560,28 @@ func (i *svgImporter) propertyError(element *svgElement, property string, err er
 	return i.errorf("element <%s> has invalid %s: %v", element.name, property, err)
 }
 
-func (i *svgImporter) parseSVGPaint(value string) (d2scene.Paint, bool, error) {
+func (i *svgImporter) parseSVGPaint(value string) (*svgPaint, error) {
 	if len(value) > 4096 {
-		return nil, false, fmt.Errorf("paint value is too long")
+		return nil, fmt.Errorf("paint value is too long")
 	}
 	trimmed := strings.TrimSpace(value)
 	switch {
 	case equalASCIIEqualFold(trimmed, "none"):
-		return nil, false, nil
+		return nil, nil
 	case equalASCIIEqualFold(trimmed, "currentColor"):
-		return nil, true, nil
+		return &svgPaint{currentColor: true}, nil
 	case strings.Contains(strings.ToLower(trimmed), "url("):
-		paint, err := i.localLinearGradientPaint(trimmed)
-		return paint, false, err
+		gradient, err := i.localGradient(trimmed)
+		if err != nil {
+			return nil, err
+		}
+		return &svgPaint{gradient: gradient}, nil
 	}
 	parsed, err := parseSolidColor(trimmed)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	return d2scene.SolidPaint{Color: parsed}, false, nil
+	return &svgPaint{color: parsed}, nil
 }
 
 func parseSolidColor(value string) (color.NRGBA, error) {
@@ -808,38 +855,16 @@ func isSVGListSpace(value byte) bool {
 	}
 }
 
-func paintWithOpacity(ctx context.Context, paint d2scene.Paint, opacity float64) (d2scene.Paint, error) {
-	if paint == nil {
-		return nil, nil
-	}
-	switch paint := paint.(type) {
-	case d2scene.SolidPaint:
-		paint.Color.A = uint8(math.Round(float64(paint.Color.A) * opacity))
-		return paint, nil
-	case d2scene.LinearGradient:
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		stops := make([]d2scene.GradientStop, len(paint.Stops))
-		for index, stop := range paint.Stops {
-			if index&255 == 0 {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
+func stopsWithOpacity(ctx context.Context, stops []d2scene.GradientStop, opacity float64) ([]d2scene.GradientStop, error) {
+	owned := make([]d2scene.GradientStop, len(stops))
+	for index, stop := range stops {
+		if index&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
-			stops[index] = stop
 		}
-		paint.Stops = stops
-		for index := range stops {
-			if index&255 == 0 {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-			}
-			paint.Stops[index].Color.A = uint8(math.Round(float64(paint.Stops[index].Color.A) * opacity))
-		}
-		return paint, nil
-	default:
-		return nil, nil
+		stop.Color.A = uint8(math.Round(float64(stop.Color.A) * opacity))
+		owned[index] = stop
 	}
+	return owned, nil
 }
