@@ -12,18 +12,19 @@ import (
 
 	"github.com/d2lang/d2/d2renderers/d2isometric"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/label"
 )
 
 func TestNativeConnectionCaptionPositionAndPercentage(t *testing.T) {
 	points := []Vec{nv(0, .1, 0), nv(4, .1, 0), nv(4, .1, 4)}
 	original := d2target.Connection{LabelPosition: "UNLOCKED_TOP", LabelPercentage: .75, StrokeWidth: 2}
 	s, ok := nativeConnectionCaptionSurface(points, original, 2, .4, .01)
-	if !ok || math.Abs(s.center.X-4.26) > 1e-8 || math.Abs(s.center.Z-2) > 1e-8 || math.Abs(s.angle-math.Pi/2) > 1e-8 || s.width != 2 || s.depth != .4 {
+	if !ok || math.Abs(s.center.X-5.06) > 1e-8 || math.Abs(s.center.Z-2) > 1e-8 || s.angle != 0 || s.width != 2 || s.depth != .4 {
 		t.Fatalf("percentage/normal/angle not preserved: %+v %v", s, ok)
 	}
 	original.LabelPosition = "UNLOCKED_BOTTOM"
 	s, _ = nativeConnectionCaptionSurface(points, original, 2, .4, .01)
-	if math.Abs(s.center.X-3.74) > 1e-8 {
+	if math.Abs(s.center.X-2.94) > 1e-8 {
 		t.Fatalf("below position ignored: %+v", s)
 	}
 	original.LabelPosition = "INSIDE_MIDDLE_LEFT"
@@ -342,10 +343,10 @@ func TestNativeCaptionOrientationUsesCompleteRouteRuns(t *testing.T) {
 	for _, segments := range []int{1, 10, 1000} {
 		points := make([]Vec, segments+1)
 		for i := range points {
-			points[i] = nv(0, .08, float64(i)*10/float64(segments))
+			points[i] = nv(float64(i)*8/float64(segments), .08, float64(i)*3/float64(segments))
 		}
 		surface, ok := nativeConnectionCaptionSurface(points, original, 1.2, .3, .01)
-		if !ok || surface.angle != math.Pi/2 || nlen(nsub(surface.center, nv(0, .086, 5))) > 1e-10 {
+		if !ok || math.Abs(surface.angle-math.Atan2(3, 8)) > 1e-12 || nlen(nsub(surface.center, nv(4, .086, 1.5))) > 1e-10 {
 			t.Fatalf("subdividing a long straight leg changed print direction or anchor: %d segments, %+v", segments, surface)
 		}
 	}
@@ -356,5 +357,42 @@ func TestNativeCaptionOrientationUsesCompleteRouteRuns(t *testing.T) {
 	surface, ok := nativeConnectionCaptionSurface(points, original, 1.2, .3, .01)
 	if !ok || surface.angle != 0 || nlen(nsub(surface.center, nv(0, .086, .5))) > 1e-10 {
 		t.Fatalf("an adjacent leg caused the label to extend across the elbow: %+v", surface)
+	}
+}
+
+func TestCaptionReadingAngleInProjection(t *testing.T) {
+	camera := nativeCameraAxes()
+	for _, end := range []Vec{nv(0, 0, 12), nv(0, 0, -12), nv(1, 0, 12), nv(-1, 0, -12), nv(12, 0, 3), nv(-12, 0, -3)} {
+		points := []Vec{{}, end}
+		positioned, ok := nativeConnectionCaptionSurface(points, d2target.Connection{LabelPosition: "INSIDE_MIDDLE_CENTER"}, 1, .3, .01)
+		if !ok {
+			t.Fatal("missing authored caption")
+		}
+		automatic := newRouteCaptionPlacer().Place(points, .5, 1, .3)
+		for _, s := range []labelSurface{positioned, automatic} {
+			baseline := nv(math.Cos(s.angle), 0, math.Sin(s.angle))
+			x, y := ndot(baseline, camera.right), ndot(baseline, camera.up)
+			if x <= 0 || math.Abs(y) > x {
+				t.Fatalf("route to %+v produced unreadable projected baseline (%g, %g)", end, x, y)
+			}
+		}
+	}
+}
+
+func TestShortDisplayedRouteClearsUprightCaption(t *testing.T) {
+	// A raw diagram can supply the endpoints without the original route.
+	// Its short diagonal requires a source-axis caption next to the wire.
+	end := nv(.8, 0, .3)
+	axis := nunit(end)
+	const width, depth = 2., .3
+	original := d2target.Connection{LabelPosition: "OUTSIDE_BOTTOM_CENTER", StrokeWidth: 2}
+	s, ok := nativeConnectionCaptionSurface([]Vec{{}, end}, original, width, depth, .01)
+	if !ok || s.angle != 0 {
+		t.Fatalf("expected an upright caption, got %+v", s)
+	}
+	offset := ndot(nsub(s.center, nmul(end, .5)), nv(-axis.Z, 0, axis.X))
+	clearance := offset - (math.Abs(axis.Z)*width+math.Abs(axis.X)*depth)/2
+	if math.Abs(clearance-(float64(original.StrokeWidth)/2+label.PADDING)*.01) > 1e-8 {
+		t.Fatalf("upright caption leaves %g clearance from the wire", clearance)
 	}
 }
