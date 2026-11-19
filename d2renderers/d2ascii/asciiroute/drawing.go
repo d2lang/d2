@@ -41,6 +41,7 @@ func drawSegmentBetweenPoints(ctx context.Context, rd RouteDrawer, start, end *g
 	// spaces, so drawing mid-segment lets a "-" land on a space in the label.
 	labelX, labelY := 0, 0
 	drawLabel := false
+	var arrowheads []Point
 
 	for {
 		attempt++
@@ -70,8 +71,11 @@ func drawSegmentBetweenPoints(ctx context.Context, rd RouteDrawer, start, end *g
 		}
 
 		// Draw the appropriate character at this position
-		drawRoutePoint(rd, x, y, sx, sy, segmentIndex, len(conn.Route), ax, ay, cx, cy,
+		arrow, drewArrow := drawRoutePoint(rd, x, y, sx, sy, segmentIndex, len(conn.Route), ax, ay, cx, cy,
 			conn, corners, arrows, turnDir, frmBoundary, toBoundary)
+		if drewArrow && labelPos != nil {
+			arrowheads = append(arrowheads, arrow)
+		}
 
 		// Remember where the label belongs; it is drawn once the segment is done
 		if labelPos != nil && labelPos.ShouldDrawAt(segmentIndex-1, x, y, ax, ay, sx, sy) {
@@ -84,13 +88,15 @@ func drawSegmentBetweenPoints(ctx context.Context, rd RouteDrawer, start, end *g
 	}
 
 	if drawLabel {
-		drawConnectionLabel(rd, labelPos, label, conn.LabelPosition, labelX, labelY, sx, sy, conn.Route, segmentIndex)
+		drawConnectionLabel(rd, labelPos, label, conn.LabelPosition, labelX, labelY, sx, sy, conn.Route, arrowheads)
 	}
 }
 
+// drawRoutePoint reports the cell occupied by an arrowhead, which can sit one
+// cell back from the geometric endpoint when the route meets a shape.
 func drawRoutePoint(rd RouteDrawer, x, y int, sx, sy float64, segmentIndex, routeLen int,
 	ax, ay, cx, cy float64, conn d2target.Connection, corners, arrows, turnDir map[string]string,
-	frmBoundary, toBoundary Boundary) {
+	frmBoundary, toBoundary Boundary) (Point, bool) {
 
 	canvas := rd.GetCanvas()
 	key := fmt.Sprintf("%d_%d", x, y)
@@ -100,18 +106,18 @@ func drawRoutePoint(rd RouteDrawer, x, y int, sx, sy float64, segmentIndex, rout
 	if char, ok := corners[turnDir[key]]; ok {
 		log.Debug(rd.GetContext(), "drawing corner", slog.Int("x", x), slog.Int("y", y), slog.String("char", char), slog.String("direction", turnDir[key]))
 		canvas.Set(x, y, char)
-		return
+		return Point{}, false
 	}
 
 	// Check for destination arrow
 	if segmentIndex == routeLen-1 && x == int(math.Round(cx)) && y == int(math.Round(cy)) && conn.DstArrow != d2target.NoArrowhead {
 		log.Debug(rd.GetContext(), "drawing destination arrow", slog.Int("x", x), slog.Int("y", y))
-		drawArrowhead(rd, x, y, sx, sy, arrows)
+		arrow := drawArrowhead(rd, x, y, sx, sy, arrows)
 		if conn.DstLabel != nil {
 			log.Debug(rd.GetContext(), "drawing destination label", slog.String("label", conn.DstLabel.Label))
 			drawDestinationLabel(rd, conn.DstLabel.Label, cx, cy, sx, sy)
 		}
-		return
+		return arrow, true
 	}
 
 	// Check for source arrow
@@ -123,12 +129,13 @@ func drawRoutePoint(rd RouteDrawer, x, y int, sx, sy float64, segmentIndex, rout
 			log.Debug(rd.GetContext(), "drawing source label", slog.String("label", conn.SrcLabel.Label))
 			drawSourceLabel(rd, conn.SrcLabel.Label, ax, cy, cx, sx, sy)
 		}
-		return
+		return Point{X: x, Y: y}, true
 	}
 
 	// Default: draw route segment
 	log.Debug(rd.GetContext(), "drawing route segment", slog.Int("x", x), slog.Int("y", y), slog.String("existing", string(existingChar)))
 	drawRouteSegment(rd.GetContext(), rd, x, y, sx, sy, frmBoundary, toBoundary)
+	return Point{}, false
 }
 
 func drawRouteSegment(ctx context.Context, rd RouteDrawer, x, y int, sx, sy float64, frmBoundary, toBoundary Boundary) {
@@ -192,7 +199,7 @@ func drawHorizontalSegment(ctx context.Context, rd RouteDrawer, x, y int, sx flo
 	}
 }
 
-func drawArrowhead(rd RouteDrawer, x, y int, sx, sy float64, arrows map[string]string) {
+func drawArrowhead(rd RouteDrawer, x, y int, sx, sy float64, arrows map[string]string) Point {
 	canvas := rd.GetCanvas()
 	arrowKey := fmt.Sprintf("%d%d", geo.Sign(sx), geo.Sign(sy))
 
@@ -203,13 +210,11 @@ func drawArrowhead(rd RouteDrawer, x, y int, sx, sy float64, arrows map[string]s
 		arrowX := x - int(math.Round(sx))
 		arrowY := y - int(math.Round(sy))
 		if canvas.IsInBounds(arrowX, arrowY) {
-			canvas.Set(arrowX, arrowY, arrows[arrowKey])
-		} else {
-			canvas.Set(x, y, arrows[arrowKey])
+			x, y = arrowX, arrowY
 		}
-	} else {
-		canvas.Set(x, y, arrows[arrowKey])
 	}
+	canvas.Set(x, y, arrows[arrowKey])
+	return Point{X: x, Y: y}
 }
 
 // Drawing helper functions

@@ -85,7 +85,7 @@ func calculateBestLabelPosition(rd RouteDrawer, routes []*geo.Point, label strin
 	}
 }
 
-func drawConnectionLabel(rd RouteDrawer, labelPos *RouteLabelPosition, label, labelPosition string, x, y int, sx, sy float64, routes []*geo.Point, i int) {
+func drawConnectionLabel(rd RouteDrawer, labelPos *RouteLabelPosition, label, labelPosition string, x, y int, sx, sy float64, routes []*geo.Point, arrowheads []Point) {
 	canvas := rd.GetCanvas()
 	lines := strings.Split(label, "\n")
 
@@ -126,11 +126,19 @@ func drawConnectionLabel(rd RouteDrawer, labelPos *RouteLabelPosition, label, la
 			xPos = int(routes[labelPos.I+((geo.Sign(sx)+1)/2)].X) - maxLineLen/2
 		}
 
+		labelY := y + yFactor
+		for _, arrow := range arrowheads {
+			row := arrow.Y - labelY
+			if row >= 0 && row < len(lines) && arrow.X >= xPos && arrow.X-xPos < utf8.RuneCountInString(lines[row]) {
+				canvas.DrawLabelAbove(xPos, y, label)
+				return
+			}
+		}
 		for lineIdx, line := range lines {
 			col := 0
 			for _, ch := range line {
-				if isInBounds(rd, xPos+col, y+yFactor+lineIdx) {
-					canvas.Set(xPos+col, y+yFactor+lineIdx, string(ch))
+				if isInBounds(rd, xPos+col, labelY+lineIdx) {
+					canvas.Set(xPos+col, labelY+lineIdx, string(ch))
 				}
 				col++
 			}

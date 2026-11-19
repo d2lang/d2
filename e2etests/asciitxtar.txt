@@ -278,3 +278,9 @@ dang_nhap -> csdl
 -- vietnamese-horizontal-edge-label --
 direction: right
 a -> b: sang Mỹ
+
+-- sequence-label-arrowheads --
+shape: sequence_diagram
+a -> b: initializing...
+b -> a: initializing...
+a <-> b: initializing...\n\n\nawaiting reply
