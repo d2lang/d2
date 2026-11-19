@@ -3,11 +3,13 @@ package d2animate
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"math"
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2sketch"
 	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2renderers/internal/svgframe"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/version"
 )
@@ -49,17 +51,24 @@ func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderO
 	}
 	buf := &bytes.Buffer{}
 
-	// TODO account for stroke width of root border
-
 	pad := d2svg.DEFAULT_PADDING
 	if renderOpts.Pad != nil {
 		pad = int(*renderOpts.Pad)
 	}
 	tl, br := rootDiagram.NestedBoundingBox()
-	left := tl.X - pad
-	top := tl.Y - pad
-	width := br.X - tl.X + pad*2
-	height := br.Y - tl.Y + pad*2
+	viewport := image.Rect(tl.X-pad, tl.Y-pad, br.X+pad, br.Y+pad)
+	// Rendered frames can extend beyond the diagram, for example when one
+	// board has a forced appendix. All frames share the same viewport.
+	for _, svg := range svgs {
+		if frame, ok := svgframe.Read(svg); ok {
+			viewport = viewport.Union(frame.ViewBox)
+		}
+	}
+	left, top := viewport.Min.X, viewport.Min.Y
+	width, height := viewport.Dx(), viewport.Dy()
+	if width < 0 || height < 0 {
+		return nil, fmt.Errorf("animation viewport dimensions exceed the supported range")
+	}
 
 	var dimensions string
 	if renderOpts.Scale != nil {

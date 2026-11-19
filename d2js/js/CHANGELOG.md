@@ -5,6 +5,8 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Support `forceAppendix` with `animateInterval` to show each board's numbered tooltips and links in its animation frame.
+
 ## [0.1.34]
 ### September 7, 2026
 
