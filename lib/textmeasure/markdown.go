@@ -6,9 +6,9 @@ import (
 	"math"
 	"strings"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	goldmarkHtml "github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/parser"
+	goldmarkHtml "github.com/yuin/goldmark/v2/renderer/html"
 	"golang.org/x/net/html"
 
 	"github.com/d2lang/util-go/go2"
@@ -16,7 +16,18 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 )
 
-var markdownRenderer goldmark.Markdown
+var markdownParser = parser.New(parser.WithExtensions(
+	extension.NewStrikethroughParser(),
+	extension.NewTableParser(),
+))
+var markdownRenderer = goldmarkHtml.New(
+	goldmarkHtml.WithUnsafe(),
+	goldmarkHtml.WithXHTML(),
+	goldmarkHtml.WithExtensions(
+		extension.NewStrikethroughHTMLRenderer(),
+		extension.NewTableHTMLRenderer(),
+	),
+)
 
 // these are css values from github-markdown.css so we can accurately compute the rendered dimensions
 const (
@@ -111,7 +122,8 @@ func hasMarkdownHeadingAncestor(n *html.Node) bool {
 
 func RenderMarkdown(m string) (string, error) {
 	var output bytes.Buffer
-	if err := markdownRenderer.Convert([]byte(m), &output); err != nil {
+	source := []byte(m)
+	if err := markdownRenderer.Render(&output, source, markdownParser.Parse(source)); err != nil {
 		return "", err
 	}
 	sanitized, err := sanitizeLinks(output.String())
@@ -119,19 +131,6 @@ func RenderMarkdown(m string) (string, error) {
 		return "", err
 	}
 	return sanitized, nil
-}
-
-func init() {
-	markdownRenderer = goldmark.New(
-		goldmark.WithRendererOptions(
-			goldmarkHtml.WithUnsafe(),
-			goldmarkHtml.WithXHTML(),
-		),
-		goldmark.WithExtensions(
-			extension.Strikethrough,
-			extension.Table,
-		),
-	)
 }
 
 func MeasureMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, fontSize int) (width, height int, err error) {

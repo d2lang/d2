@@ -72,7 +72,9 @@ func (b *builder) compileLinkRegions() error {
 		if err := b.addAppendixItem(fmt.Sprintf("shape[%d] %q", index, targetShape.ID), "tooltip", targetShape.Tooltip); err != nil {
 			return err
 		}
-		if err := b.addAppendixItem(fmt.Sprintf("shape[%d] %q", index, targetShape.ID), "prettyLink", targetShape.PrettyLink); err != nil {
+		// appendixIconNumbers numbers a link badge for every shape Link, so list
+		// every one, falling back to the Link when PrettyLink is empty.
+		if err := b.addAppendixItem(fmt.Sprintf("shape[%d] %q", index, targetShape.ID), "prettyLink", targetShape.AppendixLinkText()); err != nil {
 			return err
 		}
 	}

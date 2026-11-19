@@ -390,14 +390,17 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 
 	w := &nativeSVGWriter{ctx: ctx}
 	w.write(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="%d" height="%d" viewBox="0 0 %d %d" role="img"><title>D2 isometric diagram</title>`, scene.width, scene.height, scene.width, scene.height)
-	w.write(`<rect width="100%%" height="100%%" fill="%s"/>`, svgColor(float64(scene.background.R)/255, float64(scene.background.G)/255, float64(scene.background.B)/255))
 	if scene.backgroundPaint != nil {
-		document := nativePaintDocument(scene.backgroundPaint)
-		fragment, err := nativeSurfaceSVG(ctx, &nativeVectorSurface{document: document}, "background")
+		// Stretch the normalized gradient and its opaque backing together
+		// when the document wrapper expands or crops the background.
+		surface := &nativeVectorSurface{document: nativePaintDocument(scene.backgroundPaint), capBackground: &scene.background}
+		fragment, err := nativeSurfaceSVG(ctx, surface, "background")
 		if err != nil {
 			return nil, err
 		}
-		w.write(`<g transform="scale(%d %d)">%s</g>`, scene.width, scene.height, fragment)
+		w.write(`<svg width="100%%" height="100%%" viewBox="0 0 1 1" preserveAspectRatio="none">%s</svg>`, fragment)
+	} else {
+		w.write(`<rect width="100%%" height="100%%" fill="%s"/>`, nativeSVGColor(scene.background))
 	}
 	writeSVGGroundShadow(w, scene)
 	id := 0

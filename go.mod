@@ -21,7 +21,7 @@ require (
 	github.com/rivo/uniseg v0.4.7
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	github.com/yuin/goldmark v1.8.5
+	github.com/yuin/goldmark/v2 v2.1.16
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sync v0.22.0

@@ -11,7 +11,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/rivo/uniseg"
-	goldmarkHTML "github.com/yuin/goldmark/renderer/html"
+	goldmarkHTML "github.com/yuin/goldmark/v2/renderer/html"
 	"golang.org/x/net/html"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
@@ -336,7 +336,7 @@ func IsDangerousLink(link string) bool {
 		// in one pass, and a URL with an already-valid scheme settles immediately.
 		return true
 	}
-	return goldmarkHTML.IsDangerousURL([]byte(normalized))
+	return goldmarkHTML.IsDangerousURL(normalized)
 }
 
 const maxLinkNormalizationPasses = 8
