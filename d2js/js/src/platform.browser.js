@@ -1,11 +1,9 @@
-import { getWasmBinary, wasmExecJs } from "./wasm-loader.browser.js";
+import { compressedWasmBase64, wasmExecJs } from "./wasm-loader.browser.js";
 import workerScript from "./worker.js" with { type: "text" };
 
-// For the browser version, we build the wasm files into a file (wasm-loader.browser.js)
-// and loading a file just reads the text, so there's no external dependency calls
 export async function loadFile(path) {
   if (path === "./d2.wasm") {
-    return getWasmBinary();
+    return compressedWasmBase64;
   }
   return null;
 }

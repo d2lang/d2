@@ -1,3 +1,4 @@
+import { BrotliDecode } from "../vendor/decode.min.js";
 import { initWasm } from "./init-wasm.js";
 
 let currentPort;
@@ -113,4 +114,13 @@ export function setupMessageHandler(isNode, port, initWasm) {
   }
 }
 
-setupMessageHandler(false, self, initWasm);
+setupMessageHandler(false, self, (wasm) => {
+  if (typeof wasm === "string") {
+    const compressed =
+      typeof Uint8Array.fromBase64 === "function"
+        ? Uint8Array.fromBase64(wasm)
+        : Uint8Array.from(atob(wasm), (char) => char.charCodeAt(0));
+    wasm = BrotliDecode(compressed);
+  }
+  return initWasm(wasm);
+});
