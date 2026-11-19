@@ -44,22 +44,27 @@ func (m *Map) recursiveGlobContains(f *Field, triple bool) bool {
 	return len(path) != 0
 }
 
-// If there are fewer possible endpoint pairs than physical edges, use the
-// same indexed lookups as other selectors. Stop listing visible fields as
-// soon as their square exceeds the edge count.
-func (m *Map) recursiveEndpointsForLookup(edge *d2ast.Edge, edgeCount int, c *compiler) ([]*Field, bool) {
+// A dense set of parallel edges can be cheaper to look up by endpoint pair.
+// Stop this probe once the pairs cost more than an edge scan. Also cap visits
+// to skipped fields so choosing a plan costs at most one field visit per edge.
+func (m *Map) recursiveEndpointsForLookup(triple bool, edgeCount int, c *compiler) ([]*Field, bool) {
 	var fields []*Field
 	fits := func() bool {
 		n := len(fields)
 		return n == 0 || n <= edgeCount/n
 	}
-	visit := func(*Field) bool { return fits() && c.reserveGlobWork(edge, 1) }
-	if edge.Src.HasTripleGlob() {
-		m._tripleGlob(&fields, visit)
-	} else {
-		m._doubleGlob(&fields, visit)
+	visits := 0
+	visit := func(*Field) bool {
+		visits++
+		return visits <= edgeCount && fits() && !c.stopped()
 	}
-	return fields, fits()
+	var complete bool
+	if triple {
+		complete = m._tripleGlob(&fields, visit)
+	} else {
+		complete = m._doubleGlob(&fields, visit)
+	}
+	return fields, complete && fits()
 }
 
 // selectRecursiveEdges matches an existing-edge selector such as (** -> **)[*].
@@ -97,7 +102,7 @@ func (m *Map) selectRecursiveEdges(id *EdgeID, ref *RefContext, glob *globContex
 	// cheaper through the existing endpoint-pair index. Both paths charge
 	// their actual work to the same compilation-wide budget.
 	if edgeCount > 1 {
-		fields, usePairs := m.recursiveEndpointsForLookup(ref.Edge, edgeCount, c)
+		fields, usePairs := m.recursiveEndpointsForLookup(triple, edgeCount, c)
 		if c.stopped() {
 			return nil
 		}

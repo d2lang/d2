@@ -148,17 +148,37 @@ func TestRecursiveEdgeSelectorParallelWork(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		source string
-		work   int64
+		opts   d2compiler.CompileOptions
 		edges  int
 		bold   bool
 	}{
-		{"leading selector with default limit", undirected + strings.Repeat("a -> b\n", 365), 0, 365, false},
-		{"trailing selector with four endpoint pairs", strings.Repeat("a -> b\n", 8) + undirected, 4, 8, false},
-		{"styled endpoints", "a.style: {fill: red; stroke: black}\nb.style: {fill: blue; stroke: black}\n" + strings.Repeat("a -> b\n", 8) + undirected, 4, 8, false},
-		{"matching parallel edges in a container", "box: {\n" + strings.Repeat("a -> b\n", 16) + "}\n" + directed, 32, 16, true},
+		{
+			name:   "leading selector with default limit",
+			source: undirected + strings.Repeat("a -> b\n", 365),
+			edges:  365,
+		},
+		{
+			name:   "trailing selector with four endpoint pairs",
+			source: strings.Repeat("a -> b\n", 8) + undirected,
+			opts:   d2compiler.CompileOptions{MaxEdgeExpansionWork: 4, MaxGlobExpansion: 1},
+			edges:  8,
+		},
+		{
+			name:   "styled endpoints",
+			source: "a.style: {fill: red; stroke: black}\nb.style: {fill: blue; stroke: black}\n" + strings.Repeat("a -> b\n", 8) + undirected,
+			opts:   d2compiler.CompileOptions{MaxEdgeExpansionWork: 4},
+			edges:  8,
+		},
+		{
+			name:   "matching parallel edges in a container",
+			source: "box: {\n" + strings.Repeat("a -> b\n", 16) + "}\n" + directed,
+			opts:   d2compiler.CompileOptions{MaxEdgeExpansionWork: 32},
+			edges:  16,
+			bold:   true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g, _, err := d2compiler.Compile("parallel.d2", strings.NewReader(tc.source), &d2compiler.CompileOptions{MaxEdgeExpansionWork: tc.work})
+			g, _, err := d2compiler.Compile("parallel.d2", strings.NewReader(tc.source), &tc.opts)
 			if err != nil {
 				t.Fatal(err)
 			}
