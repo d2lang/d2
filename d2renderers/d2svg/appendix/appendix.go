@@ -1,11 +1,9 @@
-// appendix.go writes appendices/footnotes to SVG
-// Intended to be run only for static exports, like PNG or PDF.
-// SVG exports are already interactive.
-
+// Package appendix adds numbered footnotes to D2 SVGs and animation frames.
 package appendix
 
 import (
 	"fmt"
+	"image"
 	"regexp"
 	"sort"
 	"strconv"
@@ -14,6 +12,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2renderers/internal/svgframe"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/lib/color"
@@ -65,13 +64,59 @@ func FindViewboxSlice(svg []byte) []string {
 
 func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) []byte {
 	svg := string(in)
+	tl, br := diagram.BoundingBox()
+	isFrame := strings.HasPrefix(svg, "<g ")
+	var frame svgframe.Frame
+	if isFrame {
+		var ok bool
+		frame, ok = svgframe.Read(in)
+		if !ok {
+			return in
+		}
+		// Keep the separator below rendered content, including a tall legend.
+		br.Y = max(br.Y, frame.ViewBox.Max.Y-PAD_TOP)
+	}
 
-	appendix, w, h := generateAppendix(diagram, ruler, svg)
+	appendix, w, h := generateAppendix(diagram, ruler, tl, br)
 
 	if h == 0 {
 		return in
 	}
 
+	separatorEl := d2themes.NewThemableElement("line", nil)
+	separatorEl.X1 = float64(tl.X - PAD_SIDES)
+	separatorEl.Y1 = float64(br.Y + PAD_TOP)
+	separatorEl.X2 = float64(go2.IntMax(w, br.X) + PAD_SIDES)
+	separatorEl.Y2 = float64(br.Y + PAD_TOP)
+	separatorEl.Stroke = color.B2 // same as --color-border-muted in markdown
+	appendix = separatorEl.Render() + appendix
+
+	// Animated boards are group fragments. Their enclosing SVG supplies fonts
+	// and uses the shared animation ID when drawing tooltip and link icons.
+	var diagramHash string
+	if isFrame {
+		diagramHash = frame.MasterID
+		var ok bool
+		svg, ok = appendToFrame(svg, appendix, frame.ViewBox, tl, br, w, h)
+		if !ok {
+			return in
+		}
+	} else {
+		var salt *string
+		if renderOpts != nil {
+			salt = renderOpts.Salt
+		}
+		var err error
+		diagramHash, err = diagram.HashID(salt)
+		if err != nil {
+			return nil
+		}
+		svg = appendToStandaloneSVG(svg, appendix, w, h)
+	}
+	return []byte(numberIcons(diagram, diagramHash, svg))
+}
+
+func appendToStandaloneSVG(svg, appendix string, w, h int) string {
 	// match 1st two viewboxes, 1st is outer fit-to-screen viewbox="0 0 innerWidth innerHeight"
 	viewboxMatches := viewboxRegex.FindAllStringSubmatch(svg, 2)
 	viewboxMatch := viewboxMatches[1]
@@ -80,15 +125,6 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	viewboxPadLeft, _ := strconv.Atoi(viewboxSlice[0])
 	viewboxWidth, _ := strconv.Atoi(viewboxSlice[2])
 	viewboxHeight, _ := strconv.Atoi(viewboxSlice[3])
-
-	tl, br := diagram.BoundingBox()
-	separatorEl := d2themes.NewThemableElement("line", nil)
-	separatorEl.X1 = float64(tl.X - PAD_SIDES)
-	separatorEl.Y1 = float64(br.Y + PAD_TOP)
-	separatorEl.X2 = float64(go2.IntMax(w, br.X) + PAD_SIDES)
-	separatorEl.Y2 = float64(br.Y + PAD_TOP)
-	separatorEl.Stroke = color.B2 // same as --color-border-muted in markdown
-	appendix = separatorEl.Render() + appendix
 
 	w -= viewboxPadLeft
 	w += PAD_SIDES * 2
@@ -145,8 +181,10 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	}
 
 	closingIndex := strings.LastIndex(svg, "</svg></svg>")
-	svg = svg[:closingIndex] + appendix + svg[closingIndex:]
+	return svg[:closingIndex] + appendix + svg[closingIndex:]
+}
 
+func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {
 	// icons are numbered according to diagram.Shapes which is based on their order of definition,
 	// but they appear in the svg according to renderOrder so we have to replace in that order
 	type appendixIcon struct {
@@ -177,14 +215,6 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		return renderOrder[i].shape.Level < renderOrder[j].shape.Level
 	})
 
-	var salt *string
-	if renderOpts != nil {
-		salt = renderOpts.Salt
-	}
-	diagramHash, err := diagram.HashID(salt)
-	if err != nil {
-		return nil
-	}
 	// replace each rendered svg icon
 	for _, icon := range renderOrder {
 		// The clip-path has a unique ID, so this won't replace any user icons
@@ -198,12 +228,43 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		svg = strings.Replace(svg, iconStr, generateNumberedIcon(icon.number, 0, ICON_RADIUS), 1)
 	}
 
-	return []byte(svg)
+	return svg
 }
 
-func generateAppendix(diagram *d2target.Diagram, ruler *textmeasure.Ruler, svg string) (string, int, int) {
-	tl, br := diagram.BoundingBox()
+// D2 emits the frame group followed by its background rectangles (including
+// double borders and pattern overlays). Resize only those opening elements.
+var frameBackground = regexp.MustCompile(`^<g [^>]*>(?:<rect [^>]* />)*`)
+var frameDimension = regexp.MustCompile(` (x|width|height)="(-?[0-9]+)"`)
 
+func appendToFrame(svg, appendix string, box image.Rectangle, tl, br d2target.Point, w, h int) (string, bool) {
+	left := min(box.Min.X, 0, tl.X-PAD_SIDES)
+	right := max(box.Max.X, w+PAD_SIDES*2, br.X+PAD_SIDES)
+	bottom := br.Y + 2*PAD_TOP + h
+	width, height := right-left, bottom-box.Min.Y
+	prefix := frameBackground.FindString(svg)
+	end := strings.LastIndex(svg, "</g>")
+	if len(prefix) == 0 || end < len(prefix) {
+		return "", false
+	}
+	resized := frameDimension.ReplaceAllStringFunc(prefix, func(attr string) string {
+		name, value, _ := strings.Cut(attr[1:], `="`)
+		n, _ := strconv.Atoi(strings.TrimSuffix(value, `"`))
+		switch name {
+		case "x":
+			n += left - box.Min.X
+		case "width":
+			n += width - box.Dx()
+		case "height":
+			n += height - box.Dy()
+		}
+		return svglib.RenderAttributes(svglib.IntAttr(name, n))
+	})
+	viewBox := svglib.Attr("viewBox", fmt.Sprintf("%d %d %d %d", left, box.Min.Y, width, height))
+	resized = viewboxRegex.ReplaceAllString(resized, strings.TrimSpace(svglib.RenderAttributes(viewBox)))
+	return resized + svg[len(prefix):end] + appendix + svg[end:], true
+}
+
+func generateAppendix(diagram *d2target.Diagram, ruler *textmeasure.Ruler, tl, br d2target.Point) (string, int, int) {
 	maxWidth, totalHeight := 0, 0
 
 	var lines []string

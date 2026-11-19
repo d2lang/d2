@@ -85,6 +85,8 @@
   - Keep numbered link and tooltip markers in one sequence with the appendix:
     every link marker now has an entry, falling back to the link when no board
     label is available (e.g. `link: _` in a scenario). [#2961](https://github.com/d2lang/d2/issues/2961)
+  - Render forced appendices inside their animated SVG frames and size the
+    animation to include every board's footnotes.
 
 ---
 
