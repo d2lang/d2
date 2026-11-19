@@ -6,8 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2/ast"
 )
 
 func ReplaceSubstitutionsMarkdown(mdText string, variables map[string]string) string {
@@ -39,8 +38,7 @@ func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 		return "", 0, err
 	}
 	source := []byte(mdText)
-	reader := text.NewReader(source)
-	doc := markdownRenderer.Parser().Parse(reader)
+	doc := markdownParser.Parse(source)
 
 	type substitution struct {
 		start  int
@@ -63,9 +61,10 @@ func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 			return ast.WalkSkipChildren, nil
 		}
 
-		if textNode, ok := n.(*ast.Text); ok {
-			segment := textNode.Segment
-			originalText := string(segment.Value(source))
+		// Replacements need byte offsets in the original Markdown source.
+		if textNode, ok := n.(*ast.Text); ok && !textNode.Value.IsOwned() {
+			segment := textNode.Value.Index()
+			originalText := textNode.Value.Str(source)
 			newText, used, err := matcher.replaceBounded(ctx, originalText, maxExpansion-expansion)
 			if err != nil {
 				walkErr = err
@@ -117,7 +116,7 @@ func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 
 func isCodeNode(n ast.Node) bool {
 	switch n.Kind() {
-	case ast.KindCodeBlock, ast.KindFencedCodeBlock, ast.KindCodeSpan:
+	case ast.KindCodeBlock, ast.KindCodeSpan:
 		return true
 	}
 	return false

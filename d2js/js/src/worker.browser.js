@@ -1,3 +1,5 @@
+import { initWasm } from "./init-wasm.js";
+
 let currentPort;
 let d2;
 
@@ -111,11 +113,4 @@ export function setupMessageHandler(isNode, port, initWasm) {
   }
 }
 
-async function initWasmBrowser(wasmBinary) {
-  const go = new Go();
-  const result = await WebAssembly.instantiate(wasmBinary, go.importObject);
-  go.run(result.instance);
-  return self.d2;
-}
-
-setupMessageHandler(false, self, initWasmBrowser);
+setupMessageHandler(false, self, initWasm);
