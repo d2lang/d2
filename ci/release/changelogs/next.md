@@ -5,6 +5,7 @@
 
 #### Improvements 🧹
 
+- isometric: keep steep connection captions at the same reading angle as node labels and preserve clearance from their wires.
 - d2svg:
   - Prevent malformed diagram or raw render values from breaking out of SVG text
     and attributes. [#2919](https://github.com/d2lang/d2/pull/2919)

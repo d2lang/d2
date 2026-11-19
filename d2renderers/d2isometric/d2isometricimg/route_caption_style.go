@@ -90,16 +90,13 @@ func nativeConnectionCaptionSurface(points []Vec, original d2target.Connection, 
 		}
 		direction := nunit(nsub(points[i], points[i-1]))
 		center := nlerp(points[i-1], points[i], (distance-lengths[i-1])/length)
-		// Preserve above/below relative to the source route direction. Unlike
-		// upright SVG text, rotated text has depth as its normal extent.
-		offset := side * (depth/2 + (float64(original.StrokeWidth)/2+label.PADDING)*scale)
+		angle, _, across := captionPrintAxis(direction.X, direction.Z, width, depth)
+		// Preserve the authored side and clear the wire with the actual
+		// cross-route span of the oriented text.
+		offset := side * (across/2 + (float64(original.StrokeWidth)/2+label.PADDING)*scale)
 		center.X -= direction.Z * offset
 		center.Z += direction.X * offset
 		center.Y += .006
-		if direction.X < -1e-6 || math.Abs(direction.X) < 1e-6 && direction.Z < 0 {
-			direction = nmul(direction, -1)
-		}
-		angle := math.Atan2(direction.Z, direction.X)
 		start, end := nativeCaptionRouteRun(points, lengths, i)
 		// D2 reserves horizontal label dimensions. A short leg cannot hold
 		// that entire width after rotating it toward the endpoints. Retain
