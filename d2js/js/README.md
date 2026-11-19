@@ -190,7 +190,7 @@ You can browse the examples by running the dev server:
 ./make.sh dev
 ```
 
-Visit `http://localhost:3000` to see the example page. Open `/examples/elk-options/index.html` to compare 14 ELK options on editable D2 diagrams at the same scale. Each pane provides its complete D2 input and SVG.
+Visit `http://localhost:3000` to see the example page.
 
 ### Tests
 
