@@ -511,6 +511,31 @@ func TestSharedCacheSkipsInlineDataButRetainsLocalResources(t *testing.T) {
 	}
 }
 
+func TestDataOnlyResolver(t *testing.T) {
+	if _, err := NewDataOnly(Limits{}); err == nil {
+		t.Fatal("accepted missing limits")
+	}
+	limits := generousLimits()
+	limits.MaxAssets = 1
+	resolver, err := NewDataOnly(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, source := range []string{"icon.png", "https://example.invalid/icon.png"} {
+		if _, err := resolver.Resolve(ctx, source); err == nil || !strings.Contains(err.Error(), "requires a data URI") {
+			t.Fatalf("Resolve(%q) error = %v, want a data URI error", source, err)
+		}
+	}
+	uri := dataURI("image/png", encodePNG(t, 2, 3))
+	first := mustResolve(t, resolver, uri)
+	if again := mustResolve(t, resolver, uri); again != first {
+		t.Fatal("repeated data URI did not reuse its resource")
+	}
+	_, err = resolver.Resolve(ctx, dataURI("image/png", encodePNG(t, 3, 2)))
+	assertLimitError(t, err, "assets")
+}
+
 func TestResolverLimits(t *testing.T) {
 	raw := encodePNG(t, 4, 3)
 	tests := []struct {

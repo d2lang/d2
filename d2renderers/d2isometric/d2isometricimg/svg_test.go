@@ -24,12 +24,14 @@ func TestNativeSVGVectorGeometryAndText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Render(context.Background(), diagram, options)
+	svgOptions := *options
+	svgOptions.Format = ""
+	second, err := RenderSVG(context.Background(), diagram, svgOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(first, second) {
-		t.Fatal("SVG output is not deterministic")
+		t.Fatal("Render and RenderSVG produced different SVG output")
 	}
 	after, _ := json.Marshal(diagram)
 	if !bytes.Equal(before, after) {

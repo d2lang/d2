@@ -1,11 +1,4 @@
-// d2fonts holds fonts for renderings
-// This file contains the common code shared between WASM and non-WASM builds.
-// d2fonts_embed.go contains the embedded fonts for non-WASM builds.
-// d2fonts_embed_wasm.go contains compressed fonts for WASM builds that are decompressed at runtime.
-// We do this to reduce the size of WASM builds for JS packages to be smaller
-
-// TODO write a script to do this as part of CI
-// Currently using an online converter: https://dopiaza.org/tools/datauri/index.php
+// Package d2fonts holds the fonts used to measure and render diagrams.
 package d2fonts
 
 import (

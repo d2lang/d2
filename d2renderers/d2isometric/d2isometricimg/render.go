@@ -111,6 +111,16 @@ func Render(ctx context.Context, diagram *d2target.Diagram, opts *Options) ([]by
 	return renderGIF(s)
 }
 
+// RenderSVG renders vector output with the same validation and defaults as Render.
+func RenderSVG(ctx context.Context, diagram *d2target.Diagram, opts Options) ([]byte, error) {
+	opts.Format = SVG
+	o, err := normalize(&opts)
+	if err != nil {
+		return nil, err
+	}
+	return renderNativeSVG(ctx, diagram, o)
+}
+
 // CaptureFrames delivers lossless frames at exact scene times, serially. It is
 // useful for deterministic comparison and other bounded image encoders. The
 // callback owns each PNG and may retain it; no frame cache is kept here.

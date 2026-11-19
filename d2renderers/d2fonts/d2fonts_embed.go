@@ -16,23 +16,11 @@ var sourceSansProRegularBase64 string
 //go:embed encoded/SourceSansPro-Bold.txt
 var sourceSansProBoldBase64 string
 
-//go:embed encoded/SourceSansPro-Semibold.txt
-var sourceSansProSemiboldBase64 string
-
 //go:embed encoded/SourceSansPro-Italic.txt
 var sourceSansProItalicBase64 string
 
 //go:embed encoded/SourceCodePro-Regular.txt
 var sourceCodeProRegularBase64 string
-
-//go:embed encoded/SourceCodePro-Bold.txt
-var sourceCodeProBoldBase64 string
-
-//go:embed encoded/SourceCodePro-Semibold.txt
-var sourceCodeProSemiboldBase64 string
-
-//go:embed encoded/SourceCodePro-Italic.txt
-var sourceCodeProItalicBase64 string
 
 //go:embed encoded/FuzzyBubbles-Regular.txt
 var fuzzyBubblesRegularBase64 string
