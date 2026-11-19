@@ -5,6 +5,8 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Fix WebAssembly startup in Safari 27.2 workers. `D2.ready` now reports the startup error if Go exits before registering the API.
+
 ## [0.1.34]
 ### September 7, 2026
 
