@@ -3112,6 +3112,11 @@
       "zIndex": 0
     }
   ],
+  "explicitDefaultStrokeWidths": {
+    "lower.footer.simplifies": true,
+    "lower.strategies.dense": true,
+    "lower.strategies.flash": true
+  },
   "root": {
     "id": "",
     "type": "",
