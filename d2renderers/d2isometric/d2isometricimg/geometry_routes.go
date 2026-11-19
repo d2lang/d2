@@ -516,7 +516,6 @@ func (b *meshBuilder) drawEdges(edges []d2isometric.Edge, placer *routeCaptionPl
 				}
 				surface = placer.Place(captionPoints, caption.fraction, pw, pd)
 			}
-			b.captureStackCaption(edgeIndex, surface)
 			if captionIndex == 0 {
 				b.addSurfaceLink(edge.Link, edge.Tooltip, surface)
 			}

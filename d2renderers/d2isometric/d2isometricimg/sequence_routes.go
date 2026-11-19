@@ -252,11 +252,9 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 		if caption.main {
 			b.addSurfaceLink(edge.Link, edge.Tooltip, caption.surface)
 		}
-		b.captureStackCaption(edgeIndex, caption.surface)
 		b.label(caption.style.Label, caption.surface, caption.style, ink, edge.Opacity, "edge")
 	}
 	if icon.width > 0 && icon.depth > 0 {
-		b.captureStackCaption(edgeIndex, icon)
 		b.shapeIcon(d2target.Shape{ID: edge.ID, Icon: edge.Metadata.Original.Icon}, icon, edge.Opacity, "edge", edge.Metadata.Original.IconBorderRadius)
 		b.addSurfaceLink(edge.Link, edge.Tooltip, icon)
 	}

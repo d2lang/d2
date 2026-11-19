@@ -34,6 +34,8 @@ type Material struct {
 	// SVG contours paint over their own substrate without cutting a second
 	// antialiased boundary into it. Other objects still see opaque linework.
 	svgContour bool
+	// Light is visible across other objects without intercepting their SVG links.
+	svgPointerPassthrough bool
 	// Physical solid caps and unwrapped walls have a filled source background;
 	// their texture's antialiased perimeter is not a geometric hole.
 	svgSolidTexture bool

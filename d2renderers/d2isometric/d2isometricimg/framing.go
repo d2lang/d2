@@ -10,6 +10,7 @@ import (
 )
 
 type nativeSceneOptions struct {
+	stackTops     map[string]float64
 	stackWires    []stackWire // optional capture of the visible ink on one exploded deck
 	fitContent    bool
 	deferRaster   bool

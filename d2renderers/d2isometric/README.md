@@ -76,12 +76,11 @@ layers: {
 }
 ```
 
-A shape or connection linked to another displayed board emits a narrow
-beam from a lens at the edge of its artwork. The beam widens into a split
-brass ring on the destination plate. Its axis stays vertical within the
-shared footprint, including on upward links. A plain collar marks any
-intermediate plate it passes through. Connections within a floor keep
-their compiled routes. SVG links navigate to the destination plate.
+A link to a displayed board emits light from the linked shape or the
+painted part of a linked connection. The cone opens toward the whole
+destination plate and fades into clear air before its surface. Return
+links shine upward. Connections within a floor keep their compiled
+routes. SVG links navigate to the destination plate.
 
 SVG and PNG produce one image, PDF one page, and PPTX one slide. GIF uses
 the same stack and preserves authored animation. The mode is also available
@@ -93,7 +92,7 @@ uses TALA to lay out 27 objects on four plates. Follow one observation
 through calibration, difference imaging, and alert publication. A follow-up
 request returns to the observing floor.
 
-![Four survey plates with gold optical paths between exposures](../../docs/examples/exploded-layers/sky-survey.png)
+![Four sky-survey plates with widening cones of light between layers](../../docs/examples/exploded-layers/sky-survey.png)
 
 Render the example with its four local illustrations from the repository root.
 

@@ -52,6 +52,7 @@ type nativeArrowMarker struct {
 }
 
 func (b *meshBuilder) rememberArrowOwner(node d2isometric.Node, board *d2isometric.Board, first int) {
+	b.captureStackTop(node, first)
 	if node.SequenceRole != "" || node.Opacity <= 0 {
 		return
 	}

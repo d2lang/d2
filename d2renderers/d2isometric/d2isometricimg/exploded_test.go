@@ -94,8 +94,9 @@ func TestExplodedRootCaptionAtFront(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if description.rootCaption.width < bounds.Width || description.rootCaption.center.Z <= bounds.Y+bounds.Height {
-		t.Fatalf("untitled floor lost its description band: %+v", description.rootCaption)
+	descBounds := nativeMeshBounds(description.triangles[len(art.triangles):])
+	if descBounds.Width+.001 < bounds.Width || descBounds.Y <= bounds.Y+bounds.Height {
+		t.Fatalf("untitled floor lost its description band: %+v", descBounds)
 	}
 	scene.Description = ""
 	scene.Root.Label = d.Root.Label
@@ -108,14 +109,14 @@ func TestExplodedRootCaptionAtFront(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		caption := mesh.rootCaption
-		if caption.width <= 0 || caption.depth < float64(d.Root.FontSize)*d2isometric.SceneScale {
+		caption := nativeMeshBounds(mesh.triangles[len(art.triangles):])
+		if caption.Width <= 0 || caption.Height < float64(d.Root.FontSize)*d2isometric.SceneScale {
 			t.Fatalf("missing or undersized board caption: %+v", caption)
 		}
-		if exploded && caption.center.Z-caption.depth/2 <= bounds.Y+bounds.Height {
+		if exploded && caption.Y <= bounds.Y+bounds.Height {
 			t.Fatal("exploded caption overlaps the artwork from behind")
 		}
-		if !exploded && caption.center.Z+caption.depth/2 >= bounds.Y {
+		if !exploded && caption.Y+caption.Height >= bounds.Y {
 			t.Fatal("ordinary board caption moved")
 		}
 	}
@@ -148,7 +149,7 @@ func TestExplodedSVGAndPNG(t *testing.T) {
 			t.Errorf("fragment %s occurs %d times", id, got)
 		}
 	}
-	for _, fragment := range []string{`xlink:href="#deck-1"`, `xlink:href="https://d2lang.com/"`, "external destination"} {
+	for _, fragment := range []string{`xlink:href="#deck-1"`, `xlink:href="https://d2lang.com/"`, "external destination", `<g pointer-events="none">`} {
 		if !bytes.Contains(data, []byte(fragment)) {
 			t.Errorf("SVG is missing %q", fragment)
 		}

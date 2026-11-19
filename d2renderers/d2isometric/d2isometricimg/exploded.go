@@ -13,16 +13,17 @@ import (
 )
 
 type explodedDeck struct {
+	tops                              map[string]float64
 	path                              []string
 	board                             *d2target.Diagram
 	scene                             *d2isometric.Scene
 	mesh                              *nativeScene
 	offset                            Vec
-	title                             labelSurface
 	wires                             []stackWire
 	width, depth, surfaceY, thickness float64
 	height                            float64 // tallest artwork above the plate
 	contentWidth, contentDepth        float64
+	translucent                       bool
 }
 
 func explodedLayers(ctx context.Context, root *d2target.Diagram, boardPath []string) ([]explodedDeck, error) {
@@ -141,6 +142,8 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 		deck.wires = make([]stackWire, len(deck.scene.Edges))
 		perFloor := options
 		perFloor.stackWires = deck.wires
+		deck.tops = make(map[string]float64)
+		perFloor.stackTops = deck.tops
 		perFloor.deferRaster = true
 		perFloor.camera = nil
 		perFloor.outputDensity = sceneOutputDensity(deck.scene, o.Width, max(64, o.Height/len(decks)), nil)
@@ -180,9 +183,7 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 		deck.contentWidth, deck.contentDepth = bounds.Width, bounds.Height
 		width, depth = max(width, bounds.Width), max(depth, bounds.Height)
 	}
-	// The widest receiving iris must fit between the plate edge and the
-	// artwork even on the wide boards where it is drawn at full scale.
-	margin := .25 + .34*stackOpticalScale(width)
+	margin := max(.6, min(1.1, .25+width*.04))
 	width += 2 * margin
 	depth += 2 * margin
 	thickness := max(.055, min(.18, width*.012))
@@ -190,7 +191,7 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 	// compiled layout moves as a unit, including its routes and hit regions.
 	for i := range decks {
 		d := &decks[i]
-		if d.mesh.rootCaption.width > 0 {
+		if d.scene.Root.Label != "" || d.scene.Root.Icon != nil || d.scene.Description != "" {
 			d.offset.X -= (width-d.contentWidth)/2 - margin
 			d.offset.Z += (depth-d.contentDepth)/2 - margin
 		}
@@ -218,8 +219,6 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 			// stretch a dark footprint across all the other levels.
 			b.triangles[j].ShadowGround = &d.surfaceY
 		}
-		d.title = d.mesh.rootCaption
-		d.title.center = nadd(d.title.center, d.offset)
 		if err := b.appendDeck(d, &packets); err != nil {
 			return nil, err
 		}
@@ -279,7 +278,11 @@ func explodedDeckFill(scene *d2isometric.Scene) string {
 }
 
 func (b *meshBuilder) explodedSlab(d *explodedDeck, fill string) {
-	b.box(nv(0, d.surfaceY-d.thickness/2, 0), nv(d.width, d.thickness, d.depth), nativeMaterial(fill, .85, 0, 1), 0)
+	stock := nativeMaterial(fill, .85, 0, 1)
+	// The gradient's material is opaque white; its authored alpha lives in
+	// the texture. Use the paint itself to determine if the source tip shows.
+	d.translucent = nativePaint(fill, "#edf1f7").A < 255
+	b.box(nv(0, d.surfaceY-d.thickness/2, 0), nv(d.width, d.thickness, d.depth), stock, 0)
 	// Ink the cut perimeter on the top face. The narrow ring gives the rear
 	// edges the same precise silhouette even where they face away from light.
 	ink := nativeMaterial(readableSurfaceInk(fill, 1), 1, 0, .45)

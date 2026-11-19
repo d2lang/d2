@@ -548,6 +548,10 @@ func writeSVGBatch(w *nativeSVGWriter, b *svgPaintBatch, id int, camera rasterCa
 		return
 	}
 	m := b.triangle.Material
+	if m.svgPointerPassthrough {
+		w.write(`<g pointer-events="none">`)
+		defer w.write(`</g>`)
+	}
 	alpha := float64(m.Color.A) / 255
 	blend := ""
 	if m.Multiply {
