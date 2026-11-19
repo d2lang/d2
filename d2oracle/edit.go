@@ -778,10 +778,16 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 				}
 			case "style":
 				if reservedTargetKey == "" {
-					if len(mk.Key.Path[reservedIndex:]) != 2 {
+					if len(mk.Key.Path[reservedIndex:]) < 2 {
 						return errors.New("malformed style setting, expected 2 part path")
 					}
 					reservedTargetKey = mk.Key.Path[reservedIndex+1].Unbox().ScalarString()
+					isFillPatternColor := reservedTargetKey == "fill-pattern" &&
+						len(mk.Key.Path[reservedIndex:]) == 3 &&
+						mk.Key.Path[reservedIndex+2].Unbox().ScalarString() == "color"
+					if len(mk.Key.Path[reservedIndex:]) != 2 && !isFillPatternColor {
+						return errors.New("malformed style setting, expected 2 part path")
+					}
 				}
 				switch reservedTargetKey {
 				case "opacity":
@@ -870,7 +876,12 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 						return nil
 					}
 				case "fill-pattern":
-					if inlined(attrs.Style.FillPattern) {
+					if len(mk.Key.Path[reservedIndex:]) == 3 && mk.Key.Path[reservedIndex+2].Unbox().ScalarString() == "color" {
+						if inlined(attrs.Style.FillPatternColor) {
+							attrs.Style.FillPatternColor.MapKey.SetScalar(mk.Value.ScalarBox())
+							return nil
+						}
+					} else if inlined(attrs.Style.FillPattern) {
 						attrs.Style.FillPattern.MapKey.SetScalar(mk.Value.ScalarBox())
 						return nil
 					}

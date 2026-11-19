@@ -290,6 +290,9 @@ func (b *builder) preflight() error {
 	if err := validateFillPattern("root", root.FillPattern); err != nil {
 		return err
 	}
+	if _, err := b.paint(root.FillPatternColor, "root fill pattern color"); err != nil {
+		return err
+	}
 	if root.ThreeDee {
 		return unsupported("root", "3d effect")
 	}
@@ -330,6 +333,9 @@ func (b *builder) preflightShape(targetShape d2target.Shape) error {
 		return err
 	}
 	if err := validateFillPattern(object, targetShape.FillPattern); err != nil {
+		return err
+	}
+	if _, err := b.paint(targetShape.FillPatternColor, object+" fill pattern color"); err != nil {
 		return err
 	}
 	if err := validateShapeEffects(object, targetShape); err != nil {
@@ -586,7 +592,7 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	if !ok || width < 0 || height < 0 {
 		return nil, invalidPaddingError(pad)
 	}
-	rootPattern, err := b.builtinPattern(b.diagram.Root.FillPattern)
+	rootPattern, err := b.builtinPatternWithColor(b.diagram.Root.FillPattern, b.diagram.Root.FillPatternColor)
 	if err != nil {
 		return nil, fmt.Errorf("scene: root fill pattern: %w", err)
 	}
@@ -873,7 +879,7 @@ func (b *builder) buildShape(targetShape d2target.Shape) (*d2scene.Node, error) 
 			return nil, err
 		}
 		if !b.options.Sketch {
-			pattern, err := b.builtinPattern(targetShape.FillPattern)
+			pattern, err := b.builtinPatternWithColor(targetShape.FillPattern, targetShape.FillPatternColor)
 			if err != nil {
 				return nil, fmt.Errorf("scene: shape %q fill pattern: %w", targetShape.ID, err)
 			}
@@ -911,7 +917,7 @@ func (b *builder) buildShape(targetShape d2target.Shape) (*d2scene.Node, error) 
 			return nil, err
 		}
 		if !b.options.Sketch {
-			pattern, err := b.builtinPattern(targetShape.FillPattern)
+			pattern, err := b.builtinPatternWithColor(targetShape.FillPattern, targetShape.FillPatternColor)
 			if err != nil {
 				return nil, fmt.Errorf("scene: shape %q fill pattern: %w", targetShape.ID, err)
 			}
@@ -932,7 +938,7 @@ func (b *builder) buildShape(targetShape d2target.Shape) (*d2scene.Node, error) 
 			return nil, err
 		}
 		if len(outlineNodes) != 0 && !b.options.Sketch {
-			pattern, err := b.builtinPattern(targetShape.FillPattern)
+			pattern, err := b.builtinPatternWithColor(targetShape.FillPattern, targetShape.FillPatternColor)
 			if err != nil {
 				return nil, fmt.Errorf("scene: shape %q fill pattern: %w", targetShape.ID, err)
 			}

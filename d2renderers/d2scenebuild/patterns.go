@@ -8,6 +8,7 @@ import (
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/d2themes"
 )
 
 const (
@@ -16,8 +17,9 @@ const (
 )
 
 type builtinPattern struct {
-	name  string
-	paint d2scene.PatternPaint
+	name        string
+	customColor bool
+	paint       d2scene.PatternPaint
 }
 
 var paperPatternColors = [...]color.NRGBA{
@@ -47,6 +49,10 @@ func validateFillPattern(object, value string) error {
 }
 
 func (b *builder) builtinPattern(value string) (*builtinPattern, error) {
+	return b.builtinPatternWithColor(value, "")
+}
+
+func (b *builder) builtinPatternWithColor(value, colorValue string) (*builtinPattern, error) {
 	name, err := canonicalFillPattern(value)
 	if err != nil {
 		return nil, err
@@ -57,9 +63,22 @@ func (b *builder) builtinPattern(value string) (*builtinPattern, error) {
 	case "dots":
 		root := d2scene.NewNode(nil)
 		root.ID = "builtin:fill-pattern:dots:tile"
-		root.Opacity = .1
-		root.Blend = d2scene.BlendMultiply
-		ink := d2scene.SolidPaint{Color: color.NRGBA{R: 0x0a, G: 0x0f, B: 0x25, A: 0xff}}
+		var ink d2scene.Paint = d2scene.SolidPaint{Color: color.NRGBA{R: 0x0a, G: 0x0f, B: 0x25, A: 0xff}}
+		customColor := false
+		if colorValue != "" {
+			ink, err = b.paint(colorValue, "fill pattern color")
+			if err != nil {
+				return nil, err
+			}
+			if ink == nil {
+				return nil, nil
+			}
+			customColor = true
+			root.ID = "builtin:fill-pattern:dots:" + d2themes.FillPatternColorKey(colorValue) + ":tile"
+		} else {
+			root.Opacity = .1
+			root.Blend = d2scene.BlendMultiply
+		}
 		for _, point := range [][2]float64{
 			{2, 2}, {12, 2}, {12, 12}, {2, 12}, {2, 7}, {12, 7}, {7, 2}, {7, 12}, {7, 7},
 		} {
@@ -69,13 +88,26 @@ func (b *builder) builtinPattern(value string) (*builtinPattern, error) {
 			dot.ID = fmt.Sprintf("builtin:fill-pattern:dots:%.0f:%.0f", point[0], point[1])
 			root.Children = append(root.Children, dot)
 		}
-		return newBuiltinPattern(name, d2scene.Box{Width: 15, Height: 15}, root), nil
+		return newBuiltinPattern(name, customColor, d2scene.Box{Width: 15, Height: 15}, root), nil
 	case "lines":
 		root := d2scene.NewNode(nil)
 		root.ID = "builtin:fill-pattern:lines:tile"
-		root.Opacity = .05
-		root.Blend = d2scene.BlendMultiply
-		ink := d2scene.SolidPaint{Color: color.NRGBA{R: 0x0a, G: 0x0f, B: 0x25, A: 0xff}}
+		var ink d2scene.Paint = d2scene.SolidPaint{Color: color.NRGBA{R: 0x0a, G: 0x0f, B: 0x25, A: 0xff}}
+		customColor := false
+		if colorValue != "" {
+			ink, err = b.paint(colorValue, "fill pattern color")
+			if err != nil {
+				return nil, err
+			}
+			if ink == nil {
+				return nil, nil
+			}
+			customColor = true
+			root.ID = "builtin:fill-pattern:lines:" + d2themes.FillPatternColorKey(colorValue) + ":tile"
+		} else {
+			root.Opacity = .05
+			root.Blend = d2scene.BlendMultiply
+		}
 		for _, y := range []float64{2, 7, 12} {
 			line := d2scene.NewNode(d2scene.Rect{
 				Box: d2scene.Box{Y: y, Width: 15, Height: 1}, Fill: ink,
@@ -83,7 +115,7 @@ func (b *builder) builtinPattern(value string) (*builtinPattern, error) {
 			line.ID = fmt.Sprintf("builtin:fill-pattern:lines:%.0f", y)
 			root.Children = append(root.Children, line)
 		}
-		return newBuiltinPattern(name, d2scene.Box{Width: 15, Height: 15}, root), nil
+		return newBuiltinPattern(name, customColor, d2scene.Box{Width: 15, Height: 15}, root), nil
 	case "grain":
 		if err := b.ensureGrainPatternAsset(); err != nil {
 			return nil, err
@@ -101,7 +133,7 @@ func (b *builder) builtinPattern(value string) (*builtinPattern, error) {
 		imageNode.ID = "builtin:fill-pattern:grain:image"
 		imageNode.Opacity = .9
 		root.Children = []*d2scene.Node{imageNode}
-		return newBuiltinPattern(name, d2scene.Box{Width: 300, Height: 300}, root), nil
+		return newBuiltinPattern(name, false, d2scene.Box{Width: 300, Height: 300}, root), nil
 	case "paper":
 		if err := b.ensurePaperPatternAsset(); err != nil {
 			return nil, err
@@ -114,15 +146,16 @@ func (b *builder) builtinPattern(value string) (*builtinPattern, error) {
 			},
 		})
 		root.ID = "builtin:fill-pattern:paper:image"
-		return newBuiltinPattern(name, d2scene.Box{Width: 75, Height: 75}, root), nil
+		return newBuiltinPattern(name, false, d2scene.Box{Width: 75, Height: 75}, root), nil
 	default:
 		panic("unreachable fill pattern")
 	}
 }
 
-func newBuiltinPattern(name string, tile d2scene.Box, root *d2scene.Node) *builtinPattern {
+func newBuiltinPattern(name string, customColor bool, tile d2scene.Box, root *d2scene.Node) *builtinPattern {
 	return &builtinPattern{
-		name: name,
+		name:        name,
+		customColor: customColor,
 		paint: d2scene.PatternPaint{
 			Tile: tile, Root: root, Units: d2scene.UserSpaceOnUse, Transform: d2scene.Identity(),
 		},
@@ -257,7 +290,9 @@ func overlayPatternNode(base *d2scene.Node, pattern *builtinPattern, fallbackID 
 	overlay.Classes = []string{pattern.name + "-overlay"}
 	overlay.Transform = base.Transform
 	overlay.Opacity = base.Opacity
-	overlay.Blend = d2scene.BlendMultiply
+	if !pattern.customColor {
+		overlay.Blend = d2scene.BlendMultiply
+	}
 	overlay.Clip = base.Clip
 	overlay.Mask = base.Mask
 	overlay.Filters = append([]d2scene.Filter(nil), base.Filters...)

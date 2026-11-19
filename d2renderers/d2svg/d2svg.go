@@ -1407,7 +1407,7 @@ func renderArrowheadLabel(connection d2target.Connection, text string, isDst boo
 	return textEl.Render()
 }
 
-func renderOval(tl *geo.Point, width, height float64, fill, fillPattern, stroke, style string, inlineTheme *d2themes.Theme) string {
+func renderOval(tl *geo.Point, width, height float64, fill, fillPattern, fillPatternColor, stroke, style string, inlineTheme *d2themes.Theme) string {
 	el := d2themes.NewThemableElement("ellipse", inlineTheme)
 	el.Rx = width / 2
 	el.Ry = height / 2
@@ -1415,14 +1415,15 @@ func renderOval(tl *geo.Point, width, height float64, fill, fillPattern, stroke,
 	el.Cy = tl.Y + el.Ry
 	el.Fill, el.Stroke = fill, stroke
 	el.FillPattern = fillPattern
+	el.FillPatternColor = fillPatternColor
 	el.ClassName = "shape"
 	el.Style = style
 	return el.Render()
 }
 
-func renderDoubleOval(tl *geo.Point, width, height float64, fill, fillStroke, stroke, style string, inlineTheme *d2themes.Theme) string {
+func renderDoubleOval(tl *geo.Point, width, height float64, fill, fillPattern, fillPatternColor, stroke, style string, inlineTheme *d2themes.Theme) string {
 	var innerTL *geo.Point = tl.AddVector(geo.NewVector(d2target.INNER_BORDER_OFFSET, d2target.INNER_BORDER_OFFSET))
-	return renderOval(tl, width, height, fill, fillStroke, stroke, style, inlineTheme) + renderOval(innerTL, width-10, height-10, fill, "", stroke, style, inlineTheme)
+	return renderOval(tl, width, height, fill, fillPattern, fillPatternColor, stroke, style, inlineTheme) + renderOval(innerTL, width-10, height-10, fill, "", "", stroke, style, inlineTheme)
 }
 
 func defineGradients(writer io.Writer, cssGradient string) {
@@ -1517,6 +1518,7 @@ func render3DRect(diagramHash string, targetShape d2target.Shape, inlineTheme *d
 	mainShapeFill, _ := d2themes.ShapeTheme(targetShape)
 	mainShape.Fill = mainShapeFill
 	mainShape.FillPattern = targetShape.FillPattern
+	mainShape.FillPatternColor = targetShape.FillPatternColor
 	mainShape.Stroke = color.None
 	mainShape.Style = targetShape.CSSStyle()
 	mainShapeRendered := mainShape.Render()
@@ -1649,6 +1651,7 @@ func render3DHexagon(diagramHash string, targetShape d2target.Shape, inlineTheme
 	mainShape.SetMaskID(maskID)
 	mainShapeFill, _ := d2themes.ShapeTheme(targetShape)
 	mainShape.FillPattern = targetShape.FillPattern
+	mainShape.FillPatternColor = targetShape.FillPatternColor
 	mainShape.Fill = mainShapeFill
 	mainShape.Stroke = color.None
 	mainShape.Style = targetShape.CSSStyle()
@@ -1789,7 +1792,7 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 	case d2target.ShapeOval:
 		if targetShape.DoubleBorder {
 			if targetShape.Multiple {
-				fmt.Fprint(writer, renderDoubleOval(multipleTL, width, height, fill, "", stroke, style, inlineTheme))
+				fmt.Fprint(writer, renderDoubleOval(multipleTL, width, height, fill, "", "", stroke, style, inlineTheme))
 			}
 			if sketch {
 				out, err := d2sketch.DoubleOval(targetShape, diagramHash)
@@ -1798,11 +1801,11 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 				}
 				fmt.Fprint(writer, out)
 			} else {
-				fmt.Fprint(writer, renderDoubleOval(tl, width, height, fill, targetShape.FillPattern, stroke, style, inlineTheme))
+				fmt.Fprint(writer, renderDoubleOval(tl, width, height, fill, targetShape.FillPattern, targetShape.FillPatternColor, stroke, style, inlineTheme))
 			}
 		} else {
 			if targetShape.Multiple {
-				fmt.Fprint(writer, renderOval(multipleTL, width, height, fill, "", stroke, style, inlineTheme))
+				fmt.Fprint(writer, renderOval(multipleTL, width, height, fill, "", "", stroke, style, inlineTheme))
 			}
 			if sketch {
 				out, err := d2sketch.Oval(targetShape, diagramHash)
@@ -1811,7 +1814,7 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 				}
 				fmt.Fprint(writer, out)
 			} else {
-				fmt.Fprint(writer, renderOval(tl, width, height, fill, targetShape.FillPattern, stroke, style, inlineTheme))
+				fmt.Fprint(writer, renderOval(tl, width, height, fill, targetShape.FillPattern, targetShape.FillPatternColor, stroke, style, inlineTheme))
 			}
 		}
 
@@ -1866,6 +1869,7 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 					el.Height = float64(targetShape.Height)
 					el.Fill = fill
 					el.FillPattern = targetShape.FillPattern
+					el.FillPatternColor = targetShape.FillPatternColor
 					el.Stroke = stroke
 					el.Style = style
 					el.Rx = borderRadius
@@ -1885,6 +1889,7 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 					el.Height = float64(targetShape.Height)
 					el.Fill = fill
 					el.FillPattern = targetShape.FillPattern
+					el.FillPatternColor = targetShape.FillPatternColor
 					el.Stroke = stroke
 					el.Style = style
 					el.Rx = borderRadius
@@ -1915,6 +1920,7 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 					el.Height = float64(targetShape.Height)
 					el.Fill = fill
 					el.FillPattern = targetShape.FillPattern
+					el.FillPatternColor = targetShape.FillPatternColor
 					el.Stroke = stroke
 					el.Style = style
 					el.Rx = borderRadius
@@ -1959,6 +1965,7 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 				el := d2themes.NewThemableElement("path", inlineTheme)
 				el.Fill = fill
 				el.FillPattern = targetShape.FillPattern
+				el.FillPatternColor = targetShape.FillPatternColor
 				el.Stroke = stroke
 				el.Style = style
 				for _, pathData := range s.GetSVGPathData() {
@@ -1991,6 +1998,7 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 			el := d2themes.NewThemableElement("path", inlineTheme)
 			el.Fill = fill
 			el.FillPattern = targetShape.FillPattern
+			el.FillPatternColor = targetShape.FillPatternColor
 			el.Stroke = stroke
 			el.Style = style
 
@@ -2940,12 +2948,18 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	if color.IsGradient(diagram.Root.Fill) {
 		defineGradients(buf, diagram.Root.Fill)
 	}
+	if color.IsGradient(diagram.Root.FillPatternColor) {
+		defineGradients(buf, diagram.Root.FillPatternColor)
+	}
 	if color.IsGradient(diagram.Root.Stroke) {
 		defineGradients(buf, diagram.Root.Stroke)
 	}
 	for _, s := range diagram.Shapes {
 		if color.IsGradient(s.Fill) {
 			defineGradients(buf, s.Fill)
+		}
+		if color.IsGradient(s.FillPatternColor) {
+			defineGradients(buf, s.FillPatternColor)
 		}
 		if color.IsGradient(s.Stroke) {
 			defineGradients(buf, s.Stroke)
@@ -3139,6 +3153,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	backgroundEl.Fill = diagram.Root.Fill
 	backgroundEl.Stroke = diagram.Root.Stroke
 	backgroundEl.FillPattern = diagram.Root.FillPattern
+	backgroundEl.FillPatternColor = diagram.Root.FillPatternColor
 	backgroundEl.Rx = float64(diagram.Root.BorderRadius)
 	if diagram.Root.StrokeDash != 0 {
 		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(diagram.Root.StrokeWidth), diagram.Root.StrokeDash)
@@ -3179,6 +3194,8 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 
 	backgroundStr := backgroundEl.Render()
 
+	customPatterns := collectCustomFillPatterns(diagram)
+
 	// generate style elements that will be appended to the SVG tag
 	upperBuf := &bytes.Buffer{}
 	if opts.MasterID == "" {
@@ -3198,8 +3215,19 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		embedFonts(upperBuf, diagramHash, buf.String(), diagram.FontFamily, diagram.MonoFontFamily, diagram.GetCorpus()+markdown.generatedCorpus(), corpora) // Must precede DefineFillPatterns, after all text is rendered.
 
 		if classes == nil {
-			themeStylesheet = pruneThemeCSS(themeStylesheet, buf.String(), backgroundStr, doubleBorderElStr)
+			extraSources := []string{buf.String(), backgroundStr, doubleBorderElStr}
+			for _, spec := range customPatterns {
+				if color.IsThemeColor(spec.color) {
+					extraSources = append(extraSources, svg.CompactEmptyElement("rect", svg.Attr("class", "fill-"+spec.color)))
+				}
+			}
+			themeStylesheet = pruneThemeCSS(themeStylesheet, extraSources...)
 		} else {
+			for _, spec := range customPatterns {
+				if color.IsThemeColor(spec.color) {
+					classes["fill-"+spec.color] = true
+				}
+			}
 			themeStylesheet = pruneThemeCSSWithClasses(themeStylesheet, classes, backgroundStr, doubleBorderElStr)
 		}
 		fmt.Fprintf(upperBuf, `<style type="text/css"><![CDATA[%s%s]]></style>`, BaseStylesheet, themeStylesheet)
@@ -3212,7 +3240,9 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	bufStr := buf.String()
 	patternDefs := ""
 	for _, pattern := range d2ast.FillPatterns {
-		if strings.Contains(bufStr, fmt.Sprintf("%s-overlay", pattern)) || strings.EqualFold(diagram.Root.FillPattern, pattern) {
+		rootUsesDefault := strings.EqualFold(diagram.Root.FillPattern, pattern) &&
+			(diagram.Root.FillPatternColor == "" || !d2themes.FillPatternSupportsColor(pattern))
+		if hasDefaultOverlayClass(bufStr, pattern) || rootUsesDefault {
 			if patternDefs == "" {
 				fmt.Fprint(upperBuf, `<style type="text/css"><![CDATA[`)
 			}
@@ -3232,6 +3262,14 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	mix-blend-mode: multiply;
 }`, pattern, pattern, diagramHash)
 		}
+	}
+	for _, spec := range customPatterns {
+		if patternDefs == "" {
+			fmt.Fprint(upperBuf, `<style type="text/css"><![CDATA[`)
+		}
+		cssRule, def := buildCustomFillPattern(spec, diagramHash, inlineTheme)
+		fmt.Fprint(upperBuf, cssRule)
+		patternDefs += def
 	}
 	if patternDefs != "" {
 		fmt.Fprint(upperBuf, `]]></style>`)
@@ -3615,4 +3653,101 @@ func renderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, er
 		return boards, nil
 	}
 	return boards, nil
+}
+
+type customFillPatternSpec struct {
+	pattern string
+	color   string
+}
+
+func collectCustomFillPatterns(diagram *d2target.Diagram) []customFillPatternSpec {
+	var specs []customFillPatternSpec
+	seen := make(map[customFillPatternSpec]struct{})
+	add := func(pattern, colorValue string) {
+		p := strings.ToLower(pattern)
+		if colorValue == "" || !d2themes.FillPatternSupportsColor(p) {
+			return
+		}
+		spec := customFillPatternSpec{pattern: p, color: colorValue}
+		if _, ok := seen[spec]; ok {
+			return
+		}
+		seen[spec] = struct{}{}
+		specs = append(specs, spec)
+	}
+	add(diagram.Root.FillPattern, diagram.Root.FillPatternColor)
+	for _, s := range diagram.Shapes {
+		add(s.FillPattern, s.FillPatternColor)
+	}
+	if diagram.Legend != nil {
+		for _, s := range diagram.Legend.Shapes {
+			add(s.FillPattern, s.FillPatternColor)
+		}
+	}
+	return specs
+}
+
+func hasDefaultOverlayClass(bufStr, pattern string) bool {
+	overlay := pattern + "-overlay"
+	return strings.Contains(bufStr, `class="`+overlay+`"`) ||
+		strings.Contains(bufStr, `class="`+overlay+` `) ||
+		strings.Contains(bufStr, ` `+overlay+`"`)
+}
+
+func buildCustomFillPattern(spec customFillPatternSpec, diagramHash string, inlineTheme *d2themes.Theme) (string, string) {
+	key := d2themes.FillPatternColorKey(spec.color)
+	patternID := fmt.Sprintf("%s-%s-%s", spec.pattern, diagramHash, key)
+	className := fmt.Sprintf("%s-overlay-%s", spec.pattern, key)
+	cssRule := fmt.Sprintf("\n.%s {\n\tfill: url(#%s);\n}", className, patternID)
+
+	var paintAttr svg.Attribute
+	if color.IsThemeColor(spec.color) {
+		if inlineTheme != nil {
+			paintAttr = svg.Attr("fill", d2themes.ResolveThemeColor(*inlineTheme, spec.color))
+		} else {
+			paintAttr = svg.Attr("class", "fill-"+spec.color)
+		}
+	} else if color.IsGradient(spec.color) {
+		paintAttr = svg.Attr("fill", fmt.Sprintf("url('#%s')", color.UniqueGradientID(spec.color)))
+	} else {
+		paintAttr = svg.Attr("fill", spec.color)
+	}
+
+	var b strings.Builder
+	b.WriteString(svg.OpenElement("pattern",
+		svg.Attr("id", patternID),
+		svg.Attr("x", "0"),
+		svg.Attr("y", "0"),
+		svg.Attr("width", "15"),
+		svg.Attr("height", "15"),
+		svg.Attr("patternUnits", "userSpaceOnUse"),
+	))
+	b.WriteByte('\n')
+	switch spec.pattern {
+	case "dots":
+		for _, pt := range [][2]int{
+			{2, 2}, {12, 2}, {12, 12}, {2, 12}, {2, 7}, {12, 7}, {7, 2}, {7, 12}, {7, 7},
+		} {
+			b.WriteString(svg.CompactEmptyElement("rect",
+				svg.IntAttr("x", pt[0]),
+				svg.IntAttr("y", pt[1]),
+				svg.Attr("width", "1"),
+				svg.Attr("height", "1"),
+				paintAttr,
+			))
+			b.WriteByte('\n')
+		}
+	case "lines":
+		for _, y := range []int{2, 7, 12} {
+			b.WriteString(svg.CompactEmptyElement("rect",
+				svg.IntAttr("y", y),
+				svg.Attr("width", "15"),
+				svg.Attr("height", "1"),
+				paintAttr,
+			))
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteString(svg.CloseElement("pattern"))
+	return cssRule, b.String()
 }

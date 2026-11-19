@@ -14,6 +14,7 @@ func TestSerializedStyleJSONSchemaMatchesRuntimeStyle(t *testing.T) {
 		{name: "Stroke", tag: "stroke,omitempty"},
 		{name: "Fill", tag: "fill,omitempty"},
 		{name: "FillPattern", tag: "fillPattern,omitempty"},
+		{name: "FillPatternColor", tag: "fillPatternColor,omitempty"},
 		{name: "StrokeWidth", tag: "strokeWidth,omitempty"},
 		{name: "StrokeDash", tag: "strokeDash,omitempty"},
 		{name: "BorderRadius", tag: "borderRadius,omitempty"},

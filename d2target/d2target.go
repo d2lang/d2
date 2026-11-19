@@ -782,9 +782,10 @@ type Shape struct {
 
 	BorderRadius int `json:"borderRadius"`
 
-	Fill        string `json:"fill"`
-	FillPattern string `json:"fillPattern,omitempty"`
-	Stroke      string `json:"stroke"`
+	Fill             string `json:"fill"`
+	FillPattern      string `json:"fillPattern,omitempty"`
+	FillPatternColor string `json:"fillPatternColor,omitempty"`
+	Stroke           string `json:"stroke"`
 
 	Animated     bool `json:"animated"`
 	Shadow       bool `json:"shadow"`
