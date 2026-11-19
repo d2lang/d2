@@ -87,8 +87,9 @@ strengthening that treatment. Framing includes projected ground shadows.
 
 Labels and icons lie flat on their physical surfaces. Their source dimensions,
 anchors, line breaks and whitespace are retained. Outside captions clear visible
-sidewalls in projection. Container labels can move to a clear area within their
-original container when raised components obscure the source anchor. Authored
+sidewalls in projection. Container labels avoid projected component silhouettes, wires and positioned
+connection captions. If the container has no clear interior strip, a title with
+an outside source anchor can use that spot. Authored
 light ink gets a small contrasting backing when a translucent group wash needs
 it. Dense source layouts can still leave too little space for every projected
 label.

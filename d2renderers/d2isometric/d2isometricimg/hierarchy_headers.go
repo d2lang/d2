@@ -10,19 +10,11 @@ import (
 	"github.com/d2lang/d2/lib/label"
 )
 
-// hierarchyBoardHeaderSurface places the existing print area at the compiled
-// container label position. Outside and border labels are brought onto the
-// physical surface; the container and its descendants are never resized.
-func hierarchyBoardHeaderSurface(surface labelSurface, board d2isometric.Board, owner d2isometric.Node, nodes []d2isometric.Node, pixelScale float64, boards ...[]d2isometric.Board) labelSurface {
-	placed, _ := hierarchyBoardHeaderPlacement(surface, board, owner, nodes, pixelScale, boards...)
-	return placed
-}
-
 // The bool reports whether the full print area has an unoccluded placement.
 // Prefer the original source edge, then the bottom edge and a bounded set of
 // alternate strips. All candidates retain the dimensions, angle, and plane.
 // If every candidate is blocked, return the original in-footprint anchor.
-func hierarchyBoardHeaderPlacement(surface labelSurface, board d2isometric.Board, owner d2isometric.Node, nodes []d2isometric.Node, pixelScale float64, boards ...[]d2isometric.Board) (labelSurface, bool) {
+func placeHierarchyHeader(surface labelSurface, board d2isometric.Board, owner d2isometric.Node, nodes []d2isometric.Node, pixelScale float64, boards []d2isometric.Board, reservations *routeCaptionPlacer) (labelSurface, bool) {
 	if !hierarchyHeaderPositive(board.Size.X) || !hierarchyHeaderPositive(board.Size.Z) || !hierarchyHeaderPositive(surface.width) || !hierarchyHeaderPositive(surface.depth) {
 		return surface, false
 	}
@@ -49,10 +41,7 @@ func hierarchyBoardHeaderPlacement(surface labelSurface, board d2isometric.Board
 	surface.center.Z = clamp(front+tl.Y*pixelScale+surface.depth/2, z0, z1)
 	obstacles := make([]hierarchyHeaderObstacle, 0, 2*min(len(nodes), d2isometric.MaxNodes))
 	markdownChild := false
-	var supports map[string]float64
-	if len(boards) > 0 {
-		supports = hierarchySupportOffsets(boards[0])
-	}
+	supports := hierarchySupportOffsets(boards)
 	view := nativeViewDirection()
 	appendBox := func(node d2isometric.Node, halfX, halfZ, bottom, top float64) {
 		if top < surface.center.Y {
@@ -124,7 +113,7 @@ func hierarchyBoardHeaderPlacement(surface labelSurface, board d2isometric.Board
 		for i := range nodes {
 			owners[nodes[i].ID] = &nodes[i]
 		}
-		for _, candidate := range boards[0] {
+		for _, candidate := range boards {
 			node := owners[candidate.SourceID]
 			if candidate.ID == board.ID || node == nil || node.Opacity <= 0 || !hierarchyPhysicalPlate(candidate, node, nativePaint(node.Fill, "transparent").A) {
 				continue
@@ -145,9 +134,20 @@ func hierarchyBoardHeaderPlacement(surface labelSurface, board d2isometric.Board
 			appendBox(copy, candidate.Size.X/2+margin, candidate.Size.Z/2+margin, cap-depth, cap)
 		}
 	}
+	// Existing node/plate silhouettes constrain the strip search. Its candidate
+	// must also clear fixed captions, wires and previously printed headers in
+	// the final projection. Keep the geometric candidate on budget exhaustion.
+	clearStrip := func(s labelSurface, x0, x1, z0, z1 float64, vertical bool) (labelSurface, bool) {
+		placed, ok := hierarchyHeaderStrip(s, obstacles, x0, x1, z0, z1, vertical)
+		if ok && reservations != nil {
+			score, complete := reservations.score(captionRect(placed, false))
+			ok = !complete || score == 0
+		}
+		return placed, ok
+	}
 	name := position.String()
 	vertical := strings.Contains(name, "_LEFT_") || strings.Contains(name, "_RIGHT_") || name == "INSIDE_MIDDLE_LEFT" || name == "INSIDE_MIDDLE_RIGHT"
-	if placed, ok := hierarchyHeaderStrip(surface, obstacles, x0, x1, z0, z1, vertical); ok {
+	if placed, ok := clearStrip(surface, x0, x1, z0, z1, vertical); ok {
 		return placed, true
 	}
 	// At most eleven additional interval searches. Bottom strips are less
@@ -155,14 +155,14 @@ func hierarchyBoardHeaderPlacement(surface labelSurface, board d2isometric.Board
 	for _, fraction := range []float64{1, 0, .5, .25, .75, .125, .875, .375, .625} {
 		candidate := surface
 		candidate.center.Z = z0 + (z1-z0)*fraction
-		if placed, ok := hierarchyHeaderStrip(candidate, obstacles, x0, x1, z0, z1, false); ok {
+		if placed, ok := clearStrip(candidate, x0, x1, z0, z1, false); ok {
 			return placed, true
 		}
 	}
 	for _, x := range []float64{x0, x1} {
 		candidate := surface
 		candidate.center.X = x
-		if placed, ok := hierarchyHeaderStrip(candidate, obstacles, x0, x1, z0, z1, true); ok {
+		if placed, ok := clearStrip(candidate, x0, x1, z0, z1, true); ok {
 			return placed, true
 		}
 	}
@@ -174,18 +174,18 @@ func hierarchyBoardHeaderPlacement(surface labelSurface, board d2isometric.Board
 		if pad < padZ {
 			bottom := surface
 			bottom.center.Z = front + board.Size.Z - pad - bottom.depth/2
-			if placed, ok := hierarchyHeaderStrip(bottom, obstacles, x0, x1, bottom.center.Z, bottom.center.Z, false); ok {
+			if placed, ok := clearStrip(bottom, x0, x1, bottom.center.Z, bottom.center.Z, false); ok {
 				return placed, true
 			}
 		}
 	}
-	if markdownChild && position.IsOutside() {
+	if position.IsOutside() {
 		// Tight source containers may reserve their heading outside the box.
-		// If the raised document leaves no full-sized interior print strip,
+		// If no interior strip clears the geometry and fixed connections,
 		// retain that authored anchor instead of hiding the title behind it.
 		outside := surface
 		outside.center.X, outside.center.Z = sourceX, sourceZ
-		if placed, ok := hierarchyHeaderStrip(outside, obstacles, outside.center.X, outside.center.X, outside.center.Z, outside.center.Z, false); ok {
+		if placed, ok := clearStrip(outside, outside.center.X, outside.center.X, outside.center.Z, outside.center.Z, false); ok {
 			return placed, true
 		}
 	}

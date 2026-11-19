@@ -33,6 +33,7 @@
 
 #### Bugfixes ⛑️
 
+- isometric: keep container titles clear of connection captions and wires, including in tightly packed groups.
 - compiler:
   - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)
   - Honor cancellation during parsing and IR compilation, and prevent `d2 fmt`
