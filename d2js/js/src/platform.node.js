@@ -20,7 +20,7 @@ export async function loadFile(path) {
   const { join } = modules.path;
 
   try {
-    return await readFile(join(moduleDir, path));
+    return await readFile(join(moduleDir, "../wasm", path));
   } catch (err) {
     if (err.code === "ENOENT") {
       return await readFile(join(moduleDir, "../../../wasm", path.replace("./", "")));
