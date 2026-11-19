@@ -800,6 +800,11 @@ func (c *compiler) compileLabel(attrs *d2graph.Attributes, f d2ir.Node) {
 	c.explicitLabels[attrs] = struct{}{}
 }
 
+func (c *compiler) hasExplicitLabel(attrs *d2graph.Attributes) bool {
+	_, ok := c.explicitLabels[attrs]
+	return ok
+}
+
 func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 	if c.stopped() {
 		return
@@ -1412,9 +1417,10 @@ func (c *compiler) compileClass(obj *d2graph.Object) {
 			}
 		}
 
+		// A field or method without an explicit label defaults it to its ID, which is not a type.
 		if !strings.Contains(f.IDVal, "(") {
 			typ := f.Label.Value
-			if typ == f.IDVal {
+			if !c.hasExplicitLabel(&f.Attributes) && typ == f.IDVal {
 				typ = ""
 			}
 			underline := f.Attributes.Style.Underline != nil && f.Attributes.Style.Underline.Value == "true"
@@ -1425,10 +1431,8 @@ func (c *compiler) compileClass(obj *d2graph.Object) {
 				Underline:  underline,
 			})
 		} else {
-			// TODO: Not great, AST should easily allow specifying alternate primary field
-			// as an explicit label should change the name.
 			returnType := f.Label.Value
-			if returnType == f.IDVal {
+			if !c.hasExplicitLabel(&f.Attributes) && returnType == f.IDVal {
 				returnType = "void"
 			}
 			underline := f.Attributes.Style.Underline != nil && f.Attributes.Style.Underline.Value == "true"
@@ -1470,7 +1474,7 @@ func (c *compiler) compileSQLTable(obj *d2graph.Object) {
 		}
 		typ := col.Label.Value
 		// A column without an explicit label defaults it to its ID, which is not a type.
-		if _, ok := c.explicitLabels[&col.Attributes]; !ok && typ == col.IDVal {
+		if !c.hasExplicitLabel(&col.Attributes) && typ == col.IDVal {
 			typ = ""
 		}
 		d2Col := d2target.SQLColumn{
