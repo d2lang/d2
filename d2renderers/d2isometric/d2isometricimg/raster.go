@@ -676,16 +676,20 @@ const rasterShadowNormalOffset = .025
 
 func rasterShadowDirection() Vec { return Vec{X: -1, Y: 1.8, Z: 1} }
 
-func rasterShadowGround(ts []Triangle) float64 {
+func nativeMeshFloor(ts []Triangle) float64 {
 	ground := 0.
 	for _, t := range ts {
 		for _, v := range t.V {
 			ground = min(ground, v.Position.Y)
 		}
 	}
+	return ground
+}
+
+func rasterShadowGround(ts []Triangle) float64 {
 	// Keep the receiver close to the board substrate, so surface traces do
 	// not appear suspended above a distant ground plane.
-	return ground + .08
+	return nativeMeshFloor(ts) + .08
 }
 
 func rasterBuildShadow(w *rasterWork, ts []Triangle, fixedCamera ...rasterCamera) (rasterShadow, error) {
