@@ -60,6 +60,7 @@ func TestConvertGraphPreservesCustomELKProfile(t *testing.T) {
 	}
 	// EdgeEdgeSpacing is a pointer, so compare by value rather than identity.
 	if !reflect.DeepEqual(containerOpts.ConfigurableOpts, ConfigurableOpts{
+		LayeredOptions:  LayeredOptions{EdgeNode: go2.Pointer(40.)},
 		NodeSpacing:     opts.NodeSpacing,
 		Padding:         opts.Padding,
 		EdgeNodeSpacing: opts.EdgeNodeSpacing,

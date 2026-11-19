@@ -198,25 +198,36 @@ type indexedEdgeSegment struct {
 }
 
 type bendCollisionIndex struct {
+	objectBuffer float64
+	edgeBuffer   float64
 	objects      *spatialIndex[*d2graph.Object]
 	segments     *spatialIndex[*indexedEdgeSegment]
 	edgeSegments map[*d2graph.Edge][]*indexedEdgeSegment
 }
 
-func newBendCollisionIndex(g *d2graph.Graph) *bendCollisionIndex {
+func newBendCollisionIndex(g *d2graph.Graph, opts LayeredOptions) *bendCollisionIndex {
 	index := &bendCollisionIndex{
 		objects:      newSpatialIndex[*d2graph.Object](len(g.Objects)),
 		segments:     newSpatialIndex[*indexedEdgeSegment](len(g.Edges) * 3),
 		edgeSegments: make(map[*d2graph.Edge][]*indexedEdgeSegment, len(g.Edges)),
 	}
-	objectBuffer := float64(edge_node_spacing) - 1
+	index.objectBuffer = float64(edge_node_spacing) - 1
+	if opts.EdgeNode != nil {
+		index.objectBuffer = math.Max(0, *opts.EdgeNode-1)
+	}
+	// The bend cleanup historically checked for parallel edges within twice
+	// the default 10 unit edge spacing. Keep that tolerance proportional.
+	index.edgeBuffer = 20
+	if opts.EdgeEdge != nil {
+		index.edgeBuffer = 2 * *opts.EdgeEdge
+	}
 	for _, obj := range g.Objects {
 		bounds := spatialBounds{
 			minX: obj.TopLeft.X,
 			minY: obj.TopLeft.Y,
 			maxX: obj.TopLeft.X + obj.Width,
 			maxY: obj.TopLeft.Y + obj.Height,
-		}.expanded(objectBuffer)
+		}.expanded(index.objectBuffer)
 		index.objects.add(obj, bounds)
 	}
 	for _, edge := range g.Edges {
@@ -259,7 +270,7 @@ func (index *bendCollisionIndex) countObjectIntersects(src, dst *d2graph.Object,
 		if obj == src || obj == dst {
 			return
 		}
-		if obj.Intersects(segment, float64(edge_node_spacing)-1) {
+		if obj.Intersects(segment, index.objectBuffer) {
 			count++
 		}
 	})
@@ -272,7 +283,7 @@ func (index *bendCollisionIndex) countEdgeIntersects(sourceEdge *d2graph.Edge, s
 	overlapsCount := 0
 	closeOverlapsCount := 0
 	touchingCount := 0
-	queryBounds := boundsForSegment(segment).expanded(float64(edge_node_spacing) / 2)
+	queryBounds := boundsForSegment(segment).expanded(index.edgeBuffer)
 	index.segments.query(queryBounds, func(other *indexedEdgeSegment) {
 		if other.edge == sourceEdge {
 			return
@@ -282,9 +293,9 @@ func (index *bendCollisionIndex) countEdgeIntersects(sourceEdge *d2graph.Edge, s
 		if isHorizontal == otherIsHorizontal {
 			if segment.Overlaps(otherSegment, !isHorizontal, 0.) {
 				if isHorizontal {
-					if math.Abs(segment.Start.Y-otherSegment.Start.Y) < float64(edge_node_spacing)/2. {
+					if math.Abs(segment.Start.Y-otherSegment.Start.Y) < index.edgeBuffer {
 						overlapsCount++
-						if math.Abs(segment.Start.Y-otherSegment.Start.Y) < float64(edge_node_spacing)/4. {
+						if math.Abs(segment.Start.Y-otherSegment.Start.Y) < index.edgeBuffer/2 {
 							closeOverlapsCount++
 							if math.Abs(segment.Start.Y-otherSegment.Start.Y) < 1. {
 								touchingCount++
@@ -292,9 +303,9 @@ func (index *bendCollisionIndex) countEdgeIntersects(sourceEdge *d2graph.Edge, s
 						}
 					}
 				} else {
-					if math.Abs(segment.Start.X-otherSegment.Start.X) < float64(edge_node_spacing)/2. {
+					if math.Abs(segment.Start.X-otherSegment.Start.X) < index.edgeBuffer {
 						overlapsCount++
-						if math.Abs(segment.Start.X-otherSegment.Start.X) < float64(edge_node_spacing)/4. {
+						if math.Abs(segment.Start.X-otherSegment.Start.X) < index.edgeBuffer/2 {
 							closeOverlapsCount++
 							// Preserve the existing predicate, including its use of Y
 							// for vertical touching segments.

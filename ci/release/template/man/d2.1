@@ -158,6 +158,21 @@ Browser executable that watch opens. Setting to 0 opens no browser
 Set the diagram layout engine to the passed string. For a list of available options, run
 .Ar layout
 .Ns .
+.It Fl -elk-nodeNode , -elk-edgeNode , -elk-edgeEdge Ar distance
+Minimum spacing between nodes, between edges and nodes, or between edges in the same ELK layer.
+.It Fl -elk-edgeRouting Ar style
+Route ELK edges with ORTHOGONAL or POLYLINE segments.
+.It Fl -elk-wrappingStrategy Ar strategy
+Wrap a long ELK pipeline with SINGLE_EDGE or MULTI_EDGE. The default is OFF.
+.It Fl -elk-forceNodeModelOrder
+Preserve the declaration order of nodes within layers at the root of the diagram.
+.It Fl -elk-feedbackEdges
+Route backward connections around the main flow.
+.It Fl -elk-mergeEdges
+Share attachment points for ordinary incoming or outgoing edges.
+Set these options in a diagram with the flag name inside vars.d2-config.data.
+Diagram settings take precedence over the CLI.
+Set elk-layer-constraint on a shape to FIRST, LAST or NONE.
 .It Fl b , -bundle Ar true
 Bundle all assets and layers into the output svg
 .Ns .

@@ -693,6 +693,22 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 		c.errorf(f.LastRef().AST(), `%#v can only be used on connections`, f.Name.ScalarString())
 		return
 
+	} else if isReserved && keyword == "elk-layer-constraint" {
+		if obj.Parent == nil {
+			c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
+			return
+		}
+		if f.Primary() == nil || f.Composite != nil {
+			c.errorf(f.LastRef().AST(), "elk-layer-constraint expects FIRST, LAST or NONE")
+			return
+		}
+		switch v := strings.ToUpper(f.Primary().Value.ScalarString()); v {
+		case "FIRST", "LAST", "NONE":
+			obj.ELKLayerConstraint = v
+		default:
+			c.errorf(f.Primary().Value, "elk-layer-constraint expects FIRST, LAST or NONE, got %q", v)
+		}
+		return
 	} else if isReserved {
 		c.compileReserved(&obj.Attributes, f)
 		return
@@ -871,6 +887,10 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 }
 
 func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
+	if strings.EqualFold(f.Name.ScalarString(), "elk-layer-constraint") {
+		c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
+		return
+	}
 	if f.Primary() == nil {
 		if f.Composite != nil {
 			switch f.Name.ScalarString() {

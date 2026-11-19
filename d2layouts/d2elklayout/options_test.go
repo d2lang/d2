@@ -207,6 +207,91 @@ func TestConfigurableOptsAffectLayout(t *testing.T) {
 	})
 }
 
+func TestMergeEdgesKeepsSharedAttachmentsDuringBendCleanup(t *testing.T) {
+	const fan = "direction: right\nsource -> a\nsource -> b\nsource -> c\nsource -> d\na -> sink\nb -> sink\nc -> sink\nd -> sink"
+	for _, merged := range []bool{false, true} {
+		g := layoutOptionFixture(t, fan, func(o *ConfigurableOpts) { o.MergeEdges = merged })
+		starts, ends := map[geo.Point]bool{}, map[geo.Point]bool{}
+		for _, e := range g.Edges {
+			if e.Src.ID == "source" {
+				starts[*e.Route[0]] = true
+			}
+			if e.Dst.ID == "sink" {
+				ends[*e.Route[len(e.Route)-1]] = true
+			}
+		}
+		want := 4
+		if merged {
+			want = 1
+		}
+		if len(starts) != want || len(ends) != want {
+			t.Errorf("merge=%t: %d departures and %d arrivals, want %d each", merged, len(starts), len(ends), want)
+		}
+	}
+	table := layoutOptionFixture(t, "table: {shape: sql_table; id: int; name: text}\ntable.id -> a\ntable.name -> a", func(o *ConfigurableOpts) { o.MergeEdges = true })
+	if *table.Edges[0].Route[0] == *table.Edges[1].Route[0] {
+		t.Fatal("distinct SQL columns share an attachment")
+	}
+}
+
+func TestLayeredOptionScopesAndZero(t *testing.T) {
+	opts, err := graphOptions(&d2graph.Graph{Data: map[string]any{
+		"elk-nodeNode": "0", "elk-edgeEdge": "2.5", "elk-edgeNode": 0,
+		"elk-forceNodeModelOrder": true, "elk-wrappingStrategy": "single_edge", "elk-edgeRouting": "polyline",
+		"elk-feedbackEdges": true, "elk-mergeEdges": true,
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := newRootLayoutOptions(opts)
+	nested := newContainerLayoutOptions(opts)
+	if !root.ForceNodeModelOrder || nested.ForceNodeModelOrder {
+		t.Fatal("declaration order should be forced at the root only")
+	}
+	for _, o := range []*elkOpts{root, nested} {
+		if o.NodeNode == nil || *o.NodeNode != 0 || o.EdgeNode == nil || *o.EdgeNode != 0 ||
+			o.EdgeEdge == nil || *o.EdgeEdge != 2.5 || o.WrappingStrategy != "SINGLE_EDGE" ||
+			o.EdgeRouting != "POLYLINE" || !o.FeedbackEdges || !o.MergeEdges {
+			t.Fatalf("incorrect parent options: %+v", o.LayeredOptions)
+		}
+	}
+	for key, val := range map[string]string{
+		"elk-nodeNode": "-1", "elk-edgeEdge": "NaN", "elk-edgeNode": "+Inf", "elk-edgeRouting": "SPLINES",
+		"elk-wrappingStrategy": "sideways", "elk-mergeEdges": "sometimes",
+	} {
+		if _, err := graphOptions(&d2graph.Graph{Data: map[string]any{key: val}}, nil); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("expected an error naming %s for %q, got %v", key, val, err)
+		}
+	}
+}
+
+func TestELKPaddingWithOmittedSides(t *testing.T) {
+	for _, input := range []string{"[top=12.5,left=9]", "(top=12.5; left=9)", "top=12.5,left=9"} {
+		opts := DefaultOpts
+		if err := opts.SetOption("elk-padding", input); err != nil || opts.Padding != "[top=12.5,left=9,bottom=0,right=0]" {
+			t.Errorf("partial padding %q: %s, %v", input, opts.Padding, err)
+		}
+	}
+}
+
+func TestShapeLayerConstraint(t *testing.T) {
+	const src = "direction: right\nstart -> read -> build -> ship\nstart -> audit\n"
+	layout := func(extra string) *d2graph.Graph {
+		return layoutOptionFixture(t, src+extra, func(*ConfigurableOpts) {})
+	}
+	before := layout("")
+	after := layout("audit.elk-layer-constraint: last")
+	if objectByID(t, before, "audit").TopLeft.X >= objectByID(t, before, "ship").TopLeft.X ||
+		objectByID(t, after, "audit").TopLeft.X != objectByID(t, after, "ship").TopLeft.X {
+		t.Fatal("LAST should move audit into the final layer")
+	}
+	for _, src := range []string{"elk-layer-constraint: first", "a -> b: {elk-layer-constraint: last}", "a.elk-layer-constraint: middle"} {
+		if _, _, err := d2compiler.Compile("", strings.NewReader(src), nil); err == nil {
+			t.Errorf("expected invalid shape constraint in %q", src)
+		}
+	}
+}
+
 func layoutOptionFixture(t *testing.T, input string, configure func(*ConfigurableOpts)) *d2graph.Graph {
 	t.Helper()
 	g, _, err := d2compiler.Compile("", strings.NewReader(input), nil)

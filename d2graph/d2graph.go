@@ -179,6 +179,7 @@ type Object struct {
 	IconPosition  *string `json:"iconPosition,omitempty"`
 
 	ContentAspectRatio *float64 `json:"contentAspectRatio,omitempty"`
+	ELKLayerConstraint string   `json:"elkLayerConstraint,omitempty"`
 
 	Class    *d2target.Class    `json:"class,omitempty"`
 	SQLTable *d2target.SQLTable `json:"sql_table,omitempty"`

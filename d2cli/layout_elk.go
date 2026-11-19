@@ -18,8 +18,28 @@ const elkLongHelp = `ELK is a layout engine offered by Eclipse.
 Originally written in Java, D2's ELK.js 0.12.0 layout profile is bundled through the native Go elk-go port. Layered remains the default.
 See https://d2lang.com/tour/elk for more.
 
-Flags correspond to ones found at https://www.eclipse.org/elk/reference.html.
+Set spacing, routing, wrapping, ordering and edge merging in vars.d2-config.data
+using the flag name without "--" (for example, elk-mergeEdges: true).
+Diagram data takes precedence over the flag. Set elk-layer-constraint on an
+individual shape to FIRST, LAST or NONE.
+
+Flags correspond to ones found at https://eclipse.dev/elk/reference.html.
 `
+
+var elkLayeredFlags = []struct {
+	name  string
+	value any
+	help  string
+}{
+	{"elk-nodeNode", 20., "minimum spacing between nodes in the same layer"},
+	{"elk-edgeNode", 40., "minimum clearance between a passing edge and a node in the same layer"},
+	{"elk-edgeEdge", 10., "minimum spacing between edges passing through the same layer"},
+	{"elk-edgeRouting", "ORTHOGONAL", "edge routing style: ORTHOGONAL or POLYLINE"},
+	{"elk-wrappingStrategy", "OFF", "graph wrapping strategy: OFF, SINGLE_EDGE or MULTI_EDGE"},
+	{"elk-forceNodeModelOrder", false, "keep declaration order within layers at the diagram root"},
+	{"elk-feedbackEdges", false, "route backward edges around the main flow"},
+	{"elk-mergeEdges", false, "share attachment points for ordinary incoming or outgoing edges"},
+}
 
 func registerELKFlags(opts *xmain.Opts) {
 	opts.String("", "elk-algorithm", "", d2elklayout.DefaultOpts.Algorithm, "layout algorithm")
@@ -28,6 +48,16 @@ func registerELKFlags(opts *xmain.Opts) {
 	opts.Int64("", "elk-edgeNodeBetweenLayers", "", int64(d2elklayout.DefaultOpts.EdgeNodeSpacing), "the spacing to be preserved between nodes and edges that are routed next to the node’s layer")
 	opts.Int64("", "elk-edgeEdgeBetweenLayers", "", int64(*d2elklayout.DefaultOpts.EdgeEdgeSpacing), "the spacing to be preserved between pairs of edges routed between the same pair of layers")
 	opts.Int64("", "elk-nodeSelfLoop", "", int64(d2elklayout.DefaultOpts.SelfLoopSpacing), "spacing to be preserved between a node and its self loops")
+	for _, f := range elkLayeredFlags {
+		switch v := f.value.(type) {
+		case float64:
+			opts.Flags.Float64(f.name, v, f.help)
+		case bool:
+			opts.Flags.Bool(f.name, v, f.help)
+		case string:
+			opts.Flags.String(f.name, v, f.help)
+		}
+	}
 }
 
 func elkLayout(ms *xmain.State) (d2graph.LayoutGraph, error) {
@@ -57,6 +87,13 @@ func elkLayout(ms *xmain.State) (d2graph.LayoutGraph, error) {
 	opts.SelfLoopSpacing, err = layoutIntFlag(ms, "elk-nodeSelfLoop", opts.SelfLoopSpacing)
 	if err != nil {
 		return nil, err
+	}
+	for _, f := range elkLayeredFlags {
+		if hasLayoutFlag(ms, f.name) && ms.Opts.Flags.Changed(f.name) {
+			if err := opts.SetOption(f.name, ms.Opts.Flags.Lookup(f.name).Value.String()); err != nil {
+				return nil, xmain.UsageErrorf("%v", err)
+			}
+		}
 	}
 	return func(ctx context.Context, g *d2graph.Graph) error {
 		return d2elklayout.Layout(ctx, g, &opts)

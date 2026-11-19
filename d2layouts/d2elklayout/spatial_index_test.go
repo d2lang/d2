@@ -12,7 +12,7 @@ import (
 func TestBendCollisionIndexMatchesBruteForce(t *testing.T) {
 	g := compileBenchmarkGraph(t, denseBenchmarkInput(60, 180))
 	setSyntheticRoutes(g)
-	index := newBendCollisionIndex(g)
+	index := newBendCollisionIndex(g, LayeredOptions{})
 
 	queries := make([]geo.Segment, 0, len(g.Edges)*2+100)
 	for _, edge := range g.Edges {
