@@ -36,7 +36,7 @@ function Invoke-MsiExec([string] $Operation, [string] $MsiPath) {
     $result = Start-Process msiexec.exe -ArgumentList $arguments -PassThru -Wait
     if ($result.ExitCode -notin @(0, 3010)) {
         if (Test-Path -LiteralPath $log) {
-            Select-String -LiteralPath $log -Pattern 'Return value 3' -Context 8,0 | Out-Host
+            Select-String -LiteralPath $log -Pattern 'Return value 3', 'DisableMSI', 'DisableUserInstalls' -Context 2,0 | Out-Host
             Get-Content -LiteralPath $log -Tail 15 | Out-Host
         }
         throw "$Scope MSI /$Operation exited with $($result.ExitCode)"

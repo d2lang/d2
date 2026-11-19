@@ -76,6 +76,12 @@ jobs:
       - name: Verify upgrades and uninstalls for both scopes
         shell: pwsh
         run: |
+          # Windows Server blocks unmanaged user installs by default. Exercise desktop
+          # behavior on this disposable runner with the test account still unelevated.
+          $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer'
+          if (-not (Test-Path $policy)) { New-Item -Path $policy -Force | Out-Null }
+          New-ItemProperty -Path $policy -Name DisableMSI -PropertyType DWord -Value 0 -Force | Out-Null
+
           # The standard account needs read access to its installers and test script.
           $stage = New-Item -ItemType Directory -Path "$env:ProgramFiles\D2 MSI test"
           Copy-Item -LiteralPath ./ci/release/windows/test-install.ps1 -Destination $stage
