@@ -102,13 +102,14 @@
   - Escape custom shape and connection classes. [#2895](https://github.com/d2lang/d2/pull/2895)
   - Sanitize bundled-image media types and escape serialized image URLs. [#2898](https://github.com/d2lang/d2/pull/2898)
   - Escape SQL-table constraint text. [#2903](https://github.com/d2lang/d2/pull/2903)
+  - Encode and escape clip-path identifiers consistently in definitions and
+    references. [#2906](https://github.com/d2lang/d2/pull/2906)
+  - Escape color attributes across shapes, connections, labels, and themes. [#2909](https://github.com/d2lang/d2/pull/2909)
 - d2ascii:
   - Measure label widths in runes instead of bytes, so multi-byte characters
     (e.g. Vietnamese) no longer get extra spaces inserted inside words and
     labels are centered and sized correctly. [#2963](https://github.com/d2lang/d2/pull/2963)
-  - Encode and escape clip-path identifiers consistently in definitions and
-    references. [#2906](https://github.com/d2lang/d2/pull/2906)
-  - Escape color attributes across shapes, connections, labels, and themes. [#2909](https://github.com/d2lang/d2/pull/2909)
+  - Keep horizontal arrowheads visible when an edge label fills the space between endpoints.
 - appendix:
   - Keep numbered link and tooltip markers in one sequence with the appendix:
     every link marker now has an entry, falling back to the link when no board
