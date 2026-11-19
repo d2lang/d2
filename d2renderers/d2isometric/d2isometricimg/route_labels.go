@@ -205,12 +205,18 @@ func captionPrintAxis(ux, uz, width, depth float64) (angle, along, across float6
 	direction := nv(ux, 0, uz)
 	x := ndot(direction, camera.right)
 	if math.Abs(ndot(direction, camera.up)) > math.Abs(x) {
-		return 0, float64(math.Abs(ux)*width) + float64(math.Abs(uz)*depth), float64(math.Abs(uz)*width) + float64(math.Abs(ux)*depth)
+		along, across = uprightCaptionSpan(ux, uz, width, depth)
+		return 0, along, across
 	}
 	if x < 0 {
 		ux, uz = -ux, -uz
 	}
 	return math.Atan2(uz, ux), width, depth
+}
+
+func uprightCaptionSpan(ux, uz, width, depth float64) (along, across float64) {
+	x, z := math.Abs(ux), math.Abs(uz)
+	return x*width + z*depth, z*width + x*depth
 }
 
 func (l routeCaptionLeg) printAxis(width, depth float64) (angle, along, across float64) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/d2lang/d2/d2renderers/d2isometric"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/label"
 )
 
 func TestNativeConnectionCaptionPositionAndPercentage(t *testing.T) {
@@ -375,5 +376,23 @@ func TestCaptionReadingAngleInProjection(t *testing.T) {
 				t.Fatalf("route to %+v produced unreadable projected baseline (%g, %g)", end, x, y)
 			}
 		}
+	}
+}
+
+func TestShortDisplayedRouteClearsUprightCaption(t *testing.T) {
+	// A raw diagram can supply the endpoints without the original route.
+	// Its short diagonal requires a source-axis caption next to the wire.
+	end := nv(.8, 0, .3)
+	axis := nunit(end)
+	const width, depth = 2., .3
+	original := d2target.Connection{LabelPosition: "OUTSIDE_BOTTOM_CENTER", StrokeWidth: 2}
+	s, ok := nativeConnectionCaptionSurface([]Vec{{}, end}, original, width, depth, .01)
+	if !ok || s.angle != 0 {
+		t.Fatalf("expected an upright caption, got %+v", s)
+	}
+	offset := ndot(nsub(s.center, nmul(end, .5)), nv(-axis.Z, 0, axis.X))
+	clearance := offset - (math.Abs(axis.Z)*width+math.Abs(axis.X)*depth)/2
+	if math.Abs(clearance-(float64(original.StrokeWidth)/2+label.PADDING)*.01) > 1e-8 {
+		t.Fatalf("upright caption leaves %g clearance from the wire", clearance)
 	}
 }
