@@ -37,9 +37,18 @@ type AlgorithmOptions struct {
 	RadialCompactor         string   `json:"elk.radial.compactor,omitempty"`
 }
 
+func (opts *ConfigurableOpts) usesAlgorithm(name string) bool {
+	if opts.Algorithm == "" {
+		return name == "layered"
+	}
+	return opts.Algorithm == name || strings.HasSuffix(opts.Algorithm, "."+name)
+}
+
 func (opts *ConfigurableOpts) parentOptions(root bool) LayeredOptions {
 	o := opts.LayeredOptions
-	if o.EdgeNode == nil {
+	// The 40px clearance belongs to D2's layered profile. Mr. Tree spaces
+	// levels 20px apart and needs its own default for routing between them.
+	if o.EdgeNode == nil && (!root || opts.usesAlgorithm("layered")) {
 		o.EdgeNode = go2.Pointer(float64(edge_node_spacing))
 	}
 	// D2 disables model-order processing below the root for compound graphs.

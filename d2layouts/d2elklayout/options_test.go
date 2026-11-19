@@ -3,6 +3,7 @@ package d2elklayout
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"reflect"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/log"
+	"github.com/d2lang/d2/lib/textmeasure"
 )
 
 func TestConfigurableOptsSerializeELK012Keys(t *testing.T) {
@@ -303,6 +305,75 @@ func TestAlgorithmOptionsAtRoot(t *testing.T) {
 	for _, settings := range []*elkOpts{newContainerLayoutOptions(opts), newRootLayoutOptions(&DefaultOpts)} {
 		if settings.AlgorithmOptions != (AlgorithmOptions{}) {
 			t.Errorf("unexpected explicit algorithm settings: %+v", settings.AlgorithmOptions)
+		}
+	}
+}
+
+func TestMrTreeEdgeClearance(t *testing.T) {
+	for _, name := range []string{"mrtree", "elk.mrtree", "org.eclipse.elk.mrtree"} {
+		opts := DefaultOpts
+		opts.Algorithm = name
+		if v := newRootLayoutOptions(&opts).EdgeNode; v != nil {
+			t.Errorf("%s root specifies %g instead of using the provider default", name, *v)
+		}
+		if v := newContainerLayoutOptions(&opts).EdgeNode; v == nil || *v != edge_node_spacing {
+			t.Errorf("nested layered graph lost its default edge clearance")
+		}
+		for _, spacing := range []float64{0, 12} {
+			opts.EdgeNode = &spacing
+			if v := newRootLayoutOptions(&opts).EdgeNode; v == nil || *v != spacing {
+				t.Errorf("%s lost explicit edge clearance %g", name, spacing)
+			}
+		}
+	}
+}
+
+func TestMrTreeRoutesAvoidShapes(t *testing.T) {
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, direction := range []string{"right", "left", "down", "up"} {
+		for _, order := range []string{"dfs", "bfs"} {
+			t.Run(direction+"/"+order, func(t *testing.T) {
+				const graph = "Root -> API -> Cache -> Store\nRoot -> Store\nRoot -> Web\n"
+				source := fmt.Sprintf("direction: %s\n%s", direction, graph)
+				g, _, err := d2compiler.Compile("", strings.NewReader(source), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+					t.Fatal(err)
+				}
+				opts := DefaultOpts
+				opts.Algorithm = "mrtree"
+				opts.MrTreeSearchOrder = order
+				if err := Layout(t.Context(), g, &opts); err != nil {
+					t.Fatal(err)
+				}
+				for _, edge := range g.Edges {
+					last := len(edge.Route) - 1
+					if last < 1 {
+						t.Fatalf("%s has no route", edge.AbsID())
+					}
+					if edge.Src.Box.Contains(edge.Route[1]) || edge.Dst.Box.Contains(edge.Route[last-1]) {
+						t.Errorf("%s approaches an attachment from inside or along its border", edge.AbsID())
+					}
+					for i := 1; i <= last; i++ {
+						segment := geo.NewSegment(edge.Route[i-1], edge.Route[i])
+						if segment.Start.Equals(segment.End) {
+							t.Errorf("%s repeats a bend at %v", edge.AbsID(), segment.Start)
+						}
+						for _, obj := range g.Objects {
+							// Allow an edge to meet the border, including subpixel rounding
+							// when tracing from ELK's coordinates onto a D2 shape.
+							if obj.Box.Intersects(*segment, -1) {
+								t.Errorf("%s segment %v to %v crosses %s at %v (%gx%g)", edge.AbsID(), segment.Start, segment.End, obj.ID, obj.TopLeft, obj.Width, obj.Height)
+							}
+						}
+					}
+				}
+			})
 		}
 	}
 }

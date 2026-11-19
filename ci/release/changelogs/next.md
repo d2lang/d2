@@ -39,6 +39,8 @@
 
 #### Bugfixes ⛑️
 
+- elk: fix Mr. Tree arrows doubling back through their target shapes and shortcut edges cutting through intervening nodes. [#2981](https://github.com/d2lang/d2/pull/2981)
+
 - renders: honor the selected theme and its canvas color in isometric exports.
 
 - d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)

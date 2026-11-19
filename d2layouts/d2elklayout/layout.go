@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -635,8 +636,20 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		}
 	}
 
+	var mrTreeRoutes map[*d2graph.Edge]bool
+	if opts.usesAlgorithm("mrtree") {
+		mrTreeRoutes = make(map[*d2graph.Edge]bool)
+	}
 	for _, edge := range g.Edges {
 		points := edge.Route
+		if mrTreeRoutes != nil && elkEdges[edge].Container == "" {
+			// Child graphs can still use layered routing. Preserve the tree's
+			// own detours when simplifying the other routes later.
+			mrTreeRoutes[edge] = true
+			if edge.Src.Parent == edge.Dst.Parent {
+				points = trimMrTreeBends(edge)
+			}
+		}
 
 		startIndex, endIndex := 0, len(points)-1
 		start := points[startIndex]
@@ -682,11 +695,36 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 	}
 
 	if opts.EdgeRouting != "POLYLINE" {
-		deleteBends(g, opts.LayeredOptions)
+		deleteBends(g, opts.LayeredOptions, mrTreeRoutes)
 	}
 	deconflictSelfLoopLabels(g)
 
 	return nil
+}
+
+// Mr. Tree can repeat a bend on a return edge or run its final segment along
+// the target's border. Keep the attachment points and the bends in open space
+// so tracing and rounding the route do not send the arrow back into a shape.
+func trimMrTreeBends(edge *d2graph.Edge) []*geo.Point {
+	points := edge.Route
+	if len(points) <= 2 || edge.Src == edge.Dst {
+		return points
+	}
+	end := points[len(points)-1]
+	bends := points[1 : len(points)-1]
+	first := 0
+	for i, bend := range bends {
+		if edge.Dst.Box.Contains(bend) {
+			bends = bends[:i]
+			break
+		}
+		if edge.Src.Box.Contains(bend) {
+			first = i + 1
+		}
+	}
+	bends = slices.CompactFunc(bends[first:], (*geo.Point).Equals)
+	points = append(points[:1], bends...)
+	return append(points, end)
 }
 
 func srcPortID(obj *d2graph.Object, column string) string {
@@ -775,10 +813,10 @@ func overlapsAny(box *geo.Box, others []*geo.Box) bool {
 
 // deleteBends is a shim for ELK to delete unnecessary bends
 // see https://github.com/terrastruct/d2/issues/1030
-func deleteBends(g *d2graph.Graph, opts LayeredOptions) {
+func deleteBends(g *d2graph.Graph, opts LayeredOptions, keepRoute map[*d2graph.Edge]bool) {
 	hasCandidate := false
 	for _, edge := range g.Edges {
-		if edge.Src != edge.Dst && len(edge.Route) >= 4 {
+		if edge.Src != edge.Dst && len(edge.Route) >= 4 && !keepRoute[edge] {
 			hasCandidate = true
 			break
 		}
@@ -808,7 +846,7 @@ func deleteBends(g *d2graph.Graph, opts LayeredOptions) {
 	// TODO there might be value in repeating this. removal of an S shape introducing another S shape that can still be removed
 	for _, isSource := range []bool{true, false} {
 		for ei, e := range g.Edges {
-			if len(e.Route) < 4 {
+			if len(e.Route) < 4 || keepRoute[e] {
 				continue
 			}
 			if e.Src == e.Dst {
@@ -936,7 +974,7 @@ func deleteBends(g *d2graph.Graph, opts LayeredOptions) {
 	}
 
 	for ei, e := range g.Edges {
-		if len(e.Route) < 6 {
+		if len(e.Route) < 6 || keepRoute[e] {
 			continue
 		}
 		if e.Src == e.Dst {
