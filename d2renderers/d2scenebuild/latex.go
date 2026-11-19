@@ -113,22 +113,23 @@ func (b *builder) validateLatexImportOptions(object string) error {
 }
 
 func (b *builder) latexCurrentColor(raw, description string) (color.NRGBA, error) {
-	if raw == "" {
-		return color.NRGBA{A: 255}, nil
-	}
 	paint, err := b.paint(raw, description)
 	if err != nil {
 		return color.NRGBA{}, err
 	}
-	if paint == nil {
-		// Invalid CSS colors such as color:none do not override the initial black.
+	switch p := paint.(type) {
+	case nil:
+		// SVG currentColor defaults to black.
 		return color.NRGBA{A: 255}, nil
+	case d2scene.SolidPaint:
+		return p.Color, nil
+	case d2scene.LinearGradient:
+		return p.Stops[0].Color, nil
+	case d2scene.RadialGradient:
+		return p.Stops[0].Color, nil
+	default:
+		return color.NRGBA{}, fmt.Errorf("scene: unsupported %s paint %T", description, p)
 	}
-	solid, ok := paint.(d2scene.SolidPaint)
-	if !ok {
-		return color.NRGBA{}, fmt.Errorf("scene: %s must resolve to a solid color", description)
-	}
-	return solid.Color, nil
 }
 
 func (b *builder) buildLatexLabelNode(object, nodeID, formula, rawColor string, topLeft *geo.Point) (*d2scene.Node, error) {

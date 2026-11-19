@@ -247,6 +247,11 @@ func (el *ThemableElement) Render() string {
 		if el.inlineTheme != nil {
 			attributes = append(attributes, svg.Attr("color", ResolveThemeColor(*el.inlineTheme, el.Color)))
 		}
+	} else if el.Color != "" && color.IsGradient(el.Color) {
+		// SVG currentColor takes a single color even when the font paint is a gradient.
+		if gradient, err := color.ParseGradient(el.Color); err == nil {
+			attributes = append(attributes, svg.Attr("color", gradient.ColorStops[0].Color))
+		}
 	} else if len(el.Color) > 0 {
 		attributes = append(attributes, svg.Attr("color", el.Color))
 	}
