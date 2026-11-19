@@ -423,7 +423,19 @@ func (b *meshBuilder) canonicalNodeContent(n d2isometric.Node, s d2target.Shape,
 			surface = insideLabel
 		}
 	}
+	first := len(b.triangles)
 	b.shapeLabel(n.Metadata.Original, surface, ink, n.Opacity, "node")
+	if len(b.triangles) > first && label.FromString(n.Metadata.Original.LabelPosition).IsOutside() && b.options.links != nil && (n.Link != "" || n.Tooltip != "") {
+		// Keep the print area clickable, independently of its distance from
+		// the body. Relief and outside clearance transform these corners
+		// along with any inline links emitted by shapeLabel.
+		if !b.options.vector {
+			b.addSurfaceLink(n.Link, n.Tooltip, surface)
+		}
+		for _, t := range b.triangles[first:] {
+			t.Material.outsideCaption = true
+		}
+	}
 }
 
 func nativeNodeIconSurface(n d2isometric.Node, s d2target.Shape, y float64) labelSurface {

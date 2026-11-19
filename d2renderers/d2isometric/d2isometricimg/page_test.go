@@ -189,3 +189,56 @@ func TestNativeLinkDestinationDistinguishesBoardTargetsAndFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestOutsideCaptionHasSeparatePageRegionAndPaintedSVGLink(t *testing.T) {
+	d := captureDiagram()
+	s := &d.Shapes[0]
+	s.Type = "cylinder"
+	s.LabelPosition = "OUTSIDE_RIGHT_TOP"
+	s.Link = "https://example.test/orders"
+	o := Options{Width: 400, Height: 250, FitContent: true}
+	page, err := RenderPage(context.Background(), d, &o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Links) != 2 || page.Links[0].URL != s.Link || page.Links[1].URL != s.Link {
+		t.Fatalf("expected separate body and caption regions for %q, got %+v", s.Link, page.Links)
+	}
+	body, caption := page.Links[0].Box, page.Links[1].Box
+	if body.X+body.Width >= caption.X+caption.Width/2 {
+		t.Errorf("body link %+v extends to the center of the detached caption %+v", body, caption)
+	}
+	o.Format = SVG
+	data, err := Render(context.Background(), d, &o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := []byte(`<a xlink:href="https://example.test/orders">`)
+	_, rest, ok := bytes.Cut(data, start)
+	anchor, _, closed := bytes.Cut(rest, []byte("</a>"))
+	if !ok || !closed || bytes.Count(data, start) != 1 || !bytes.Contains(anchor, []byte(`<use xlink:href=`)) || !bytes.Contains(anchor, []byte(`<rect width="1" height="1" fill="transparent" pointer-events="all"/>`)) {
+		t.Fatal("SVG link must contain the rendered cylinder and its separately clipped caption")
+	}
+}
+
+func TestSVGKeyboardStopsFollowShapesAcrossPaintGroups(t *testing.T) {
+	d := captureDiagram()
+	d.Connections = nil
+	parent, child := &d.Shapes[0], &d.Shapes[1]
+	parent.Width, parent.Height = 400, 300
+	child.ID, child.Pos.X, child.Pos.Y = parent.ID+".child", 75, 85
+	// Each shape must keep its own keyboard stop even with a shared URL.
+	const href = "https://example.test/details"
+	parent.Link, child.Link = href, href
+	data, err := Render(context.Background(), d, &Options{Format: SVG, Width: 400, Height: 250, FitContent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchors := bytes.Count(data, []byte(`<a xlink:href="`+href+`"`))
+	if anchors <= 2 {
+		t.Fatalf("fixture must split the parent across paint groups, got %d anchors", anchors)
+	}
+	if focusable := anchors - bytes.Count(data, []byte(`tabindex="-1"`)); focusable != 2 {
+		t.Errorf("%d keyboard stops for two linked shapes", focusable)
+	}
+}
