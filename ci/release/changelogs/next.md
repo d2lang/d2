@@ -42,6 +42,8 @@
 - d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
 - isometric: keep container titles clear of connection captions and wires, including in tightly packed groups.
 - compiler:
+  - Apply recursive connection styles efficiently to diagrams with few or no
+    connections, including large SQL tables. [#2946](https://github.com/d2lang/d2/issues/2946)
   - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)
   - Honor cancellation during parsing and IR compilation, and prevent `d2 fmt`
     from writing output after cancellation. [#2894](https://github.com/d2lang/d2/pull/2894)

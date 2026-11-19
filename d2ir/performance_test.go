@@ -87,6 +87,15 @@ func BenchmarkCompileLeadingGlob(b *testing.B) {
 	}
 }
 
+func BenchmarkCompileRecursiveEdgeSelector(b *testing.B) {
+	benchmarkCompileSource(b, `
+(*** -> ***)[*].style.italic: false
+customers: {shape: sql_table; id; name; email; created_at}
+orders: {shape: sql_table; id; customer_id; total; created_at}
+orders.customer_id -> customers.id
+`)
+}
+
 func BenchmarkCompileDistinctEdges(b *testing.B) {
 	for _, count := range []int{100, 1000, 3200} {
 		b.Run(fmt.Sprintf("edges=%d", count), func(b *testing.B) {

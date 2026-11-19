@@ -79,7 +79,7 @@ func _doubleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool
 	}
 	name := f.Name.ScalarString()
 	if _, reserved := d2ast.ReservedKeywords[name]; reserved && f.Name.IsUnquoted() {
-		if skipDoubleGlobSubtree(name) {
+		if skipRecursiveGlobSubtree(name, false) {
 			return true
 		}
 		if f.Map() != nil {
@@ -96,13 +96,13 @@ func _doubleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool
 	return true
 }
 
-func skipDoubleGlobSubtree(name string) bool {
-	if _, board := d2ast.BoardKeywords[name]; board {
-		return true
+// name is an unquoted reserved keyword.
+func skipRecursiveGlobSubtree(name string, triple bool) bool {
+	_, board := d2ast.BoardKeywords[name]
+	if triple {
+		return !board
 	}
-	// Classes and variables are definitions, not diagram objects. Applying
-	// recursive globs inside either map can mutate definitions before use.
-	return name == "classes" || name == "vars"
+	return board || name == "classes" || name == "vars"
 }
 
 func _tripleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool {
@@ -114,7 +114,7 @@ func _tripleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool
 	}
 	name := f.Name.ScalarString()
 	if _, reserved := d2ast.ReservedKeywords[name]; reserved && f.Name.IsUnquoted() {
-		if _, board := d2ast.BoardKeywords[name]; !board {
+		if skipRecursiveGlobSubtree(name, true) {
 			return true
 		}
 		if f.Map() != nil {
@@ -141,7 +141,7 @@ func (m *Map) _doubleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 		}
 		name := f.Name.ScalarString()
 		if _, ok := d2ast.ReservedKeywords[name]; ok && f.Name.IsUnquoted() {
-			if skipDoubleGlobSubtree(name) {
+			if skipRecursiveGlobSubtree(name, false) {
 				continue
 			}
 			if f.Map() != nil {
@@ -172,7 +172,7 @@ func (m *Map) _tripleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 			continue
 		}
 		if _, ok := d2ast.ReservedKeywords[f.Name.ScalarString()]; ok && f.Name.IsUnquoted() {
-			if _, ok := d2ast.BoardKeywords[f.Name.ScalarString()]; !ok {
+			if skipRecursiveGlobSubtree(f.Name.ScalarString(), true) {
 				continue
 			}
 			// We don't ever want to append layers, scenarios or steps directly.

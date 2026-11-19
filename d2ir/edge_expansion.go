@@ -97,12 +97,20 @@ func (b *edgeExpansionWorkBudget) reserve() error {
 }
 
 func (c *compiler) reserveEdgeExpansion(segment *d2ast.Edge, glob *globContext, src, dst *Field, selector bool) bool {
+	return c.reserveEdgeWork(segment) && c.reserveEdgePair(segment, glob, src, dst, selector)
+}
+
+func (c *compiler) reserveEdgeWork(segment *d2ast.Edge) bool {
 	if c.stopped() {
 		return false
 	}
 	if err := c.edgeExpansionWork.reserve(); err != nil {
 		return c.rejectEdgeExpansion(segment, err)
 	}
+	return true
+}
+
+func (c *compiler) reserveEdgePair(segment *d2ast.Edge, glob *globContext, src, dst *Field, selector bool) bool {
 	pair := edgeExpansionPair{glob: glob, segment: segment, src: src, dst: dst, selector: selector}
 	if _, ok := c.edgeExpansionPairs[pair]; ok {
 		return true
