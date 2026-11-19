@@ -81,11 +81,11 @@ func newSurfaceIconPainter(ctx context.Context, count int, assets *d2scenebuild.
 	}
 	if p.resolver == nil {
 		var err error
-		p.resolver, err = imageasset.New(imageasset.Options{Limits: imageasset.Limits{
+		p.resolver, err = imageasset.NewDataOnly(imageasset.Limits{
 			MaxFetchedBytes: 12 << 20, MaxEncodedBytes: 8 << 20, MaxDecompressedBytes: 8 << 20, MaxSVGBytes: int64(p.limits.MaxBytes),
 			MaxDecodedWidth: 8192, MaxDecodedHeight: 8192, MaxDecodedPixels: 8 << 20,
 			MaxAssets: maxSurfaceIcons, MaxCumulativeEncodedBytes: maxSurfaceIconBytes, MaxCumulativeDecodedBytes: maxSurfaceIconDecoded,
-		}})
+		})
 		if err != nil {
 			return nil, err
 		}

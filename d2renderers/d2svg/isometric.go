@@ -65,9 +65,8 @@ func renderIsometricValidated(ctx context.Context, diagram *d2target.Diagram, op
 	if native != nil {
 		o = *native
 	}
-	o.Format = d2isometricimg.SVG
 	o.Render.ThemeID, o.Render.ThemeOverrides = opts.ThemeID, opts.ThemeOverrides
-	data, err := d2isometricimg.Render(ctx, diagram, &o)
+	data, err := d2isometricimg.RenderSVG(ctx, diagram, o)
 	if err != nil {
 		return nil, err
 	}

@@ -334,6 +334,8 @@ type Resolver struct {
 	cache             Cache
 	cachePrefix       string
 	limits            Limits
+	// Only New installs local-file and HTTP loading. A data-only resolver has no external I/O.
+	loadExternal func(context.Context, sourceSpec) (loadedSource, error)
 
 	mu                     sync.Mutex
 	assetCount             int
@@ -345,7 +347,8 @@ type Resolver struct {
 }
 
 func New(options Options) (*Resolver, error) {
-	if err := options.Limits.Validate(); err != nil {
+	r, err := NewDataOnly(options.Limits)
+	if err != nil {
 		return nil, err
 	}
 	if options.Cache != nil && options.CacheNamespace == "" {
@@ -395,17 +398,27 @@ func New(options Options) (*Resolver, error) {
 		namespaceHash := sha256.Sum256([]byte(options.CacheNamespace + "\x00network-policy:" + networkNamespace))
 		cachePrefix = fmt.Sprintf("namespace:%x:", namespaceHash)
 	}
+	r.loadExternal = r.loadExternalSource
+	r.baseDir = baseDir
+	r.localFiles = options.LocalFiles
+	r.client = client
+	r.ownsHTTPTransport = ownsHTTPTransport
+	r.cache = options.Cache
+	r.cachePrefix = cachePrefix
+	return r, nil
+}
+
+// NewDataOnly creates a resolver that accepts only embedded data URIs.
+// It applies the same per-resource and cumulative limits as New.
+func NewDataOnly(limits Limits) (*Resolver, error) {
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
 	return &Resolver{
-		baseDir:           baseDir,
-		localFiles:        options.LocalFiles,
-		client:            client,
-		ownsHTTPTransport: ownsHTTPTransport,
-		cache:             options.Cache,
-		cachePrefix:       cachePrefix,
-		limits:            options.Limits,
-		resolvedSources:   make(map[string]*Resource),
-		inflight:          make(map[string]*resolveCall),
-		resolveSlots:      make(chan struct{}, maxConcurrentResolutions),
+		limits:          limits,
+		resolvedSources: make(map[string]*Resource),
+		inflight:        make(map[string]*resolveCall),
+		resolveSlots:    make(chan struct{}, maxConcurrentResolutions),
 	}, nil
 }
 

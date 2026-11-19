@@ -18,15 +18,14 @@ import (
 	"math"
 
 	"github.com/alecthomas/chroma/v2"
-	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
-	"github.com/alecthomas/chroma/v2/styles"
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2latex"
 	"github.com/d2lang/d2/d2renderers/d2sketch"
+	"github.com/d2lang/d2/d2renderers/internal/codestyle"
 	"github.com/d2lang/d2/d2renderers/internal/patternassets"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
@@ -1271,11 +1270,11 @@ func drawConnection(writer io.Writer, diagramHash string, connection d2target.Co
 				lexer = lexers.Fallback
 			}
 			for _, isLight := range []bool{true, false} {
-				theme := "github"
+				theme := codestyle.Light
 				if !isLight {
-					theme = "catppuccin-mocha"
+					theme = codestyle.Dark
 				}
-				style := styles.Get(theme)
+				style := codestyle.Get(theme)
 				if style == nil {
 					return labelMask, errors.New(`code snippet style "github" not found`)
 				}
@@ -2150,17 +2149,13 @@ func drawShape(writer, appendixWriter io.Writer, diagramHash string, targetShape
 				lexer = lexers.Fallback
 			}
 			for _, isLight := range []bool{true, false} {
-				theme := "github"
+				theme := codestyle.Light
 				if !isLight {
-					theme = "catppuccin-mocha"
+					theme = codestyle.Dark
 				}
-				style := styles.Get(theme)
+				style := codestyle.Get(theme)
 				if style == nil {
 					return labelMask, errors.New(`code snippet style "github" not found`)
-				}
-				formatter := formatters.Get("svg")
-				if formatter == nil {
-					return labelMask, errors.New(`code snippet formatter "svg" not found`)
 				}
 				iterator, err := lexer.Tokenise(nil, targetShape.Label)
 				if err != nil {
