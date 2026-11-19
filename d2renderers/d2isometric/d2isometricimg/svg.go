@@ -219,6 +219,7 @@ type svgPaintBatch struct {
 }
 
 type svgPaintUnit struct {
+	link    *nativeLink
 	batches []*svgPaintBatch
 	depth   float64
 	count   int
@@ -270,6 +271,7 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 		return nil, err
 	}
 	type unitKey struct {
+		link     *nativeLink
 		group    *nativeOpacityGroup
 		owner    *nativePaintOwner
 		material *Material
@@ -277,6 +279,15 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 	units := []*svgPaintUnit{}
 	unitIndex := make(map[unitKey]int)
 	batchIndexes := []map[svgBatchKey]*svgPaintBatch{}
+	// Object spans follow mesh construction order. Put the link around
+	// the visible paint so gaps between a body and its outside label and
+	// areas occluded by other objects keep their own hit targets.
+	var meshLinks []*nativeLink
+	for i := range scene.links {
+		if scene.links[i].meshEnd > 0 {
+			meshLinks = append(meshLinks, &scene.links[i])
+		}
+	}
 	shade := &Raster{camera: camera}
 	for i, t := range scene.triangles {
 		if t.svgCoverageOnly || len(visible[i]) == 0 || t.Material != nil && t.Material.Color.A == 0 {
@@ -291,6 +302,12 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 			t.Material = m
 		}
 		key := unitKey{group: t.OpacityGroup}
+		for len(meshLinks) > 0 && i >= meshLinks[0].meshEnd {
+			meshLinks = meshLinks[1:]
+		}
+		if len(meshLinks) > 0 && i >= meshLinks[0].meshStart {
+			key.link = meshLinks[0]
+		}
 		if key.group == nil {
 			key.owner = t.PaintOwner
 		}
@@ -301,7 +318,7 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 		if !exists {
 			unit = len(units)
 			unitIndex[key] = unit
-			u := &svgPaintUnit{first: i, opacity: 1, opaque: faces[i].opaque}
+			u := &svgPaintUnit{link: key.link, first: i, opacity: 1, opaque: faces[i].opaque}
 			if key.owner != nil {
 				u.opaque = key.owner.Opaque
 			}
@@ -402,6 +419,10 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 	writeSVGGroundShadow(w, scene)
 	id := 0
 	for _, u := range units {
+		var closeLink string
+		if u.link != nil {
+			closeLink = writeSVGLinkStart(w, *u.link)
+		}
 		w.write(`<g opacity="%s">`, svgNumber(u.opacity))
 		for _, b := range u.batches {
 			id++
@@ -410,7 +431,7 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 				return nil, w.err
 			}
 		}
-		w.write(`</g>`)
+		w.write(`</g>%s`, closeLink)
 	}
 	writeSVGLinks(w, scene)
 	w.write(`</svg>`)
@@ -464,7 +485,13 @@ func writeSVGBatch(w *nativeSVGWriter, b *svgPaintBatch, id int, camera rasterCa
 			filter = fmt.Sprintf(` filter="url(#light-%d)"`, id)
 		}
 		a := b.affine
-		w.write(`<g clip-path="url(#face-%d)" opacity="%s"%s><g transform="matrix(%s %s %s %s %s %s)"%s><use xlink:href="#%s"/></g></g>`, id, svgNumber(alpha), blend, svgNumber(a[0]), svgNumber(a[1]), svgNumber(a[2]), svgNumber(a[3]), svgNumber(a[4]), svgNumber(a[5]), filter, surfaceID)
+		w.write(`<g clip-path="url(#face-%d)" opacity="%s"%s><g transform="matrix(%s %s %s %s %s %s)"%s>`, id, svgNumber(alpha), blend, svgNumber(a[0]), svgNumber(a[1]), svgNumber(a[2]), svgNumber(a[3]), svgNumber(a[4]), svgNumber(a[5]), filter)
+		if m.outsideCaption {
+			// A complete label is one target, including whitespace between
+			// glyphs. The surrounding clip limits it to the visible surface.
+			w.write(`<rect width="1" height="1" fill="transparent" pointer-events="all"/>`)
+		}
+		w.write(`<use xlink:href="#%s"/></g></g>`, surfaceID)
 		return
 	}
 	fill := b.color
@@ -480,9 +507,13 @@ func writeSVGLinks(w *nativeSVGWriter, s *nativeScene) {
 		points []svgPoint
 		area   float64
 	}
-	links := make([]projectedLink, len(s.links))
-	for i, link := range s.links {
-		projected := &links[i]
+	links := make([]projectedLink, 0, len(s.links))
+	for _, link := range s.links {
+		if link.meshEnd > 0 {
+			continue
+		}
+		links = append(links, projectedLink{})
+		projected := &links[len(links)-1]
 		projected.link = link
 		for _, v := range link.points {
 			p := s.camera.project(v)
@@ -496,14 +527,25 @@ func writeSVGLinks(w *nativeSVGWriter, s *nativeScene) {
 	sort.SliceStable(links, func(i, j int) bool { return links[i].area > links[j].area })
 	for _, projected := range links {
 		link, points := projected.link, projected.points
-		destination := link.region.URL
-		if destination == "" && link.region.Target != "" {
-			destination = "#" + link.region.Target
-		}
-		w.write(`<a xlink:href="%s">`, html.EscapeString(destination))
-		if link.region.Tooltip != "" {
-			w.write(`<title>%s</title>`, html.EscapeString(link.region.Tooltip))
-		}
-		w.write(`<path d="%s" fill="transparent" pointer-events="all"/></a>`, svgPolygonPath([][]svgPoint{points}))
+		closeLink := writeSVGLinkStart(w, link)
+		w.write(`<path d="%s" fill="transparent" pointer-events="all"/>%s`, svgPolygonPath([][]svgPoint{points}), closeLink)
 	}
+}
+
+func writeSVGLinkStart(w *nativeSVGWriter, link nativeLink) string {
+	destination := link.region.URL
+	if destination == "" && link.region.Target != "" {
+		destination = "#" + link.region.Target
+	}
+	closeTag := "</g>"
+	if destination != "" {
+		w.write(`<a xlink:href="%s">`, html.EscapeString(destination))
+		closeTag = "</a>"
+	} else {
+		w.write(`<g>`)
+	}
+	if link.region.Tooltip != "" {
+		w.write(`<title>%s</title>`, html.EscapeString(link.region.Tooltip))
+	}
+	return closeTag
 }

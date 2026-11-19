@@ -189,3 +189,34 @@ func TestNativeLinkDestinationDistinguishesBoardTargetsAndFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestOutsideCaptionHasSeparatePageRegionAndPaintedSVGLink(t *testing.T) {
+	d := captureDiagram()
+	s := &d.Shapes[0]
+	s.Type = "cylinder"
+	s.LabelPosition = "OUTSIDE_RIGHT_TOP"
+	s.Link = "https://example.test/orders"
+	o := Options{Width: 400, Height: 250, FitContent: true}
+	page, err := RenderPage(context.Background(), d, &o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Links) != 2 || page.Links[0].URL != s.Link || page.Links[1].URL != s.Link {
+		t.Fatalf("expected separate body and caption regions for %q, got %+v", s.Link, page.Links)
+	}
+	body, caption := page.Links[0].Box, page.Links[1].Box
+	if body.X+body.Width >= caption.X+caption.Width/2 {
+		t.Errorf("body link %+v extends to the center of the detached caption %+v", body, caption)
+	}
+	o.Format = SVG
+	data, err := Render(context.Background(), d, &o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := []byte(`<a xlink:href="https://example.test/orders">`)
+	_, rest, ok := bytes.Cut(data, start)
+	anchor, _, closed := bytes.Cut(rest, []byte("</a>"))
+	if !ok || !closed || bytes.Count(data, start) != 1 || !bytes.Contains(anchor, []byte(`<use xlink:href=`)) || !bytes.Contains(anchor, []byte(`<rect width="1" height="1" fill="transparent" pointer-events="all"/>`)) {
+		t.Fatal("SVG link must contain the rendered cylinder and its separately clipped caption")
+	}
+}

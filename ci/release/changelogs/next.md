@@ -69,6 +69,8 @@
     overly interconnected graphs before entering non-cancellable layout.
     [#2926](https://github.com/d2lang/d2/pull/2926)
 - links and paints:
+  - Limit isometric SVG shape links to the painted shape and caption. Paged
+    exports use separate annotation boxes for detached captions.
   - Reject dangerous ordinary link schemes after decoding common obfuscation. [#2896](https://github.com/d2lang/d2/pull/2896)
   - Require gradient stop positions to be finite numbers or percentages. [#2905](https://github.com/d2lang/d2/pull/2905)
   - Reject external SVG paint URLs and unsafe fill-pattern or theme values in raw

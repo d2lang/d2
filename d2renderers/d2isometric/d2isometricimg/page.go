@@ -24,8 +24,9 @@ type Page struct {
 }
 
 type nativeLink struct {
-	points [4]Vec
-	region d2scene.LinkRegion
+	points             [4]Vec
+	region             d2scene.LinkRegion
+	meshStart, meshEnd int // SVG shape links wrap these painted triangles.
 }
 
 // RenderPage renders one compiled board and returns its image and bounded
@@ -119,7 +120,8 @@ func preflightPageMetadata(ctx context.Context, diagram *d2target.Diagram, budge
 	return ctx.Err()
 }
 
-func (b *meshBuilder) addNativeLink(points [4]Vec, region d2scene.LinkRegion) {
+func (b *meshBuilder) addNativeLink(link nativeLink) {
+	region := link.region
 	if b.options.links == nil || b.err != nil || region.URL == "" && region.Target == "" && region.Tooltip == "" {
 		return
 	}
@@ -143,14 +145,14 @@ func (b *meshBuilder) addNativeLink(points [4]Vec, region d2scene.LinkRegion) {
 		b.err = err
 		return
 	}
-	for _, p := range points {
+	for _, p := range link.points {
 		if !captionFinite(p.X, p.Y, p.Z) {
 			b.err = fmt.Errorf("isometric page link bounds are non-finite")
 			return
 		}
 	}
 	b.linkBytes += bytes
-	b.links = append(b.links, nativeLink{points: points, region: region})
+	b.links = append(b.links, link)
 }
 
 // Match the existing native PDF/PPTX metadata contract. Reject unsupported
@@ -224,7 +226,18 @@ func (b *meshBuilder) addSurfaceLink(link, tooltip string, s labelSurface) {
 	if !b.validateTypedLink(link, tooltip) {
 		return
 	}
-	b.addNativeLink(surfaceCorners(s), nativeLinkDestination(link, tooltip))
+	b.addNativeLink(nativeLink{points: surfaceCorners(s), region: nativeLinkDestination(link, tooltip)})
+}
+
+func (b *meshBuilder) addObjectLink(link, tooltip string, first int) {
+	if b.options.links == nil || link == "" && tooltip == "" || first == len(b.triangles) {
+		return
+	}
+	if b.options.vector {
+		b.addNativeLink(nativeLink{meshStart: first, meshEnd: len(b.triangles), region: nativeLinkDestination(link, tooltip)})
+		return
+	}
+	b.addMeshLink(link, tooltip, b.triangles[first:])
 }
 
 func (b *meshBuilder) addMeshLink(link, tooltip string, triangles []Triangle) {
@@ -235,10 +248,23 @@ func (b *meshBuilder) addMeshLink(link, tooltip string, triangles []Triangle) {
 		return
 	}
 	var e projectedExtent
-	e.mesh(triangles)
+	for _, t := range triangles {
+		if t.Material != nil && t.Material.outsideCaption {
+			continue
+		}
+		for _, v := range t.V {
+			e.add(v.Position)
+		}
+	}
+	if !e.valid {
+		return
+	}
 	c := nativeCameraAxes()
 	point := func(x, y float64) Vec { return nadd(nmul(c.right, x), nadd(nmul(c.up, y), nmul(c.direction, e.maxZ))) }
-	b.addNativeLink([4]Vec{point(e.minX, e.minY), point(e.maxX, e.minY), point(e.maxX, e.maxY), point(e.minX, e.maxY)}, nativeLinkDestination(link, tooltip))
+	b.addNativeLink(nativeLink{
+		points: [4]Vec{point(e.minX, e.minY), point(e.maxX, e.minY), point(e.maxX, e.maxY), point(e.minX, e.maxY)},
+		region: nativeLinkDestination(link, tooltip),
+	})
 }
 
 // Map source-document link boxes through the same meet/stretch viewport used
@@ -275,7 +301,7 @@ func (b *meshBuilder) addDocumentLinks(doc *d2scene.Document, s labelSurface) {
 		if x1 <= x0 || y1 <= y0 {
 			continue
 		}
-		b.addNativeLink([4]Vec{point(x0, y0), point(x1, y0), point(x1, y1), point(x0, y1)}, r)
+		b.addNativeLink(nativeLink{points: [4]Vec{point(x0, y0), point(x1, y0), point(x1, y1), point(x0, y1)}, region: r})
 		if b.err != nil {
 			return
 		}

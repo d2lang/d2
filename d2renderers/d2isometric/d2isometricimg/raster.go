@@ -37,6 +37,7 @@ type Material struct {
 	// Physical solid caps and unwrapped walls have a filled source background;
 	// their texture's antialiased perimeter is not a geometric hole.
 	svgSolidTexture bool
+	outsideCaption  bool // Paged exports give this printed surface its own link box.
 	gradient        string
 }
 
