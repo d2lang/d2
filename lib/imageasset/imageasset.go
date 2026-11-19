@@ -420,22 +420,9 @@ func (r *Resolver) CloseIdleConnections() {
 }
 
 func boundedDefaultTransport(base http.RoundTripper) *http.Transport {
-	if transport, ok := base.(*http.Transport); ok {
-		clone := transport.Clone()
-		clone.MaxResponseHeaderBytes = maxResponseHeaderBytes
-		return clone
-	}
-	// http.DefaultTransport is exported and may legally be replaced. Retain the
-	// standard library's safe defaults instead of asserting its concrete type.
-	return &http.Transport{
-		Proxy:                  http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:      true,
-		MaxIdleConns:           100,
-		IdleConnTimeout:        90 * time.Second,
-		TLSHandshakeTimeout:    10 * time.Second,
-		ExpectContinueTimeout:  1 * time.Second,
-		MaxResponseHeaderBytes: maxResponseHeaderBytes,
-	}
+	transport := netpolicy.CloneDefaultTransport(base)
+	transport.MaxResponseHeaderBytes = maxResponseHeaderBytes
+	return transport
 }
 
 func (r *Resolver) assetCountSnapshot() int {

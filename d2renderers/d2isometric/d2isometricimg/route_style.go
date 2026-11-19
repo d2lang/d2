@@ -16,7 +16,7 @@ func nativeRouteTint(edge d2isometric.Edge) string {
 	palette := [...]string{"#3d6d8f", "#36776b", "#786391", "#957245", "#586d86", "#8c606b"}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(edge.ID))
-	return palette[int(h.Sum32())%len(palette)]
+	return palette[h.Sum32()%uint32(len(palette))]
 }
 
 func nativeRouteRadius(edge d2isometric.Edge) float64 {

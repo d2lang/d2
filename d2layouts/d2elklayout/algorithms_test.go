@@ -3,6 +3,7 @@ package d2elklayout_test
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -41,17 +42,15 @@ type expectedLayout struct {
 	Edges     []expectedEdge   `json:"edges"`
 }
 
+//go:embed testdata/elk_go_0_12_d2_algorithms.json
+var frozenElkAlgorithms []byte
+
 // This fixture freezes D2's post-layout geometry after elk-go has passed its
 // separate differential gates against the official ELK.js 0.12.0 asset. It is
 // a D2 regression fixture, not an independently generated ELK.js oracle.
 func TestD2ExposedAlgorithmsMatchFrozenElkGo012Profile(t *testing.T) {
-	const fixturePath = "testdata/elk_go_0_12_d2_algorithms.json"
-	expectedData, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var expectedLayouts []expectedLayout
-	if err := json.Unmarshal(expectedData, &expectedLayouts); err != nil {
+	if err := json.Unmarshal(frozenElkAlgorithms, &expectedLayouts); err != nil {
 		t.Fatal(err)
 	}
 	expectedByAlgorithm := make(map[string]expectedLayout, len(expectedLayouts))
@@ -207,7 +206,7 @@ func TestD2ExposedAlgorithmsMatchFrozenElkGo012Profile(t *testing.T) {
 		if err := encoder.Encode(actualLayouts); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(fixturePath, actualData.Bytes(), 0o644); err != nil {
+		if err := os.WriteFile("testdata/elk_go_0_12_d2_algorithms.json", actualData.Bytes(), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

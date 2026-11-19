@@ -439,7 +439,7 @@ func openVerifiedDirectory(path string) (*os.File, error) {
 		_ = directory.Close()
 		return nil, err
 	}
-	if !opened.IsDir() || !os.SameFile(listed, opened) {
+	if !opened.IsDir() || !sameFontFile(listed, opened) {
 		_ = directory.Close()
 		return nil, fmt.Errorf("directory identity changed while opening")
 	}
@@ -494,7 +494,7 @@ func probeFontFileCoverage(ctx context.Context, path string, maxFileBytes, remai
 	}
 	defer file.Close()
 	opened, err := file.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(listed, opened) || opened.Size() != listed.Size() {
+	if err != nil || !opened.Mode().IsRegular() || !sameFontFile(listed, opened) || opened.Size() != listed.Size() {
 		return fontCoverageProbe{}, nil
 	}
 	reader := &boundedFontReaderAt{ctx: ctx, reader: file, remaining: remainingScanBytes}
@@ -566,7 +566,7 @@ func readBoundedFontFile(path string, maxFileBytes, remainingScanBytes int64) ([
 	}
 	defer file.Close()
 	opened, err := file.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(listed, opened) || opened.Size() <= 0 {
+	if err != nil || !opened.Mode().IsRegular() || !sameFontFile(listed, opened) || opened.Size() <= 0 {
 		return nil, nil
 	}
 	readLimit := min(maxFileBytes, remainingScanBytes)

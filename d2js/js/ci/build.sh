@@ -13,39 +13,9 @@ if ! cmp -s ./THIRD_PARTY_NOTICES.txt ./d2js/js/THIRD_PARTY_NOTICES.txt; then
   echoerr "d2js/js/THIRD_PARTY_NOTICES.txt is out of sync with the repository notice"
   exit 1
 fi
-if [ -n "${NPM_VERSION:-}" ]; then
-  JS_VERSION="$NPM_VERSION"
-else
-  JS_VERSION=$(awk -F'"' '/"version"/ {print $4}' ./d2js/js/package.json)
-fi
-# Match native builds: identify the exact release tag, or the source commit for
-# an untagged development build. The npm package has its own independent version.
-D2_VERSION=$(git_describe_ref)
-sh_c "GOOS=js GOARCH=wasm go build -ldflags='-s -w -X github.com/d2lang/d2/lib/version.Version=${D2_VERSION} -X github.com/d2lang/d2/d2js/d2wasm.jsVersion=${JS_VERSION}' -trimpath -o main.wasm ./d2js"
-
-if [ -n "${NPM_VERSION:-}" ]; then
-  # Optimize with wasm-opt if available
-  if command -v wasm-opt >/dev/null 2>&1; then
-    echo "Optimizing WASM with wasm-opt..."
-    # -Oz can use quadratic memory on large Go WASM modules.
-    # https://github.com/WebAssembly/binaryen/issues/7644
-    # Go 1.26 emits saturating float-to-integer conversions.
-    sh_c "wasm-opt -O2 --enable-bulk-memory-opt --enable-nontrapping-float-to-int main.wasm -o main.wasm"
-  else
-    echo "wasm-opt not found, skipping optimization (install with: brew install binaryen)"
-  fi
-fi
-
-sh_c "mv main.wasm ./d2js/js/wasm/d2.wasm"
-
-if [ ! -f ./d2js/js/wasm/d2.wasm ]; then
-  echoerr "Error: d2.wasm is missing"
-  exit 1
-else
-  echo "d2.wasm exists. Size:"
-  ls -lh ./d2js/js/wasm/d2.wasm | awk '{print $5}'
-fi
-
+mkdir -p ./d2js/js/wasm
+./ci/build-wasm.sh ./d2js/js/wasm/d2.wasm
+cp "$(tinygo env TINYGOROOT)/targets/wasm_exec.js" ./d2js/js/wasm/wasm_exec.js
 cd d2js/js
 sh_c bun build.js
 

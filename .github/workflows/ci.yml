@@ -22,6 +22,8 @@ jobs:
         with:
           go-version-file: ./go.mod
           cache: true
+      - name: Install TinyGo and Binaryen
+        run: ./ci/install-wasm-tools.sh
       - name: Install verified Pandoc formatter
         shell: bash
         run: |
