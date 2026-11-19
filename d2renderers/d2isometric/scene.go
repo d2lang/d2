@@ -303,6 +303,19 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 			}
 		}
 	}
+	// Endpoint text without an authored color uses the theme foreground.
+	// Keep the original tokens available alongside the resolved presentation.
+	endpointInk := func(text *d2target.Text) *d2target.Text {
+		if text == nil {
+			return nil
+		}
+		resolved := *text
+		if resolved.Color == "" {
+			resolved.Color = d2target.FG_COLOR
+		}
+		resolved.Color = paint(resolved.Color)
+		return &resolved
+	}
 	edgeIDs := map[string]bool{}
 	for _, c := range owned.Connections {
 		if c.ID == "" || edgeIDs[c.ID] {
@@ -312,9 +325,11 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 		e := Edge{ID: c.ID, Source: c.Src, Target: c.Dst, Label: c.Label, SourceLabel: c.SrcLabel, TargetLabel: c.DstLabel, SourceArrow: c.SrcArrow, TargetArrow: c.DstArrow, Stroke: paint(c.Stroke), FontColor: paint(c.Color), StrokeWidth: c.StrokeWidth, StrokeDash: c.StrokeDash, Opacity: c.Opacity, Link: c.Link, Tooltip: c.Tooltip, Metadata: EdgeMetadata{Original: c}}
 		e.StrokeExplicit = keepPaint(c.Stroke)
 		e.FontExplicit = keepPaint(c.Color)
-		if themeID != 0 {
+		if themeID != 0 || overrides != nil {
 			e.FontColor = paint(c.GetFontColor())
 			e.FontExplicit = true
+			e.SourceLabel = endpointInk(c.SrcLabel)
+			e.TargetLabel = endpointInk(c.DstLabel)
 		}
 		if c.Icon != nil {
 			e.Icon = c.Icon.String()
