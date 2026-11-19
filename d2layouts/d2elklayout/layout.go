@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -102,6 +102,8 @@ type ELKGraph struct {
 }
 
 type ConfigurableOpts struct {
+	LayeredOptions
+	AlgorithmOptions
 	Algorithm       string `json:"elk.algorithm,omitempty"`
 	NodeSpacing     int    `json:"spacing.nodeNodeBetweenLayers,omitempty"`
 	Padding         string `json:"elk.padding,omitempty"`
@@ -122,7 +124,8 @@ var DefaultOpts = ConfigurableOpts{
 }
 
 var port_spacing = 40.
-var edge_node_spacing = 40
+
+const edge_node_spacing = 40
 
 type objectDegree struct {
 	incoming float64
@@ -177,17 +180,16 @@ func (s elkGraphStats) maxSelfLoopLabel(parent *d2graph.Object, isWidth bool) in
 }
 
 type elkOpts struct {
-	EdgeNode              int       `json:"elk.spacing.edgeNode,omitempty"`
 	FixedAlignment        string    `json:"elk.layered.nodePlacement.bk.fixedAlignment,omitempty"`
 	Thoroughness          int       `json:"elk.layered.thoroughness,omitempty"`
 	Direction             Direction `json:"elk.direction"`
 	HierarchyHandling     string    `json:"elk.hierarchyHandling,omitempty"`
 	InlineEdgeLabels      bool      `json:"elk.edgeLabels.inline,omitempty"`
-	ForceNodeModelOrder   bool      `json:"elk.layered.crossingMinimization.forceNodeModelOrder,omitempty"`
 	ConsiderModelOrder    string    `json:"elk.layered.considerModelOrder.strategy,omitempty"`
 	CycleBreakingStrategy string    `json:"elk.layered.cycleBreaking.strategy,omitempty"`
 
 	SelfLoopDistribution string `json:"elk.layered.edgeRouting.selfLoopDistribution,omitempty"`
+	LayerConstraint      string `json:"elk.layered.layering.layerConstraint,omitempty"`
 
 	NodeSizeConstraints string `json:"elk.nodeSize.constraints,omitempty"`
 	ContentAlignment    string `json:"elk.contentAlignment,omitempty"`
@@ -211,7 +213,6 @@ func edgeEdgeSpacingOrDefault(opts *ConfigurableOpts) *int {
 func newRootLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 	return &elkOpts{
 		Thoroughness:          8,
-		EdgeNode:              edge_node_spacing,
 		HierarchyHandling:     "INCLUDE_CHILDREN",
 		FixedAlignment:        "BALANCED",
 		ConsiderModelOrder:    "NODES_AND_EDGES",
@@ -219,11 +220,13 @@ func newRootLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 		NodeSizeConstraints:   "MINIMUM_SIZE",
 		ContentAlignment:      "H_CENTER V_CENTER",
 		ConfigurableOpts: ConfigurableOpts{
-			Algorithm:       opts.Algorithm,
-			NodeSpacing:     opts.NodeSpacing,
-			EdgeNodeSpacing: opts.EdgeNodeSpacing,
-			EdgeEdgeSpacing: edgeEdgeSpacingOrDefault(opts),
-			SelfLoopSpacing: opts.SelfLoopSpacing,
+			LayeredOptions:   opts.parentOptions(true),
+			AlgorithmOptions: opts.AlgorithmOptions,
+			Algorithm:        opts.Algorithm,
+			NodeSpacing:      opts.NodeSpacing,
+			EdgeNodeSpacing:  opts.EdgeNodeSpacing,
+			EdgeEdgeSpacing:  edgeEdgeSpacingOrDefault(opts),
+			SelfLoopSpacing:  opts.SelfLoopSpacing,
 		},
 	}
 }
@@ -233,7 +236,6 @@ func newContainerLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 		Thoroughness:      8,
 		HierarchyHandling: "INCLUDE_CHILDREN",
 		FixedAlignment:    "BALANCED",
-		EdgeNode:          edge_node_spacing,
 		// ELK 0.12 crashes on compound subgraphs when model-order
 		// processing is enabled below the root. Keep it disabled there.
 		ConsiderModelOrder:    "NONE",
@@ -241,6 +243,7 @@ func newContainerLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 		NodeSizeConstraints:   "MINIMUM_SIZE",
 		ContentAlignment:      "H_CENTER V_CENTER",
 		ConfigurableOpts: ConfigurableOpts{
+			LayeredOptions:  opts.parentOptions(false),
 			NodeSpacing:     opts.NodeSpacing,
 			EdgeNodeSpacing: opts.EdgeNodeSpacing,
 			EdgeEdgeSpacing: edgeEdgeSpacingOrDefault(opts),
@@ -258,11 +261,16 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if opts == nil {
-		opts = &DefaultOpts
-	}
 	defer xdefer.Errorf(&err, "failed to ELK layout")
 	if err := layoutguard.CheckGraph(ctx, "ELK", g); err != nil {
+		return err
+	}
+	opts, err = graphOptions(g, opts)
+	if err != nil {
+		return err
+	}
+	padding, err := readPadding(opts.Padding)
+	if err != nil {
 		return err
 	}
 	graphStats := collectELKGraphStats(g)
@@ -359,10 +367,9 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 			}
 		}
 
+		n.LayoutOptions.LayerConstraint = strings.ToUpper(obj.ELKLayerConstraint)
 		if obj.IsContainer() {
-			padding := parsePadding(opts.Padding)
-			padding = adjustPadding(obj, width, height, padding)
-			n.LayoutOptions.Padding = padding.String()
+			n.LayoutOptions.Padding = adjustPadding(obj, width, height, padding).String()
 		}
 
 		if obj.HasLabel() {
@@ -629,8 +636,20 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		}
 	}
 
+	var mrTreeRoutes map[*d2graph.Edge]bool
+	if opts.usesAlgorithm("mrtree") {
+		mrTreeRoutes = make(map[*d2graph.Edge]bool)
+	}
 	for _, edge := range g.Edges {
 		points := edge.Route
+		if mrTreeRoutes != nil && elkEdges[edge].Container == "" {
+			// Child graphs can still use layered routing. Preserve the tree's
+			// own detours when simplifying the other routes later.
+			mrTreeRoutes[edge] = true
+			if edge.Src.Parent == edge.Dst.Parent {
+				points = trimMrTreeBends(edge)
+			}
+		}
 
 		startIndex, endIndex := 0, len(points)-1
 		start := points[startIndex]
@@ -675,10 +694,37 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		}
 	}
 
-	deleteBends(g)
+	if opts.EdgeRouting != "POLYLINE" {
+		deleteBends(g, opts.LayeredOptions, mrTreeRoutes)
+	}
 	deconflictSelfLoopLabels(g)
 
 	return nil
+}
+
+// Mr. Tree can repeat a bend on a return edge or run its final segment along
+// the target's border. Keep the attachment points and the bends in open space
+// so tracing and rounding the route do not send the arrow back into a shape.
+func trimMrTreeBends(edge *d2graph.Edge) []*geo.Point {
+	points := edge.Route
+	if len(points) <= 2 || edge.Src == edge.Dst {
+		return points
+	}
+	end := points[len(points)-1]
+	bends := points[1 : len(points)-1]
+	first := 0
+	for i, bend := range bends {
+		if edge.Dst.Box.Contains(bend) {
+			bends = bends[:i]
+			break
+		}
+		if edge.Src.Box.Contains(bend) {
+			first = i + 1
+		}
+	}
+	bends = slices.CompactFunc(bends[first:], (*geo.Point).Equals)
+	points = append(points[:1], bends...)
+	return append(points, end)
 }
 
 func srcPortID(obj *d2graph.Object, column string) string {
@@ -767,10 +813,10 @@ func overlapsAny(box *geo.Box, others []*geo.Box) bool {
 
 // deleteBends is a shim for ELK to delete unnecessary bends
 // see https://github.com/terrastruct/d2/issues/1030
-func deleteBends(g *d2graph.Graph) {
+func deleteBends(g *d2graph.Graph, opts LayeredOptions, keepRoute map[*d2graph.Edge]bool) {
 	hasCandidate := false
 	for _, edge := range g.Edges {
-		if edge.Src != edge.Dst && len(edge.Route) >= 4 {
+		if edge.Src != edge.Dst && len(edge.Route) >= 4 && !keepRoute[edge] {
 			hasCandidate = true
 			break
 		}
@@ -778,13 +824,29 @@ func deleteBends(g *d2graph.Graph) {
 	if !hasCandidate {
 		return
 	}
-	collisionIndex := newBendCollisionIndex(g)
+	collisionIndex := newBendCollisionIndex(g, opts)
+
+	// Straightening a bend can slide the attachment along the shape border.
+	// Keep ELK's shared input and output ports at their original positions.
+	type endpointKey struct {
+		object *d2graph.Object
+		point  geo.Point
+		source bool
+	}
+	var attachments map[endpointKey]int
+	if opts.MergeEdges {
+		attachments = make(map[endpointKey]int)
+		for _, edge := range g.Edges {
+			attachments[endpointKey{edge.Src, *edge.Route[0], true}]++
+			attachments[endpointKey{edge.Dst, *edge.Route[len(edge.Route)-1], false}]++
+		}
+	}
 
 	// Get rid of S-shapes at the source and the target
 	// TODO there might be value in repeating this. removal of an S shape introducing another S shape that can still be removed
 	for _, isSource := range []bool{true, false} {
 		for ei, e := range g.Edges {
-			if len(e.Route) < 4 {
+			if len(e.Route) < 4 || keepRoute[e] {
 				continue
 			}
 			if e.Src == e.Dst {
@@ -810,6 +872,9 @@ func deleteBends(g *d2graph.Graph) {
 				columnIndex = e.DstTableColumnIndex
 			}
 
+			if opts.MergeEdges && attachments[endpointKey{endpoint, *start, isSource}] > 1 {
+				continue
+			}
 			isHorizontal := math.Ceil(start.Y) == math.Ceil(corner.Y)
 			dx, dy := endpoint.GetModifierElementAdjustments()
 
@@ -909,7 +974,7 @@ func deleteBends(g *d2graph.Graph) {
 	}
 
 	for ei, e := range g.Edges {
-		if len(e.Route) < 6 {
+		if len(e.Route) < 6 || keepRoute[e] {
 			continue
 		}
 		if e.Src == e.Dst {
@@ -1007,55 +1072,38 @@ func deleteBends(g *d2graph.Graph) {
 }
 
 type shapePadding struct {
-	top, left, bottom, right int
+	top, left, bottom, right float64
 }
 
-// parse out values from elk padding string. e.g. "[top=50,left=50,bottom=50,right=50]"
-func parsePadding(in string) shapePadding {
-	reTop := regexp.MustCompile(`top=(\d+)`)
-	reLeft := regexp.MustCompile(`left=(\d+)`)
-	reBottom := regexp.MustCompile(`bottom=(\d+)`)
-	reRight := regexp.MustCompile(`right=(\d+)`)
-
-	padding := shapePadding{}
-
-	submatches := reTop.FindStringSubmatch(in)
-	if len(submatches) == 2 {
-		i, err := strconv.ParseInt(submatches[1], 10, 64)
-		if err == nil {
-			padding.top = int(i)
+// ELK accepts named padding on any subset of the four sides.
+func readPadding(value string) (shapePadding, error) {
+	var p shapePadding
+	// Match the delimiters accepted by the ELK spacing parser.
+	fields := strings.Trim(value, "()[]{}\"' \t\r\n")
+	for _, part := range strings.FieldsFunc(fields, func(r rune) bool { return r == ',' || r == ';' }) {
+		name, raw, ok := strings.Cut(part, "=")
+		n, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		if !ok || err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
+			return p, fmt.Errorf("invalid elk-padding field %q: expected side=nonnegative-number", part)
+		}
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "top":
+			p.top = n
+		case "left":
+			p.left = n
+		case "bottom":
+			p.bottom = n
+		case "right":
+			p.right = n
+		default:
+			return p, fmt.Errorf("unknown elk-padding side %q", name)
 		}
 	}
-
-	submatches = reLeft.FindStringSubmatch(in)
-	if len(submatches) == 2 {
-		i, err := strconv.ParseInt(submatches[1], 10, 64)
-		if err == nil {
-			padding.left = int(i)
-		}
-	}
-
-	submatches = reBottom.FindStringSubmatch(in)
-	if len(submatches) == 2 {
-		i, err := strconv.ParseInt(submatches[1], 10, 64)
-		if err == nil {
-			padding.bottom = int(i)
-		}
-	}
-
-	submatches = reRight.FindStringSubmatch(in)
-	i, err := strconv.ParseInt(submatches[1], 10, 64)
-	if len(submatches) == 2 {
-		if err == nil {
-			padding.right = int(i)
-		}
-	}
-
-	return padding
+	return p, nil
 }
 
 func (padding shapePadding) String() string {
-	return fmt.Sprintf("[top=%d,left=%d,bottom=%d,right=%d]", padding.top, padding.left, padding.bottom, padding.right)
+	return fmt.Sprintf("[top=%g,left=%g,bottom=%g,right=%g]", padding.top, padding.left, padding.bottom, padding.right)
 }
 
 func adjustPadding(obj *d2graph.Object, width, height float64, padding shapePadding) shapePadding {
@@ -1142,10 +1190,10 @@ func adjustPadding(obj *d2graph.Object, width, height float64, padding shapePadd
 	innerLeft := int(math.Ceil(innerBox.TopLeft.X))
 	innerRight := int(math.Ceil(width - (innerBox.TopLeft.X + innerBox.Width)))
 
-	padding.top = go2.Max(padding.top, innerTop+extraTop)
-	padding.bottom = go2.Max(padding.bottom, innerBottom+extraBottom)
-	padding.left = go2.Max(padding.left, innerLeft+extraLeft)
-	padding.right = go2.Max(padding.right, innerRight+extraRight)
+	padding.top = math.Max(padding.top, float64(innerTop+extraTop))
+	padding.bottom = math.Max(padding.bottom, float64(innerBottom+extraBottom))
+	padding.left = math.Max(padding.left, float64(innerLeft+extraLeft))
+	padding.right = math.Max(padding.right, float64(innerRight+extraRight))
 
 	return padding
 }

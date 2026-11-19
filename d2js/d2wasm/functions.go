@@ -169,12 +169,16 @@ func GetELKGraph(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid fs input: %s", err.Error()), Code: 400}
 	}
 
-	g, _, err := d2compiler.Compile(inputPath, strings.NewReader(input.FS[inputPath]), &d2compiler.CompileOptions{
+	g, config, err := d2compiler.Compile(inputPath, strings.NewReader(input.FS[inputPath]), &d2compiler.CompileOptions{
 		UTF16Pos: true,
 		FS:       fs,
 	})
 	if err != nil {
 		return nil, &WASMError{Message: err.Error(), Code: 400}
+	}
+
+	if config != nil {
+		g.Data = config.Data
 	}
 
 	ruler, err := textmeasure.NewRuler()

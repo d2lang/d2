@@ -22,6 +22,7 @@ func TestConvertGraphPreservesCustomELKProfile(t *testing.T) {
 	for i, obj := range g.Objects {
 		obj.Box = geo.NewBox(geo.NewPoint(float64(i*100), float64(i*50)), 60, 40)
 	}
+	objectByID(t, g, "container").ELKLayerConstraint = "lAsT"
 	opts := ConfigurableOpts{
 		Algorithm:       "layered",
 		NodeSpacing:     123,
@@ -54,12 +55,16 @@ func TestConvertGraphPreservesCustomELKProfile(t *testing.T) {
 	if containerOpts == nil {
 		t.Fatal("container layout options are nil")
 	}
+	if containerOpts.LayerConstraint != "LAST" {
+		t.Errorf("ELK layer constraint = %q, want LAST", containerOpts.LayerConstraint)
+	}
 	if containerOpts.ConsiderModelOrder != "NONE" || containerOpts.CycleBreakingStrategy != "GREEDY" || containerOpts.ForceNodeModelOrder {
 		t.Fatalf("container migration profile = consider %q, cycle %q, force model order %t; want NONE/GREEDY/false",
 			containerOpts.ConsiderModelOrder, containerOpts.CycleBreakingStrategy, containerOpts.ForceNodeModelOrder)
 	}
 	// EdgeEdgeSpacing is a pointer, so compare by value rather than identity.
 	if !reflect.DeepEqual(containerOpts.ConfigurableOpts, ConfigurableOpts{
+		LayeredOptions:  LayeredOptions{EdgeNode: go2.Pointer(40.)},
 		NodeSpacing:     opts.NodeSpacing,
 		Padding:         opts.Padding,
 		EdgeNodeSpacing: opts.EdgeNodeSpacing,
