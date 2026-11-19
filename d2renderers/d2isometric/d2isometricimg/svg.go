@@ -539,6 +539,14 @@ func svgTextureAffine(t Triangle, p [3]svgPoint) ([6]float64, error) {
 }
 
 func writeSVGBatch(w *nativeSVGWriter, b *svgPaintBatch, id int, camera rasterCamera) {
+	if b.cover != nil && b.cover.written {
+		return
+	}
+	m := b.triangle.Material
+	if m != nil && m.svgPointerPassthrough {
+		w.write(`<g pointer-events="none">`)
+		defer w.write(`</g>`)
+	}
 	if b.cover != nil {
 		writeSVGPaintCover(w, b.cover, camera)
 		return
@@ -547,10 +555,9 @@ func writeSVGBatch(w *nativeSVGWriter, b *svgPaintBatch, id int, camera rasterCa
 	if path == "" {
 		return
 	}
-	m := b.triangle.Material
-	if m.svgPointerPassthrough {
-		w.write(`<g pointer-events="none">`)
-		defer w.write(`</g>`)
+	if m.svgHitOnly {
+		w.write(`<path d="%s" fill="transparent" pointer-events="all"/>`, path)
+		return
 	}
 	alpha := float64(m.Color.A) / 255
 	blend := ""

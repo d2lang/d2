@@ -10,14 +10,15 @@ import (
 )
 
 type nativeSceneOptions struct {
-	stackTops     map[string]float64
-	stackWires    []stackWire // optional capture of the visible ink on one exploded deck
-	fitContent    bool
-	deferRaster   bool
-	vector        bool          // retain solid cap coverage beneath vector face paint
-	camera        *rasterCamera // final logical pixels, before supersampling
-	outputDensity float64
-	links         *d2scenebuild.LinkBudget
+	stackApertures map[string]stackAperture
+	stackTops      map[string]float64
+	stackWires     []stackWire // optional capture of the visible ink on one exploded deck
+	fitContent     bool
+	deferRaster    bool
+	vector         bool          // retain solid cap coverage beneath vector face paint
+	camera         *rasterCamera // final logical pixels, before supersampling
+	outputDensity  float64
+	links          *d2scenebuild.LinkBudget
 }
 
 const nativeTrafficRadius = .045

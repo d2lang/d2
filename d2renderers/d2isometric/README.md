@@ -76,11 +76,11 @@ layers: {
 }
 ```
 
-A link to a displayed board emits light from the linked shape or the
-painted part of a linked connection. The cone opens toward the whole
-destination plate and fades into clear air before its surface. Return
-links shine upward. Connections within a floor keep their compiled
-routes. SVG links navigate to the destination plate.
+In the example above, the face of `Proof` lifts over an opening in the
+Composition plate. Four fine lines pass through the opening, then spread to
+the four corners of Pressroom. In SVG, clicking the cover, rim, or opening
+navigates to Pressroom. A link on a connection starts its lines on the
+visible stroke. Connections within a floor keep their compiled routes.
 
 SVG and PNG produce one image, PDF one page, and PPTX one slide. GIF uses
 the same stack and preserves authored animation. The mode is also available
@@ -92,7 +92,7 @@ uses TALA to lay out 27 objects on four plates. Follow one observation
 through calibration, difference imaging, and alert publication. A follow-up
 request returns to the observing floor.
 
-![Four sky-survey plates with widening cones of light between layers](../../docs/examples/exploded-layers/sky-survey.png)
+![Four sky-survey plates with hollow linked objects and fine lines to the destination corners](../../docs/examples/exploded-layers/sky-survey.png)
 
 Render the example with its four local illustrations from the repository root.
 

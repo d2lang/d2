@@ -39,6 +39,7 @@ type nativeScene struct {
 	links             []nativeLink
 }
 type meshBuilder struct {
+	stackBoardCuts    map[string][]stackAperture
 	ctx               context.Context
 	triangles         []Triangle
 	err               error
@@ -513,6 +514,7 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 		return nil, err
 	}
 	headerNodes := hierarchyRenderNodes(s.Nodes, b.hierarchySupports)
+	b.planStackHatches(headerNodes, boards, captions)
 	if b.palettePaper != "" || !nativeToken(s.Root.Fill) {
 		hierarchyBackground = s.Background
 	}
@@ -541,6 +543,11 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 		w, d := max(.01, board.Size.X), max(.01, board.Size.Z)
 		firstBoardTriangle, firstBoardAnimation := len(b.triangles), len(b.animatedNodes)
 		b.hierarchyBoard(board, owner, tint, opacity)
+		if owner != nil {
+			if opening := b.options.stackApertures[owner.ID]; opening.width > 0 {
+				b.stackHatchWalls(opening, min(opening.width, opening.depth)*.065, min(0, hierarchySurfaceY(board)), owner.Opacity)
+			}
+		}
 
 		if board.Label != "" || owner != nil && owner.Icon != "" {
 			style := d2target.Text{}
@@ -614,11 +621,13 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 				continue
 			}
 			first := len(b.triangles)
+			firstLink := len(b.links)
 			if node.SequenceRole != "" {
 				b.sequenceNode(node, tints[node.BoardID])
 			} else {
 				b.hierarchyNode(node, tints[node.BoardID])
 			}
+			b.openStackHatch(node, first, firstLink)
 			captions.AvoidMesh(b.triangles[first:])
 			b.addObjectLink(node.Link, node.Tooltip, first)
 			shadowSpans = append(shadowSpans, hierarchyShadowSpan{first, len(b.triangles), node.BoardID})

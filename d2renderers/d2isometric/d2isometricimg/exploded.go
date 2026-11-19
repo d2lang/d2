@@ -13,6 +13,7 @@ import (
 )
 
 type explodedDeck struct {
+	openings                          map[string]stackAperture
 	tops                              map[string]float64
 	path                              []string
 	board                             *d2target.Diagram
@@ -23,7 +24,6 @@ type explodedDeck struct {
 	width, depth, surfaceY, thickness float64
 	height                            float64 // tallest artwork above the plate
 	contentWidth, contentDepth        float64
-	translucent                       bool
 }
 
 func explodedLayers(ctx context.Context, root *d2target.Diagram, boardPath []string) ([]explodedDeck, error) {
@@ -126,6 +126,7 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 	width, depth := 3.0, 1.0
 	triangles, pixels := 0, int64(0)
 	textures := make(map[image.Image]bool)
+	floors := indexStackFloors(decks)
 	for i := range decks {
 		deck := &decks[i]
 		floorSettings := o.Render
@@ -144,6 +145,8 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 		perFloor.stackWires = deck.wires
 		deck.tops = make(map[string]float64)
 		perFloor.stackTops = deck.tops
+		deck.openings = requestedStackApertures(deck.scene, floors, i)
+		perFloor.stackApertures = deck.openings
 		perFloor.deferRaster = true
 		perFloor.camera = nil
 		perFloor.outputDensity = sceneOutputDensity(deck.scene, o.Width, max(64, o.Height/len(decks)), nil)
@@ -204,6 +207,14 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 	var packets []packetRoute
 	for i := range decks {
 		d := &decks[i]
+		for id, opening := range d.openings {
+			if opening.width == 0 {
+				delete(d.openings, id)
+				continue
+			}
+			opening.center = nadd(opening.center, d.offset)
+			d.openings[id] = opening
+		}
 		anchor := "deck-" + strconv.Itoa(i)
 		targets[stackPathKey(d.path)] = anchor
 		fill := explodedDeckFill(d.scene)
@@ -224,6 +235,15 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 		}
 		d.mesh = nil
 	}
+	// Use the selected board's canvas on the combined document. Individual
+	// floors retain their own shape, gradient and theme materials.
+	canvas, err := d2isometric.BuildScene(&d2target.Diagram{Root: diagram.Root, Config: diagram.Config}, &settings)
+	if err != nil {
+		return nil, err
+	}
+	if canvas.ThemeID != 0 || canvas.ThemeOverrides != nil || !nativeToken(canvas.Root.Fill) {
+		b.palettePaper = canvas.Background
+	}
 	if err := b.addStackConnectors(decks); err != nil {
 		return nil, err
 	}
@@ -237,15 +257,6 @@ func buildExplodedScene(ctx context.Context, diagram *d2target.Diagram, o Option
 				r.Target = targets[stackLinkKey(r.Target)]
 			}
 		}
-	}
-	// Use the selected board's canvas on the combined document. Individual
-	// floors retain their own shape, gradient and theme materials.
-	canvas, err := d2isometric.BuildScene(&d2target.Diagram{Root: diagram.Root, Config: diagram.Config}, &settings)
-	if err != nil {
-		return nil, err
-	}
-	if canvas.ThemeID != 0 || canvas.ThemeOverrides != nil {
-		b.palettePaper = canvas.Background
 	}
 	result, err := finishNativeScene(b, canvas, o.Width, o.Height, packets)
 	if err != nil {
@@ -279,10 +290,7 @@ func explodedDeckFill(scene *d2isometric.Scene) string {
 
 func (b *meshBuilder) explodedSlab(d *explodedDeck, fill string) {
 	stock := nativeMaterial(fill, .85, 0, 1)
-	// The gradient's material is opaque white; its authored alpha lives in
-	// the texture. Use the paint itself to determine if the source tip shows.
-	d.translucent = nativePaint(fill, "#edf1f7").A < 255
-	b.box(nv(0, d.surfaceY-d.thickness/2, 0), nv(d.width, d.thickness, d.depth), stock, 0)
+	b.cutSlab(d, stock)
 	// Ink the cut perimeter on the top face. The narrow ring gives the rear
 	// edges the same precise silhouette even where they face away from light.
 	ink := nativeMaterial(readableSurfaceInk(fill, 1), 1, 0, .45)

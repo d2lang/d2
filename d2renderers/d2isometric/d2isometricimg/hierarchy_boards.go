@@ -366,6 +366,7 @@ func (b *meshBuilder) hierarchyBoard(board d2isometric.Board, owner *d2isometric
 		paint.width, paint.depth = face.width*sx, face.depth*sz
 		start := len(b.triangles)
 		b.surfaceTexture(tex, paint, opacity)
+		b.cutStackBoardFace(paint, b.stackBoardCuts[board.ID], start)
 		for i := start; i < len(b.triangles); i++ {
 			b.triangles[i].NoDepthWrite = false
 			b.triangles[i].Material.Unlit = !platform

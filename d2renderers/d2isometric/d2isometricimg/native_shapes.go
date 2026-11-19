@@ -425,11 +425,12 @@ func (b *meshBuilder) canonicalNodeContent(n d2isometric.Node, s d2target.Shape,
 	}
 	first := len(b.triangles)
 	b.shapeLabel(n.Metadata.Original, surface, ink, n.Opacity, "node")
-	if len(b.triangles) > first && label.FromString(n.Metadata.Original.LabelPosition).IsOutside() && b.options.links != nil && (n.Link != "" || n.Tooltip != "") {
+	_, hatch := b.options.stackApertures[n.ID]
+	if len(b.triangles) > first && label.FromString(n.Metadata.Original.LabelPosition).IsOutside() && (hatch || b.options.links != nil) && (n.Link != "" || n.Tooltip != "") {
 		// Keep the print area clickable, independently of its distance from
 		// the body. Relief and outside clearance transform these corners
 		// along with any inline links emitted by shapeLabel.
-		if !b.options.vector {
+		if b.options.links != nil && !b.options.vector {
 			b.addSurfaceLink(n.Link, n.Tooltip, surface)
 		}
 		for _, t := range b.triangles[first:] {

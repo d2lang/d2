@@ -46,6 +46,18 @@ func TestSVGPaintCoverKeepsExactSilhouetteAndOneSourceOpacity(t *testing.T) {
 	if w.buf.String() != svg {
 		t.Fatal("paint material was emitted again, compounding source alpha")
 	}
+	// A decorative mesh may overlap a link. Its shared paint cover must
+	// pass clicks through, just like an individually painted polygon.
+	material.svgPointerPassthrough = true
+	w = &nativeSVGWriter{ctx: context.Background()}
+	cover.written = false
+	for i, batch := range batches {
+		batch.cover = cover
+		writeSVGBatch(w, batch, i, nativeCameraAxes())
+	}
+	if got := w.buf.String(); got != `<g pointer-events="none">`+svg+`</g>` {
+		t.Fatal("decorative paint cover intercepts links or emits duplicate groups")
+	}
 }
 
 func TestSVGPaintCoversKeepDifferentMaterialsAndDecalsSeparate(t *testing.T) {

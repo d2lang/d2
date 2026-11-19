@@ -104,8 +104,8 @@ func TestStackLinksStartOnTheirPaintedParallelWires(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, l := range links {
-		if l.contact.width <= 0 || l.contact.width > .75 || l.contact.center.X != l.source.X || l.contact.center.Z != l.source.Z || math.Abs(l.contact.center.Y-l.source.Y) > .003 {
-			t.Fatalf("wire contact must follow the painted ink, got %+v", l)
+		if l.opening.width != 2*nativeRouteRadius(top.scene.Edges[0]) || l.opening.depth != l.opening.width {
+			t.Fatalf("wire opening must match the painted stroke: %+v", l)
 		}
 	}
 	for i := 0; i < 2; i++ {
@@ -114,188 +114,164 @@ func TestStackLinksStartOnTheirPaintedParallelWires(t *testing.T) {
 			t.Fatalf("test edges did not form separate lanes: %v", p)
 		}
 		want := nadd(top.offset, p)
-		if min(nlen(nsub(links[0].source, want)), nlen(nsub(links[1].source, want))) > .025 {
+		if min(nlen(nsub(links[0].opening.center, want)), nlen(nsub(links[1].opening.center, want))) > .025 {
 			t.Fatalf("no lead on rendered wire %d at %v; starts %v", i, want, links)
 		}
 	}
 }
 
-func TestStackConeGeometryAndAirGaps(t *testing.T) {
-	decks := []explodedDeck{connectorTestDeck(16, "root"), connectorTestDeck(7.5, "root", "layers", "middle"), connectorTestDeck(0, "root", "layers", "bottom")}
+func TestStackCornerRaysUseRealOpeningAndTargetCorners(t *testing.T) {
+	decks := []explodedDeck{connectorTestDeck(16, "root"), connectorTestDeck(8, "root", "layers", "middle"), connectorTestDeck(0, "root", "layers", "bottom")}
+	cam := nativeCameraAxes()
 	for _, pair := range [][2]int{{0, 2}, {2, 0}} {
-		b := &meshBuilder{ctx: context.Background()}
-		tex, err := b.stackConeTexture()
-		if err != nil {
-			t.Fatal(err)
-		}
 		from, to := decks[pair[0]], decks[pair[1]]
-		source := nv(.82, from.surfaceY+.31, -.24)
-		link := stackConnector{from: pair[0], to: pair[1], source: source, opacity: .55}
-		b.drawStackCone(decks, link, tex)
-		if b.err != nil || len(b.triangles) == 0 {
-			t.Fatalf("missing cone mesh: %v", b.err)
+		opening := stackAperture{center: nv(.82, from.surfaceY+.31, -.24), width: .4, depth: .23, opacity: .55}
+		link := stackConnector{from: pair[0], to: pair[1], opening: opening, opacity: .55}
+		starts, ends := make(map[[2]int]bool), make(map[[2]int]bool)
+		shoulders := make(map[[2]int]Vec)
+		var fans [][2]Vec
+		ticks := 0
+		height := to.surfaceY + .002
+		if pair[0] > pair[1] {
+			height = to.surfaceY - to.thickness - .001
 		}
-		emit, receive := stackConeHeights(decks, link)
-		reveal := stackConeReveal(from, source, emit, receive)
-		start := false
-		before, after := false, false
-		minX, maxX := math.Inf(1), math.Inf(-1)
-		visibleApex := false
-		for _, tri := range b.triangles {
-			if tri.Material.Color.A != 140 || !tri.NoDepthWrite || !tri.Material.svgPointerPassthrough {
-				t.Fatal("cone ignored link opacity or wrote opaque depth")
+		stackRayStrokes(decks, link, true, func(a, b Vec, width float64, ink stackRayInk) {
+			if width <= 0 {
+				t.Fatal("empty stroke")
 			}
-			lo, hi := math.Inf(1), math.Inf(-1)
-			for _, v := range tri.V {
-				p := v.Position
-				if math.Abs(p.X-source.X)+math.Abs(p.Z-source.Z)+math.Abs(p.Y-emit) < 1e-7 {
-					start = true
+			if ink == stackCornerTick {
+				ticks++
+				if math.Abs(a.Y-to.surfaceY) > .01 || math.Abs(b.Y-to.surfaceY) > .01 {
+					t.Fatal("spurious corner target on intervening deck")
 				}
-				if math.Abs(p.Y-(emit+(receive-emit)*reveal)) < 1e-8 {
-					if math.Hypot(p.X-source.X, p.Z-source.Z) > .01*to.width {
-						t.Fatalf("the visible apex diverged before clearing the source lip: %v", p)
-					}
-					visibleApex = true
-				}
-				if math.Abs(p.X) > from.width/2+1e-8 || math.Abs(p.Z) > from.depth/2+1e-8 {
-					t.Fatalf("cone outside plate footprint %v", p)
-				}
-				if f := (p.Y - emit) / (receive - emit); f < -1e-8 || f > reveal+(1-reveal)*stackConeFadeEnd+1e-8 {
-					t.Fatalf("cone reached receiving surface %v", p)
-				}
-				minX, maxX = min(minX, p.X), max(maxX, p.X)
-				lo, hi = min(lo, p.Y), max(hi, p.Y)
+				return
 			}
-			if lo < decks[1].surfaceY-1e-8 && hi > decks[1].surfaceY-decks[1].thickness+1e-8 {
-				t.Fatal("cone cuts through middle plate")
+			if math.Abs(a.Y-opening.center.Y) < 1e-8 {
+				d := nsub(a, opening.center)
+				if math.Abs(d.X) > opening.width/2 || math.Abs(d.Z) > opening.depth/2 {
+					t.Fatalf("wrong aperture point: %v", a)
+				}
+				starts[[2]int{int(math.Copysign(1, d.X)), int(math.Copysign(1, d.Z))}] = true
 			}
-			before = before || lo >= decks[1].surfaceY-1e-8
-			after = after || hi <= decks[1].surfaceY-decks[1].thickness+1e-8
+			for _, p := range []Vec{a, b} {
+				if math.Abs(p.X) > to.width/2+1e-8 || math.Abs(p.Z) > to.depth/2+1e-8 {
+					t.Fatalf("ray outside shared footprint: %v", p)
+				}
+				if p.Y < decks[1].surfaceY-1e-8 && p.Y > decks[1].surfaceY-decks[1].thickness+1e-8 {
+					t.Fatalf("ray enters intermediate slab: %v", p)
+				}
+			}
+			if math.Abs(b.Y-height) < 1e-8 {
+				if math.Abs(b.X) > .39*to.width && math.Abs(b.Z) > .39*to.depth {
+					ends[[2]int{int(math.Copysign(1, b.X)), int(math.Copysign(1, b.Z))}] = true
+				}
+			}
+			if math.Abs(a.X-b.X) < 1e-8 && math.Abs(a.Z-b.Z) < 1e-8 {
+				key := [2]int{int(math.Copysign(1, a.X-opening.center.X)), int(math.Copysign(1, a.Z-opening.center.Z))}
+				last, ok := shoulders[key]
+				if !ok || math.Abs(b.Y-opening.center.Y) > math.Abs(last.Y-opening.center.Y) {
+					shoulders[key] = b
+				}
+			} else {
+				fans = append(fans, [2]Vec{a, b})
+			}
+		})
+		if len(shoulders) != 4 {
+			t.Fatalf("missing plumb starts: %v", shoulders)
 		}
-		if !start || !visibleApex || !before || !after || maxX-minX < .62*to.width {
-			t.Fatalf("narrow or detached cone: bounds %g..%g; source and spans %t %t %t", minX, maxX, start, before, after)
+		for key, p := range shoulders {
+			if pair[0] < pair[1] {
+				// From below the plate, the ray toward the camera must miss
+				// the stock before the four strokes start to spread.
+				edge := nadd(p, nmul(cam.direction, (from.surfaceY-from.thickness-p.Y)/cam.direction.Y))
+				if math.Abs(edge.X) <= from.width/2 && math.Abs(edge.Z) <= from.depth/2 {
+					t.Fatalf("shoulder %v still hidden behind source stock", p)
+				}
+			}
+			if !starts[key] {
+				t.Fatal("plumb stroke does not originate inside the mouth")
+			}
+		}
+		for _, segment := range fans {
+			// The remainder of each line keeps aiming at the same corner,
+			// including the lengths clipped against a printed sheet.
+			straight := false
+			for key, o := range shoulders {
+				inset := .075
+				last := nv(float64(key[0])*(to.width/2-inset), height, float64(key[1])*(to.depth/2-inset))
+				v := nsub(last, o)
+				offset := func(p Vec) float64 {
+					vp := nsub(p, o)
+					return math.Abs(ndot(v, cam.right)*ndot(vp, cam.up)-ndot(v, cam.up)*ndot(vp, cam.right)) / max(.01, math.Hypot(ndot(v, cam.right), ndot(v, cam.up)))
+				}
+				if offset(segment[0]) < 1e-7 && offset(segment[1]) < 1e-7 {
+					straight = true
+				}
+			}
+			if !straight {
+				t.Fatalf("stroke %v misses its matching destination corner", segment)
+			}
+		}
+		if len(starts) != 4 || len(ends) != 4 || ticks != 8 {
+			t.Fatalf("missing corners, origins %v termini %v ticks %d", starts, ends, ticks)
 		}
 	}
 }
 
-func TestStackConeSourceOnTransparentPlate(t *testing.T) {
-	top, bottom := connectorTestDeck(14, "root"), connectorTestDeck(0, "root", "layers", "B")
-	top.translucent = true
-	// A sloped painted cap and a high external caption overlap this
-	// shape's center. Only the cap gives the real emission height.
-	node := d2isometric.Node{ID: "object", Size: nv(2, 8, 2), Link: "root.layers.B", Opacity: 1}
+func TestStackCornerRayUsesApertureBeforeRaisedCover(t *testing.T) {
+	top, bottom := connectorTestDeck(6, "root"), connectorTestDeck(0, "root", "layers", "B")
+	node := d2isometric.Node{ID: "cover", Position: nv(.82, .6, -.24), Size: nv(1.2, .7, 1.4), Link: "root.layers.B", Opacity: .6}
 	top.scene.Nodes = []d2isometric.Node{node}
-	top.tops = make(map[string]float64)
-	b := &meshBuilder{ctx: context.Background(), options: nativeSceneOptions{stackTops: top.tops}}
-	b.flat(nv(-1, .2, -1), nv(1, .6, -1), nv(0, .4, 1), nativeMaterial("white", 1, 0, 1), false)
-	caption := nativeMaterial("white", 1, 0, 1)
-	caption.outsideCaption = true
-	b.flat(nv(-1, 3, -1), nv(1, 3, -1), nv(0, 3, 1), caption, false)
-	b.captureStackTop(node, 0)
-	decks := []explodedDeck{top, bottom}
-	links, err := b.stackLinks(decks)
-	if err != nil || len(links) != 1 {
-		t.Fatalf("missing transfer: %+v, %v", links, err)
-	}
-	l := links[0]
-	emit, receive := stackConeHeights(decks, l)
-	bands := stackConeBands(decks, l)
-	if math.Abs(emit-(top.surfaceY+.4)) > 1e-8 || stackConeReveal(top, l.source, emit, receive) != 0 || len(bands) == 0 || bands[0].start != 0 {
-		t.Fatalf("light must emerge from the painted object on transparent stock: emit %g, bands %v", emit, bands)
-	}
-	b.triangles = nil
-	tex, err := b.stackConeTexture()
-	if err != nil {
-		t.Fatal(err)
-	}
-	b.drawStackCone(decks, l, tex)
-	full := b.triangles
-	l.opacity = .45
-	b.triangles = nil
-	b.drawStackCone(decks, l, tex)
-	if b.err != nil || len(full) < 3 || len(full) != len(b.triangles) {
-		t.Fatalf("partial opacity changed the cone mesh: %v", b.err)
-	}
-	for i, tri := range full {
-		partial := b.triangles[i]
-		if tri.V != partial.V || !tri.Material.svgPointerPassthrough || !partial.Material.svgPointerPassthrough ||
-			tri.Material.Color.A != 255 || partial.Material.Color.A != 115 {
-			t.Fatalf("full and partial opacity must share passthrough geometry, facet %d", i)
-		}
-	}
-}
-
-func TestStackConeMouthAroundProjectedApex(t *testing.T) {
-	// Short, wide boards can put the projected apex inside the target
-	// ellipse. A diameter still gives every SVG facet an invertible UV.
-	apex := nv(.12, .02, .05)
-	ring := stackConeSection(apex, 3, 2, 0)
-	for i := 1; i < len(ring); i++ {
-		if ring[i].u <= ring[i-1].u || nlen(nsub(ring[i].end, ring[i-1].end)) == 0 {
-			t.Fatalf("degenerate optical section: %+v", ring)
-		}
-	}
-}
-
-func TestStackConeFadesAheadOfTransparentPortraitReceiver(t *testing.T) {
-	top, bottom := connectorTestDeck(9.23, "root"), connectorTestDeck(0, "root", "layers", "last")
-	for _, d := range []*explodedDeck{&top, &bottom} {
-		d.width, d.depth, d.thickness = 4.2, 5.86, .055
-	}
-	bottom.translucent = true
-	l := stackConnector{from: 0, to: 1, source: nv(-1.165, 9.99, -2.067), opacity: 1}
+	top.tops = map[string]float64{"cover": 2}
+	opening := stackAperture{center: nv(.82, 6.23, .48), width: .75, depth: .41, opacity: .6}
+	top.openings = map[string]stackAperture{"cover": opening}
 	b := &meshBuilder{ctx: context.Background()}
-	tex, err := b.stackConeTexture()
-	if err != nil {
-		t.Fatal(err)
+	links, err := b.stackLinks([]explodedDeck{top, bottom})
+	if err != nil || len(links) != 1 || links[0].opening != opening {
+		t.Fatalf("missing real opening: %+v (%v)", links, err)
 	}
-	b.drawStackCone([]explodedDeck{top, bottom}, l, tex)
-	view := nativeCameraAxes().direction
-	samples := 0
+	b.drawStackRays([]explodedDeck{top, bottom}, links[0], true)
+	if len(b.triangles) == 0 {
+		t.Fatalf("missing geometry")
+	}
 	for _, tri := range b.triangles {
-		a, c, d := tri.V[0], tri.V[1], tri.V[2]
-		for i := 0; i <= 16; i++ {
-			for j := 0; i+j <= 16; j++ {
-				w1, w2 := float64(i)/16, float64(j)/16
-				w0 := 1 - w1 - w2
-				p := nadd(nadd(nmul(a.Position, w0), nmul(c.Position, w1)), nmul(d.Position, w2))
-				hit := nsub(p, nmul(view, p.Y/view.Y))
-				if math.Abs(hit.X) > bottom.width/2-.03 || math.Abs(hit.Z) > bottom.depth/2-.03 {
-					continue
-				}
-				samples++
-				u, v := w0*a.U+w1*c.U+w2*d.U, w0*a.V+w1*c.V+w2*d.V
-				alpha := tex.RGBAAt(int(math.Round(127*u)), int(math.Round(127*min(1., v)))).A
-				if alpha > 2 {
-					t.Fatalf("cone visibly paints the receiving plate at %v with alpha %d/255", hit, alpha)
-				}
-			}
+		if tri.Material.Texture != nil || !tri.Material.svgPointerPassthrough || !tri.NoDepthWrite || tri.Material.Color.A > uint8(255*node.Opacity) {
+			t.Fatalf("transfer must use untextured, passthrough ink at source opacity")
 		}
 	}
-	if samples == 0 {
-		t.Fatal("fixture did not sample the projected receiving plate")
-	}
 }
 
-func TestStackConeSoftTexture(t *testing.T) {
+func TestStackCornerMarksAreSharedByIncomingLinks(t *testing.T) {
+	top, bottom := connectorTestDeck(8, "root"), connectorTestDeck(0, "root", "layers", "B")
+	for i, alpha := range []float64{.3, .6, .45} {
+		top.scene.Nodes = append(top.scene.Nodes, d2isometric.Node{ID: string(rune('a' + i)), Position: nv(float64(i-1), .1, 0), Size: nv(1, .2, 1), Link: "root.layers.B", Opacity: alpha})
+	}
 	b := &meshBuilder{ctx: context.Background()}
-	tex, err := b.stackConeTexture()
-	if err != nil {
+	if err := b.addStackConnectors([]explodedDeck{top, bottom}); err != nil {
 		t.Fatal(err)
 	}
-	alpha := func(u, v float64) uint8 { return tex.RGBAAt(int(127*u), int(127*v)).A }
-	if !(alpha(.5, .12) > alpha(.5, .50) && alpha(.5, .50) > alpha(.5, .80) && alpha(.5, .97) == 0 && alpha(.5, .42) > 5*alpha(.01, .42)) {
-		t.Fatalf("cone must soften across its section and dissipate near the target")
+	faces := 0
+	for _, tri := range b.triangles {
+		if math.Abs(tri.V[0].Position.Y-.003) > 1e-8 || math.Abs(tri.V[1].Position.Y-.003) > 1e-8 {
+			continue
+		}
+		faces++
+		if tri.Material.Color.A != 130 {
+			t.Fatalf("expected strongest incoming opacity on shared marks, got %d", tri.Material.Color.A)
+		}
+	}
+	if faces != 16 {
+		t.Fatalf("four corners each have two strokes with two faces, got %d", faces)
 	}
 }
 
-func TestStackConeBudgetBeforeGeometry(t *testing.T) {
+func TestStackCornerRayBudgetBeforeGeometry(t *testing.T) {
 	decks := make([]explodedDeck, MaxTimelineBoards)
 	for i := range decks {
 		decks[i] = connectorTestDeck(float64(len(decks)-i)*6, "root", "layers", string(rune('a'+i)))
 	}
 	decks[len(decks)-1].path = []string{"root", "layers", "last"}
-	for i := 0; i < 400; i++ {
+	for i := 0; i < 1800; i++ {
 		decks[0].scene.Nodes = append(decks[0].scene.Nodes, d2isometric.Node{Opacity: 1, Link: "root.layers.last"})
 	}
 	b := &meshBuilder{ctx: context.Background()}

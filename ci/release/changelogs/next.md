@@ -1,6 +1,6 @@
 #### Features 🚀
 
-- Use `--isometric-exploded` to render D2 layers on stacked plates, with per-layer spacing and fading cones of light from linked objects toward their destination plates.
+- Use `--isometric-exploded` to render D2 layers on stacked plates, with per-layer spacing and openings linked by fine lines to the corners of the destination plates.
 
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
