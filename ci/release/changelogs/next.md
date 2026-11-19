@@ -61,6 +61,7 @@
   - Bound image references, locators, fetched and decoded bytes, cached data, and
     final output during SVG image bundling. [#2911](https://github.com/d2lang/d2/pull/2911)
 - rendering:
+  - Keep nested isometric platforms visible when the diagram has a root border or fill pattern.
   - Reject malformed, cyclic, reused, or nil raw diagram board graphs with
     ordinary errors instead of panics or fatal recursion. [#2912](https://github.com/d2lang/d2/pull/2912)
   - Validate raw geometry, routes, arrows, fonts, and arithmetic before recursive
