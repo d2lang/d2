@@ -60,15 +60,52 @@ jobs:
           dotnet tool install --tool-path "$env:RUNNER_TEMP\wix" wix --version 7.0.0
           "$env:RUNNER_TEMP\wix" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Build and verify MSI
+      - name: Build and verify both MSIs
         shell: pwsh
         env:
           WIX7_EULA_ACCEPTED: ${{ vars.WIX7_EULA_ACCEPTED }}
         run: |
-          ./ci/release/windows/build.ps1 `
-            -Version $env:VERSION `
-            -ArchivePath "$env:RUNNER_TEMP\release-archives\d2-$env:VERSION-windows-amd64.tar.gz" `
-            -OutputDirectory "$env:RUNNER_TEMP\windows-msi"
+          $inputs = @{
+            Version = $env:VERSION
+            ArchivePath = "$env:RUNNER_TEMP\release-archives\d2-$env:VERSION-windows-amd64.tar.gz"
+            OutputDirectory = "$env:RUNNER_TEMP\windows-msi"
+          }
+          ./ci/release/windows/build.ps1 @inputs
+          ./ci/release/windows/build.ps1 @inputs -CurrentUser
+
+      - name: Verify upgrades and uninstalls for both scopes
+        shell: pwsh
+        run: |
+          # The standard account needs read access to its installers and test script.
+          $stage = New-Item -ItemType Directory -Path "$env:ProgramFiles\D2 MSI test"
+          Copy-Item -LiteralPath ./ci/release/windows/test-install.ps1 -Destination $stage
+          Copy-Item -LiteralPath ./ci/release/windows/d2.ico -Destination $stage
+          # Use a recognizable older payload and distinct MSI product codes. PR packages use version 0.0.0.
+          Set-Content -LiteralPath "$stage\d2.exe" -Value 'upgrade fixture'
+          Set-Content -LiteralPath "$stage\THIRD_PARTY_NOTICES.txt" -Value 'upgrade fixture'
+          foreach ($suffix in '', '-user') {
+            wix build -acceptEula wix7 -arch x64 -d D2Version=0.0.0 -b $stage.FullName `
+              -o "$stage\previous$suffix.msi" "./ci/release/windows/d2$suffix.wxs"
+            if ($LASTEXITCODE -ne 0) { throw "Building the upgrade fixture failed" }
+            Copy-Item "$env:RUNNER_TEMP\windows-msi\d2-$env:VERSION-windows-amd64$suffix.msi" "$stage\d2$suffix.msi"
+          }
+          $password = ConvertTo-SecureString ("T1!" + [guid]::NewGuid().ToString("N")) -AsPlainText -Force
+          $user = New-LocalUser -Name 'D2MsiTest' -Password $password
+          try {
+            $users = Get-LocalGroup -SID 'S-1-5-32-545'
+            if ($user.SID -notin (Get-LocalGroupMember -Group $users).SID) {
+              Add-LocalGroupMember -Group $users -Member $user
+            }
+            $credential = [pscredential]::new("$env:COMPUTERNAME\$($user.Name)", $password)
+            $arguments = "-NoProfile -NonInteractive -File `"$stage\test-install.ps1`" -Scope User -Version $env:VERSION"
+            $test = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments `
+              -Credential $credential -LoadUserProfile -WorkingDirectory $stage -NoNewWindow -Wait -PassThru
+            if ($test.ExitCode -ne 0) { throw "Standard-user test exited with $($test.ExitCode)" }
+            & "$stage\test-install.ps1" -Scope Machine -Version $env:VERSION
+          } finally {
+            Remove-LocalUser -Name $user.Name
+            Remove-Item -LiteralPath $stage -Recurse -Force
+          }
 
       - name: Upload verified MSI artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

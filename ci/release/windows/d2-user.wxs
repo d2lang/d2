@@ -1,0 +1,25 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package Name="D2 (current user)" Manufacturer="D2" Language="1033" Version="$(var.D2Version)"
+             UpgradeCode="b4061de9-46b6-443a-966c-d4f6a9f1f7bf" Scope="perUser" InstallerVersion="500">
+        <Icon Id="d2.ico" SourceFile="d2.ico" />
+        <Property Id="ARPPRODUCTICON" Value="d2.ico" />
+        <MediaTemplate EmbedCab="yes" />
+        <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A later version of [ProductName] is already installed." />
+        <Launch Condition='ACTION = "ADMIN" OR NOT ALLUSERS' Message="Use the all-users D2 installer to install for everyone." />
+
+        <StandardDirectory Id="LocalAppDataFolder">
+            <Directory Id="UserPrograms" Name="Programs">
+                <Directory Id="INSTALLDIR" Name="D2" />
+            </Directory>
+        </StandardDirectory>
+        <Feature Id="Complete" Level="1">
+            <Component Id="UserInstall" Directory="INSTALLDIR" Guid="a8526a0f-94dc-4274-b3bb-f001248a2083">
+                <RegistryValue Root="HKCU" Key="Software\D2" Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
+                <File Id="D2EXE" Source="d2.exe" />
+                <File Id="ThirdPartyNoticesFile" Source="THIRD_PARTY_NOTICES.txt" />
+                <Environment Id="UserPath" Name="PATH" Action="set" Part="last" System="no" Permanent="no" Value="[INSTALLDIR]" />
+                <RemoveFolder Id="RemoveD2Folder" On="uninstall" />
+            </Component>
+        </Feature>
+    </Package>
+</Wix>
