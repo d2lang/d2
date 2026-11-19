@@ -2,6 +2,7 @@ package d2exporter_test
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/d2lang/d2/d2layouts"
 	"github.com/d2lang/d2/d2layouts/d2dagrelayout"
 	"github.com/d2lang/d2/d2lib"
+	"github.com/d2lang/d2/d2renderers/d2isometric"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/internal/testlog"
 	"github.com/d2lang/d2/lib/geo"
@@ -297,6 +299,36 @@ func run(t *testing.T, tc testCase) {
 
 	err = diff.TestdataJSON(filepath.Join("..", "testdata", "d2exporter", t.Name()), got)
 	assert.Success(t, err)
+}
+
+func TestAuthoredDefaultStrokeWidth(t *testing.T) {
+	diagram, err := compile(context.Background(), `classes: { pen: { style.stroke-width: 2 } }
+plain
+authored.style.stroke-width: 2
+inherited.class: pen
+wide.style.stroke-width: 5
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(diagram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded d2target.Diagram
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	scene, err := d2isometric.BuildScene(&decoded, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range scene.Nodes {
+		want := node.ID == "authored" || node.ID == "inherited"
+		if node.Metadata.ExplicitDefaultStrokeWidth != want {
+			t.Errorf("shape %q: explicitly authored default stroke width = %v, want %v", node.ID, node.Metadata.ExplicitDefaultStrokeWidth, want)
+		}
+	}
 }
 
 // TestHashID tests that 2 diagrams with different theme configs do not equal each other

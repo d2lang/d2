@@ -113,6 +113,43 @@ func TestRenderIsometricModeAndDocumentOptions(t *testing.T) {
 	}
 }
 
+func TestIsometricAuthoredDefaultWidthIsolatesInlineResources(t *testing.T) {
+	d := isometricAPIDiagram()
+	d.Shapes[0].Stroke = "N1"
+	opts := &RenderOpts{Salt: go2.Pointer("shared")}
+	render := func() []byte {
+		t.Helper()
+		out, err := RenderIsometric(context.Background(), d, opts, &d2isometricimg.Options{Width: 160, Height: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	flat, err := d.HashID(opts.Salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := render()
+	d.ExplicitDefaultStrokeWidths = map[string]bool{"database": false, "unknown": true}
+	if !bytes.Equal(original, render()) {
+		t.Fatal("marks outside the rendered shapes changed the SVG")
+	}
+	d.ExplicitDefaultStrokeWidths["database"] = true
+	if markedFlat, err := d.HashID(opts.Salt); err != nil || flat != markedFlat {
+		t.Fatalf("flat diagram hash changed: %s / %s (%v)", flat, markedFlat, err)
+	}
+	ids := isometricSVGID.FindAllSubmatch(original, -1)
+	if len(ids) == 0 {
+		t.Fatal("fixture has no SVG resources")
+	}
+	marked := render()
+	for _, id := range ids {
+		if bytes.Contains(marked, id[0]) {
+			t.Fatalf("authoring the width reused resource %s", id[1])
+		}
+	}
+}
+
 func TestIsometricGradientCoversPaddedViewport(t *testing.T) {
 	d := isometricAPIDiagram()
 	d.Root.Fill = "linear-gradient(90deg, rgba(255,0,0,0.5), blue)"
