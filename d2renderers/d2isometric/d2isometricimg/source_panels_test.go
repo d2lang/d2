@@ -139,3 +139,29 @@ func TestNativeRootLabelDescriptionAndFrameAreVisible(t *testing.T) {
 		t.Fatal("root title/description did not reserve visible space")
 	}
 }
+
+func TestNativeRootFrameBelowNestedPlatforms(t *testing.T) {
+	d := sourcePanelFixture(t, "regression/dagre_child_id_id/elk/board.exp.json")
+	d.Root.StrokeWidth, d.Root.Stroke = 3, "#394a56"
+	scene := nativeFixtureScene(t, d)
+	if len(scene.panels) != 1 {
+		t.Fatalf("got %d panels, want the root frame", len(scene.panels))
+	}
+	frame := scene.panels[0]
+	lowest := 0.
+	for _, tri := range scene.triangles[:frame.first] {
+		for _, vertex := range tri.V {
+			lowest = min(lowest, vertex.Position.Y)
+		}
+	}
+	if lowest >= -.045 {
+		t.Fatal("fixture must lower the platform below the default frame elevation")
+	}
+	for _, tri := range scene.triangles[frame.first:frame.last] {
+		for _, vertex := range tri.V {
+			if vertex.Position.Y >= lowest {
+				t.Fatalf("frame at %g intersects the nested platform, which descends to %g", vertex.Position.Y, lowest)
+			}
+		}
+	}
+}
