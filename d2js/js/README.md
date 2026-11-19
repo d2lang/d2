@@ -163,18 +163,11 @@ All [RenderOptions](#renderoptions) properties in addition to:
 
 ## Development
 
-D2.js development requires the Go version in the root `go.mod`, the Bun version
-in `package.json`, and Node.js 24 with npm. The integration tests use Node to
-check the installed npm package in both CommonJS and ESM applications.
-
-Optional: For optimal WASM file size, also install binaryen:
-```bash
-# macOS
-brew install binaryen
-
-# Ubuntu/Debian
-sudo apt-get install binaryen
-```
+D2.js builds its browser and Node.js WebAssembly module with TinyGo. Install the
+Go version in the root `go.mod`, TinyGo 0.44.0, Binaryen (CI uses version 133),
+the Bun version in `package.json`, and Node.js 24 with npm. Put `tinygo` and
+`wasm-opt` on PATH. The build bundles the JavaScript runtime from the same TinyGo
+installation as the compiler.
 
 ### Building from source
 

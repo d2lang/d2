@@ -49,7 +49,7 @@ type Policy struct {
 // rootState makes Policy copies share exactly one close operation. Policy is a
 // value type and is commonly copied into compiler and asset resolver options.
 type rootState struct {
-	handle *os.Root
+	handle *fileRoot
 	once   sync.Once
 	err    error
 }
@@ -63,7 +63,7 @@ func Rooted(root string) (Policy, error) {
 		return Policy{}, fmt.Errorf("localfile: resolve root %q: %w", root, err)
 	}
 	absolute = filepath.Clean(absolute)
-	handle, err := os.OpenRoot(absolute)
+	handle, err := openRoot(absolute)
 	if err != nil {
 		return Policy{}, fmt.Errorf("localfile: open root %q: %w", root, err)
 	}
@@ -175,7 +175,7 @@ func closeFile(file *os.File, name string) error {
 	return nil
 }
 
-func closeRoot(root *os.Root, name string) error {
+func closeRoot(root *fileRoot, name string) error {
 	if err := root.Close(); err != nil {
 		return fmt.Errorf("localfile: close root %q: %w", name, err)
 	}

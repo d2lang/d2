@@ -10,6 +10,6 @@ func openFile(name string) (*os.File, error) {
 	return os.Open(name)
 }
 
-func openFileInRoot(root *os.Root, name string) (*os.File, error) {
+func openFileInRoot(root *fileRoot, name string) (*os.File, error) {
 	return root.Open(name)
 }

@@ -74,54 +74,12 @@ func newHTTPClient(base *http.Client, policy Policy, resolver ipResolver, policy
 		return &client, nil
 	}
 
-	var transport *http.Transport
-	switch baseTransport := client.Transport.(type) {
-	case nil:
-		transport = defaultTransport()
-	case *http.Transport:
-		// Clone copies exported configuration but deliberately excludes live
-		// connection pools and handlers installed with RegisterProtocol.
-		transport = baseTransport.Clone()
-	default:
-		return nil, fmt.Errorf("public-only network policy requires *http.Transport, got %T", client.Transport)
+	transport, err := publicOnlyTransport(client.Transport, resolver, policyDial)
+	if err != nil {
+		return nil, err
 	}
-
-	// A proxy resolves or connects to the target outside this transport's dial
-	// boundary, so it cannot uphold the public-only policy. Trusted proxy users
-	// can explicitly opt into private-network behavior.
-	transport.Proxy = nil
-	transport.OnProxyConnectResponse = nil
-	transport.GetProxyConnectHeader = nil
-	transport.ProxyConnectHeader = nil
-	if resolver == nil || policyDial == nil {
-		return nil, errors.New("public-only network policy requires its resolver and dialer")
-	}
-	// Never delegate a validated numeric destination to caller-provided dial
-	// hooks: a hook can ignore that destination and connect to a private address.
-	transport.Dial = nil
-	transport.DialContext = validatedDialContext(resolver, policyDial)
-	// Either hook bypasses DialContext for HTTPS.
-	transport.DialTLS = nil
-	transport.DialTLSContext = nil
-	// A caller-provided TLSNextProto callback is an arbitrary RoundTripper and
-	// can create connections outside DialContext. Clearing it still permits the
-	// standard library to configure its built-in HTTP/2 implementation.
-	transport.TLSNextProto = nil
 	client.Transport = transport
 	return &client, nil
-}
-
-func defaultTransport() *http.Transport {
-	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
-		return transport.Clone()
-	}
-	return &http.Transport{
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
 }
 
 type dialContextFunc func(context.Context, string, string) (net.Conn, error)

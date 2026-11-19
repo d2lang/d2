@@ -5,6 +5,8 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Build the browser and Node WebAssembly module with TinyGo, reducing the Brotli-compressed WASM payload by about 40%.
+
 ## [0.1.34]
 ### September 7, 2026
 
