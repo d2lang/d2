@@ -13,18 +13,24 @@ if ($Scope -eq 'User') {
         throw 'Run the user install test from a standard account.'
     }
     $directory, $otherDirectory, $otherScope = $userPrograms, $machinePrograms, 'Machine'
-    $suffix, $registry, $displayName = '-user', 'HKCU:', 'D2 (current user)'
+    $suffix, $upgradeCode = '-user', '{B4061DE9-46B6-443A-966C-D4F6A9F1F7BF}'
 } else {
     $directory, $otherDirectory, $otherScope = $machinePrograms, $userPrograms, 'User'
-    $suffix, $registry, $displayName = '', 'HKLM:', 'D2'
+    $suffix, $upgradeCode = '', '{AC84FEE7-EB67-4F5D-A08D-ADEF69538690}'
 }
 
 $currentMsi = Join-Path $PSScriptRoot "d2$suffix.msi"
 $previousMsi = Join-Path $PSScriptRoot "previous$suffix.msi"
-$uninstallKey = "$registry\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+$installer = New-Object -ComObject WindowsInstaller.Installer
+
+function Get-D2Products {
+    $products = $installer.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null, $installer, @($upgradeCode))
+    foreach ($code in $products) { $code }
+}
 
 function Invoke-MsiExec([string] $Operation, [string] $MsiPath) {
     $name = [IO.Path]::GetFileNameWithoutExtension($MsiPath)
+    Write-Host "Running msiexec /$Operation $name.msi as $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
     $log = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "$name-$Operation.log"
     $arguments = "/$Operation `"$MsiPath`" /qn /norestart /l*v `"$log`""
     $result = Start-Process msiexec.exe -ArgumentList $arguments -PassThru -Wait
@@ -47,13 +53,14 @@ if ((Test-Path -LiteralPath $directory) -or (Test-Path -LiteralPath $otherDirect
 }
 $otherPath = [Environment]::GetEnvironmentVariable('Path', $otherScope)
 Invoke-MsiExec 'i' $previousMsi
-$previous = @(Get-ItemProperty "$uninstallKey\*" | Where-Object DisplayName -eq $displayName)
+$previous = @(Get-D2Products)
 if ($previous.Count -ne 1 -or (Get-Content -LiteralPath "$directory\THIRD_PARTY_NOTICES.txt" -Raw).Trim() -ne 'upgrade fixture') {
     throw "Could not identify the existing $Scope installation"
 }
 Invoke-MsiExec 'i' $currentMsi
 try {
-    if (Test-Path -LiteralPath $previous[0].PSPath) { throw "Upgrade left the previous $Scope product registered" }
+    $current = @(Get-D2Products)
+    if ($current.Count -ne 1 -or $current[0] -eq $previous[0]) { throw "Upgrade did not replace the previous $Scope product" }
     foreach ($name in 'd2.exe', 'THIRD_PARTY_NOTICES.txt') {
         if (-not (Test-Path -LiteralPath (Join-Path $directory $name) -PathType Leaf)) {
             throw "Missing $directory\$name after $Scope install"
@@ -69,7 +76,7 @@ try {
 } finally {
     Invoke-MsiExec 'x' $currentMsi
 }
-if ((Test-Path -LiteralPath $directory) -or (Test-InstalledPath) -or
+if (@(Get-D2Products).Count -or (Test-Path -LiteralPath $directory) -or (Test-InstalledPath) -or
     $otherPath -cne [Environment]::GetEnvironmentVariable('Path', $otherScope)) {
     throw "$Scope uninstall left installation files or PATH changes"
 }
