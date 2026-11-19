@@ -15,8 +15,9 @@
     "access": "public"
   },
   "type": "module",
-  "main": "./dist/cjs/index.js",
-  "module": "./dist/esm/index.js",
+  "main": "./dist/node-cjs/index.js",
+  "module": "./dist/node-esm/index.js",
+  "browser": "./dist/browser/index.js",
   "exports": {
     ".": {
       "browser": "./dist/browser/index.js",

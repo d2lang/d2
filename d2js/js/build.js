@@ -11,9 +11,12 @@ await rm("./dist", { recursive: true, force: true });
 await mkdir("./dist/browser", { recursive: true });
 await mkdir("./dist/node-esm", { recursive: true });
 await mkdir("./dist/node-cjs", { recursive: true });
+await mkdir("./dist/wasm", { recursive: true });
 
 const wasmBinary = await readFile("./wasm/d2.wasm");
 const wasmExecJs = await readFile("./wasm/wasm_exec.js", "utf8");
+await writeFile("./dist/wasm/d2.wasm", wasmBinary);
+await writeFile("./dist/wasm/wasm_exec.js", wasmExecJs);
 
 const compressedWasm = brotliCompressSync(wasmBinary);
 console.log(
@@ -66,7 +69,9 @@ async function buildDynamicFiles(platform) {
       target: "browser",
       format: "esm",
     });
-    await writeFile(workerFile, await worker.outputs[0].text());
+    const workerScript = await worker.outputs[0].text();
+    await writeFile(workerFile, workerScript);
+    await writeFile("./dist/browser/worker.js", `${wasmExecJs}\n${workerScript}`);
   } else {
     await copyFile(entrypoint, workerFile);
   }
@@ -116,15 +121,8 @@ async function buildAndCopy(buildType) {
     );
   }
 
-  if (buildType !== "browser") {
-    await copyFile(resolve(ROOT_DIR, "wasm/d2.wasm"), join(config.outdir, "d2.wasm"));
-    await copyFile(
-      resolve(ROOT_DIR, "wasm/wasm_exec.js"),
-      join(config.outdir, "wasm_exec.js")
-    );
-    if (buildType === "node-cjs") {
-      await writeFile(join(config.outdir, "package.json"), '{"type":"commonjs"}\n');
-    }
+  if (buildType === "node-cjs") {
+    await writeFile(join(config.outdir, "package.json"), '{"type":"commonjs"}\n');
   }
 }
 
