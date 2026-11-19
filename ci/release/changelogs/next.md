@@ -33,6 +33,7 @@
 
 #### Bugfixes ⛑️
 
+- d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
 - compiler:
   - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)
   - Honor cancellation during parsing and IR compilation, and prevent `d2 fmt`
@@ -51,11 +52,16 @@
   - Limit wildcard edge connections and selectors to bounded expansion work,
     returning a clear error before excessive fanout consumes resources.
     [#2926](https://github.com/d2lang/d2/pull/2926)
+  - Keep `sql_table` column types that match the column name, such as
+    `date: date`, instead of rendering an empty type. [#2950](https://github.com/d2lang/d2/pull/2950)
+  - Keep `class` field types and method return types that match the name, such
+    as `date: date`, instead of dropping them. [#2952](https://github.com/d2lang/d2/pull/2952)
 - decoding and assets:
   - Cap decompressed URL-encoded D2 input at 16 MiB. [#2902](https://github.com/d2lang/d2/pull/2902)
   - Bound image references, locators, fetched and decoded bytes, cached data, and
     final output during SVG image bundling. [#2911](https://github.com/d2lang/d2/pull/2911)
 - rendering:
+  - Keep nested isometric platforms visible when the diagram has a root border or fill pattern.
   - Keep outside-right isometric labels beside the projected shape wall.
   - Reject malformed, cyclic, reused, or nil raw diagram board graphs with
     ordinary errors instead of panics or fatal recursion. [#2912](https://github.com/d2lang/d2/pull/2912)

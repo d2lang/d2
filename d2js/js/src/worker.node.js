@@ -1,4 +1,5 @@
 import { parentPort } from "node:worker_threads";
+import { initWasm } from "./init-wasm.js";
 
 let currentPort;
 let d2;
@@ -113,11 +114,4 @@ export function setupMessageHandler(isNode, port, initWasm) {
   }
 }
 
-async function initWasmNode(wasmBinary) {
-  const go = new Go();
-  const result = await WebAssembly.instantiate(wasmBinary, go.importObject);
-  go.run(result.instance);
-  return global.d2;
-}
-
-setupMessageHandler(true, parentPort, initWasmNode);
+setupMessageHandler(true, parentPort, initWasm);

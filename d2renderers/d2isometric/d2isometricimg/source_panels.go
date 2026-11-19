@@ -227,7 +227,10 @@ func (b *meshBuilder) rootDecorations(s *d2isometric.Scene, assets *d2scenebuild
 			}
 		}
 		doc.Root.Children = children
-		if err := b.sourcePanel(doc, documentSurface(doc, b.scale, -.045), panelCount); err != nil {
+		// Nested platforms can descend below zero. Place the frame under
+		// the lowest wall so its opaque fill cannot cover a container.
+		floor := nativeMeshFloor(b.triangles)
+		if err := b.sourcePanel(doc, documentSurface(doc, b.scale, floor-.045), panelCount); err != nil {
 			return err
 		}
 	}
