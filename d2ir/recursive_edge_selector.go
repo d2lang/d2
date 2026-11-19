@@ -44,6 +44,24 @@ func (m *Map) recursiveGlobContains(f *Field, triple bool) bool {
 	return len(path) != 0
 }
 
+// If there are fewer possible endpoint pairs than physical edges, use the
+// same indexed lookups as other selectors. Stop listing visible fields as
+// soon as their square exceeds the edge count.
+func (m *Map) recursiveEndpointsForLookup(edge *d2ast.Edge, edgeCount int, c *compiler) ([]*Field, bool) {
+	var fields []*Field
+	fits := func() bool {
+		n := len(fields)
+		return n == 0 || n <= edgeCount/n
+	}
+	visit := func(*Field) bool { return fits() && c.reserveGlobWork(edge, 1) }
+	if edge.Src.HasTripleGlob() {
+		m._tripleGlob(&fields, visit)
+	} else {
+		m._doubleGlob(&fields, visit)
+	}
+	return fields, fits()
+}
+
 // selectRecursiveEdges matches an existing-edge selector such as (** -> **)[*].
 // Both endpoints use the same field traversal. Only real edges can contribute
 // a match, even while the lazy glob is replayed as new fields are declared.
@@ -54,12 +72,47 @@ func (m *Map) selectRecursiveEdges(id *EdgeID, ref *RefContext, glob *globContex
 		key      string
 	}
 	triple := ref.Edge.Src.HasTripleGlob()
+	if !m.mayHaveEdges() {
+		return nil
+	}
+	scopes := []*Map{m}
+	edgeCount := 0
+	for i := 0; i < len(scopes); i++ {
+		scope := scopes[i]
+		edgeCount += len(scope.Edges)
+		for f := scope.firstEdgeField; f != nil; f = f.nextEdgeField {
+			if !c.reserveGlobWork(ref.Edge, 1) {
+				return nil
+			}
+			if skipRecursiveGlobField(f.Name, triple) || !canTrimEdgeScope(f.Name) {
+				continue
+			}
+			if child := f.Map(); child.mayHaveEdges() {
+				scopes = append(scopes, child)
+			}
+		}
+	}
+
+	// Replaying a selector on many parallel edges between a few fields is
+	// cheaper through the existing endpoint-pair index. Both paths charge
+	// their actual work to the same compilation-wide budget.
+	if edgeCount > 1 {
+		fields, usePairs := m.recursiveEndpointsForLookup(ref.Edge, edgeCount, c)
+		if c.stopped() {
+			return nil
+		}
+		if usePairs {
+			var edges []*Edge
+			m.getEdgesBetween(id, ref, glob, c, true, fields, fields, &edges)
+			return edges
+		}
+	}
+
 	var candidates []match
-	var visit func(*Map) bool
-	visit = func(scope *Map) bool {
+	for _, scope := range scopes {
 		for _, e := range scope.Edges {
 			if !c.reserveEdgeWork(ref.Edge) {
-				return false
+				return nil
 			}
 			direct := id.SrcArrow == e.ID.SrcArrow && id.DstArrow == e.ID.DstArrow
 			reverse := id.SrcArrow == e.ID.DstArrow && id.DstArrow == e.ID.SrcArrow
@@ -79,24 +132,12 @@ func (m *Map) selectRecursiveEdges(id *EdgeID, ref *RefContext, glob *globContex
 				continue
 			}
 			if !c.reserveEdgePair(ref.Edge, glob, src, dst, true) {
-				return false
+				return nil
 			}
 			candidates = append(candidates, match{e, src, dst, key})
 		}
-		for _, f := range scope.edgeFields {
-			if !c.reserveGlobWork(ref.Edge, 1) {
-				return false
-			}
-			if skipRecursiveGlobField(f.Name, triple) || !canTrimEdgeScope(f.Name) {
-				continue
-			}
-			if child := f.Map(); child.mayHaveEdges() && !visit(child) {
-				return false
-			}
-		}
-		return true
 	}
-	if !visit(m) || len(candidates) == 0 {
+	if len(candidates) == 0 {
 		return nil
 	}
 

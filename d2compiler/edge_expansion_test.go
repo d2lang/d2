@@ -120,8 +120,8 @@ func TestRecursiveEdgeStylesOnImportedConnections(t *testing.T) {
 	const source = `
 first_group: @library.group
 removed: @library.group
-removed: null
 second_group: { ...@library }
+removed: null
 (*** -> ***)[*].style.bold: true
 `
 	g, _, err := d2compiler.Compile("main.d2", strings.NewReader(source), &d2compiler.CompileOptions{
@@ -137,5 +137,40 @@ second_group: { ...@library }
 		if edge.Style.Bold == nil || edge.Style.Bold.Value != "true" {
 			t.Fatalf("missing style on imported edge %s", edge.AbsID())
 		}
+	}
+}
+
+func TestRecursiveEdgeSelectorParallelWork(t *testing.T) {
+	t.Parallel()
+
+	const undirected = "(*** -- ***)[*].style.bold: true\n"
+	const directed = "(*** -> ***)[*].style.bold: true\n"
+	for _, tc := range []struct {
+		name   string
+		source string
+		work   int64
+		edges  int
+		bold   bool
+	}{
+		{"leading selector with default limit", undirected + strings.Repeat("a -> b\n", 365), 0, 365, false},
+		{"trailing selector with four endpoint pairs", strings.Repeat("a -> b\n", 8) + undirected, 4, 8, false},
+		{"styled endpoints", "a.style: {fill: red; stroke: black}\nb.style: {fill: blue; stroke: black}\n" + strings.Repeat("a -> b\n", 8) + undirected, 4, 8, false},
+		{"matching parallel edges in a container", "box: {\n" + strings.Repeat("a -> b\n", 16) + "}\n" + directed, 32, 16, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, _, err := d2compiler.Compile("parallel.d2", strings.NewReader(tc.source), &d2compiler.CompileOptions{MaxEdgeExpansionWork: tc.work})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(g.Edges) != tc.edges {
+				t.Fatalf("got %d edges, want %d", len(g.Edges), tc.edges)
+			}
+			for _, edge := range g.Edges {
+				bold := edge.Style.Bold != nil && edge.Style.Bold.Value == "true"
+				if bold != tc.bold {
+					t.Fatalf("edge %s bold = %v, want %v", edge.AbsID(), bold, tc.bold)
+				}
+			}
+		})
 	}
 }

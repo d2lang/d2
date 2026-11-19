@@ -5,7 +5,6 @@ package d2ir
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -192,9 +191,9 @@ type Map struct {
 	// recounting the whole IR around every compiled key.
 	structureVersion uint64
 
-	// Compiler-owned fields whose subtrees have held an edge. Keeping those
-	// branches lets recursive selectors skip unrelated columns and shapes.
-	edgeFields []*Field
+	// Fields whose subtrees have held edges. The selector restores source
+	// order after matching, so these links can be maintained without a slice.
+	firstEdgeField *Field
 }
 
 type fieldIndexKey struct {
@@ -337,7 +336,13 @@ func (m *Map) markStructureChanged() {
 }
 
 func (m *Map) mayHaveEdges() bool {
-	return m != nil && (len(m.Edges) > 0 || len(m.edgeFields) > 0)
+	return m != nil && (len(m.Edges) > 0 || m.firstEdgeField != nil)
+}
+
+func (m *Map) addEdgeField(f *Field) {
+	f.nextEdgeField = m.firstEdgeField
+	f.inEdgeFields = true
+	m.firstEdgeField = f
 }
 
 func (f *Field) noteEdges() {
@@ -346,8 +351,7 @@ func (f *Field) noteEdges() {
 		if !ok {
 			return
 		}
-		parent.edgeFields = append(parent.edgeFields, f)
-		f.inEdgeFields = true
+		parent.addEdgeField(f)
 		f, _ = parent.parent.(*Field)
 	}
 }
@@ -402,7 +406,13 @@ func (m *Map) insertField(index int, f *Field) {
 func (m *Map) removeField(index int) *Field {
 	f := m.Fields[index]
 	if f != nil && f.inEdgeFields {
-		m.edgeFields = slices.DeleteFunc(m.edgeFields, func(child *Field) bool { return child == f })
+		for link := &m.firstEdgeField; *link != nil; link = &(*link).nextEdgeField {
+			if *link == f {
+				*link = f.nextEdgeField
+				break
+			}
+		}
+		f.nextEdgeField = nil
 		f.inEdgeFields = false
 	}
 	copy(m.Fields[index:], m.Fields[index+1:])
@@ -477,7 +487,7 @@ func (m *Map) Copy(newParent Node) Node {
 	m.edgeIndex = nil
 	m.edgeIndexSize = 0
 	m.structureVersion = 0
-	m.edgeFields = nil
+	m.firstEdgeField = nil
 
 	m.parent = newParent
 	pfields := m.Fields
@@ -486,8 +496,7 @@ func (m *Map) Copy(newParent Node) Node {
 		field := f.Copy(m).(*Field)
 		m.Fields = append(m.Fields, field)
 		if field.Map().mayHaveEdges() {
-			m.edgeFields = append(m.edgeFields, field)
-			field.inEdgeFields = true
+			m.addEdgeField(field)
 		}
 	}
 	m.Edges = append([]*Edge(nil), m.Edges...)
@@ -642,10 +651,11 @@ var _ Importable = &Map{}
 
 type Field struct {
 	// *Map.
-	parent       Node
-	importAST    d2ast.Node
-	suspended    bool
-	inEdgeFields bool
+	parent        Node
+	importAST     d2ast.Node
+	suspended     bool
+	inEdgeFields  bool
+	nextEdgeField *Field
 
 	Name d2ast.String `json:"name"`
 
@@ -672,6 +682,7 @@ func (f *Field) Copy(newParent Node) Node {
 	tmp := *f
 	f = &tmp
 
+	f.nextEdgeField = nil
 	f.inEdgeFields = false
 	f.parent = newParent
 	f.References = append([]*FieldReference(nil), f.References...)
@@ -1702,13 +1713,18 @@ func (m *Map) getEdges(eid *EdgeID, refctx *RefContext, gctx *globContext, c *co
 		return err
 	}
 
+	m.getEdgesBetween(eid, refctx, gctx, c, indexed, srcFA, dstFA, ea)
+	return nil
+}
+
+func (m *Map) getEdgesBetween(eid *EdgeID, refctx *RefContext, gctx *globContext, c *compiler, indexed bool, srcFA, dstFA []*Field, ea *[]*Edge) {
 	for _, src := range srcFA {
 		for _, dst := range dstFA {
 			if c != nil && c.stopped() {
-				return nil
+				return
 			}
 			if c != nil && (refctx.Edge.Src.HasGlob() || refctx.Edge.Dst.HasGlob()) && !c.reserveEdgeExpansion(refctx.Edge, gctx, src, dst, true) {
-				return nil
+				return
 			}
 			eid2 := eid.Copy()
 			eid2.SrcPath = RelIDA(m, src)
@@ -1732,7 +1748,6 @@ func (m *Map) getEdges(eid *EdgeID, refctx *RefContext, gctx *globContext, c *co
 			}
 		}
 	}
-	return nil
 }
 
 func (m *Map) CreateEdge(eid *EdgeID, refctx *RefContext, c *compiler) ([]*Edge, error) {
