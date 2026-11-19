@@ -219,6 +219,11 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 	}
 	theme.ApplyOverrides(overrides)
 	paint := func(value string) string { return d2themes.ResolveThemeColor(theme, value) }
+	// The native presentation palette applies only to the default theme.
+	// A selected theme’s tokens carry the same paint intent as an override.
+	keepPaint := func(value string) bool {
+		return overrides != nil || value != "" && (themeID != 0 || !color.IsThemeColor(value))
+	}
 	scene := &Scene{PixelScale: SceneScale, Description: diagram.Description, Background: paint(diagram.Root.Fill), Boards: []Board{}, Nodes: []Node{}, Edges: []Edge{}}
 	scene.Root = owned.Root
 	scene.Legend = owned.Legend
@@ -242,6 +247,9 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 	}
 	if scene.Background == "" {
 		scene.Background = "#f5f7fa"
+		if themeID != 0 || overrides != nil {
+			scene.Background = paint(d2target.BG_COLOR)
+		}
 	}
 	indices := map[string]int{}
 	keys := map[string]int{}
@@ -273,9 +281,9 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 		indices[s.ID] = i
 		keys[key] = i
 		n := Node{ID: s.ID, Label: s.Label, Type: s.Type, Fill: paint(s.Fill), Stroke: paint(s.Stroke), FontColor: paint(s.GetFontColor()), Opacity: s.Opacity, StrokeWidth: s.StrokeWidth, StrokeDash: s.StrokeDash, Tooltip: s.Tooltip, Link: s.Link, Metadata: NodeMetadata{Original: s}}
-		n.FillExplicit = overrides != nil || (s.Fill != "" && !color.IsThemeColor(s.Fill))
-		n.StrokeExplicit = overrides != nil || (s.Stroke != "" && !color.IsThemeColor(s.Stroke))
-		n.FontExplicit = overrides != nil || (s.Color != "" && !color.IsThemeColor(s.Color))
+		n.FillExplicit = keepPaint(s.Fill)
+		n.StrokeExplicit = keepPaint(s.Stroke)
+		n.FontExplicit = themeID != 0 || keepPaint(s.Color)
 		if s.Icon != nil {
 			n.Icon = s.Icon.String()
 		}
@@ -295,6 +303,19 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 			}
 		}
 	}
+	// Endpoint text without an authored color uses the theme foreground.
+	// Keep the original tokens available alongside the resolved presentation.
+	endpointInk := func(text *d2target.Text) *d2target.Text {
+		if text == nil {
+			return nil
+		}
+		resolved := *text
+		if resolved.Color == "" {
+			resolved.Color = d2target.FG_COLOR
+		}
+		resolved.Color = paint(resolved.Color)
+		return &resolved
+	}
 	edgeIDs := map[string]bool{}
 	for _, c := range owned.Connections {
 		if c.ID == "" || edgeIDs[c.ID] {
@@ -302,8 +323,14 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 		}
 		edgeIDs[c.ID] = true
 		e := Edge{ID: c.ID, Source: c.Src, Target: c.Dst, Label: c.Label, SourceLabel: c.SrcLabel, TargetLabel: c.DstLabel, SourceArrow: c.SrcArrow, TargetArrow: c.DstArrow, Stroke: paint(c.Stroke), FontColor: paint(c.Color), StrokeWidth: c.StrokeWidth, StrokeDash: c.StrokeDash, Opacity: c.Opacity, Link: c.Link, Tooltip: c.Tooltip, Metadata: EdgeMetadata{Original: c}}
-		e.StrokeExplicit = overrides != nil || (c.Stroke != "" && !color.IsThemeColor(c.Stroke))
-		e.FontExplicit = overrides != nil || (c.Color != "" && !color.IsThemeColor(c.Color))
+		e.StrokeExplicit = keepPaint(c.Stroke)
+		e.FontExplicit = keepPaint(c.Color)
+		if themeID != 0 || overrides != nil {
+			e.FontColor = paint(c.GetFontColor())
+			e.FontExplicit = true
+			e.SourceLabel = endpointInk(c.SrcLabel)
+			e.TargetLabel = endpointInk(c.DstLabel)
+		}
 		if c.Icon != nil {
 			e.Icon = c.Icon.String()
 		}

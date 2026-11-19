@@ -153,6 +153,40 @@ func captureDiagram() *d2target.Diagram {
 	return d
 }
 
+func TestNativeSelectedThemePaintsCanvasShapesAndConnections(t *testing.T) {
+	d := captureDiagram()
+	d.Root.Fill = "N7"
+	for i := range d.Shapes {
+		d.Shapes[i].Fill, d.Shapes[i].Stroke, d.Shapes[i].Color = "B6", "B1", ""
+	}
+	d.Connections[0].Stroke = "B1"
+	theme := int64(200)
+	d.Config = &d2target.Config{ThemeID: &theme}
+	opts := Options{Format: SVG, Width: 320, Height: 200}
+	data, err := Render(context.Background(), d, &opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Dark Mauve’s paper, node surface, ink and wire colors.
+	for _, paint := range []string{"#1e1e2e", "#313244", "#cdd6f4", "#cba6f7"} {
+		if !bytes.Contains(data, []byte(`fill="`+paint+`"`)) {
+			t.Errorf("missing selected theme paint %s", paint)
+		}
+	}
+	opts.Format = PNG
+	data, err = Render(context.Background(), d, &opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := color.NRGBAModel.Convert(img.At(0, 0)); got != (color.NRGBA{30, 30, 46, 255}) {
+		t.Fatalf("dark canvas = %v", got)
+	}
+}
+
 func TestNativeDeterministicCapture(t *testing.T) {
 	// A machine with no executable search path still renders every format.
 	t.Setenv("PATH", "")

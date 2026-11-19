@@ -33,6 +33,8 @@
 
 #### Bugfixes ⛑️
 
+- renders: honor the selected theme and its canvas color in isometric exports.
+
 - d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
 - compiler:
   - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)

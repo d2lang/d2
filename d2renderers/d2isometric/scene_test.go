@@ -270,3 +270,34 @@ func TestAuthoredPaintAndThemeOverrides(t *testing.T) {
 		t.Fatal("override provenance not passed to runtime")
 	}
 }
+
+func TestThemeConnectionCaptionInk(t *testing.T) {
+	d := d2target.NewDiagram()
+	d.Shapes = []d2target.Shape{testNode("a", 0, 0), testNode("b", 120, 0)}
+	c := testEdge("paint", "a", "b")
+	c.Color = ""
+	c.SrcLabel = &d2target.Text{Label: "one"}
+	c.DstLabel = &d2target.Text{Label: "many", Color: "B1"}
+	d.Connections = []d2target.Connection{c}
+	dark := int64(200)
+	ink := "#405060"
+	for _, tc := range []struct {
+		opts         RenderOpts
+		main, target string
+	}{
+		{RenderOpts{ThemeID: &dark}, "#CDD6F4", "#CBA6F7"},
+		{RenderOpts{ThemeOverrides: &d2target.ThemeOverrides{N1: &ink, B1: &ink}}, ink, ink},
+	} {
+		s, err := BuildScene(d, &tc.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := s.Edges[0]
+		if !e.FontExplicit || !strings.EqualFold(e.FontColor, tc.main) || !strings.EqualFold(e.SourceLabel.Color, tc.main) || !strings.EqualFold(e.TargetLabel.Color, tc.target) {
+			t.Errorf("main, source and target ink = %q, %q, %q; want %q, %q, %q", e.FontColor, e.SourceLabel.Color, e.TargetLabel.Color, tc.main, tc.main, tc.target)
+		}
+		if e.Metadata.Original.SrcLabel.Color != "" || e.Metadata.Original.DstLabel.Color != "B1" {
+			t.Fatal("resolving endpoint ink changed source metadata")
+		}
+	}
+}
