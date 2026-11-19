@@ -48,19 +48,29 @@ func TestRenderAnimationDefaultsMissingPadding(t *testing.T) {
 	}
 }
 
-func TestRenderRejectsAppendixAnimation(t *testing.T) {
+func TestRenderAnimatedAppendix(t *testing.T) {
 	animateInterval := int64(1_000)
 	forceAppendix := true
-	request := RenderRequest{
-		Diagram: d2target.NewDiagram(),
-		Opts: &RenderOptions{
+	target := "*"
+	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{
+		FS: map[string]string{"index": "home\nscenarios: {detail: {back.link: _}}"},
+		Opts: &CompileOptions{RenderOptions: RenderOptions{
 			AnimateInterval: &animateInterval,
 			ForceAppendix:   &forceAppendix,
-		},
+			Target:          &target,
+		}},
+	}))
+	if err != nil {
+		t.Fatal(err)
 	}
-	response := invokeRenderRequest(t, request)
-	if response.Error == nil || response.Error.Code != 400 || response.Error.Message != "forceAppendix is not supported for animated SVGs" {
-		t.Fatalf("Render() error = %#v, want unsupported-options response", response.Error)
+	result := compiled.(CompileResponse)
+	out, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: &result.RenderOptions}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg := string(out.([]byte))
+	if strings.Count(svg, `class="appendix"`) != 1 || !strings.Contains(svg, ">root</text>") {
+		t.Fatal("expected one appendix containing the parent-board link")
 	}
 }
 
