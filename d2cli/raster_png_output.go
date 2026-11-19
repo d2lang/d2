@@ -34,6 +34,9 @@ func renderPNGToWriter(ctx context.Context, inputPath string, cacheImages bool, 
 		return preview, err
 	}
 	defer assetOptions.Resolver.CloseIdleConnections()
+	if len(preview) != 0 {
+		assetOptions.UnavailableImages = make(map[string]struct{})
+	}
 	document, err := buildSceneWithAssets(ctx, diagram, opts, assetOptions)
 	if err != nil {
 		return preview, err
@@ -47,7 +50,7 @@ func renderPNGToWriter(ctx context.Context, inputPath string, cacheImages bool, 
 		return preview, err
 	}
 	if len(preview) != 0 {
-		return bundleRasterPreview(ctx, assetOptions.Resolver, preview)
+		return bundleRasterPreview(ctx, assetOptions, preview)
 	}
 	return preview, nil
 }

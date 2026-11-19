@@ -673,7 +673,7 @@ func renderGIFWithSession(
 		return summary, fmt.Errorf("GIF rendered frame count %d differs from schedule %d", renderedFrameCount, totalFrames)
 	}
 	if len(summary.previewSVG) != 0 {
-		summary.previewSVG, err = bundleRasterPreview(ctx, assetOptions.Resolver, summary.previewSVG)
+		summary.previewSVG, err = bundleRasterPreview(ctx, assetOptions, summary.previewSVG)
 		if err != nil {
 			return summary, fmt.Errorf("GIF watch preview: %w", err)
 		}
@@ -737,6 +737,7 @@ func validateRenderSession(export string, session *d2raster.RenderSession) error
 }
 
 var rasterImageHrefPrefix = []byte(`<image href="`)
+var unavailableImageURI = []byte("data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(d2scenebuild.UnavailableImageSVG)))
 
 type rasterPreviewReference struct {
 	start  int
@@ -747,13 +748,12 @@ type rasterPreviewReference struct {
 type rasterPreviewResource struct {
 	resource *imageasset.Resource
 	uriBytes int
+	uri      []byte
 }
 
-// bundleRasterPreview embeds external image references from the same
-// resolver session used to build the frames. Resolver memoization is
-// important here: local files and remote responses cannot change between the
-// rendered GIF and its watch preview without adding a second I/O path.
-func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sourceSVG []byte) ([]byte, error) {
+// bundleRasterPreview embeds the scene's resolved images and any placeholders
+// recorded for the previewed board.
+func bundleRasterPreview(ctx context.Context, assets *d2scenebuild.AssetOptions, sourceSVG []byte) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -763,11 +763,12 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 	if int64(len(sourceSVG)) > rasterPreviewMaxSourceBytes {
 		return nil, fmt.Errorf("source bytes %d exceed limit %d", len(sourceSVG), rasterPreviewMaxSourceBytes)
 	}
-	if resolver == nil {
+	if assets == nil || assets.Resolver == nil {
 		return nil, fmt.Errorf("image resolver is required")
 	}
 
 	references := make([]rasterPreviewReference, 0)
+	resources := make(map[string]rasterPreviewResource)
 	searchAt := 0
 	imageCount := 0
 	for {
@@ -787,7 +788,11 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 		}
 		source := string(sourceSVG[start:end])
 		if !strings.HasPrefix(strings.ToLower(source), "data:") {
+			source = html.UnescapeString(source)
 			references = append(references, rasterPreviewReference{start: start, end: end, source: source})
+			if _, missing := assets.UnavailableImages[source]; missing {
+				resources[source] = rasterPreviewResource{uri: unavailableImageURI, uriBytes: len(unavailableImageURI)}
+			}
 		}
 		searchAt = end + 1
 	}
@@ -795,12 +800,11 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 		return sourceSVG, nil
 	}
 
-	resources := make(map[string]rasterPreviewResource)
 	outputBytes := int64(len(sourceSVG))
 	for _, reference := range references {
 		previewResource, ok := resources[reference.source]
 		if !ok {
-			resolved, err := resolver.Resolve(ctx, html.UnescapeString(reference.source))
+			resolved, err := assets.Resolver.Resolve(ctx, reference.source)
 			if err != nil {
 				return nil, err
 			}
@@ -825,17 +829,16 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 		return nil, fmt.Errorf("expanded output bytes %d exceed limit %d", outputBytes, rasterPreviewMaxOutputBytes)
 	}
 
-	encodedResources := make(map[string][]byte, len(resources))
 	for source, previewResource := range resources {
-		data, err := previewResource.resource.BytesContext(ctx)
+		if previewResource.uri != nil {
+			continue
+		}
+		uri, err := previewResource.resource.DataURIContext(ctx)
 		if err != nil {
 			return nil, err
 		}
-		uri, err := rasterDataURI(ctx, previewResource.resource.MIMEType(), data, previewResource.uriBytes)
-		if err != nil {
-			return nil, err
-		}
-		encodedResources[source] = uri
+		previewResource.uri = uri
+		resources[source] = previewResource
 	}
 
 	result := make([]byte, 0, int(outputBytes))
@@ -845,39 +848,12 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 			return nil, err
 		}
 		result = append(result, sourceSVG[copyAt:reference.start]...)
-		result = append(result, encodedResources[reference.source]...)
+		result = append(result, resources[reference.source].uri...)
 		copyAt = reference.end
 	}
 	result = append(result, sourceSVG[copyAt:]...)
 	if int64(len(result)) != outputBytes {
 		return nil, fmt.Errorf("expanded output size %d differs from preflight size %d", len(result), outputBytes)
-	}
-	return result, nil
-}
-
-func rasterDataURI(ctx context.Context, mimeType string, data []byte, outputBytes int) ([]byte, error) {
-	prefix := []byte("data:" + mimeType + ";base64,")
-	if outputBytes != len(prefix)+base64.StdEncoding.EncodedLen(len(data)) {
-		return nil, fmt.Errorf("data URI size preflight mismatch")
-	}
-	result := make([]byte, outputBytes)
-	copy(result, prefix)
-	writeAt := len(prefix)
-	// A multiple of three lets every non-final chunk encode independently.
-	const chunkBytes = 48 * 1024
-	for readAt := 0; readAt < len(data); readAt += chunkBytes {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		end := min(readAt+chunkBytes, len(data))
-		base64.StdEncoding.Encode(result[writeAt:], data[readAt:end])
-		writeAt += base64.StdEncoding.EncodedLen(end - readAt)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if writeAt != len(result) {
-		return nil, fmt.Errorf("data URI encoded size %d differs from preflight size %d", writeAt, len(result))
 	}
 	return result, nil
 }
