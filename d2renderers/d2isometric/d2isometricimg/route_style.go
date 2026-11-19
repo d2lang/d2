@@ -52,7 +52,11 @@ func (b *meshBuilder) routeCasing(points []Vec, radius float64, opacity float64)
 	if len(points) < 2 {
 		return
 	}
-	mat := nativeMaterial("#f5f7fb", 1, 0, opacity)
+	paper := b.palettePaper
+	if paper == "" {
+		paper = "#f5f7fb"
+	}
+	mat := nativeMaterial(paper, 1, 0, opacity)
 	mat.Unlit = true
 	left, right := make([]Vertex, len(points)), make([]Vertex, len(points))
 	for i, p := range points {

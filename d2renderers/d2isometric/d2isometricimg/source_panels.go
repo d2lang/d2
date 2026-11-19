@@ -227,7 +227,10 @@ func (b *meshBuilder) rootDecorations(s *d2isometric.Scene, assets *d2scenebuild
 			}
 		}
 		doc.Root.Children = children
-		if err := b.sourcePanel(doc, documentSurface(doc, b.scale, -.045), panelCount); err != nil {
+		// Nested platforms can descend below zero. Place the frame under
+		// the lowest wall so its opaque fill cannot cover a container.
+		floor := nativeMeshFloor(b.triangles)
+		if err := b.sourcePanel(doc, documentSurface(doc, b.scale, floor-.045), panelCount); err != nil {
 			return err
 		}
 	}
@@ -240,7 +243,8 @@ func finishNativeScene(b *meshBuilder, s *d2isometric.Scene, width, height int, 
 		return nil, b.err
 	}
 	background := color.NRGBA{245, 247, 251, 255}
-	if !nativeToken(s.Root.Fill) && !libcolor.IsGradient(s.Background) {
+	useBackground := b.palettePaper != "" || !nativeToken(s.Root.Fill)
+	if useBackground && !libcolor.IsGradient(s.Background) {
 		c := nativePaint(s.Background, "#f5f7fb")
 		a := float64(c.A) / 255
 		background = color.NRGBA{uint8(float64(c.R)*a + float64(background.R)*(1-a)), uint8(float64(c.G)*a + float64(background.G)*(1-a)), uint8(float64(c.B)*a + float64(background.B)*(1-a)), 255}
@@ -254,7 +258,7 @@ func finishNativeScene(b *meshBuilder, s *d2isometric.Scene, width, height int, 
 	}
 	width, height = camera.width, camera.height
 	result := &nativeScene{packets: packets, triangles: b.triangles, panels: b.panels, width: width, height: height, background: background, animatedNodes: b.animatedNodes, pixelScale: b.scale, links: b.links}
-	if !nativeToken(s.Root.Fill) && libcolor.IsGradient(s.Background) {
+	if useBackground && libcolor.IsGradient(s.Background) {
 		var err error
 		result.backgroundPaint, err = scenepaint.Gradient(s.Background)
 		if err != nil {

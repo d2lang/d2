@@ -15,6 +15,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/label"
 )
 
 func TestNativePlainLabelKeepsLongContentAndAuthoredWhitespace(t *testing.T) {
@@ -381,5 +382,39 @@ func TestNativeCanonicalArtworkStaysOnFaceWithOutsideCaption(t *testing.T) {
 				t.Fatal("outside caption touches the raised body's projected front edge")
 			}
 		})
+	}
+}
+
+func TestRightCaptionKeepsSourceGapFromProjectedWall(t *testing.T) {
+	for _, position := range []string{"OUTSIDE_RIGHT_TOP", "OUTSIDE_RIGHT_MIDDLE", "OUTSIDE_RIGHT_BOTTOM"} {
+		for _, drop := range []float64{0, -.2} {
+			n := fidelityNode(d2target.ShapeCylinder)
+			s := &n.Metadata.Original
+			s.Label, s.LabelWidth, s.LabelHeight, s.LabelPosition = "Orders", 48, 20, position
+			ctx := context.Background()
+			text, err := newTextPainter(ctx, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := &meshBuilder{ctx: ctx, text: text, scale: .01, hierarchySupports: map[string]float64{n.BoardID: drop}}
+			b.hierarchyNode(n, "")
+			if b.err != nil {
+				t.Fatal(b.err)
+			}
+			left := math.Inf(1)
+			for _, tri := range b.triangles {
+				if tri.Material == nil || !tri.NoDepthWrite || tri.Material.Texture == nil {
+					continue
+				}
+				for _, v := range tri.V {
+					left = min(left, captionProjection(v.Position).x)
+				}
+			}
+			wall := nv(n.Position.X+n.Size.X/2, n.Position.Y-n.Size.Y/2+drop, n.Position.Z)
+			gap := left - captionProjection(wall).x
+			if want := float64(label.PADDING) * b.scale; math.Abs(gap-want) > 1e-8 {
+				t.Errorf("%s at support offset %g: projected gap %g, want %g", position, drop, gap, want)
+			}
+		}
 	}
 }

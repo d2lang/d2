@@ -50,6 +50,7 @@ type meshBuilder struct {
 	facePixels        int64
 	faceMaxPixels     int64
 	arrowBackground   string
+	palettePaper      string
 	arrowOwners       map[string]*nativeArrowOwner
 	arrowMarkers      map[nativeArrowMarkerKey]nativeArrowMarker
 	arrowWork         int64
@@ -480,6 +481,9 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 	theme := d2themescatalog.Find(s.ThemeID)
 	theme.ApplyOverrides(s.ThemeOverrides)
 	b.arrowBackground = d2themes.ResolveThemeColor(theme, d2target.BG_COLOR)
+	if s.ThemeID != 0 || s.ThemeOverrides != nil {
+		b.palettePaper = b.arrowBackground
+	}
 	captions := newRouteCaptionPlacer()
 	if b.scale <= 0 {
 		b.scale = .01
@@ -504,7 +508,7 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 	b.routeCasingFloor = hierarchyCasingFloor(boards, nodes)
 	b.hierarchySupports = hierarchySupportOffsets(boards)
 	headerNodes := hierarchyRenderNodes(s.Nodes, b.hierarchySupports)
-	if !nativeToken(s.Root.Fill) {
+	if b.palettePaper != "" || !nativeToken(s.Root.Fill) {
 		hierarchyBackground = s.Background
 	}
 	boardIndex := map[string]d2isometric.Board{}
@@ -584,7 +588,7 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 		}
 		if owner != nil {
 			nativePhysicalShadows(b.triangles[firstBoardTriangle:], owner.Metadata.Original.Shadow)
-			b.addMeshLink(owner.Metadata.Original.Link, owner.Metadata.Original.Tooltip, b.triangles[firstBoardTriangle:])
+			b.addObjectLink(owner.Metadata.Original.Link, owner.Metadata.Original.Tooltip, firstBoardTriangle)
 			if owner.Metadata.Original.Animated && len(b.triangles) > firstBoardTriangle {
 				if len(b.animatedNodes) == firstBoardAnimation {
 					b.animatedNodes = append(b.animatedNodes, nativeAnimatedNode{first: firstBoardTriangle, last: len(b.triangles)})
@@ -611,7 +615,7 @@ func newNativeSceneWithOptions(ctx context.Context, s *d2isometric.Scene, width,
 				b.hierarchyNode(node, tints[node.BoardID])
 			}
 			captions.AvoidMesh(b.triangles[first:])
-			b.addMeshLink(node.Metadata.Original.Link, node.Metadata.Original.Tooltip, b.triangles[first:])
+			b.addObjectLink(node.Link, node.Tooltip, first)
 			shadowSpans = append(shadowSpans, hierarchyShadowSpan{first, len(b.triangles), node.BoardID})
 			b.rememberArrowOwner(node, nil, first)
 		}

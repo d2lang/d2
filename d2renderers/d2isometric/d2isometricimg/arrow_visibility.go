@@ -98,7 +98,7 @@ func (b *meshBuilder) arrowOwnerCaps(o *nativeArrowOwner) []Triangle {
 	o.prepared = true
 	n := nativeClassicNode(o.node)
 	if nativeMarkdownCard(n) {
-		n = nativeMarkdownCardPaint(n)
+		n = b.markdownCardPaint(n)
 	}
 	// Only standalone solids have real textured cap geometry; source
 	// containers of the same shape use their ordinary extruded profiles.

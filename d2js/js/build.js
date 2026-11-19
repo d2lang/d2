@@ -57,12 +57,18 @@ async function buildDynamicFiles(platform) {
 
   await writeFile(join(SRC_DIR, "platform.js"), platformContent);
 
-  if (platform === "node") {
-    const workerContent = await readFile(join(SRC_DIR, "worker.node.js"), "utf8");
-    await writeFile(join(SRC_DIR, "worker.js"), workerContent);
+  const entrypoint = join(SRC_DIR, `worker.${platform}.js`);
+  const workerFile = join(SRC_DIR, "worker.js");
+  if (platform === "browser") {
+    // The browser loads this worker from a blob URL, so bundle its imports first.
+    const worker = await build({
+      entrypoints: [entrypoint],
+      target: "browser",
+      format: "esm",
+    });
+    await writeFile(workerFile, await worker.outputs[0].text());
   } else {
-    const workerContent = await readFile(join(SRC_DIR, "worker.browser.js"), "utf8");
-    await writeFile(join(SRC_DIR, "worker.js"), workerContent);
+    await copyFile(entrypoint, workerFile);
   }
 }
 
