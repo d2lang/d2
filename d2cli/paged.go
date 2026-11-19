@@ -198,7 +198,7 @@ func (r *pagedRenderer) render(diagram *d2target.Diagram, wantsPreview bool) (*p
 		return nil, fmt.Errorf("paged board %d frame: %w", r.renderedBoards, renderErr)
 	}
 	if len(preview) != 0 {
-		preview, err = bundleRasterPreview(r.ctx, r.assets.Resolver, preview)
+		preview, err = bundleRasterPreview(r.ctx, r.assets, preview)
 		if err != nil {
 			return nil, fmt.Errorf("paged watch preview: %w", err)
 		}

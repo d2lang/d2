@@ -33,6 +33,10 @@ type AssetOptions struct {
 	Resolver        *imageasset.Resolver
 	SVGImportLimits d2svgimport.Limits
 	SVGImportBudget SVGImportBudget
+
+	// When supplied, Build records the image sources for which this board used
+	// the built-in placeholder. Supply a fresh map for each board preview.
+	UnavailableImages map[string]struct{}
 }
 
 // SVGImportBudget is a document-wide ceiling on parse and emitted-scene work

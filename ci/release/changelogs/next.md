@@ -59,7 +59,8 @@
   - Keep `class` field types and method return types that match the name, such
     as `date: date`, instead of dropping them. [#2952](https://github.com/d2lang/d2/pull/2952)
 - watch: embed local images in PNG watch previews instead of treating their URLs
-  as board navigation. [#2945](https://github.com/d2lang/d2/issues/2945)
+  as board navigation. Unavailable images show the same placeholder in the
+  preview and the exported PNG. [#2945](https://github.com/d2lang/d2/issues/2945)
 - decoding and assets:
   - Cap decompressed URL-encoded D2 input at 16 MiB. [#2902](https://github.com/d2lang/d2/pull/2902)
   - Bound image references, locators, fetched and decoded bytes, cached data, and

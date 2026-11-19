@@ -30,6 +30,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
+	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
@@ -673,6 +674,72 @@ func TestPNGWatchPreviewEmbedsLocalImages(t *testing.T) {
 	}
 }
 
+func TestPNGWatchPreviewUnavailableImage(t *testing.T) {
+	fill := color.NRGBA{R: 0xd4, G: 0x42, B: 0x31, A: 0xff}
+	asset := testSolidPNG(t, fill)
+	for _, source := range []string{"local", "remote"} {
+		t.Run(source, func(t *testing.T) {
+			dir := t.TempDir()
+			href := "missing&image.png"
+			assetPath := filepath.Join(dir, href)
+			var requests atomic.Int32
+			if source == "remote" {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if requests.Add(1) == 1 {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Type", "image/png")
+					_, _ = w.Write(asset)
+				}))
+				defer server.Close()
+				href = server.URL + "/" + href
+			}
+			icon, err := url.Parse(href)
+			if err != nil {
+				t.Fatal(err)
+			}
+			diagram := rasterImageDiagram(icon)
+			diagram.Shapes[0].Width, diagram.Shapes[0].Height = 64, 64
+			env := xos.NewEnv(nil)
+			env.Setenv("IMG_CACHE", "1")
+			state := &xmain.State{Env: env, Log: cmdlog.NewTB(env, t), PWD: dir}
+			outputPath := filepath.Join(dir, "output.png")
+			renderAndCheck := func(wantHref string, wantPixel color.NRGBA) {
+				t.Helper()
+				preview, written, err := _renderWithPNGEncoder(trustedAssetContext(), state,
+					d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, filepath.Join(dir, "input.d2"), outputPath,
+					false, false, nil, diagram, PNG, "", true, nil)
+				if err != nil || !written {
+					t.Fatalf("PNG written = %t, err = %v", written, err)
+				}
+				if !bytes.Contains(preview, []byte(`<image href="`+wantHref+`"`)) {
+					t.Fatal("watch preview did not embed the expected image")
+				}
+				pngBytes, err := os.ReadFile(outputPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertPNGPixel(t, pngBytes, 32, 56, wantPixel)
+			}
+
+			placeholder := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(d2scenebuild.UnavailableImageSVG))
+			renderAndCheck(placeholder, color.NRGBA{R: 0xb8, G: 0xd7, B: 0xf2, A: 0xff})
+			if source == "local" {
+				if err := os.WriteFile(assetPath, asset, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if n := requests.Load(); n != 1 {
+				t.Fatalf("first render fetched image %d times, want 1", n)
+			}
+			renderAndCheck("data:image/png;base64,"+base64.StdEncoding.EncodeToString(asset), fill)
+			if source == "remote" && requests.Load() != 2 {
+				t.Fatalf("two renders fetched image %d times, want 2", requests.Load())
+			}
+		})
+	}
+}
+
 func TestBundleGIFPreviewEmbedsLocalImages(t *testing.T) {
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.d2")
@@ -718,7 +785,7 @@ func TestBundleGIFPreviewUsesResolvedSnapshotAndUnescapesHref(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview, err := bundleRasterPreview(
-		context.Background(), assetOptions.Resolver,
+		context.Background(), assetOptions,
 		[]byte(`<svg><image href="asset&amp;one.png"/></svg>`),
 	)
 	if err != nil {
@@ -736,7 +803,7 @@ func TestBundleGIFPreviewBoundsReferencesAndExpandedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	tooMany := []byte("<svg>" + strings.Repeat(`<image href="data:image/png;base64,AA=="/>`, rasterPreviewMaxImageReferences+1) + "</svg>")
-	if _, err := bundleRasterPreview(context.Background(), assetOptions.Resolver, tooMany); err == nil || !strings.Contains(err.Error(), "image references") {
+	if _, err := bundleRasterPreview(context.Background(), assetOptions, tooMany); err == nil || !strings.Contains(err.Error(), "image references") {
 		t.Fatalf("preview image-reference limit error = %v", err)
 	}
 
@@ -751,7 +818,7 @@ func TestBundleGIFPreviewBoundsReferencesAndExpandedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	expanding := []byte("<svg>" + strings.Repeat(`<image href="asset.svg"/>`, 3_000) + "</svg>")
-	if _, err := bundleRasterPreview(context.Background(), assetOptions.Resolver, expanding); err == nil || !strings.Contains(err.Error(), "expanded output bytes") {
+	if _, err := bundleRasterPreview(context.Background(), assetOptions, expanding); err == nil || !strings.Contains(err.Error(), "expanded output bytes") {
 		t.Fatalf("preview expanded-output limit error = %v", err)
 	}
 }
