@@ -129,9 +129,11 @@ func (e *projectedExtent) preparedGroundShadows(ts []Triangle, nodes []nativeAni
 	// corresponding footprint in the final camera's coordinates.
 	u := nsub(light.right, nmul(light.direction, light.right.Y/light.direction.Y))
 	v := nsub(light.up, nmul(light.direction, light.up.Y/light.direction.Y))
-	radius := 3*max(groundShadowLayers[0].sigma, math.Sqrt(2./3)/light.scale) + 1/light.scale
+	radius := float64(3*max(groundShadowLayers[0].sigma, math.Sqrt(2./3)/light.scale)) + 1/light.scale
 	camera := nativeCameraAxes()
-	expand := func(axis Vec) float64 { return radius * (math.Abs(ndot(u, axis)) + math.Abs(ndot(v, axis))) }
+	// Round the filter footprint before adding it to the bounds. Fusing the
+	// product into an extremum shifts camera depth and subsequent SVG cuts.
+	expand := func(axis Vec) float64 { return float64(radius * (math.Abs(ndot(u, axis)) + math.Abs(ndot(v, axis)))) }
 	dx, dy, dz := expand(camera.right), expand(camera.up), expand(camera.direction)
 	shadow.minX, shadow.maxX = shadow.minX-dx, shadow.maxX+dx
 	shadow.minY, shadow.maxY = shadow.minY-dy, shadow.maxY+dy
