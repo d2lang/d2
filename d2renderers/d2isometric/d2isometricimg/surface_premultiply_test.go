@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// pollContext reports cancellation from its third poll on.
+type pollContext struct {
+	context.Context
+	polls int
+}
+
+func (c *pollContext) Err() error {
+	c.polls++
+	if c.polls > 2 {
+		return context.Canceled
+	}
+	return nil
+}
+
 // nativePremultiply replaces draw.Draw's draw.Src for surface textures, so it
 // must produce the same bytes for every channel value at every alpha.
 func TestNativePremultiplyMatchesDraw(t *testing.T) {
@@ -38,5 +52,10 @@ func TestNativePremultiplyMatchesDraw(t *testing.T) {
 	cancel()
 	if _, err := nativePremultiply(ctx, full); err == nil {
 		t.Fatal("a canceled context was ignored")
+	}
+	// The pass goes on consulting the context: the 256 rows are polled at
+	// rows 0, 64, 128 and 192.
+	if _, err := nativePremultiply(&pollContext{Context: context.Background()}, full); err != context.Canceled {
+		t.Fatalf("cancellation during the pass was ignored: %v", err)
 	}
 }

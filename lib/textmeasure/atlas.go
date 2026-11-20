@@ -114,7 +114,7 @@ type atlasKey struct {
 // whereas a caller's font may be registered afresh for every diagram and must
 // not be kept alive here. An atlas is about 41 KB and a diagram uses a
 // handful of sizes, so the table stops retaining new ones at about 10 MB;
-// sizes beyond that are measured per Ruler, as all of them used to be.
+// a Ruler measures the sizes beyond that itself.
 const maxSharedAtlases = 256
 
 var (

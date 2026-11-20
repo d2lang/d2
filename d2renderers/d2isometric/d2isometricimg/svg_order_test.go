@@ -142,20 +142,23 @@ func TestSVGPaintOrderCancellationAndWorkBudget(t *testing.T) {
 	}
 }
 
-// Equal boxes sort by index alone. The order decides which polygons share a
-// leaf, and with it how much work a later visit is charged.
+// Boxes with equal keys sort by index. The order decides which polygons share
+// a leaf, and with it how much work a later visit is charged.
 func TestSVGOrderTreeBreaksTiesByIndex(t *testing.T) {
+	// Two boxes, alternating, so that the sort has to move every polygon.
 	polygons := make([]svgOrderPolygon, 40)
 	for i := range polygons {
-		polygons[i] = svgOrderPolygon{box: svgBox{0, 0, 1, 1}}
+		x := float64(i % 2 * 2)
+		polygons[i] = svgOrderPolygon{box: svgBox{x, 0, x + 1, 1}}
 	}
 	tree, err := svgNewOrderTree(polygons, &svgVisibilityBudget{ctx: context.Background(), limits: svgDefaultVisibilityLimits})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i, index := range tree.indices {
-		if index != i {
-			t.Fatalf("indices of equal boxes = %v, want ascending", tree.indices)
+		// The even polygons, on the left, in ascending order; then the odd ones.
+		if want := 2*(i%20) + i/20; index != want {
+			t.Fatalf("indices = %v, want the even ones then the odd ones, each ascending", tree.indices)
 		}
 	}
 }

@@ -118,12 +118,14 @@ func svgColor(r, g, b float64) string {
 	return fmt.Sprintf("#%02x%02x%02x", uint8(math.Round(rasterClamp(r)*255)), uint8(math.Round(rasterClamp(g)*255)), uint8(math.Round(rasterClamp(b)*255)))
 }
 
-// svgAppendCanonicalLoop appends the canonical loop of polygon to an empty
-// buffer with room for it, and returns nil for a degenerate polygon.
+// svgAppendCanonicalLoop writes the canonical loop of polygon into the
+// storage of p, replacing what p held, and returns nil for a degenerate
+// polygon.
 //
 // Normalize at the same precision used to serialize the SVG. Matching edges
 // may be cancelled only after their endpoints have been rounded and cleaned.
 func svgAppendCanonicalLoop(p, polygon []svgPoint) []svgPoint {
+	p = p[:0]
 	for _, v := range polygon {
 		v = svgPoint{x: math.Round(v.x*1e6) / 1e6, y: math.Round(v.y*1e6) / 1e6}
 		if len(p) == 0 || v != p[len(p)-1] {
