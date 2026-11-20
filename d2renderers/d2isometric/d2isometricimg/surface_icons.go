@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"image"
-	"image/draw"
 	"math"
 	"net/url"
 	"strings"
@@ -185,13 +184,9 @@ func (p *surfaceIconPainter) texture(source *url.URL, width, depth float64, bord
 	if err != nil {
 		return nil, fmt.Errorf("isometric surface icon rasterization: %w", err)
 	}
-	tex := image.NewRGBA(frame.Bounds())
-	// Copy by rows so cancellation also bounds the alpha conversion pass.
-	for y := 0; y < h; y++ {
-		if err := p.ctx.Err(); err != nil {
-			return nil, err
-		}
-		draw.Draw(tex, image.Rect(0, y, w, y+1), frame, image.Pt(0, y), draw.Src)
+	tex, err := nativePremultiply(p.ctx, frame)
+	if err != nil {
+		return nil, err
 	}
 	p.pixels += pixels
 	p.textures[key] = tex

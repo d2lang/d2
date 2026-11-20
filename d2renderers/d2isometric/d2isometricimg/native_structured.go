@@ -2,8 +2,6 @@ package d2isometricimg
 
 import (
 	"fmt"
-	"image"
-	"image/draw"
 	"math"
 	"strconv"
 	"strings"
@@ -317,8 +315,11 @@ func (b *meshBuilder) structuredCell(doc *d2scene.Document, cell *d2scene.Node, 
 		b.err = err
 		return
 	}
-	tex := image.NewRGBA(frame.Bounds())
-	draw.Draw(tex, tex.Bounds(), frame, frame.Bounds().Min, draw.Src)
+	tex, err := nativePremultiply(b.ctx, frame)
+	if err != nil {
+		b.err = err
+		return
+	}
 	if err := retainNativeVectorSurface(b.ctx, tex, &part); err != nil {
 		b.err = err
 		return
