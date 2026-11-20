@@ -3,7 +3,7 @@ package d2isometricimg
 import (
 	"math"
 	"math/bits"
-	"sort"
+	"slices"
 )
 
 type svgVisibilityTreeNode struct {
@@ -61,13 +61,16 @@ func svgNewVisibilityTree(polygons []svgVisibilityPolygon, faces []svgVisibility
 		if err := budget.spend((end - start) * bits.Len(uint(end-start))); err != nil {
 			return 0, err
 		}
-		sort.Slice(tree.indices[start:end], func(i, j int) bool {
-			a, b := tree.indices[start+i], tree.indices[start+j]
+		// Indices are distinct, so this is a total order.
+		slices.SortFunc(tree.indices[start:end], func(a, b int) int {
 			ca, cb := center(a), center(b)
-			if ca == cb {
-				return a < b
+			switch {
+			case ca < cb:
+				return -1
+			case ca > cb:
+				return 1
 			}
-			return ca < cb
+			return a - b
 		})
 		middle := (start + end) / 2
 		left, err := build(start, middle)
@@ -85,28 +88,28 @@ func svgNewVisibilityTree(polygons []svgVisibilityPolygon, faces []svgVisibility
 	return tree, err
 }
 
-func (t *svgVisibilityTree) query(box svgBox, budget *svgVisibilityBudget) ([]int, error) {
+// query appends the faces whose bounds overlap box to result. The traversal
+// stack is the caller's scratch storage and is returned for reuse.
+func (t *svgVisibilityTree) query(box svgBox, budget *svgVisibilityBudget, stack []int32, result []int) ([]int32, []int, error) {
 	if len(t.nodes) == 0 {
-		return nil, nil
+		return stack, result, nil
 	}
-	stack := []int{0}
-	var result []int
+	stack = append(stack[:0], 0)
 	for len(stack) > 0 {
 		if err := budget.spend(1); err != nil {
-			return nil, err
+			return stack, result, err
 		}
-		index := stack[len(stack)-1]
+		node := &t.nodes[stack[len(stack)-1]]
 		stack = stack[:len(stack)-1]
-		node := t.nodes[index]
 		if !node.box.overlaps(box) {
 			continue
 		}
 		if node.left >= 0 {
-			stack = append(stack, node.right, node.left)
+			stack = append(stack, int32(node.right), int32(node.left))
 			continue
 		}
 		if err := budget.spend(node.end - node.start); err != nil {
-			return nil, err
+			return stack, result, err
 		}
 		for _, id := range t.indices[node.start:node.end] {
 			if t.polygons[id].box.overlaps(box) {
@@ -114,5 +117,5 @@ func (t *svgVisibilityTree) query(box svgBox, budget *svgVisibilityBudget) ([]in
 			}
 		}
 	}
-	return result, nil
+	return stack, result, nil
 }
