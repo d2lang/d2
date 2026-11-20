@@ -13,12 +13,11 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2isometric/d2isometricimg"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
-	"github.com/d2lang/util-go/diff"
 )
 
 // Bound aggregate geometry and vector-surface memory independently of go test's
 // parallelism.
-var isometricRenderSlots = make(chan struct{}, 2)
+var isometricRenderSlots = make(chan struct{}, 4)
 
 // These source fixtures require artwork or glyphs outside D2's bundled
 // resources. Keep checking their explicit errors without vendoring resources,
@@ -138,7 +137,7 @@ func renderIsometric(t *testing.T, ctx context.Context, diagram *d2target.Diagra
 			continue
 		}
 		rendered = append(rendered, board)
-		if err := diff.Testdata(filepath.Join(dir, board.name), ".svg", data); err != nil {
+		if err := testdata(filepath.Join(dir, board.name), ".svg", data); err != nil {
 			t.Error(err)
 		}
 	}
@@ -237,6 +236,11 @@ func TestIsometricSVGSnapshot(t *testing.T) {
 		t.Fatalf("missing SVG snapshot: %v", err)
 	}
 	t.Setenv("TESTDATA_ACCEPT", "")
+	// A got file left by an earlier failing run is removed once the output
+	// matches the snapshot again.
+	if err := os.WriteFile(filepath.Join(dir, "isometric.got.svg"), []byte("stale"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	renderIsometric(t, context.Background(), &diagram, dir, &d2svg.RenderOpts{})
 	files, err := os.ReadDir(dir)
 	if err != nil {

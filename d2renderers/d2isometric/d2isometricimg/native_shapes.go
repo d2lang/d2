@@ -3,7 +3,6 @@ package d2isometricimg
 import (
 	"fmt"
 	"image"
-	"image/draw"
 	"math"
 
 	"github.com/d2lang/d2/d2renderers/d2isometric"
@@ -248,8 +247,11 @@ func (b *meshBuilder) nativeFaceLayer(s d2target.Shape, layer nativeFaceLayer) (
 		b.err = fmt.Errorf("native shape face raster: %w", err)
 		return nil, labelSurface{}
 	}
-	tex := image.NewRGBA(frame.Bounds())
-	draw.Draw(tex, tex.Bounds(), frame, frame.Bounds().Min, draw.Src)
+	tex, err := nativePremultiply(b.ctx, frame)
+	if err != nil {
+		b.err = err
+		return nil, labelSurface{}
+	}
 	if err := retainNativeVectorSurface(b.ctx, tex, doc); err != nil {
 		b.err = err
 		return nil, labelSurface{}

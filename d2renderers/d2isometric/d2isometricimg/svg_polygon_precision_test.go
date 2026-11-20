@@ -117,3 +117,19 @@ func TestSVGFillPathPreservesHolesOverlapsAndPointContacts(t *testing.T) {
 		}
 	}
 }
+
+func TestSVGFillPathCancelsEdgesAcrossSignedZeros(t *testing.T) {
+	cell := func(x0, x1, y float64) []svgPoint {
+		return []svgPoint{{x: x0, y: y}, {x: x1, y: y}, {x: x1, y: y + 1}, {x: x0, y: y + 1}}
+	}
+	// Rounding -3e-7 spells the shared boundary -0 on the left and +0 on the
+	// right. Both are the same vertex, so the cells still merge into one loop.
+	var signed, plain [][]svgPoint
+	for y := 0.; y < 4; y++ {
+		signed = append(signed, cell(-1, -3e-7, y), cell(0, 1, y))
+		plain = append(plain, cell(-1, 0, y), cell(0, 1, y))
+	}
+	if got, want := svgFillPath(signed), svgFillPath(plain); got != want || strings.Count(got, "M") != 1 {
+		t.Fatalf("the two zeros were not one vertex: %s, want %s", got, want)
+	}
+}

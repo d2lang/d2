@@ -118,10 +118,14 @@ func svgColor(r, g, b float64) string {
 	return fmt.Sprintf("#%02x%02x%02x", uint8(math.Round(rasterClamp(r)*255)), uint8(math.Round(rasterClamp(g)*255)), uint8(math.Round(rasterClamp(b)*255)))
 }
 
+// svgAppendCanonicalLoop writes the canonical loop of polygon into the
+// storage of p, replacing what p held, and returns nil for a degenerate
+// polygon.
+//
 // Normalize at the same precision used to serialize the SVG. Matching edges
 // may be cancelled only after their endpoints have been rounded and cleaned.
-func svgCanonicalLoop(polygon []svgPoint) []svgPoint {
-	p := make([]svgPoint, 0, len(polygon))
+func svgAppendCanonicalLoop(p, polygon []svgPoint) []svgPoint {
+	p = p[:0]
 	for _, v := range polygon {
 		v = svgPoint{x: math.Round(v.x*1e6) / 1e6, y: math.Round(v.y*1e6) / 1e6}
 		if len(p) == 0 || v != p[len(p)-1] {
@@ -148,7 +152,11 @@ func svgCanonicalLoop(polygon []svgPoint) []svgPoint {
 			first = i
 		}
 	}
-	return append(p[first:len(p):len(p)], p[:first]...)
+	// Start at the least vertex. Three reversals rotate in place.
+	slices.Reverse(p[:first])
+	slices.Reverse(p[first:])
+	slices.Reverse(p)
+	return p
 }
 
 func svgWriteLoop(s *strings.Builder, loop []svgPoint) {
@@ -169,10 +177,21 @@ func svgWriteLoop(s *strings.Builder, loop []svgPoint) {
 
 func svgPolygonPath(polygons [][]svgPoint) string {
 	var s strings.Builder
+	var loop []svgPoint
 	for _, polygon := range polygons {
-		svgWriteLoop(&s, svgCanonicalLoop(polygon))
+		if cap(loop) < len(polygon) {
+			loop = make([]svgPoint, 0, 2*len(polygon))
+		}
+		svgWriteLoop(&s, svgAppendCanonicalLoop(loop[:0], polygon))
 	}
 	return s.String()
+}
+
+// svgLoopPointKey identifies a rounded loop vertex. Both zeros are one vertex:
+// equal coordinates identify a vertex, not equal bit patterns.
+func svgLoopPointKey(p svgPoint) [2]uint64 {
+	// Adding zero turns negative zero into positive zero and changes nothing else.
+	return [2]uint64{math.Float64bits(p.x + 0), math.Float64bits(p.y + 0)}
 }
 
 // A nonzero fill depends only on the net directed edges. Two neighboring
@@ -193,14 +212,34 @@ func svgFillPath(polygons [][]svgPoint) string {
 		}
 		remaining -= len(polygon)
 	}
-	type edge struct{ from, to svgPoint }
-	var edges []edge
-	pending := make(map[edge]int)
+	// Vertices are numbered in order of first appearance and an edge is the
+	// pair of its vertex numbers, so the tables hash one word per edge.
+	capacity := maxEdges - remaining
+	vertexIDs := make(map[[2]uint64]int32, capacity)
+	vertices := make([]svgPoint, 0, capacity)
+	edges := make([]uint64, 0, capacity)
+	pending := make(map[uint64]int32, capacity)
+	var loop []svgPoint
+	var ids []int32
 	for _, polygon := range polygons {
-		p := svgCanonicalLoop(polygon)
-		for i, a := range p {
-			e := edge{a, p[(i+1)%len(p)]}
-			back := edge{e.to, e.from}
+		if cap(loop) < len(polygon) {
+			loop = make([]svgPoint, 0, 2*len(polygon))
+		}
+		p := svgAppendCanonicalLoop(loop[:0], polygon)
+		ids = ids[:0]
+		for _, v := range p {
+			key := svgLoopPointKey(v)
+			id, ok := vertexIDs[key]
+			if !ok {
+				id = int32(len(vertices))
+				vertexIDs[key] = id
+				vertices = append(vertices, v)
+			}
+			ids = append(ids, id)
+		}
+		for i, from := range ids {
+			to := ids[(i+1)%len(ids)]
+			e, back := uint64(uint32(from))<<32|uint64(uint32(to)), uint64(uint32(to))<<32|uint64(uint32(from))
 			if pending[back] > 0 {
 				pending[back]--
 				continue
@@ -211,25 +250,40 @@ func svgFillPath(polygons [][]svgPoint) string {
 	}
 	// Build adjacency in input order. Avoid map iteration so snapshots and
 	// path winding remain deterministic even at point-touching components.
-	next := make(map[svgPoint][]svgPoint)
+	// The surviving edges of vertex v occupy next[start[v]:start[v]+count[v]].
+	count := make([]int32, len(vertices))
+	kept := edges[:0:0]
 	for _, e := range edges {
 		if pending[e] > 0 {
-			next[e.from] = append(next[e.from], e.to)
 			pending[e]--
+			count[e>>32]++
+			kept = append(kept, e)
 		}
 	}
+	start := make([]int32, len(vertices))
+	total := int32(0)
+	for v, n := range count {
+		start[v] = total
+		total += n
+		count[v] = 0
+	}
+	next := make([]int32, total)
+	for _, e := range kept {
+		from := e >> 32
+		next[start[from]+count[from]] = int32(uint32(e))
+		count[from]++
+	}
 	var s strings.Builder
+	loop = loop[:0]
 	for _, e := range edges {
-		start := e.from
-		for len(next[start]) > 0 {
-			var loop []svgPoint
-			for at := start; ; {
-				loop = append(loop, at)
-				out := next[at]
-				atNext := out[len(out)-1]
-				next[at] = out[:len(out)-1]
-				at = atNext
-				if at == start {
+		first := int32(e >> 32)
+		for count[first] > 0 {
+			loop = loop[:0]
+			for at := first; ; {
+				loop = append(loop, vertices[at])
+				count[at]--
+				at = next[start[at]+count[at]]
+				if at == first {
 					break
 				}
 			}

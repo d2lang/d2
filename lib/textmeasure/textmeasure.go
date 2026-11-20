@@ -22,7 +22,9 @@ const TAB_SIZE = 4
 const SIZELESS_FONT_SIZE = 0
 const CODE_LINE_HEIGHT = 1.3
 
-// Runes encompasses ASCII, Latin-1, and geometric shapes like black square
+// Runes encompasses ASCII, Latin-1, and geometric shapes like black square.
+// To measure a different set, assign a new slice before creating a Ruler:
+// metrics already measured for a slice are reused, so do not edit it in place.
 var Runes []rune
 
 func init() {
@@ -176,8 +178,8 @@ func (r *Ruler) HasFontFamilyLoaded(fontFamily *d2fonts.FontFamily) bool {
 func (r *Ruler) addFontSize(font d2fonts.Font) {
 	sizeless := font
 	sizeless.Size = SIZELESS_FONT_SIZE
-	face := r.fontFace(font, r.ttfs[sizeless])
-	atlas := NewAtlas(face, Runes)
+	parsed := r.ttfs[sizeless]
+	atlas := parsed.sharedAtlas(r.fontFace(font, parsed), font.Size)
 	r.atlases[font] = atlas
 	r.lineHeights[font] = atlas.lineHeight
 	r.tabWidths[font] = atlas.glyph(' ').advance * TAB_SIZE

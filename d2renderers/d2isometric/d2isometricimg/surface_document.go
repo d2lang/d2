@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"image"
-	"image/draw"
 	"math"
 	"strings"
 	"time"
@@ -130,15 +129,50 @@ func rasterNativeSurfaceDocument(ctx context.Context, document *d2scene.Document
 	if err != nil {
 		return nil, err
 	}
-	texture := image.NewRGBA(frame.Bounds())
-	for y := 0; y < height; y++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		draw.Draw(texture, image.Rect(0, y, width, y+1), frame, image.Pt(0, y), draw.Src)
+	texture, err := nativePremultiply(ctx, frame)
+	if err != nil {
+		return nil, err
 	}
 	if err := retainNativeVectorSurface(ctx, texture, &view); err != nil {
 		return nil, err
+	}
+	return texture, nil
+}
+
+// nativePremultiply converts a rendered surface to the premultiplied texture
+// format with exactly the pixels of draw.Draw's draw.Src. Surfaces are mostly
+// empty or opaque: transparent pixels are already zero in a new image and
+// opaque ones are copied, leaving the per-channel arithmetic to antialiased
+// edges. Cancellation bounds the pass.
+func nativePremultiply(ctx context.Context, frame *image.NRGBA) (*image.RGBA, error) {
+	bounds := frame.Bounds()
+	texture := image.NewRGBA(bounds)
+	row := bounds.Dx() * 4
+	for y := 0; y < bounds.Dy(); y++ {
+		if y%64 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		src := frame.Pix[y*frame.Stride : y*frame.Stride+row]
+		dst := texture.Pix[y*texture.Stride : y*texture.Stride+row]
+		for i := 0; i < row; i += 4 {
+			s := src[i : i+4 : i+4]
+			alpha := s[3]
+			if alpha == 0 {
+				continue
+			}
+			d := dst[i : i+4 : i+4]
+			if alpha == 0xff {
+				copy(d, s)
+				continue
+			}
+			a := uint32(alpha) * 0x101
+			d[0] = uint8(uint32(s[0]) * a / 0xff >> 8)
+			d[1] = uint8(uint32(s[1]) * a / 0xff >> 8)
+			d[2] = uint8(uint32(s[2]) * a / 0xff >> 8)
+			d[3] = alpha
+		}
 	}
 	return texture, nil
 }

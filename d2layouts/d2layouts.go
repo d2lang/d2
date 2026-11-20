@@ -33,6 +33,24 @@ type GraphInfo struct {
 	DiagramType    DiagramType
 }
 
+// graphShapes logs a graph's objects. Printing them only when a handler
+// formats the record keeps LayoutNested, which logs every nested graph before
+// and after its layout, from listing all objects while debug logs are off.
+// It reads the graph when it is formatted, so a handler must format it inside
+// Handle, as slog's handlers and log.PrettyHandler do.
+type graphShapes struct{ g *d2graph.Graph }
+
+// String serves handlers that format the attribute with fmt, such as
+// log.PrettyHandler.
+func (s graphShapes) String() string {
+	return s.g.PrintString()
+}
+
+// LogValue serves handlers that resolve attributes, such as slog's own.
+func (s graphShapes) LogValue() slog.Value {
+	return slog.StringValue(s.g.PrintString())
+}
+
 func (gi GraphInfo) isDefault() bool {
 	return !gi.IsConstantNear && gi.DiagramType == DefaultGraphType
 }
@@ -278,19 +296,19 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 	if len(g.Objects) > 0 {
 		switch graphInfo.DiagramType {
 		case GridDiagram:
-			log.Debug(ctx, "layout grid", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", g.PrintString()))
+			log.Debug(ctx, "layout grid", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", graphShapes{g}))
 			if err = d2grid.Layout(ctx, g); err != nil {
 				return err
 			}
 
 		case SequenceDiagram:
-			log.Debug(ctx, "layout sequence", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", g.PrintString()))
+			log.Debug(ctx, "layout sequence", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", graphShapes{g}))
 			err = d2sequence.Layout(ctx, g, coreLayout)
 			if err != nil {
 				return err
 			}
 		default:
-			log.Debug(ctx, "default layout", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", g.PrintString()))
+			log.Debug(ctx, "default layout", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", graphShapes{g}))
 			err := coreLayout(ctx, g)
 			if err != nil {
 				return err
@@ -369,7 +387,7 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 		return err
 	}
 
-	log.Debug(ctx, "done", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", g.PrintString()))
+	log.Debug(ctx, "done", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", graphShapes{g}))
 	return err
 }
 

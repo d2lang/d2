@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+func svgNewVisibleFragmentSet(points []svgPoint, budget *svgVisibilityBudget, maxFragments, maxVertices int) (*svgVisibleFragmentSet, error) {
+	set := &svgVisibleFragmentSet{}
+	box := svgPolygonBox(points)
+	set.reset(box, budget, &svgPointPool{}, maxFragments, maxVertices)
+	return set, set.add(svgVisibleFragment{points: points, box: box})
+}
+
 func TestSVGFragmentIndexBoundsLiveReferences(t *testing.T) {
 	limits := svgDefaultVisibilityLimits
 	limits.gridReferences = 2
@@ -13,23 +20,21 @@ func TestSVGFragmentIndexBoundsLiveReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	small := svgVisibilityRectangle(1, 1, 2, 2, 0, 0, 0)
+	small := svgVisibleFragment{points: svgVisibilityRectangle(1, 1, 2, 2, 0, 0, 0)}
+	small.box = svgPolygonBox(small.points)
 	if err := s.add(small); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.add(small); err == nil {
 		t.Fatal("fragment index exceeded its reference budget")
 	}
-	if s.references != 2 || len(s.fragments) != 2 || s.vertices != 8 {
+	if s.references != 2 || s.live != 2 || len(s.fragments) != 2 || s.vertices != 8 {
 		t.Fatal("rejected fragment changed the active index")
 	}
-	id := s.next
-	if err := s.changeCells(id, s.fragments[id].box, false); err != nil {
+	if err := s.remove(int32(len(s.fragments))); err != nil {
 		t.Fatal(err)
 	}
-	delete(s.fragments, id)
-	s.vertices -= len(small)
-	if err := s.add(small); err != nil || s.references != 2 {
+	if err := s.add(small); err != nil || s.references != 2 || s.live != 2 {
 		t.Fatalf("removed fragments did not release their references: %v", err)
 	}
 }

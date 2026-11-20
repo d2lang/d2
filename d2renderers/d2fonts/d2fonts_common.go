@@ -4,8 +4,10 @@ package d2fonts
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"sync"
 
+	"github.com/d2lang/d2/internal/bundledfont"
 	"github.com/d2lang/d2/lib/font"
 	fontlib "github.com/d2lang/d2/lib/font"
 	"github.com/d2lang/d2/lib/syncmap"
@@ -29,18 +31,29 @@ func (f FontFamily) Font(size int, style FontStyle) Font {
 }
 
 func (f Font) GetEncodedSubset(corpus string) string {
-	var uniqueChars string
+	var unique strings.Builder
 	uniqueMap := make(map[rune]bool)
 	for _, char := range corpus {
 		if _, exists := uniqueMap[char]; !exists {
 			uniqueMap[char] = true
-			uniqueChars = uniqueChars + string(char)
+			unique.WriteRune(char)
 		}
 	}
+	uniqueChars := unique.String()
 
 	FontFamiliesMu.Lock()
 	defer FontFamiliesMu.Unlock()
 	face := FontFaces.Get(f)
+	// Only bundled fonts are remembered: a caller's font may be registered
+	// afresh for every diagram and must not be kept alive by this cache.
+	cacheable := bundledfont.Is(face)
+	var key encodedSubsetKey
+	if cacheable {
+		key = encodedSubsetKey{face: &face[0], chars: uniqueChars}
+		if encoded, ok := encodedSubsets[key]; ok {
+			return encoded
+		}
+	}
 	fontBuf := make([]byte, len(face))
 	copy(fontBuf, face)
 	fontBuf = font.UTF8CutFont(fontBuf, uniqueChars)
@@ -51,8 +64,39 @@ func (f Font) GetEncodedSubset(corpus string) string {
 		return FontEncodings.Get(f)
 	}
 
-	return fmt.Sprintf("data:application/font-woff;base64,%v", base64.StdEncoding.EncodeToString(fontBuf))
+	encoded := fmt.Sprintf("data:application/font-woff;base64,%v", base64.StdEncoding.EncodeToString(fontBuf))
+	if cacheable {
+		// The key is retained too, and characters the font lacks lengthen it
+		// without adding anything to the subset.
+		size := len(encoded) + len(uniqueChars)
+		if encodedSubsetsSize+size > maxEncodedSubsetsSize {
+			clear(encodedSubsets)
+			encodedSubsetsSize = 0
+		}
+		encodedSubsets[key] = encoded
+		encodedSubsetsSize += size
+	}
+	return encoded
 }
+
+// encodedSubsetKey identifies a subset by a bundled font file's backing array
+// and the characters retained, in order of first use.
+type encodedSubsetKey struct {
+	face  *byte
+	chars string
+}
+
+// A subset is a pure function of the font file and its characters, and
+// cutting, compressing and encoding one is most of the cost of embedding
+// fonts. Boards of one diagram, successive renders while watching a file and
+// the layouts of one test all repeat the same subsets. FontFamiliesMu guards
+// the cache, which is emptied whenever its keys and values outgrow the budget.
+const maxEncodedSubsetsSize = 8 << 20
+
+var (
+	encodedSubsets     = make(map[encodedSubsetKey]string)
+	encodedSubsetsSize int
+)
 
 const (
 	FONT_SIZE_XS   = 13
