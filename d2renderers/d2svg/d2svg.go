@@ -2498,8 +2498,12 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 	// such as list markers and decoded entities. Include those rendered runs in
 	// every font subset, including multi-board animations where render-local
 	// Markdown layout state is not available here.
-	for _, match := range nativeMarkdownTextPattern.FindAllStringSubmatch(source, -1) {
-		corpus += html.UnescapeString(match[1])
+	// The pattern can only match where the class name occurs, which most
+	// diagrams never contain; skip scanning the whole document for those.
+	if strings.Contains(source, "md-text") {
+		for _, match := range nativeMarkdownTextPattern.FindAllStringSubmatch(source, -1) {
+			corpus += html.UnescapeString(match[1])
+		}
 	}
 	corpora = restrictFontCorpora(corpora, corpus)
 	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)
