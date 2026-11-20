@@ -3,6 +3,7 @@ package d2talalayout_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -12,7 +13,9 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/routing"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/internal/testlog"
+	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/log"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
@@ -26,28 +29,13 @@ func TestLargeContainerRouting(t *testing.T) {
 func checkLargeContainerRouting(t *testing.T, links, shapes int, nested bool, seed int64) {
 	t.Helper()
 	source := largeContainerDiagram(links, nested)
-	layout := func(ctx context.Context, g *d2graph.Graph) error {
-		return d2talalayout.Layout(ctx, g, &d2talalayout.Options{Seeds: []int64{seed}})
-	}
 	var renderOpts *d2svg.RenderOpts
 	if nested {
 		renderOpts = &d2svg.RenderOpts{Sketch: new(true), DarkThemeID: new(int64(104))}
 	}
-	ruler, err := textmeasure.NewRuler()
-	if err != nil {
-		t.Fatal(err)
-	}
 	telemetry := new(routing.SearchTelemetry)
 	ctx := routing.WithSearchTelemetry(log.With(t.Context(), testlog.New(t)), telemetry)
-	diagram, _, err := d2lib.Compile(ctx, source, &d2lib.CompileOptions{
-		Ruler:          ruler,
-		Layout:         new("tala"),
-		LayoutResolver: func(string) (d2graph.LayoutGraph, error) { return layout, nil },
-		RouterResolver: func(string) (d2graph.RouteEdges, error) { return d2talalayout.RouteEdges, nil },
-	}, renderOpts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	diagram := compileRoutingDiagram(t, ctx, source, seed, renderOpts)
 	if len(diagram.Shapes) != shapes || len(diagram.Connections) != links {
 		t.Fatalf("got %d shapes and %d connections", len(diagram.Shapes), len(diagram.Connections))
 	}
@@ -88,6 +76,68 @@ func checkLargeContainerRouting(t *testing.T, links, shapes int, nested bool, se
 		t.Fatalf("route search exhausted its %d-unit budget", routing.MaxSearchWorkUnits)
 	}
 	t.Logf("peak route-search work: %d of %d units", peak, routing.MaxSearchWorkUnits)
+}
+
+func compileRoutingDiagram(t *testing.T, ctx context.Context, source string, seed int64, renderOpts *d2svg.RenderOpts) *d2target.Diagram {
+	t.Helper()
+	layout := func(ctx context.Context, g *d2graph.Graph) error {
+		return d2talalayout.Layout(ctx, g, &d2talalayout.Options{Seeds: []int64{seed}})
+	}
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagram, _, err := d2lib.Compile(ctx, source, &d2lib.CompileOptions{
+		Ruler:          ruler,
+		Layout:         new("tala"),
+		LayoutResolver: func(string) (d2graph.LayoutGraph, error) { return layout, nil },
+		RouterResolver: func(string) (d2graph.RouteEdges, error) { return d2talalayout.RouteEdges, nil },
+	}, renderOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return diagram
+}
+
+func TestCompactCompoundRoutes(t *testing.T) {
+	// These four routes acquired detours or extra crossings when the router
+	// discarded cross-container hierarchy lanes on small diagrams.
+	for _, tc := range []struct {
+		name string
+		want map[string]geo.Points
+	}{
+		{"shared-source", map[string]geo.Points{
+			"g2.n0 -> g4.n1": {{X: 169, Y: 634}, {X: 348, Y: 634}, {X: 348, Y: 1197}, {X: 403, Y: 1197}},
+			"g2.n0 -> g4.n2": {{X: 169, Y: 656}, {X: 242, Y: 656}, {X: 242, Y: 1164}},
+		}},
+		{"shared-target", map[string]geo.Points{
+			"g0.n1 -> g1.n2": {{X: 968, Y: 126}, {X: 968, Y: 231}, {X: 458, Y: 231}, {X: 458, Y: 336}},
+			"g0.n0 -> g1.n2": {{X: 682, Y: 93}, {X: 458, Y: 93}, {X: 458, Y: 336}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := os.ReadFile("testdata/" + tc.name + ".d2")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := log.With(t.Context(), testlog.New(t))
+			diagram := compileRoutingDiagram(t, ctx, string(source), 1, nil)
+			found := 0
+			for _, edge := range diagram.Connections {
+				id := edge.Src + " -> " + edge.Dst
+				want, ok := tc.want[id]
+				if ok {
+					found++
+					if !slices.EqualFunc(edge.Route, want, (*geo.Point).Equals) {
+						t.Errorf("%s route = %v, want %v", id, geo.Points(edge.Route).ToString(), want.ToString())
+					}
+				}
+			}
+			if found != len(tc.want) {
+				t.Fatalf("found %d of %d expected connections", found, len(tc.want))
+			}
+		})
+	}
 }
 
 // Reproduce the pair ordering and stride in #2891. The nested variant groups

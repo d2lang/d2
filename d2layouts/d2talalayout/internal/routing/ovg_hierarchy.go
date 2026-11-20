@@ -2,6 +2,7 @@ package routing
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"slices"
 
@@ -11,10 +12,39 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 )
 
-// Placement can assign a single hierarchy across several nested containers.
-// Routing lanes between levels belong to siblings in the same coordinate space.
-// Cross-container connections get the usual port intersections and edge waypoints.
-func siblingRoutingHierarchies(g *layoutgraph.Graph, guard *ovgBuildGuard) (map[*layoutgraph.Node]*layoutgraph.Hierarchy, error) {
+// Keep the placement hierarchy's original lanes when their grid is affordable.
+// Wide hierarchies spanning multiple containers can fill most of the drawing
+// with extra intersections. In those hierarchies, only linked siblings need a
+// shared set of lanes. Both kinds of lanes feed the same visibility graph.
+func routingHierarchies(g *layoutgraph.Graph, guard *ovgBuildGuard) (map[*layoutgraph.Node]*layoutgraph.Hierarchy, error) {
+	membership := make(map[*layoutgraph.Node]*layoutgraph.Hierarchy)
+	whole := make(map[*layoutgraph.Hierarchy]bool)
+	needsLocalLanes := false
+	for _, node := range g.Nodes {
+		if err := guard.step(); err != nil {
+			return nil, err
+		}
+		h := node.Hierarchy
+		if h == nil {
+			continue
+		}
+		keep, seen := whole[h]
+		if !seen {
+			var err error
+			keep, err = keepHierarchyLanes(h, node.Container, len(g.Edges), guard)
+			if err != nil {
+				return nil, err
+			}
+			whole[h] = keep
+			needsLocalLanes = needsLocalLanes || !keep
+		}
+		if keep {
+			membership[node] = h
+		}
+	}
+	if !needsLocalLanes {
+		return membership, guard.check()
+	}
 	type scope struct {
 		hierarchy *layoutgraph.Hierarchy
 		container *layoutgraph.Node
@@ -25,7 +55,7 @@ func siblingRoutingHierarchies(g *layoutgraph.Graph, guard *ovgBuildGuard) (map[
 			return nil, err
 		}
 		from, to := edge.From, edge.To
-		if edge.IsLoop() || from.Hierarchy == nil || from.Hierarchy != to.Hierarchy || from.Container != to.Container {
+		if edge.IsLoop() || from.Hierarchy == nil || whole[from.Hierarchy] || from.Hierarchy != to.Hierarchy || from.Container != to.Container {
 			continue
 		}
 		key := scope{from.Hierarchy, from.Container}
@@ -33,7 +63,6 @@ func siblingRoutingHierarchies(g *layoutgraph.Graph, guard *ovgBuildGuard) (map[
 			groups[key] = layoutgraph.NewHierarchy()
 		}
 	}
-	membership := make(map[*layoutgraph.Node]*layoutgraph.Hierarchy)
 	for _, node := range g.Nodes {
 		if err := guard.step(); err != nil {
 			return nil, err
@@ -44,6 +73,36 @@ func siblingRoutingHierarchies(g *layoutgraph.Graph, guard *ovgBuildGuard) (map[
 		}
 	}
 	return membership, guard.check()
+}
+
+func keepHierarchyLanes(h *layoutgraph.Hierarchy, container *layoutgraph.Node, edgeCount int, guard *ovgBuildGuard) (bool, error) {
+	left, top := math.Inf(1), math.Inf(1)
+	right, bottom := math.Inf(-1), math.Inf(-1)
+	oneContainer := true
+	for n := range h.Levels() {
+		if err := guard.step(); err != nil {
+			return false, err
+		}
+		if n == nil || n.TopLeft == nil {
+			return false, fmt.Errorf("TALA routing hierarchy contains a node without a position")
+		}
+		oneContainer = oneContainer && n.Container == container
+		left, top = min(left, n.TopLeft.X), min(top, n.TopLeft.Y)
+		right, bottom = max(right, n.TopLeft.X+n.Width), max(bottom, n.TopLeft.Y+n.Height)
+	}
+	if oneContainer {
+		return true, nil
+	}
+
+	// Estimate the footprint at the spacing used by addHierarchyLevelNodes,
+	// then one heap insertion per arrival direction (horizontal or vertical)
+	// per point and arrow. The search guard charges the actual work.
+	columns := 1 + math.Ceil((right-left)/ovgPadding)
+	rows := 1 + math.Ceil((bottom-top)/ovgPadding)
+	points := columns * rows
+	heapLevels := 1 + math.Ceil(math.Log2(points))
+	estimatedSearchWork := 2 * points * heapLevels * float64(edgeCount)
+	return estimatedSearchWork <= float64(maxRouteSearchWorkUnits), nil
 }
 
 func newOVGForHierarchy(g *layoutgraph.Graph, h *layoutgraph.Hierarchy, guard *ovgBuildGuard) (*OVG, error) {

@@ -74,11 +74,12 @@ func TestOVGCandidateBudgetDoesNotSelectDifferentRoutes(t *testing.T) {
 	requireOVGResourceError(t, err, "intersection candidate count")
 }
 
-func TestHierarchyRoutingScopesFollowSiblingEdges(t *testing.T) {
+func TestHierarchyRoutingLanes(t *testing.T) {
 	g := layoutgraph.NewGraph()
 	h := layoutgraph.NewHierarchy()
 	node := func(id layoutgraph.EntityID, parent *layoutgraph.Node, level int) *layoutgraph.Node {
 		n := g.AddNode(layoutgraph.NewNode(id, 40, 40))
+		n.TopLeft = geo.NewPoint(0, 0)
 		n.Container = parent
 		n.Hierarchy = h
 		h.Levels()[n] = level
@@ -89,7 +90,21 @@ func TestHierarchyRoutingScopesFollowSiblingEdges(t *testing.T) {
 	c, d := node(5, right, 1), node(6, right, 4)
 	g.Connect(a, b)
 	g.Connect(b, c)
-	scopes, err := siblingRoutingHierarchies(g, newBackgroundOVGBuildGuardForTest(t))
+	scopes, err := routingHierarchies(g, newBackgroundOVGBuildGuardForTest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range g.Nodes {
+		if scopes[n] != h {
+			t.Fatalf("compact hierarchy lost its original lanes for node %d", n.ID)
+		}
+	}
+
+	// Spread the same nodes out far enough that the full grid would be
+	// expensive. Only the sibling pair connected within its container needs
+	// shared lanes. The cross-container edge still gets ordinary waypoints.
+	d.TopLeft = geo.NewPoint(50_000, 50_000)
+	scopes, err = routingHierarchies(g, newBackgroundOVGBuildGuardForTest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +112,23 @@ func TestHierarchyRoutingScopesFollowSiblingEdges(t *testing.T) {
 		t.Fatal("only the two linked siblings should have local hierarchy lanes")
 	}
 	g.Connect(c, d)
-	scopes, err = siblingRoutingHierarchies(g, newBackgroundOVGBuildGuardForTest(t))
+	scopes, err = routingHierarchies(g, newBackgroundOVGBuildGuardForTest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if scopes[a] == nil || scopes[c] == nil || scopes[a] != scopes[b] || scopes[c] != scopes[d] || scopes[a] == scopes[c] {
 		t.Fatal("links in different containers should receive separate local lanes")
+	}
+	for _, n := range g.Nodes {
+		n.Container = nil
+	}
+	scopes, err = routingHierarchies(g, newBackgroundOVGBuildGuardForTest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range g.Nodes {
+		if scopes[n] != h {
+			t.Fatalf("a single container lost its hierarchy lanes for node %d", n.ID)
+		}
 	}
 }
