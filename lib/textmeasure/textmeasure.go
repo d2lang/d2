@@ -176,8 +176,8 @@ func (r *Ruler) HasFontFamilyLoaded(fontFamily *d2fonts.FontFamily) bool {
 func (r *Ruler) addFontSize(font d2fonts.Font) {
 	sizeless := font
 	sizeless.Size = SIZELESS_FONT_SIZE
-	face := r.fontFace(font, r.ttfs[sizeless])
-	atlas := NewAtlas(face, Runes)
+	parsed := r.ttfs[sizeless]
+	atlas := parsed.sharedAtlas(r.fontFace(font, parsed), font.Size)
 	r.atlases[font] = atlas
 	r.lineHeights[font] = atlas.lineHeight
 	r.tabWidths[font] = atlas.glyph(' ').advance * TAB_SIZE
