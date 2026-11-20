@@ -72,6 +72,27 @@ func svgVisibilityLatticeScene(r *rand.Rand, faces int) []svgVisibilityFace {
 	return scene
 }
 
+// svgVisibilityShavedScene is a board ruled into strips, then covered from the
+// left one narrow band at a time. Every band replaces each strip with a
+// shorter one, so the board has few fragments at any moment and a long history
+// of removed ones.
+func svgVisibilityShavedScene() []svgVisibilityFace {
+	scene := []svgVisibilityFace{{points: svgVisibilityRectangle(0, 0, 400, 300, 0, 0, 0), opaque: true}}
+	// The rules are larger than the bands, so they are subtracted first.
+	for y := 0.; y < 300; y += 5 {
+		scene = append(scene, svgVisibilityFace{points: svgVisibilityRectangle(0, y, 400, y+2, 1, 0, 0), opaque: true, order: len(scene)})
+	}
+	// Each band is a little narrower than the one before, which fixes the
+	// order in which they are subtracted to left to right.
+	x := 0.
+	for i := range 100 {
+		width := 2 - float64(i)/200
+		scene = append(scene, svgVisibilityFace{points: svgVisibilityRectangle(x, 0, x+width, 300, 2, 0, 0), opaque: true, order: len(scene)})
+		x += width
+	}
+	return scene
+}
+
 func svgVisibilitySameFragments(a, b [][][]svgPoint) bool {
 	if len(a) != len(b) {
 		return false
@@ -99,8 +120,9 @@ func svgVisibilitySameFragments(a, b [][][]svgPoint) bool {
 }
 
 // svgVisibilityCompare solves faces with the solver and with the reference
-// solver, and fails unless they agree on the error and on every fragment.
-func svgVisibilityCompare(t *testing.T, name string, faces []svgVisibilityFace, limits svgVisibilityLimits) {
+// solver, and fails unless they agree on the error and on every fragment. It
+// returns the error they agree on.
+func svgVisibilityCompare(t *testing.T, name string, faces []svgVisibilityFace, limits svgVisibilityLimits) error {
 	t.Helper()
 	want, wantErr := refSvgVisibleFacesWithLimits(context.Background(), faces, limits)
 	got, gotErr := svgVisibleFacesWithLimits(context.Background(), faces, limits)
@@ -110,6 +132,7 @@ func svgVisibilityCompare(t *testing.T, name string, faces []svgVisibilityFace, 
 	if !svgVisibilitySameFragments(got, want) {
 		t.Fatalf("%s, limits %+v: fragments differ from the reference solver", name, limits)
 	}
+	return wantErr
 }
 
 // The solver's fragments are serialized directly into SVG paths, so it must
@@ -121,14 +144,24 @@ func TestSVGVisibilityMatchesReferenceSolver(t *testing.T) {
 	}
 	for seed := int64(1); seed <= 4; seed++ {
 		for _, size := range sizes {
-			if size > 1000 && seed > 1 {
+			// One large scene is enough; this seed's fits the work limit.
+			if size > 1000 && seed != 2 {
 				continue
 			}
 			faces := svgVisibilityRandomScene(rand.New(rand.NewSource(seed*1000+int64(size))), size)
 			limits := svgDefaultVisibilityLimits
 			limits.work = svgVisibilityWorkLimit(len(faces))
-			svgVisibilityCompare(t, "random scene", faces, limits)
+			// A scene that ran out of work would compare two error strings
+			// and no fragments.
+			if err := svgVisibilityCompare(t, "random scene", faces, limits); err != nil {
+				t.Fatalf("seed %d, %d faces: the scene does not fit the default limits: %v", seed, size, err)
+			}
 		}
+	}
+
+	// A face whose fragments are replaced again and again.
+	if err := svgVisibilityCompare(t, "shaved board", svgVisibilityShavedScene(), svgDefaultVisibilityLimits); err != nil {
+		t.Fatal(err)
 	}
 
 	// A small face under more occluders than the fragment index needs is
@@ -181,6 +214,10 @@ func TestSVGVisibilityLimitsMatchReferenceSolver(t *testing.T) {
 	}
 	for _, scene := range scenes {
 		base := svgDefaultVisibilityLimits
+		// The bisections below assume that the scene fits the default limits.
+		if err := svgVisibilityCompare(t, scene.name, scene.faces, base); err != nil {
+			t.Fatalf("%s does not fit the default limits: %v", scene.name, err)
+		}
 		r := rand.New(rand.NewSource(int64(len(scene.faces))))
 		for _, limit := range scene.limits {
 			// Find the least value the reference solver succeeds with by
@@ -233,6 +270,79 @@ func TestSVGVisibilityWorkerRetentionCountsAllScratch(t *testing.T) {
 	worker.seen = make([]int32, 1000)
 	if got := worker.retainedBytes(); got < svgPoolChunk*24+4000 || got > svgVisibilityWorkerRetainedBytes {
 		t.Fatalf("a small worker retains %d bytes", got)
+	}
+}
+
+// A face whose fragments are replaced many times keeps slots for the live
+// ones, not for every fragment it ever had.
+func TestSVGFragmentSetReclaimsRemovedFragments(t *testing.T) {
+	budget := &svgVisibilityBudget{ctx: context.Background(), limits: svgDefaultVisibilityLimits}
+	var pool svgPointPool
+	var set svgVisibleFragmentSet
+	bounds := svgBox{0, 0, 100, 100}
+	set.reset(bounds, budget, &pool, 1<<20, 1<<24)
+	const created, kept = 9000, 12
+	tile := func(i int) svgVisibleFragment {
+		x, y := float64(i%100), float64(i/100%100)
+		points := svgVisibilityRectangle(x, y, x+1, y+1, 0, 0, 0)
+		if i == created/kept-1 {
+			// The first fragment that is kept spans most of the grid.
+			points = svgVisibilityRectangle(5, 5, 95, 95, 0, 0, 0)
+		}
+		return svgVisibleFragment{points: points, box: svgPolygonBox(points)}
+	}
+	for i := range created {
+		if err := set.add(tile(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Keep every 750th fragment, the first of which spans many cells.
+	var want []svgBox
+	for id := int32(1); id <= created; id++ {
+		if id%(created/kept) != 0 {
+			if err := set.remove(id); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		want = append(want, set.fragments[id-1].box)
+	}
+	if len(want) != kept || set.live != kept {
+		t.Fatalf("kept %d fragments, live %d, want %d", len(want), set.live, kept)
+	}
+	work := budget.work
+	ids, err := set.query(bounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.fragments) != kept {
+		t.Fatalf("the set holds %d slots for %d live fragments", len(set.fragments), kept)
+	}
+	// The survivors are renumbered in creation order, and found again.
+	if len(ids) != kept {
+		t.Fatalf("query found %d fragments, want %d", len(ids), kept)
+	}
+	for i, id := range ids {
+		if id != int32(i+1) || set.fragments[id-1].box != want[i] {
+			t.Fatalf("fragment %d is %+v, want id %d with %+v", id, set.fragments[id-1].box, i+1, want[i])
+		}
+	}
+	// Reclaiming is not work: the query charged for the live fragments only.
+	if charged := budget.work - work; charged > 4*kept*kept {
+		t.Fatalf("the query charged %d units for %d live fragments", charged, kept)
+	}
+	if err := set.add(tile(0)); err != nil || len(set.fragments) != kept+1 {
+		t.Fatalf("adding after reclaiming: %v, %d slots", err, len(set.fragments))
+	}
+}
+
+// A worker that has outgrown the retention limit goes back to the pool empty.
+func TestSVGVisibilityWorkerOverLimitIsEmptied(t *testing.T) {
+	worker := &svgVisibilityWorker{}
+	worker.set.fragments = make([]svgVisibleFragment, 0, svgVisibilityWorkerRetainedBytes/32)
+	svgReturnVisibilityWorker(worker)
+	if worker.retainedBytes() != 0 {
+		t.Fatalf("an oversized worker kept %d bytes after it was returned", worker.retainedBytes())
 	}
 }
 

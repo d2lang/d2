@@ -25,6 +25,8 @@ type svgVisibleFragment struct {
 // Fragments are numbered from one in creation order and stored by that number.
 // A removed fragment keeps its slot with nil points; cells drop it the next
 // time they are visited, while live counts stay exact for work accounting.
+// When removed fragments far outnumber live ones, compact renumbers the
+// survivors, so the set stays proportional to what is alive.
 type svgVisibleFragmentSet struct {
 	grid                                      svgVisibilityGrid
 	cells                                     [][]int32
@@ -178,6 +180,9 @@ func (s *svgVisibleFragmentSet) visit(bucket []int32, live int, box svgBox) ([]i
 
 // query returns, in creation order, the fragments whose bounds overlap box.
 func (s *svgVisibleFragmentSet) query(box svgBox) ([]int32, error) {
+	if len(s.fragments) > 4*s.live+1024 {
+		s.compact()
+	}
 	s.stamp++
 	if s.stamp == 0 {
 		for i := range s.fragments {
@@ -208,6 +213,46 @@ func (s *svgVisibleFragmentSet) query(box svgBox) ([]int32, error) {
 	}
 	slices.Sort(s.ids)
 	return s.ids, nil
+}
+
+// compact renumbers the surviving fragments in creation order and rebuilds
+// the cells, dropping the slots and cell entries of removed fragments. Live
+// counts and references are unchanged, so no work is charged. Fragment ids
+// from an earlier query are invalid afterwards.
+func (s *svgVisibleFragmentSet) compact() {
+	kept := 0
+	for i := range s.fragments {
+		if s.fragments[i].points == nil {
+			continue
+		}
+		s.fragments[kept] = s.fragments[i]
+		s.fragments[kept].stamp = 0
+		kept++
+	}
+	clear(s.fragments[kept:])
+	s.fragments = s.fragments[:kept]
+	for i := range s.cells {
+		s.cells[i] = s.cells[i][:0]
+	}
+	s.large = s.large[:0]
+	s.stamp = 0
+	for i := range s.fragments {
+		id := int32(i + 1)
+		x0, y0, x1, y1, ok := s.grid.cellsFor(s.fragments[i].box)
+		if !ok {
+			continue
+		}
+		// The same rule as changeCells: a fragment over many cells is large.
+		if (x1-x0+1)*(y1-y0+1) > 64 {
+			s.large = append(s.large, id)
+			continue
+		}
+		for y := y0; y <= y1; y++ {
+			for x := x0; x <= x1; x++ {
+				s.cells[y*s.grid.nx+x] = append(s.cells[y*s.grid.nx+x], id)
+			}
+		}
+	}
 }
 
 // subtract removes cut from every fragment it overlaps. Pieces are appended
@@ -368,14 +413,17 @@ func svgBorrowVisibilityWorker(scene *svgVisibilityScene, budget *svgVisibilityB
 
 func svgReturnVisibilityWorker(w *svgVisibilityWorker) {
 	if w.retainedBytes() > svgVisibilityWorkerRetainedBytes {
-		return
+		// Give the storage up, but still hand the worker back: a pool that
+		// keeps its entries in a slice may otherwise go on referring to it.
+		*w = svgVisibilityWorker{}
+	} else {
+		// Returned fragments stay with the caller; scene polygons must not
+		// be kept alive by the pool.
+		w.scene, w.budget = nil, nil
+		w.points, w.lists = nil, nil
+		clear(w.fragments[:cap(w.fragments)])
+		clear(w.next[:cap(w.next)])
+		w.set.clear()
 	}
-	// Returned fragments stay with the caller; scene polygons must not be
-	// kept alive by the pool.
-	w.scene, w.budget = nil, nil
-	w.points, w.lists = nil, nil
-	clear(w.fragments[:cap(w.fragments)])
-	clear(w.next[:cap(w.next)])
-	w.set.clear()
 	svgVisibilityWorkers.Put(w)
 }
