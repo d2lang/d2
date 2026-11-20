@@ -1,6 +1,7 @@
 package e2etests
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/d2lang/util-go/assert"
 	"github.com/d2lang/util-go/diff"
 	"github.com/d2lang/util-go/go2"
+	"github.com/d2lang/util-go/xjson"
 
 	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2graph"
@@ -38,18 +40,31 @@ import (
 func TestE2E(t *testing.T) {
 	t.Parallel()
 
-	t.Run("sanity", testSanity)
-	t.Run("stable", testStable)
-	t.Run("real_world", testRealWorld)
-	t.Run("regression", testRegression)
-	t.Run("patterns", testPatterns)
-	t.Run("todo", testTodo)
-	t.Run("measured", testMeasured)
-	t.Run("unicode", testUnicode)
-	t.Run("root", testRoot)
-	t.Run("themes", testThemes)
-	t.Run("txtar", testTxtar)
-	t.Run("asciitxtar", testASCIITxtar)
+	// Every case is an independent parallel subtest. Start the groups together
+	// so the suite is bounded by its total work rather than by the slowest case
+	// of each group in turn.
+	for _, group := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"sanity", testSanity},
+		{"stable", testStable},
+		{"real_world", testRealWorld},
+		{"regression", testRegression},
+		{"patterns", testPatterns},
+		{"todo", testTodo},
+		{"measured", testMeasured},
+		{"unicode", testUnicode},
+		{"root", testRoot},
+		{"themes", testThemes},
+		{"txtar", testTxtar},
+		{"asciitxtar", testASCIITxtar},
+	} {
+		t.Run(group.name, func(t *testing.T) {
+			t.Parallel()
+			group.run(t)
+		})
+	}
 }
 
 func testSanity(t *testing.T) {
@@ -199,7 +214,7 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 	// Write SVG file
 	var err2, err3 error
 	if os.Getenv("SKIP_SVG_CHECK") == "" {
-		err2 = diff.Testdata(filepath.Join(outputDir, "sketch"), ".svg", svgBytes)
+		err2 = testdata(filepath.Join(outputDir, "sketch"), ".svg", svgBytes)
 	}
 	extendedAsciiArtist := d2ascii.NewASCIIartist()
 
@@ -210,7 +225,7 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 	}
 	extendedBytes, err := extendedAsciiArtist.Render(ctx, diagram, extendedRenderOpts)
 	assert.Success(t, err)
-	err3 = diff.Testdata(filepath.Join(outputDir, "extended"), ".txt", extendedBytes)
+	err3 = testdata(filepath.Join(outputDir, "extended"), ".txt", extendedBytes)
 
 	// Standard ASCII
 	var err4 error
@@ -221,11 +236,34 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 	}
 	standardBytes, err := standardAsciiArtist.Render(ctx, diagram, standardRenderOpts)
 	assert.Success(t, err)
-	err4 = diff.Testdata(filepath.Join(outputDir, "standard"), ".txt", standardBytes)
+	err4 = testdata(filepath.Join(outputDir, "standard"), ".txt", standardBytes)
 
 	assert.Success(t, err2)
 	assert.Success(t, err3)
 	assert.Success(t, err4)
+}
+
+// testdata checks got against the golden path.exp<ext>.
+//
+// diff.Testdata writes path.got<ext> and runs `git diff` for every comparison,
+// which costs a process spawn per golden. Nearly every golden matches, so
+// compare the bytes first and only fall back to diff.Testdata, which reports
+// the diff and implements $TESTDATA_ACCEPT, when they differ.
+func testdata(path, ext string, got []byte) error {
+	exp, err := os.ReadFile(path + ".exp" + ext)
+	if err != nil || !bytes.Equal(exp, got) {
+		return diff.Testdata(path, ext, got)
+	}
+	// diff.Testdata removes the got file once it matches the golden.
+	if err := os.Remove(path + ".got" + ext); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// testdataJSON is diff.TestdataJSON on top of testdata.
+func testdataJSON(path string, got interface{}) error {
+	return testdata(path, ".json", append(xjson.Marshal(got), '\n'))
 }
 
 type testCase struct {
@@ -432,9 +470,9 @@ func run(t *testing.T, tc testCase) {
 		assert.False(t, strings.Contains(string(svgBytes), "<foreignObject"))
 
 		var err2 error
-		err = diff.TestdataJSON(filepath.Join(dataPath, "board"), diagram)
+		err = testdataJSON(filepath.Join(dataPath, "board"), diagram)
 		if os.Getenv("SKIP_SVG_CHECK") == "" {
-			err2 = diff.Testdata(filepath.Join(dataPath, "sketch"), ".svg", svgBytes)
+			err2 = testdata(filepath.Join(dataPath, "sketch"), ".svg", svgBytes)
 		}
 		renderIsometric(t, ctx, diagram, dataPath, renderOpts)
 
