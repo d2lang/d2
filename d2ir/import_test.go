@@ -14,6 +14,7 @@ import (
 
 	"github.com/d2lang/d2/d2ir"
 	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/lib/localfile"
 )
 
 type cancelOnOpenFS struct {
@@ -351,4 +352,34 @@ x.d2:1:7: connection missing source`)
 		}
 		runa(t, tca)
 	})
+}
+
+func TestImportRelativeToNativeInputPath(t *testing.T) {
+	// d2cli passes the input file as an absolute native path, so on Windows
+	// the importer path uses backslashes. Relative imports must still resolve
+	// against the importing file's directory, not the working directory.
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		filepath.Join(dir, "sub", "a.d2"): "...@b",
+		filepath.Join(dir, "sub", "b.d2"): "x: meow",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	inputPath := filepath.Join(dir, "index.d2")
+	ast, err := d2parser.Parse(inputPath, strings.NewReader("...@sub/a"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := d2ir.Compile(ast, &d2ir.CompileOptions{FS: localfile.Unrestricted()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQuery(t, m, 0, 0, "meow", "x")
 }
