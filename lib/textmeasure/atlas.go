@@ -124,15 +124,17 @@ var (
 
 // sharedAtlas returns an atlas of Runes for face, which is parsed at size.
 func (f *parsedFont) sharedAtlas(face font.Face, size int) *atlas {
-	if !bundledfont.Is(f.src) || len(Runes) == 0 {
-		return NewAtlas(face, Runes)
+	// Read the set once, so that the key names the runes that are measured.
+	runes := Runes
+	if !bundledfont.Is(f.src) || len(runes) == 0 {
+		return NewAtlas(face, runes)
 	}
-	key := atlasKey{src: &f.src[0], size: size, runes: &Runes[0], count: len(Runes)}
+	key := atlasKey{src: &f.src[0], size: size, runes: &runes[0], count: len(runes)}
 	if cached, ok := sharedAtlases.Load(key); ok {
 		m := cached.(*atlasMetrics)
 		return &atlas{face: face, mapping: m.mapping, ascent: m.ascent, descent: m.descent, lineHeight: m.lineHeight}
 	}
-	a := NewAtlas(face, Runes)
+	a := NewAtlas(face, runes)
 	if sharedAtlasesSize.Load() < maxSharedAtlases {
 		m := &atlasMetrics{mapping: a.mapping, ascent: a.ascent, descent: a.descent, lineHeight: a.lineHeight}
 		if _, loaded := sharedAtlases.LoadOrStore(key, m); !loaded {

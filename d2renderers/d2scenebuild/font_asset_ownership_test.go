@@ -34,6 +34,8 @@ func TestBuildOwnsIndependentBundledAndCustomFontAssets(t *testing.T) {
 	}
 	firstAsset.Data[0] ^= 1
 	wantFirst := firstAsset.Data[0]
+	// Nothing may measure text or encode a subset with this font while the
+	// byte is changed: results for a bundled font are shared between renders.
 	bundled[0] ^= 1
 	if firstAsset.Data[0] != wantFirst || secondAsset.Data[0] != wantSecond {
 		t.Fatal("mutating the public FontFaces entry changed an existing scene")

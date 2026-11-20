@@ -22,7 +22,9 @@ const TAB_SIZE = 4
 const SIZELESS_FONT_SIZE = 0
 const CODE_LINE_HEIGHT = 1.3
 
-// Runes encompasses ASCII, Latin-1, and geometric shapes like black square
+// Runes encompasses ASCII, Latin-1, and geometric shapes like black square.
+// To measure a different set, assign a new slice before creating a Ruler:
+// metrics already measured for a slice are reused, so do not edit it in place.
 var Runes []rune
 
 func init() {
