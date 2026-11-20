@@ -1,7 +1,7 @@
 import { build } from "bun";
 import { copyFile, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { brotliCompressSync } from "node:zlib";
+import { brotliCompressSync, constants } from "node:zlib";
 
 const __dirname = new URL(".", import.meta.url).pathname;
 const ROOT_DIR = resolve(__dirname);
@@ -18,7 +18,13 @@ const wasmExecJs = await readFile("./wasm/wasm_exec.js", "utf8");
 await writeFile("./dist/wasm/d2.wasm", wasmBinary);
 await writeFile("./dist/wasm/wasm_exec.js", wasmExecJs);
 
-const compressedWasm = brotliCompressSync(wasmBinary);
+// Tune distance coding for the size of the browser bundle after HTTP compression.
+const compressedWasm = brotliCompressSync(wasmBinary, {
+  params: {
+    [constants.BROTLI_PARAM_NPOSTFIX]: 1,
+    [constants.BROTLI_PARAM_NDIRECT]: 12,
+  },
+});
 console.log(
   `WASM compression: ${(wasmBinary.length / 1024 / 1024).toFixed(2)}MB → ${(
     compressedWasm.length /
