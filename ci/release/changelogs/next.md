@@ -20,6 +20,8 @@
     and attributes. [#2919](https://github.com/d2lang/d2/pull/2919)
   - Encode unsafe local IDs consistently so definitions and references continue
     to match. [#2919](https://github.com/d2lang/d2/pull/2919)
+  - Disable animated connection CSS animations when
+    `prefers-reduced-motion: reduce` is active. [#1979](https://github.com/d2lang/d2/issues/1979)
 - assets:
   - Apply the same local/network access policy and cumulative resource budgets to
     SVG and raster exports. [#2918](https://github.com/d2lang/d2/pull/2918)

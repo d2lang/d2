@@ -2599,6 +2599,11 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 		stroke-dashoffset: 0;
 	}
 }
+@media (prefers-reduced-motion: reduce) {
+	.animated-connection {
+		animation: none !important;
+	}
+}
 `,
 	)
 
