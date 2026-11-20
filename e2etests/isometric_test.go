@@ -17,7 +17,7 @@ import (
 
 // Bound aggregate geometry and vector-surface memory independently of go test's
 // parallelism.
-var isometricRenderSlots = make(chan struct{}, 2)
+var isometricRenderSlots = make(chan struct{}, 4)
 
 // These source fixtures require artwork or glyphs outside D2's bundled
 // resources. Keep checking their explicit errors without vendoring resources,
