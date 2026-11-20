@@ -12,6 +12,7 @@
 
 - isometric: draw interior creases with a finer line and soften ground shadows away from the object's foot.
 - renders: reduce isometric SVG size by sharing lighting gradients and removing interior edges from filled paths.
+- performance: isometric SVG export does far less work to remove hidden surfaces; the largest boards in the E2E corpus render about 4× to 5× faster. Processes that render more than once (watch mode, D2.js, the Go API) reuse the glyph metrics and embedded-font subsets of the bundled fonts, held in bounded caches of about 10 MB and 8 MB. Output is unchanged. [#2992](https://github.com/d2lang/d2/pull/2992)
 
 - isometric: keep steep connection captions at the same reading angle as node labels and preserve clearance from their wires.
 - d2svg:
