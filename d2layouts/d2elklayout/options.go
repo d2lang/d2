@@ -1,0 +1,233 @@
+package d2elklayout
+
+import (
+	"fmt"
+	"math"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/util-go/go2"
+)
+
+// LayeredOptions are applied to parent graphs. Nil spacing values keep the
+// layout defaults, and an explicit zero requests zero clearance.
+type LayeredOptions struct {
+	NodeNode            *float64 `json:"elk.spacing.nodeNode,omitempty"`
+	EdgeNode            *float64 `json:"elk.spacing.edgeNode,omitempty"`
+	EdgeEdge            *float64 `json:"elk.spacing.edgeEdge,omitempty"`
+	EdgeRouting         string   `json:"elk.edgeRouting,omitempty"`
+	WrappingStrategy    string   `json:"elk.layered.wrapping.strategy,omitempty"`
+	ForceNodeModelOrder bool     `json:"elk.layered.crossingMinimization.forceNodeModelOrder,omitempty"`
+	FeedbackEdges       bool     `json:"elk.layered.feedbackEdges,omitempty"`
+	MergeEdges          bool     `json:"elk.layered.mergeEdges,omitempty"`
+}
+
+// AlgorithmOptions tune the algorithm selected at the diagram root.
+// An omitted value lets the selected ELK provider use its own default.
+type AlgorithmOptions struct {
+	ForceModel              string   `json:"elk.force.model,omitempty"`
+	ForceRepulsion          *float64 `json:"elk.force.repulsion,omitempty"`
+	StressDesiredEdgeLength *float64 `json:"elk.stress.desiredEdgeLength,omitempty"`
+	MrTreeSearchOrder       string   `json:"elk.mrtree.searchOrder,omitempty"`
+	MrTreeWeighting         string   `json:"elk.mrtree.weighting,omitempty"`
+	RadialRadius            *float64 `json:"elk.radial.radius,omitempty"`
+	RadialWedgeCriteria     string   `json:"elk.radial.wedgeCriteria,omitempty"`
+	RadialCompactor         string   `json:"elk.radial.compactor,omitempty"`
+}
+
+func (opts *ConfigurableOpts) usesAlgorithm(name string) bool {
+	if opts.Algorithm == "" {
+		return name == "layered"
+	}
+	return opts.Algorithm == name || strings.HasSuffix(opts.Algorithm, "."+name)
+}
+
+func (opts *ConfigurableOpts) parentOptions(root bool) LayeredOptions {
+	o := opts.LayeredOptions
+	// The 40px clearance belongs to D2's layered profile. Mr. Tree spaces
+	// levels 20px apart and needs its own default for routing between them.
+	if o.EdgeNode == nil && (!root || opts.usesAlgorithm("layered")) {
+		o.EdgeNode = go2.Pointer(float64(edge_node_spacing))
+	}
+	// D2 disables model-order processing below the root for compound graphs.
+	o.ForceNodeModelOrder = root && o.ForceNodeModelOrder
+	return o
+}
+
+var diagramOptions = []string{
+	"elk-algorithm", "elk-forceModel", "elk-forceRepulsion", "elk-stressDesiredEdgeLength",
+	"elk-mrtreeSearchOrder", "elk-mrtreeWeighting", "elk-radialRadius", "elk-radialWedgeCriteria", "elk-radialCompactor",
+	"elk-nodeNode", "elk-edgeNode", "elk-edgeEdge", "elk-edgeRouting",
+	"elk-wrappingStrategy", "elk-forceNodeModelOrder", "elk-feedbackEdges", "elk-mergeEdges",
+	"elk-nodeNodeBetweenLayers", "elk-edgeNodeBetweenLayers", "elk-edgeEdgeBetweenLayers",
+	"elk-nodeSelfLoop", "elk-padding",
+}
+
+// SetOption sets one ELK diagram option using its CLI name and textual value.
+func (options *ConfigurableOpts) SetOption(name, value string) error {
+	opts := *options
+	var err error
+	switch name {
+	case "elk-algorithm":
+		opts.Algorithm = algorithmName(value)
+	case "elk-forceModel":
+		opts.ForceModel, err = optionEnum(value, "fruchterman_reingold", "eades")
+	case "elk-forceRepulsion":
+		opts.ForceRepulsion, err = parseNumber(name, value)
+	case "elk-stressDesiredEdgeLength":
+		opts.StressDesiredEdgeLength, err = parseNumber(name, value)
+	case "elk-mrtreeSearchOrder":
+		opts.MrTreeSearchOrder, err = optionEnum(value, "dfs", "bfs")
+	case "elk-mrtreeWeighting":
+		opts.MrTreeWeighting, err = optionEnum(value, "model_order", "descendants", "fan")
+	case "elk-radialRadius":
+		opts.RadialRadius, err = parseNumber(name, value)
+	case "elk-radialWedgeCriteria":
+		opts.RadialWedgeCriteria, err = optionEnum(value, "node_size", "leaf_number")
+	case "elk-radialCompactor":
+		opts.RadialCompactor, err = optionEnum(value, "none", "radial_compaction", "wedge_compaction")
+	case "elk-nodeNode":
+		opts.NodeNode, err = parseNumber(name, value)
+	case "elk-edgeNode":
+		opts.EdgeNode, err = parseNumber(name, value)
+	case "elk-edgeEdge":
+		opts.EdgeEdge, err = parseNumber(name, value)
+	case "elk-edgeRouting":
+		opts.EdgeRouting, err = optionEnum(value, "orthogonal", "polyline")
+	case "elk-wrappingStrategy":
+		opts.WrappingStrategy, err = optionEnum(value, "off", "single_edge", "multi_edge")
+	case "elk-forceNodeModelOrder":
+		opts.ForceNodeModelOrder, err = strconv.ParseBool(strings.ToLower(value))
+	case "elk-feedbackEdges":
+		opts.FeedbackEdges, err = strconv.ParseBool(strings.ToLower(value))
+	case "elk-mergeEdges":
+		opts.MergeEdges, err = strconv.ParseBool(strings.ToLower(value))
+	case "elk-nodeNodeBetweenLayers", "elk-edgeNodeBetweenLayers", "elk-edgeEdgeBetweenLayers", "elk-nodeSelfLoop":
+		n, parseErr := strconv.Atoi(value)
+		if parseErr != nil || n < 0 {
+			err = fmt.Errorf("expected a nonnegative integer")
+			break
+		}
+		switch name {
+		case "elk-nodeNodeBetweenLayers":
+			opts.NodeSpacing = n
+		case "elk-edgeNodeBetweenLayers":
+			opts.EdgeNodeSpacing = n
+		case "elk-edgeEdgeBetweenLayers":
+			opts.EdgeEdgeSpacing = &n
+		case "elk-nodeSelfLoop":
+			opts.SelfLoopSpacing = n
+		}
+	case "elk-padding":
+		padding, parseErr := readPadding(value)
+		if parseErr != nil {
+			err = parseErr
+		} else {
+			opts.Padding = padding.String()
+		}
+	default:
+		return fmt.Errorf("unknown ELK option %q", name)
+	}
+	if err != nil {
+		return fmt.Errorf("%s=%q: %w", name, value, err)
+	}
+	*options = opts
+	return nil
+}
+
+func parseNumber(name, value string) (*float64, error) {
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateNumber(name, n); err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+func validateNumber(name string, n float64) error {
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return fmt.Errorf("expected a finite number")
+	}
+	if name == "elk-stressDesiredEdgeLength" && n <= 0 {
+		return fmt.Errorf("desired edge length must be positive")
+	}
+	if n < 0 {
+		return fmt.Errorf("expected a nonnegative number")
+	}
+	return nil
+}
+
+func algorithmName(value string) string {
+	id := strings.ToLower(value)
+	// ELK accepts short names and qualified IDs. Its two SPOrE IDs use camel case.
+	start := strings.LastIndexByte(id, '.') + 1
+	switch id[start:] {
+	case "sporeoverlap":
+		return id[:start] + "sporeOverlap"
+	case "sporecompaction":
+		return id[:start] + "sporeCompaction"
+	}
+	return id
+}
+
+func optionEnum(value string, allowed ...string) (string, error) {
+	v := strings.ToLower(value)
+	if slices.Contains(allowed, v) {
+		return strings.ToUpper(v), nil // ELK's layout API uses uppercase enum names.
+	}
+	return "", fmt.Errorf("expected %s", strings.Join(allowed, " or "))
+}
+
+func graphOptions(g *d2graph.Graph, defaults *ConfigurableOpts) (*ConfigurableOpts, error) {
+	if defaults == nil {
+		defaults = &DefaultOpts
+	}
+	opts := *defaults
+	for _, name := range diagramOptions {
+		if raw, ok := g.Data[name]; ok {
+			switch raw.(type) {
+			case string, bool, float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			default:
+				return nil, fmt.Errorf("%s expects a scalar value", name)
+			}
+			if err := opts.SetOption(name, fmt.Sprint(raw)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Go callers can also set the typed fields directly.
+	for _, opt := range []struct {
+		name  string
+		value *float64
+	}{
+		{"elk-nodeNode", opts.NodeNode},
+		{"elk-edgeNode", opts.EdgeNode},
+		{"elk-edgeEdge", opts.EdgeEdge},
+		{"elk-forceRepulsion", opts.ForceRepulsion},
+		{"elk-stressDesiredEdgeLength", opts.StressDesiredEdgeLength},
+		{"elk-radialRadius", opts.RadialRadius},
+	} {
+		if opt.value != nil {
+			if err := validateNumber(opt.name, *opt.value); err != nil {
+				return nil, fmt.Errorf("%s: %w", opt.name, err)
+			}
+		}
+	}
+	for _, option := range []struct{ name, value string }{
+		{"elk-algorithm", opts.Algorithm}, {"elk-forceModel", opts.ForceModel},
+		{"elk-mrtreeSearchOrder", opts.MrTreeSearchOrder}, {"elk-mrtreeWeighting", opts.MrTreeWeighting},
+		{"elk-radialWedgeCriteria", opts.RadialWedgeCriteria}, {"elk-radialCompactor", opts.RadialCompactor},
+		{"elk-edgeRouting", opts.EdgeRouting}, {"elk-wrappingStrategy", opts.WrappingStrategy},
+	} {
+		if option.value != "" {
+			if err := opts.SetOption(option.name, option.value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return &opts, nil
+}

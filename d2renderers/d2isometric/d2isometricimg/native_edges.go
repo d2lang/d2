@@ -53,6 +53,14 @@ type classicInkEdge struct {
 type classicInkSegment struct {
 	a, c    Vec
 	support []*classicInkFacet
+	crease  bool // A fold between two visible faces in the default ink.
+}
+
+func (s classicInkSegment) radius(radius float64) float64 {
+	if s.crease {
+		return radius * (2.0 / 3.0)
+	}
+	return radius
 }
 
 // Projected finite supporting faces keep centered ink on its own physical
@@ -227,6 +235,7 @@ func classicInkSegments(ctx context.Context, n d2isometric.Node, triangles []Tri
 		return classicInkLess(keys[i].c, keys[j].c)
 	})
 	fullRim := nativeClassicRim(n)
+	lightCreases := fullRim && !n.StrokeExplicit && !n.Metadata.ExplicitDefaultStrokeWidth && n.StrokeWidth == d2target.DEFAULT_SHAPE_STROKE_WIDTH
 	radius := 0.
 	if len(inkRadius) > 0 && inkRadius[0] > 0 && captionFinite(inkRadius[0]) {
 		radius = inkRadius[0]
@@ -312,12 +321,17 @@ func classicInkSegments(ctx context.Context, n d2isometric.Node, triangles []Tri
 		if len(e.faces) > 2 {
 			continue
 		}
-		front, back, paintedRim := false, false, false
+		frontCount := 0
+		back, paintedRim := false, false
 		for _, f := range e.faces {
 			dot := ndot(f.normal, view)
-			front, back = front || dot > 1e-7, back || dot < -1e-7
+			if dot > 1e-7 {
+				frontCount++
+			}
+			back = back || dot < -1e-7
 			paintedRim = paintedRim || f.cap
 		}
+		front := frontCount > 0
 		topBoundary := len(e.faces) == 1 && math.Abs(e.a.Y-e.c.Y) < classicInkWeld && e.faces[0].third.Y < e.a.Y-classicInkWeld
 		if !fullRim && (topBoundary || paintedRim) {
 			continue
@@ -340,7 +354,11 @@ func classicInkSegments(ctx context.Context, n d2isometric.Node, triangles []Tri
 				}
 				return nil, fmt.Errorf("isometric outline exceeds %d local supporting faces", maxClassicInkSupportFaces)
 			}
-			result = append(result, classicInkSegment{e.a, e.c, support})
+			// Canonical caps are textured quads. At their open top boundary
+			// the cap supplies the second visible face of a front-facing wall.
+			// A tangent or rear wall still defines the object silhouette.
+			crease := lightCreases && (topBoundary && front || frontCount == 2)
+			result = append(result, classicInkSegment{a: e.a, c: e.c, support: support, crease: crease})
 			if len(result) > maxClassicInkSegments {
 				return nil, fmt.Errorf("isometric outline exceeds %d segments", maxClassicInkSegments)
 			}
@@ -385,6 +403,11 @@ func classicInkPaths(segments []classicInkSegment) [][]classicInkSegment {
 	sort.Slice(vertices, func(i, j int) bool { return classicInkLess(vertices[i], vertices[j]) })
 	used := make([]bool, len(segments))
 	var paths [][]classicInkSegment
+	// A change of weight ends both strips at the same world-space vertex.
+	// Keep each width constant even across a long straight segment.
+	continues := func(indices []int) bool {
+		return len(indices) == 2 && segments[indices[0]].crease == segments[indices[1]].crease
+	}
 	walk := func(start classicInkKey, first int) {
 		var path []classicInkSegment
 		at, index := start, first
@@ -396,7 +419,7 @@ func classicInkPaths(segments []classicInkSegment) [][]classicInkSegment {
 			}
 			path = append(path, s)
 			at = classicInkKeyOf(s.c)
-			if len(adjacent[at]) != 2 {
+			if !continues(adjacent[at]) {
 				break
 			}
 			index = adjacent[at][0]
@@ -407,7 +430,7 @@ func classicInkPaths(segments []classicInkSegment) [][]classicInkSegment {
 		paths = append(paths, path)
 	}
 	for _, p := range vertices {
-		if len(adjacent[p]) == 2 {
+		if continues(adjacent[p]) {
 			continue
 		}
 		for _, i := range adjacent[p] {
@@ -488,10 +511,11 @@ func (b *meshBuilder) classicInkEdges(n d2isometric.Node, triangles []Triangle) 
 		if len(path) == 0 {
 			return
 		}
-		b.classicInkRibbon(path, radius, material)
+		b.classicInkRibbon(path, path[0].radius(radius), material)
 		ends = append(ends, path[0])
 		last := path[len(path)-1]
-		ends = append(ends, classicInkSegment{last.c, last.a, last.support})
+		last.a, last.c = last.c, last.a
+		ends = append(ends, last)
 	}
 	count := 0
 	for _, path := range classicInkPaths(segments) {
@@ -521,7 +545,7 @@ func (b *meshBuilder) classicInkEdges(n d2isometric.Node, triangles []Triangle) 
 				}
 				next := min(length, at+remaining)
 				if on {
-					part = append(part, classicInkSegment{nlerp(s.a, s.c, at/length), nlerp(s.a, s.c, next/length), s.support})
+					part = append(part, classicInkSegment{a: nlerp(s.a, s.c, at/length), c: nlerp(s.a, s.c, next/length), support: s.support})
 				}
 				phase += next - at
 				at = next

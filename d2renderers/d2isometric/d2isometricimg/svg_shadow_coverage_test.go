@@ -6,6 +6,8 @@ import (
 	"image/color"
 	"math"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -38,17 +40,17 @@ func TestSVGShadowOpaqueCapAndWallHaveOneStrength(t *testing.T) {
 	surface := &nativeVectorSurface{document: &d2scene.Document{Root: root, ViewBox: d2scene.Box{Width: 1, Height: 1}, LogicalWidth: 1, LogicalHeight: 1}}
 	material := &Material{Color: color.NRGBA{255, 255, 255, 255}, Texture: texture, Vector: surface}
 	b := &meshBuilder{ctx: ctx}
-	// The cap and right wall overlap in the light projection. The wall alone
+	// Both faces are elevated and cast only the far shadow. The wall alone
 	// and cap alone must have the same alpha as that overlap, not a dark rim.
-	a := Vertex{Position: nv(-1, .8, -.5), Normal: nv(0, 1, 0)}
-	c := Vertex{Position: nv(1, .8, -.5), Normal: nv(0, 1, 0), U: 1}
-	d := Vertex{Position: nv(1, .8, .5), Normal: nv(0, 1, 0), U: 1, V: 1}
-	e := Vertex{Position: nv(-1, .8, .5), Normal: nv(0, 1, 0), V: 1}
+	a := Vertex{Position: nv(-1, 1.55, -.5), Normal: nv(0, 1, 0)}
+	c := Vertex{Position: nv(1, 1.55, -.5), Normal: nv(0, 1, 0), U: 1}
+	d := Vertex{Position: nv(1, 1.55, .5), Normal: nv(0, 1, 0), U: 1, V: 1}
+	e := Vertex{Position: nv(-1, 1.55, .5), Normal: nv(0, 1, 0), V: 1}
 	b.triangle(a, d, c, material, true)
 	b.triangle(a, e, d, material, true)
 	cap := append([]Triangle(nil), b.triangles...)
-	b.flat(c.Position, nv(1, .15, -.5), nv(1, .15, .5), nativeMaterial("white", .5, 0, 1), true)
-	b.flat(c.Position, nv(1, .15, .5), d.Position, nativeMaterial("white", .5, 0, 1), true)
+	b.flat(c.Position, nv(1, .9, -.5), nv(1, .9, .5), nativeMaterial("white", .5, 0, 1), true)
+	b.flat(c.Position, nv(1, .9, .5), d.Position, nativeMaterial("white", .5, 0, 1), true)
 	nativePhysicalShadows(b.triangles, false)
 	nativePhysicalShadows(cap, false)
 	camera := nativeCameraAxes()
@@ -57,7 +59,7 @@ func TestSVGShadowOpaqueCapAndWallHaveOneStrength(t *testing.T) {
 	full := rasterSVGShadowCoverage(t, scene)
 	scene.triangles = cap
 	onlyCap := rasterSVGShadowCoverage(t, scene)
-	want := uint8(math.Round(.11 * 184))
+	want := uint8(math.Round(math.Round(groundShadowLayers[0].opacity*255) * 184 / 255))
 	overlap, wallOnly := 0, 0
 	for y := 0; y < 400; y++ {
 		for x := 0; x < 400; x++ {
@@ -108,8 +110,80 @@ func TestSVGShadowRetainsTransparentTextureHole(t *testing.T) {
 		p.Y = ground
 		q := camera.project(p)
 		alpha := frame.NRGBAAt(int(q.x), int(q.y)).A
-		if x == 0 && alpha != 0 || x != 0 && alpha < 27 {
+		if x == 0 && alpha != 0 || x != 0 && alpha < uint8(math.Round(255*groundShadowLayers[0].opacity))-1 {
 			t.Fatalf("texture alpha changed at x=%g: %d", x, alpha)
+		}
+	}
+}
+
+func TestSVGShadowTightensTowardTheFoot(t *testing.T) {
+	camera := nativeCameraAxes()
+	camera.scale, camera.width, camera.height = 100, 400, 400
+	b := &meshBuilder{ctx: context.Background()}
+	material := nativeMaterial("white", .5, 0, 1)
+	// A wall intersects the receiver. Moving along its cast samples steadily
+	// higher points on the same wall without crossing any other geometry.
+	b.flat(nv(0, 0, -1), nv(0, 1.4, -1), nv(0, 1.4, 1), material, true)
+	b.flat(nv(0, 0, -1), nv(0, 1.4, 1), nv(0, 0, 1), material, true)
+	scene := &nativeScene{camera: camera, width: 400, height: 400, triangles: b.triangles}
+	frame := rasterSVGShadowCoverage(t, scene)
+	ground, light := rasterShadowGround(b.triangles), rasterShadowDirection()
+	last := uint8(255)
+	for _, height := range []float64{.1, .4, 1.1} {
+		p := nsub(nv(0, ground+rasterShadowNormalOffset+height, 0), nmul(light, height/light.Y))
+		p.Y = ground
+		q := camera.project(p)
+		alpha := frame.NRGBAAt(int(q.x), int(q.y)).A
+		if alpha == 0 || alpha >= last {
+			t.Fatalf("wall shadow alpha at height %g = %d, previous %d", height, alpha, last)
+		}
+		last = alpha
+	}
+	w := &nativeSVGWriter{ctx: context.Background()}
+	writeSVGGroundShadow(w, scene)
+	if w.err != nil {
+		t.Fatal(w.err)
+	}
+	radii := regexp.MustCompile(`<feGaussianBlur stdDeviation="([^ ]+) ([^"]+)"`).FindAllStringSubmatch(w.buf.String(), -1)
+	if len(radii) != 3 {
+		t.Fatalf("got %d shadow blur radii", len(radii))
+	}
+	for axis := 1; axis <= 2; axis++ {
+		last := math.Inf(1)
+		for _, r := range radii {
+			sigma, err := strconv.ParseFloat(r[axis], 64)
+			if err != nil || sigma <= 0 || sigma >= last {
+				t.Fatalf("expected decreasing shadow blur on axis %d: %v", axis, radii)
+			}
+			last = sigma
+		}
+	}
+}
+
+func TestSVGShadowHorizontalCasterAtLayerCeiling(t *testing.T) {
+	camera := nativeCameraAxes()
+	camera.scale, camera.width, camera.height = 100, 400, 400
+	// The unpainted vertex fixes ground at zero, independently of the cap.
+	floor := Triangle{V: [3]Vertex{{Position: nv(0, -.08, 0)}}}
+	for i, layer := range groundShadowLayers[1:] {
+		ceiling := rasterShadowNormalOffset + layer.height
+		for _, height := range []float64{ceiling, math.Nextafter(ceiling, math.Inf(1))} {
+			cap := Triangle{CastShadow: true, V: [3]Vertex{
+				{Position: nv(-1, height, 0)}, {Position: nv(1, height, 0)}, {Position: nv(0, height, 1)},
+			}}
+			scene := &nativeScene{camera: camera, width: 400, height: 400, triangles: []Triangle{floor, cap}}
+			w := &nativeSVGWriter{ctx: context.Background()}
+			writeSVGGroundShadow(w, scene)
+			if w.err != nil {
+				t.Fatal(w.err)
+			}
+			want := i + 2
+			if height > ceiling {
+				want--
+			}
+			if got := strings.Count(w.buf.String(), "<feGaussianBlur "); got != want {
+				t.Errorf("height %.17g at ceiling %.17g: got %d layers, want %d", height, ceiling, got, want)
+			}
 		}
 	}
 }

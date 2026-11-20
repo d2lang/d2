@@ -65,9 +65,8 @@ func renderIsometricValidated(ctx context.Context, diagram *d2target.Diagram, op
 	if native != nil {
 		o = *native
 	}
-	o.Format = d2isometricimg.SVG
 	o.Render.ThemeID, o.Render.ThemeOverrides = opts.ThemeID, opts.ThemeOverrides
-	data, err := d2isometricimg.Render(ctx, diagram, &o)
+	data, err := d2isometricimg.RenderSVG(ctx, diagram, o)
 	if err != nil {
 		return nil, err
 	}
@@ -154,11 +153,26 @@ func wrapIsometricSVG(diagram *d2target.Diagram, data []byte, opts *RenderOpts) 
 		}
 		dimensions = []svg.Attribute{svg.Attr("width", strconv.FormatFloat(w, 'f', 0, 64)), svg.Attr("height", strconv.FormatFloat(h, 'f', 0, 64))}
 	}
-	hash, err := diagram.HashID(opts.Salt)
+	diagramHash, err := diagram.HashID(opts.Salt)
 	if err != nil {
 		return nil, err
 	}
-	data = namespaceIsometricSVG(data, hash+"-isometric-")
+	prefix := diagramHash + "-isometric-"
+	// Flat diagram hashes intentionally ignore authoring an otherwise identical
+	// default stroke width. In isometric SVG that choice changes the ink mesh.
+	if len(diagram.ExplicitDefaultStrokeWidths) != 0 {
+		var marked []byte
+		for i, shape := range diagram.Shapes {
+			if shape.StrokeWidth == d2target.DEFAULT_SHAPE_STROKE_WIDTH && diagram.ExplicitDefaultStrokeWidths[shape.ID] {
+				marked = strconv.AppendInt(marked, int64(i), 10)
+				marked = append(marked, ',')
+			}
+		}
+		if len(marked) != 0 {
+			prefix += hash(string(marked)) + "-"
+		}
+	}
+	data = namespaceIsometricSVG(data, prefix)
 	opening := isometricSVGRoot.FindIndex(data)
 	if opening == nil || !bytes.HasSuffix(data, []byte("</svg>")) {
 		return nil, fmt.Errorf("native isometric output has an invalid SVG envelope")
@@ -183,7 +197,7 @@ func wrapIsometricSVG(diagram *d2target.Diagram, data []byte, opts *RenderOpts) 
 	attributes = append(attributes, svg.Attr("preserveAspectRatio", alignment+" meet"), svg.Attr("viewBox", fmt.Sprintf("0 0 %d %d", width, height)))
 	attributes = append(attributes, dimensions...)
 	output.WriteString(svg.OpenElement("svg", attributes...))
-	output.WriteString(svg.OpenElement("svg", svg.Attr("class", hash+" d2-svg d2-isometric"), svg.IntAttr("width", int(width)), svg.IntAttr("height", int(height)), svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", -pad, -pad, width, height)), svg.Attr("role", "img")))
+	output.WriteString(svg.OpenElement("svg", svg.Attr("class", diagramHash+" d2-svg d2-isometric"), svg.IntAttr("width", int(width)), svg.IntAttr("height", int(height)), svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", -pad, -pad, width, height)), svg.Attr("role", "img")))
 	output.Write(body)
 	output.WriteString(`</svg></svg>`)
 	if output.Len() > d2isometricimg.MaxOutputBytes {

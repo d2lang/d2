@@ -10,6 +10,7 @@ import (
 // every scene application, while useInstances records the local <use> work
 // that must be charged again for every independent expansion.
 type compiledClipPath struct {
+	parentID     string
 	path         d2scene.Path
 	transform    d2scene.Matrix
 	useInstances int
@@ -51,9 +52,6 @@ func (i *svgImporter) validateClipTree(root *svgElement) error {
 		parent := current.parent
 
 		if element.name == "clipPath" {
-			if element.id == "" {
-				return i.errorf("element <clipPath> must declare an id")
-			}
 			if parent == nil || (parent.name != "svg" && parent.name != "g" && parent.name != "defs") {
 				return i.errorf("element <clipPath> is only supported under <svg>, <g>, or <defs>")
 			}
@@ -72,12 +70,6 @@ func (i *svgImporter) validateClipTree(root *svgElement) error {
 			child := element.children[0]
 			if child.name != "use" && !supportedClipGeometry(child.name) {
 				return i.errorf("element <clipPath> has unsupported child <%s>", displayXMLName(child.name))
-			}
-		}
-
-		if _, ok := element.attrs["overflow"]; ok {
-			if element.name != "use" || parent == nil || parent.name != "clipPath" {
-				return i.errorf("overflow metadata is supported only on a direct <use> child of <clipPath>")
 			}
 		}
 
@@ -118,9 +110,7 @@ func (i *svgImporter) compileClipPathResource(element *svgElement) (*compiledCli
 	if err != nil {
 		return nil, err
 	}
-	if style.clipPathID != "" {
-		return nil, i.errorf("nested clip-path resources are unsupported")
-	}
+	parentID := style.clipPathID
 
 	current := element.children[0]
 	inherited := style
@@ -168,7 +158,7 @@ func (i *svgImporter) compileClipPathResource(element *svgElement) (*compiledCli
 				}
 				return nil, i.errorf("clip-path has invalid or non-finite geometry")
 			}
-			return &compiledClipPath{path: path, transform: transform, useInstances: useInstances}, nil
+			return &compiledClipPath{path: path, transform: transform, useInstances: useInstances, parentID: parentID}, nil
 		}
 
 		if useDepth >= i.limits.MaxUseDepth {
@@ -204,7 +194,7 @@ func (i *svgImporter) validateClipDeclarations(element *svgElement) error {
 		if err := i.ctx.Err(); err != nil {
 			return err
 		}
-		if property != "transform" && property != "clip-rule" {
+		if property != "transform" && property != "clip-rule" && !(element.name == "clipPath" && property == "clip-path") && !(element.name == "use" && property == "overflow") {
 			return i.errorf("element <%s> has unsupported clipping-resource property %q", element.name, property)
 		}
 	}
@@ -270,7 +260,7 @@ func (i *svgImporter) clipCommands(element *svgElement) ([]d2scene.PathCommand, 
 	}
 }
 
-func (i *svgImporter) localClipPathID(value string) (string, error) {
+func (i *svgImporter) localResourceID(value, kind string) (string, error) {
 	if err := i.ctx.Err(); err != nil {
 		return "", err
 	}
@@ -285,14 +275,47 @@ func (i *svgImporter) localClipPathID(value string) (string, error) {
 	if !valid {
 		return "", fmt.Errorf("requires one local url(#id) reference; external, quoted, and fallback URLs are forbidden")
 	}
-	target := i.ids[id]
+	target, declared := i.ids[id]
+	if declared && target == nil {
+		return "", fmt.Errorf("references an ambiguous local id")
+	}
 	if target == nil {
 		return "", fmt.Errorf("references an unknown local id")
 	}
-	if target.name != "clipPath" {
-		return "", fmt.Errorf("local id does not name a <clipPath> resource")
+	if target.name != kind {
+		return "", fmt.Errorf("local id does not name a <%s> resource", kind)
 	}
 	return id, nil
+}
+
+// Intersect successive clipping paths by nesting clipped scene groups. All
+// paths are expressed relative to the original element's local coordinates.
+func (i *svgImporter) applyClipPaths(node *d2scene.Node, id string) (*d2scene.Node, error) {
+	transform := d2scene.Identity()
+	for depth := 0; id != ""; depth++ {
+		if depth >= i.limits.MaxUseDepth {
+			return nil, i.errorf("clip-path chain exceeds depth limit %d or contains a cycle", i.limits.MaxUseDepth)
+		}
+		clip, err := i.instantiateClipPath(id)
+		if err != nil {
+			return nil, err
+		}
+		clip.Transform = transform.Mul(clip.Transform)
+		if node.Clip != nil {
+			group, err := i.newNode(nil)
+			if err != nil {
+				return nil, err
+			}
+			group.Transform, node.Transform = node.Transform, d2scene.Identity()
+			group.Children = []*d2scene.Node{node}
+			node = group
+		}
+		node.Clip = clip
+		resource := i.ids[id]
+		transform = transform.Mul(resource.transform)
+		id = resource.clipPath.parentID
+	}
+	return node, nil
 }
 
 func (i *svgImporter) instantiateClipPath(id string) (*d2scene.Clip, error) {

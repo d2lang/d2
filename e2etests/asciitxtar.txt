@@ -267,3 +267,20 @@ b: "A"
 shape: sequence_diagram
 alice -> bob: What does it mean\nto be well-adjusted?
 bob -> alice: The ability to play bridge or\ngolf as if they were games.
+
+-- vietnamese-labels --
+nguoi_dung: Người dùng
+dang_nhap: Đăng nhập
+csdl: Cơ sở dữ liệu
+nguoi_dung -> dang_nhap: gửi yêu cầu
+dang_nhap -> csdl
+
+-- vietnamese-horizontal-edge-label --
+direction: right
+a -> b: sang Mỹ
+
+-- sequence-label-arrowheads --
+shape: sequence_diagram
+a -> b: initializing...
+b -> a: initializing...
+a <-> b: initializing...\n\n\nawaiting reply

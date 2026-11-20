@@ -75,8 +75,8 @@ type FrameOptions struct {
 	// decoded assets (bounded separately), the final frame canvas, and returned
 	// image.
 	MaxOffscreenBytes int64
-	// MaxEvenOddClipWork bounds aggregate point-in-edge evaluations used by
-	// supersampled even-odd fills and clips.
+	// MaxEvenOddClipWork bounds edge crossing and coverage work for supersampled
+	// even-odd fills and clips, including repeated visits across tiles.
 	MaxEvenOddClipWork int64
 	// MaxScanlineWork bounds aggregate operation units used by non-zero fills,
 	// strokes, streamed paint coverage, and clips. Zero selects a bounded default;
@@ -1570,7 +1570,7 @@ func drawPrimitive(ctx context.Context, dst *image.RGBA, primitive *preparedPrim
 		if primitive.fillRule == d2scene.EvenOdd {
 			bounds := subpathPixelBounds(primitive.subpaths, primitive.transform, 0, dst.Bounds())
 			err := drawPaintMask(ctx, dst, bounds, primitive.fill, scratch, "even-odd fill Alpha mask", func(mask *image.Alpha) error {
-				return rasterizeEvenOddMask(ctx, mask, bounds.Min, primitive.evenOddSubpaths)
+				return rasterizeEvenOddCoverage(ctx, mask, bounds.Min, primitive.evenOddSubpaths, primitive.evenOddEdges)
 			})
 			if err != nil {
 				return err

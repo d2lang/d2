@@ -1,6 +1,7 @@
 package d2svgimport
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"math"
@@ -16,13 +17,10 @@ var stopPresentationProperties = map[string]struct{}{
 }
 
 func isGradientResourceElement(name string) bool {
-	return name == "linearGradient" || name == "stop"
+	return name == "linearGradient" || name == "radialGradient" || name == "stop"
 }
 
-// validateGradientTree keeps paint servers out of the rendering tree. The
-// supported subset deliberately has no resource-to-resource edges: gradients
-// are direct children of <defs>, stops are direct children of a gradient, and
-// href inheritance is rejected by the exact attribute allowlist.
+// Gradients are definitions even when placed directly in a graphics container.
 func (i *svgImporter) validateGradientTree(root *svgElement) error {
 	type entry struct {
 		element *svgElement
@@ -36,24 +34,18 @@ func (i *svgImporter) validateGradientTree(root *svgElement) error {
 		current := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		switch current.element.name {
-		case "linearGradient":
-			if current.parent == nil || current.parent.name != "defs" {
-				return i.errorf("element <linearGradient> must be a direct child of <defs>")
-			}
-			if current.element.id == "" {
-				return i.errorf("element <linearGradient> must declare an id")
-			}
-			if len(current.element.children) == 0 {
-				return i.errorf("element <linearGradient> must contain at least one <stop>")
+		case "linearGradient", "radialGradient":
+			if current.parent == nil || (current.parent.name != "defs" && current.parent.name != "g" && current.parent.name != "svg") {
+				return i.errorf("element <%s> must be inside <svg>, <g> or <defs>", current.element.name)
 			}
 			for _, child := range current.element.children {
 				if child.name != "stop" {
-					return i.errorf("element <linearGradient> has unsupported child <%s>", displayXMLName(child.name))
+					return i.errorf("element <%s> has unsupported child <%s>", current.element.name, displayXMLName(child.name))
 				}
 			}
 		case "stop":
-			if current.parent == nil || current.parent.name != "linearGradient" {
-				return i.errorf("element <stop> is only supported inside <linearGradient>")
+			if current.parent == nil || (current.parent.name != "linearGradient" && current.parent.name != "radialGradient") {
+				return i.errorf("element <stop> is only supported inside a gradient")
 			}
 			if len(current.element.children) != 0 {
 				return i.errorf("element <stop> cannot contain child elements")
@@ -78,8 +70,8 @@ func (i *svgImporter) compileGradientElement(element *svgElement) error {
 	}
 
 	switch element.name {
-	case "linearGradient":
-		return i.compileLinearGradient(element)
+	case "linearGradient", "radialGradient":
+		return i.compileGradient(element)
 	case "stop":
 		return i.compileGradientStop(element)
 	default:
@@ -87,59 +79,131 @@ func (i *svgImporter) compileGradientElement(element *svgElement) error {
 	}
 }
 
-func (i *svgImporter) compileLinearGradient(element *svgElement) error {
-	for _, name := range []string{"x1", "y1", "x2", "y2", "gradientUnits"} {
-		if _, ok := element.attrs[name]; !ok {
-			return i.errorf("element <linearGradient> is missing required attribute %q", name)
-		}
-	}
-	units, err := trimSVGSpace(i.ctx, element.attrs["gradientUnits"])
-	if err != nil {
-		return err
-	}
-	if units != "userSpaceOnUse" {
-		return i.errorf("element <linearGradient> supports only gradientUnits=\"userSpaceOnUse\"")
-	}
+// Percentages in user space are relative to the viewport of the element
+// using the paint. Keep them unresolved until that element is instantiated.
+type gradientLength struct {
+	value   float64
+	percent bool
+}
 
-	coordinate := func(name string) (float64, error) {
-		value, err := parseSVGLength(element.attrs[name], true)
+func (length gradientLength) resolve(extent float64) float64 {
+	if length.percent {
+		return length.value * extent
+	}
+	return length.value
+}
+
+func parseLengthOrPercentage(raw string, units d2scene.PaintUnits) (gradientLength, error) {
+	raw = strings.TrimSpace(raw)
+	number, percent := strings.CutSuffix(raw, "%")
+	if percent && strings.TrimSpace(number) != number {
+		return gradientLength{}, fmt.Errorf("percentage sign must follow its number")
+	}
+	value, err := parseSVGLength(number, !percent && units == d2scene.UserSpaceOnUse)
+	if percent {
+		value /= 100
+	}
+	return gradientLength{value: value, percent: percent}, err
+}
+
+type svgGradient struct {
+	units     d2scene.PaintUnits
+	transform d2scene.Matrix
+	spread    d2scene.SpreadMethod
+	stops     []d2scene.GradientStop
+	radial    bool
+	// A radial gradient runs from the focal circle to the outer circle.
+	startX, startY, endX, endY gradientLength
+	innerRadius, outerRadius   gradientLength
+}
+
+func (g *svgGradient) paint(ctx context.Context, viewport d2scene.Box, opacity float64) (d2scene.Paint, error) {
+	if len(g.stops) == 0 {
+		return nil, nil
+	}
+	w, h := viewport.Width, viewport.Height
+	if g.units == d2scene.ObjectBoundingBox {
+		w, h = 1, 1
+	}
+	start := d2scene.Point{X: g.startX.resolve(w), Y: g.startY.resolve(h)}
+	end := d2scene.Point{X: g.endX.resolve(w), Y: g.endY.resolve(h)}
+	stops, err := stopsWithOpacity(ctx, g.stops, opacity)
+	if err != nil {
+		return nil, err
+	}
+	if !d2scene.BoundsFromPoints(start, end).IsFinite() {
+		return nil, fmt.Errorf("invalid gradient coordinates")
+	}
+	if g.radial {
+		diagonal := math.Hypot(w/math.Sqrt2, h/math.Sqrt2)
+		radius, focalRadius := g.outerRadius.resolve(diagonal), g.innerRadius.resolve(diagonal)
+		if math.IsInf(radius, 0) || math.IsInf(focalRadius, 0) {
+			return nil, fmt.Errorf("invalid radial gradient radius")
+		}
+		return d2scene.RadialGradient{Center: end, Focal: start, Radius: radius, FocalRadius: focalRadius, Units: g.units, Transform: g.transform, Spread: g.spread, Stops: stops}, nil
+	}
+	direction := g.transform.Vector(d2scene.Point{X: end.X - start.X, Y: end.Y - start.Y})
+	if math.IsNaN(direction.X) || math.IsInf(direction.X, 0) || math.IsNaN(direction.Y) || math.IsInf(direction.Y, 0) {
+		return nil, fmt.Errorf("invalid transformed gradient geometry")
+	}
+	return d2scene.LinearGradient{Start: start, End: end, Units: g.units, Transform: g.transform, Spread: g.spread, Stops: stops}, nil
+}
+
+func (i *svgImporter) compileGradient(element *svgElement) error {
+	g := &svgGradient{radial: element.name == "radialGradient"}
+	switch strings.TrimSpace(element.attrs["gradientUnits"]) {
+	case "", "objectBoundingBox":
+		g.units = d2scene.ObjectBoundingBox
+	case "userSpaceOnUse":
+		g.units = d2scene.UserSpaceOnUse
+	default:
+		return i.errorf("element <%s> has invalid gradientUnits", element.name)
+	}
+	switch strings.TrimSpace(element.attrs["spreadMethod"]) {
+	case "", "pad":
+		g.spread = d2scene.SpreadPad
+	case "reflect":
+		g.spread = d2scene.SpreadReflect
+	case "repeat":
+		g.spread = d2scene.SpreadRepeat
+	default:
+		return i.errorf("element <%s> has invalid spreadMethod", element.name)
+	}
+	type coordinate struct {
+		name   string
+		length *gradientLength
+	}
+	var coords []coordinate
+	if g.radial {
+		half := gradientLength{value: 0.5, percent: true}
+		g.endX, g.endY, g.outerRadius = half, half, half
+		coords = []coordinate{{"cx", &g.endX}, {"cy", &g.endY}, {"r", &g.outerRadius}, {"fx", &g.startX}, {"fy", &g.startY}, {"fr", &g.innerRadius}}
+	} else {
+		g.endX = gradientLength{value: 1, percent: true}
+		coords = []coordinate{{"x1", &g.startX}, {"y1", &g.startY}, {"x2", &g.endX}, {"y2", &g.endY}}
+	}
+	for _, coord := range coords {
+		raw, ok := element.attrs[coord.name]
+		if !ok {
+			continue
+		}
+		length, err := parseLengthOrPercentage(raw, g.units)
 		if err != nil {
-			return 0, i.propertyError(element, name, err)
+			return i.propertyError(element, coord.name, err)
 		}
-		return value, nil
+		*coord.length = length
 	}
-	x1, err := coordinate("x1")
-	if err != nil {
-		return err
-	}
-	y1, err := coordinate("y1")
-	if err != nil {
-		return err
-	}
-	x2, err := coordinate("x2")
-	if err != nil {
-		return err
-	}
-	y2, err := coordinate("y2")
-	if err != nil {
-		return err
-	}
-	start := d2scene.Point{X: x1, Y: y1}
-	end := d2scene.Point{X: x2, Y: y2}
-	if start == end {
-		return i.errorf("element <linearGradient> has a zero-length gradient vector")
-	}
-
-	if raw, ok := element.attrs["spreadMethod"]; ok {
-		spread, err := trimSVGSpace(i.ctx, raw)
-		if err != nil {
-			return err
+	if g.radial {
+		if _, ok := element.attrs["fx"]; !ok {
+			g.startX = g.endX
 		}
-		if spread != "pad" {
-			return i.errorf("element <linearGradient> supports only the pad spread method")
+		if _, ok := element.attrs["fy"]; !ok {
+			g.startY = g.endY
+		}
+		if g.innerRadius.value < 0 || g.outerRadius.value < 0 {
+			return i.errorf("element <radialGradient> has a negative radius")
 		}
 	}
-
 	transform := d2scene.Identity()
 	if raw, ok := element.attrs["gradientTransform"]; ok {
 		trimmed, err := trimSVGSpace(i.ctx, raw)
@@ -147,7 +211,7 @@ func (i *svgImporter) compileLinearGradient(element *svgElement) error {
 			return err
 		}
 		if trimmed == "" {
-			return i.errorf("element <linearGradient> has an empty gradientTransform")
+			return i.errorf("element <%s> has an empty gradientTransform", element.name)
 		}
 		remaining := i.limits.MaxTransformFunctions - i.parsedTransforms
 		if remaining <= 0 {
@@ -163,18 +227,10 @@ func (i *svgImporter) compileLinearGradient(element *svgElement) error {
 		i.parsedTransforms += functions
 	}
 	if !affineInverseIsFinite(transform) {
-		return i.errorf("element <linearGradient> has a singular or unrepresentable gradientTransform")
+		return i.errorf("element <%s> has a singular or unrepresentable gradientTransform", element.name)
 	}
-	direction := transform.Vector(d2scene.Point{X: end.X - start.X, Y: end.Y - start.Y})
-	if math.IsNaN(direction.X) || math.IsInf(direction.X, 0) || math.IsNaN(direction.Y) || math.IsInf(direction.Y, 0) ||
-		direction == (d2scene.Point{}) {
-		return i.errorf("element <linearGradient> has invalid transformed gradient geometry")
-	}
-
-	element.gradient = &d2scene.LinearGradient{
-		Start: start, End: end, Units: d2scene.UserSpaceOnUse,
-		Transform: transform, Spread: d2scene.SpreadPad,
-	}
+	g.transform = transform
+	element.gradient = g
 	return nil
 }
 
@@ -196,13 +252,21 @@ func (i *svgImporter) compileGradientStop(element *svgElement) error {
 		}
 	}
 
-	rawOffset, ok := element.attrs["offset"]
-	if !ok {
-		return i.errorf("element <stop> is missing offset")
-	}
-	offset, err := parseUnitInterval(rawOffset)
-	if err != nil {
-		return i.propertyError(element, "offset", err)
+	rawOffset := strings.TrimSpace(element.attrs["offset"])
+	offset := 0.0
+	if rawOffset != "" {
+		number, percent := strings.CutSuffix(rawOffset, "%")
+		if strings.TrimSpace(number) != number {
+			return i.propertyError(element, "offset", fmt.Errorf("percentage sign must follow its number"))
+		}
+		offset, err = parseSVGNumber(number)
+		if err != nil {
+			return i.propertyError(element, "offset", err)
+		}
+		if percent {
+			offset /= 100
+		}
+		offset = min(1, max(0, offset))
 	}
 	stop, err := i.stopFromDeclarations(element)
 	if err != nil {
@@ -248,10 +312,7 @@ func (i *svgImporter) compileGradientResources(root *svgElement) error {
 		}
 		element := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if element.name == "linearGradient" {
-			if element.gradient == nil {
-				return i.errorf("internal uncompiled linear gradient")
-			}
+		if element.gradient != nil {
 			stops := make([]d2scene.GradientStop, len(element.children))
 			previous := -1.0
 			for index, child := range element.children {
@@ -262,13 +323,11 @@ func (i *svgImporter) compileGradientResources(root *svgElement) error {
 					return i.errorf("internal uncompiled gradient stop")
 				}
 				stop := *child.gradientStop
-				if stop.Offset < previous {
-					return i.errorf("element <linearGradient> has decreasing stop offsets")
-				}
+				stop.Offset = max(previous, stop.Offset)
 				stops[index] = stop
 				previous = stop.Offset
 			}
-			element.gradient.Stops = stops
+			element.gradient.stops = stops
 		}
 		for index := len(element.children) - 1; index >= 0; index-- {
 			stack = append(stack, element.children[index])
@@ -307,7 +366,7 @@ func (i *svgImporter) validateStylesheetRules() error {
 			}
 		}
 		if len(regular) != 0 && len(stops) != 0 {
-			return i.errorf("stylesheet rule .%s mixes stop-only and rendering properties", rule.class)
+			return i.errorf("stylesheet rule .%s mixes stop-only and rendering properties", strings.Join(rule.classes, ", ."))
 		}
 		if len(stops) != 0 {
 			probe := &svgElement{name: "stop", declarations: stops}
@@ -324,7 +383,7 @@ func (i *svgImporter) validateStylesheetRules() error {
 	return nil
 }
 
-func (i *svgImporter) localLinearGradientPaint(value string) (d2scene.Paint, error) {
+func (i *svgImporter) localGradient(value string) (*svgGradient, error) {
 	if !strings.HasPrefix(value, "url(#") || !strings.HasSuffix(value, ")") {
 		return nil, fmt.Errorf("paint servers require one local url(#id) reference; external references and fallbacks are forbidden")
 	}
@@ -336,27 +395,17 @@ func (i *svgImporter) localLinearGradientPaint(value string) (d2scene.Paint, err
 	if !valid {
 		return nil, fmt.Errorf("paint servers require one local url(#id) reference; external references and fallbacks are forbidden")
 	}
-	target := i.ids[id]
+	target, declared := i.ids[id]
+	if declared && target == nil {
+		return nil, fmt.Errorf("paint server references an ambiguous local id")
+	}
 	if target == nil {
 		return nil, fmt.Errorf("paint server references an unknown local id")
 	}
-	if target.name != "linearGradient" || target.gradient == nil {
-		return nil, fmt.Errorf("paint server local id does not name a supported linear gradient")
+	if target.gradient == nil {
+		return nil, fmt.Errorf("paint server local id does not name a supported gradient")
 	}
-	if err := i.ctx.Err(); err != nil {
-		return nil, err
-	}
-	gradient := *target.gradient
-	gradient.Stops = make([]d2scene.GradientStop, len(target.gradient.Stops))
-	for index, stop := range target.gradient.Stops {
-		if index&255 == 0 {
-			if err := i.ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		gradient.Stops[index] = stop
-	}
-	return gradient, nil
+	return target.gradient, i.ctx.Err()
 }
 
 // validLocalPaintID accepts the bounded unescaped identifier spelling used by

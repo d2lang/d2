@@ -358,17 +358,22 @@ func svgVisibleFacesWithLimits(ctx context.Context, faces []svgVisibilityFace, l
 		if inputVertices > limits.vertices {
 			return nil, fmt.Errorf("isometric SVG visibility exceeds vertex limit")
 		}
-		for _, p := range face.points {
+		// Clipping a ground caster uses its exact world height. Snap the
+		// resulting intersections here, before fitting any depth planes,
+		// just as for projected mesh faces. The caller keeps its exact
+		// coordinates for clipping against the next receiver-height band.
+		points := make([]svgPoint, len(face.points))
+		for j, p := range face.points {
 			if math.IsNaN(p.x) || math.IsNaN(p.y) || math.IsNaN(p.z) || math.Abs(p.x) > rasterCoordinateLimit || math.Abs(p.y) > rasterCoordinateLimit || math.Abs(p.z) > rasterCoordinateLimit {
 				return nil, fmt.Errorf("isometric SVG visibility face %d has invalid coordinates", i)
 			}
+			points[j] = svgProjectedPoint(p.x, p.y, p.z)
 		}
-		valid := svgValidFragment(face.points)
-		plane, ok := svgPolygonPlane(valid)
+		points = svgValidFragment(points)
+		plane, ok := svgPolygonPlane(points)
 		if !ok {
 			continue
 		}
-		points := append([]svgPoint(nil), valid...)
 		if svgPolygonArea(points) < 0 {
 			for a, b := 0, len(points)-1; a < b; a, b = a+1, b-1 {
 				points[a], points[b] = points[b], points[a]

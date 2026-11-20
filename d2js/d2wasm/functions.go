@@ -169,12 +169,16 @@ func GetELKGraph(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid fs input: %s", err.Error()), Code: 400}
 	}
 
-	g, _, err := d2compiler.Compile(inputPath, strings.NewReader(input.FS[inputPath]), &d2compiler.CompileOptions{
+	g, config, err := d2compiler.Compile(inputPath, strings.NewReader(input.FS[inputPath]), &d2compiler.CompileOptions{
 		UTF16Pos: true,
 		FS:       fs,
 	})
 	if err != nil {
 		return nil, &WASMError{Message: err.Error(), Code: 400}
+	}
+
+	if config != nil {
+		g.Data = config.Data
 	}
 
 	ruler, err := textmeasure.NewRuler()
@@ -305,6 +309,12 @@ func Compile(args []js.Value) (interface{}, error) {
 	}
 	if input.Opts != nil && input.Opts.DarkThemeID != nil {
 		renderOpts.DarkThemeID = input.Opts.DarkThemeID
+	}
+	if input.Opts != nil && input.Opts.ThemeOverrides != nil {
+		renderOpts.ThemeOverrides = input.Opts.ThemeOverrides
+	}
+	if input.Opts != nil && input.Opts.DarkThemeOverrides != nil {
+		renderOpts.DarkThemeOverrides = input.Opts.DarkThemeOverrides
 	}
 	if input.Opts != nil && input.Opts.Scale != nil {
 		renderOpts.Scale = input.Opts.Scale

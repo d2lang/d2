@@ -191,7 +191,7 @@ func validateShapeEffects(object string, targetShape d2target.Shape) error {
 	}
 	if !targetShape.ThreeDee && targetShape.Multiple {
 		switch targetShape.Type {
-		case d2target.ShapeText, d2target.ShapeCode, d2target.ShapeClass, d2target.ShapeSQLTable, d2target.ShapeImage:
+		case d2target.ShapeText, d2target.ShapeCode, d2target.ShapeClass, d2target.ShapeSQLTable:
 			return unsupported(object, "multiple for shape type "+targetShape.Type)
 		}
 	}

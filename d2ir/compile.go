@@ -540,7 +540,7 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				if resolvedField.Composite != nil {
 					switch n := node.(type) {
 					case *Field:
-						n.Composite = resolvedField.Composite
+						n.setComposite(resolvedField.Composite)
 					case *Edge:
 						if resolvedField.Composite.Map() == nil {
 							c.errorf(node.LastRef().AST(), `cannot substitute array variable "%s" to an edge`, strings.Join(box.Substitution.IDA(), "."))
@@ -911,7 +911,7 @@ func (c *compiler) overlay(base *Map, f *Field) {
 		return
 	}
 	overlayMapIndexed(base, f.Map())
-	f.Composite = base
+	f.setComposite(base)
 }
 
 func (g *globContext) copy() *globContext {
@@ -1835,7 +1835,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 					return
 				}
 				beforeFields, beforeEdges := structureCounts(f.Map())
-				f.Composite = n.Composite.Copy(f).(Composite)
+				f.setComposite(n.Composite.Copy(f).(Composite))
 				markStructureCountDelta(ParentMap(f), beforeFields, beforeEdges, f.Map())
 			}
 		case *Map:

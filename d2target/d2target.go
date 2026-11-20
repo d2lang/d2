@@ -22,6 +22,8 @@ import (
 )
 
 const (
+	DEFAULT_SHAPE_STROKE_WIDTH = 2
+
 	DEFAULT_ICON_SIZE = 32
 	MAX_ICON_SIZE     = 64
 
@@ -90,6 +92,10 @@ type Diagram struct {
 
 	Shapes      []Shape      `json:"shapes"`
 	Connections []Connection `json:"connections"`
+
+	// An explicitly chosen default width and an inherited default have the same
+	// 2D appearance. Retain their distinction for isometric crease weights.
+	ExplicitDefaultStrokeWidths map[string]bool `json:"explicitDefaultStrokeWidths,omitempty"`
 
 	Root   Shape   `json:"root"`
 	Legend *Legend `json:"legend,omitempty"`
@@ -903,7 +909,7 @@ func BaseShape() *Shape {
 	return &Shape{
 		Opacity:     1,
 		StrokeDash:  0,
-		StrokeWidth: 2,
+		StrokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
 		Text: Text{
 			Bold:       true,
 			FontFamily: "DEFAULT",

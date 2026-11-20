@@ -1,13 +1,16 @@
 #### Features 🚀
 
+- elk: choose the layout algorithm in `vars.d2-config.data`. Configure the force model and repulsion, target edge length for stress, tree traversal and sibling order, and radial spacing, branch angles and compaction in D2 or on the CLI. Layered layout also supports edge merging and routing, spacing within layers, pipeline wrapping, declaration order and feedback edges. Set `elk-layer-constraint` on a shape to place it in the first or last layer.
+
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
 - renders: add native isometric SVG, PNG, GIF, PDF, and PPTX exports with `--isometric`, source configuration, and Go/JavaScript options
 
 #### Improvements 🧹
 
-- TALA routes larger diagrams with cross-container connections with its standard orthogonal router by keeping hierarchy lanes local to each container and indexing existing route segments. [#2891](https://github.com/d2lang/d2/issues/2891)
+- TALA routes larger cross-container diagrams within its existing search budget. It preserves the original hierarchy lanes on compact diagrams and indexes previously routed segments. [#2891](https://github.com/d2lang/d2/issues/2891)
 
+- isometric: draw interior creases with a finer line and soften ground shadows away from the object's foot.
 - renders: reduce isometric SVG size by sharing lighting gradients and removing interior edges from filled paths.
 
 - isometric: keep steep connection captions at the same reading angle as node labels and preserve clearance from their wires.
@@ -39,11 +42,14 @@
 
 #### Bugfixes ⛑️
 
+- PNG, GIF, PDF and PPTX exports now render SVG icons that use default gradients, masks, Gaussian blur and common editor metadata. [#2937](https://github.com/d2lang/d2/issues/2937)
 - renders: honor the selected theme and its canvas color in isometric exports.
 
 - d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
 - isometric: keep container titles clear of connection captions and wires, including in tightly packed groups.
 - compiler:
+  - Apply recursive connection styles efficiently to diagrams with few or no
+    connections, including large SQL tables. [#2946](https://github.com/d2lang/d2/issues/2946)
   - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)
   - Honor cancellation during parsing and IR compilation, and prevent `d2 fmt`
     from writing output after cancellation. [#2894](https://github.com/d2lang/d2/pull/2894)
@@ -72,6 +78,7 @@
   - Cap decompressed URL-encoded D2 input at 16 MiB. [#2902](https://github.com/d2lang/d2/pull/2902)
   - Bound image references, locators, fetched and decoded bytes, cached data, and
     final output during SVG image bundling. [#2911](https://github.com/d2lang/d2/pull/2911)
+- elk: fix Mr. Tree arrows doubling back through their target shapes and shortcut edges cutting through intervening nodes. [#2981](https://github.com/d2lang/d2/pull/2981)
 - rendering:
   - Keep nested isometric platforms visible when the diagram has a root border or fill pattern.
   - Keep outside-right isometric labels beside the projected shape wall.
@@ -81,6 +88,7 @@
     rendering. [#2912](https://github.com/d2lang/d2/pull/2912)
   - Limit raw graphs to 1,024 levels and 4,096 boards. [#2912](https://github.com/d2lang/d2/pull/2912)
   - Limit LaTeX labels to 4 KiB and 128 nested groups. [#2922](https://github.com/d2lang/d2/pull/2922)
+  - Render LaTeX labels with the shape's font color instead of its stroke color. [#2943](https://github.com/d2lang/d2/pull/2943)
   - Limit grids to 10,000 rows or columns and 1,000,000 total cells, returning
     a clear error for oversized dimensions instead of crashing or exhausting
     memory. [#2924](https://github.com/d2lang/d2/pull/2924)
@@ -103,6 +111,11 @@
   - Encode and escape clip-path identifiers consistently in definitions and
     references. [#2906](https://github.com/d2lang/d2/pull/2906)
   - Escape color attributes across shapes, connections, labels, and themes. [#2909](https://github.com/d2lang/d2/pull/2909)
+- d2ascii:
+  - Measure label widths in runes instead of bytes, so multi-byte characters
+    (e.g. Vietnamese) no longer get extra spaces inserted inside words and
+    labels are centered and sized correctly. [#2963](https://github.com/d2lang/d2/pull/2963)
+  - Keep horizontal arrowheads visible when an edge label fills the space between endpoints.
 - appendix:
   - Keep numbered link and tooltip markers in one sequence with the appendix:
     every link marker now has an entry, falling back to the link when no board

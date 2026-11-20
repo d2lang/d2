@@ -16,6 +16,8 @@ const (
 	geometryEllipse
 	geometryPath
 	geometryImage
+	geometryText
+	geometryUnavailableImage
 )
 
 type svgGeometry struct {
@@ -46,12 +48,18 @@ func (i *svgImporter) compileGeometry(element *svgElement) (svgGeometry, error) 
 			return svgGeometry{}, nil
 		}
 		return svgGeometry{kind: geometryPath, commands: commands}, nil
-	case "text":
-		commands, err := i.frozenMathJaxTextCommands(element)
-		if err != nil {
+	case "text", "tspan":
+		if i.frozenText(element) {
+			commands, err := i.frozenMathJaxTextCommands(element)
+			if err != nil {
+				return svgGeometry{}, err
+			}
+			return svgGeometry{kind: geometryPath, commands: commands}, nil
+		}
+		if err := i.validatePositionedText(element); err != nil {
 			return svgGeometry{}, err
 		}
-		return svgGeometry{kind: geometryPath, commands: commands}, nil
+		return svgGeometry{kind: geometryText}, nil
 	case "image":
 		return i.compileEmbeddedImage(element)
 	case "rect":

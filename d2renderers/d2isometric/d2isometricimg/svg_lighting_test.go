@@ -184,8 +184,8 @@ func TestSVGShadowUnionsEqualOpacityAndKeepsNearestCaster(t *testing.T) {
 		t.Fatal(w.err)
 	}
 	svg := w.buf.String()
-	if strings.Count(svg, `<path `) != 1 || !strings.Contains(svg, `opacity="0.055216"`) {
-		t.Fatalf("nearest half-strength caster should produce one union at .11*128/255: %s", svg)
+	if strings.Count(svg, `<path `) != 1 || !strings.Contains(svg, `opacity="0.501961"`) || strings.Count(svg, `<feGaussianBlur `) != 1 {
+		t.Fatalf("elevated half-strength caster should produce one far silhouette at 128/255: %s", svg)
 	}
 	if strings.Contains(svg, `<image`) || strings.Contains(svg, `data:image`) {
 		t.Fatal("vector shadow unexpectedly contains a bitmap")

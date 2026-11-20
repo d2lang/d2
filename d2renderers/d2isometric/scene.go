@@ -54,7 +54,8 @@ type Board struct {
 	HeaderDepth float64  `json:"headerDepth"`
 }
 type NodeMetadata struct {
-	Original d2target.Shape `json:"original"`
+	ExplicitDefaultStrokeWidth bool           `json:"explicitDefaultStrokeWidth,omitempty"`
+	Original                   d2target.Shape `json:"original"`
 }
 type Node struct {
 	ID             string       `json:"id"`
@@ -283,6 +284,7 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 		n := Node{ID: s.ID, Label: s.Label, Type: s.Type, Fill: paint(s.Fill), Stroke: paint(s.Stroke), FontColor: paint(s.GetFontColor()), Opacity: s.Opacity, StrokeWidth: s.StrokeWidth, StrokeDash: s.StrokeDash, Tooltip: s.Tooltip, Link: s.Link, Metadata: NodeMetadata{Original: s}}
 		n.FillExplicit = keepPaint(s.Fill)
 		n.StrokeExplicit = keepPaint(s.Stroke)
+		n.Metadata.ExplicitDefaultStrokeWidth = diagram.ExplicitDefaultStrokeWidths[s.ID]
 		n.FontExplicit = themeID != 0 || keepPaint(s.Color)
 		if s.Icon != nil {
 			n.Icon = s.Icon.String()

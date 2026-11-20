@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/lib/geo"
@@ -21,10 +22,15 @@ import (
 // the deprecated raw WASM getELKGraph export and will be removed with it after
 // one compatibility release.
 func ConvertGraph(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (_ *ELKGraph, err error) {
-	if opts == nil {
-		opts = &DefaultOpts
-	}
 	defer xdefer.Errorf(&err, "failed to ELK layout")
+	opts, err = graphOptions(g, opts)
+	if err != nil {
+		return nil, err
+	}
+	padding, err := readPadding(opts.Padding)
+	if err != nil {
+		return nil, err
+	}
 	graphStats := collectELKGraphStats(g)
 
 	elkGraph := &ELKGraph{
@@ -119,10 +125,9 @@ func ConvertGraph(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts)
 			}
 		}
 
+		n.LayoutOptions.LayerConstraint = strings.ToUpper(obj.ELKLayerConstraint)
 		if obj.IsContainer() {
-			padding := parsePadding(opts.Padding)
-			padding = adjustPadding(obj, width, height, padding)
-			n.LayoutOptions.Padding = padding.String()
+			n.LayoutOptions.Padding = adjustPadding(obj, width, height, padding).String()
 		}
 
 		if obj.HasLabel() {

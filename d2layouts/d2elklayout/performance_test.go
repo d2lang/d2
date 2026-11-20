@@ -52,7 +52,7 @@ func BenchmarkDeleteBendsDense(b *testing.B) {
 				g := compileBenchmarkGraph(b, input)
 				setSyntheticRoutes(g)
 				b.StartTimer()
-				deleteBends(g)
+				deleteBends(g, LayeredOptions{}, nil)
 			}
 		})
 	}

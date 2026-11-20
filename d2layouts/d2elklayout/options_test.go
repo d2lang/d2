@@ -3,7 +3,9 @@ package d2elklayout
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/log"
+	"github.com/d2lang/d2/lib/textmeasure"
 )
 
 func TestConfigurableOptsSerializeELK012Keys(t *testing.T) {
@@ -205,6 +208,231 @@ func TestConfigurableOptsAffectLayout(t *testing.T) {
 			t.Fatalf("self-loop route extent changed from %g to %g, want a material increase", compactExtent, spaciousExtent)
 		}
 	})
+}
+
+func TestMergeEdgesKeepsSharedAttachmentsDuringBendCleanup(t *testing.T) {
+	const fan = "direction: right\nsource -> a\nsource -> b\nsource -> c\nsource -> d\na -> sink\nb -> sink\nc -> sink\nd -> sink"
+	for _, merged := range []bool{false, true} {
+		g := layoutOptionFixture(t, fan, func(o *ConfigurableOpts) { o.MergeEdges = merged })
+		starts, ends := map[geo.Point]bool{}, map[geo.Point]bool{}
+		for _, e := range g.Edges {
+			if e.Src.ID == "source" {
+				starts[*e.Route[0]] = true
+			}
+			if e.Dst.ID == "sink" {
+				ends[*e.Route[len(e.Route)-1]] = true
+			}
+		}
+		want := 4
+		if merged {
+			want = 1
+		}
+		if len(starts) != want || len(ends) != want {
+			t.Errorf("merge=%t: %d departures and %d arrivals, want %d each", merged, len(starts), len(ends), want)
+		}
+	}
+	table := layoutOptionFixture(t, "table: {shape: sql_table; id: int; name: text}\ntable.id -> a\ntable.name -> a", func(o *ConfigurableOpts) { o.MergeEdges = true })
+	if *table.Edges[0].Route[0] == *table.Edges[1].Route[0] {
+		t.Fatal("distinct SQL columns share an attachment")
+	}
+}
+
+func TestLayeredOptionScopesAndZero(t *testing.T) {
+	opts, err := graphOptions(&d2graph.Graph{Data: map[string]any{
+		"elk-nodeNode": "0", "elk-edgeEdge": "2.5", "elk-edgeNode": 0,
+		"elk-forceNodeModelOrder": true, "elk-wrappingStrategy": "single_edge", "elk-edgeRouting": "polyline",
+		"elk-feedbackEdges": "TrUe", "elk-mergeEdges": true,
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := newRootLayoutOptions(opts)
+	nested := newContainerLayoutOptions(opts)
+	if !root.ForceNodeModelOrder || nested.ForceNodeModelOrder {
+		t.Fatal("declaration order should be forced at the root only")
+	}
+	for _, o := range []*elkOpts{root, nested} {
+		if o.NodeNode == nil || *o.NodeNode != 0 || o.EdgeNode == nil || *o.EdgeNode != 0 ||
+			o.EdgeEdge == nil || *o.EdgeEdge != 2.5 || o.WrappingStrategy != "SINGLE_EDGE" ||
+			o.EdgeRouting != "POLYLINE" || !o.FeedbackEdges || !o.MergeEdges {
+			t.Fatalf("incorrect parent options: %+v", o.LayeredOptions)
+		}
+	}
+	for key, val := range map[string]string{
+		"elk-nodeNode": "-1", "elk-edgeEdge": "NaN", "elk-edgeNode": "+Inf", "elk-edgeRouting": "SPLINES",
+		"elk-wrappingStrategy": "sideways", "elk-mergeEdges": "sometimes",
+	} {
+		if _, err := graphOptions(&d2graph.Graph{Data: map[string]any{key: val}}, nil); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("expected an error naming %s for %q, got %v", key, val, err)
+		}
+	}
+}
+
+func TestAlgorithmOptionsAtRoot(t *testing.T) {
+	defaults := DefaultOpts
+	defaults.Algorithm = "force"
+	defaults.ForceModel = "eAdEs"
+	defaults.StressDesiredEdgeLength = go2.Pointer(60.)
+	data := map[string]any{
+		"elk-algorithm": "OrG.ECLIPSE.Elk.StReSs", "elk-stressDesiredEdgeLength": 200,
+		"elk-forceRepulsion": 0, "elk-mrtreeSearchOrder": "BfS", "elk-mrtreeWeighting": "FaN",
+		"elk-radialRadius": 0, "elk-radialWedgeCriteria": "LeAf_NuMbEr", "elk-radialCompactor": "WeDgE_CoMpAcTiOn",
+	}
+	opts, err := graphOptions(&d2graph.Graph{Data: data}, &defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := newRootLayoutOptions(opts)
+	if root.Algorithm != "org.eclipse.elk.stress" || defaults.Algorithm != "force" || *defaults.StressDesiredEdgeLength != 60 {
+		t.Fatalf("unexpected algorithm or mutation of caller options: %q, %+v", root.Algorithm, defaults)
+	}
+	raw, err := json.Marshal(root.AlgorithmOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"elk.force.model": "EADES", "elk.force.repulsion": 0., "elk.stress.desiredEdgeLength": 200.,
+		"elk.mrtree.searchOrder": "BFS", "elk.mrtree.weighting": "FAN",
+		"elk.radial.radius": 0., "elk.radial.wedgeCriteria": "LEAF_NUMBER", "elk.radial.compactor": "WEDGE_COMPACTION",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("serialized algorithm options = %s, want %v", raw, want)
+	}
+	for _, settings := range []*elkOpts{newContainerLayoutOptions(opts), newRootLayoutOptions(&DefaultOpts)} {
+		if settings.AlgorithmOptions != (AlgorithmOptions{}) {
+			t.Errorf("unexpected explicit algorithm settings: %+v", settings.AlgorithmOptions)
+		}
+	}
+}
+
+func TestMrTreeEdgeClearance(t *testing.T) {
+	for _, name := range []string{"mrtree", "elk.mrtree", "org.eclipse.elk.mrtree"} {
+		opts := DefaultOpts
+		opts.Algorithm = name
+		if v := newRootLayoutOptions(&opts).EdgeNode; v != nil {
+			t.Errorf("%s root specifies %g instead of using the provider default", name, *v)
+		}
+		if v := newContainerLayoutOptions(&opts).EdgeNode; v == nil || *v != edge_node_spacing {
+			t.Errorf("nested layered graph lost its default edge clearance")
+		}
+		for _, spacing := range []float64{0, 12} {
+			opts.EdgeNode = &spacing
+			if v := newRootLayoutOptions(&opts).EdgeNode; v == nil || *v != spacing {
+				t.Errorf("%s lost explicit edge clearance %g", name, spacing)
+			}
+		}
+	}
+}
+
+func TestMrTreeRoutesAvoidShapes(t *testing.T) {
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, direction := range []string{"right", "left", "down", "up"} {
+		for _, order := range []string{"dfs", "bfs"} {
+			t.Run(direction+"/"+order, func(t *testing.T) {
+				const graph = "Root -> API -> Cache -> Store\nRoot -> Store\nRoot -> Web\n"
+				source := fmt.Sprintf("direction: %s\n%s", direction, graph)
+				g, _, err := d2compiler.Compile("", strings.NewReader(source), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+					t.Fatal(err)
+				}
+				opts := DefaultOpts
+				opts.Algorithm = "mrtree"
+				opts.MrTreeSearchOrder = order
+				if err := Layout(t.Context(), g, &opts); err != nil {
+					t.Fatal(err)
+				}
+				for _, edge := range g.Edges {
+					last := len(edge.Route) - 1
+					if last < 1 {
+						t.Fatalf("%s has no route", edge.AbsID())
+					}
+					if edge.Src.Box.Contains(edge.Route[1]) || edge.Dst.Box.Contains(edge.Route[last-1]) {
+						t.Errorf("%s approaches an attachment from inside or along its border", edge.AbsID())
+					}
+					for i := 1; i <= last; i++ {
+						segment := geo.NewSegment(edge.Route[i-1], edge.Route[i])
+						if segment.Start.Equals(segment.End) {
+							t.Errorf("%s repeats a bend at %v", edge.AbsID(), segment.Start)
+						}
+						for _, obj := range g.Objects {
+							// Allow an edge to meet the border, including subpixel rounding
+							// when tracing from ELK's coordinates onto a D2 shape.
+							if obj.Box.Intersects(*segment, -1) {
+								t.Errorf("%s segment %v to %v crosses %s at %v (%gx%g)", edge.AbsID(), segment.Start, segment.End, obj.ID, obj.TopLeft, obj.Width, obj.Height)
+							}
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAlgorithmOptionValidation(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"elk-stressDesiredEdgeLength", "0"}, {"elk-stressDesiredEdgeLength", "-1"},
+		{"elk-forceRepulsion", "NaN"}, {"elk-radialRadius", "+Inf"}, {"elk-radialRadius", "-1"},
+		{"elk-forceModel", "spring"}, {"elk-mrtreeSearchOrder", "shortest"}, {"elk-mrtreeWeighting", "constraint"},
+		{"elk-radialWedgeCriteria", "area"}, {"elk-radialCompactor", "tight"},
+	} {
+		opts := DefaultOpts
+		if err := opts.SetOption(tc.key, tc.value); err == nil || !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("%s=%s: expected a diagnostic naming the option, got %v", tc.key, tc.value, err)
+		}
+	}
+	opts := DefaultOpts
+	opts.StressDesiredEdgeLength = go2.Pointer(0.)
+	if _, err := graphOptions(&d2graph.Graph{}, &opts); err == nil || !strings.Contains(err.Error(), "elk-stressDesiredEdgeLength") {
+		t.Errorf("invalid typed stress length: %v", err)
+	}
+	for input, want := range map[string]string{
+		"RaDiAl": "radial", "SPoReOvErLaP": "sporeOverlap", "ORG.ECLIPSE.ELK.SPORECOMPACTION": "org.eclipse.elk.sporeCompaction",
+	} {
+		if got := algorithmName(input); got != want {
+			t.Errorf("algorithm %q = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestELKPaddingWithOmittedSides(t *testing.T) {
+	for _, input := range []string{"[top=12.5,left=9]", "(top=12.5; left=9)", "top=12.5,left=9", "[ToP=12.5,LeFt=9]"} {
+		opts := DefaultOpts
+		if err := opts.SetOption("elk-padding", input); err != nil || opts.Padding != "[top=12.5,left=9,bottom=0,right=0]" {
+			t.Errorf("partial padding %q: %s, %v", input, opts.Padding, err)
+		}
+	}
+}
+
+func TestShapeLayerConstraint(t *testing.T) {
+	const src = "direction: right\nstart -> read -> build -> ship\nstart -> audit\n"
+	layout := func(extra string) *d2graph.Graph {
+		return layoutOptionFixture(t, src+extra, func(*ConfigurableOpts) {})
+	}
+	before := layout("")
+	if objectByID(t, before, "audit").TopLeft.X >= objectByID(t, before, "ship").TopLeft.X {
+		t.Fatal("audit should precede ship by default")
+	}
+	for _, last := range []string{"last", "LAST", "lAsT"} {
+		after := layout("audit.elk-layer-constraint: " + last)
+		if objectByID(t, after, "audit").TopLeft.X != objectByID(t, after, "ship").TopLeft.X {
+			t.Errorf("%q should move audit into the final layer", last)
+		}
+	}
+	for _, src := range []string{"elk-layer-constraint: first", "a -> b: {elk-layer-constraint: last}", "a.elk-layer-constraint: middle"} {
+		if _, _, err := d2compiler.Compile("", strings.NewReader(src), nil); err == nil {
+			t.Errorf("expected invalid shape constraint in %q", src)
+		}
+	}
 }
 
 func layoutOptionFixture(t *testing.T, input string, configure func(*ConfigurableOpts)) *d2graph.Graph {

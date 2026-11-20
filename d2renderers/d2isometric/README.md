@@ -67,8 +67,9 @@ no visible hardware or additional steps. Every independent root casts onto its
 own local ground, so deeper nesting in one system does not lengthen another
 system's contact shadows.
 
-Components use classic isometric ink: matte faces, sharp rims and consistent
-strokes along visible structural edges and silhouettes. Shared corners use sharp
+Components use matte faces and sharp rims. By default, the crease between two
+visible faces is drawn at two-thirds of the silhouette width. An authored
+stroke width applies at full weight to both. Shared corners use sharp
 joins with bounded bevels at acute tips. Hidden edges and triangulation lines are
 omitted. Source-contour bodies retain relief within their original footprint.
 Curved wall normals are smoothed while sharp and concave corners stay distinct.
@@ -82,8 +83,9 @@ D2 outlines, border colors, widths, dashes, radii, multiple copies, double borde
 patterns, opacity and authored shadows are retained. The existing `style.3d`
 property continues to affect shape depth. Default surfaces use a muted palette;
 authored colors and theme overrides remain authoritative. Solid components and
-outer platforms cast restrained contact shadows, with authored shadows
-strengthening that treatment. Framing includes projected ground shadows.
+outer platforms cast ground shadows that are deepest near the foot and become
+softer and lighter with distance. An authored shadow strengthens the cast.
+Framing includes projected ground shadows.
 
 Labels and icons lie flat on their physical surfaces. Their source dimensions,
 anchors, line breaks and whitespace are retained. Outside captions clear visible

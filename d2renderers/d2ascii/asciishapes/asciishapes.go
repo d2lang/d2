@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/d2lang/d2/d2renderers/d2ascii/asciicanvas"
 	"github.com/d2lang/d2/d2renderers/d2ascii/charset"
@@ -80,8 +81,8 @@ func DrawShapeLabel(ctx *Context, x1, y1, x2, y2, width, height int, label, labe
 	lines := strings.Split(label, "\n")
 	maxLineLen := 0
 	for _, line := range lines {
-		if len(line) > maxLineLen {
-			maxLineLen = len(line)
+		if utf8.RuneCountInString(line) > maxLineLen {
+			maxLineLen = utf8.RuneCountInString(line)
 		}
 	}
 
@@ -97,11 +98,11 @@ func AdjustWidthForLabel(ctx *Context, x, y, w, h float64, width int, label stri
 	}
 
 	originalWidth := width
-	availableSpace := width - len(label)
-	log.Debug(ctx.Ctx, "width adjustment for label", slog.String("label", label), slog.Int("chars", len(label)), slog.Int("width", width), slog.Int("available", availableSpace))
+	availableSpace := width - utf8.RuneCountInString(label)
+	log.Debug(ctx.Ctx, "width adjustment for label", slog.String("label", label), slog.Int("chars", utf8.RuneCountInString(label)), slog.Int("width", width), slog.Int("available", availableSpace))
 
 	if availableSpace < MinLabelPadding {
-		width = len(label) + MinLabelPadding
+		width = utf8.RuneCountInString(label) + MinLabelPadding
 		log.Debug(ctx.Ctx, "insufficient space, expanding width", slog.Int("original", originalWidth), slog.Int("new", width), slog.Int("minPadding", MinLabelPadding))
 		return width
 	}

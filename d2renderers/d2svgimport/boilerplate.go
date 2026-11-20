@@ -39,9 +39,13 @@ var sodipodiMetadataAttributes = map[string]map[string]struct{}{
 	"path": {"nodetypes": {}},
 }
 
+func isDescription(name string) bool {
+	return name == "title" || name == "desc" || name == "dc:title"
+}
+
 func isNonRenderingElement(name string) bool {
 	switch name {
-	case "title", "metadata", "rdf:RDF", "cc:Work", "dc:format", "dc:type", "sodipodi:namedview":
+	case "title", "desc", "dc:title", "metadata", "rdf:RDF", "cc:Work", "dc:format", "dc:type", "sodipodi:namedview":
 		return true
 	default:
 		return false
@@ -86,10 +90,10 @@ func (i *svgImporter) validateNonRenderingTree(root *svgElement) error {
 					return i.errorf("element <rdf:RDF> has unsupported child <%s>", displayXMLName(element.name))
 				}
 			case "cc:Work":
-				if element.name != "dc:format" && element.name != "dc:type" {
+				if element.name != "dc:format" && element.name != "dc:type" && element.name != "dc:title" {
 					return i.errorf("element <cc:Work> has unsupported child <%s>", displayXMLName(element.name))
 				}
-			case "title", "dc:format", "dc:type", "sodipodi:namedview":
+			case "title", "desc", "dc:title", "dc:format", "dc:type", "sodipodi:namedview":
 				return i.errorf("non-rendering element <%s> cannot contain child elements", parent.name)
 			}
 		}
@@ -107,7 +111,7 @@ func (i *svgImporter) validateNonRenderingTree(root *svgElement) error {
 			if parent == nil || parent.name != "rdf:RDF" {
 				return i.errorf("element <cc:Work> is only supported inside <rdf:RDF>")
 			}
-		case "dc:format", "dc:type":
+		case "dc:format", "dc:type", "dc:title":
 			if parent == nil || parent.name != "cc:Work" {
 				return i.errorf("element <%s> is only supported inside <cc:Work>", element.name)
 			}
@@ -151,20 +155,13 @@ func (i *svgImporter) validateMetadataCardinality(element *svgElement) error {
 			return i.errorf("element <rdf:RDF> must contain exactly one <cc:Work>")
 		}
 	case "cc:Work":
-		if len(element.children) != 2 {
-			return i.errorf("element <cc:Work> must contain exactly one <dc:format> and one <dc:type>")
-		}
-		formats, types := 0, 0
+		// Dublin Core properties are optional in editor-generated metadata.
+		seen := make(map[string]bool, 3)
 		for _, child := range element.children {
-			switch child.name {
-			case "dc:format":
-				formats++
-			case "dc:type":
-				types++
+			if seen[child.name] {
+				return i.errorf("element <cc:Work> contains duplicate <%s>", child.name)
 			}
-		}
-		if formats != 1 || types != 1 {
-			return i.errorf("element <cc:Work> must contain exactly one <dc:format> and one <dc:type>")
+			seen[child.name] = true
 		}
 	}
 	return nil
@@ -241,6 +238,18 @@ func (i *svgImporter) ignoredNamespacedAttribute(element string, attribute xml.A
 }
 
 func (i *svgImporter) validateIgnoredUnnamespacedAttribute(element, name, value string) (bool, error) {
+	// Text layout and solid-color paint-server properties do not apply to
+	// geometry. Editors often serialize them on paths along with their fill.
+	if supportedClipGeometry(element) {
+		switch name {
+		case "text-indent", "text-align", "text-decoration-line", "text-decoration-style", "text-decoration-color",
+			"text-transform", "block-progression", "white-space", "solid-color", "solid-opacity":
+			return true, nil
+		}
+		if element == "path" && name == "href" && strings.HasPrefix(value, "#") {
+			return i.validLocalPaintID(value[1:])
+		}
+	}
 	if strings.HasPrefix(name, "data-") {
 		if len(name) == len("data-") {
 			return false, i.errorf("element <%s> has invalid data-* metadata attribute", element)
@@ -287,7 +296,7 @@ func (i *svgImporter) validateRootBoilerplate(element *svgElement) error {
 		if err != nil {
 			return err
 		}
-		if version != "1.0" && version != "1.1" {
+		if version != "1.0" && version != "1.1" && version != "1.2" {
 			return i.errorf("root <svg> has unsupported version")
 		}
 	}
@@ -299,14 +308,6 @@ func (i *svgImporter) validateRootBoilerplate(element *svgElement) error {
 			}
 		}
 	}
-	if raw, ok := element.attrs["enable-background"]; ok {
-		if err := validateEnableBackground(i.ctx, raw); err != nil {
-			if contextErr := i.ctx.Err(); contextErr != nil {
-				return contextErr
-			}
-			return i.errorf("root <svg> has invalid enable-background: %v", err)
-		}
-	}
 	return nil
 }
 
@@ -314,6 +315,9 @@ func validateEnableBackground(ctx context.Context, input string) error {
 	trimmed, err := trimSVGSpace(ctx, input)
 	if err != nil {
 		return err
+	}
+	if equalASCIIEqualFold(trimmed, "new") || equalASCIIEqualFold(trimmed, "accumulate") || equalASCIIEqualFold(trimmed, "inherit") {
+		return nil
 	}
 	keywordEnd := 0
 	for keywordEnd < len(trimmed) && !isSVGListSpace(trimmed[keywordEnd]) {
