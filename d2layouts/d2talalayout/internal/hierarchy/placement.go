@@ -456,7 +456,7 @@ func placeDescendants(g *layoutgraph.Graph, root *placementNode, tl geo.Point) {
 func minimumDistanceToNextLevel(levelNodes []*placementNode, isHorizontal bool) float64 {
 	var scratch crossingScratch
 	segments := scratch.crossLevelSegments(levelNodes, false, true)
-	crossings := countCrossings(segments)
+	crossings := scratch.countCrossings(segments)
 	crossingsDistance := float64(crossings) * crossingSpacing
 
 	maxLabelSize := 0.

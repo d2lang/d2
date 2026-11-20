@@ -138,17 +138,22 @@ func buildOVGFromGraphWithGuard(g *layoutgraph.Graph, nearbyNodes []*layoutgraph
 	orthogonalNodes := make([]*layoutgraph.Node, 0, orthogonalNodeCapacity)
 	orthogonalNodes = append(orthogonalNodes, nearbyNodes...)
 
+	hierarchies, err := routingHierarchies(g, guard)
+	if err != nil {
+		return nil, err
+	}
 	var hierarchyOVGs []*OVG
 	seenHierarchies := make(map[*layoutgraph.Hierarchy]struct{})
 	for _, n := range g.Nodes {
 		if err := guard.step(); err != nil {
 			return nil, err
 		}
-		if n.Hierarchy == nil {
+		group := hierarchies[n]
+		if group == nil {
 			orthogonalNodes = append(orthogonalNodes, n)
-		} else if _, seen := seenHierarchies[n.Hierarchy]; !seen {
-			seenHierarchies[n.Hierarchy] = struct{}{}
-			hierarchyOVG, err := newOVGForHierarchy(g, n.Hierarchy, guard)
+		} else if _, seen := seenHierarchies[group]; !seen {
+			seenHierarchies[group] = struct{}{}
+			hierarchyOVG, err := newOVGForHierarchy(g, group, guard)
 			if err != nil {
 				return nil, err
 			}
@@ -180,7 +185,7 @@ func buildOVGFromGraphWithGuard(g *layoutgraph.Graph, nearbyNodes []*layoutgraph
 		}
 	}
 
-	if err := ovg.addEdgesNodes(g, guard); err != nil {
+	if err := ovg.addEdgesNodes(g, hierarchies, guard); err != nil {
 		return nil, err
 	}
 	if err := ovg.addTreeNodes(g, guard); err != nil {
@@ -430,7 +435,7 @@ func (ovg *OVG) addIntersections(g *layoutgraph.Graph, xs, ys map[float64]struct
 }
 
 // For each edge in tala.Edges, add nodes on the edge perimeter (bounding box) and half-way through the bounding box
-func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
+func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, hierarchies map[*layoutgraph.Node]*layoutgraph.Hierarchy, guard *ovgBuildGuard) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
@@ -450,11 +455,8 @@ func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error 
 		if edge.IsLoop() {
 			continue
 		}
-		if edge.From.Hierarchy != nil && edge.To.Hierarchy != nil && edge.To.Hierarchy == edge.From.Hierarchy {
-			// if the edge is between two nodes in the same hierarchy, it was already handled
-			// by the hierarchical OVG routine
-			// though, there can be edges between nodes in two different hierarchies
-			// in that case, these points must be created
+		if group := hierarchies[edge.From]; group != nil && group == hierarchies[edge.To] {
+			// The hierarchy already supplies lanes between these endpoints.
 			continue
 		}
 		fillPoints, err := ovg.perimeterPoints(edge.From, edge.To, guard)

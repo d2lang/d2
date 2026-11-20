@@ -12,7 +12,8 @@ import (
 const crossingComparisonPrecision = 0.0001
 
 type crossingScratch struct {
-	segments []layoutgraph.CrossingSegment
+	segments   []layoutgraph.CrossingSegment
+	rankCounts [][2]int
 }
 
 // The routines below are part of the implementation of the `ordering` procedure
@@ -65,7 +66,7 @@ func minimizeCrossings(nodes []*placementNode, byLevel map[int][]*placementNode,
 	sortLevelNodesByAdacencyPosition(nodes, isTopDown)
 	computeLevelRanks(byLevel[nodes[0].level])
 	segments := scratch.crossLevelSegments(nodes, true, true)
-	crossings := countCrossings(segments)
+	crossings := scratch.countCrossings(segments)
 	length := addLengths(segments)
 	for j := 0; j < len(nodes); j++ {
 		newCrossings, newLength, swapIndex := bestIndexBySwappingNeighbors(nodes, j, byLevel, scratch)
@@ -102,7 +103,7 @@ func bestIndexBySwappingNeighbors(levelNodes []*placementNode, nodeIndex int, by
 		levelNodes[nodeIndex], levelNodes[j] = levelNodes[j], levelNodes[nodeIndex]
 		computeLevelRanks(byLevel[levelNodes[nodeIndex].level])
 		segments := scratch.crossLevelSegments(levelNodes, true, true)
-		newCrossings := countCrossings(segments)
+		newCrossings := scratch.countCrossings(segments)
 		newLength := addLengths(segments)
 		if newCrossings < bestCrossing {
 			bestCrossing = newCrossings
@@ -205,8 +206,52 @@ func addLengths(segments []layoutgraph.CrossingSegment) float64 {
 	return length
 }
 
-func countCrossings(segments []layoutgraph.CrossingSegment) int64 {
-	return layoutgraph.CountSegmentCrossings(segments)
+// crossLevelSegments sorts by start rank, then end rank. For segments going
+// to the same adjacent level, a crossing is a strict inversion of end ranks.
+// Equal starts arrive in end-rank order, and equal ends do not cross.
+func (scratch *crossingScratch) countCrossings(segments []layoutgraph.CrossingSegment) int64 {
+	if len(segments) < 32 {
+		return layoutgraph.CountSegmentCrossings(segments)
+	}
+	level := segments[0].Start.Y
+	maxRank := 0
+	for _, segment := range segments {
+		rank := int(segment.End.X)
+		if segment.Start.Y != level || math.Abs(segment.End.Y-level) != 1 ||
+			rank < 0 || float64(rank) != segment.End.X || rank/len(segments) > 4 {
+			// Keep the geometric scorer for nonadjacent levels or sparse ranks.
+			return layoutgraph.CountSegmentCrossings(segments)
+		}
+		maxRank = max(maxRank, rank)
+	}
+	size := maxRank + 2
+	if cap(scratch.rankCounts) < size {
+		scratch.rankCounts = make([][2]int, size)
+	} else {
+		scratch.rankCounts = scratch.rankCounts[:size]
+		clear(scratch.rankCounts)
+	}
+
+	// A Fenwick tree for each side of the level counts previously seen ranks.
+	var crossings int64
+	var seen [2]int
+	for _, segment := range segments {
+		side := 0
+		if segment.End.Y > level {
+			side = 1
+		}
+		index := int(segment.End.X) + 1
+		greater := seen[side]
+		for i := index; i > 0; i -= i & -i {
+			greater -= scratch.rankCounts[i][side]
+		}
+		crossings += int64(greater)
+		for i := index; i < size; i += i & -i {
+			scratch.rankCounts[i][side]++
+		}
+		seen[side]++
+	}
+	return crossings
 }
 
 func sortLevelNodesByAdacencyPosition(nodes []*placementNode, useConnectionsAbove bool) {
