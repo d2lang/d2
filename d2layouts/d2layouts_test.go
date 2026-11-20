@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/d2lang/d2/d2compiler"
@@ -351,5 +354,72 @@ note: {near: top-left; c -> d}`)
 				t.Fatalf("nested layout changed parent data: %#v", g.Data)
 			}
 		})
+	}
+}
+
+// shapesRecorder keeps the "shapes" attribute of every record, unformatted.
+type shapesRecorder struct {
+	mu     sync.Mutex
+	shapes []slog.Value
+}
+
+func (h *shapesRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (h *shapesRecorder) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h *shapesRecorder) WithGroup(string) slog.Handler            { return h }
+func (h *shapesRecorder) Handle(_ context.Context, record slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == "shapes" {
+			h.shapes = append(h.shapes, attr.Value)
+		}
+		return true
+	})
+	return nil
+}
+
+func TestLayoutNestedLogsShapesLazily(t *testing.T) {
+	t.Parallel()
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A grid, a sequence diagram and ordinary shapes reach every log call.
+	g := compileLayoutTestGraph(t, "a -> b\ngrid: {\n  grid-columns: 1\n  c -> d\n}\nsequence: {\n  shape: sequence_diagram\n  e -> f\n}\n")
+	if err := g.ApplyTheme(d2themescatalog.NeutralDefault.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &shapesRecorder{}
+	ctx := log.With(context.Background(), slog.New(recorder))
+	if err := LayoutNested(ctx, g, GraphInfo{}, d2dagrelayout.DefaultLayout, DefaultRouter); err != nil {
+		t.Fatal(err)
+	}
+	// Every graph is handed to the handler unformatted, so listing its objects
+	// costs nothing unless a handler asks for the text.
+	if len(recorder.shapes) < 6 {
+		t.Fatalf("LayoutNested logged the shapes of %d graphs, want at least 6", len(recorder.shapes))
+	}
+	for _, value := range recorder.shapes {
+		if value.Kind() != slog.KindLogValuer {
+			t.Fatalf("shapes were formatted before a handler asked for them: %v", value.Kind())
+		}
+	}
+
+	// The text is what was logged eagerly before, for both kinds of handler.
+	want := g.PrintString()
+	attr := slog.Any("shapes", graphShapes{g})
+	// log.PrettyHandler formats attribute values with fmt.
+	if got := fmt.Sprintf("%v", attr.Value); got != want {
+		t.Fatalf("fmt formatted %q, want %q", got, want)
+	}
+	// slog's own handlers resolve them.
+	var out strings.Builder
+	logger := slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	log.Debug(log.With(context.Background(), logger), "layout", attr)
+	if !strings.Contains(out.String(), "shapes="+strconv.Quote(want)) {
+		t.Fatalf("text handler wrote %q, want shapes=%q", out.String(), want)
 	}
 }
