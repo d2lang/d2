@@ -98,7 +98,9 @@ type CompileOptions struct {
 	// edge globs, including lazy replays. Zero uses DefaultMaxEdgeExpansionWork.
 	MaxEdgeExpansionWork int64
 	// FS resolves imports. Nil disables imports. The lib/localfile package
-	// provides rooted and explicit unrestricted host-filesystem policies.
+	// provides rooted and explicit unrestricted host-filesystem policies. A filesystem
+	// may implement ResolveImportPath(parent, name string) string to use its own
+	// path syntax. Other filesystems receive slash-separated io/fs paths.
 	FS fs.FS
 }
 

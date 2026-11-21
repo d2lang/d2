@@ -43,6 +43,8 @@
 
 #### Bugfixes ⛑️
 
+- Windows: resolve nested imports relative to the importing diagram, including on UNC shares. [#2642](https://github.com/d2lang/d2/issues/2642)
+
 - PNG, GIF, PDF and PPTX exports now render SVG icons that use default gradients, masks, Gaussian blur and common editor metadata. [#2937](https://github.com/d2lang/d2/issues/2937)
 - renders: honor the selected theme and its canvas color in isometric exports.
 
