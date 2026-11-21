@@ -60,14 +60,17 @@ func BenchmarkSVGMetadata(b *testing.B) {
 		})
 	}
 	for _, tc := range []struct {
-		name, shapeType      string
-		threeD, lateFallback bool
+		name, shapeType string
+		threeDEvery     int // Zero leaves every shape flat.
+		lateFallback    bool
 	}{
-		{"Rectangles", d2target.ShapeRectangle, false, false},
-		{"Ovals", d2target.ShapeOval, false, false},
-		{"RectanglesLateFallback", d2target.ShapeRectangle, false, true},
-		{"Opaque3D", d2target.ShapeRectangle, true, false},
-		{"Opaque3DLateFallback", d2target.ShapeRectangle, true, true},
+		{"Rectangles", d2target.ShapeRectangle, 0, false},
+		{"Ovals", d2target.ShapeOval, 0, false},
+		{"RectanglesLateFallback", d2target.ShapeRectangle, 0, true},
+		{"Opaque3D", d2target.ShapeRectangle, 1, false},
+		{"Opaque3DLateFallback", d2target.ShapeRectangle, 1, true},
+		{"Alternating3D", d2target.ShapeRectangle, 2, false},
+		{"Sparse3D", d2target.ShapeRectangle, 8, false},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			d := d2target.NewDiagram()
@@ -75,7 +78,7 @@ func BenchmarkSVGMetadata(b *testing.B) {
 				s := d2target.BaseShape()
 				s.ID = "node" + strconv.Itoa(i)
 				s.Type = tc.shapeType
-				s.ThreeDee = tc.threeD
+				s.ThreeDee = tc.threeDEvery > 0 && i%tc.threeDEvery == 0
 				s.Pos = d2target.Point{X: (i % 16) * 120, Y: (i / 16) * 80}
 				s.Width, s.Height = 100, 60
 				s.Label, s.LabelPosition = s.ID, "INSIDE_MIDDLE_CENTER"

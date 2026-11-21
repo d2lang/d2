@@ -1,6 +1,7 @@
 package d2svg
 
 import (
+	"bufio"
 	"bytes"
 	"slices"
 	"strings"
@@ -15,6 +16,8 @@ import (
 type svgUsage struct {
 	fonts   [len(embeddedFontClasses)]strings.Builder
 	classes map[string]bool
+	// Reuse the decoder buffer when typed objects separate raw fragments.
+	xmlBuffer bufio.Reader
 }
 
 type glyphRun struct {
@@ -146,7 +149,7 @@ func (w *objectWriter) flushRaw() {
 	}
 	source := bytes.NewReader(w.buf.Bytes()[w.rawStart:w.rawEnd])
 	w.rawStart = w.rawEnd
-	fonts, classes, ok := scanFontCorporaAndClasses(source)
+	fonts, classes, ok := scanFontCorporaAndClasses(source, &w.usage.xmlBuffer)
 	if !ok {
 		// Unknown CSS or dynamic content also makes the whole-board font
 		// scan fail. Keep legacy embedding without parsing those bytes twice.

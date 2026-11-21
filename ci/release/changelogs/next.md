@@ -8,7 +8,7 @@
 
 #### Improvements 🧹
 
-- Ordinary labeled diagrams render faster and allocate fewer bytes because the SVG writer records fonts and theme colors as it draws.
+- Ordinary labeled diagrams render faster and allocate fewer bytes because the SVG writer records fonts and theme colors as it draws. [#2995](https://github.com/d2lang/d2/pull/2995)
 
 - Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer.
 

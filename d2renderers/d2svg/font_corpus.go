@@ -1,6 +1,7 @@
 package d2svg
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/xml"
 	"io"
@@ -77,7 +78,7 @@ func collectFontCorpora(source string) (fontCorpora, bool) {
 // scan. A nonnil class map means the complete fragment passed the existing
 // theme parser's safety checks and can avoid a second XML pass.
 func collectFontCorporaAndClasses(source string) (fontCorpora, map[string]bool, bool) {
-	fonts, classes, ok := scanFontCorporaAndClasses(strings.NewReader(source))
+	fonts, classes, ok := scanFontCorporaAndClasses(strings.NewReader(source), new(bufio.Reader))
 	if !ok || !regularFaceTriggered(fonts, source) {
 		return nil, nil, false
 	}
@@ -86,14 +87,15 @@ func collectFontCorporaAndClasses(source string) (fontCorpora, map[string]bool, 
 
 // scanFontCorporaAndClasses reads one or more complete sibling elements.
 // The legacy regular-face trigger must be checked against the entire board.
-func scanFontCorporaAndClasses(source io.Reader) (fontCorpora, map[string]bool, bool) {
+func scanFontCorporaAndClasses(source io.Reader, buf *bufio.Reader) (fontCorpora, map[string]bool, bool) {
 	if BaseStylesheet != fontCorpusBaseStylesheet {
 		return nil, nil, false
 	}
-	decoder := xml.NewDecoder(io.MultiReader(
+	buf.Reset(io.MultiReader(
 		strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`),
 		source, strings.NewReader(`</svg>`),
 	))
+	decoder := xml.NewDecoder(buf)
 	type frame struct {
 		font   int
 		text   bool
