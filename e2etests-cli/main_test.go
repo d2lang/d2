@@ -1132,6 +1132,28 @@ bank.Equities.app14522 -> bank.Fixed Income.app14500: security reference
 			},
 		},
 		{
+			name: "import_from_another_directory",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				source := "tower -> receiver"
+				entry := filepath.Join("gallery", "radio.d2")
+				writeFile(t, dir, entry, "...@tideglass")
+				writeFile(t, dir, filepath.Join("gallery", "tideglass.d2"), source)
+				writeFile(t, dir, "tideglass.d2", "unrelated")
+				writeFile(t, dir, "reference.d2", source)
+
+				err := runTestMainPersist(t, ctx, dir, env, "--isometric", "--scale=.2", "reference.d2", "reference.gif")
+				assert.Success(t, err)
+				want := readFile(t, dir, "reference.gif")
+				for _, input := range []string{entry, filepath.Join(dir, entry)} {
+					err := runTestMainPersist(t, ctx, dir, env, "--isometric", "--scale=.2", input, "radio.gif")
+					assert.Success(t, err)
+					if !bytes.Equal(readFile(t, dir, "radio.gif"), want) {
+						t.Fatalf("input %q rendered a different GIF from its sibling diagram", input)
+					}
+				}
+			},
+		},
+		{
 			name: "import_vars",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				writeFile(t, dir, "hello-world.d2", `vars: { d2-config: @config }; x -> y`)

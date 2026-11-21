@@ -771,6 +771,10 @@ func rasterizeShadow(w *rasterWork, ts []Triangle, camera rasterCamera, minY, ma
 		if t.OpacityGroup != nil {
 			opacity = uint8(math.Round(float64(opacity) * t.OpacityGroup.Opacity))
 		}
+		var tex shadowAlphaTexture
+		if t.ShadowFillAlpha == nil && t.Material != nil {
+			tex = shadowTexture(t.Material.Texture)
+		}
 		for y := y0; y < y1; y++ {
 			if y%32 == 0 {
 				if err := w.ctx.Err(); err != nil {
@@ -794,21 +798,22 @@ func rasterizeShadow(w *rasterWork, ts []Triangle, camera rasterCamera, minY, ma
 					}
 				}
 				z := float32((u*p[0].z + v*p[1].z + s*p[2].z) / a)
+				at := y*camera.width + x
+				if z <= shadow.depth[at] {
+					continue
+				}
 				sampleOpacity := opacity
-				if t.ShadowFillAlpha == nil && t.Material != nil && t.Material.Texture != nil {
+				if tex.pix != nil {
 					tx := (u*vertices[0].U + v*vertices[1].U + s*vertices[2].U) / a
 					ty := (u*vertices[0].V + v*vertices[1].V + s*vertices[2].V) / a
-					_, _, _, alpha := rasterTexture(t.Material.Texture, tx, ty)
+					alpha := tex.sample(tx, ty)
 					sampleOpacity = uint8(math.Round(float64(opacity) * alpha))
 					if sampleOpacity == 0 {
 						continue
 					}
 				}
-				at := y*camera.width + x
-				if z > shadow.depth[at] {
-					shadow.depth[at] = z
-					shadow.opacity[at] = sampleOpacity
-				}
+				shadow.depth[at] = z
+				shadow.opacity[at] = sampleOpacity
 			}
 		}
 	}
@@ -1092,6 +1097,45 @@ func rasterMultiplyOver(dst []uint8, red, green, blue, alpha float64) {
 
 func rasterWeighted(a, b, c Vec, x, y, z float64) Vec {
 	return Vec{X: a.X*x + b.X*y + c.X*z, Y: a.Y*x + b.Y*y + c.Y*z, Z: a.Z*x + b.Z*y + c.Z*z}
+}
+
+// A shadow map needs only the alpha channel of each validated raster texture.
+// pix starts at the first alpha byte, including for strided subimages.
+type shadowAlphaTexture struct {
+	pix          []uint8
+	size         image.Point
+	stride, step int
+}
+
+func shadowTexture(texture image.Image) shadowAlphaTexture {
+	switch im := texture.(type) {
+	case *image.RGBA:
+		return shadowAlphaTexture{pix: im.Pix[3:], size: im.Rect.Size(), stride: im.Stride, step: 4}
+	case *image.NRGBA:
+		return shadowAlphaTexture{pix: im.Pix[3:], size: im.Rect.Size(), stride: im.Stride, step: 4}
+	case *image.Alpha:
+		return shadowAlphaTexture{pix: im.Pix, size: im.Rect.Size(), stride: im.Stride, step: 1}
+	}
+	return shadowAlphaTexture{}
+}
+
+func (t shadowAlphaTexture) sample(u, v float64) float64 {
+	x := rasterClamp(u)*float64(t.size.X) - .5
+	y := rasterClamp(v)*float64(t.size.Y) - .5
+	x0, y0 := int(math.Floor(x)), int(math.Floor(y))
+	fx, fy := x-float64(x0), y-float64(y0)
+	left := max(0, min(t.size.X-1, x0)) * t.step
+	right := max(0, min(t.size.X-1, x0+1)) * t.step
+	top := max(0, min(t.size.Y-1, y0)) * t.stride
+	bottom := max(0, min(t.size.Y-1, y0+1)) * t.stride
+	a := float64(t.pix[top+left]) / 255 * ((1 - fx) * (1 - fy))
+	a += float64(t.pix[top+right]) / 255 * (fx * (1 - fy))
+	a += float64(t.pix[bottom+left]) / 255 * ((1 - fx) * fy)
+	a += float64(t.pix[bottom+right]) / 255 * (fx * fy)
+	if a <= 1e-10 {
+		return 0
+	}
+	return a
 }
 
 func rasterTexture(texture image.Image, u, v float64) (float64, float64, float64, float64) {

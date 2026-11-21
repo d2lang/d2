@@ -83,6 +83,14 @@ func Unrestricted() Policy {
 	return Policy{mode: modeUnrestricted}
 }
 
+// ResolveImportPath joins D2 imports using host filesystem path semantics.
+func (Policy) ResolveImportPath(parent, name string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+	return filepath.Join(filepath.Dir(parent), filepath.FromSlash(name))
+}
+
 // RootPath returns the absolute configured root and true for a rooted policy.
 // It returns an empty string and false for denied and unrestricted policies.
 func (p Policy) RootPath() (string, bool) {

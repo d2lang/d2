@@ -64,6 +64,18 @@ jobs:
         with:
           name: d2chaos
           path: ./d2chaos/out
+  windows-imports:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ./go.mod
+      - name: Test native and virtual import paths
+        run: go test -v -run '^(TestImportRelativeToNativeInputPath|TestImportVirtualDirectoryWithBackslash|TestResolveImportPathOnWindows)$' ./d2ir ./lib/localfile
+      - name: Render a diagram from outside its directory
+        run: go test -v -run '^TestCLI_E2E$/^import_from_another_directory$' ./e2etests-cli
   signed:
     runs-on: ubuntu-latest
     timeout-minutes: 5

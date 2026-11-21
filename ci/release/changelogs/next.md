@@ -8,6 +8,8 @@
 
 #### Improvements 🧹
 
+- Native isometric GIFs with animated shapes render faster by sampling only texture opacity for shadows.
+
 - TALA routes larger cross-container diagrams within its existing search budget. It preserves the original hierarchy lanes on compact diagrams and indexes previously routed segments. [#2891](https://github.com/d2lang/d2/issues/2891)
 
 - isometric: draw interior creases with a finer line and soften ground shadows away from the object's foot.
@@ -42,6 +44,8 @@
     outside the selected tree. [#2908](https://github.com/d2lang/d2/pull/2908)
 
 #### Bugfixes ⛑️
+
+- Windows: resolve nested imports relative to the importing diagram, including on UNC shares. [#2642](https://github.com/d2lang/d2/issues/2642)
 
 - PNG, GIF, PDF and PPTX exports now render SVG icons that use default gradients, masks, Gaussian blur and common editor metadata. [#2937](https://github.com/d2lang/d2/issues/2937)
 - renders: honor the selected theme and its canvas color in isometric exports.
