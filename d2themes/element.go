@@ -136,6 +136,12 @@ func (el *ThemableElement) SetClipPathID(id svg.ID) {
 }
 
 func (el *ThemableElement) Render() string {
+	return el.RenderWithClasses(nil)
+}
+
+// RenderWithClasses also reports the classes generated for this element and
+// its fill-pattern overlay. It does not inspect trusted inner SVG.
+func (el *ThemableElement) RenderWithClasses(visit func(string)) string {
 	attributes := make([]svg.Attribute, 0, 24+len(el.extraAttributes))
 	// href has to be at the top for the img bundler to detect <image> tags correctly
 	if len(el.Href) > 0 {
@@ -257,6 +263,9 @@ func (el *ThemableElement) Render() string {
 	}
 
 	if len(class) > 0 {
+		if visit != nil {
+			visit(class)
+		}
 		attributes = append(attributes, svg.Attr("class", class))
 	}
 	if len(style) > 0 {
@@ -299,7 +308,7 @@ func (el *ThemableElement) Render() string {
 		patternEl.Color = ""
 		patternEl.ClassName = fmt.Sprintf("%s-overlay", fillPattern)
 		patternEl.FillPattern = ""
-		out += patternEl.Render()
+		out += patternEl.RenderWithClasses(visit)
 	}
 	return out
 }

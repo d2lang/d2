@@ -2,7 +2,6 @@ package d2svg
 
 import (
 	"fmt"
-	"io"
 	"math"
 
 	"github.com/d2lang/d2/d2target"
@@ -12,7 +11,7 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-func classHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text string, textWidth, textHeight, fontSize float64, inlineTheme *d2themes.Theme) string {
+func classHeader(writer *objectWriter, diagramHash string, shape d2target.Shape, box *geo.Box, text string, textWidth, textHeight, fontSize float64, inlineTheme *d2themes.Theme) {
 	rectEl := d2themes.NewThemableElement("rect", inlineTheme)
 	rectEl.X, rectEl.Y = box.TopLeft.X, box.TopLeft.Y
 	rectEl.Width, rectEl.Height = box.Width, box.Height
@@ -22,7 +21,7 @@ func classHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text st
 	if shape.BorderRadius != 0 {
 		rectEl.SetClipPathID(borderRadiusClipPathID(diagramHash, shape.ID))
 	}
-	str := rectEl.Render()
+	writer.element(rectEl)
 
 	if text != "" {
 		tl := label.InsideMiddleCenter.GetPointOnBox(
@@ -40,13 +39,11 @@ func classHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text st
 		textEl.Style = fmt.Sprintf(`text-anchor:%s;font-size:%vpx;`,
 			"middle", 4+fontSize,
 		)
-		textEl.SetInnerSVG(svg.TrustedFragment(RenderText(text, textEl.X, textHeight)))
-		str += textEl.Render()
+		writer.label(textEl, text, textHeight)
 	}
-	return str
 }
 
-func classRow(shape d2target.Shape, box *geo.Box, prefix, nameText, typeText string, fontSize float64, underline bool, inlineTheme *d2themes.Theme) string {
+func classRow(writer *objectWriter, shape d2target.Shape, box *geo.Box, prefix, nameText, typeText string, fontSize float64, underline bool, inlineTheme *d2themes.Theme) {
 	prefixTL := label.InsideMiddleLeft.GetPointOnBox(
 		box,
 		d2target.PrefixPadding,
@@ -66,8 +63,7 @@ func classRow(shape d2target.Shape, box *geo.Box, prefix, nameText, typeText str
 	textEl.Fill = shape.PrimaryAccentColor
 	textEl.ClassName = "text-mono"
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "start", fontSize)
-	textEl.SetText(prefix)
-	out := textEl.Render()
+	writer.text(textEl, prefix)
 
 	textEl.X = prefixTL.X + d2target.PrefixWidth
 	textEl.Fill = shape.Fill
@@ -75,21 +71,18 @@ func classRow(shape d2target.Shape, box *geo.Box, prefix, nameText, typeText str
 	if underline {
 		textEl.ClassName += " text-underline"
 	}
-	textEl.SetText(nameText)
-	out += textEl.Render()
+	writer.text(textEl, nameText)
 
 	textEl.X = typeTR.X
 	textEl.Y = typeTR.Y + fontSize*3/4
 	textEl.Fill = shape.SecondaryAccentColor
 	textEl.ClassName = "text-mono"
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "end", fontSize)
-	textEl.SetText(typeText)
-	out += textEl.Render()
+	writer.text(textEl, typeText)
 
-	return out
 }
 
-func drawClass(writer io.Writer, diagramHash string, targetShape d2target.Shape, inlineTheme *d2themes.Theme) {
+func drawClass(writer *objectWriter, diagramHash string, targetShape d2target.Shape, inlineTheme *d2themes.Theme) {
 	el := d2themes.NewThemableElement("rect", inlineTheme)
 	el.X = float64(targetShape.Pos.X)
 	el.Y = float64(targetShape.Pos.Y)
@@ -102,7 +95,7 @@ func drawClass(writer io.Writer, diagramHash string, targetShape d2target.Shape,
 		el.Rx = float64(targetShape.BorderRadius)
 		el.Ry = float64(targetShape.BorderRadius)
 	}
-	fmt.Fprint(writer, el.Render())
+	writer.element(el)
 
 	box := geo.NewBox(
 		geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)),
@@ -112,16 +105,12 @@ func drawClass(writer io.Writer, diagramHash string, targetShape d2target.Shape,
 	rowHeight := box.Height / float64(2+len(targetShape.Class.Fields)+len(targetShape.Class.Methods))
 	headerBox := geo.NewBox(box.TopLeft, box.Width, math.Max(2*rowHeight, float64(targetShape.LabelHeight)+2*label.PADDING))
 
-	fmt.Fprint(writer,
-		classHeader(diagramHash, targetShape, headerBox, targetShape.Label, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight), float64(targetShape.FontSize), inlineTheme),
-	)
+	classHeader(writer, diagramHash, targetShape, headerBox, targetShape.Label, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight), float64(targetShape.FontSize), inlineTheme)
 
 	rowBox := geo.NewBox(box.TopLeft.Copy(), box.Width, rowHeight)
 	rowBox.TopLeft.Y += headerBox.Height
 	for _, f := range targetShape.Fields {
-		fmt.Fprint(writer,
-			classRow(targetShape, rowBox, f.VisibilityToken(), f.Name, f.Type, float64(targetShape.FontSize), f.Underline, inlineTheme),
-		)
+		classRow(writer, targetShape, rowBox, f.VisibilityToken(), f.Name, f.Type, float64(targetShape.FontSize), f.Underline, inlineTheme)
 		rowBox.TopLeft.Y += rowHeight
 	}
 
@@ -137,12 +126,10 @@ func drawClass(writer io.Writer, diagramHash string, targetShape d2target.Shape,
 
 	lineEl.Stroke = targetShape.Fill
 	lineEl.Style = "stroke-width:1"
-	fmt.Fprint(writer, lineEl.Render())
+	writer.element(lineEl)
 
 	for _, m := range targetShape.Methods {
-		fmt.Fprint(writer,
-			classRow(targetShape, rowBox, m.VisibilityToken(), m.Name, m.Return, float64(targetShape.FontSize), m.Underline, inlineTheme),
-		)
+		classRow(writer, targetShape, rowBox, m.VisibilityToken(), m.Name, m.Return, float64(targetShape.FontSize), m.Underline, inlineTheme)
 		rowBox.TopLeft.Y += rowHeight
 	}
 
