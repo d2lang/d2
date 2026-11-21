@@ -15,7 +15,7 @@ require (
 	github.com/d2lang/util-go v0.2.0
 	github.com/ericpauley/go-quantize v0.0.0-20200331213906-ae555eb2afa4
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-text/typesetting v0.3.5
+	github.com/go-text/typesetting v0.3.4
 	github.com/lucasb-eyer/go-colorful v1.4.1
 	github.com/mazznoer/csscolorparser v0.2.0
 	github.com/rivo/uniseg v0.4.7

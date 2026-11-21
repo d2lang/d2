@@ -170,7 +170,7 @@ SOFTWARE.
 
 go-text/typesetting
 https://github.com/go-text/typesetting
-Version 0.3.5
+Version 0.3.4
 
 D2 uses go-text's OpenType parser, HarfBuzz-compatible shaper, Unicode
 segmenter, and language data to shape scene text in Go.
