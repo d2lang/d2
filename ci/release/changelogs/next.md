@@ -88,6 +88,7 @@
   - Bound image references, locators, fetched and decoded bytes, cached data, and
     final output during SVG image bundling. [#2911](https://github.com/d2lang/d2/pull/2911)
 - elk: fix Mr. Tree arrows doubling back through their target shapes and shortcut edges cutting through intervening nodes. [#2981](https://github.com/d2lang/d2/pull/2981)
+- elk: fix a panic with algorithms other than `layered` when a connection enters or leaves a nested container. [#2717](https://github.com/d2lang/d2/issues/2717)
 - rendering:
   - Keep nested isometric platforms visible when the diagram has a root border or fill pattern.
   - Keep outside-right isometric labels beside the projected shape wall.

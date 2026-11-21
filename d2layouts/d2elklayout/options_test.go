@@ -485,3 +485,29 @@ func routeExtent(t *testing.T, edge *d2graph.Edge) float64 {
 	}
 	return math.Max(maxX-minX, maxY-minY)
 }
+
+func TestNestedEdgeRoutesWithoutLayered(t *testing.T) {
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, algorithm := range []string{"layered", "stress", "force", "mrtree", "radial"} {
+		t.Run(algorithm, func(t *testing.T) {
+			g, _, err := d2compiler.Compile("", strings.NewReader("outer: {inner: {a}}\nexternal -> outer.inner.a\n"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			opts := DefaultOpts
+			opts.Algorithm = algorithm
+			if err := Layout(t.Context(), g, &opts); err != nil {
+				t.Fatal(err)
+			}
+			if len(g.Edges[0].Route) < 2 {
+				t.Fatalf("edge has route %v", g.Edges[0].Route)
+			}
+		})
+	}
+}
