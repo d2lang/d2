@@ -121,6 +121,29 @@ func TestShapeTextUsesDeterministicPlaceholderForMissingScalar(t *testing.T) {
 	}
 }
 
+func TestShapeTextKeepsGlyphsAfterParagraphSeparator(t *testing.T) {
+	face := shapingTestFace(t, "SourceSansPro-Regular.ttf")
+	faces := []ShapeFace{{ID: "primary", Face: face}}
+	const suffix = "bx"
+	for _, separator := range []string{"\n", "\r\n", "\u0085", "\u2029"} {
+		prefix := "café" + separator
+		shaped, err := new(ShapingWorkspace).ShapeTextTransient(context.Background(), prefix+suffix, fixed.I(16), faces, shapingTestLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		suffixStart := utf8.RuneCountInString(prefix)
+		var visible []rune
+		for _, glyph := range shaped.Glyphs {
+			if glyph.SourceIndex >= suffixStart && glyph.HasInk {
+				visible = append(visible, glyph.Source)
+			}
+		}
+		if string(visible) != suffix {
+			t.Errorf("glyphs after %q = %q, want %q", separator, string(visible), suffix)
+		}
+	}
+}
+
 func TestASCIISemanticFastPathMatchesSegmenter(t *testing.T) {
 	face := shapingTestFace(t, "SourceSansPro-Regular.ttf")
 	texts := []string{"plain ASCII text", "1234!? ()[]{}", "\x00\t\n\r\x7f", "(abc) 123 [xyz]"}

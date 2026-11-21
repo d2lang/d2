@@ -83,7 +83,7 @@ SOFTWARE.
 
 Go image
 https://pkg.go.dev/golang.org/x/image
-Version 0.45.0
+Version 0.48.0
 
 D2 uses the font, OpenType, fixed-point math, and WebP packages.
 

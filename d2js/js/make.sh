@@ -10,7 +10,7 @@ PATH="$(cd -- "$(dirname "$0")" && pwd)/../../ci/sub/bin:$PATH"
 cd -- "$(dirname "$0")"
 
 BUN_VERSION=$(awk -F'"' '$2 == "bun" { print $4 }' package.json)
-BUN_INSTALLER_COMMIT=0d9b296af33f2b851fcbf4df3e9ec89751734ba4
+BUN_INSTALLER_COMMIT=a7733435cf40429e3b35c36072769df2052b80f1
 if [ -z "$BUN_VERSION" ]; then
   echoerr "Unable to read the Bun version from package.json"
   exit 1
@@ -20,7 +20,7 @@ if ! command -v bun >/dev/null 2>&1 || [ "$(bun --version)" != "$BUN_VERSION" ];
   if [ -n "${CI-}" ]; then
     echo "Installing Bun ${BUN_VERSION}..."
     curl -fsSL \
-      "https://raw.githubusercontent.com/oven-sh/bun/${BUN_INSTALLER_COMMIT}/src/cli/install.sh" |
+      "https://raw.githubusercontent.com/oven-sh/bun/${BUN_INSTALLER_COMMIT}/src/runtime/cli/install.sh" |
       bash -s "bun-v${BUN_VERSION}"
     export PATH="${BUN_INSTALL:-$HOME/.bun}/bin:$PATH"
   else
