@@ -42,6 +42,32 @@ func TestSurfaceDecalSurvivesLargeTexturedSubstrate(t *testing.T) {
 	}
 }
 
+func TestShadowTextureMatchesRasterAlpha(t *testing.T) {
+	bounds := image.Rect(-3, 4, 6, 11)
+	crop := image.Rect(-1, 6, 4, 9)
+	rgba, nrgba, alpha := image.NewRGBA(bounds), image.NewNRGBA(bounds), image.NewAlpha(bounds)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			a := uint8((x-crop.Min.X)*31 + (y-crop.Min.Y)*65)
+			rgba.SetRGBA(x, y, color.RGBA{R: a / 2, A: a})
+			nrgba.SetNRGBA(x, y, color.NRGBA{G: 200, A: a})
+			alpha.SetAlpha(x, y, color.Alpha{A: a})
+		}
+	}
+	// Subimages retain the parent stride and start at a nonzero origin.
+	for _, texture := range []image.Image{rgba.SubImage(crop), nrgba.SubImage(crop), alpha.SubImage(crop)} {
+		shadow := shadowTexture(texture)
+		for _, u := range []float64{-1, 0, .1, .25, .5, .83, 1, 2} {
+			for _, v := range []float64{-1, 0, .25, .5, .72, 1, 2} {
+				_, _, _, want := rasterTexture(texture, u, v)
+				if got := shadow.sample(u, v); got != want {
+					t.Fatalf("%T at (%g, %g): shadow alpha %g, raster alpha %g", texture, u, v, got, want)
+				}
+			}
+		}
+	}
+}
+
 func TestShadowRespectsTextureAlphaAndAuthoredOpacity(t *testing.T) {
 	b := &meshBuilder{ctx: context.Background()}
 	transparent := image.NewRGBA(image.Rect(0, 0, 2, 2))

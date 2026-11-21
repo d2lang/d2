@@ -8,6 +8,8 @@
 
 #### Improvements 🧹
 
+- Native isometric GIFs with animated shapes render faster by sampling only texture opacity for shadows.
+
 - TALA routes larger cross-container diagrams within its existing search budget. It preserves the original hierarchy lanes on compact diagrams and indexes previously routed segments. [#2891](https://github.com/d2lang/d2/issues/2891)
 
 - isometric: draw interior creases with a finer line and soften ground shadows away from the object's foot.
