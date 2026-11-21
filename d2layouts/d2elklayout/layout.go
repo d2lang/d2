@@ -565,7 +565,13 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		}
 		// Algorithms other than layered do not route edges that cross container boundaries
 		if len(points) == 0 {
-			points = []*geo.Point{edge.Src.Center(), edge.Dst.Center()}
+			start, end := edge.Src.Center(), edge.Dst.Center()
+			if edge.Dst.IsDescendantOf(edge.Src) {
+				start = geo.NewPoint(end.X, edge.Src.TopLeft.Y)
+			} else if edge.Src.IsDescendantOf(edge.Dst) {
+				end = geo.NewPoint(start.X, edge.Dst.TopLeft.Y)
+			}
+			points = []*geo.Point{start, end}
 		}
 		edge.Route = points
 	}

@@ -511,3 +511,44 @@ func TestNestedEdgeRoutesWithoutLayered(t *testing.T) {
 		})
 	}
 }
+
+func TestNestedEdgeRoutesEndOnBorders(t *testing.T) {
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{
+		"outer: {inner: {a}}\nexternal -> outer.inner.a\n",
+		"outer: {inner: {a}}\nouter -> outer.inner.a\n",
+		"outer: {inner: {a}}\nouter.inner.a -> outer\n",
+	} {
+		for _, algorithm := range []string{"layered", "stress", "force", "mrtree"} {
+			t.Run(algorithm+"/"+input, func(t *testing.T) {
+				g, _, err := d2compiler.Compile("", strings.NewReader(input), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+					t.Fatal(err)
+				}
+				opts := DefaultOpts
+				opts.Algorithm = algorithm
+				if err := Layout(t.Context(), g, &opts); err != nil {
+					t.Fatal(err)
+				}
+				edge := g.Edges[0]
+				route := edge.Route
+				for _, end := range []struct {
+					obj   *d2graph.Object
+					point *geo.Point
+				}{{edge.Src, route[0]}, {edge.Dst, route[len(route)-1]}} {
+					box := end.obj.Box
+					interior := geo.NewBox(geo.NewPoint(box.TopLeft.X+1, box.TopLeft.Y+1), box.Width-2, box.Height-2)
+					if !box.Contains(end.point) || interior.Contains(end.point) {
+						t.Errorf("route %v does not end on the border of %s", route, end.obj.AbsID())
+					}
+				}
+			})
+		}
+	}
+}
