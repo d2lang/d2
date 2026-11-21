@@ -1177,15 +1177,38 @@ func (c *compiler) compileStyleField(styles *d2graph.Style, f *d2ir.Field) {
 		c.errorf(f.LastRef().AST(), `invalid style keyword: "%s"`, f.Name.ScalarString())
 		return
 	}
-	if f.Primary() == nil {
-		return
+	if f.Primary() != nil {
+		compileStyleFieldInit(styles, f)
+		scalar := f.Primary().Value
+		err := styles.Apply(f.Name.ScalarString(), scalar.ScalarString())
+		if err != nil {
+			c.errorf(scalar, err.Error())
+			return
+		}
 	}
-	compileStyleFieldInit(styles, f)
-	scalar := f.Primary().Value
-	err := styles.Apply(f.Name.ScalarString(), scalar.ScalarString())
-	if err != nil {
-		c.errorf(scalar, err.Error())
-		return
+	if strings.EqualFold(f.Name.ScalarString(), "fill-pattern") && f.Map() != nil {
+		for _, ff := range f.Map().Fields {
+			if c.stopped() {
+				return
+			}
+			if !strings.EqualFold(ff.Name.ScalarString(), "color") || !ff.Name.IsUnquoted() {
+				c.errorf(ff.LastRef().AST(), `invalid fill-pattern subfield: "%s"`, ff.Name.ScalarString())
+				continue
+			}
+			if ff.Map() != nil && len(ff.Map().Fields) > 0 {
+				c.errorf(ff.LastRef().AST(), `"color" cannot have subfields`)
+				continue
+			}
+			if ff.Primary() == nil {
+				c.errorf(ff.LastRef().AST(), `missing value for fill-pattern "color"`)
+				continue
+			}
+			styles.FillPatternColor = &d2graph.Scalar{MapKey: ff.LastPrimaryKey()}
+			scalar := ff.Primary().Value
+			if err := styles.Apply("fill-pattern.color", scalar.ScalarString()); err != nil {
+				c.errorf(scalar, err.Error())
+			}
+		}
 	}
 }
 

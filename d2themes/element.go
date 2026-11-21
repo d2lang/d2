@@ -1,6 +1,8 @@
 package d2themes
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
@@ -59,7 +61,8 @@ type ThemableElement struct {
 	// Deprecated: use SetText or SetInnerSVG.
 	Content string
 
-	FillPattern string
+	FillPattern      string
+	FillPatternColor string
 
 	inlineTheme     *Theme
 	extraAttributes []svg.Attribute
@@ -297,11 +300,34 @@ func (el *ThemableElement) Render() string {
 		patternEl.Stroke = ""
 		patternEl.BackgroundColor = ""
 		patternEl.Color = ""
-		patternEl.ClassName = fmt.Sprintf("%s-overlay", fillPattern)
+		if el.FillPatternColor != "" && FillPatternSupportsColor(fillPattern) {
+			patternEl.ClassName = fmt.Sprintf("%s-overlay-%s", fillPattern, FillPatternColorKey(el.FillPatternColor))
+		} else {
+			patternEl.ClassName = fmt.Sprintf("%s-overlay", fillPattern)
+		}
 		patternEl.FillPattern = ""
+		patternEl.FillPatternColor = ""
 		out += patternEl.Render()
 	}
 	return out
+}
+
+// FillPatternSupportsColor reports whether a built-in fill pattern supports
+// custom foreground color overrides.
+func FillPatternSupportsColor(pattern string) bool {
+	switch strings.ToLower(pattern) {
+	case "dots", "lines":
+		return true
+	default:
+		return false
+	}
+}
+
+// FillPatternColorKey returns a short deterministic CSS-safe identifier suffix
+// for a fill-pattern color override.
+func FillPatternColorKey(colorValue string) string {
+	sum := sha256.Sum256([]byte(colorValue))
+	return hex.EncodeToString(sum[:6])
 }
 
 func calculateAxisRadius(borderRadius, width, height float64) float64 {

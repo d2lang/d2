@@ -20,24 +20,25 @@ type StyleScalar struct {
 // Routing currently compares only a subset of these fields, but every value
 // must survive cloning and fixture round-trips unchanged.
 type EdgeStyle struct {
-	Opacity       *StyleScalar
-	Stroke        *StyleScalar
-	Fill          *StyleScalar
-	FillPattern   *StyleScalar
-	StrokeWidth   *StyleScalar
-	StrokeDash    *StyleScalar
-	BorderRadius  *StyleScalar
-	Shadow        *StyleScalar
-	ThreeDee      *StyleScalar
-	Multiple      *StyleScalar
-	Font          *StyleScalar
-	FontSize      *StyleScalar
-	FontColor     *StyleScalar
-	Animated      *StyleScalar
-	Bold          *StyleScalar
-	Italic        *StyleScalar
-	Underline     *StyleScalar
-	Filled        *StyleScalar
-	DoubleBorder  *StyleScalar
-	TextTransform *StyleScalar
+	Opacity          *StyleScalar
+	Stroke           *StyleScalar
+	Fill             *StyleScalar
+	FillPattern      *StyleScalar
+	FillPatternColor *StyleScalar
+	StrokeWidth      *StyleScalar
+	StrokeDash       *StyleScalar
+	BorderRadius     *StyleScalar
+	Shadow           *StyleScalar
+	ThreeDee         *StyleScalar
+	Multiple         *StyleScalar
+	Font             *StyleScalar
+	FontSize         *StyleScalar
+	FontColor        *StyleScalar
+	Animated         *StyleScalar
+	Bold             *StyleScalar
+	Italic           *StyleScalar
+	Underline        *StyleScalar
+	Filled           *StyleScalar
+	DoubleBorder     *StyleScalar
+	TextTransform    *StyleScalar
 }

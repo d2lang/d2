@@ -5,6 +5,7 @@
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
 - renders: add native isometric SVG, PNG, GIF, PDF, and PPTX exports with `--isometric`, source configuration, and Go/JavaScript options
+- style: add `style.fill-pattern.color` to customize the color of `dots` and `lines` fill patterns. [#2639](https://github.com/d2lang/d2/issues/2639)
 
 #### Improvements 🧹
 

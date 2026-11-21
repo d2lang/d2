@@ -20,8 +20,16 @@ func TestRenderRejectsTargetColorAttributeInjection(t *testing.T) {
 		configure func(*d2target.Diagram)
 	}{
 		{name: "root-fill", configure: func(d *d2target.Diagram) { d.Root.Fill = payload }},
+		{name: "root-fill-pattern-color", configure: func(d *d2target.Diagram) {
+			d.Root.FillPattern = "dots"
+			d.Root.FillPatternColor = payload
+		}},
 		{name: "root-stroke", configure: func(d *d2target.Diagram) { d.Root.Stroke = payload }},
 		{name: "shape-fill", configure: func(d *d2target.Diagram) { d.Shapes[0].Fill = payload }},
+		{name: "shape-fill-pattern-color", configure: func(d *d2target.Diagram) {
+			d.Shapes[0].FillPattern = "dots"
+			d.Shapes[0].FillPatternColor = payload
+		}},
 		{name: "shape-stroke", configure: func(d *d2target.Diagram) { d.Shapes[0].Stroke = payload }},
 		{name: "shape-color", configure: func(d *d2target.Diagram) { d.Shapes[0].Color = payload }},
 		{name: "shape-label-fill", configure: func(d *d2target.Diagram) { d.Shapes[0].LabelFill = payload }},

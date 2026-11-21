@@ -28,26 +28,27 @@ type SerializedScalar struct {
 // SerializedStyle is the edge-style portion of graph JSON. Adding a host
 // d2graph.Style field must not silently change the fixture representation.
 type SerializedStyle struct {
-	Opacity       *SerializedScalar `json:"opacity,omitempty"`
-	Stroke        *SerializedScalar `json:"stroke,omitempty"`
-	Fill          *SerializedScalar `json:"fill,omitempty"`
-	FillPattern   *SerializedScalar `json:"fillPattern,omitempty"`
-	StrokeWidth   *SerializedScalar `json:"strokeWidth,omitempty"`
-	StrokeDash    *SerializedScalar `json:"strokeDash,omitempty"`
-	BorderRadius  *SerializedScalar `json:"borderRadius,omitempty"`
-	Shadow        *SerializedScalar `json:"shadow,omitempty"`
-	ThreeDee      *SerializedScalar `json:"3d,omitempty"`
-	Multiple      *SerializedScalar `json:"multiple,omitempty"`
-	Font          *SerializedScalar `json:"font,omitempty"`
-	FontSize      *SerializedScalar `json:"fontSize,omitempty"`
-	FontColor     *SerializedScalar `json:"fontColor,omitempty"`
-	Animated      *SerializedScalar `json:"animated,omitempty"`
-	Bold          *SerializedScalar `json:"bold,omitempty"`
-	Italic        *SerializedScalar `json:"italic,omitempty"`
-	Underline     *SerializedScalar `json:"underline,omitempty"`
-	Filled        *SerializedScalar `json:"filled,omitempty"`
-	DoubleBorder  *SerializedScalar `json:"doubleBorder,omitempty"`
-	TextTransform *SerializedScalar `json:"textTransform,omitempty"`
+	Opacity          *SerializedScalar `json:"opacity,omitempty"`
+	Stroke           *SerializedScalar `json:"stroke,omitempty"`
+	Fill             *SerializedScalar `json:"fill,omitempty"`
+	FillPattern      *SerializedScalar `json:"fillPattern,omitempty"`
+	FillPatternColor *SerializedScalar `json:"fillPatternColor,omitempty"`
+	StrokeWidth      *SerializedScalar `json:"strokeWidth,omitempty"`
+	StrokeDash       *SerializedScalar `json:"strokeDash,omitempty"`
+	BorderRadius     *SerializedScalar `json:"borderRadius,omitempty"`
+	Shadow           *SerializedScalar `json:"shadow,omitempty"`
+	ThreeDee         *SerializedScalar `json:"3d,omitempty"`
+	Multiple         *SerializedScalar `json:"multiple,omitempty"`
+	Font             *SerializedScalar `json:"font,omitempty"`
+	FontSize         *SerializedScalar `json:"fontSize,omitempty"`
+	FontColor        *SerializedScalar `json:"fontColor,omitempty"`
+	Animated         *SerializedScalar `json:"animated,omitempty"`
+	Bold             *SerializedScalar `json:"bold,omitempty"`
+	Italic           *SerializedScalar `json:"italic,omitempty"`
+	Underline        *SerializedScalar `json:"underline,omitempty"`
+	Filled           *SerializedScalar `json:"filled,omitempty"`
+	DoubleBorder     *SerializedScalar `json:"doubleBorder,omitempty"`
+	TextTransform    *SerializedScalar `json:"textTransform,omitempty"`
 }
 
 // SerializedNode is the fixture representation of one layout node.

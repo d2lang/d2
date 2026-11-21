@@ -60,6 +60,7 @@ func stylePointers(style d2graph.Style) []*d2graph.Scalar {
 		style.Stroke,
 		style.Fill,
 		style.FillPattern,
+		style.FillPatternColor,
 		style.StrokeWidth,
 		style.StrokeDash,
 		style.BorderRadius,

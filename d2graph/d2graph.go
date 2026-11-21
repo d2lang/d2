@@ -282,26 +282,27 @@ func (r Reference) InEdge() bool {
 }
 
 type Style struct {
-	Opacity       *Scalar `json:"opacity,omitempty"`
-	Stroke        *Scalar `json:"stroke,omitempty"`
-	Fill          *Scalar `json:"fill,omitempty"`
-	FillPattern   *Scalar `json:"fillPattern,omitempty"`
-	StrokeWidth   *Scalar `json:"strokeWidth,omitempty"`
-	StrokeDash    *Scalar `json:"strokeDash,omitempty"`
-	BorderRadius  *Scalar `json:"borderRadius,omitempty"`
-	Shadow        *Scalar `json:"shadow,omitempty"`
-	ThreeDee      *Scalar `json:"3d,omitempty"`
-	Multiple      *Scalar `json:"multiple,omitempty"`
-	Font          *Scalar `json:"font,omitempty"`
-	FontSize      *Scalar `json:"fontSize,omitempty"`
-	FontColor     *Scalar `json:"fontColor,omitempty"`
-	Animated      *Scalar `json:"animated,omitempty"`
-	Bold          *Scalar `json:"bold,omitempty"`
-	Italic        *Scalar `json:"italic,omitempty"`
-	Underline     *Scalar `json:"underline,omitempty"`
-	Filled        *Scalar `json:"filled,omitempty"`
-	DoubleBorder  *Scalar `json:"doubleBorder,omitempty"`
-	TextTransform *Scalar `json:"textTransform,omitempty"`
+	Opacity          *Scalar `json:"opacity,omitempty"`
+	Stroke           *Scalar `json:"stroke,omitempty"`
+	Fill             *Scalar `json:"fill,omitempty"`
+	FillPattern      *Scalar `json:"fillPattern,omitempty"`
+	FillPatternColor *Scalar `json:"fillPatternColor,omitempty"`
+	StrokeWidth      *Scalar `json:"strokeWidth,omitempty"`
+	StrokeDash       *Scalar `json:"strokeDash,omitempty"`
+	BorderRadius     *Scalar `json:"borderRadius,omitempty"`
+	Shadow           *Scalar `json:"shadow,omitempty"`
+	ThreeDee         *Scalar `json:"3d,omitempty"`
+	Multiple         *Scalar `json:"multiple,omitempty"`
+	Font             *Scalar `json:"font,omitempty"`
+	FontSize         *Scalar `json:"fontSize,omitempty"`
+	FontColor        *Scalar `json:"fontColor,omitempty"`
+	Animated         *Scalar `json:"animated,omitempty"`
+	Bold             *Scalar `json:"bold,omitempty"`
+	Italic           *Scalar `json:"italic,omitempty"`
+	Underline        *Scalar `json:"underline,omitempty"`
+	Filled           *Scalar `json:"filled,omitempty"`
+	DoubleBorder     *Scalar `json:"doubleBorder,omitempty"`
+	TextTransform    *Scalar `json:"textTransform,omitempty"`
 }
 
 // NoneTextTransform will return a boolean if the text should not have any
@@ -346,6 +347,14 @@ func (s *Style) Apply(key, value string) error {
 			return fmt.Errorf(`expected "fill-pattern" to be one of: %s`, strings.Join(d2ast.FillPatterns, ", "))
 		}
 		s.FillPattern.Value = value
+	case "fill-pattern.color":
+		if s.FillPatternColor == nil {
+			break
+		}
+		if !color.ValidColor(value) {
+			return errors.New(`expected "fill-pattern.color" to be a valid named color ("orange"), a hex code ("#f0ff3a"), or a gradient ("linear-gradient(red, blue)")`)
+		}
+		s.FillPatternColor.Value = value
 	case "stroke-width":
 		if s.StrokeWidth == nil {
 			break

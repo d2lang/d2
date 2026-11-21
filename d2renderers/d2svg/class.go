@@ -18,6 +18,7 @@ func classHeader(diagramHash string, shape d2target.Shape, box *geo.Box, text st
 	rectEl.Width, rectEl.Height = box.Width, box.Height
 	rectEl.Fill = shape.Fill
 	rectEl.FillPattern = shape.FillPattern
+	rectEl.FillPatternColor = shape.FillPatternColor
 	rectEl.ClassName = "class_header"
 	if shape.BorderRadius != 0 {
 		rectEl.SetClipPathID(borderRadiusClipPathID(diagramHash, shape.ID))
@@ -97,6 +98,7 @@ func drawClass(writer io.Writer, diagramHash string, targetShape d2target.Shape,
 	el.Height = float64(targetShape.Height)
 	el.Fill, el.Stroke = d2themes.ShapeTheme(targetShape)
 	el.FillPattern = targetShape.FillPattern
+	el.FillPatternColor = targetShape.FillPatternColor
 	el.Style = targetShape.CSSStyle()
 	if targetShape.BorderRadius != 0 {
 		el.Rx = float64(targetShape.BorderRadius)
