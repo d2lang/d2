@@ -8,6 +8,8 @@
 
 #### Improvements 🧹
 
+- Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer.
+
 - Native isometric GIFs with animated shapes render faster by sampling only texture opacity for shadows.
 
 - TALA routes larger cross-container diagrams within its existing search budget. It preserves the original hierarchy lanes on compact diagrams and indexes previously routed segments. [#2891](https://github.com/d2lang/d2/issues/2891)

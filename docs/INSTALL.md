@@ -172,7 +172,7 @@ You can always install from source:
 go install github.com/d2lang/d2@latest
 ```
 
-You need at least Go v1.27
+D2 requires Go 1.27.4 or newer.
 
 ### Source Release
 
@@ -189,7 +189,7 @@ fonts and icons. Furthermore, when installing a non versioned commit, installing
 will ensure that `d2 --version` works correctly by embedding the commit hash into the `d2`
 binary.
 
-Remember, you need at least Go v1.27
+Use the compiler version declared in [go.mod](../go.mod) when building release archives.
 
 ## Windows
 
