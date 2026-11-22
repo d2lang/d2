@@ -287,7 +287,8 @@ func (gs *GraphState) captureGeometryStateContext(graph *Graph, guard *limits.Wo
 			}
 			edges[edge] = struct{}{}
 		}
-		for node := range gs.nodeGeometry {
+		for i := range gs.slots.entries {
+			node := gs.slots.entries[i].node
 			if err := guard.Step(); err != nil {
 				return err
 			}
@@ -316,13 +317,14 @@ func (gs *GraphState) captureGeometryStateContext(graph *Graph, guard *limits.Wo
 		gs.edgeGeometry = nil
 	}
 
-	gs.treeOrientations = make(map[*Tree]geo.Orientation, len(graph.NodeToTree))
+	clear(gs.treeOrientations)
+	gs.treeOrientations = gs.treeOrientations[:0]
 	for _, tree := range graph.NodeToTree {
 		if err := guard.Step(); err != nil {
 			return err
 		}
 		if tree != nil {
-			gs.treeOrientations[tree] = tree.Orientation
+			gs.treeOrientations = append(gs.treeOrientations, treeOrientationSnapshot{tree: tree, orientation: tree.Orientation})
 		}
 	}
 	return guard.Finish()
@@ -702,6 +704,31 @@ func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope s
 		herds:          herds,
 		hierarchies:    hierarchies,
 	}, nil
+}
+
+// chargeRuntimeStateContext charges what captureRuntimeStateContext charges,
+// without capturing: the same traversal (its units, limits and errors), then
+// one unit for the graph, one per node, one per edge plus one per slot of its
+// point capacity, and one per cluster, sequence, tree, abduction, herd and
+// hierarchy, and the final Finish. Those capture loops can fail only through
+// the guard, so charging their units at once fails exactly where one of
+// their Steps would. The traversal's node set is kept for TracksNode.
+func (gs *GraphState) chargeRuntimeStateContext(graph *Graph, guard *limits.WorkGuard) error {
+	objects, err := collectRuntimeObjectsContext(graph, guard, "transaction runtime")
+	if err != nil {
+		return err
+	}
+	units := 1 + int64(len(objects.nodes))
+	for edge := range objects.edges {
+		units += 1 + int64(cap(edge.Points))
+	}
+	units += int64(len(objects.clusters)) + int64(len(objects.sequences)) + int64(len(objects.trees)) +
+		int64(len(objects.edgeAbductions)) + int64(len(objects.herds)) + int64(len(objects.hierarchies))
+	if err := guard.Add(units); err != nil {
+		return err
+	}
+	gs.trackedNodes = objects.nodes
+	return guard.Finish()
 }
 
 func (gs *GraphState) captureRuntimeStateContext(graph *Graph, guard *limits.WorkGuard) error {

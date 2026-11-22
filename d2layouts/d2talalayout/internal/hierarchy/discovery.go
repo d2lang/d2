@@ -581,6 +581,10 @@ func findCycleEdges(ctx context.Context, g *layoutgraph.Graph) (map[*layoutgraph
 	if err != nil {
 		return nil, err
 	}
+	return findCycleEdgesGuarded(g, guard)
+}
+
+func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*layoutgraph.Edge]struct{}, error) {
 	incomingEdges := make(map[*layoutgraph.Node]map[*layoutgraph.Edge]struct{})
 	outgoingEdges := make(map[*layoutgraph.Node]map[*layoutgraph.Edge]struct{})
 	addEdgeToSet := func(e *layoutgraph.Edge, n *layoutgraph.Node, set map[*layoutgraph.Node]map[*layoutgraph.Edge]struct{}) {
@@ -592,6 +596,18 @@ func findCycleEdges(ctx context.Context, g *layoutgraph.Graph) (map[*layoutgraph
 	}
 
 	nodes := make(map[*layoutgraph.Node]struct{})
+	// nodeOrder lists nodes in first-insertion order: the passes below visit
+	// the nodes still in the set in this order. They visited the set in map
+	// order, so the nodes a pass reached before pruning removed them, and the
+	// units it charged, varied from run to run; the edges found are the same
+	// in any order.
+	var nodeOrder []*layoutgraph.Node
+	addNode := func(n *layoutgraph.Node) {
+		if _, ok := nodes[n]; !ok {
+			nodes[n] = struct{}{}
+			nodeOrder = append(nodeOrder, n)
+		}
+	}
 	// set of edges to take the difference with set of non cycle edges
 	edges := make(map[*layoutgraph.Edge]struct{})
 	for _, e := range g.Edges {
@@ -599,8 +615,8 @@ func findCycleEdges(ctx context.Context, g *layoutgraph.Graph) (map[*layoutgraph
 			return nil, err
 		}
 		edges[e] = struct{}{}
-		nodes[e.From] = struct{}{}
-		nodes[e.To] = struct{}{}
+		addNode(e.From)
+		addNode(e.To)
 		if e.IsTargetedTo(e.From) {
 			addEdgeToSet(e, e.From, incomingEdges)
 			addEdgeToSet(e, e.To, outgoingEdges)
@@ -657,7 +673,10 @@ func findCycleEdges(ctx context.Context, g *layoutgraph.Graph) (map[*layoutgraph
 			// as we delete sinks we might be creating new sinks
 			// so this part runs until all sinks were removed
 			foundSink := false
-			for n := range nodes {
+			for _, n := range nodeOrder {
+				if _, ok := nodes[n]; !ok {
+					continue
+				}
 				if err := guard.Step(); err != nil {
 					return nil, err
 				}
@@ -679,7 +698,10 @@ func findCycleEdges(ctx context.Context, g *layoutgraph.Graph) (map[*layoutgraph
 		// sources
 		for {
 			foundSource := false
-			for n := range nodes {
+			for _, n := range nodeOrder {
+				if _, ok := nodes[n]; !ok {
+					continue
+				}
 				if err := guard.Step(); err != nil {
 					return nil, err
 				}
@@ -699,7 +721,10 @@ func findCycleEdges(ctx context.Context, g *layoutgraph.Graph) (map[*layoutgraph
 		if len(nodes) > 0 {
 			var maxNode *layoutgraph.Node
 			maxDiff := math.Inf(-1)
-			for node := range nodes {
+			for _, node := range nodeOrder {
+				if _, ok := nodes[node]; !ok {
+					continue
+				}
 				if err := guard.Step(); err != nil {
 					return nil, err
 				}

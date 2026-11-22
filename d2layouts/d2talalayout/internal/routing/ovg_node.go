@@ -167,6 +167,12 @@ func (n *OVGNode) sharesPortOwner(other *OVGNode) bool {
 }
 
 func (node *OVGNode) addEdge(e *OVGEdge) {
+	if node.Edges == nil {
+		// Most nodes get two to four edges; start there instead of growing
+		// through capacities 1 and 2. Only addEdge appends to Edges (OVG
+		// Connect gives a node its first four slots from a chunk).
+		node.Edges = make([]*OVGEdge, 0, 4)
+	}
 	node.Edges = append(node.Edges, e)
 }
 

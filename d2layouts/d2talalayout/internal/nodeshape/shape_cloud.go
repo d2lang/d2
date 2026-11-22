@@ -13,67 +13,19 @@ type shapeCloud struct {
 func (s shapeCloud) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideMiddleCenter:  {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomCenter: {},
-			label.InsideTopCenter:     {},
-		}
+		return cloudLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:   {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-			label.InsideTopLeft:      {},
-			label.InsideTopRight:     {},
-			label.InsideBottomLeft:   {},
-			label.InsideBottomRight:  {},
-			label.InsideMiddleLeft:   {},
-			label.InsideMiddleRight:  {},
-		}
+		return cloudLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightMiddle: {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return cloudLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:  {},
-			label.OutsideTopRight: {},
-			label.OutsideLeftTop:  {},
-			label.OutsideRightTop: {},
-		}
+		return cloudLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return cloudLabelPreferencesFallback
 }
 
 func (s shapeCloud) SnapPointPercentages() [][]*geo.RelativePoint {
-	return [][]*geo.RelativePoint{
-		// Top
-		{
-			geo.NewRelativePoint(0.16, 0.368),
-			geo.NewRelativePoint(0.378, 0.155),
-			geo.NewRelativePoint(0.815, 0.328),
-		},
-		// Left
-		{
-			geo.NewRelativePoint(0, 0.7),
-			geo.NewRelativePoint(0.066, 0.935),
-		},
-		// Bottom
-		{
-			geo.NewRelativePoint(0.25, 1),
-			geo.NewRelativePoint(0.5, 1),
-			geo.NewRelativePoint(0.75, 1),
-		},
-		// Right
-		{
-			geo.NewRelativePoint(1, 0.7),
-			geo.NewRelativePoint(0.95, 0.89),
-		},
-	}
+	return cloudSnapPoints
 }
 
 func (s shapeCloud) PortIndices(orientation geo.Orientation) []int {
@@ -128,4 +80,65 @@ func (s shapeCloud) CenterPortIndex(o geo.Orientation) int {
 	}
 
 	return centerPorts[centerPortsIndex]
+}
+
+var cloudLabelPreferencesGood = map[label.Position]struct{}{
+	label.InsideMiddleCenter:  {},
+	label.InsideBottomCenter:  {},
+	label.OutsideBottomCenter: {},
+	label.InsideTopCenter:     {},
+}
+
+var cloudLabelPreferencesOK = map[label.Position]struct{}{
+	label.OutsideTopCenter:   {},
+	label.OutsideBottomLeft:  {},
+	label.OutsideBottomRight: {},
+	label.InsideTopLeft:      {},
+	label.InsideTopRight:     {},
+	label.InsideBottomLeft:   {},
+	label.InsideBottomRight:  {},
+	label.InsideMiddleLeft:   {},
+	label.InsideMiddleRight:  {},
+}
+
+var cloudLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.OutsideLeftMiddle:  {},
+	label.OutsideRightMiddle: {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightBottom: {},
+}
+
+var cloudLabelPreferencesBad = map[label.Position]struct{}{
+	label.OutsideTopLeft:  {},
+	label.OutsideTopRight: {},
+	label.OutsideLeftTop:  {},
+	label.OutsideRightTop: {},
+}
+
+var cloudLabelPreferencesFallback = map[label.Position]struct{}{}
+
+// cloudSnapPoints is shared by every call: callers only read it.
+var cloudSnapPoints = [][]*geo.RelativePoint{
+	// Top
+	{
+		geo.NewRelativePoint(0.16, 0.368),
+		geo.NewRelativePoint(0.378, 0.155),
+		geo.NewRelativePoint(0.815, 0.328),
+	},
+	// Left
+	{
+		geo.NewRelativePoint(0, 0.7),
+		geo.NewRelativePoint(0.066, 0.935),
+	},
+	// Bottom
+	{
+		geo.NewRelativePoint(0.25, 1),
+		geo.NewRelativePoint(0.5, 1),
+		geo.NewRelativePoint(0.75, 1),
+	},
+	// Right
+	{
+		geo.NewRelativePoint(1, 0.7),
+		geo.NewRelativePoint(0.95, 0.89),
+	},
 }

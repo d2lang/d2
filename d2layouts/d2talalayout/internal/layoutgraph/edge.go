@@ -19,6 +19,11 @@ type Edge struct {
 	To     *Node
 	Points []*geo.Point
 
+	// preflightSlot is the edge's slot in the inventory of the most recent
+	// validateEngineGraph that recorded it. It is a lookup hint only, trusted
+	// when the slot it names holds this very edge, and never affects layout.
+	preflightSlot int32
+
 	SourceArrowhead      Arrowhead
 	TargetArrowhead      Arrowhead
 	SourceArrowheadLabel *Label

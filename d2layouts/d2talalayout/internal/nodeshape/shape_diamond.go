@@ -13,61 +13,19 @@ type shapeDiamond struct {
 func (s shapeDiamond) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideMiddleCenter: {},
-		}
+		return diamondLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.OutsideBottomCenter: {},
-			label.InsideMiddleLeft:    {},
-			label.InsideMiddleRight:   {},
-			label.OutsideLeftMiddle:   {},
-			label.OutsideRightMiddle:  {},
-			label.InsideBottomCenter:  {},
-			label.InsideTopCenter:     {},
-		}
+		return diamondLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:     {},
-			label.InsideTopRight:    {},
-			label.InsideBottomLeft:  {},
-			label.InsideBottomRight: {},
-		}
+		return diamondLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:     {},
-			label.OutsideTopRight:    {},
-			label.OutsideLeftTop:     {},
-			label.OutsideRightTop:    {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return diamondLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return diamondLabelPreferencesFallback
 }
 
 func (s shapeDiamond) SnapPointPercentages() [][]*geo.RelativePoint {
-	return [][]*geo.RelativePoint{
-		// Top
-		{
-			geo.NewRelativePoint(0.5, 0),
-		},
-		// Left
-		{
-			geo.NewRelativePoint(0, 0.5),
-		},
-		// Bottom
-		{
-			geo.NewRelativePoint(0.5, 1),
-		},
-		// Right
-		{
-			geo.NewRelativePoint(1, 0.5),
-		},
-	}
+	return diamondSnapPoints
 }
 
 func (s shapeDiamond) PortIndices(orientation geo.Orientation) []int {
@@ -125,4 +83,59 @@ func (s shapeDiamond) CenterPortIndex(o geo.Orientation) int {
 	}
 
 	return centerPorts[centerPortsIndex]
+}
+
+var diamondLabelPreferencesGood = map[label.Position]struct{}{
+	label.InsideMiddleCenter: {},
+}
+
+var diamondLabelPreferencesOK = map[label.Position]struct{}{
+	label.OutsideTopCenter:    {},
+	label.OutsideBottomCenter: {},
+	label.InsideMiddleLeft:    {},
+	label.InsideMiddleRight:   {},
+	label.OutsideLeftMiddle:   {},
+	label.OutsideRightMiddle:  {},
+	label.InsideBottomCenter:  {},
+	label.InsideTopCenter:     {},
+}
+
+var diamondLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.InsideTopLeft:     {},
+	label.InsideTopRight:    {},
+	label.InsideBottomLeft:  {},
+	label.InsideBottomRight: {},
+}
+
+var diamondLabelPreferencesBad = map[label.Position]struct{}{
+	label.OutsideTopLeft:     {},
+	label.OutsideTopRight:    {},
+	label.OutsideLeftTop:     {},
+	label.OutsideRightTop:    {},
+	label.OutsideBottomLeft:  {},
+	label.OutsideBottomRight: {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightBottom: {},
+}
+
+var diamondLabelPreferencesFallback = map[label.Position]struct{}{}
+
+// diamondSnapPoints is shared by every call: callers only read it.
+var diamondSnapPoints = [][]*geo.RelativePoint{
+	// Top
+	{
+		geo.NewRelativePoint(0.5, 0),
+	},
+	// Left
+	{
+		geo.NewRelativePoint(0, 0.5),
+	},
+	// Bottom
+	{
+		geo.NewRelativePoint(0.5, 1),
+	},
+	// Right
+	{
+		geo.NewRelativePoint(1, 0.5),
+	},
 }

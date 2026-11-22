@@ -13,68 +13,19 @@ type shapeSquare struct {
 func (s shapeSquare) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.InsideTopCenter:     {},
-			label.InsideMiddleCenter:  {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomCenter: {},
-			label.InsideTopLeft:       {},
-			label.InsideTopRight:      {},
-			label.InsideBottomLeft:    {},
-			label.InsideBottomRight:   {},
-		}
+		return squareLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.InsideMiddleLeft:   {},
-			label.InsideMiddleRight:  {},
-			label.OutsideTopLeft:     {},
-			label.OutsideTopRight:    {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-		}
+		return squareLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideLeftTop:     {},
-			label.OutsideRightTop:    {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightMiddle: {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return squareLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{}
+		return squareLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return squareLabelPreferencesFallback
 }
 
 func (s shapeSquare) SnapPointPercentages() [][]*geo.RelativePoint {
-	return [][]*geo.RelativePoint{
-		// Top
-		{
-			geo.NewRelativePoint(0.25, 0),
-			geo.NewRelativePoint(0.5, 0),
-			geo.NewRelativePoint(0.75, 0),
-		},
-		// Left
-		{
-			geo.NewRelativePoint(0, 0.25),
-			geo.NewRelativePoint(0, 0.5),
-			geo.NewRelativePoint(0, 0.75),
-		},
-		// Bottom
-		{
-			geo.NewRelativePoint(0.25, 1),
-			geo.NewRelativePoint(0.5, 1),
-			geo.NewRelativePoint(0.75, 1),
-		},
-		// Right
-		{
-			geo.NewRelativePoint(1, 0.25),
-			geo.NewRelativePoint(1, 0.5),
-			geo.NewRelativePoint(1, 0.75),
-		},
-	}
+	return squareSnapPoints
 }
 
 func (s shapeSquare) PortIndices(orientation geo.Orientation) []int {
@@ -132,4 +83,66 @@ func (s shapeSquare) CenterPortIndex(o geo.Orientation) int {
 	}
 
 	return centerPorts[centerPortsIndex]
+}
+
+var squareLabelPreferencesGood = map[label.Position]struct{}{
+	label.OutsideTopCenter:    {},
+	label.InsideTopCenter:     {},
+	label.InsideMiddleCenter:  {},
+	label.InsideBottomCenter:  {},
+	label.OutsideBottomCenter: {},
+	label.InsideTopLeft:       {},
+	label.InsideTopRight:      {},
+	label.InsideBottomLeft:    {},
+	label.InsideBottomRight:   {},
+}
+
+var squareLabelPreferencesOK = map[label.Position]struct{}{
+	label.InsideMiddleLeft:   {},
+	label.InsideMiddleRight:  {},
+	label.OutsideTopLeft:     {},
+	label.OutsideTopRight:    {},
+	label.OutsideBottomLeft:  {},
+	label.OutsideBottomRight: {},
+}
+
+var squareLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.OutsideLeftTop:     {},
+	label.OutsideRightTop:    {},
+	label.OutsideLeftMiddle:  {},
+	label.OutsideRightMiddle: {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightBottom: {},
+}
+
+var squareLabelPreferencesBad = map[label.Position]struct{}{}
+
+var squareLabelPreferencesFallback = map[label.Position]struct{}{}
+
+// squareSnapPoints is shared by every call: callers only read it.
+var squareSnapPoints = [][]*geo.RelativePoint{
+	// Top
+	{
+		geo.NewRelativePoint(0.25, 0),
+		geo.NewRelativePoint(0.5, 0),
+		geo.NewRelativePoint(0.75, 0),
+	},
+	// Left
+	{
+		geo.NewRelativePoint(0, 0.25),
+		geo.NewRelativePoint(0, 0.5),
+		geo.NewRelativePoint(0, 0.75),
+	},
+	// Bottom
+	{
+		geo.NewRelativePoint(0.25, 1),
+		geo.NewRelativePoint(0.5, 1),
+		geo.NewRelativePoint(0.75, 1),
+	},
+	// Right
+	{
+		geo.NewRelativePoint(1, 0.25),
+		geo.NewRelativePoint(1, 0.5),
+		geo.NewRelativePoint(1, 0.75),
+	},
 }

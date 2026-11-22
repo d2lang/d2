@@ -15,40 +15,15 @@ type shapePackage struct {
 func (s shapePackage) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideMiddleCenter:  {},
-			label.InsideMiddleLeft:    {},
-			label.InsideBottomLeft:    {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomLeft:   {},
-			label.OutsideBottomCenter: {},
-			label.InsideTopLeft:       {},
-			label.InsideTopCenter:     {},
-			label.InsideTopRight:      {},
-		}
+		return packageLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:     {},
-			label.InsideMiddleRight:  {},
-			label.InsideBottomRight:  {},
-			label.OutsideBottomRight: {},
-		}
+		return packageLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:   {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightMiddle: {},
-			label.OutsideLeftTop:     {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return packageLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopRight: {},
-			label.OutsideRightTop: {},
-		}
+		return packageLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return packageLabelPreferencesFallback
 }
 
 func (s shapePackage) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -164,3 +139,38 @@ func (s shapePackage) CenterPortIndex(o geo.Orientation) int {
 
 	return centerPorts[centerPortsIndex]
 }
+
+var packageLabelPreferencesGood = map[label.Position]struct{}{
+	label.InsideMiddleCenter:  {},
+	label.InsideMiddleLeft:    {},
+	label.InsideBottomLeft:    {},
+	label.InsideBottomCenter:  {},
+	label.OutsideBottomLeft:   {},
+	label.OutsideBottomCenter: {},
+	label.InsideTopLeft:       {},
+	label.InsideTopCenter:     {},
+	label.InsideTopRight:      {},
+}
+
+var packageLabelPreferencesOK = map[label.Position]struct{}{
+	label.OutsideTopLeft:     {},
+	label.InsideMiddleRight:  {},
+	label.InsideBottomRight:  {},
+	label.OutsideBottomRight: {},
+}
+
+var packageLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.OutsideTopCenter:   {},
+	label.OutsideLeftMiddle:  {},
+	label.OutsideRightMiddle: {},
+	label.OutsideLeftTop:     {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightBottom: {},
+}
+
+var packageLabelPreferencesBad = map[label.Position]struct{}{
+	label.OutsideTopRight: {},
+	label.OutsideRightTop: {},
+}
+
+var packageLabelPreferencesFallback = map[label.Position]struct{}{}

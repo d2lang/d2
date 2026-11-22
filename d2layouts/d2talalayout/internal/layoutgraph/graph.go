@@ -66,6 +66,32 @@ type Graph struct {
 	CommonUncleSiblings map[*Node]Nodes
 
 	edgeLengthCache map[uint64]float64
+
+	// snapshotSizeHint is the node count of the latest transaction snapshot
+	// of this graph; it only sizes the next snapshot's storage.
+	snapshotSizeHint int32
+	// commitScratchFree holds validation scratch for transactions on this
+	// graph (see commitScratch).
+	commitScratchFree []*commitScratch
+	// Released transactions' snapshot storage (see Transaction.Release).
+	spareGraphStates []*GraphState
+	spareOverlapSets []*existingOverlapSet
+	// spareContainerMemos holds released transactions' container memos.
+	spareContainerMemos []*containerMemo
+	// prefilter is Transaction.PlacementRejected's scratch for transactions
+	// on this graph (calls do not nest).
+	prefilter *placementPrefilter
+	// sharedInput marks a graph that several goroutines read at the same
+	// time (see MarkSharedInput).
+	sharedInput bool
+}
+
+// MarkSharedInput records that g will be read by several goroutines at the
+// same time (the seeds' common input), so validation must not write the
+// lookup hints it otherwise leaves on the objects it visits. Call it before
+// the goroutines start; g must not be changed while they read it.
+func (g *Graph) MarkSharedInput() {
+	g.sharedInput = true
 }
 
 type descendantWalkEntry struct {
@@ -74,9 +100,59 @@ type descendantWalkEntry struct {
 }
 
 type descendantWalkScratch struct {
-	seen        map[*Node]struct{}
-	stack       []descendantWalkEntry
+	// seen backs the ancestor walk's long chains and the descendant walk once
+	// it has visited more than walkLinearSeen nodes; seenUsed records that it
+	// holds entries. Shorter descendant walks search visited linearly, so a
+	// map grown by one large walk is not cleared again by every small one.
+	seen         map[*Node]struct{}
+	seenUsed     bool
+	visited      []*Node
+	visitedInMap bool
+	stack        []descendantWalkEntry
+	// stackHigh is the largest stack length since the last release.
+	stackHigh   int
 	descendants []*Node
+	// exceptions holds hasBadOverlapStateContext's descendant and ancestor list.
+	exceptions []*Node
+}
+
+const walkLinearSeen = 64
+
+// resetVisited empties the descendant walk's seen set.
+func (scratch *descendantWalkScratch) resetVisited() {
+	clear(scratch.visited)
+	scratch.visited = scratch.visited[:0]
+	if scratch.seenUsed {
+		clear(scratch.seen)
+		scratch.seenUsed = false
+	}
+	scratch.visitedInMap = false
+}
+
+func (scratch *descendantWalkScratch) markVisited(node *Node) {
+	scratch.visited = append(scratch.visited, node)
+	if scratch.visitedInMap {
+		scratch.seen[node] = struct{}{}
+		return
+	}
+	if len(scratch.visited) > walkLinearSeen {
+		if scratch.seen == nil {
+			scratch.seen = make(map[*Node]struct{}, 2*walkLinearSeen)
+		}
+		for _, visited := range scratch.visited {
+			scratch.seen[visited] = struct{}{}
+		}
+		scratch.visitedInMap = true
+		scratch.seenUsed = true
+	}
+}
+
+func (scratch *descendantWalkScratch) wasVisited(node *Node) bool {
+	if scratch.visitedInMap {
+		_, ok := scratch.seen[node]
+		return ok
+	}
+	return slices.Contains(scratch.visited, node)
 }
 
 var descendantWalkPool = typedpool.New(func() *descendantWalkScratch {
@@ -107,7 +183,17 @@ func (g *Graph) Direction(container *Node) geo.Orientation {
 }
 
 func (g *Graph) isBadStateContext(node *Node, graphState *GraphState, ignoreContainerEscape bool, guard workStepper) (bool, error) {
-	bad, skipOverlapCheck, err := g.isStructurallyBadStateContext(node, graphState, ignoreContainerEscape, guard)
+	return g.isBadStateWithOrigins(node, graphState, ignoreContainerEscape, nil, guard)
+}
+
+// isBadStateWithOrigins is isBadStateContext with an optional cache of
+// containerFixedOrigin answers that is valid while no geometry changes.
+func (g *Graph) isBadStateWithOrigins(node *Node, graphState *GraphState, ignoreContainerEscape bool, origins *fixedOriginCache, guard workStepper) (bool, error) {
+	steps := newBatchedSteps(guard)
+	bad, skipOverlapCheck, err := g.structurallyBadCountedWithOrigins(node, graphState, ignoreContainerEscape, nil, false, origins, &steps)
+	if flushErr := steps.flush(); flushErr != nil {
+		return false, flushErr
+	}
 	if err != nil || bad {
 		return bad, err
 	}
@@ -117,19 +203,68 @@ func (g *Graph) isBadStateContext(node *Node, graphState *GraphState, ignoreCont
 	return g.hasBadOverlapStateContext(node, graphState, guard)
 }
 
-// isStructurallyBadStateContext checks the linear-time node invariants that do
-// not depend on any other non-descendant graph node. Keeping these separate
-// lets transactions validate every node's containment and fixed-position
-// invariants while restricting pairwise overlap checks to relevant candidates.
-func (g *Graph) isStructurallyBadStateContext(node *Node, graphState *GraphState, ignoreContainerEscape bool, guard workStepper) (bad, skipOverlapCheck bool, err error) {
-	return g.isStructurallyBadStateWithFixedOriginContext(node, graphState, ignoreContainerEscape, nil, false, guard)
+// fixedOriginCache answers node.Graph.containerFixedOrigin(node.container())
+// for one pass of checks during which no node moves. A graph without any
+// FixedTopLeft node has no fixed origin in any container.
+type fixedOriginCache struct {
+	graph    *Graph
+	hasFixed bool
+	ready    bool
+	origins  map[*Node]*geo.Point
 }
 
-func (g *Graph) isStructurallyBadStateWithFixedOriginContext(node *Node, graphState *GraphState, ignoreContainerEscape bool, fixedOrigin *geo.Point, fixedOriginCached bool, guard workStepper) (bad, skipOverlapCheck bool, err error) {
+func (cache *fixedOriginCache) lookup(node *Node) *geo.Point {
+	g := node.Graph
+	if g != cache.graph || !cache.ready {
+		cache.graph = g
+		cache.hasFixed = false
+		// containerFixedOrigin only answers from a node with FixedTopLeft. This
+		// walk visits nodes in the same order up to the first such node, so a
+		// nil node fails here exactly where that scan would fail.
+		for _, n := range g.Nodes {
+			if n.FixedTopLeft != nil {
+				cache.hasFixed = true
+				break
+			}
+		}
+		// The map is only read when some node has FixedTopLeft.
+		if cache.origins == nil {
+			if cache.hasFixed {
+				cache.origins = make(map[*Node]*geo.Point)
+			}
+		} else {
+			clear(cache.origins)
+		}
+		cache.ready = true
+	}
+	if !cache.hasFixed {
+		return nil
+	}
+	container := node.container()
+	if origin, ok := cache.origins[container]; ok {
+		return origin
+	}
+	origin := g.containerFixedOrigin(container)
+	cache.origins[container] = origin
+	return origin
+}
+
+// structurallyBadCounted checks the linear-time invariants of node that do
+// not depend on any other non-descendant graph node (transactions check
+// pairwise overlaps separately, against relevant candidates only), with its
+// units recorded in steps. The check has no side effects, so the caller may
+// charge the units after it returns (before acting on the result).
+func (g *Graph) structurallyBadCounted(node *Node, graphState *GraphState, ignoreContainerEscape bool, fixedOrigin *geo.Point, fixedOriginCached bool, steps *batchedSteps) (bad, skipOverlapCheck bool, err error) {
+	return g.structurallyBadCountedWithOrigins(node, graphState, ignoreContainerEscape, fixedOrigin, fixedOriginCached, nil, steps)
+}
+
+// structurallyBadCountedWithOrigins answers an uncached fixed-origin lookup
+// from origins when it is non-nil.
+func (g *Graph) structurallyBadCountedWithOrigins(node *Node, graphState *GraphState, ignoreContainerEscape bool, fixedOrigin *geo.Point, fixedOriginCached bool, origins *fixedOriginCache, steps *batchedSteps) (bad, skipOverlapCheck bool, err error) {
 	if node == nil || node.TopLeft == nil {
 		return true, false, invariant.New("transaction bad-state check received an incomplete node")
 	}
-	if err := guard.Step(); err != nil {
+	if err := steps.step(); err != nil {
 		return false, false, err
 	}
 	// No need to check if cluster node is in bad state, the vessel covers it
@@ -145,7 +280,7 @@ func (g *Graph) isStructurallyBadStateWithFixedOriginContext(node *Node, graphSt
 		}
 		if node.isContainer {
 			for _, child := range g.Containers[node] {
-				if err := guard.Step(); err != nil {
+				if err := steps.step(); err != nil {
 					return false, false, err
 				}
 				if child == nil || child.TopLeft == nil {
@@ -165,6 +300,11 @@ func (g *Graph) isStructurallyBadStateWithFixedOriginContext(node *Node, graphSt
 	if fixedOriginCached {
 		pastFixedOrigin = fixedOrigin != nil &&
 			(node.TopLeft.X < fixedOrigin.X || node.TopLeft.Y < fixedOrigin.Y)
+	} else if origins != nil {
+		// isPointPastFixedOrigin(x, y, true) with a cached origin.
+		origin := origins.lookup(node)
+		pastFixedOrigin = origin != nil &&
+			(node.TopLeft.X < origin.X || node.TopLeft.Y < origin.Y)
 	} else {
 		pastFixedOrigin = node.isPointPastFixedOrigin(node.TopLeft.X, node.TopLeft.Y, true)
 	}
@@ -174,7 +314,7 @@ func (g *Graph) isStructurallyBadStateWithFixedOriginContext(node *Node, graphSt
 
 	if node.FixedTopLeft != nil && graphState != nil {
 		originalPoint := geo.Point{}
-		if original, exists := graphState.nodeGeometry[node]; exists && original.topLeft.pointer != nil {
+		if original, exists := graphState.slots.lookup(node); exists && original.topLeft.pointer != nil {
 			originalPoint = original.topLeft.value
 		}
 		if node.TopLeft.X != originalPoint.X || node.TopLeft.Y != originalPoint.Y {
@@ -191,28 +331,36 @@ func (g *Graph) hasBadOverlapStateContext(node *Node, graphState *GraphState, gu
 	if node.Cluster != nil {
 		return false, nil
 	}
-	var pairwiseExceptions map[*Node]map[*Node]struct{}
+	var pairwiseExceptions *existingOverlapSet
 	if graphState != nil {
 		pairwiseExceptions = graphState.existingOverlaps
 	}
 
-	var exceptions []*Node
+	// The exception list is scratch: it is only read by the overlap scan below.
+	// Build it in pooled storage with the same walks and unit charges as
+	// allDescendantNodesGuarded followed by a guarded walk up the ancestors.
+	scratch := descendantWalkPool.Get()
+	defer releaseDescendantWalkScratch(scratch)
+	exceptions := scratch.exceptions[:0]
 	if node.isContainer || node.isClusterVessel || g.Sequences[node] != nil {
 		var err error
-		exceptions, err = g.allDescendantNodesGuarded(node, true, guard)
+		exceptions, err = g.appendDescendantNodesGuarded(exceptions, scratch, node, true, guard)
 		if err != nil {
+			scratch.exceptions = exceptions
 			return false, err
 		}
 	}
 	// doesOverlapWithDimensionsContext already skips node identity, so only
 	// descendants and ancestors need to be materialized as exceptions.
 	if node.Container != nil || node.Cluster != nil || node.Sequence != nil {
-		ancestors, err := g.ancestorsOfGuarded(node, guard)
+		var err error
+		exceptions, err = g.appendAncestorsGuarded(exceptions, scratch, node, guard)
 		if err != nil {
+			scratch.exceptions = exceptions
 			return false, err
 		}
-		exceptions = append(exceptions, ancestors...)
 	}
+	scratch.exceptions = exceptions
 	return g.doesOverlapWithDimensionsContext(node, node.TopLeft, node.Width, node.Height, exceptions, pairwiseExceptions, guard)
 }
 
@@ -335,43 +483,56 @@ func (g *Graph) Connect(nodeA, nodeB *Node) *Edge {
 	return edge
 }
 
-func (g *Graph) doesOverlapWithDimensionsContext(node *Node, p *geo.Point, newWidth, newHeight float64, exceptions []*Node, pairwiseExceptions map[*Node]map[*Node]struct{}, guard workStepper) (bool, error) {
+func (g *Graph) doesOverlapWithDimensionsContext(node *Node, p *geo.Point, newWidth, newHeight float64, exceptions []*Node, pairwiseExceptions *existingOverlapSet, guard workStepper) (bool, error) {
 	if node == nil || p == nil {
 		return true, invariant.New("overlap check received an incomplete node")
 	}
 	right := p.X + newWidth
 	bottom := p.Y + newHeight
+	// Unit charges are batched (see batchedSteps); every return below flushes
+	// them first, so the guard sees the same units in the same order relative
+	// to the errors this scan can report.
+	steps := newBatchedSteps(guard)
+	// Membership in a short exception list is a pointer comparison; longer lists
+	// keep the set. Either way an excepted node is exactly a listed node.
 	var exceptionSet map[*Node]struct{}
+	var exceptionList []*Node
 	if len(exceptions) > 0 {
-		if len(exceptions) <= 8 || len(exceptions) > maxPooledOverlapExceptions {
-			// Small maps fit in the compiler's stack-allocated map group; large
-			// maps must not enter the pool after a partially populated failure.
-			exceptionSet = make(map[*Node]struct{}, len(exceptions))
-		} else {
-			scratch := overlapExceptionPool.Get()
-			defer releaseOverlapExceptions(scratch)
-			if scratch.nodes == nil {
-				scratch.nodes = make(map[*Node]struct{}, len(exceptions))
-			}
-			exceptionSet = scratch.nodes
-		}
-		for _, exception := range exceptions {
-			if err := guard.Step(); err != nil {
+		if len(exceptions) <= maxLinearOverlapExceptions {
+			exceptionList = exceptions
+			if err := steps.add(int64(len(exceptions))); err != nil {
 				return false, err
 			}
-			exceptionSet[exception] = struct{}{}
+		} else {
+			if len(exceptions) > maxPooledOverlapExceptions {
+				// Large maps must not enter the pool after a partially populated failure.
+				exceptionSet = make(map[*Node]struct{}, len(exceptions))
+			} else {
+				scratch := overlapExceptionPool.Get()
+				defer releaseOverlapExceptions(scratch)
+				if scratch.nodes == nil {
+					scratch.nodes = make(map[*Node]struct{}, len(exceptions))
+				}
+				exceptionSet = scratch.nodes
+			}
+			for _, exception := range exceptions {
+				if err := steps.step(); err != nil {
+					return false, err
+				}
+				exceptionSet[exception] = struct{}{}
+			}
 		}
 	}
 	// Every candidate comparison uses the same moved-node exception set. Resolve
 	// it once instead of repeating an outer-map lookup for every graph node.
-	pairwiseNodeExceptions := pairwiseExceptions[node]
+	pairwiseNodeExceptions, hasPairwiseExceptions := pairwiseExceptions.nearExceptionsOf(node)
 
 	for _, otherNode := range g.Nodes {
-		if err := guard.Step(); err != nil {
+		if err := steps.step(); err != nil {
 			return false, err
 		}
 		if otherNode == nil {
-			return false, invariant.New("overlap check encountered a nil graph node")
+			return false, steps.flushWith(invariant.New("overlap check encountered a nil graph node"))
 		}
 		if otherNode == node {
 			continue
@@ -388,24 +549,39 @@ func (g *Graph) doesOverlapWithDimensionsContext(node *Node, p *geo.Point, newWi
 			}
 			// Distant boxes cannot overlap regardless of the exception sets. Test
 			// geometry first so sparse layouts avoid two map probes per box.
-			if _, excepted := pairwiseNodeExceptions[otherNode]; excepted {
+			if hasPairwiseExceptions && pairwiseNodeExceptions.contains(otherNode) {
 				continue
 			}
-			if _, excepted := exceptionSet[otherNode]; excepted {
-				continue
+			if exceptionList != nil {
+				if slices.Contains(exceptionList, otherNode) {
+					continue
+				}
+			} else if exceptionSet != nil {
+				if _, excepted := exceptionSet[otherNode]; excepted {
+					continue
+				}
 			}
-			deltaValue, err := node.deltaToGuarded(otherNode, p, guard)
+			deltaValue, units, err := node.deltaToCounted(otherNode, p)
+			if addErr := steps.add(units); addErr != nil {
+				return false, addErr
+			}
 			if err != nil {
-				return false, err
+				return false, steps.flushWith(err)
 			}
 			delta := float64(deltaValue)
 
 			// Standard overlap test
 			if (p.X < (otherNode.TopLeft.X + otherNode.Width + delta)) && ((right + delta) > otherNode.TopLeft.X) &&
 				(p.Y < (otherNode.TopLeft.Y + otherNode.Height + delta)) && ((bottom + delta) > otherNode.TopLeft.Y) {
+				if err := steps.flush(); err != nil {
+					return false, err
+				}
 				return true, nil
 			}
 		}
+	}
+	if err := steps.flush(); err != nil {
+		return false, err
 	}
 	return false, guard.Finish()
 }
@@ -422,6 +598,7 @@ func (g *Graph) WouldOverlapWithWorkGuard(
 	if guard == nil {
 		return false, fmt.Errorf("TALA overlap check requires a work guard")
 	}
+	pairwise := existingOverlapSetFromMap(pairwiseExceptions)
 	if node == nil {
 		return g.doesOverlapWithDimensionsContext(
 			node,
@@ -429,7 +606,7 @@ func (g *Graph) WouldOverlapWithWorkGuard(
 			0,
 			0,
 			exceptions,
-			pairwiseExceptions,
+			pairwise,
 			guard,
 		)
 	}
@@ -439,7 +616,7 @@ func (g *Graph) WouldOverlapWithWorkGuard(
 		node.Width,
 		node.Height,
 		exceptions,
-		pairwiseExceptions,
+		pairwise,
 		guard,
 	)
 }
@@ -954,26 +1131,83 @@ func (g *Graph) allDescendantNodes(node *Node, includeClusterNodes bool) []*Node
 
 func (g *Graph) allDescendantNodesGuarded(node *Node, includeClusterNodes bool, guard workStepper) ([]*Node, error) {
 	scratch := descendantWalkPool.Get()
-	clear(scratch.seen)
+	defer releaseDescendantWalkScratch(scratch)
+	descendants, err := g.appendDescendantNodesGuarded(scratch.descendants[:0], scratch, node, includeClusterNodes, guard)
+	scratch.descendants = descendants
+	if err != nil {
+		return nil, err
+	}
+	return append([]*Node(nil), descendants...), nil
+}
+
+// retainable reports whether the scratch is small enough to pool (see
+// typedpool.MaxRetainedEntries). visited records every node a walk marks and
+// the ancestor walk's set holds nodes it also appends to its result, so the
+// capacities bound what seen has held.
+func (scratch *descendantWalkScratch) retainable() bool {
+	const limit = typedpool.MaxRetainedEntries
+	return len(scratch.seen) <= limit && cap(scratch.visited) <= limit && cap(scratch.stack) <= limit &&
+		cap(scratch.descendants) <= limit && cap(scratch.exceptions) <= limit
+}
+
+// releaseDescendantWalkScratch drops every graph pointer held by pooled walk
+// storage and returns it to the pool. Only the storage used since the last
+// release can hold pointers, so only that is cleared. Oversized storage is
+// left to the collector.
+func releaseDescendantWalkScratch(scratch *descendantWalkScratch) {
+	if !scratch.retainable() {
+		return
+	}
+	scratch.resetVisited()
+	clear(scratch.stack[:scratch.stackHigh])
+	scratch.stackHigh = 0
+	// The whole capacity: callers store the lists they appended to back into
+	// the scratch only when the walk returns, so after a panic the appended
+	// entries lie beyond the stored length.
+	clear(scratch.descendants[:cap(scratch.descendants)])
+	clear(scratch.exceptions[:cap(scratch.exceptions)])
 	scratch.stack = scratch.stack[:0]
 	scratch.descendants = scratch.descendants[:0]
-	defer func() {
-		clear(scratch.seen)
-		clear(scratch.stack[:cap(scratch.stack)])
-		clear(scratch.descendants)
-		scratch.stack = scratch.stack[:0]
-		scratch.descendants = scratch.descendants[:0]
-		descendantWalkPool.Put(scratch)
-	}()
+	scratch.exceptions = scratch.exceptions[:0]
+	descendantWalkPool.Put(scratch)
+}
+
+// forEachDescendant applies fn to allDescendantNodes(node,
+// includeClusterNodes) in order, without copying the list out of the pooled
+// walk storage.
+func (g *Graph) forEachDescendant(node *Node, includeClusterNodes bool, fn func(*Node)) {
+	scratch := descendantWalkPool.Get()
+	defer releaseDescendantWalkScratch(scratch)
+	descendants, err := g.appendDescendantNodesGuarded(scratch.descendants[:0], scratch, node, includeClusterNodes, unboundedWork)
+	scratch.descendants = descendants
+	if err != nil {
+		panic(err)
+	}
+	for _, descendant := range descendants {
+		fn(descendant)
+	}
+}
+
+// appendDescendantNodesGuarded appends allDescendantNodesGuarded's result to
+// dst using scratch's walk state, with identical unit charges and Finish.
+func (g *Graph) appendDescendantNodesGuarded(dst []*Node, scratch *descendantWalkScratch, node *Node, includeClusterNodes bool, guard workStepper) ([]*Node, error) {
+	scratch.resetVisited()
+	if len(scratch.stack) > scratch.stackHigh {
+		scratch.stackHigh = len(scratch.stack)
+	}
+	scratch.stack = scratch.stack[:0]
+	// The walk has no other failure than the guard and observes nothing else
+	// through it, so its units are charged in one batch before Finish.
+	steps := newBatchedSteps(guard)
 	if node != nil {
-		scratch.seen[node] = struct{}{}
+		scratch.markVisited(node)
 	}
 	pushChildren := func(parent *Node) error {
 		// Push in reverse traversal order so the iterative walk retains the old
 		// container-before-cluster-before-sequence preorder.
 		if sequence := g.Sequences[parent]; sequence != nil {
 			for _, v := range slices.Backward(sequence.Nodes) {
-				if err := guard.Step(); err != nil {
+				if err := steps.step(); err != nil {
 					return err
 				}
 				scratch.stack = append(scratch.stack, descendantWalkEntry{node: v, emit: includeClusterNodes})
@@ -982,7 +1216,7 @@ func (g *Graph) allDescendantNodesGuarded(node *Node, includeClusterNodes bool, 
 		if parent != nil && parent.isClusterVessel {
 			if cluster := g.Clusters[parent]; cluster != nil {
 				for _, v := range slices.Backward(cluster.Nodes) {
-					if err := guard.Step(); err != nil {
+					if err := steps.step(); err != nil {
 						return err
 					}
 					scratch.stack = append(scratch.stack, descendantWalkEntry{node: v, emit: includeClusterNodes})
@@ -992,21 +1226,24 @@ func (g *Graph) allDescendantNodesGuarded(node *Node, includeClusterNodes bool, 
 		if parent == nil || parent.isContainer {
 			children := g.Containers[parent]
 			for _, child := range slices.Backward(children) {
-				if err := guard.Step(); err != nil {
+				if err := steps.step(); err != nil {
 					return err
 				}
 				scratch.stack = append(scratch.stack, descendantWalkEntry{node: child, emit: true})
 			}
 		}
+		if len(scratch.stack) > scratch.stackHigh {
+			scratch.stackHigh = len(scratch.stack)
+		}
 		return nil
 	}
 	if err := pushChildren(node); err != nil {
-		return nil, err
+		return dst, err
 	}
 
 	for len(scratch.stack) > 0 {
-		if err := guard.Step(); err != nil {
-			return nil, err
+		if err := steps.step(); err != nil {
+			return dst, err
 		}
 		last := len(scratch.stack) - 1
 		current := scratch.stack[last]
@@ -1014,39 +1251,74 @@ func (g *Graph) allDescendantNodesGuarded(node *Node, includeClusterNodes bool, 
 		if current.node == nil {
 			continue
 		}
-		if _, exists := scratch.seen[current.node]; exists {
+		if scratch.wasVisited(current.node) {
 			continue
 		}
-		scratch.seen[current.node] = struct{}{}
+		scratch.markVisited(current.node)
 		if current.emit {
-			scratch.descendants = append(scratch.descendants, current.node)
+			dst = append(dst, current.node)
 		}
 		if err := pushChildren(current.node); err != nil {
-			return nil, err
+			return dst, err
 		}
+	}
+	if err := steps.flush(); err != nil {
+		return dst, err
 	}
 	if err := guard.Finish(); err != nil {
-		return nil, err
+		return dst, err
 	}
-	return append([]*Node(nil), scratch.descendants...), nil
+	return dst, nil
 }
 
-func (g *Graph) ancestorsOfGuarded(node *Node, guard workStepper) (nodes []*Node, err error) {
-	seen := make(map[*Node]struct{})
+// appendAncestorsGuarded appends node's ancestors to dst, nearest first,
+// following Container, else Cluster.Vessel, else Sequence.Vessel (node
+// itself excluded). It charges one unit per node of the chain, node
+// included, fails on a cycle or a chain of more than maxEngineNodes nodes,
+// and ends with guard.Finish. Short chains are checked for repeats by
+// scanning the chain itself.
+func (g *Graph) appendAncestorsGuarded(dst []*Node, scratch *descendantWalkScratch, node *Node, guard workStepper) ([]*Node, error) {
+	const linearChain = 32
+	start := len(dst)
+	steps := newBatchedSteps(guard)
+	useSet := false
+	visited := 0
 	for current := node; current != nil; {
-		if err := guard.Step(); err != nil {
-			return nil, err
+		if err := steps.step(); err != nil {
+			return dst, err
 		}
-		if _, exists := seen[current]; exists {
-			return nil, invariant.New("cycle in transaction ancestry")
+		// The chain so far is node followed by dst[start:].
+		var repeated bool
+		if useSet {
+			_, repeated = scratch.seen[current]
+		} else {
+			repeated = visited > 0 && (current == node || slices.Contains(dst[start:], current))
 		}
-		seen[current] = struct{}{}
-		if len(seen) > maxEngineNodes {
-			return nil, invariant.New("transaction ancestry exceeds node limit")
+		if repeated {
+			return dst, steps.flushWith(invariant.New("cycle in transaction ancestry"))
+		}
+		visited++
+		if !useSet && visited > linearChain {
+			if scratch.seen == nil {
+				scratch.seen = make(map[*Node]struct{})
+			}
+			clear(scratch.seen)
+			scratch.seenUsed = true
+			scratch.seen[node] = struct{}{}
+			for _, ancestor := range dst[start:] {
+				scratch.seen[ancestor] = struct{}{}
+			}
+			useSet = true
+		}
+		if useSet {
+			scratch.seen[current] = struct{}{}
+		}
+		if visited > maxEngineNodes {
+			return dst, steps.flushWith(invariant.New("transaction ancestry exceeds node limit"))
 		}
 		if current != node {
 			// don't include node itself
-			nodes = append(nodes, current)
+			dst = append(dst, current)
 		}
 		if current.Container != nil {
 			current = current.Container
@@ -1058,7 +1330,10 @@ func (g *Graph) ancestorsOfGuarded(node *Node, guard workStepper) (nodes []*Node
 			break
 		}
 	}
-	return nodes, guard.Finish()
+	if err := steps.flush(); err != nil {
+		return dst, err
+	}
+	return dst, guard.Finish()
 }
 
 func (g *Graph) isTreeSentinel(n *Node) bool {

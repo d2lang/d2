@@ -9,6 +9,7 @@ import (
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/internal/testlog"
+	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/log"
 )
 
@@ -74,4 +75,40 @@ func (snapshot exactTestSlice[T]) assertRestored(t *testing.T, got []T, name str
 	if !slices.Equal(got[:cap(got)], snapshot.backing) {
 		t.Fatalf("%s backing array contents changed", name)
 	}
+}
+
+// crossedCount is the number of crossed edges.
+func (index *ovgCrossingIndex) crossedCount() int {
+	count := len(index.crossedOther)
+	for _, crossed := range index.crossedSlots {
+		if crossed {
+			count++
+		}
+	}
+	return count
+}
+
+func newOVGEdgeRouterWithWorkLimit(
+	ctx context.Context,
+	flavor RouteGenerationFlavor,
+	ovg *OVG,
+	g *layoutgraph.Graph,
+	existingRoutes []*Route,
+	edges []*layoutgraph.Edge,
+	workLimit uint64,
+) (_ *ovgEdgeRouter, err error) {
+	return newSharingOVGEdgeRouter(ctx, flavor, ovg, g, existingRoutes, edges, workLimit, nil)
+}
+
+// routesAtPoint is the former pointToRoute[point].
+func (router *ovgEdgeRouter) routesAtPoint(point geo.Point) []*Route {
+	if class := router.classes.classOfPoint(point); class >= 0 {
+		return router.routesAtClass(class)
+	}
+	return router.pointToRoute[point]
+}
+
+// hasPointRoutes reports whether any route point was recorded.
+func (router *ovgEdgeRouter) hasPointRoutes() bool {
+	return len(router.classRoutes) > 0 || len(router.pointToRoute) > 0
 }

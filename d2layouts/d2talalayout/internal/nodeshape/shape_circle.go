@@ -11,38 +11,48 @@ type shapeCircle struct {
 func (s shapeCircle) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.InsideMiddleCenter:  {},
-			label.OutsideBottomCenter: {},
-		}
+		return circleLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.InsideBottomCenter: {},
-			label.InsideTopCenter:    {},
-			label.InsideMiddleLeft:   {},
-			label.InsideMiddleRight:  {},
-		}
+		return circleLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:      {},
-			label.InsideTopRight:     {},
-			label.InsideBottomLeft:   {},
-			label.InsideBottomRight:  {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightMiddle: {},
-		}
+		return circleLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:     {},
-			label.OutsideTopRight:    {},
-			label.OutsideLeftTop:     {},
-			label.OutsideRightTop:    {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return circleLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return circleLabelPreferencesFallback
 }
+
+var circleLabelPreferencesGood = map[label.Position]struct{}{
+	label.OutsideTopCenter:    {},
+	label.InsideMiddleCenter:  {},
+	label.OutsideBottomCenter: {},
+}
+
+var circleLabelPreferencesOK = map[label.Position]struct{}{
+	label.InsideBottomCenter: {},
+	label.InsideTopCenter:    {},
+	label.InsideMiddleLeft:   {},
+	label.InsideMiddleRight:  {},
+}
+
+var circleLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.InsideTopLeft:      {},
+	label.InsideTopRight:     {},
+	label.InsideBottomLeft:   {},
+	label.InsideBottomRight:  {},
+	label.OutsideLeftMiddle:  {},
+	label.OutsideRightMiddle: {},
+}
+
+var circleLabelPreferencesBad = map[label.Position]struct{}{
+	label.OutsideTopLeft:     {},
+	label.OutsideTopRight:    {},
+	label.OutsideLeftTop:     {},
+	label.OutsideRightTop:    {},
+	label.OutsideBottomLeft:  {},
+	label.OutsideBottomRight: {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightBottom: {},
+}
+
+var circleLabelPreferencesFallback = map[label.Position]struct{}{}

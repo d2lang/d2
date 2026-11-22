@@ -1,8 +1,6 @@
 package placementcost
 
 import (
-	"context"
-	"fmt"
 	"math"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -21,22 +19,6 @@ const (
 	// IdealGapSize is the target separation between connected node boundaries.
 	IdealGapSize = 2.5 * layoutgraph.ConnectedNodeGap
 )
-
-func scoringCancellationError(ctx context.Context, iteration int) error {
-	if iteration%scoringCancellationCheckInterval != 0 {
-		return nil
-	}
-	return checkScoringCancellation(ctx)
-}
-
-// Keep the interval check small enough to inline into the scoring loops. The
-// context call and error formatting are only needed at a polling boundary.
-func checkScoringCancellation(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("EdgeLength: %w", err)
-	}
-	return nil
-}
 
 type compassReading int
 

@@ -13,67 +13,19 @@ type shapePerson struct {
 func (s shapePerson) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.OutsideBottomCenter: {},
-		}
+		return personLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:   {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-		}
+		return personLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.InsideTopCenter:    {},
-			label.InsideMiddleCenter: {},
-			label.InsideBottomCenter: {},
-			label.InsideBottomLeft:   {},
-			label.InsideBottomRight:  {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightMiddle: {},
-			label.OutsideRightBottom: {},
-		}
+		return personLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:     {},
-			label.InsideTopRight:    {},
-			label.InsideMiddleLeft:  {},
-			label.InsideMiddleRight: {},
-			label.OutsideRightTop:   {},
-			label.OutsideLeftTop:    {},
-			label.OutsideTopLeft:    {},
-			label.OutsideTopRight:   {},
-		}
+		return personLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return personLabelPreferencesFallback
 }
 
 func (s shapePerson) SnapPointPercentages() [][]*geo.RelativePoint {
-	return [][]*geo.RelativePoint{
-		// Top
-		{
-			geo.NewRelativePoint(0.21, 0.122),
-			geo.NewRelativePoint(0.5, 0),
-			geo.NewRelativePoint(0.79, 0.122),
-		},
-		// Left
-		{
-			geo.NewRelativePoint(0.135, 0.35),
-			geo.NewRelativePoint(0.08, 0.75),
-		},
-		// Bottom
-		{
-			geo.NewRelativePoint(0.25, 0.985),
-			geo.NewRelativePoint(0.5, 1),
-			geo.NewRelativePoint(0.75, 0.985),
-		},
-		// Right
-		{
-			geo.NewRelativePoint(0.865, 0.35),
-			geo.NewRelativePoint(0.92, 0.75),
-		},
-	}
+	return personSnapPoints
 }
 
 func (s shapePerson) PortIndices(orientation geo.Orientation) []int {
@@ -131,4 +83,65 @@ func (s shapePerson) CenterPortIndex(o geo.Orientation) int {
 	}
 
 	return centerPorts[centerPortsIndex]
+}
+
+var personLabelPreferencesGood = map[label.Position]struct{}{
+	label.OutsideBottomCenter: {},
+}
+
+var personLabelPreferencesOK = map[label.Position]struct{}{
+	label.OutsideTopCenter:   {},
+	label.OutsideBottomLeft:  {},
+	label.OutsideBottomRight: {},
+}
+
+var personLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.InsideTopCenter:    {},
+	label.InsideMiddleCenter: {},
+	label.InsideBottomCenter: {},
+	label.InsideBottomLeft:   {},
+	label.InsideBottomRight:  {},
+	label.OutsideLeftMiddle:  {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightMiddle: {},
+	label.OutsideRightBottom: {},
+}
+
+var personLabelPreferencesBad = map[label.Position]struct{}{
+	label.InsideTopLeft:     {},
+	label.InsideTopRight:    {},
+	label.InsideMiddleLeft:  {},
+	label.InsideMiddleRight: {},
+	label.OutsideRightTop:   {},
+	label.OutsideLeftTop:    {},
+	label.OutsideTopLeft:    {},
+	label.OutsideTopRight:   {},
+}
+
+var personLabelPreferencesFallback = map[label.Position]struct{}{}
+
+// personSnapPoints is shared by every call: callers only read it.
+var personSnapPoints = [][]*geo.RelativePoint{
+	// Top
+	{
+		geo.NewRelativePoint(0.21, 0.122),
+		geo.NewRelativePoint(0.5, 0),
+		geo.NewRelativePoint(0.79, 0.122),
+	},
+	// Left
+	{
+		geo.NewRelativePoint(0.135, 0.35),
+		geo.NewRelativePoint(0.08, 0.75),
+	},
+	// Bottom
+	{
+		geo.NewRelativePoint(0.25, 0.985),
+		geo.NewRelativePoint(0.5, 1),
+		geo.NewRelativePoint(0.75, 0.985),
+	},
+	// Right
+	{
+		geo.NewRelativePoint(0.865, 0.35),
+		geo.NewRelativePoint(0.92, 0.75),
+	},
 }

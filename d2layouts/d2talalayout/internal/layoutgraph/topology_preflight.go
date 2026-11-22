@@ -17,85 +17,143 @@ const (
 	maxPooledParentRelationNodes       = 4096
 )
 
+// parentPathEntry is one node on a parent walk together with its slot in the
+// inventory (-1 for a node outside it).
+type parentPathEntry struct {
+	node *Node
+	slot int32
+}
+
+// parentRelationScratch holds walk state for the nodes of one inventory by
+// slot, plus maps for any node reached outside the inventory.
 type parentRelationScratch struct {
-	state  map[*Node]uint8
-	depths map[*Node]int
-	path   []*Node
+	state      []uint8
+	depths     []int32
+	path       []parentPathEntry
+	extraState map[*Node]uint8
+	extraDepth map[*Node]int
 }
 
 var parentRelationScratchPool = typedpool.New(func() *parentRelationScratch {
-	return &parentRelationScratch{
-		state:  make(map[*Node]uint8, 128),
-		depths: make(map[*Node]int, 128),
-		path:   make([]*Node, 0, 16),
-	}
+	return &parentRelationScratch{}
 })
 
 func borrowParentRelationScratch(nodeCount int) (*parentRelationScratch, bool) {
 	if nodeCount > maxPooledParentRelationNodes {
 		return &parentRelationScratch{
-			state:  make(map[*Node]uint8, nodeCount),
-			depths: make(map[*Node]int, nodeCount),
-			path:   make([]*Node, 0, min(nodeCount, maxEngineTopologyDepth)),
+			state:  make([]uint8, nodeCount),
+			depths: make([]int32, nodeCount),
+			path:   make([]parentPathEntry, 0, min(nodeCount, maxEngineTopologyDepth)),
 		}, false
 	}
 	scratch := parentRelationScratchPool.Get()
-	clear(scratch.state)
-	clear(scratch.depths)
-	clear(scratch.path[:cap(scratch.path)])
+	if cap(scratch.state) < nodeCount {
+		scratch.state = make([]uint8, nodeCount)
+		scratch.depths = make([]int32, nodeCount)
+	} else {
+		scratch.state = scratch.state[:nodeCount]
+		scratch.depths = scratch.depths[:nodeCount]
+		clear(scratch.state)
+		clear(scratch.depths)
+	}
 	scratch.path = scratch.path[:0]
+	clear(scratch.extraState)
+	clear(scratch.extraDepth)
 	return scratch, true
 }
 
 func returnParentRelationScratch(scratch *parentRelationScratch, pooled bool) {
-	if !pooled {
+	// state and depths are bounded when borrowed; the path and the maps of
+	// nodes outside the inventory are bounded here.
+	const limit = maxPooledParentRelationNodes
+	if !pooled || cap(scratch.path) > limit || len(scratch.extraState) > limit || len(scratch.extraDepth) > limit {
 		return
 	}
-	clear(scratch.state)
-	clear(scratch.depths)
 	clear(scratch.path[:cap(scratch.path)])
 	scratch.path = scratch.path[:0]
+	clear(scratch.extraState)
+	clear(scratch.extraDepth)
 	parentRelationScratchPool.Put(scratch)
 }
 
+func (scratch *parentRelationScratch) stateOf(node *Node, slot int32) uint8 {
+	if slot >= 0 {
+		return scratch.state[slot]
+	}
+	return scratch.extraState[node]
+}
+
+func (scratch *parentRelationScratch) setState(node *Node, slot int32, state uint8) {
+	if slot >= 0 {
+		scratch.state[slot] = state
+		return
+	}
+	if scratch.extraState == nil {
+		scratch.extraState = make(map[*Node]uint8)
+		scratch.extraDepth = make(map[*Node]int)
+	}
+	scratch.extraState[node] = state
+}
+
+func (scratch *parentRelationScratch) depthOf(node *Node, slot int32) int {
+	if slot >= 0 {
+		return int(scratch.depths[slot])
+	}
+	return scratch.extraDepth[node]
+}
+
+func (scratch *parentRelationScratch) setDepth(node *Node, slot int32, depth int) {
+	if slot >= 0 {
+		scratch.depths[slot] = int32(depth)
+		return
+	}
+	scratch.extraDepth[node] = depth
+}
+
+// validateNodeParentRelation walks every inventory node's parent chain once.
+// slotOf returns an inventory node's slot in order, -1 for any other node
+// (and nil). Starting walks in slot
+// order instead of map order changes neither the units charged (each node is
+// stepped once) nor whether a cycle or an excessive depth exists.
 func validateNodeParentRelation(
 	guard workStepper,
-	nodes map[*Node]struct{},
+	slotOf func(*Node) int32,
+	order []*Node,
 	relation string,
 	parentOf func(*Node) *Node,
 ) error {
-	scratch, pooled := borrowParentRelationScratch(len(nodes))
+	scratch, pooled := borrowParentRelationScratch(len(order))
 	defer returnParentRelationScratch(scratch, pooled)
-	state := scratch.state
-	depths := scratch.depths
-	for node := range nodes {
-		if state[node] == 2 {
+	for start, node := range order {
+		if scratch.state[start] == 2 {
 			continue
 		}
 		scratch.path = scratch.path[:0]
-		current := node
-		for current != nil && state[current] == 0 {
+		current, slot := node, int32(start)
+		for current != nil && scratch.stateOf(current, slot) == 0 {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			state[current] = 1
-			scratch.path = append(scratch.path, current)
+			scratch.setState(current, slot, 1)
+			scratch.path = append(scratch.path, parentPathEntry{node: current, slot: slot})
 			current = parentOf(current)
+			slot = slotOf(current)
 		}
-		if current != nil && state[current] == 1 {
+		if current != nil && scratch.stateOf(current, slot) == 1 {
 			return fmt.Errorf("TALA engine %s cycle detected at node %d", relation, current.ID)
 		}
 		depth := 0
 		if current != nil {
-			depth = depths[current]
+			depth = scratch.depthOf(current, slot)
 		}
-		for _, p := range slices.Backward(scratch.path) {
+		for i := len(scratch.path) - 1; i >= 0; i-- {
+			p := scratch.path[i]
 			depth++
 			if depth > maxEngineTopologyDepth {
 				return fmt.Errorf("TALA engine %s depth exceeds limit %d", relation, maxEngineTopologyDepth)
 			}
-			depths[p] = depth
-			state[p] = 2
+			scratch.setDepth(p.node, p.slot, depth)
+			scratch.setState(p.node, p.slot, 2)
 		}
 	}
 	return nil
@@ -135,13 +193,13 @@ func validateCombineNodeTopology(ctx context.Context, graphs []*Graph) error {
 
 	var referenceCount int64
 	var routePointCount int64
+	// The limit errors do not name the reference being visited: the walk
+	// visits the graph's maps in map order, so which kind crossed the limit
+	// varied from run to run; whether the total crosses it does not depend on
+	// the order.
 	addReference := func(kind string) error {
 		if referenceCount >= maxEngineTopologyReferences {
-			return fmt.Errorf(
-				"TALA CombineSubgraphs topology references exceed limit %d while visiting %s",
-				maxEngineTopologyReferences,
-				kind,
-			)
+			return fmt.Errorf("TALA CombineSubgraphs topology references exceed limit %d", maxEngineTopologyReferences)
 		}
 		referenceCount++
 		return guard.Step()
@@ -152,11 +210,7 @@ func validateCombineNodeTopology(ctx context.Context, graphs []*Graph) error {
 		}
 		spare := int64(capacity - length)
 		if spare > maxEngineTopologyReferences-referenceCount {
-			return fmt.Errorf(
-				"TALA CombineSubgraphs topology references exceed limit %d while reserving %s capacity",
-				maxEngineTopologyReferences,
-				kind,
-			)
+			return fmt.Errorf("TALA CombineSubgraphs topology references exceed limit %d", maxEngineTopologyReferences)
 		}
 		referenceCount += spare
 		return guard.Check()
@@ -165,7 +219,7 @@ func validateCombineNodeTopology(ctx context.Context, graphs []*Graph) error {
 		return fmt.Errorf("TALA CombineSubgraphs node-owned topology contains nil %s", kind)
 	}
 
-	nodes := make(map[*Node]struct{})
+	nodes := make(map[*Node]int32)
 	edges := make(map[*Edge]struct{})
 	clusters := make(map[*Cluster]struct{})
 	sequences := make(map[*Sequence]struct{})
@@ -197,7 +251,7 @@ func validateCombineNodeTopology(ctx context.Context, graphs []*Graph) error {
 		if len(nodes) >= maxEngineNodes {
 			return fmt.Errorf("TALA CombineSubgraphs unique node count exceeds limit %d", maxEngineNodes)
 		}
-		nodes[node] = struct{}{}
+		nodes[node] = int32(len(nodeQueue))
 		nodeQueue = append(nodeQueue, node)
 		return nil
 	}
@@ -487,27 +541,155 @@ func validateCombineNodeTopology(ctx context.Context, graphs []*Graph) error {
 		}
 	}
 
-	if err := validateNodeParentRelation(guard, nodes, "container parent", func(node *Node) *Node {
+	combineSlotOf := func(node *Node) int32 {
+		if node == nil {
+			return -1
+		}
+		if slot, ok := nodes[node]; ok {
+			return slot
+		}
+		return -1
+	}
+	if err := validateNodeParentRelation(guard, combineSlotOf, nodeQueue, "container parent", func(node *Node) *Node {
 		return node.Container
 	}); err != nil {
 		return err
 	}
-	if err := validateNodeParentRelation(guard, nodes, "effective container parent", func(node *Node) *Node {
+	if err := validateNodeParentRelation(guard, combineSlotOf, nodeQueue, "effective container parent", func(node *Node) *Node {
 		return node.container()
 	}); err != nil {
 		return err
 	}
-	if err := validateNodeParentRelation(guard, nodes, "ancestry parent", ancestryParent); err != nil {
+	if err := validateNodeParentRelation(guard, combineSlotOf, nodeQueue, "ancestry parent", ancestryParent); err != nil {
 		return err
 	}
 	return guard.Finish()
+}
+
+// preflightScratch is validateEngineGraph's working storage, pooled because
+// layout stages validate their (sub)graphs thousands of times per layout.
+// Every map and slice is empty when the scratch is taken from the pool, so
+// a validation sees exactly the fresh storage it allocated before.
+type preflightScratch struct {
+	nodes       map[*Node]int32
+	edges       map[*Edge]struct{}
+	clusters    map[*Cluster]struct{}
+	sequences   map[*Sequence]struct{}
+	trees       map[*Tree]struct{}
+	abductions  map[*EdgeAbduction]struct{}
+	herds       map[*HerdAssignment]struct{}
+	hierarchies map[*Hierarchy]struct{}
+
+	nodeQueue      []*Node
+	edgeQueue      []*Edge
+	clusterQueue   []*Cluster
+	sequenceQueue  []*Sequence
+	treeQueue      []*Tree
+	abductionQueue []*EdgeAbduction
+	herdQueue      []*HerdAssignment
+	hierarchyQueue []*Hierarchy
+
+	descendantColor  []uint8
+	descendantHeight []int32
+	descendantStarts []*Node
+	childBuffer      []*Node
+	childSlots       []int32
+	stack            []preflightDescendantFrame
+}
+
+type preflightDescendantFrame struct {
+	node       *Node
+	slot       int32
+	begin, end int
+	index      int
+}
+
+var preflightScratchPool = typedpool.New(func() *preflightScratch {
+	return &preflightScratch{
+		nodes:       make(map[*Node]int32),
+		edges:       make(map[*Edge]struct{}),
+		clusters:    make(map[*Cluster]struct{}),
+		sequences:   make(map[*Sequence]struct{}),
+		trees:       make(map[*Tree]struct{}),
+		abductions:  make(map[*EdgeAbduction]struct{}),
+		herds:       make(map[*HerdAssignment]struct{}),
+		hierarchies: make(map[*Hierarchy]struct{}),
+	}
+})
+
+// retainable reports whether every map and slice of the scratch is within
+// maxPooledParentRelationNodes (TinyGo's sync.Pool never frees what it
+// holds).
+func (scratch *preflightScratch) retainable() bool {
+	const limit = maxPooledParentRelationNodes
+	return len(scratch.nodes) <= limit && len(scratch.edges) <= limit && len(scratch.clusters) <= limit &&
+		len(scratch.sequences) <= limit && len(scratch.trees) <= limit && len(scratch.abductions) <= limit &&
+		len(scratch.herds) <= limit && len(scratch.hierarchies) <= limit &&
+		cap(scratch.nodeQueue) <= limit && cap(scratch.edgeQueue) <= limit && cap(scratch.clusterQueue) <= limit &&
+		cap(scratch.sequenceQueue) <= limit && cap(scratch.treeQueue) <= limit && cap(scratch.abductionQueue) <= limit &&
+		cap(scratch.herdQueue) <= limit && cap(scratch.hierarchyQueue) <= limit &&
+		cap(scratch.descendantColor) <= limit && cap(scratch.descendantHeight) <= limit &&
+		cap(scratch.descendantStarts) <= limit && cap(scratch.childBuffer) <= limit &&
+		cap(scratch.childSlots) <= limit && cap(scratch.stack) <= limit
+}
+
+// release empties the scratch (dropping every graph pointer) and returns it
+// to the pool. Very large inventories are not pooled.
+func (scratch *preflightScratch) release() {
+	if !scratch.retainable() {
+		return
+	}
+	clear(scratch.nodes)
+	clear(scratch.edges)
+	clear(scratch.clusters)
+	clear(scratch.sequences)
+	clear(scratch.trees)
+	clear(scratch.abductions)
+	clear(scratch.herds)
+	clear(scratch.hierarchies)
+	clear(scratch.nodeQueue)
+	clear(scratch.edgeQueue)
+	clear(scratch.clusterQueue)
+	clear(scratch.sequenceQueue)
+	clear(scratch.treeQueue)
+	clear(scratch.abductionQueue)
+	clear(scratch.herdQueue)
+	clear(scratch.hierarchyQueue)
+	clear(scratch.descendantStarts)
+	clear(scratch.childBuffer[:cap(scratch.childBuffer)])
+	clear(scratch.stack[:cap(scratch.stack)])
+	scratch.nodeQueue = scratch.nodeQueue[:0]
+	scratch.edgeQueue = scratch.edgeQueue[:0]
+	scratch.clusterQueue = scratch.clusterQueue[:0]
+	scratch.sequenceQueue = scratch.sequenceQueue[:0]
+	scratch.treeQueue = scratch.treeQueue[:0]
+	scratch.abductionQueue = scratch.abductionQueue[:0]
+	scratch.herdQueue = scratch.herdQueue[:0]
+	scratch.hierarchyQueue = scratch.hierarchyQueue[:0]
+	scratch.descendantStarts = scratch.descendantStarts[:0]
+	scratch.childBuffer = scratch.childBuffer[:0]
+	scratch.childSlots = scratch.childSlots[:0]
+	scratch.stack = scratch.stack[:0]
+	preflightScratchPool.Put(scratch)
 }
 
 // validateEngineGraph performs a bounded, iterative walk of every runtime
 // topology reference before layout code allocates snapshots or starts work.
 // It intentionally validates structural safety rather than semantic layout
 // policy, which belongs at the adapter boundary.
+//
+// Its node and edge inventory is found through each object's preflightSlot
+// hint (verified by the inventory entry it names, so stale values are
+// harmless), which the walk writes, so the objects it reaches must belong to
+// the calling goroutine, as those of every graph a layout stage works on do.
+// A graph that several goroutines read at the same time (the seeds' common
+// input, marked with MarkSharedInput) keeps its inventory in maps and is not
+// written to (validateEngineGraphWith without hints).
 func validateEngineGraph(ctx context.Context, location string, graph *Graph) error {
+	return validateEngineGraphWith(ctx, location, graph, graph == nil || !graph.sharedInput)
+}
+
+func validateEngineGraphWith(ctx context.Context, location string, graph *Graph, useHints bool) error {
 	if graph == nil {
 		return fmt.Errorf("TALA engine requires a graph")
 	}
@@ -519,9 +701,12 @@ func validateEngineGraph(ctx context.Context, location string, graph *Graph) err
 
 	var referenceCount int64
 	var routePointCount int64
+	// The limit errors do not name the reference being visited (see
+	// validateCombineNodeTopology): which kind crossed the limit depended on
+	// map order.
 	addReference := func(kind string) error {
 		if referenceCount >= maxEngineTopologyReferences {
-			return fmt.Errorf("TALA engine topology references exceed limit %d while visiting %s", maxEngineTopologyReferences, kind)
+			return fmt.Errorf("TALA engine topology references exceed limit %d", maxEngineTopologyReferences)
 		}
 		referenceCount++
 		return guard.Step()
@@ -532,7 +717,7 @@ func validateEngineGraph(ctx context.Context, location string, graph *Graph) err
 		}
 		spare := int64(capacity - length)
 		if spare > maxEngineTopologyReferences-referenceCount {
-			return fmt.Errorf("TALA engine topology references exceed limit %d while reserving %s capacity", maxEngineTopologyReferences, kind)
+			return fmt.Errorf("TALA engine topology references exceed limit %d", maxEngineTopologyReferences)
 		}
 		referenceCount += spare
 		return guard.Check()
@@ -541,23 +726,52 @@ func validateEngineGraph(ctx context.Context, location string, graph *Graph) err
 		return fmt.Errorf("TALA engine topology contains nil %s", kind)
 	}
 
-	nodes := make(map[*Node]struct{})
-	edges := make(map[*Edge]struct{})
-	clusters := make(map[*Cluster]struct{})
-	sequences := make(map[*Sequence]struct{})
-	trees := make(map[*Tree]struct{})
-	abductions := make(map[*EdgeAbduction]struct{})
-	herds := make(map[*HerdAssignment]struct{})
-	hierarchies := make(map[*Hierarchy]struct{})
+	scratch := preflightScratchPool.Get()
+	nodes := scratch.nodes
+	edges := scratch.edges
+	clusters := scratch.clusters
+	sequences := scratch.sequences
+	trees := scratch.trees
+	abductions := scratch.abductions
+	herds := scratch.herds
+	hierarchies := scratch.hierarchies
 
-	var nodeQueue []*Node
-	var edgeQueue []*Edge
-	var clusterQueue []*Cluster
-	var sequenceQueue []*Sequence
-	var treeQueue []*Tree
-	var abductionQueue []*EdgeAbduction
-	var herdQueue []*HerdAssignment
-	var hierarchyQueue []*Hierarchy
+	nodeQueue := scratch.nodeQueue
+	edgeQueue := scratch.edgeQueue
+	clusterQueue := scratch.clusterQueue
+	sequenceQueue := scratch.sequenceQueue
+	treeQueue := scratch.treeQueue
+	abductionQueue := scratch.abductionQueue
+	herdQueue := scratch.herdQueue
+	hierarchyQueue := scratch.hierarchyQueue
+	var childBuffer []*Node
+	var childSlots []int32
+	var stack []preflightDescendantFrame
+	var descendantStarts []*Node
+	defer func() {
+		// Keep whatever storage grew for the next validation.
+		scratch.nodeQueue = nodeQueue
+		scratch.edgeQueue = edgeQueue
+		scratch.clusterQueue = clusterQueue
+		scratch.sequenceQueue = sequenceQueue
+		scratch.treeQueue = treeQueue
+		scratch.abductionQueue = abductionQueue
+		scratch.herdQueue = herdQueue
+		scratch.hierarchyQueue = hierarchyQueue
+		if cap(childBuffer) > cap(scratch.childBuffer) {
+			scratch.childBuffer = childBuffer
+		}
+		if cap(childSlots) > cap(scratch.childSlots) {
+			scratch.childSlots = childSlots
+		}
+		if cap(stack) > cap(scratch.stack) {
+			scratch.stack = stack
+		}
+		if cap(descendantStarts) > cap(scratch.descendantStarts) {
+			scratch.descendantStarts = descendantStarts
+		}
+		scratch.release()
+	}()
 
 	queueNode := func(node *Node, required bool, kind string) error {
 		if node == nil {
@@ -569,13 +783,26 @@ func validateEngineGraph(ctx context.Context, location string, graph *Graph) err
 		if err := addReference(kind); err != nil {
 			return err
 		}
+		if useHints {
+			// The inventory holds each node once, so len(nodeQueue) counts the
+			// unique nodes as len(nodes) does.
+			if slot := node.preflightSlot; slot >= 0 && int(slot) < len(nodeQueue) && nodeQueue[slot] == node {
+				return nil
+			}
+			if len(nodeQueue) >= maxEngineNodes {
+				return fmt.Errorf("TALA engine unique node count exceeds limit %d", maxEngineNodes)
+			}
+			node.preflightSlot = int32(len(nodeQueue))
+			nodeQueue = append(nodeQueue, node)
+			return nil
+		}
 		if _, seen := nodes[node]; seen {
 			return nil
 		}
 		if len(nodes) >= maxEngineNodes {
 			return fmt.Errorf("TALA engine unique node count exceeds limit %d", maxEngineNodes)
 		}
-		nodes[node] = struct{}{}
+		nodes[node] = int32(len(nodeQueue))
 		nodeQueue = append(nodeQueue, node)
 		return nil
 	}
@@ -588,6 +815,17 @@ func validateEngineGraph(ctx context.Context, location string, graph *Graph) err
 		}
 		if err := addReference(kind); err != nil {
 			return err
+		}
+		if useHints {
+			if slot := edge.preflightSlot; slot >= 0 && int(slot) < len(edgeQueue) && edgeQueue[slot] == edge {
+				return nil
+			}
+			if len(edgeQueue) >= maxEngineEdges {
+				return fmt.Errorf("TALA engine unique edge count exceeds limit %d", maxEngineEdges)
+			}
+			edge.preflightSlot = int32(len(edgeQueue))
+			edgeQueue = append(edgeQueue, edge)
+			return nil
 		}
 		if _, seen := edges[edge]; seen {
 			return nil
@@ -989,10 +1227,27 @@ func validateEngineGraph(ctx context.Context, location string, graph *Graph) err
 		}
 	}
 
+	// inventorySlot returns an inventory node's slot, -1 for any other node.
+	inventorySlot := func(node *Node) int32 {
+		if node == nil {
+			return -1
+		}
+		if useHints {
+			if slot := node.preflightSlot; slot >= 0 && int(slot) < len(nodeQueue) && nodeQueue[slot] == node {
+				return slot
+			}
+			return -1
+		}
+		if slot, ok := nodes[node]; ok {
+			return slot
+		}
+		return -1
+	}
+
 	// Validate parent chains independently of the declared container map so a
 	// stale or hidden parent pointer cannot introduce recursion or excessive
 	// depth into later snapshot/layout walks.
-	if err := validateNodeParentRelation(guard, nodes, "container parent", func(node *Node) *Node {
+	if err := validateNodeParentRelation(guard, inventorySlot, nodeQueue, "container parent", func(node *Node) *Node {
 		return node.Container
 	}); err != nil {
 		return err
@@ -1002,12 +1257,12 @@ func validateEngineGraph(ctx context.Context, location string, graph *Graph) err
 	// Validate that effective parent relation separately: ancestry helpers walk
 	// it directly and would otherwise recurse forever even when the raw
 	// Container pointers form a valid forest.
-	if err := validateNodeParentRelation(guard, nodes, "effective container parent", func(node *Node) *Node {
+	if err := validateNodeParentRelation(guard, inventorySlot, nodeQueue, "effective container parent", func(node *Node) *Node {
 		return node.container()
 	}); err != nil {
 		return err
 	}
-	if err := validateNodeParentRelation(guard, nodes, "ancestry parent", ancestryParent); err != nil {
+	if err := validateNodeParentRelation(guard, inventorySlot, nodeQueue, "ancestry parent", ancestryParent); err != nil {
 		return err
 	}
 
@@ -1015,88 +1270,143 @@ func validateEngineGraph(ctx context.Context, location string, graph *Graph) err
 	// containers, active cluster membership, and active sequence membership.
 	// Validate that combined ownership graph, not just Containers, so later
 	// recursive movement/snapshot helpers have a firm depth bound.
-	type descendantFrame struct {
-		node     *Node
-		children []*Node
-		index    int
+	//
+	// Colors and heights live in slices indexed by inventory slot (the nil
+	// root uses slot len(nodeQueue)); a node outside the inventory, which the
+	// inventory walk above should make impossible, falls back to maps. Every
+	// frame's children are appended to one flat buffer, popped with the frame.
+	type descendantFrame = preflightDescendantFrame
+	rootSlot := int32(len(nodeQueue))
+	descendantSlot := func(node *Node) int32 {
+		if node == nil {
+			return rootSlot
+		}
+		return inventorySlot(node)
 	}
-	descendantChildren := func(node *Node) ([]*Node, error) {
-		var children []*Node
+	if cap(scratch.descendantColor) < len(nodeQueue)+1 {
+		scratch.descendantColor = make([]uint8, len(nodeQueue)+1)
+		scratch.descendantHeight = make([]int32, len(nodeQueue)+1)
+	}
+	descendantColor := scratch.descendantColor[:len(nodeQueue)+1]
+	descendantHeight := scratch.descendantHeight[:len(nodeQueue)+1]
+	clear(descendantColor)
+	clear(descendantHeight)
+	var extraColor map[*Node]uint8
+	var extraHeight map[*Node]int
+	colorOf := func(node *Node, slot int32) uint8 {
+		if slot >= 0 {
+			return descendantColor[slot]
+		}
+		return extraColor[node]
+	}
+	setColor := func(node *Node, slot int32, color uint8) {
+		if slot >= 0 {
+			descendantColor[slot] = color
+			return
+		}
+		if extraColor == nil {
+			extraColor = make(map[*Node]uint8)
+			extraHeight = make(map[*Node]int)
+		}
+		extraColor[node] = color
+	}
+	heightOf := func(node *Node, slot int32) int {
+		if slot >= 0 {
+			return int(descendantHeight[slot])
+		}
+		return extraHeight[node]
+	}
+	setHeight := func(node *Node, slot int32, height int) {
+		if slot >= 0 {
+			descendantHeight[slot] = int32(height)
+			return
+		}
+		extraHeight[node] = height
+	}
+	childBuffer = scratch.childBuffer[:0]
+	childSlots = scratch.childSlots[:0]
+	appendDescendantChildren := func(node *Node) error {
+		start := len(childBuffer)
 		if node == nil || node.isContainer {
-			children = append(children, graph.Containers[node]...)
+			childBuffer = append(childBuffer, graph.Containers[node]...)
 		}
 		if node != nil && node.isClusterVessel {
 			cluster := graph.Clusters[node]
 			if cluster == nil {
-				return nil, fmt.Errorf("TALA engine cluster vessel %d has no cluster record", node.ID)
+				return fmt.Errorf("TALA engine cluster vessel %d has no cluster record", node.ID)
 			}
-			children = append(children, cluster.Nodes...)
+			childBuffer = append(childBuffer, cluster.Nodes...)
 		}
 		if sequence, exists := graph.Sequences[node]; exists {
 			if sequence == nil {
-				return nil, structuralNil("sequence record")
+				return structuralNil("sequence record")
 			}
-			children = append(children, sequence.Nodes...)
+			childBuffer = append(childBuffer, sequence.Nodes...)
 		}
-		return children, nil
+		for _, child := range childBuffer[start:] {
+			childSlots = append(childSlots, descendantSlot(child))
+		}
+		return nil
 	}
-	descendantColor := make(map[*Node]uint8, len(nodes)+1)
-	descendantHeight := make(map[*Node]int, len(nodes)+1)
-	descendantStarts := make([]*Node, 0, len(nodes)+1)
+	descendantStarts = scratch.descendantStarts[:0]
 	if _, hasRoot := graph.Containers[nil]; hasRoot {
 		descendantStarts = append(descendantStarts, nil)
 	}
-	for node := range nodes {
+	for _, node := range nodeQueue {
 		if node != nil {
 			descendantStarts = append(descendantStarts, node)
 		}
 	}
+	stack = scratch.stack[:0]
 	for _, start := range descendantStarts {
-		if descendantColor[start] != 0 {
+		startSlot := descendantSlot(start)
+		if colorOf(start, startSlot) != 0 {
 			continue
 		}
-		children, err := descendantChildren(start)
-		if err != nil {
+		childBuffer, childSlots = childBuffer[:0], childSlots[:0]
+		if err := appendDescendantChildren(start); err != nil {
 			return err
 		}
-		descendantColor[start] = 1
-		stack := []descendantFrame{{node: start, children: children}}
+		setColor(start, startSlot, 1)
+		stack = append(stack[:0], descendantFrame{node: start, slot: startSlot, begin: 0, end: len(childBuffer)})
 		for len(stack) > 0 {
 			frame := &stack[len(stack)-1]
-			if frame.index >= len(frame.children) {
+			if frame.begin+frame.index >= frame.end {
 				ownHeight := 1
 				if frame.node == nil {
 					ownHeight = 0
 				}
 				height := ownHeight
-				for _, child := range frame.children {
-					if childHeight := ownHeight + descendantHeight[child]; childHeight > height {
+				for i := frame.begin; i < frame.end; i++ {
+					if childHeight := ownHeight + heightOf(childBuffer[i], childSlots[i]); childHeight > height {
 						height = childHeight
 					}
 				}
 				if height > maxEngineTopologyDepth {
 					return fmt.Errorf("TALA engine descendant depth exceeds limit %d", maxEngineTopologyDepth)
 				}
-				descendantHeight[frame.node] = height
-				descendantColor[frame.node] = 2
+				setHeight(frame.node, frame.slot, height)
+				setColor(frame.node, frame.slot, 2)
+				childBuffer, childSlots = childBuffer[:frame.begin], childSlots[:frame.begin]
 				stack = stack[:len(stack)-1]
 				continue
 			}
-			child := frame.children[frame.index]
+			child := childBuffer[frame.begin+frame.index]
+			childSlot := childSlots[frame.begin+frame.index]
 			frame.index++
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			switch descendantColor[child] {
+			switch colorOf(child, childSlot) {
 			case 1:
 				return fmt.Errorf("TALA engine descendant cycle detected at node %d", child.ID)
 			case 0:
-				children, err := descendantChildren(child)
-				if err != nil {
+				begin := len(childBuffer)
+				if err := appendDescendantChildren(child); err != nil {
 					return err
 				}
-				descendantColor[child] = 1
-				stack = append(stack, descendantFrame{node: child, children: children})
+				setColor(child, childSlot, 1)
+				stack = append(stack, descendantFrame{node: child, slot: childSlot, begin: begin, end: len(childBuffer)})
 			}
 		}
 	}

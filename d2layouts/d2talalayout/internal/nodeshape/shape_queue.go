@@ -12,40 +12,15 @@ type shapeQueue struct {
 func (s shapeQueue) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.InsideTopCenter:     {},
-			label.InsideMiddleCenter:  {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomCenter: {},
-		}
+		return queueLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:     {},
-			label.InsideBottomLeft:  {},
-			label.InsideMiddleRight: {},
-		}
+		return queueLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.InsideTopRight:     {},
-			label.InsideBottomRight:  {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightMiddle: {},
-			label.InsideMiddleLeft:   {},
-		}
+		return queueLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:     {},
-			label.OutsideTopRight:    {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-			label.OutsideLeftTop:     {},
-			label.OutsideRightTop:    {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return queueLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return queueLabelPreferencesFallback
 }
 
 func (s shapeQueue) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -111,3 +86,38 @@ func (s shapeQueue) SnapPointPercentages() [][]*geo.RelativePoint {
 		},
 	}
 }
+
+var queueLabelPreferencesGood = map[label.Position]struct{}{
+	label.OutsideTopCenter:    {},
+	label.InsideTopCenter:     {},
+	label.InsideMiddleCenter:  {},
+	label.InsideBottomCenter:  {},
+	label.OutsideBottomCenter: {},
+}
+
+var queueLabelPreferencesOK = map[label.Position]struct{}{
+	label.InsideTopLeft:     {},
+	label.InsideBottomLeft:  {},
+	label.InsideMiddleRight: {},
+}
+
+var queueLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.InsideTopRight:     {},
+	label.InsideBottomRight:  {},
+	label.OutsideLeftMiddle:  {},
+	label.OutsideRightMiddle: {},
+	label.InsideMiddleLeft:   {},
+}
+
+var queueLabelPreferencesBad = map[label.Position]struct{}{
+	label.OutsideTopLeft:     {},
+	label.OutsideTopRight:    {},
+	label.OutsideBottomLeft:  {},
+	label.OutsideBottomRight: {},
+	label.OutsideLeftTop:     {},
+	label.OutsideRightTop:    {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightBottom: {},
+}
+
+var queueLabelPreferencesFallback = map[label.Position]struct{}{}

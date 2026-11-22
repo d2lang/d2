@@ -109,6 +109,8 @@ type Shape interface {
 	shape.Shape
 
 	// SnapPointPercentages returns port groups in top, left, bottom, and right order.
+	// Shapes whose ports do not depend on their box return one shared value:
+	// callers must not modify the result.
 	SnapPointPercentages() [][]*geo.RelativePoint
 	// MirroredPortIndices maps each port index to its reflected counterpart.
 	MirroredPortIndices() map[int]int
@@ -119,7 +121,8 @@ type Shape interface {
 	// CenterPortIndex returns the center port for an orientation, or -1 if the
 	// shape does not expose one.
 	CenterPortIndex(orientation geo.Orientation) int
-	// LabelPositionPreferences returns the positions in a preference tier.
+	// LabelPositionPreferences returns the positions in a preference tier. The
+	// sets are shared per shape type and tier: callers must not modify them.
 	LabelPositionPreferences(tier LabelTier) map[label.Position]struct{}
 }
 

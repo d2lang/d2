@@ -2,12 +2,7 @@ package placementcost
 
 import (
 	"context"
-	"encoding/binary"
-	"fmt"
-	"hash/fnv"
 	"math"
-	"runtime"
-	"sync"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
@@ -16,9 +11,66 @@ import (
 
 const invalidEdgeLengthState uint64 = 0
 
+// stateHash is FNV-1a (64-bit), the hash/fnv New64a function, computed
+// inline: word feeds a value's eight little-endian bytes, exactly the bytes
+// binary.LittleEndian.PutUint64 used to write into the hash.
+type stateHash uint64
+
+const (
+	fnv64Offset stateHash = 14695981039346656037
+	fnv64Prime  stateHash = 1099511628211
+)
+
+func (h stateHash) byte(b byte) stateHash {
+	return (h ^ stateHash(b)) * fnv64Prime
+}
+
+func (h stateHash) word(v uint64) stateHash {
+	h = (h ^ stateHash(byte(v))) * fnv64Prime
+	h = (h ^ stateHash(byte(v>>8))) * fnv64Prime
+	h = (h ^ stateHash(byte(v>>16))) * fnv64Prime
+	h = (h ^ stateHash(byte(v>>24))) * fnv64Prime
+	h = (h ^ stateHash(byte(v>>32))) * fnv64Prime
+	h = (h ^ stateHash(byte(v>>40))) * fnv64Prime
+	h = (h ^ stateHash(byte(v>>48))) * fnv64Prime
+	return (h ^ stateHash(byte(v>>56))) * fnv64Prime
+}
+
 func placementEdgeLengthState(graph *layoutgraph.Graph, costs layoutgraph.RoutingCostState, options EdgeLengthOptions) uint64 {
-	h := fnv.New64a()
-	var b [8]byte // Buffer for encoding numbers
+	h := edgeLengthStateHeader(graph, costs, options)
+
+	// Process nodes
+	for _, n := range graph.Nodes {
+		if n.TopLeft == nil {
+			return invalidEdgeLengthState
+		}
+		h = edgeLengthStateNode(h, n)
+	}
+
+	// Process edge abductions
+	for _, ea := range options.EdgeAbductions {
+		h = h.word(uint64(ea.Edge.ID))
+		if ea.OriginallyFrom != nil {
+			h = h.word(uint64(ea.OriginallyFrom.ID))
+		}
+		if ea.OriginallyTo != nil {
+			h = h.word(uint64(ea.OriginallyTo.ID))
+		}
+		if ea.CurrentTo != nil {
+			h = h.word(uint64(ea.CurrentTo.ID))
+		}
+		if ea.CurrentFrom != nil {
+			h = h.word(uint64(ea.CurrentFrom.ID))
+		}
+	}
+
+	return uint64(h)
+}
+
+// edgeLengthStateHeader hashes the options and graph costs, the start of
+// every EdgeLength cache key.
+func edgeLengthStateHeader(graph *layoutgraph.Graph, costs layoutgraph.RoutingCostState, options EdgeLengthOptions) stateHash {
+	h := fnv64Offset
 
 	// Process booleans
 	var flags byte
@@ -31,65 +83,27 @@ func placementEdgeLengthState(graph *layoutgraph.Graph, costs layoutgraph.Routin
 	if options.PenalizeDirection {
 		flags |= 1 << 2
 	}
-	h.Write([]byte{flags})
+	h = h.byte(flags)
 
 	// Process graph costs
-	binary.LittleEndian.PutUint64(b[:], math.Float64bits(graph.CellSize))
-	h.Write(b[:])
-	binary.LittleEndian.PutUint64(b[:], math.Float64bits(costs.Turn))
-	h.Write(b[:])
-	binary.LittleEndian.PutUint64(b[:], math.Float64bits(costs.NonCenterPort))
-	h.Write(b[:])
-	binary.LittleEndian.PutUint64(b[:], math.Float64bits(costs.Crossing))
-	h.Write(b[:])
+	h = h.word(math.Float64bits(graph.CellSize))
+	h = h.word(math.Float64bits(costs.Turn))
+	h = h.word(math.Float64bits(costs.NonCenterPort))
+	h = h.word(math.Float64bits(costs.Crossing))
+	return h
+}
 
-	// Process nodes
-	for _, n := range graph.Nodes {
-		if n.TopLeft == nil {
-			return invalidEdgeLengthState
-		}
-		binary.LittleEndian.PutUint64(b[:], uint64(n.ID))
-		h.Write(b[:])
-
-		binary.LittleEndian.PutUint64(b[:], math.Float64bits(n.TopLeft.X))
-		h.Write(b[:])
-		binary.LittleEndian.PutUint64(b[:], math.Float64bits(n.TopLeft.Y))
-		h.Write(b[:])
-
-		binary.LittleEndian.PutUint64(b[:], math.Float64bits(n.Width))
-		h.Write(b[:])
-		binary.LittleEndian.PutUint64(b[:], math.Float64bits(n.Height))
-		h.Write(b[:])
-
-		for _, e := range n.Edges {
-			binary.LittleEndian.PutUint64(b[:], uint64(e.ID))
-			h.Write(b[:])
-		}
+// edgeLengthStateNode hashes one node (TopLeft present) into a cache key.
+func edgeLengthStateNode(h stateHash, n *layoutgraph.Node) stateHash {
+	h = h.word(uint64(n.ID))
+	h = h.word(math.Float64bits(n.TopLeft.X))
+	h = h.word(math.Float64bits(n.TopLeft.Y))
+	h = h.word(math.Float64bits(n.Width))
+	h = h.word(math.Float64bits(n.Height))
+	for _, e := range n.Edges {
+		h = h.word(uint64(e.ID))
 	}
-
-	// Process edge abductions
-	for _, ea := range options.EdgeAbductions {
-		binary.LittleEndian.PutUint64(b[:], uint64(ea.Edge.ID))
-		h.Write(b[:])
-		if ea.OriginallyFrom != nil {
-			binary.LittleEndian.PutUint64(b[:], uint64(ea.OriginallyFrom.ID))
-			h.Write(b[:])
-		}
-		if ea.OriginallyTo != nil {
-			binary.LittleEndian.PutUint64(b[:], uint64(ea.OriginallyTo.ID))
-			h.Write(b[:])
-		}
-		if ea.CurrentTo != nil {
-			binary.LittleEndian.PutUint64(b[:], uint64(ea.CurrentTo.ID))
-			h.Write(b[:])
-		}
-		if ea.CurrentFrom != nil {
-			binary.LittleEndian.PutUint64(b[:], uint64(ea.CurrentFrom.ID))
-			h.Write(b[:])
-		}
-	}
-
-	return h.Sum64()
+	return h
 }
 
 func edgeLengthWorkerCount(nodeCount, gomaxprocs int) int {
@@ -109,8 +123,9 @@ func edgeLengthWorkerCount(nodeCount, gomaxprocs int) int {
 // EdgeLength evaluates the graph's placement cost and may populate its
 // graph-owned edge-length cache.
 func EdgeLength(ctx context.Context, graph *layoutgraph.Graph, options EdgeLengthOptions) (float64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
 	}
 
 	edgeLengthState := placementEdgeLengthState(graph, graph.RoutingCosts(), options)
@@ -120,107 +135,18 @@ func EdgeLength(ctx context.Context, graph *layoutgraph.Graph, options EdgeLengt
 		}
 	}
 
-	symmetryCost := graph.CellSize
-	var totalSum float64
-
-	workerCount := edgeLengthWorkerCount(len(graph.Nodes), runtime.GOMAXPROCS(0))
-	var costs []float64
-	if workerCount > 1 {
-		costs = make([]float64, len(graph.Nodes))
-		var wg sync.WaitGroup
-		var panicOnce sync.Once
-		var workerPanicked bool
-		var errOnce sync.Once
-		var workerErr error
-
-		for worker := range workerCount {
-			wg.Go(func() {
-				defer func() {
-					if recovered := recover(); recovered != nil {
-						panicOnce.Do(func() {
-							// A recovered value can contain credentials or invoke an
-							// attacker-controlled String method. Retain only the fact
-							// that this worker violated an invariant.
-							workerPanicked = true
-						})
-					}
-				}()
-
-				for i := worker; i < len(graph.Nodes); i += workerCount {
-					n := graph.Nodes[i]
-					nl, err := NodeEdgeLength(ctx, n, options)
-					if err != nil {
-						errOnce.Do(func() { workerErr = err })
-						return
-					}
-					if options.IncludeNodeSizes {
-						columnCrossingCost, err := ColumnCrossingCost(ctx, n, options.EdgeAbductions)
-						if err != nil {
-							errOnce.Do(func() { workerErr = err })
-							return
-						}
-						symmetry, err := nodeSymmetry(ctx, n, options.EdgeAbductions, true)
-						if err != nil {
-							errOnce.Do(func() { workerErr = err })
-							return
-						}
-						nl += columnCrossingCost
-						nl -= symmetry * symmetryCost * float64(len(n.Edges))
-					}
-					if err := ctx.Err(); err != nil {
-						errOnce.Do(func() { workerErr = fmt.Errorf("EdgeLength: %w", err) })
-						return
-					}
-
-					costs[i] = nl
-				}
-			})
-		}
-
-		wg.Wait()
-		if workerPanicked {
-			panic("TALA EdgeLength worker invariant failure")
-		}
-		if workerErr != nil {
-			return 0, workerErr
-		}
-	} else {
-		for _, n := range graph.Nodes {
-			nl, err := NodeEdgeLength(ctx, n, options)
-			if err != nil {
-				return 0, err
-			}
-			if options.IncludeNodeSizes {
-				columnCrossingCost, err := ColumnCrossingCost(ctx, n, options.EdgeAbductions)
-				if err != nil {
-					return 0, err
-				}
-				symmetry, err := nodeSymmetry(ctx, n, options.EdgeAbductions, true)
-				if err != nil {
-					return 0, err
-				}
-				nl += columnCrossingCost
-				nl -= symmetry * symmetryCost * float64(len(n.Edges))
-			}
-			if err := ctx.Err(); err != nil {
-				return 0, fmt.Errorf("EdgeLength: %w", err)
-			}
-			totalSum += nl
-		}
-	}
-	if workerCount > 1 {
-		for _, c := range costs {
-			totalSum += c
-		}
+	totalSum, err := sumNodeEdgeLengths(ctx, &p, graph, options)
+	if err != nil {
+		return 0, err
 	}
 
 	crossings, err := GraphEdgeCrossings(ctx, graph)
 	if err != nil {
 		return 0, err
 	}
-	totalSum += graph.CrossingCost() * float64(crossings)
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	totalSum = addCrossingCost(totalSum, graph, crossings)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	if edgeLengthState != invalidEdgeLengthState {
 		graph.StoreEdgeLengthCost(edgeLengthState, totalSum)
@@ -229,15 +155,33 @@ func EdgeLength(ctx context.Context, graph *layoutgraph.Graph, options EdgeLengt
 	return totalSum, nil
 }
 
-func countEdgeCrossingsExcludingSharedNodes(ctx context.Context, edges []*layoutgraph.Edge) (int64, error) {
+// addCrossingCost adds the crossing penalty to an EdgeLength sum. Like
+// edgeLengthTermValue it is the single, non-inlined place where this sum is
+// formed, so every evaluation path performs the same operations.
+//
+//go:noinline
+func addCrossingCost(totalSum float64, graph *layoutgraph.Graph, crossings int64) float64 {
+	totalSum += graph.CrossingCost() * float64(crossings)
+	return totalSum
+}
+
+// edgeCenters holds the centers of an edge's endpoints, computed once per
+// count by the same Center method the pair loop used to call per pair.
+type edgeCenters struct {
+	from, to geo.Point
+}
+
+func countEdgeCrossingsExcludingSharedNodes(p *scoringPoll, edges []*layoutgraph.Edge, centers []edgeCenters) (int64, error) {
+	centers = centers[:len(edges)]
 	var crossings int64
 	for i := 0; i < len(edges)-1; i++ {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		edge1 := edges[i]
+		segment1 := &centers[i]
 		for j := i + 1; j < len(edges); j++ {
-			if err := scoringCancellationError(ctx, j-i-1); err != nil {
+			if err := p.at(j - i - 1); err != nil {
 				return 0, err
 			}
 			edge2 := edges[j]
@@ -248,17 +192,15 @@ func countEdgeCrossingsExcludingSharedNodes(ctx context.Context, edges []*layout
 				continue
 			}
 
-			// Create segments and check if they cross
-			seg1 := geo.NewSegment(edge1.From.Center(), edge1.To.Center())
-			seg2 := geo.NewSegment(edge2.From.Center(), edge2.To.Center())
-
-			if layoutgraph.SegmentsCross(seg1.Start, seg1.End, seg2.Start, seg2.End) {
+			// Check if the segments between the endpoint centers cross
+			segment2 := &centers[j]
+			if layoutgraph.SegmentsCross(&segment1.from, &segment1.to, &segment2.from, &segment2.to) {
 				crossings++
 			}
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	return crossings, nil
 }
@@ -267,6 +209,7 @@ type graphEdgeCrossingScratch struct {
 	levelGroup map[int]int
 	groups     [][]*layoutgraph.Edge
 	active     int
+	centers    []edgeCenters
 }
 
 const maxPooledGraphEdgeCrossingEntries = 4096
@@ -277,7 +220,8 @@ var graphEdgeCrossingScratchPool = typedpool.New(func() *graphEdgeCrossingScratc
 
 func putGraphEdgeCrossingScratch(scratch *graphEdgeCrossingScratch) {
 	if len(scratch.levelGroup) > maxPooledGraphEdgeCrossingEntries ||
-		cap(scratch.groups) > maxPooledGraphEdgeCrossingEntries {
+		cap(scratch.groups) > maxPooledGraphEdgeCrossingEntries ||
+		cap(scratch.centers) > maxPooledGraphEdgeCrossingEntries {
 		return
 	}
 	remaining := maxPooledGraphEdgeCrossingEntries - cap(scratch.groups)
@@ -299,12 +243,13 @@ func putGraphEdgeCrossingScratch(scratch *graphEdgeCrossingScratch) {
 
 // GraphEdgeCrossings counts crossings between edges that do not share a node.
 func GraphEdgeCrossings(ctx context.Context, graph *layoutgraph.Graph) (int64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
 	}
 	if len(graph.Edges) == 0 {
-		if err := ctx.Err(); err != nil {
-			return 0, fmt.Errorf("EdgeLength: %w", err)
+		if err := p.check(); err != nil {
+			return 0, err
 		}
 		return 0, nil
 	}
@@ -313,7 +258,7 @@ func GraphEdgeCrossings(ctx context.Context, graph *layoutgraph.Graph) (int64, e
 	defer putGraphEdgeCrossingScratch(scratch)
 
 	for i, edge := range graph.Edges {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		if edge.From == nil || edge.To == nil || edge.From.TopLeft == nil || edge.To.TopLeft == nil {
@@ -341,27 +286,36 @@ func GraphEdgeCrossings(ctx context.Context, graph *layoutgraph.Graph) (int64, e
 
 	var totalCrossings int64
 	for _, groupIndex := range scratch.levelGroup {
-		crossings, err := countEdgeCrossingsExcludingSharedNodes(ctx, scratch.groups[groupIndex])
+		edges := scratch.groups[groupIndex]
+		if cap(scratch.centers) < len(edges) {
+			scratch.centers = make([]edgeCenters, len(edges))
+		}
+		centers := scratch.centers[:len(edges)]
+		for k, edge := range edges {
+			centers[k] = edgeCenters{from: *edge.From.Center(), to: *edge.To.Center()}
+		}
+		crossings, err := countEdgeCrossingsExcludingSharedNodes(&p, edges, centers)
 		if err != nil {
 			return 0, err
 		}
 		totalCrossings += crossings
 	}
 
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	return totalCrossings, nil
 }
 
 // ContainerAlignmentCost scores misalignment between peer containers.
 func ContainerAlignmentCost(ctx context.Context, graph *layoutgraph.Graph) (float64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
 	}
 	l := 0.0
 	for i := 0; i < len(graph.Nodes)-1; i++ {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		n1 := graph.Nodes[i]
@@ -369,7 +323,7 @@ func ContainerAlignmentCost(ctx context.Context, graph *layoutgraph.Graph) (floa
 			continue
 		}
 		for j := i + 1; j < len(graph.Nodes); j++ {
-			if err := scoringCancellationError(ctx, j-i-1); err != nil {
+			if err := p.at(j - i - 1); err != nil {
 				return 0, err
 			}
 			n2 := graph.Nodes[j]
@@ -386,8 +340,8 @@ func ContainerAlignmentCost(ctx context.Context, graph *layoutgraph.Graph) (floa
 			}
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	return l, nil
 }

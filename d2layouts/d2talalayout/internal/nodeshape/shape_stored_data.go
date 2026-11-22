@@ -12,40 +12,15 @@ type shapeStoredData struct {
 func (s shapeStoredData) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.InsideTopCenter:     {},
-			label.InsideMiddleCenter:  {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomCenter: {},
-		}
+		return storedDataLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopRight:    {},
-			label.OutsideBottomRight: {},
-			label.InsideTopRight:     {},
-			label.InsideBottomRight:  {},
-			label.InsideMiddleRight:  {},
-			label.InsideTopLeft:      {},
-			label.InsideBottomLeft:   {},
-		}
+		return storedDataLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.InsideMiddleLeft:  {},
-			label.OutsideLeftMiddle: {},
-			label.OutsideTopLeft:    {},
-			label.OutsideBottomLeft: {},
-		}
+		return storedDataLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideRightMiddle: {},
-			label.OutsideLeftTop:     {},
-			label.OutsideRightTop:    {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return storedDataLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return storedDataLabelPreferencesFallback
 }
 
 func (s shapeStoredData) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -116,3 +91,38 @@ func (s shapeStoredData) SnapPointPercentages() [][]*geo.RelativePoint {
 		},
 	}
 }
+
+var storedDataLabelPreferencesGood = map[label.Position]struct{}{
+	label.OutsideTopCenter:    {},
+	label.InsideTopCenter:     {},
+	label.InsideMiddleCenter:  {},
+	label.InsideBottomCenter:  {},
+	label.OutsideBottomCenter: {},
+}
+
+var storedDataLabelPreferencesOK = map[label.Position]struct{}{
+	label.OutsideTopRight:    {},
+	label.OutsideBottomRight: {},
+	label.InsideTopRight:     {},
+	label.InsideBottomRight:  {},
+	label.InsideMiddleRight:  {},
+	label.InsideTopLeft:      {},
+	label.InsideBottomLeft:   {},
+}
+
+var storedDataLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.InsideMiddleLeft:  {},
+	label.OutsideLeftMiddle: {},
+	label.OutsideTopLeft:    {},
+	label.OutsideBottomLeft: {},
+}
+
+var storedDataLabelPreferencesBad = map[label.Position]struct{}{
+	label.OutsideRightMiddle: {},
+	label.OutsideLeftTop:     {},
+	label.OutsideRightTop:    {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightBottom: {},
+}
+
+var storedDataLabelPreferencesFallback = map[label.Position]struct{}{}

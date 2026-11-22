@@ -485,8 +485,9 @@ func routeEdgesWithResourceGuards(
 		flavors = []RouteGenerationFlavor{TopDownLeftRight}
 	}
 	routers := make([]*ovgEdgeRouter, 0, len(flavors))
+	var shared ovgRouterShared
 	for _, flavor := range flavors {
-		router, err := newOVGEdgeRouterWithWorkLimit(ctx, flavor, ovg, g, existingRoutes, unroutedEdges, searchWorkLimit)
+		router, err := newSharingOVGEdgeRouter(ctx, flavor, ovg, g, existingRoutes, unroutedEdges, searchWorkLimit, &shared)
 		if err != nil {
 			return ovg, err
 		}
@@ -496,6 +497,8 @@ func routeEdgesWithResourceGuards(
 	if err != nil {
 		return ovg, err
 	}
+	// Every worker has returned normally; the routers do not search again.
+	releaseRouterScratch(routers)
 
 	var bestRoutes []*Route
 	var bestWork *routeSearchWorkGuard
@@ -614,6 +617,9 @@ func routeAdditionalEdgesWithResourceLimits(
 			existingRoutes = append(existingRoutes, route)
 		}
 	}
+	if err := guard.flushStage(); err != nil {
+		return ovg, err
+	}
 
 	// cache these ahead of time
 	g.CrossingCost()
@@ -625,8 +631,9 @@ func routeAdditionalEdgesWithResourceLimits(
 		flavors = []RouteGenerationFlavor{TopDownLeftRight}
 	}
 	routers := make([]*ovgEdgeRouter, 0, len(flavors))
+	var shared ovgRouterShared
 	for _, flavor := range flavors {
-		router, err := newOVGEdgeRouterWithWorkLimit(ctx, flavor, ovg, g, existingRoutes, edges, searchWorkLimit)
+		router, err := newSharingOVGEdgeRouter(ctx, flavor, ovg, g, existingRoutes, edges, searchWorkLimit, &shared)
 		if err != nil {
 			return ovg, err
 		}
@@ -637,6 +644,8 @@ func routeAdditionalEdgesWithResourceLimits(
 	if err != nil {
 		return ovg, err
 	}
+	// Every worker has returned normally; the routers do not search again.
+	releaseRouterScratch(routers)
 
 	var bestRoutes []*Route
 	var bestWork *routeSearchWorkGuard

@@ -64,3 +64,37 @@ func computeSymmetryScore(ctx context.Context, node *layoutgraph.Node, neighbors
 	}
 	return score, matched, nil
 }
+
+func scoringCancellationError(ctx context.Context, iteration int) error {
+	if iteration%scoringCancellationCheckInterval != 0 {
+		return nil
+	}
+	return checkScoringCancellation(ctx)
+}
+
+// Keep the interval check small enough to inline into the scoring loops. The
+// context call and error formatting are only needed at a polling boundary.
+func checkScoringCancellation(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("EdgeLength: %w", err)
+	}
+	return nil
+}
+
+// nodeSymmetry is the internal entry point with a context.
+func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction, checkNeighbors bool) (float64, error) {
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
+	}
+	p.symmetry = getSymmetryWorkspace()
+	defer putSymmetryWorkspace(p.symmetry)
+	return nodeSymmetryPolled(&p, node, edgeAbductions, checkNeighbors)
+}
+
+// computeSymmetryScoreInto writes match state into caller-owned storage so the
+// optimizer can score symmetry without allocating.
+func computeSymmetryScoreInto(ctx context.Context, node *layoutgraph.Node, neigh []*layoutgraph.Node, matchedSlice []bool) (float64, error) {
+	p := newScoringPoll(ctx)
+	return symmetryScoreInto(&p, node, neigh, matchedSlice)
+}

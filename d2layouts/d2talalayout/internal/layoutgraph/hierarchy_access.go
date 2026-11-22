@@ -38,6 +38,20 @@ func (gs *GraphState) UpdateWithWorkGuard(g *Graph, guard *limits.WorkGuard) err
 	return gs.updateContext(g, guard)
 }
 
+// ChargeTopologySnapshot charges guard exactly what a topology snapshot
+// (NewGraphStateSnapshot with CaptureTopology, then UpdateWithWorkGuard)
+// charges, with the same limits, errors and cancellation checks, but captures
+// nothing, and reports whether the snapshot would track node. It is for a
+// caller whose operation provably leaves the graph unchanged, so the rollback
+// point would only ever be restored onto identical values.
+func ChargeTopologySnapshot(g *Graph, guard *limits.WorkGuard, node *Node) (tracked bool, err error) {
+	state := &GraphState{captureTopology: true, chargeOnly: true}
+	if err := state.updateContext(g, guard); err != nil {
+		return false, err
+	}
+	return state.TracksNode(node), nil
+}
+
 // OwnedNodes returns every node whose state is owned by g, including graph
 // nodes temporarily removed by tree or sequence preprocessing. It charges the
 // same work units in the same traversal order as the former hierarchy code.

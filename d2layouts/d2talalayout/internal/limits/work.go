@@ -7,6 +7,7 @@ package limits
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 const (
@@ -61,32 +62,104 @@ type WorkGuard struct {
 	location string
 	used     int64
 	limit    int64
+	// strideMask is pollingStride()-1. done never changes after construction,
+	// so the stride is fixed; caching it as a mask lets Step's inlined fast
+	// path test the polling boundary without a division. A zero mask (a
+	// zero-valued guard) routes every Step through stepSlow, which computes
+	// the stride itself.
+	strideMask int64
 }
 
 // NewWorkGuard constructs a work guard and observes cancellation before any
 // operation work begins.
 func NewWorkGuard(ctx context.Context, location string, limit int64) (*WorkGuard, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("TALA %s requires a context", location)
+	if err := checkWorkGuardArgs(ctx, location, limit); err != nil {
+		return nil, err
 	}
-	if limit < 0 {
-		return nil, fmt.Errorf("TALA %s work limit must not be negative", location)
-	}
-	guard := &WorkGuard{
-		ctx:      ctx,
-		done:     ctx.Done(),
-		location: location,
-		limit:    limit,
-	}
-	if err := guard.Finish(); err != nil {
+	guard := new(WorkGuard)
+	if err := guard.init(ctx, location, limit); err != nil {
 		return nil, err
 	}
 	return guard, nil
 }
 
+// Init sets guard up exactly as NewWorkGuard sets up the guard it returns
+// (same checks, errors and initial cancellation check), for a caller that
+// keeps a short-lived guard in a variable or reuses one guard value instead
+// of allocating one per operation. Any earlier state of guard is discarded;
+// the caller must not use it elsewhere any more. After an error the guard
+// must not be used.
+func (guard *WorkGuard) Init(ctx context.Context, location string, limit int64) error {
+	if err := checkWorkGuardArgs(ctx, location, limit); err != nil {
+		*guard = WorkGuard{}
+		return err
+	}
+	return guard.init(ctx, location, limit)
+}
+
+func checkWorkGuardArgs(ctx context.Context, location string, limit int64) error {
+	if ctx == nil {
+		return fmt.Errorf("TALA %s requires a context", location)
+	}
+	if limit < 0 {
+		return fmt.Errorf("TALA %s work limit must not be negative", location)
+	}
+	return nil
+}
+
+func (guard *WorkGuard) init(ctx context.Context, location string, limit int64) error {
+	*guard = WorkGuard{
+		ctx:      ctx,
+		done:     ctx.Done(),
+		location: location,
+		limit:    limit,
+	}
+	guard.strideMask = guard.pollingStride() - 1
+	return guard.Finish()
+}
+
+var workGuardPool = sync.Pool{New: func() any { return new(WorkGuard) }}
+
+// AcquireWorkGuard is NewWorkGuard with the guard taken from a pool, for
+// short-lived guards created once per call of a hot operation. The caller
+// calls Release when the operation is over and no reference to the guard is
+// used any more (a guard passed to a callee that keeps it must not be
+// released).
+func AcquireWorkGuard(ctx context.Context, location string, limit int64) (*WorkGuard, error) {
+	if err := checkWorkGuardArgs(ctx, location, limit); err != nil {
+		return nil, err
+	}
+	guard := workGuardPool.Get().(*WorkGuard)
+	if err := guard.init(ctx, location, limit); err != nil {
+		guard.Release()
+		return nil, err
+	}
+	return guard, nil
+}
+
+// Release clears a guard from AcquireWorkGuard and returns it to the pool.
+// The guard must not be used afterwards.
+func (guard *WorkGuard) Release() {
+	*guard = WorkGuard{}
+	workGuardPool.Put(guard)
+}
+
 // Step charges one work unit.
+//
+// The fast path returns nil exactly when the charged unit is within the limit
+// and is not a polling boundary: both strides are powers of two, so
+// used&strideMask != 0 is used%stride != 0 for every int64 (including the
+// wrapped negative values a saturated guard could reach). Every other case
+// takes the original sequence in stepSlow.
 func (guard *WorkGuard) Step() error {
 	guard.used++
+	if guard.used&guard.strideMask == 0 || guard.used > guard.limit {
+		return guard.stepSlow()
+	}
+	return nil
+}
+
+func (guard *WorkGuard) stepSlow() error {
 	if guard.used > guard.limit {
 		return fmt.Errorf(
 			"TALA %s work exceeds limit %d",

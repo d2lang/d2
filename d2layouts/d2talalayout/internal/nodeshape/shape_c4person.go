@@ -13,67 +13,19 @@ type shapeC4Person struct {
 func (s shapeC4Person) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideMiddleCenter: {},
-		}
+		return c4PersonLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.InsideTopCenter:    {},
-			label.InsideBottomCenter: {},
-		}
+		return c4PersonLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.InsideBottomLeft:  {},
-			label.InsideBottomRight: {},
-			label.InsideTopLeft:     {},
-			label.InsideTopRight:    {},
-			label.InsideMiddleLeft:  {},
-			label.InsideMiddleRight: {},
-		}
+		return c4PersonLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.OutsideBottomCenter: {},
-			label.OutsideBottomLeft:   {},
-			label.OutsideBottomRight:  {},
-			label.OutsideLeftMiddle:   {},
-			label.OutsideLeftBottom:   {},
-			label.OutsideRightMiddle:  {},
-			label.OutsideRightBottom:  {},
-			label.OutsideRightTop:     {},
-			label.OutsideLeftTop:      {},
-			label.OutsideTopLeft:      {},
-			label.OutsideTopRight:     {},
-		}
+		return c4PersonLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return c4PersonLabelPreferencesFallback
 }
 
 func (s shapeC4Person) SnapPointPercentages() [][]*geo.RelativePoint {
-	return [][]*geo.RelativePoint{
-		// Top (1 port at center of head)
-		{
-			geo.NewRelativePoint(0.5, 0),
-		},
-		// Left (3 ports on body only)
-		{
-			geo.NewRelativePoint(0, 0.45), // Just below where body starts
-			geo.NewRelativePoint(0, 0.65), // Middle of body
-			geo.NewRelativePoint(0, 0.85), // Lower part of body
-		},
-		// Bottom (3 ports)
-		{
-			geo.NewRelativePoint(0.25, 1),
-			geo.NewRelativePoint(0.5, 1),
-			geo.NewRelativePoint(0.75, 1),
-		},
-		// Right (3 ports on body only)
-		{
-			geo.NewRelativePoint(1, 0.45), // Just below where body starts
-			geo.NewRelativePoint(1, 0.65), // Middle of body
-			geo.NewRelativePoint(1, 0.85), // Lower part of body
-		},
-	}
+	return c4PersonSnapPoints
 }
 
 func (s shapeC4Person) PortIndices(orientation geo.Orientation) []int {
@@ -131,4 +83,65 @@ func (s shapeC4Person) CenterPortIndex(o geo.Orientation) int {
 	}
 
 	return centerPorts[centerPortsIndex]
+}
+
+var c4PersonLabelPreferencesGood = map[label.Position]struct{}{
+	label.InsideMiddleCenter: {},
+}
+
+var c4PersonLabelPreferencesOK = map[label.Position]struct{}{
+	label.InsideTopCenter:    {},
+	label.InsideBottomCenter: {},
+}
+
+var c4PersonLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.InsideBottomLeft:  {},
+	label.InsideBottomRight: {},
+	label.InsideTopLeft:     {},
+	label.InsideTopRight:    {},
+	label.InsideMiddleLeft:  {},
+	label.InsideMiddleRight: {},
+}
+
+var c4PersonLabelPreferencesBad = map[label.Position]struct{}{
+	label.OutsideTopCenter:    {},
+	label.OutsideBottomCenter: {},
+	label.OutsideBottomLeft:   {},
+	label.OutsideBottomRight:  {},
+	label.OutsideLeftMiddle:   {},
+	label.OutsideLeftBottom:   {},
+	label.OutsideRightMiddle:  {},
+	label.OutsideRightBottom:  {},
+	label.OutsideRightTop:     {},
+	label.OutsideLeftTop:      {},
+	label.OutsideTopLeft:      {},
+	label.OutsideTopRight:     {},
+}
+
+var c4PersonLabelPreferencesFallback = map[label.Position]struct{}{}
+
+// c4PersonSnapPoints is shared by every call: callers only read it.
+var c4PersonSnapPoints = [][]*geo.RelativePoint{
+	// Top (1 port at center of head)
+	{
+		geo.NewRelativePoint(0.5, 0),
+	},
+	// Left (3 ports on body only)
+	{
+		geo.NewRelativePoint(0, 0.45), // Just below where body starts
+		geo.NewRelativePoint(0, 0.65), // Middle of body
+		geo.NewRelativePoint(0, 0.85), // Lower part of body
+	},
+	// Bottom (3 ports)
+	{
+		geo.NewRelativePoint(0.25, 1),
+		geo.NewRelativePoint(0.5, 1),
+		geo.NewRelativePoint(0.75, 1),
+	},
+	// Right (3 ports on body only)
+	{
+		geo.NewRelativePoint(1, 0.45), // Just below where body starts
+		geo.NewRelativePoint(1, 0.65), // Middle of body
+		geo.NewRelativePoint(1, 0.85), // Lower part of body
+	},
 }

@@ -1,12 +1,14 @@
 package routing
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"slices"
 	"sort"
+	"sync/atomic"
 
 	"github.com/d2lang/d2/lib/geo"
 
@@ -59,6 +61,20 @@ type ovgBuildGuard struct {
 	nodes      uint64
 	edges      uint64
 	work       uint64
+
+	// stage is aggregate when it is the routing stage guard. OVG construction
+	// is the only user of the aggregate while it runs, so single steps are not
+	// passed to it one by one: pending counts the steps not yet added, and room
+	// how many units it accepted beyond its count at the last addition. A step
+	// that would not fit, and any other charge, first adds pending, so the
+	// aggregate fails at exactly the same unit as before; flushStage adds the
+	// rest before anyone else charges the aggregate. Others do charge it
+	// between batches (the routing stage between the OVG builds of its
+	// subgraphs, which share one guard; route searches after a build), so a
+	// batch starts (pending 0) by re-reading room.
+	stage   *routeWorkGuard
+	pending uint64
+	room    uint64
 }
 
 func newOVGBuildGuard(ctx context.Context, limits ovgBuildLimits) (*ovgBuildGuard, error) {
@@ -66,10 +82,38 @@ func newOVGBuildGuard(ctx context.Context, limits ovgBuildLimits) (*ovgBuildGuar
 		ctx = context.Background()
 	}
 	guard := &ovgBuildGuard{ctx: ctx, done: ctx.Done(), aggregate: routeAggregateWorkFromContext(ctx), limits: limits}
+	guard.stage, _ = guard.aggregate.(*routeWorkGuard)
+	guard.syncStageRoom()
 	if err := guard.check(); err != nil {
 		return nil, err
 	}
 	return guard, nil
+}
+
+func (guard *ovgBuildGuard) syncStageRoom() {
+	if guard.stage == nil {
+		guard.room = 0
+		return
+	}
+	used := atomic.LoadUint64(&guard.stage.used)
+	if used > guard.stage.limit {
+		guard.room = 0
+		return
+	}
+	guard.room = guard.stage.limit - used
+}
+
+// flushStage adds the pending steps to the stage aggregate. They fit, since
+// pending never exceeds room.
+func (guard *ovgBuildGuard) flushStage() error {
+	if guard.pending == 0 {
+		return nil
+	}
+	pending := guard.pending
+	guard.pending = 0
+	err := guard.stage.add(pending)
+	guard.syncStageRoom()
+	return err
 }
 
 func (guard *ovgBuildGuard) check() error {
@@ -115,6 +159,9 @@ func (guard *ovgBuildGuard) reserveEdges(amount uint64) error {
 }
 
 func (guard *ovgBuildGuard) reserveWork(amount uint64) error {
+	if err := guard.flushStage(); err != nil {
+		return err
+	}
 	next, ok := limits.CheckedAddUint64(guard.work, amount)
 	if !ok {
 		if err := guard.check(); err != nil {
@@ -139,12 +186,32 @@ func (guard *ovgBuildGuard) reserveWork(amount uint64) error {
 	}
 	guard.work = next
 	if guard.aggregate != nil {
-		return guard.aggregate.add(amount)
+		err := guard.aggregate.add(amount)
+		guard.syncStageRoom()
+		return err
 	}
 	return nil
 }
 
 func (guard *ovgBuildGuard) step() error {
+	// reserveWork(1) when it would neither fail nor poll the context: the work
+	// stays within the limit, does not reach a polling stride, and the stage
+	// aggregate (if any) has room for the unit.
+	next := guard.work + 1
+	if next <= guard.limits.work && next%routeStageContextCheckStride != 0 && guard.done != nil {
+		if guard.aggregate == nil {
+			guard.work = next
+			return nil
+		}
+		if guard.stage != nil && guard.pending == 0 {
+			guard.syncStageRoom()
+		}
+		if guard.stage != nil && guard.pending < guard.room {
+			guard.work = next
+			guard.pending++
+			return nil
+		}
+	}
 	return guard.reserveWork(1)
 }
 
@@ -697,7 +764,8 @@ func newOVGPortIndex(ports map[*layoutgraph.Node][]*OVGNode, graph *layoutgraph.
 		verticalBlockers:   make(map[float64][]*layoutgraph.Node),
 		horizontalBlockers: make(map[float64][]*layoutgraph.Node),
 	}
-	for owner, nodePorts := range ports {
+	for _, owner := range sortedPortOwners(ports) {
+		nodePorts := ports[owner]
 		if err := guard.step(); err != nil {
 			return nil, err
 		}
@@ -713,17 +781,11 @@ func newOVGPortIndex(ports map[*layoutgraph.Node][]*OVGNode, graph *layoutgraph.
 			index.ownersByY[port.Y] = append(index.ownersByY[port.Y], ownerIndex)
 		}
 	}
-	for _, values := range index.xByY {
-		if err := guard.reserveSortWork(len(values)); err != nil {
-			return nil, err
-		}
-		sort.Float64s(values)
+	if err := reservePortAxisSortWork(index.xByY, guard); err != nil {
+		return nil, err
 	}
-	for _, values := range index.yByX {
-		if err := guard.reserveSortWork(len(values)); err != nil {
-			return nil, err
-		}
-		sort.Float64s(values)
+	if err := reservePortAxisSortWork(index.yByX, guard); err != nil {
+		return nil, err
 	}
 
 	// A port-to-candidate segment is axis aligned. Precompute the graph-order
@@ -774,6 +836,74 @@ func newOVGPortIndex(ports map[*layoutgraph.Node][]*OVGNode, graph *layoutgraph.
 		}
 	}
 	return index, nil
+}
+
+// sortedPortOwners returns the keys of ports in a deterministic order: by ID,
+// then by geometry (copies of one node share its ID). The port index numbers
+// its owners in this order and queries visit aligned owners in it, stopping
+// early, and merged ports are added to the OVG in it; in map order the work
+// charged, and so where a limit fails, varied from run to run. Two owners
+// equal in all of these are interchangeable for the index.
+func sortedPortOwners(ports map[*layoutgraph.Node][]*OVGNode) []*layoutgraph.Node {
+	owners := make([]*layoutgraph.Node, 0, len(ports))
+	for owner := range ports {
+		owners = append(owners, owner)
+	}
+	slices.SortFunc(owners, comparePortOwners)
+	return owners
+}
+
+func comparePortOwners(a, b *layoutgraph.Node) int {
+	if a == b {
+		return 0
+	}
+	if a == nil || b == nil {
+		if a == nil {
+			return -1
+		}
+		return 1
+	}
+	if c := cmp.Compare(a.ID, b.ID); c != 0 {
+		return c
+	}
+	var ax, ay, bx, by float64
+	if a.TopLeft != nil {
+		ax, ay = a.TopLeft.X, a.TopLeft.Y
+	}
+	if b.TopLeft != nil {
+		bx, by = b.TopLeft.X, b.TopLeft.Y
+	}
+	if c := cmp.Compare(ax, bx); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(ay, by); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Width, b.Width); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Height, b.Height)
+}
+
+// reservePortAxisSortWork charges the sort work of every axis list and sorts
+// it. The charges are made in ascending order of their amounts (each list's
+// own charge is unchanged): in map order, which list's charge crossed a limit,
+// and so the units in the error, varied from run to run.
+func reservePortAxisSortWork(axis map[float64][]float64, guard *ovgBuildGuard) error {
+	lengths := make([]int, 0, len(axis))
+	for _, values := range axis {
+		lengths = append(lengths, len(values))
+	}
+	slices.Sort(lengths)
+	for _, length := range lengths {
+		if err := guard.reserveSortWork(length); err != nil {
+			return err
+		}
+	}
+	for _, values := range axis {
+		sort.Float64s(values)
+	}
+	return nil
 }
 
 // Owner indexes are appended in ascending order during index construction.

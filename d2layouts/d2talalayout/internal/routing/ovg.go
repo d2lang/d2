@@ -28,6 +28,57 @@ type OVG struct {
 	fixedOverlapsMu    sync.Mutex
 	fixedOverlapsCache []fixedOverlapsCacheEntry
 	buildGuard         *ovgBuildGuard
+
+	// Chunks that Connect and the intersection sweep carve edges and nodes
+	// from, instead of one allocation each.
+	edgeSlab []OVGEdge
+	nodeSlab []ovgNodeWithPoint
+	// edgeListSlab holds the first four slots of nodes' edge lists.
+	edgeListSlab []*OVGEdge
+}
+
+type ovgNodeWithPoint struct {
+	node  OVGNode
+	point geo.Point
+}
+
+const ovgSlabSize = 256
+
+// newSlabEdge is NewOVGEdge(from, to) carved from the OVG's edge chunk.
+func (g *OVG) newSlabEdge(from, to *OVGNode) *OVGEdge {
+	if len(g.edgeSlab) == 0 {
+		g.edgeSlab = make([]OVGEdge, ovgSlabSize)
+	}
+	edge := &g.edgeSlab[0]
+	g.edgeSlab = g.edgeSlab[1:]
+	edge.From, edge.To = from, to
+	return edge
+}
+
+// newSlabNode is NewOVGNode(geo.NewPoint(x, y)) carved from the OVG's node
+// chunk; the point lives next to the node.
+func (g *OVG) newSlabNode(x, y float64) *OVGNode {
+	if len(g.nodeSlab) == 0 {
+		g.nodeSlab = make([]ovgNodeWithPoint, ovgSlabSize)
+	}
+	slot := &g.nodeSlab[0]
+	g.nodeSlab = g.nodeSlab[1:]
+	slot.point = geo.Point{X: x, Y: y}
+	slot.node.Point = &slot.point
+	return &slot.node
+}
+
+// newEdgeList is the empty capacity-4 list addEdge starts a node's edges
+// with, carved from a chunk. The full slice expression caps it at 4, so a
+// node with more edges reallocates and never writes into its neighbour's
+// slots.
+func (g *OVG) newEdgeList() []*OVGEdge {
+	if len(g.edgeListSlab) < 4 {
+		g.edgeListSlab = make([]*OVGEdge, 4*ovgSlabSize)
+	}
+	list := g.edgeListSlab[:0:4]
+	g.edgeListSlab = g.edgeListSlab[4:]
+	return list
 }
 
 type fixedOverlapsCacheEntry struct {
@@ -56,9 +107,16 @@ func (g *OVG) Connect(nodeA, nodeB *OVGNode) *OVGEdge {
 		return nil
 	}
 
-	edge := NewOVGEdge(nodeA, nodeB)
+	edge := g.newSlabEdge(nodeA, nodeB)
+	edge.index = int32(len(g.Edges))
 	g.Edges = append(g.Edges, edge)
+	if nodeA.Edges == nil {
+		nodeA.Edges = g.newEdgeList()
+	}
 	nodeA.addEdge(edge)
+	if nodeB.Edges == nil {
+		nodeB.Edges = g.newEdgeList()
+	}
 	nodeB.addEdge(edge)
 	if edge.isVertical() {
 		g.VerticalEdges[nodeA.X] = append(g.VerticalEdges[nodeA.X], edge)
@@ -80,18 +138,23 @@ func (g *OVG) removeIsolatedNodes(guard *ovgBuildGuard) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
-	newNodes := make([]*OVGNode, 0)
-
-	for _, n := range g.Nodes {
+	// Charge every node first (a failing step leaves the nodes untouched,
+	// as before), then keep the connected nodes in order in place: the
+	// OVG owns its node slice and nothing else holds it during the build.
+	for range g.Nodes {
 		if err := guard.step(); err != nil {
 			return err
 		}
+	}
+	kept := 0
+	for _, n := range g.Nodes {
 		if len(n.Edges) > 0 {
-			newNodes = append(newNodes, n)
+			g.Nodes[kept] = n
+			kept++
 		}
 	}
-
-	g.Nodes = newNodes
+	clear(g.Nodes[kept:])
+	g.Nodes = g.Nodes[:kept]
 	return guard.check()
 }
 
@@ -128,6 +191,14 @@ func buildOVGFromGraphWithLimits(ctx context.Context, g *layoutgraph.Graph, near
 }
 
 func buildOVGFromGraphWithGuard(g *layoutgraph.Graph, nearbyNodes []*layoutgraph.Node, guard *ovgBuildGuard) (*OVG, error) {
+	ovg, err := buildOVGFromGraphWithGuardSteps(g, nearbyNodes, guard)
+	if flushErr := guard.flushStage(); err == nil && flushErr != nil {
+		return nil, flushErr
+	}
+	return ovg, err
+}
+
+func buildOVGFromGraphWithGuardSteps(g *layoutgraph.Graph, nearbyNodes []*layoutgraph.Node, guard *ovgBuildGuard) (*OVG, error) {
 	if err := guard.check(); err != nil {
 		return nil, err
 	}
@@ -386,7 +457,15 @@ func (ovg *OVG) addIntersections(g *layoutgraph.Graph, xs, ys map[float64]struct
 	if err != nil {
 		return err
 	}
+	if guard.done != nil {
+		return ovg.addIntersectionCandidatesCounted(xOrder, yOrder, portIndex, proximityIndex, guard)
+	}
+	return ovg.addIntersectionCandidatesStepped(xOrder, yOrder, portIndex, proximityIndex, guard)
+}
 
+// addIntersectionCandidatesStepped is the candidate loop of addIntersections
+// with a guard call per operation; contexts without Done observe every poll.
+func (ovg *OVG) addIntersectionCandidatesStepped(xOrder, yOrder []float64, portIndex *ovgPortIndex, proximityIndex *ovgPointProximityIndex, guard *ovgBuildGuard) error {
 	// TODO don't have cross section of port nodes from container to descendants
 	// Cross section of all the port nodes
 	for _, px := range xOrder {
@@ -436,6 +515,13 @@ func (ovg *OVG) addIntersections(g *layoutgraph.Graph, xs, ys map[float64]struct
 
 // For each edge in tala.Edges, add nodes on the edge perimeter (bounding box) and half-way through the bounding box
 func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, hierarchies map[*layoutgraph.Node]*layoutgraph.Hierarchy, guard *ovgBuildGuard) error {
+	return ovg.addEdgesNodesWith(g, hierarchies, guard, guard.done != nil)
+}
+
+// addEdgesNodesWith is addEdgesNodes; counted (contexts with Done only)
+// evaluates each fill point's proximity and port visibility without the
+// guard and charges their steps with one stepN before the point is added.
+func (ovg *OVG) addEdgesNodesWith(g *layoutgraph.Graph, hierarchies map[*layoutgraph.Node]*layoutgraph.Hierarchy, guard *ovgBuildGuard, counted bool) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
@@ -447,6 +533,17 @@ func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, hierarchies map[*layoutgraph
 	portIndex, err := newOVGPortIndex(ovg.Ports, g, fixedOverlaps, guard)
 	if err != nil {
 		return err
+	}
+	return ovg.addEdgeFillPoints(g, hierarchies, portIndex, guard, counted)
+}
+
+// addEdgeFillPoints is the edge loop of addEdgesNodes.
+func (ovg *OVG) addEdgeFillPoints(g *layoutgraph.Graph, hierarchies map[*layoutgraph.Node]*layoutgraph.Hierarchy, portIndex *ovgPortIndex, guard *ovgBuildGuard, counted bool) error {
+	var view *ovgPortView
+	var near ovgNearScan
+	if counted {
+		view = newOVGPortView(ovg, portIndex)
+		near = newOVGNearScan(g.Nodes)
 	}
 	for _, edge := range g.Edges {
 		if err := guard.step(); err != nil {
@@ -469,6 +566,28 @@ func (ovg *OVG) addEdgesNodes(g *layoutgraph.Graph, hierarchies map[*layoutgraph
 		}
 		fillPoints = append(fillPoints, halfwayPoints...)
 		for _, fillPoint := range fillPoints {
+			if counted {
+				// Two steps, pointNearGraphNode, then
+				// hasUnobstructedLineToPorts(1) as below.
+				nearNode, units := near.nearCounted(fillPoint)
+				units += 2
+				if nearNode {
+					if err := guard.stepN(units); err != nil {
+						return err
+					}
+					continue
+				}
+				unobstructed, more := view.unobstructedCounted(fillPoint, portIndex.ownersByX[fillPoint.X], portIndex.ownersByY[fillPoint.Y], 1)
+				if err := guard.stepN(units + more); err != nil {
+					return err
+				}
+				if unobstructed {
+					if _, err := guard.addNode(ovg, NewOVGNode(fillPoint)); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			if err := guard.step(); err != nil {
 				return err
 			}
@@ -874,6 +993,15 @@ func (ovg *OVG) addNewBoundaryLayers(g *layoutgraph.Graph, tl, br *geo.Point, gu
 
 // For each given OVG node, try to add a new node at the graph boundaries that make a direct connection to this node
 func (ovg *OVG) addPortConnectionNodesAtBoundaries(g *layoutgraph.Graph, tl, br *geo.Point, guard *ovgBuildGuard) error {
+	if guard.done != nil {
+		return ovg.addPortConnectionNodesAtBoundariesCounted(g, tl, br, guard)
+	}
+	return ovg.addPortConnectionNodesAtBoundariesStepped(g, tl, br, guard)
+}
+
+// addPortConnectionNodesAtBoundariesStepped is addPortConnectionNodesAtBoundaries
+// with a guard call per operation; contexts without Done observe every poll.
+func (ovg *OVG) addPortConnectionNodesAtBoundariesStepped(g *layoutgraph.Graph, tl, br *geo.Point, guard *ovgBuildGuard) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
@@ -1115,6 +1243,12 @@ func (ovg *OVG) mapNodesToContainer(g *layoutgraph.Graph, guard *ovgBuildGuard) 
 // Based on Sweep Line Algorithm
 // https://en.wikipedia.org/wiki/Sweep_line_algorithm
 func (ovg *OVG) connectNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
+	return ovg.connectNodesWith(g, guard, guard.done != nil)
+}
+
+// connectNodesWith is connectNodes; counted selects the line connector that
+// charges each pair's steps at once (contexts with Done only).
+func (ovg *OVG) connectNodesWith(g *layoutgraph.Graph, guard *ovgBuildGuard, counted bool) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
@@ -1124,11 +1258,15 @@ func (ovg *OVG) connectNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 		}
 	}
 	// Create edges
-	horizontal := map[float64][]*OVGNode{}
-	vertical := map[float64][]*OVGNode{}
-	eligibleNodeCount := uint64(0)
+	scratch := ovgLineScratchPool.Get()
+	defer scratch.release()
+	if cap(scratch.eligible) < len(ovg.Nodes) {
+		scratch.eligible = make([]*OVGNode, 0, len(ovg.Nodes))
+	}
+	eligible := scratch.eligible[:0]
 	for _, node := range ovg.Nodes {
 		if err := guard.step(); err != nil {
+			scratch.eligible = eligible
 			return err
 		}
 		// Tunnels can only connect to each other (and to their node centers)
@@ -1139,31 +1277,28 @@ func (ovg *OVG) connectNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 		// sequence steps should only connect from certain sides
 		restricted, err := guard.isRestrictedSequencePort(node)
 		if err != nil {
+			scratch.eligible = eligible
 			return err
 		}
 		if restricted {
 			continue
 		}
 
-		eligibleNodeCount++
-		horizontal[node.Y] = append(horizontal[node.Y], node)
-		vertical[node.X] = append(vertical[node.X], node)
+		eligible = append(eligible, node)
 	}
+	scratch.eligible = eligible
+	eligibleNodeCount := uint64(len(eligible))
+	horizontal, vertical := scratch.groupLines(eligible, counted)
 
-	sortLines := func(lines map[float64][]*OVGNode) ([]float64, error) {
-		var coords []float64
-		for coord := range lines {
+	// sortLines charges what ordering a line map's keys charged: one step
+	// per key, then the sort reservation.
+	sortLines := func(lines *ovgLineGroups) error {
+		for range lines.positions {
 			if err := guard.step(); err != nil {
-				return nil, err
+				return err
 			}
-			coords = append(coords, coord)
 		}
-		if err := guard.reserveSortWork(len(coords)); err != nil {
-			return nil, err
-		}
-		slices.Sort(coords)
-
-		return coords, nil
+		return guard.reserveSortWork(len(lines.positions))
 	}
 
 	// Each eligible node appears in one horizontal and one vertical sweep.
@@ -1175,8 +1310,8 @@ func (ovg *OVG) connectNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 	// *---*---*---*---*
 	// |   |   |   |   |
 	// *---*---*---*---*
-	h := uint64(len(horizontal))
-	v := uint64(len(vertical))
+	h := uint64(len(horizontal.positions))
+	v := uint64(len(vertical.positions))
 	edgeCapacity, err := checkedOVGEdgeCapacity(uint64(len(ovg.Edges)), eligibleNodeCount, h, v, guard.limits.edges, maxIntAsUint64())
 	if err != nil {
 		return err
@@ -1190,28 +1325,36 @@ func (ovg *OVG) connectNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 	if err != nil {
 		return err
 	}
-	horizontalLines, err := sortLines(horizontal)
-	if err != nil {
+	var lineView *ovgLineView
+	if counted {
+		lineView = newOVGLineView(ovg, fixedOverlaps)
+	}
+	connectLine := func(nodes []*OVGNode, linePosition float64, isHorizontal bool) error {
+		if lineView != nil {
+			return ovg.connectNodesOnSameLineCounted(nodes, linePosition, isHorizontal, lineView, guard)
+		}
+		return ovg.connectNodesOnSameLine(nodes, linePosition, isHorizontal, fixedOverlaps, guard)
+	}
+	if err := sortLines(horizontal); err != nil {
 		return err
 	}
-	for _, y := range horizontalLines {
+	for i, y := range horizontal.positions {
 		if err := guard.step(); err != nil {
 			return err
 		}
-		if err := ovg.connectNodesOnSameLine(horizontal[y], y, true, fixedOverlaps, guard); err != nil {
+		if err := connectLine(horizontal.line(i), y, true); err != nil {
 			return err
 		}
 	}
 
-	verticalLines, err := sortLines(vertical)
-	if err != nil {
+	if err := sortLines(vertical); err != nil {
 		return err
 	}
-	for _, x := range verticalLines {
+	for i, x := range vertical.positions {
 		if err := guard.step(); err != nil {
 			return err
 		}
-		if err := ovg.connectNodesOnSameLine(vertical[x], x, false, fixedOverlaps, guard); err != nil {
+		if err := connectLine(vertical.line(i), x, false); err != nil {
 			return err
 		}
 	}
@@ -1708,7 +1851,10 @@ func (ovg *OVG) mergePorts(other *OVG, guard *ovgBuildGuard) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
-	for n, ports := range other.Ports {
+	// In a deterministic order (see sortedPortOwners): each owner's charge is
+	// not one unit, and the merged ports join ovg.Nodes in this order.
+	for _, n := range sortedPortOwners(other.Ports) {
+		ports := other.Ports[n]
 		if err := guard.reserveWork(uint64(len(ports)) + 1); err != nil {
 			return err
 		}

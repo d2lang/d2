@@ -12,40 +12,15 @@ type shapeParallelogram struct {
 func (s shapeParallelogram) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:      {},
-			label.InsideMiddleCenter: {},
-			label.InsideBottomRight:  {},
-			label.OutsideTopRight:    {},
-			label.OutsideBottomLeft:  {},
-		}
+		return parallelogramLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.InsideTopCenter:     {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomCenter: {},
-		}
+		return parallelogramLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideLeftMiddle:  {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightTop:    {},
-			label.OutsideRightMiddle: {},
-			label.InsideTopRight:     {},
-			label.InsideMiddleLeft:   {},
-			label.InsideMiddleRight:  {},
-			label.InsideBottomLeft:   {},
-		}
+		return parallelogramLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:     {},
-			label.OutsideLeftTop:     {},
-			label.OutsideRightBottom: {},
-			label.OutsideBottomRight: {},
-		}
+		return parallelogramLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return parallelogramLabelPreferencesFallback
 }
 
 func (s shapeParallelogram) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -82,3 +57,38 @@ func (s shapeParallelogram) SnapPointPercentages() [][]*geo.RelativePoint {
 		},
 	}
 }
+
+var parallelogramLabelPreferencesGood = map[label.Position]struct{}{
+	label.InsideTopLeft:      {},
+	label.InsideMiddleCenter: {},
+	label.InsideBottomRight:  {},
+	label.OutsideTopRight:    {},
+	label.OutsideBottomLeft:  {},
+}
+
+var parallelogramLabelPreferencesOK = map[label.Position]struct{}{
+	label.OutsideTopCenter:    {},
+	label.InsideTopCenter:     {},
+	label.InsideBottomCenter:  {},
+	label.OutsideBottomCenter: {},
+}
+
+var parallelogramLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.OutsideLeftMiddle:  {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightTop:    {},
+	label.OutsideRightMiddle: {},
+	label.InsideTopRight:     {},
+	label.InsideMiddleLeft:   {},
+	label.InsideMiddleRight:  {},
+	label.InsideBottomLeft:   {},
+}
+
+var parallelogramLabelPreferencesBad = map[label.Position]struct{}{
+	label.OutsideTopLeft:     {},
+	label.OutsideLeftTop:     {},
+	label.OutsideRightBottom: {},
+	label.OutsideBottomRight: {},
+}
+
+var parallelogramLabelPreferencesFallback = map[label.Position]struct{}{}

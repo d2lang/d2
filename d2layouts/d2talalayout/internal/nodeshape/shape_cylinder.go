@@ -12,39 +12,15 @@ type shapeCylinder struct {
 func (s shapeCylinder) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.InsideMiddleCenter:  {},
-			label.OutsideBottomCenter: {},
-		}
+		return cylinderLabelPreferencesGood
 	case OK:
-		return map[label.Position]struct{}{
-			label.InsideTopCenter:    {},
-			label.InsideBottomCenter: {},
-			label.InsideMiddleLeft:   {},
-			label.OutsideTopRight:    {},
-			label.OutsideBottomRight: {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightMiddle: {},
-			label.OutsideTopLeft:     {},
-			label.OutsideBottomLeft:  {},
-			label.InsideTopLeft:      {},
-			label.InsideBottomLeft:   {},
-			label.InsideMiddleRight:  {},
-			label.InsideTopRight:     {},
-			label.InsideBottomRight:  {},
-		}
+		return cylinderLabelPreferencesOK
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideLeftTop:     {},
-			label.OutsideRightTop:    {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return cylinderLabelPreferencesUnideal
 	case Bad:
-		return map[label.Position]struct{}{}
+		return cylinderLabelPreferencesBad
 	}
-	return map[label.Position]struct{}{}
+	return cylinderLabelPreferencesFallback
 }
 
 func (s shapeCylinder) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -110,3 +86,37 @@ func (s shapeCylinder) SnapPointPercentages() [][]*geo.RelativePoint {
 		},
 	}
 }
+
+var cylinderLabelPreferencesGood = map[label.Position]struct{}{
+	label.OutsideTopCenter:    {},
+	label.InsideMiddleCenter:  {},
+	label.OutsideBottomCenter: {},
+}
+
+var cylinderLabelPreferencesOK = map[label.Position]struct{}{
+	label.InsideTopCenter:    {},
+	label.InsideBottomCenter: {},
+	label.InsideMiddleLeft:   {},
+	label.OutsideTopRight:    {},
+	label.OutsideBottomRight: {},
+	label.OutsideLeftMiddle:  {},
+	label.OutsideRightMiddle: {},
+	label.OutsideTopLeft:     {},
+	label.OutsideBottomLeft:  {},
+	label.InsideTopLeft:      {},
+	label.InsideBottomLeft:   {},
+	label.InsideMiddleRight:  {},
+	label.InsideTopRight:     {},
+	label.InsideBottomRight:  {},
+}
+
+var cylinderLabelPreferencesUnideal = map[label.Position]struct{}{
+	label.OutsideLeftTop:     {},
+	label.OutsideRightTop:    {},
+	label.OutsideLeftBottom:  {},
+	label.OutsideRightBottom: {},
+}
+
+var cylinderLabelPreferencesBad = map[label.Position]struct{}{}
+
+var cylinderLabelPreferencesFallback = map[label.Position]struct{}{}

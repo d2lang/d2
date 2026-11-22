@@ -88,8 +88,8 @@ func TestNewOVGEdgeRouter(t *testing.T) {
 			assert.False(t, &existingRoutes == &router.routes, "Existing routes should be copied to avoid slice reference sharing")
 			assert.Equal(t, existingRoutes, router.routes, "Routes should've been copied")
 			// check nodes were assigned to routes
-			assert.Equal(t, []*Route{existingRoutes[0]}, router.pointToRoute[*ovgNode1.Point])
-			assert.Equal(t, []*Route{existingRoutes[1]}, router.pointToRoute[*ovgNode2.Point])
+			assert.Equal(t, []*Route{existingRoutes[0]}, router.routesAtPoint(*ovgNode1.Point))
+			assert.Equal(t, []*Route{existingRoutes[1]}, router.routesAtPoint(*ovgNode2.Point))
 
 			assert.Equal(t, tc.expectedEdgeOrder, router.edges)
 		})
@@ -130,7 +130,7 @@ func TestAddRoute(t *testing.T) {
 	assert.Equal(t, 1, len(router.edgeSet.horizontalEdges))
 
 	for _, node := range route.OVGNodes {
-		assert.Equal(t, router.pointToRoute[*node.Point], []*Route{route, route})
+		assert.Equal(t, router.routesAtPoint(*node.Point), []*Route{route, route})
 	}
 }
 

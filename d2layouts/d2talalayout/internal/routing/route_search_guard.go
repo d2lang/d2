@@ -121,6 +121,61 @@ func (guard *routeSearchWorkGuard) step() error {
 	return guard.aggregate.add(1)
 }
 
+// stepN charges n units exactly as n consecutive step calls would: the same
+// units, context polls at the same work counts, and on exhaustion the same
+// error with used left at the limit, which later fallback steps observe. It
+// lets a scan whose iterations each charged one step skip the iterations
+// whose only effect was that charge.
+func (guard *routeSearchWorkGuard) stepN(n int) error {
+	if n <= 0 {
+		return nil
+	}
+	if guard.done == nil || (!guard.deferAggregate && guard.aggregate != nil) {
+		// Per-step polling or per-step aggregate charges: keep the literal steps.
+		for range n {
+			if err := guard.step(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	units := uint64(n)
+	succeeded := units
+	exhausted := false
+	if guard.used >= guard.limit {
+		succeeded, exhausted = 0, true
+	} else if remaining := guard.limit - guard.used; remaining < units {
+		succeeded, exhausted = remaining, true
+	}
+	// step polls on entry whenever used >= nextCheck; entries see used values
+	// guard.used, guard.used+1, ..., including the exhausted entry.
+	entries := succeeded
+	if exhausted {
+		entries++
+	}
+	last := guard.used + entries - 1
+	for at := max(guard.used, guard.nextCheck); at <= last; at += routeSearchContextCheckStride {
+		if err := guard.check(); err != nil {
+			guard.used = at
+			return err
+		}
+		guard.nextCheck = at + routeSearchContextCheckStride
+	}
+	guard.used += succeeded
+	if exhausted {
+		if err := guard.check(); err != nil {
+			return err
+		}
+		return fmt.Errorf(
+			"%w: TALA EdgeRouting flavor %s work exceeds limit %d",
+			errRouteSearchWorkLimit,
+			guard.flavor,
+			guard.limit,
+		)
+	}
+	return nil
+}
+
 func (guard *routeSearchWorkGuard) add(units uint64) error {
 	if guard.used > guard.limit || units > guard.limit-guard.used {
 		if err := guard.check(); err != nil {
