@@ -10,18 +10,35 @@ type shapePerson struct {
 	shape.Shape
 }
 
-func (s shapePerson) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapePerson) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return personLabelPreferencesGood
+		return 1 << label.OutsideBottomCenter
 	case OK:
-		return personLabelPreferencesOK
+		return 1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight
 	case Unideal:
-		return personLabelPreferencesUnideal
+		return 1<<label.InsideTopCenter |
+			1<<label.InsideMiddleCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideRightBottom
 	case Bad:
-		return personLabelPreferencesBad
+		return 1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight
 	}
-	return personLabelPreferencesFallback
+	return 0
 }
 
 func (s shapePerson) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -84,41 +101,6 @@ func (s shapePerson) CenterPortIndex(o geo.Orientation) int {
 
 	return centerPorts[centerPortsIndex]
 }
-
-var personLabelPreferencesGood = map[label.Position]struct{}{
-	label.OutsideBottomCenter: {},
-}
-
-var personLabelPreferencesOK = map[label.Position]struct{}{
-	label.OutsideTopCenter:   {},
-	label.OutsideBottomLeft:  {},
-	label.OutsideBottomRight: {},
-}
-
-var personLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.InsideTopCenter:    {},
-	label.InsideMiddleCenter: {},
-	label.InsideBottomCenter: {},
-	label.InsideBottomLeft:   {},
-	label.InsideBottomRight:  {},
-	label.OutsideLeftMiddle:  {},
-	label.OutsideLeftBottom:  {},
-	label.OutsideRightMiddle: {},
-	label.OutsideRightBottom: {},
-}
-
-var personLabelPreferencesBad = map[label.Position]struct{}{
-	label.InsideTopLeft:     {},
-	label.InsideTopRight:    {},
-	label.InsideMiddleLeft:  {},
-	label.InsideMiddleRight: {},
-	label.OutsideRightTop:   {},
-	label.OutsideLeftTop:    {},
-	label.OutsideTopLeft:    {},
-	label.OutsideTopRight:   {},
-}
-
-var personLabelPreferencesFallback = map[label.Position]struct{}{}
 
 // personSnapPoints is shared by every call: callers only read it.
 var personSnapPoints = [][]*geo.RelativePoint{

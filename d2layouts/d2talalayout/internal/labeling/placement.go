@@ -237,7 +237,6 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 		bestScore = math.Inf(1)
 		var bestLabelPosition label.Position
 		tranches := labelPositionPreferenceTranches(node)
-		var tierPreferences *labelTierPreferences // built at the first comparison
 		for _, tranch := range tranches {
 			if err := checkCanceled(); err != nil {
 				return err
@@ -307,7 +306,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 						tiedBest = []label.Position{}
 						tiedBestFakeLabelNodes = []*layoutgraph.Node{}
 					}
-				} else if score == bestScore && compareCachedLabelPositions(&tierPreferences, node, labelPosition, bestLabelPosition) == 0 && bestLabelPosition.IsOutside() && labelPosition.IsOutside() {
+				} else if score == bestScore && compareLabelPositions(node, labelPosition, bestLabelPosition) == 0 && bestLabelPosition.IsOutside() && labelPosition.IsOutside() {
 					tiedBest = append(tiedBest, labelPosition)
 					tiedBestFakeLabelNodes = append(tiedBestFakeLabelNodes, fakeLabelNode)
 				}
@@ -1263,13 +1262,4 @@ func isClusterPathSharedChecked(e *layoutgraph.Edge, checkWork func() error) (bo
 	}
 
 	return false, nil
-}
-
-// compareCachedLabelPositions is compareLabelPositions with the node's tier
-// preference sets built on first use and kept in *preferences.
-func compareCachedLabelPositions(preferences **labelTierPreferences, node *layoutgraph.Node, first, second label.Position) int {
-	if *preferences == nil {
-		*preferences = newLabelTierPreferences(node)
-	}
-	return (*preferences).compare(first, second)
 }

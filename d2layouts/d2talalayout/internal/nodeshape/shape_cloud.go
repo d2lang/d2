@@ -10,18 +10,35 @@ type shapeCloud struct {
 	shape.Shape
 }
 
-func (s shapeCloud) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeCloud) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return cloudLabelPreferencesGood
+		return 1<<label.InsideMiddleCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.OutsideBottomCenter |
+			1<<label.InsideTopCenter
 	case OK:
-		return cloudLabelPreferencesOK
+		return 1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight |
+			1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight
 	case Unideal:
-		return cloudLabelPreferencesUnideal
+		return 1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightBottom
 	case Bad:
-		return cloudLabelPreferencesBad
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideRightTop
 	}
-	return cloudLabelPreferencesFallback
+	return 0
 }
 
 func (s shapeCloud) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -81,41 +98,6 @@ func (s shapeCloud) CenterPortIndex(o geo.Orientation) int {
 
 	return centerPorts[centerPortsIndex]
 }
-
-var cloudLabelPreferencesGood = map[label.Position]struct{}{
-	label.InsideMiddleCenter:  {},
-	label.InsideBottomCenter:  {},
-	label.OutsideBottomCenter: {},
-	label.InsideTopCenter:     {},
-}
-
-var cloudLabelPreferencesOK = map[label.Position]struct{}{
-	label.OutsideTopCenter:   {},
-	label.OutsideBottomLeft:  {},
-	label.OutsideBottomRight: {},
-	label.InsideTopLeft:      {},
-	label.InsideTopRight:     {},
-	label.InsideBottomLeft:   {},
-	label.InsideBottomRight:  {},
-	label.InsideMiddleLeft:   {},
-	label.InsideMiddleRight:  {},
-}
-
-var cloudLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.OutsideLeftMiddle:  {},
-	label.OutsideRightMiddle: {},
-	label.OutsideLeftBottom:  {},
-	label.OutsideRightBottom: {},
-}
-
-var cloudLabelPreferencesBad = map[label.Position]struct{}{
-	label.OutsideTopLeft:  {},
-	label.OutsideTopRight: {},
-	label.OutsideLeftTop:  {},
-	label.OutsideRightTop: {},
-}
-
-var cloudLabelPreferencesFallback = map[label.Position]struct{}{}
 
 // cloudSnapPoints is shared by every call: callers only read it.
 var cloudSnapPoints = [][]*geo.RelativePoint{

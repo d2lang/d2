@@ -9,18 +9,35 @@ type shapeDocument struct {
 	shapeSquare
 }
 
-func (s shapeDocument) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeDocument) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return documentLabelPreferencesGood
+		return 1<<label.InsideTopLeft |
+			1<<label.InsideTopCenter |
+			1<<label.InsideTopRight |
+			1<<label.InsideMiddleCenter
 	case OK:
-		return documentLabelPreferencesOK
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideTopCenter |
+			1<<label.OutsideTopRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight
 	case Unideal:
-		return documentLabelPreferencesUnideal
+		return 1<<label.OutsideLeftTop |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideRightBottom |
+			1<<label.InsideBottomCenter |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight
 	case Bad:
-		return documentLabelPreferencesBad
+		return 1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomCenter |
+			1<<label.OutsideBottomRight
 	}
-	return documentLabelPreferencesFallback
+	return 0
 }
 
 func (s shapeDocument) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -66,38 +83,3 @@ func (s shapeDocument) SnapPointPercentages() [][]*geo.RelativePoint {
 		},
 	}
 }
-
-var documentLabelPreferencesGood = map[label.Position]struct{}{
-	label.InsideTopLeft:      {},
-	label.InsideTopCenter:    {},
-	label.InsideTopRight:     {},
-	label.InsideMiddleCenter: {},
-}
-
-var documentLabelPreferencesOK = map[label.Position]struct{}{
-	label.OutsideTopLeft:    {},
-	label.OutsideTopCenter:  {},
-	label.OutsideTopRight:   {},
-	label.InsideMiddleLeft:  {},
-	label.InsideMiddleRight: {},
-}
-
-var documentLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.OutsideLeftTop:     {},
-	label.OutsideLeftMiddle:  {},
-	label.OutsideLeftBottom:  {},
-	label.OutsideRightTop:    {},
-	label.OutsideRightMiddle: {},
-	label.OutsideRightBottom: {},
-	label.InsideBottomCenter: {},
-	label.InsideBottomLeft:   {},
-	label.InsideBottomRight:  {},
-}
-
-var documentLabelPreferencesBad = map[label.Position]struct{}{
-	label.OutsideBottomLeft:   {},
-	label.OutsideBottomCenter: {},
-	label.OutsideBottomRight:  {},
-}
-
-var documentLabelPreferencesFallback = map[label.Position]struct{}{}

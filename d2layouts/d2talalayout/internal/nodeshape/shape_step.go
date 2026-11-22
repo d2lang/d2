@@ -10,18 +10,35 @@ type shapeStep struct {
 	shape.Shape
 }
 
-func (s shapeStep) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeStep) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return stepLabelPreferencesGood
+		return 1 << label.InsideMiddleCenter
 	case OK:
-		return stepLabelPreferencesOK
+		return 1<<label.InsideTopCenter |
+			1<<label.InsideTopRight |
+			1<<label.InsideBottomRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.InsideBottomCenter |
+			1<<label.OutsideTopLeft |
+			1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomCenter
 	case Unideal:
-		return stepLabelPreferencesUnideal
+		return 1<<label.OutsideRightMiddle |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideLeftBottom |
+			1<<label.InsideTopLeft |
+			1<<label.InsideBottomLeft
 	case Bad:
-		return stepLabelPreferencesBad
+		return 1<<label.OutsideTopRight |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideRightBottom |
+			1<<label.OutsideBottomRight
 	}
-	return stepLabelPreferencesFallback
+	return 0
 }
 
 func (s shapeStep) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -113,38 +130,3 @@ func (s shapeStep) CenterPortIndex(o geo.Orientation) int {
 
 	return centerPorts[centerPortsIndex]
 }
-
-var stepLabelPreferencesGood = map[label.Position]struct{}{
-	label.InsideMiddleCenter: {},
-}
-
-var stepLabelPreferencesOK = map[label.Position]struct{}{
-	label.InsideTopCenter:     {},
-	label.InsideTopRight:      {},
-	label.InsideBottomRight:   {},
-	label.InsideMiddleLeft:    {},
-	label.InsideMiddleRight:   {},
-	label.InsideBottomCenter:  {},
-	label.OutsideTopLeft:      {},
-	label.OutsideTopCenter:    {},
-	label.OutsideBottomLeft:   {},
-	label.OutsideBottomCenter: {},
-}
-
-var stepLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.OutsideRightMiddle: {},
-	label.OutsideLeftTop:     {},
-	label.OutsideLeftBottom:  {},
-	label.InsideTopLeft:      {},
-	label.InsideBottomLeft:   {},
-}
-
-var stepLabelPreferencesBad = map[label.Position]struct{}{
-	label.OutsideTopRight:    {},
-	label.OutsideLeftMiddle:  {},
-	label.OutsideRightTop:    {},
-	label.OutsideRightBottom: {},
-	label.OutsideBottomRight: {},
-}
-
-var stepLabelPreferencesFallback = map[label.Position]struct{}{}

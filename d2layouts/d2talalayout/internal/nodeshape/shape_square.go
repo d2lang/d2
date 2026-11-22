@@ -10,18 +10,34 @@ type shapeSquare struct {
 	shape.Shape
 }
 
-func (s shapeSquare) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeSquare) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return squareLabelPreferencesGood
+		return 1<<label.OutsideTopCenter |
+			1<<label.InsideTopCenter |
+			1<<label.InsideMiddleCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.OutsideBottomCenter |
+			1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight
 	case OK:
-		return squareLabelPreferencesOK
+		return 1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight
 	case Unideal:
-		return squareLabelPreferencesUnideal
-	case Bad:
-		return squareLabelPreferencesBad
+		return 1<<label.OutsideLeftTop |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightBottom
 	}
-	return squareLabelPreferencesFallback
+	return 0
 }
 
 func (s shapeSquare) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -84,40 +100,6 @@ func (s shapeSquare) CenterPortIndex(o geo.Orientation) int {
 
 	return centerPorts[centerPortsIndex]
 }
-
-var squareLabelPreferencesGood = map[label.Position]struct{}{
-	label.OutsideTopCenter:    {},
-	label.InsideTopCenter:     {},
-	label.InsideMiddleCenter:  {},
-	label.InsideBottomCenter:  {},
-	label.OutsideBottomCenter: {},
-	label.InsideTopLeft:       {},
-	label.InsideTopRight:      {},
-	label.InsideBottomLeft:    {},
-	label.InsideBottomRight:   {},
-}
-
-var squareLabelPreferencesOK = map[label.Position]struct{}{
-	label.InsideMiddleLeft:   {},
-	label.InsideMiddleRight:  {},
-	label.OutsideTopLeft:     {},
-	label.OutsideTopRight:    {},
-	label.OutsideBottomLeft:  {},
-	label.OutsideBottomRight: {},
-}
-
-var squareLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.OutsideLeftTop:     {},
-	label.OutsideRightTop:    {},
-	label.OutsideLeftMiddle:  {},
-	label.OutsideRightMiddle: {},
-	label.OutsideLeftBottom:  {},
-	label.OutsideRightBottom: {},
-}
-
-var squareLabelPreferencesBad = map[label.Position]struct{}{}
-
-var squareLabelPreferencesFallback = map[label.Position]struct{}{}
 
 // squareSnapPoints is shared by every call: callers only read it.
 var squareSnapPoints = [][]*geo.RelativePoint{

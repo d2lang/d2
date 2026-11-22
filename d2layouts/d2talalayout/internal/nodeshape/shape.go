@@ -121,9 +121,17 @@ type Shape interface {
 	// CenterPortIndex returns the center port for an orientation, or -1 if the
 	// shape does not expose one.
 	CenterPortIndex(orientation geo.Orientation) int
-	// LabelPositionPreferences returns the positions in a preference tier. The
-	// sets are shared per shape type and tier: callers must not modify them.
-	LabelPositionPreferences(tier LabelTier) map[label.Position]struct{}
+	// LabelPositionPreferences returns the positions in a preference tier.
+	LabelPositionPreferences(tier LabelTier) LabelSet
+}
+
+// LabelSet is a set of label positions: position p is a member when bit p is
+// set.
+type LabelSet uint64
+
+// Has reports whether position is in the set.
+func (s LabelSet) Has(position label.Position) bool {
+	return position >= 0 && position < 64 && s&(1<<position) != 0
 }
 
 // New constructs TALA's policy wrapper around a D2 shape. An empty type uses

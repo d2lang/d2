@@ -9,58 +9,40 @@ type shapeOval struct {
 	shapeSquare
 }
 
-func (s shapeOval) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeOval) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return ovalLabelPreferencesGood
+		return 1<<label.OutsideTopCenter |
+			1<<label.InsideMiddleCenter |
+			1<<label.OutsideBottomCenter
 	case OK:
-		return ovalLabelPreferencesOK
+		return 1<<label.InsideBottomCenter |
+			1<<label.InsideTopCenter |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight
 	case Unideal:
-		return ovalLabelPreferencesUnideal
+		return 1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightMiddle
 	case Bad:
-		return ovalLabelPreferencesBad
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightBottom |
+			1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight
 	}
-	return ovalLabelPreferencesFallback
+	return 0
 }
 
 func (s shapeOval) SnapPointPercentages() [][]*geo.RelativePoint {
 	return ovalSnapPoints
 }
-
-var ovalLabelPreferencesGood = map[label.Position]struct{}{
-	label.OutsideTopCenter:    {},
-	label.InsideMiddleCenter:  {},
-	label.OutsideBottomCenter: {},
-}
-
-var ovalLabelPreferencesOK = map[label.Position]struct{}{
-	label.InsideBottomCenter: {},
-	label.InsideTopCenter:    {},
-	label.InsideMiddleLeft:   {},
-	label.InsideMiddleRight:  {},
-}
-
-var ovalLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.OutsideLeftMiddle:  {},
-	label.OutsideRightMiddle: {},
-}
-
-var ovalLabelPreferencesBad = map[label.Position]struct{}{
-	label.OutsideTopLeft:     {},
-	label.OutsideTopRight:    {},
-	label.OutsideLeftTop:     {},
-	label.OutsideRightTop:    {},
-	label.OutsideBottomLeft:  {},
-	label.OutsideBottomRight: {},
-	label.OutsideLeftBottom:  {},
-	label.OutsideRightBottom: {},
-	label.InsideTopLeft:      {},
-	label.InsideTopRight:     {},
-	label.InsideBottomLeft:   {},
-	label.InsideBottomRight:  {},
-}
-
-var ovalLabelPreferencesFallback = map[label.Position]struct{}{}
 
 // ovalSnapPoints is shared by every call: callers only read it.
 var ovalSnapPoints = [][]*geo.RelativePoint{

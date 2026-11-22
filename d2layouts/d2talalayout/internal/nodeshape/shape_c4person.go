@@ -10,18 +10,35 @@ type shapeC4Person struct {
 	shape.Shape
 }
 
-func (s shapeC4Person) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeC4Person) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return c4PersonLabelPreferencesGood
+		return 1 << label.InsideMiddleCenter
 	case OK:
-		return c4PersonLabelPreferencesOK
+		return 1<<label.InsideTopCenter |
+			1<<label.InsideBottomCenter
 	case Unideal:
-		return c4PersonLabelPreferencesUnideal
+		return 1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight |
+			1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight
 	case Bad:
-		return c4PersonLabelPreferencesBad
+		return 1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomCenter |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideRightBottom |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight
 	}
-	return c4PersonLabelPreferencesFallback
+	return 0
 }
 
 func (s shapeC4Person) SnapPointPercentages() [][]*geo.RelativePoint {
@@ -84,41 +101,6 @@ func (s shapeC4Person) CenterPortIndex(o geo.Orientation) int {
 
 	return centerPorts[centerPortsIndex]
 }
-
-var c4PersonLabelPreferencesGood = map[label.Position]struct{}{
-	label.InsideMiddleCenter: {},
-}
-
-var c4PersonLabelPreferencesOK = map[label.Position]struct{}{
-	label.InsideTopCenter:    {},
-	label.InsideBottomCenter: {},
-}
-
-var c4PersonLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.InsideBottomLeft:  {},
-	label.InsideBottomRight: {},
-	label.InsideTopLeft:     {},
-	label.InsideTopRight:    {},
-	label.InsideMiddleLeft:  {},
-	label.InsideMiddleRight: {},
-}
-
-var c4PersonLabelPreferencesBad = map[label.Position]struct{}{
-	label.OutsideTopCenter:    {},
-	label.OutsideBottomCenter: {},
-	label.OutsideBottomLeft:   {},
-	label.OutsideBottomRight:  {},
-	label.OutsideLeftMiddle:   {},
-	label.OutsideLeftBottom:   {},
-	label.OutsideRightMiddle:  {},
-	label.OutsideRightBottom:  {},
-	label.OutsideRightTop:     {},
-	label.OutsideLeftTop:      {},
-	label.OutsideTopLeft:      {},
-	label.OutsideTopRight:     {},
-}
-
-var c4PersonLabelPreferencesFallback = map[label.Position]struct{}{}
 
 // c4PersonSnapPoints is shared by every call: callers only read it.
 var c4PersonSnapPoints = [][]*geo.RelativePoint{

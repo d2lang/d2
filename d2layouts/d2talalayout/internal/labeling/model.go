@@ -101,29 +101,11 @@ func setDefaultLabelPlacement(node *layoutgraph.Node) {
 	}
 }
 
-// labelTierPreferences holds a node shape's preference sets for the Good, OK,
-// Unideal and Bad tiers. LabelPositionPreferences builds a new map on every
-// call from the shape alone, so one node's sets can be built once and used
-// for all of its comparisons.
-type labelTierPreferences [4]map[label.Position]struct{}
-
-func newLabelTierPreferences(node *layoutgraph.Node) *labelTierPreferences {
-	var preferences labelTierPreferences
-	for index, tier := range []nodeshape.LabelTier{nodeshape.Good, nodeshape.OK, nodeshape.Unideal, nodeshape.Bad} {
-		preferences[index] = node.Shape.LabelPositionPreferences(tier)
-	}
-	return &preferences
-}
-
-// compare compares two label positions for the node the sets were built for:
-// each scores one more than the index of the last tier set that holds it (-1
-// when none does), and the lower score comes first (1 when first's is lower,
-// -1 when higher, 0 when equal).
-func (preferences *labelTierPreferences) compare(first, second label.Position) int {
+func compareLabelPositions(node *layoutgraph.Node, first, second label.Position) int {
 	score := func(position label.Position) int {
 		score := -1
-		for index := range preferences {
-			if _, found := preferences[index][position]; found {
+		for index, tier := range []nodeshape.LabelTier{nodeshape.Good, nodeshape.OK, nodeshape.Unideal, nodeshape.Bad} {
+			if node.Shape.LabelPositionPreferences(tier).Has(position) {
 				score = index + 1
 			}
 		}
@@ -157,7 +139,7 @@ func labelPositionPreferenceTranches(node *layoutgraph.Node) [][]label.Position 
 		allowed := node.Shape.LabelPositionPreferences(tier)
 		var tranche []label.Position
 		for _, position := range baseOrder {
-			if _, found := allowed[position]; found {
+			if allowed.Has(position) {
 				tranche = append(tranche, position)
 			}
 		}

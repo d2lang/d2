@@ -8,41 +8,23 @@ type shapeImage struct {
 	shapeSquare
 }
 
-func (s shapeImage) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeImage) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return imageLabelPreferencesGood
+		return 1<<label.OutsideBottomCenter |
+			1<<label.OutsideTopCenter
 	case OK:
-		return imageLabelPreferencesOK
+		return 1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightMiddle
 	case Unideal:
-		return imageLabelPreferencesUnideal
-	case Bad:
-		return imageLabelPreferencesBad
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightBottom
 	}
-	return imageLabelPreferencesFallback
+	return 0
 }
-
-var imageLabelPreferencesGood = map[label.Position]struct{}{
-	label.OutsideBottomCenter: {},
-	label.OutsideTopCenter:    {},
-}
-
-var imageLabelPreferencesOK = map[label.Position]struct{}{
-	label.OutsideLeftMiddle:  {},
-	label.OutsideRightMiddle: {},
-}
-
-var imageLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.OutsideTopLeft:     {},
-	label.OutsideTopRight:    {},
-	label.OutsideBottomLeft:  {},
-	label.OutsideBottomRight: {},
-	label.OutsideLeftTop:     {},
-	label.OutsideRightTop:    {},
-	label.OutsideLeftBottom:  {},
-	label.OutsideRightBottom: {},
-}
-
-var imageLabelPreferencesBad = map[label.Position]struct{}{}
-
-var imageLabelPreferencesFallback = map[label.Position]struct{}{}

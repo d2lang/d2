@@ -9,58 +9,40 @@ type shapeHexagon struct {
 	shapeSquare
 }
 
-func (s shapeHexagon) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeHexagon) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return hexagonLabelPreferencesGood
+		return 1<<label.OutsideTopCenter |
+			1<<label.InsideMiddleCenter |
+			1<<label.OutsideBottomCenter
 	case OK:
-		return hexagonLabelPreferencesOK
+		return 1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.InsideTopCenter |
+			1<<label.InsideBottomCenter
 	case Unideal:
-		return hexagonLabelPreferencesUnideal
+		return 1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightMiddle |
+			1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight
 	case Bad:
-		return hexagonLabelPreferencesBad
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideRightBottom |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight
 	}
-	return hexagonLabelPreferencesFallback
+	return 0
 }
 
 func (s shapeHexagon) SnapPointPercentages() [][]*geo.RelativePoint {
 	return hexagonSnapPoints
 }
-
-var hexagonLabelPreferencesGood = map[label.Position]struct{}{
-	label.OutsideTopCenter:    {},
-	label.InsideMiddleCenter:  {},
-	label.OutsideBottomCenter: {},
-}
-
-var hexagonLabelPreferencesOK = map[label.Position]struct{}{
-	label.InsideMiddleLeft:   {},
-	label.InsideMiddleRight:  {},
-	label.InsideTopCenter:    {},
-	label.InsideBottomCenter: {},
-}
-
-var hexagonLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.OutsideLeftMiddle:  {},
-	label.OutsideRightMiddle: {},
-	label.InsideTopLeft:      {},
-	label.InsideTopRight:     {},
-	label.InsideBottomLeft:   {},
-	label.InsideBottomRight:  {},
-}
-
-var hexagonLabelPreferencesBad = map[label.Position]struct{}{
-	label.OutsideTopLeft:     {},
-	label.OutsideTopRight:    {},
-	label.OutsideLeftTop:     {},
-	label.OutsideLeftBottom:  {},
-	label.OutsideRightTop:    {},
-	label.OutsideRightBottom: {},
-	label.OutsideBottomLeft:  {},
-	label.OutsideBottomRight: {},
-}
-
-var hexagonLabelPreferencesFallback = map[label.Position]struct{}{}
 
 // hexagonSnapPoints is shared by every call: callers only read it.
 var hexagonSnapPoints = [][]*geo.RelativePoint{

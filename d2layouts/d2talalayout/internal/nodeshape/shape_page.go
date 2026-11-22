@@ -8,51 +8,33 @@ type shapePage struct {
 	shapeSquare
 }
 
-func (s shapePage) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapePage) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return pageLabelPreferencesGood
+		return 1<<label.InsideMiddleCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.OutsideBottomCenter
 	case OK:
-		return pageLabelPreferencesOK
+		return 1<<label.InsideTopLeft |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight |
+			1<<label.OutsideTopLeft |
+			1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight
 	case Unideal:
-		return pageLabelPreferencesUnideal
+		return 1<<label.OutsideTopRight |
+			1<<label.InsideTopCenter |
+			1<<label.OutsideRightBottom |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideLeftBottom
 	case Bad:
-		return pageLabelPreferencesBad
+		return 1<<label.InsideTopRight |
+			1<<label.OutsideRightTop
 	}
-	return pageLabelPreferencesFallback
+	return 0
 }
-
-var pageLabelPreferencesGood = map[label.Position]struct{}{
-	label.InsideMiddleCenter:  {},
-	label.InsideBottomCenter:  {},
-	label.OutsideBottomCenter: {},
-}
-
-var pageLabelPreferencesOK = map[label.Position]struct{}{
-	label.InsideTopLeft:      {},
-	label.InsideMiddleLeft:   {},
-	label.InsideMiddleRight:  {},
-	label.InsideBottomLeft:   {},
-	label.InsideBottomRight:  {},
-	label.OutsideTopLeft:     {},
-	label.OutsideTopCenter:   {},
-	label.OutsideBottomLeft:  {},
-	label.OutsideBottomRight: {},
-}
-
-var pageLabelPreferencesUnideal = map[label.Position]struct{}{
-	label.OutsideTopRight:    {},
-	label.InsideTopCenter:    {},
-	label.OutsideRightBottom: {},
-	label.OutsideRightMiddle: {},
-	label.OutsideLeftTop:     {},
-	label.OutsideLeftMiddle:  {},
-	label.OutsideLeftBottom:  {},
-}
-
-var pageLabelPreferencesBad = map[label.Position]struct{}{
-	label.InsideTopRight:  {},
-	label.OutsideRightTop: {},
-}
-
-var pageLabelPreferencesFallback = map[label.Position]struct{}{}
