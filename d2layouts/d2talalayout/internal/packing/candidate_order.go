@@ -39,18 +39,19 @@ type packTrial struct {
 // starts at +Inf) and are dropped. This changes which commits run, so only
 // the work charged to the budgets changes.
 type candidateOrdering struct {
-	trials   []packTrial
+	trials   []packTrial // the candidates kept, in candidate order
+	order    []int32     // indices into trials, by ascending score
 	topLefts []geo.Point
 	saved    []geo.Point
 }
 
-// prepare fills o.trials for currPacking's candidate positions and reports
-// whether the ordering applies. It does not apply when the graph has
-// clusters or sequences: a commit then also synchronizes them, which can move
-// other nodes, so the score after the commit need not be the score of the
-// translated geometry. Without them a commit's only change is its operation
-// (BinPack's transactions do not affect containers), and nothing else moves
-// before the checks and the score.
+// prepare fills o.trials and o.order for currPacking's candidate positions
+// and reports whether the ordering applies. It does not apply when the graph
+// has clusters or sequences: a commit then also synchronizes them, which can
+// move other nodes, so the score after the commit need not be the score of
+// the translated geometry. Without them a commit's only change is its
+// operation (BinPack's transactions do not affect containers), and nothing
+// else moves before the checks and the score.
 func (o *candidateOrdering) prepare(
 	txn *layoutgraph.Transaction,
 	g *layoutgraph.Graph,
@@ -62,6 +63,7 @@ func (o *candidateOrdering) prepare(
 	guard *limits.WorkGuard,
 ) (bool, error) {
 	o.trials = o.trials[:0]
+	o.order = o.order[:0]
 	if candidateOrderingDisabled || len(g.Clusters) != 0 || len(g.Sequences) != 0 {
 		return false, nil
 	}
@@ -105,8 +107,14 @@ func (o *candidateOrdering) prepare(
 		}
 		o.trials = append(o.trials, packTrial{index: index, score: score})
 	}
-	slices.SortStableFunc(o.trials, func(a, b packTrial) int {
-		return cmp.Compare(a.score, b.score)
+	// A stable sort's result depends only on the keys, so sorting indices
+	// gives the order sorting the trials would, with the sort that []int32
+	// already instantiates.
+	for k := range o.trials {
+		o.order = append(o.order, int32(k))
+	}
+	slices.SortStableFunc(o.order, func(a, b int32) int {
+		return cmp.Compare(o.trials[a].score, o.trials[b].score)
 	})
 	return true, nil
 }

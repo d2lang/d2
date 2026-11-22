@@ -798,9 +798,11 @@ type ovgLineRect struct {
 // their port lists and whether they are fixed overlaps, so each line scans
 // them without map lookups.
 type ovgLineView struct {
-	rects      []ovgLineRect
-	fixed      []bool
-	candidates []ovgLineRect
+	rects []ovgLineRect
+	fixed []bool
+	// candidates is a line's scratch: pointers into rects, so that sorting
+	// them runs the sort already instantiated for pointers.
+	candidates []*ovgLineRect
 }
 
 func newOVGLineView(ovg *OVG, fixedOverlaps map[*layoutgraph.Node]struct{}) *ovgLineView {
@@ -832,9 +834,9 @@ func (ovg *OVG) connectNodesOnSameLineCounted(nodes []*OVGNode, linePosition flo
 		}
 		node := view.rects[k].node
 		if isHorizontal && node.TopLeft.Y <= linePosition && node.TopLeft.Y+node.Height >= linePosition {
-			candidates = append(candidates, view.rects[k])
+			candidates = append(candidates, &view.rects[k])
 		} else if !isHorizontal && node.TopLeft.X <= linePosition && node.TopLeft.X+node.Width >= linePosition {
-			candidates = append(candidates, view.rects[k])
+			candidates = append(candidates, &view.rects[k])
 		}
 	}
 	view.candidates = candidates
@@ -844,7 +846,10 @@ func (ovg *OVG) connectNodesOnSameLineCounted(nodes []*OVGNode, linePosition flo
 	if err := guard.reserveSortWork(len(candidates)); err != nil {
 		return err
 	}
-	sortSliceExact(candidates, func(a, b ovgLineRect) bool {
+	// The sort's comparisons and swaps depend only on the comparison
+	// results, so sorting pointers yields the permutation sorting the
+	// rectangles themselves would.
+	sortSliceExact(candidates, func(a, b *ovgLineRect) bool {
 		if isHorizontal {
 			return a.node.TopLeft.X < b.node.TopLeft.X
 		}

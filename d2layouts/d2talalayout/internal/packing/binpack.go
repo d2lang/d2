@@ -724,7 +724,8 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 			// Candidates certain to be rejected were dropped, the rest are
 			// visited in ascending order of their score (stable: candidate
 			// order among equal scores); the first valid one is the choice.
-			for _, trial := range ordering.trials {
+			for _, k := range ordering.order {
+				trial := ordering.trials[k]
 				if err := returnIfCanceled(); err != nil {
 					return err
 				}
