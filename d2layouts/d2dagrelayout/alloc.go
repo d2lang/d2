@@ -9,7 +9,8 @@ import (
 // Batched allocation for values the layout creates by the thousand. Every
 // value handed out is a distinct object, as with individual allocations, and
 // every slice is capped at its length, so an append copies it instead of
-// growing into its neighbor.
+// growing into its neighbor. The arenas' methods are not inlined: they are
+// called from many places, where inlined copies would only add code.
 
 const boxedIntCount = 4096
 
@@ -40,6 +41,7 @@ type pointArena struct {
 	chunk int
 }
 
+//go:noinline
 func (a *pointArena) take(n int) []geo.Point {
 	if n > len(a.buf) {
 		a.buf = make([]geo.Point, max(n, a.chunk))
@@ -55,6 +57,7 @@ type pointRefArena struct {
 	chunk int
 }
 
+//go:noinline
 func (a *pointRefArena) take(n int) []*geo.Point {
 	if n > len(a.buf) {
 		a.buf = make([]*geo.Point, max(n, a.chunk))
@@ -71,6 +74,7 @@ type stringArena struct {
 	chunk int
 }
 
+//go:noinline
 func (a *stringArena) ptr(s string) *string {
 	if len(a.buf) == 0 {
 		a.buf = make([]string, max(1, a.chunk))
