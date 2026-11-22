@@ -351,8 +351,16 @@ func buildReport(result *Result, opts Options) ([]byte, error) {
 		},
 	}
 
+	// The template is parsed here rather than at package initialization: the
+	// d2 binary links this package through internal/testutil but never builds
+	// a report, and an initializer would keep the template parser in the
+	// binary and run it at every start.
+	report, err := template.New("image-diff-report").Parse(reportHTML)
+	if err != nil {
+		return nil, err
+	}
 	var out bytes.Buffer
-	if err := reportTemplate.Execute(&out, data); err != nil {
+	if err := report.Execute(&out, data); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -362,7 +370,7 @@ func pngDataURL(data []byte) template.URL {
 	return template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(data))
 }
 
-var reportTemplate = template.Must(template.New("image-diff-report").Parse(`<!doctype html>
+const reportHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -401,4 +409,4 @@ img { display: block; max-width: none; image-rendering: pixelated; }
 </section>
 </body>
 </html>
-`))
+`
