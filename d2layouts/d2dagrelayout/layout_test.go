@@ -248,7 +248,9 @@ a.e -> f
 	if err != nil {
 		t.Fatal(err)
 	}
-	index := newCrossRankIndex(g)
+	ix := newObjectIndex(g)
+	ix.closeOver()
+	index := newCrossRankIndex(ix)
 	objects := append([]*d2graph.Object{g.Root}, g.Objects...)
 	for _, obj := range objects {
 		var wantEdges []*d2graph.Edge
@@ -257,12 +259,16 @@ a.e -> f
 				wantEdges = append(wantEdges, edge)
 			}
 		}
-		gotEdges := index.incident[obj]
+		k, ok := ix.lookup(obj)
+		if !ok {
+			t.Fatalf("%s has no index", obj.AbsID())
+		}
+		gotEdges := index.incident(k)
 		if len(gotEdges) != len(wantEdges) {
 			t.Fatalf("incident edge count for %s = %d, want %d", obj.AbsID(), len(gotEdges), len(wantEdges))
 		}
 		for edgeIndex := range wantEdges {
-			if gotEdges[edgeIndex] != wantEdges[edgeIndex] {
+			if g.Edges[gotEdges[edgeIndex]] != wantEdges[edgeIndex] {
 				t.Fatalf("incident edge %d for %s is out of order", edgeIndex, obj.AbsID())
 			}
 		}

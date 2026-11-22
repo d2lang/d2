@@ -45,7 +45,6 @@ func CheckGraph(ctx context.Context, engine string, g *d2graph.Graph) error {
 		return fmt.Errorf("%s layout edge count %d exceeds safe limit of %d", engine, len(g.Edges), maxLayoutEdges)
 	}
 
-	incident := make(map[*d2graph.Object]int, len(g.Objects))
 	for i, edge := range g.Edges {
 		if i%64 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -55,13 +54,16 @@ func CheckGraph(ctx context.Context, engine string, g *d2graph.Graph) error {
 		if edge == nil || edge.Src == nil || edge.Dst == nil {
 			return fmt.Errorf("%s layout graph contains an edge without endpoints", engine)
 		}
-		incident[edge.Src]++
-		incident[edge.Dst]++
 	}
 	if len(g.Edges) <= unconditionallyAllowedEdges {
 		return nil
 	}
 
+	incident := make(map[*d2graph.Object]int, len(g.Objects))
+	for _, edge := range g.Edges {
+		incident[edge.Src]++
+		incident[edge.Dst]++
+	}
 	var work int64
 	for i, edge := range g.Edges {
 		if i%64 == 0 {

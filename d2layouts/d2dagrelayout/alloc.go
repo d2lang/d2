@@ -1,0 +1,82 @@
+package d2dagrelayout
+
+import (
+	"sync"
+
+	"github.com/d2lang/d2/lib/geo"
+)
+
+// Batched allocation for values the layout creates by the thousand. Every
+// value handed out is a distinct object, as with individual allocations, and
+// every slice is capped at its length, so an append copies it instead of
+// growing into its neighbor.
+
+const boxedIntCount = 4096
+
+var (
+	boxedIntsOnce sync.Once
+	boxedInts     []any
+)
+
+// boxFloat returns v as an interface value. The sizes the adapter stores in
+// dagro labels are small integers, whose boxes are made once and shared;
+// dagro only reads them.
+func boxFloat(v float64) any {
+	if v >= 0 && v < boxedIntCount && v == float64(int(v)) && (v != 0 || 1/v > 0) {
+		boxedIntsOnce.Do(func() {
+			boxedInts = make([]any, boxedIntCount)
+			for i := range boxedInts {
+				boxedInts[i] = float64(i)
+			}
+		})
+		return boxedInts[int(v)]
+	}
+	return v
+}
+
+// pointArena hands out points from chunks of at least chunk points.
+type pointArena struct {
+	buf   []geo.Point
+	chunk int
+}
+
+func (a *pointArena) take(n int) []geo.Point {
+	if n > len(a.buf) {
+		a.buf = make([]geo.Point, max(n, a.chunk))
+	}
+	s := a.buf[:n:n]
+	a.buf = a.buf[n:]
+	return s
+}
+
+// pointRefArena hands out point slices from chunks of at least chunk entries.
+type pointRefArena struct {
+	buf   []*geo.Point
+	chunk int
+}
+
+func (a *pointRefArena) take(n int) []*geo.Point {
+	if n > len(a.buf) {
+		a.buf = make([]*geo.Point, max(n, a.chunk))
+	}
+	s := a.buf[:n:n]
+	a.buf = a.buf[n:]
+	return s
+}
+
+// stringArena hands out pointers to new strings from chunks of at least
+// chunk strings.
+type stringArena struct {
+	buf   []string
+	chunk int
+}
+
+func (a *stringArena) ptr(s string) *string {
+	if len(a.buf) == 0 {
+		a.buf = make([]string, max(1, a.chunk))
+	}
+	p := &a.buf[0]
+	*p = s
+	a.buf = a.buf[1:]
+	return p
+}
