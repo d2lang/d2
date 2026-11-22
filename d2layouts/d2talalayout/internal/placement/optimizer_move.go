@@ -25,35 +25,41 @@ func (optim *sizedOptimizer) moveNodeToBest(ctx context.Context, node *layoutgra
 	// Set to true by a successful search that leaves every node it moved at
 	// its exact starting bits.
 	optim.moveExact = false
-	if node == nil || node.Graph == nil || node.TopLeft == nil {
-		return optim.moveNodeToBestStepped(ctx, node, points, mustImprove, guard)
+	switch {
+	case node == nil || node.Graph == nil || node.TopLeft == nil:
+		search = nil
+	case !(afterSearch && search.preparedFor(optim, node)) && !search.prepare(optim, node):
+		search = nil
+	case optim.nodeMayMoveDescendants(node) && !optim.moveScratch.descendantsOutside(node, search.table.entries):
+		// Containers, cluster and sequence vessels move their descendants
+		// with them: the prepared answers hold only if none of those is a
+		// node of the scan table (they are not graph nodes of this level in
+		// valid graphs).
+		search = nil
 	}
-	if !(afterSearch && search.preparedFor(optim, node)) && !search.prepare(optim, node) {
-		return optim.moveNodeToBestStepped(ctx, node, points, mustImprove, guard)
-	}
-	// Containers, cluster and sequence vessels move their descendants with
-	// them: the prepared answers hold only if none of those is a node of the
-	// scan table (they are not graph nodes of this level in valid graphs).
-	if optim.nodeMayMoveDescendants(node) && !optim.moveScratch.descendantsOutside(node, search.table.entries) {
-		return optim.moveNodeToBestStepped(ctx, node, points, mustImprove, guard)
-	}
-	return optim.moveNodeToBestCounted(ctx, node, points, mustImprove, search, guard)
+	return optim.moveNodeToBestWith(ctx, node, points, mustImprove, search, guard)
 }
 
-// moveNodeToBestCounted is moveNodeToBestStepped for a node whose canMove
-// checks the prepared search answers: a leaf, or a node whose descendants
-// (which move with it) are not in the scan table. Only node and its
-// descendants move while it runs, so a canMove answer and its units are a
-// pure function of the point (and of node's current position, which is
-// tested first exactly as indexedCanMove does). The units of the loop steps
-// and canMove checks since the last observation are charged with one Add
-// before anything else touches the guard or the graph; on a rejection the
-// stepped loop replays those points from the identical guard state.
+// moveNodeToBestWith moves node to the best of points. With search nil it
+// is the stepped loop: every canMove check runs indexedCanMove and every
+// unit is charged as it is taken.
 //
-// Only leaves use the score memo and record their own scores for the swap
-// search: a node with descendants is not fixed by its own position alone.
-func (optim *sizedOptimizer) moveNodeToBestCounted(ctx context.Context, node *layoutgraph.Node, points []geo.Point, mustImprove bool, search *optimizerUnoccupiedSearch, guard *limits.OptimizationWorkGuard) (bool, error) {
-	leaf := !optim.nodeMayMoveDescendants(node)
+// A search prepared for node (a leaf, or a node whose descendants, which move
+// with it, are not in the scan table) answers the canMove checks instead.
+// Only node and its descendants move while it runs, so a canMove answer and
+// its units are a pure function of the point (and of node's current
+// position, which is tested first exactly as indexedCanMove does). The units
+// of the loop steps and canMove checks since the last observation are
+// charged with one Add before anything else touches the guard or the graph;
+// on a rejection replayMoveNodeSteps replays those points stepped from the
+// identical guard state.
+//
+// Only leaves with a prepared search use the score memo and record their own
+// scores for the swap search: a node with descendants is not fixed by its own
+// position alone.
+func (optim *sizedOptimizer) moveNodeToBestWith(ctx context.Context, node *layoutgraph.Node, points []geo.Point, mustImprove bool, search *optimizerUnoccupiedSearch, guard *limits.OptimizationWorkGuard) (bool, error) {
+	counted := search != nil
+	leaf := counted && !optim.nodeMayMoveDescendants(node)
 	// Only node and its descendants move between the scorer's Score calls,
 	// the sweep scorer's contract.
 	scorer := placementcost.NewNodeEdgeLengthSweepScorer(node, placementcost.EdgeLengthOptions{
@@ -151,7 +157,12 @@ func (optim *sizedOptimizer) moveNodeToBestCounted(ctx context.Context, node *la
 	}
 
 	for i := range points {
-		pending++ // the loop's guard.Step
+		if counted {
+			pending++ // the loop's guard.Step
+		} else if err := guard.Step(); err != nil {
+			restoreNodePositions(originalPositions)
+			return false, err
+		}
 		point := &points[i]
 		x := point.X
 		y := point.Y
@@ -161,23 +172,25 @@ func (optim *sizedOptimizer) moveNodeToBestCounted(ctx context.Context, node *la
 		// If the candidate position is the original one, we should be able to move back to it (if we moved somewhere else in this routine)
 		canMove := x == currentNodeX && y == currentNodeY
 		if !canMove {
-			if node.TopLeft.X == x && node.TopLeft.Y == y {
+			var err error
+			switch {
+			case !counted:
+				canMove, err = optim.indexedCanMove(node, point, guard)
+			case node.TopLeft.X == x && node.TopLeft.Y == y:
 				// indexedCanMove accepts the node's own position without work.
 				canMove = true
-			} else if movable, units, ok := search.canMove(x, y, !leaf); ok {
-				canMove = movable
-				pending += units
-			} else {
-				if err := flush(i, false); err != nil {
-					restoreNodePositions(originalPositions)
-					return false, err
+			default:
+				movable, units, ok := search.canMove(x, y, !leaf)
+				if ok {
+					canMove = movable
+					pending += units
+				} else if err = flush(i, false); err == nil {
+					canMove, err = optim.indexedCanMove(node, point, guard)
 				}
-				var err error
-				canMove, err = optim.indexedCanMove(node, point, guard)
-				if err != nil {
-					restoreNodePositions(originalPositions)
-					return false, err
-				}
+			}
+			if err != nil {
+				restoreNodePositions(originalPositions)
+				return false, err
 			}
 		}
 		if canMove {
@@ -382,8 +395,8 @@ func (current *optimizerCurrentScore) matches(node *layoutgraph.Node) bool {
 		len(node.Edges) == current.edges
 }
 
-// replayMoveNodeSteps charges, stepped, what moveNodeToBestStepped charges
-// for points[start..end]: each point's loop step and its canMove check (the
+// replayMoveNodeSteps charges, stepped, what the stepped loop charges for
+// points[start..end]: each point's loop step and its canMove check (the
 // last point's check only when lastChecked). Nothing moves in between, so the
 // checks see the graph the counted checks saw.
 func (optim *sizedOptimizer) replayMoveNodeSteps(node *layoutgraph.Node, points []geo.Point, start, end int, lastChecked bool, currentNodeX, currentNodeY float64, guard *limits.OptimizationWorkGuard) error {
