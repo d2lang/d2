@@ -552,3 +552,45 @@ func TestNestedEdgeRoutesEndOnBorders(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfLoopRoutesWithoutLayered(t *testing.T) {
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"a -> a\n", "outer: {a}\nouter -> outer\n"} {
+		for _, algorithm := range []string{"layered", "stress", "force", "mrtree"} {
+			t.Run(algorithm+"/"+input, func(t *testing.T) {
+				g, _, err := d2compiler.Compile("", strings.NewReader(input), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+					t.Fatal(err)
+				}
+				opts := DefaultOpts
+				opts.Algorithm = algorithm
+				if err := Layout(t.Context(), g, &opts); err != nil {
+					t.Fatal(err)
+				}
+				edge := g.Edges[0]
+				route := edge.Route
+				if len(route) < 3 {
+					t.Fatalf("self-loop route %v has no detour", route)
+				}
+				for i := 1; i < len(route); i++ {
+					if route[i-1].Equals(route[i]) {
+						t.Errorf("self-loop route %v repeats %v", route, route[i])
+					}
+				}
+				box := edge.Src.Box
+				interior := geo.NewBox(geo.NewPoint(box.TopLeft.X+1, box.TopLeft.Y+1), box.Width-2, box.Height-2)
+				for _, end := range []*geo.Point{route[0], route[len(route)-1]} {
+					if !box.Contains(end) || interior.Contains(end) {
+						t.Errorf("self-loop route %v does not end on the border of %s", route, edge.Src.AbsID())
+					}
+				}
+			})
+		}
+	}
+}

@@ -563,7 +563,13 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 				Y: parentY + s.End.Y,
 			})
 		}
-		// Algorithms other than layered do not route edges that cross container boundaries
+		// Algorithms other than layered do not route self-loops or edges that cross container boundaries
+		if len(points) == 0 && edge.Src == edge.Dst {
+			x, spacing := edge.Src.TopLeft.X, float64(opts.SelfLoopSpacing)
+			top := edge.Src.TopLeft.Y + edge.Src.Height/3
+			bottom := edge.Src.TopLeft.Y + edge.Src.Height*2/3
+			points = []*geo.Point{geo.NewPoint(x, top), geo.NewPoint(x-spacing, top), geo.NewPoint(x-spacing, bottom), geo.NewPoint(x, bottom)}
+		}
 		if len(points) == 0 {
 			start, end := edge.Src.Center(), edge.Dst.Center()
 			if edge.Dst.IsDescendantOf(edge.Src) {
