@@ -33,6 +33,10 @@ func (g *Graph) NewRequestTransaction(ctx context.Context, options TransactionOp
 }
 
 func (state *GraphState) TracksNode(node *Node) bool {
+	if state.chargeOnly {
+		_, tracked := state.trackedNodes[node]
+		return tracked
+	}
 	_, tracked := state.nodes[node]
 	return tracked
 }

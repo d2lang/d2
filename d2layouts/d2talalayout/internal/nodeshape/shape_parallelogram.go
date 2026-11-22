@@ -9,43 +9,35 @@ type shapeParallelogram struct {
 	shapeSquare
 }
 
-func (s shapeParallelogram) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeParallelogram) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:      {},
-			label.InsideMiddleCenter: {},
-			label.InsideBottomRight:  {},
-			label.OutsideTopRight:    {},
-			label.OutsideBottomLeft:  {},
-		}
+		return 1<<label.InsideTopLeft |
+			1<<label.InsideMiddleCenter |
+			1<<label.InsideBottomRight |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideBottomLeft
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.InsideTopCenter:     {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomCenter: {},
-		}
+		return 1<<label.OutsideTopCenter |
+			1<<label.InsideTopCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.OutsideBottomCenter
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideLeftMiddle:  {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightTop:    {},
-			label.OutsideRightMiddle: {},
-			label.InsideTopRight:     {},
-			label.InsideMiddleLeft:   {},
-			label.InsideMiddleRight:  {},
-			label.InsideBottomLeft:   {},
-		}
+		return 1<<label.OutsideLeftMiddle |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideRightMiddle |
+			1<<label.InsideTopRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.InsideBottomLeft
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:     {},
-			label.OutsideLeftTop:     {},
-			label.OutsideRightBottom: {},
-			label.OutsideBottomRight: {},
-		}
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideRightBottom |
+			1<<label.OutsideBottomRight
 	}
-	return map[label.Position]struct{}{}
+	return 0
 }
 
 func (s shapeParallelogram) SnapPointPercentages() [][]*geo.RelativePoint {

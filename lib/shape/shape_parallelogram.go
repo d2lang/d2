@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeParallelogram struct {
@@ -16,12 +15,9 @@ const parallelWedgeWidth = 26.
 
 func NewParallelogram(box *geo.Box) Shape {
 	shape := shapeParallelogram{
-		baseShape: &baseShape{
-			Type: PARALLELOGRAM_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(PARALLELOGRAM_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -33,13 +29,18 @@ func (s shapeParallelogram) GetInnerBox() *geo.Box {
 }
 
 func parallelogramPath(box *geo.Box) *svg.SvgPathContext {
+	return parallelogramOutline(box, svg.NewSVGPathContext)
+}
+
+// parallelogramOutline draws the outline of parallelogramPath into a path made by newPath.
+func parallelogramOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	wedgeWidth := parallelWedgeWidth
 	// Note: box width should always be larger than parallelWedgeWidth
 	// this just handles after collapsing into a line
 	if box.Width <= wedgeWidth {
 		wedgeWidth = box.Width / 2.0
 	}
-	pc := svg.NewSVGPathContext(box.TopLeft, 1, 1)
+	pc := newPath(box.TopLeft, 1, 1)
 	pc.StartAt(pc.Absolute(wedgeWidth, 0))
 	pc.L(false, box.Width, 0)
 	pc.L(false, box.Width-wedgeWidth, box.Height)
@@ -51,6 +52,10 @@ func parallelogramPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeParallelogram) Perimeter() []geo.Intersectable {
 	return parallelogramPath(s.Box).Path
+}
+
+func (s shapeParallelogram) traceBorder(t *borderTracer) {
+	parallelogramOutline(s.Box, t.newPath)
 }
 
 func (s shapeParallelogram) GetSVGPathData() []string {

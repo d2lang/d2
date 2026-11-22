@@ -22,6 +22,9 @@ func borrowEdgeAbductionBools(length int) *edgeAbductionBoolScratch {
 }
 
 func returnEdgeAbductionBools(scratch *edgeAbductionBoolScratch) {
+	if cap(scratch.values) > typedpool.MaxRetainedEntries {
+		return // left to the collector (TinyGo's sync.Pool never frees)
+	}
 	scratch.values = scratch.values[:0]
 	edgeAbductionBoolScratchPool.Put(scratch)
 }

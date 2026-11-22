@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeCylinder struct {
@@ -18,12 +17,9 @@ const (
 
 func NewCylinder(box *geo.Box) Shape {
 	shape := shapeCylinder{
-		baseShape: &baseShape{
-			Type: CYLINDER_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(CYLINDER_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -47,9 +43,14 @@ func (s shapeCylinder) GetInnerBox() *geo.Box {
 }
 
 func cylinderOuterPath(box *geo.Box) *svg.SvgPathContext {
+	return cylinderOuterOutline(box, svg.NewSVGPathContext)
+}
+
+// cylinderOuterOutline draws the outline of cylinderOuterPath into a path made by newPath.
+func cylinderOuterOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	arcHeight := getArcHeight(box)
 	multiplier := 0.45
-	pc := svg.NewSVGPathContext(box.TopLeft, 1, 1)
+	pc := newPath(box.TopLeft, 1, 1)
 	pc.StartAt(pc.Absolute(0, arcHeight))
 	pc.C(false, 0, 0, box.Width*multiplier, 0, box.Width/2, 0)
 	pc.C(false, box.Width-box.Width*multiplier, 0, box.Width, 0, box.Width, arcHeight)
@@ -73,6 +74,10 @@ func cylinderInnerPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeCylinder) Perimeter() []geo.Intersectable {
 	return cylinderOuterPath(s.Box).Path
+}
+
+func (s shapeCylinder) traceBorder(t *borderTracer) {
+	cylinderOuterOutline(s.Box, t.newPath)
 }
 
 func (s shapeCylinder) GetSVGPathData() []string {

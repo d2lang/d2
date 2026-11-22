@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeDocument struct {
@@ -21,12 +20,9 @@ const (
 
 func NewDocument(box *geo.Box) Shape {
 	shape := shapeDocument{
-		baseShape: &baseShape{
-			Type: DOCUMENT_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(DOCUMENT_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -36,7 +32,12 @@ func (s shapeDocument) GetInnerBox() *geo.Box {
 }
 
 func documentPath(box *geo.Box) *svg.SvgPathContext {
-	pc := svg.NewSVGPathContext(box.TopLeft, box.Width, box.Height)
+	return documentOutline(box, svg.NewSVGPathContext)
+}
+
+// documentOutline draws the outline of documentPath into a path made by newPath.
+func documentOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
+	pc := newPath(box.TopLeft, box.Width, box.Height)
 	pc.StartAt(pc.Absolute(0, docPathBottom/docPathHeight))
 	pc.L(false, 0, 0)
 	pc.L(false, 1, 0)
@@ -49,6 +50,10 @@ func documentPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeDocument) Perimeter() []geo.Intersectable {
 	return documentPath(s.Box).Path
+}
+
+func (s shapeDocument) traceBorder(t *borderTracer) {
+	documentOutline(s.Box, t.newPath)
 }
 
 func (s shapeDocument) GetSVGPathData() []string {

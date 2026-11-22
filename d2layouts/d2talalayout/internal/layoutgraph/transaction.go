@@ -12,27 +12,41 @@ import (
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
 )
 
 type GraphState struct {
-	// nodeGeometry is also the transaction's deduplicated node set.
-	nodeGeometry     map[*Node]graphGeometrySnapshot
+	// slots is the transaction's deduplicated node set with each node's
+	// geometry at capture time, in recording order.
+	slots snapshotSlots
+	// captureID changes with every capture into this state (states are
+	// recycled), so derived data can tell whether it is still current.
+	captureID uint64
+	// originalGeometry[i] is the geometry of originalNodes[i] at capture time
+	// (present is false for a nil entry). While g.Nodes still equals
+	// originalNodes element for element it answers, by index, whether a
+	// node's geometry changed (geometryChangedAt).
+	originalGeometry []indexedGeometrySnapshot
 	originalNodes    []*Node
 	originalNodesRef []*Node
 	hasFixedTopLeft  bool
 
-	clusterArrangements map[*Cluster]ClusterArrangement
-	clusterDesired      map[*Cluster]ClusterArrangement
-	clusterPaddings     map[*Cluster]float64
-	edgeGeometry        map[*Edge]edgeSnapshot
-	treeOrientations    map[*Tree]geo.Orientation
+	// clusterStates and treeOrientations hold one entry per cluster or tree
+	// visited (a repeated one twice, with equal values, restored alike).
+	clusterStates    []clusterStateSnapshot
+	edgeGeometry     map[*Edge]edgeSnapshot
+	treeOrientations []treeOrientationSnapshot
 
 	// We don't want to be frozen due to some existing overlap, since many can be valid diagrams
 	// We just care about not introducing new overlaps
-	existingOverlaps      map[*Node]map[*Node]struct{}
-	existingExactOverlaps map[*Node]map[*Node]struct{}
-	captureTopology       bool
-	captureEdgeRoutes     bool
+	existingOverlaps  *existingOverlapSet
+	captureTopology   bool
+	captureEdgeRoutes bool
+	// chargeOnly makes a topology update charge its capture without taking
+	// it (ChargeTopologySnapshot); trackedNodes is then the traversal's node
+	// set, the key set the capture would have had.
+	chargeOnly   bool
+	trackedNodes map[*Node]struct{}
 
 	graph          graphSnapshot
 	nodes          map[*Node]nodeSnapshot
@@ -45,12 +59,80 @@ type GraphState struct {
 	hierarchies    map[*Hierarchy]hierarchySnapshot
 }
 
+type clusterStateSnapshot struct {
+	cluster     *Cluster
+	arrangement ClusterArrangement
+	desired     ClusterArrangement
+	padding     float64
+}
+
+type treeOrientationSnapshot struct {
+	tree        *Tree
+	orientation geo.Orientation
+}
+
 // graphGeometrySnapshot keeps geometry in one value for speculative commit
 // checks and preserves the original position pointer for rollback.
 type graphGeometrySnapshot struct {
 	topLeft pointerSnapshot[geo.Point]
 	width   float64
 	height  float64
+}
+
+type indexedGeometrySnapshot struct {
+	geometry graphGeometrySnapshot
+	present  bool
+}
+
+// nodeStack is pooled walk storage for snapshot capture.
+type nodeStack struct {
+	nodes []*Node
+}
+
+var recordStackPool = typedpool.New(func() *nodeStack { return new(nodeStack) })
+
+// transactionEdgeSet is pooled storage for transactionSweepPadding's edge set.
+type transactionEdgeSet struct {
+	edges map[*Edge]struct{}
+}
+
+var transactionEdgeSetPool = typedpool.New(func() *transactionEdgeSet {
+	return &transactionEdgeSet{edges: make(map[*Edge]struct{}, 64)}
+})
+
+// releaseRecordStack empties queue, the stack's storage after the walks, and
+// pools it; storage beyond typedpool.MaxRetainedEntries is left to the
+// collector (TinyGo's sync.Pool never frees what it holds).
+func releaseRecordStack(stack *nodeStack, queue []*Node) {
+	if cap(queue) > typedpool.MaxRetainedEntries {
+		return
+	}
+	clear(queue[:cap(queue)])
+	stack.nodes = queue[:0]
+	recordStackPool.Put(stack)
+}
+
+// releaseTransactionEdgeSet empties the set and pools it, unless it grew
+// beyond typedpool.MaxRetainedEntries (the set is only inserted into, so its
+// length is the most it held).
+func releaseTransactionEdgeSet(edgeSet *transactionEdgeSet) {
+	if len(edgeSet.edges) > typedpool.MaxRetainedEntries {
+		return
+	}
+	clear(edgeSet.edges)
+	transactionEdgeSetPool.Put(edgeSet)
+}
+
+// changedFrom reports whether node's geometry differs from original, its
+// recorded geometry.
+func (original graphGeometrySnapshot) changedFrom(node *Node) bool {
+	if node.TopLeft == nil {
+		return original.topLeft.pointer != nil ||
+			node.Width != original.width || node.Height != original.height
+	}
+	return original.topLeft.pointer == nil ||
+		node.TopLeft.X != original.topLeft.value.X || node.TopLeft.Y != original.topLeft.value.Y ||
+		node.Width != original.width || node.Height != original.height
 }
 
 type transactionPendingDescendant struct {
@@ -70,32 +152,108 @@ type Transaction struct {
 	// speculative Rollback deliberately ignores it.
 	placementCostSnapshot *PlacementCostSnapshot
 
-	// Geometry-only transactions usually move a small subset of the graph. Reuse
-	// these sets across speculative candidates so validation neither scans every
-	// pair nor allocates fresh bookkeeping for every Commit.
-	dirtyNodes     map[*Node]struct{}
+	// indexOrder is g.Nodes as it was when the exception index was last
+	// rebuilt (the legacy index from nodes to their g.Nodes positions was
+	// reused, not rebuilt, by consecutive dirty-path commits).
+	indexOrder      []*Node
+	indexOrderReady bool
+	// indexSlots holds the snapshot slot of each indexOrder entry (or
+	// noIndexSlot past its end) for the capture it was computed from.
+	indexSlots        []int32
+	indexSlotsState   *GraphState
+	indexSlotsCapture uint64
+	// Geometry trial clones can share an immutable rollback point. Their first
+	// accepted UpdateState must not recycle that shared state as scratch.
+	priorGraphStateShared bool
+	// sharedOverlaps marks a clone: its existing-overlap set belongs to the
+	// transaction it was cloned from, so Release never recycles it.
+	sharedOverlaps bool
+
+	// commitScratch is the validation scratch of the Commit in progress,
+	// borrowed from the graph (see commitScratch).
+	*commitScratch
+
+	// memo serves StableStructure transactions with AffectContainers.
+	memo *containerMemo
+
+	// runningOps counts the Commit calls of this transaction in progress (an
+	// operation may commit its own transaction again), so Clear can leave the
+	// operation list they iterate alone.
+	runningOps int
+}
+
+// commitScratch is validation scratch that no state carries from one Commit
+// to the next: every field is reset or regenerated before use. Commit
+// borrows one from its graph's free list and returns it, so the many short
+// transactions on one graph (one per transpose attempt, per bin-packing
+// subgraph, ...) share storage instead of each allocating its own.
+type commitScratch struct {
+	// Geometry-only transactions usually move a small subset of the graph.
 	dirtyNodeMarks []bool
 	fixedOrigins   map[*Node]geo.Point
 
 	// Final-state overlap validation uses one sweep-built candidate graph per
-	// commit. The slices and pointer index are retained across speculative
-	// candidates, which avoids both O(changed*nodes) closure construction and an
-	// O(nodes) scan for every node being validated.
-	overlapCandidates     [][]int
-	overlapSweepNodes     []transactionSweepNode
-	overlapActiveNodes    []transactionSweepNode
-	overlapNodeIndices    map[*Node][]int
-	overlapNodeIndexReady bool
-	// Geometry trial clones can share an immutable rollback point. Their first
-	// accepted UpdateState must not recycle that shared state as scratch.
-	priorGraphStateShared bool
-	overlapInvalidBoxes   []bool
-	exceptionMarks        []uint32
-	exceptionGeneration   uint32
-	descendantStack       []transactionPendingDescendant
-	descendantNodes       []*Node
-	descendantSeen        map[*Node]uint32
-	descendantGeneration  uint32
+	// commit.
+	overlapCandidates [][]int
+	// candidateLists lists the indices whose candidate list is non-empty
+	// (every other list in the backing array is empty), so a build resets,
+	// sorts and visits only those.
+	candidateLists      []int32
+	overlapSweepNodes   []transactionSweepNode
+	overlapActiveNodes  []transactionSweepNode
+	overlapInvalidBoxes []bool
+	overlapBoxes        []transactionBox
+	// boxesReady reports that collectOverlapValidationNodes left every
+	// g.Nodes entry's box, invalid-box flag and dirty count in the scratch
+	// (fast path; see collectOverlapValidationNodes).
+	boxesReady     bool
+	readyDirty     int
+	readyPositions int
+	readyStructure bool
+	readyInvalid   bool
+	// marks serves the descendant walks as their seen set and the overlap
+	// checks as their exception set.
+	marks           slotMarks
+	pass            containerPass
+	descendantStack []transactionPendingDescendant
+	descendantNodes []*Node
+
+	// Existing-overlap regression check scratch (numbered like the set).
+	overlapDirtyMarks      []uint32
+	overlapDirtyGeneration uint32
+	overlapDirtyList       []int32
+
+	// repositionContainers' ordering and the ancestor walks.
+	containerScratch []*Node
+	// containerCheckOrder's keys.
+	containerKeys   []*Node
+	walkScratch     *descendantWalkScratch
+	ancestorScratch []*Node
+}
+
+// ensureCommitScratch gives a transaction used outside Commit (tests drive
+// the validation steps directly) scratch of its own.
+func (t *Transaction) ensureCommitScratch() {
+	if t.commitScratch == nil {
+		t.commitScratch = &commitScratch{}
+	}
+}
+
+// borrowCommitScratch takes scratch from the graph's free list; nested
+// commits on the same graph (an operation that commits another transaction)
+// take further entries.
+func (g *Graph) borrowCommitScratch() *commitScratch {
+	if count := len(g.commitScratchFree); count > 0 {
+		scratch := g.commitScratchFree[count-1]
+		g.commitScratchFree[count-1] = nil
+		g.commitScratchFree = g.commitScratchFree[:count-1]
+		return scratch
+	}
+	return &commitScratch{}
+}
+
+func (g *Graph) returnCommitScratch(scratch *commitScratch) {
+	g.commitScratchFree = append(g.commitScratchFree, scratch)
 }
 
 type TransactionOptions struct {
@@ -104,6 +262,15 @@ type TransactionOptions struct {
 	// AffectEdgeRoutes records route slice and point identity for operations
 	// that move already-routed edges together with nodes.
 	AffectEdgeRoutes bool
+	// StableStructure is the caller's promise that from the transaction's
+	// creation until its last Commit, its operations and the caller's code
+	// between commits change only node geometry (TopLeft, the point it
+	// refers to, Width, Height) and cluster arrangement and padding: the
+	// graph's maps and node list, ownership fields, edges, labels, icons,
+	// shapes, margins, loop offsets, fixed and desired sizes stay as they
+	// were. With AffectContainers, Commit then reuses container wraps and
+	// container checks whose geometry inputs are unchanged (containerMemo).
+	StableStructure bool
 }
 
 type transactionWorkGuardKey struct{}
@@ -201,27 +368,22 @@ func (gs *GraphState) updateContext(g *Graph, guard *limits.WorkGuard) error {
 	// the supported unique-node limit.
 	totalNodes := min(len(g.Nodes), maxEngineNodes)
 
-	// Reset or create maps all at once to minimize allocation overhead
-	// Using a more efficient approach to allocation
-	if gs.nodeGeometry == nil || len(gs.nodeGeometry) > 2*totalNodes {
-		// Create new maps when they don't exist or are significantly larger than needed
-		gs.nodeGeometry = make(map[*Node]graphGeometrySnapshot, totalNodes)
-	} else {
-		// Clear maps without reallocating
-		clear(gs.nodeGeometry)
+	// The node set keeps its storage when a GraphState is refreshed. A new
+	// state is sized from the previous snapshot of this graph (the traversal
+	// usually reaches the same nodes), else from the primary view.
+	expectedNodes := max(totalNodes, min(int(g.snapshotSizeHint), maxEngineNodes))
+	if cap(gs.slots.entries) > 2*expectedNodes+64 {
+		gs.slots = snapshotSlots{}
+	}
+	gs.slots.reset()
+	gs.captureID++
+	if gs.slots.entries == nil {
+		gs.slots.entries = make([]snapshotEntry, 0, expectedNodes)
 	}
 	gs.hasFixedTopLeft = false
 
-	clusterCount := len(g.Clusters)
-	if gs.clusterArrangements == nil || len(gs.clusterArrangements) > 2*clusterCount {
-		gs.clusterArrangements = make(map[*Cluster]ClusterArrangement, clusterCount)
-		gs.clusterDesired = make(map[*Cluster]ClusterArrangement, clusterCount)
-		gs.clusterPaddings = make(map[*Cluster]float64, clusterCount)
-	} else {
-		clear(gs.clusterArrangements)
-		clear(gs.clusterDesired)
-		clear(gs.clusterPaddings)
-	}
+	clear(gs.clusterStates)
+	gs.clusterStates = gs.clusterStates[:0]
 
 	gs.originalNodesRef = g.Nodes
 	if cap(gs.originalNodes) < len(g.Nodes) {
@@ -230,32 +392,48 @@ func (gs *GraphState) updateContext(g *Graph, guard *limits.WorkGuard) error {
 		gs.originalNodes = gs.originalNodes[:len(g.Nodes)]
 	}
 	copy(gs.originalNodes, g.Nodes)
-
+	// Nothing below mutates geometry, so each entry equals the node's
+	// recorded geometry.
+	if cap(gs.originalGeometry) < len(g.Nodes) {
+		gs.originalGeometry = make([]indexedGeometrySnapshot, len(g.Nodes))
+	} else {
+		gs.originalGeometry = gs.originalGeometry[:len(g.Nodes)]
+	}
+	for i, n := range g.Nodes {
+		if n == nil {
+			gs.originalGeometry[i] = indexedGeometrySnapshot{}
+			continue
+		}
+		gs.originalGeometry[i] = indexedGeometrySnapshot{
+			geometry: graphGeometrySnapshot{topLeft: snapshotPointer(n.TopLeft), width: n.Width, height: n.Height},
+			present:  true,
+		}
+	}
 	recordNode := func(n *Node) (bool, error) {
 		if n == nil {
 			return false, nil
 		}
-		if _, exists := gs.nodeGeometry[n]; exists {
+		if gs.slots.recordedDuringCapture(n) {
 			return false, nil
 		}
-		if len(gs.nodeGeometry) >= maxEngineNodes {
+		if gs.slots.size() >= maxEngineNodes {
 			return false, fmt.Errorf("TALA transaction unique node snapshot exceeds limit %d", maxEngineNodes)
 		}
 		if err := guard.Step(); err != nil {
 			return false, err
 		}
-		topLeft := snapshotPointer(n.TopLeft)
-		gs.nodeGeometry[n] = graphGeometrySnapshot{
-			topLeft: topLeft,
-			width:   n.Width,
-			height:  n.Height,
-		}
+		gs.slots.add(n)
 		gs.hasFixedTopLeft = gs.hasFixedTopLeft || n.FixedTopLeft != nil
 		return true, nil
 	}
 
+	// One pooled stack serves every walk; each walk starts and ends with it
+	// empty.
+	stack := recordStackPool.Get()
+	queue := stack.nodes[:0]
+	defer func() { releaseRecordStack(stack, queue) }()
 	recordDescendants := func(root *Node) error {
-		queue := []*Node{root}
+		queue = append(queue[:0], root)
 		for len(queue) > 0 {
 			node := queue[len(queue)-1]
 			queue = queue[:len(queue)-1]
@@ -266,12 +444,13 @@ func (gs *GraphState) updateContext(g *Graph, guard *limits.WorkGuard) error {
 			if !recorded {
 				continue
 			}
-			for range g.Containers[node] {
-				if err := guard.Step(); err != nil {
+			children := g.Containers[node]
+			if len(children) != 0 {
+				if err := guard.Add(int64(len(children))); err != nil {
 					return err
 				}
 			}
-			queue = append(queue, g.Containers[node]...)
+			queue = append(queue, children...)
 		}
 		return nil
 	}
@@ -304,9 +483,12 @@ func (gs *GraphState) updateContext(g *Graph, guard *limits.WorkGuard) error {
 		if c == nil {
 			continue
 		}
-		gs.clusterArrangements[c] = c.Arrangement
-		gs.clusterDesired[c] = c.DesiredArrangement
-		gs.clusterPaddings[c] = c.Padding
+		gs.clusterStates = append(gs.clusterStates, clusterStateSnapshot{
+			cluster:     c,
+			arrangement: c.Arrangement,
+			desired:     c.DesiredArrangement,
+			padding:     c.Padding,
+		})
 		if err := recordDescendants(c.Vessel); err != nil {
 			return err
 		}
@@ -321,6 +503,7 @@ func (gs *GraphState) updateContext(g *Graph, guard *limits.WorkGuard) error {
 	}
 
 	// Store sequence nodes that may be temporarily removed from g.Nodes.
+	defer func() { g.snapshotSizeHint = int32(gs.slots.size()) }()
 	for _, s := range g.Sequences {
 		if err := guard.Step(); err != nil {
 			return err
@@ -341,7 +524,11 @@ func (gs *GraphState) updateContext(g *Graph, guard *limits.WorkGuard) error {
 		}
 	}
 
-	if gs.captureTopology {
+	if gs.captureTopology && gs.chargeOnly {
+		if err := gs.chargeRuntimeStateContext(g, guard); err != nil {
+			return err
+		}
+	} else if gs.captureTopology {
 		if err := gs.captureRuntimeStateContext(g, guard); err != nil {
 			return err
 		}
@@ -408,13 +595,19 @@ func transactionSweepPadding(g *Graph, guard *limits.WorkGuard) (float64, error)
 	padding := float64(TableNodeGap)
 	maxMargin := 0.0
 	maxLoopOffset := 0.0
-	edges := make(map[*Edge]struct{}, len(g.Edges))
+	// The scan is pure, so its units are batched and flushed before every
+	// return. The edge set only determines how many units the final per-edge
+	// pass charges (one per distinct edge); the padding maximum does not
+	// depend on duplicates, so it is taken while inserting.
+	steps := batchedWork(guard)
+	edgeSet := transactionEdgeSetPool.Get()
+	defer releaseTransactionEdgeSet(edgeSet)
+	edges := edgeSet.edges
+	edgePadding := padding
 	for _, node := range g.Nodes {
-		if err := guard.Step(); err != nil {
-			return 0, err
-		}
+		steps.step()
 		if node == nil {
-			return 0, fmt.Errorf("TALA transaction contains a nil node")
+			return 0, steps.flushWith(fmt.Errorf("TALA transaction contains a nil node"))
 		}
 		if node.TopLeft != nil {
 			if !transactionNodeHasFiniteBox(node) {
@@ -424,24 +617,21 @@ func transactionSweepPadding(g *Graph, guard *limits.WorkGuard) (float64, error)
 				if node.isContainer && len(g.Containers[node]) == 0 {
 					continue
 				}
-				return 0, invariant.Errorf(
+				return 0, steps.flushWith(invariant.Errorf(
 					"transaction node %d has invalid geometry (x=%v y=%v width=%v height=%v)",
 					node.ID, node.TopLeft.X, node.TopLeft.Y, node.Width, node.Height,
-				)
+				))
 			}
 		}
-		for _, margin := range []float64{node.margin.top, node.margin.right, node.margin.bottom, node.margin.left} {
-			if !transactionFinite(margin) {
-				return 0, invariant.Errorf("transaction node %d has non-finite margin", node.ID)
-			}
+		if !transactionFinite(node.margin.top) || !transactionFinite(node.margin.right) ||
+			!transactionFinite(node.margin.bottom) || !transactionFinite(node.margin.left) {
+			return 0, steps.flushWith(invariant.Errorf("transaction node %d has non-finite margin", node.ID))
 		}
 		maxMargin = max(maxMargin, node.margin.top, node.margin.right, node.margin.bottom, node.margin.left)
 		for _, offset := range node.LoopOffsets {
-			if err := guard.Step(); err != nil {
-				return 0, err
-			}
+			steps.step()
 			if !transactionFinite(offset) {
-				return 0, invariant.Errorf("transaction node %d has a non-finite loop offset", node.ID)
+				return 0, steps.flushWith(invariant.Errorf("transaction node %d has a non-finite loop offset", node.ID))
 			}
 			if offset > maxLoopOffset {
 				maxLoopOffset = offset
@@ -451,30 +641,29 @@ func transactionSweepPadding(g *Graph, guard *limits.WorkGuard) (float64, error)
 		// endpoint before graph.Edges is synchronized. Include those references so
 		// the broad phase never drops a pair that deltaTo would inspect.
 		for _, edge := range node.Edges {
-			if err := guard.Step(); err != nil {
-				return 0, err
-			}
+			steps.step()
 			if edge == nil {
-				return 0, fmt.Errorf("TALA transaction node %d contains a nil edge", node.ID)
+				return 0, steps.flushWith(fmt.Errorf("TALA transaction node %d contains a nil edge", node.ID))
 			}
 			edges[edge] = struct{}{}
+			edgePadding = max(edgePadding, float64(edge.MinWidth), float64(edge.MinHeight))
 		}
 	}
 	for _, edge := range g.Edges {
-		if err := guard.Step(); err != nil {
-			return 0, err
-		}
+		steps.step()
 		if edge == nil {
-			return 0, fmt.Errorf("TALA transaction contains a nil edge")
+			return 0, steps.flushWith(fmt.Errorf("TALA transaction contains a nil edge"))
 		}
 		edges[edge] = struct{}{}
+		edgePadding = max(edgePadding, float64(edge.MinWidth), float64(edge.MinHeight))
 	}
-	for edge := range edges {
-		if err := guard.Step(); err != nil {
-			return 0, err
-		}
-		padding = max(padding, float64(edge.MinWidth), float64(edge.MinHeight))
+	if err := steps.add(int64(len(edges))); err != nil {
+		return 0, err
 	}
+	if err := steps.flush(); err != nil {
+		return 0, err
+	}
+	padding = edgePadding
 	// deltaTo can combine one directional margin or loop offset from each
 	// node in the pair. Twice the graph maximum is therefore a proven broad-
 	// phase bound for every exact predicate evaluated below.
@@ -490,11 +679,21 @@ func transactionFinite(value float64) bool {
 }
 
 func transactionNodeHasFiniteBox(node *Node) bool {
-	return node != nil && node.TopLeft != nil &&
-		transactionFinite(node.TopLeft.X) && transactionFinite(node.TopLeft.Y) &&
-		transactionFinite(node.Width) && transactionFinite(node.Height) &&
-		transactionFinite(node.TopLeft.X+node.Width) && transactionFinite(node.TopLeft.Y+node.Height) &&
-		node.Width >= 0 && node.Height >= 0
+	if node == nil || node.TopLeft == nil {
+		return false
+	}
+	// v-v is +0 for a finite v and NaN for an infinite or NaN one, so the sum
+	// is zero exactly when all six values are finite.
+	x, y, width, height := node.TopLeft.X, node.TopLeft.Y, node.Width, node.Height
+	right, bottom := x+width, y+height
+	return (x-x)+(y-y)+(width-width)+(height-height)+(right-right)+(bottom-bottom) == 0 &&
+		width >= 0 && height >= 0
+}
+
+// transactionBox holds a node's edges with right = x+width and
+// bottom = y+height, the sums the broad phases compare.
+type transactionBox struct {
+	left, top, right, bottom float64
 }
 
 type transactionSweepNode struct {
@@ -502,26 +701,42 @@ type transactionSweepNode struct {
 	index int
 }
 
-func buildTransactionOverlaps(g *Graph, guard *limits.WorkGuard) (map[*Node]map[*Node]struct{}, map[*Node]map[*Node]struct{}, error) {
-	return buildTransactionOverlapsWithReferenceLimit(g, guard, maxTransactionOverlapReferences)
-}
-
-func buildTransactionOverlapsWithReferenceLimit(g *Graph, guard *limits.WorkGuard, referenceLimit int64) (map[*Node]map[*Node]struct{}, map[*Node]map[*Node]struct{}, error) {
+// buildExistingOverlapSetInto builds the set in set's storage (emptied
+// first).
+func (g *Graph) buildExistingOverlapSetInto(set *existingOverlapSet, guard *limits.WorkGuard, referenceLimit int64) (*existingOverlapSet, error) {
+	set.reset()
 	padding, err := transactionSweepPadding(g, guard)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	placed := make([]transactionSweepNode, 0, len(g.Nodes))
+	placed := set.placed[:0]
+	defer func() {
+		clear(placed)
+		set.placed = placed[:0]
+	}()
 	for index, node := range g.Nodes {
 		if err := guard.Step(); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if node.TopLeft != nil && transactionNodeHasFiniteBox(node) {
 			placed = append(placed, transactionSweepNode{node: node, index: index})
 		}
 	}
 	if err := guard.Step(); err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	// The sweep meets each pair of placed entries once, so a pair can only
+	// repeat when g.Nodes repeats a node; only then must insertions dedupe.
+	// The overlap hint serves as a temporary stamp here (verified by the
+	// entry it names, so stale values are harmless).
+	dedupe := false
+	for i := range placed {
+		node := placed[i].node
+		if stamp := node.overlapSlot; stamp >= 0 && int(stamp) < i && placed[stamp].node == node {
+			dedupe = true
+			break
+		}
+		node.overlapSlot = int32(i)
 	}
 	slices.SortStableFunc(placed, func(left, right transactionSweepNode) int {
 		if left.node.TopLeft.X != right.node.TopLeft.X {
@@ -540,34 +755,29 @@ func buildTransactionOverlapsWithReferenceLimit(g *Graph, guard *limits.WorkGuar
 		return cmp.Compare(left.index, right.index)
 	})
 
-	existingOverlaps := make(map[*Node]map[*Node]struct{})
-	existingExactOverlaps := make(map[*Node]map[*Node]struct{})
 	var retainedReferences int64
-	addPair := func(overlaps map[*Node]map[*Node]struct{}, first, second *Node) error {
+	addPair := func(exact bool, first, second *Node) error {
 		if referenceLimit < 2 || retainedReferences > referenceLimit-2 {
 			return fmt.Errorf("TALA transaction overlap references exceed limit %d", referenceLimit)
 		}
-		if overlaps[first] == nil {
-			overlaps[first] = make(map[*Node]struct{})
-		}
-		if overlaps[second] == nil {
-			overlaps[second] = make(map[*Node]struct{})
-		}
-		overlaps[first][second] = struct{}{}
-		overlaps[second][first] = struct{}{}
+		set.addPair(exact, first, second, dedupe)
 		retainedReferences += 2
 		return nil
 	}
 
-	active := make([]*Node, 0)
+	active := set.active[:0]
+	defer func() {
+		clear(active[:cap(active)])
+		set.active = active[:0]
+	}()
 	for _, current := range placed {
 		if err := guard.Step(); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		kept := active[:0]
 		for _, other := range active {
 			if err := guard.Step(); err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			// g.Nodes is a legacy public slice and malformed direct callers can
 			// repeat the same pointer. The old all-pairs scan explicitly skipped
@@ -584,24 +794,24 @@ func buildTransactionOverlapsWithReferenceLimit(g *Graph, guard *limits.WorkGuar
 				continue
 			}
 			if current.node.DoesOverlapExact(other) {
-				if err := addPair(existingExactOverlaps, current.node, other); err != nil {
-					return nil, nil, err
+				if err := addPair(true, current.node, other); err != nil {
+					return nil, err
 				}
 			}
 			// Preserve the old ordered-pair semantics even if a malformed direct
 			// caller has asymmetric edge references.
 			if current.node.doesOverlap(other) || other.doesOverlap(current.node) {
-				if err := addPair(existingOverlaps, current.node, other); err != nil {
-					return nil, nil, err
+				if err := addPair(false, current.node, other); err != nil {
+					return nil, err
 				}
 			}
 		}
 		active = append(kept, current.node)
 	}
 	if err := guard.Finish(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return existingOverlaps, existingExactOverlaps, nil
+	return set, nil
 }
 
 // newTransactionWithOptionsContext constructs a transaction using a request-scoped
@@ -620,18 +830,18 @@ func (g *Graph) newTransactionWithOptionsContext(ctx context.Context, options Tr
 	if err := guard.Finish(); err != nil {
 		return nil, err
 	}
-	graphState := &GraphState{captureEdgeRoutes: options.AffectEdgeRoutes}
+	graphState := g.takeSpareGraphState()
+	graphState.captureEdgeRoutes = options.AffectEdgeRoutes
 	if err := graphState.updateContext(g, guard); err != nil {
 		return nil, err
 	}
 
-	existingOverlaps, existingExactOverlaps, err := buildTransactionOverlaps(g, guard)
+	existingOverlaps, err := g.buildExistingOverlapSetInto(g.takeSpareOverlapSet(), guard, maxTransactionOverlapReferences)
 	if err != nil {
 		return nil, err
 	}
 
 	graphState.existingOverlaps = existingOverlaps
-	graphState.existingExactOverlaps = existingExactOverlaps
 	txn := &Transaction{
 		Ops:     make([]func() error, 0),
 		Graph:   g,
@@ -640,8 +850,105 @@ func (g *Graph) newTransactionWithOptionsContext(ctx context.Context, options Tr
 
 		PriorGraphState: graphState,
 	}
+	if options.StableStructure && options.AffectContainers {
+		txn.memo = g.takeSpareContainerMemo()
+	}
 
 	return txn, guard.Finish()
+}
+
+// Release hands the transaction's snapshot storage back to its graph for the
+// next transaction created there. It is for a caller that owns the
+// transaction outright: neither the transaction nor its PriorGraphState (nor
+// anything taken from them) may be used afterwards. A rollback point that is
+// shared (CloneGeometryContext, PreservePriorGraphState) is left alone.
+func (t *Transaction) Release() {
+	if t == nil || t.Graph == nil || t.priorGraphStateShared {
+		return
+	}
+	g := t.Graph
+	if state := t.PriorGraphState; state != nil && !state.captureTopology {
+		if set := state.existingOverlaps; set != nil && !t.sharedOverlaps {
+			g.recycleOverlapSet(set)
+		}
+		g.recycleGraphState(state)
+	}
+	if spare := t.spareGraphState; spare != nil && !spare.captureTopology {
+		g.recycleGraphState(spare)
+	}
+	t.PriorGraphState = nil
+	t.spareGraphState = nil
+	clear(t.Ops)
+	t.Ops = nil
+	if t.memo != nil {
+		g.recycleContainerMemo(t.memo)
+		t.memo = nil
+	}
+}
+
+const maxSpareTransactionStates = 4
+
+// takeSpareGraphState returns a released geometry state for reuse, or a new
+// one. updateContext rewrites every field a geometry capture reads.
+func (g *Graph) takeSpareGraphState() *GraphState {
+	if g == nil {
+		// updateContext reports the missing graph.
+		return &GraphState{}
+	}
+	if count := len(g.spareGraphStates); count > 0 {
+		state := g.spareGraphStates[count-1]
+		g.spareGraphStates[count-1] = nil
+		g.spareGraphStates = g.spareGraphStates[:count-1]
+		return state
+	}
+	return &GraphState{}
+}
+
+func (g *Graph) recycleGraphState(state *GraphState) {
+	if len(g.spareGraphStates) >= maxSpareTransactionStates {
+		return
+	}
+	state.existingOverlaps = nil
+	state.captureEdgeRoutes = false
+	state.edgeGeometry = nil
+	g.spareGraphStates = append(g.spareGraphStates, state)
+}
+
+func (g *Graph) takeSpareContainerMemo() *containerMemo {
+	if count := len(g.spareContainerMemos); count > 0 {
+		memo := g.spareContainerMemos[count-1]
+		g.spareContainerMemos[count-1] = nil
+		g.spareContainerMemos = g.spareContainerMemos[:count-1]
+		return memo
+	}
+	return &containerMemo{}
+}
+
+func (g *Graph) recycleContainerMemo(memo *containerMemo) {
+	memo.reset()
+	if len(g.spareContainerMemos) < maxSpareTransactionStates {
+		g.spareContainerMemos = append(g.spareContainerMemos, memo)
+	}
+}
+
+func (g *Graph) takeSpareOverlapSet() *existingOverlapSet {
+	if g == nil {
+		return &existingOverlapSet{}
+	}
+	if count := len(g.spareOverlapSets); count > 0 {
+		set := g.spareOverlapSets[count-1]
+		g.spareOverlapSets[count-1] = nil
+		g.spareOverlapSets = g.spareOverlapSets[:count-1]
+		return set
+	}
+	return &existingOverlapSet{}
+}
+
+func (g *Graph) recycleOverlapSet(set *existingOverlapSet) {
+	if len(g.spareOverlapSets) >= maxSpareTransactionStates {
+		return
+	}
+	g.spareOverlapSets = append(g.spareOverlapSets, set)
 }
 
 func (t *Transaction) UpdateState() error {
@@ -652,7 +959,9 @@ func (t *Transaction) UpdateState() error {
 	previous := t.PriorGraphState
 	updated := t.spareGraphState
 	if updated == nil {
-		updated = &GraphState{}
+		// A released geometry state; updateContext rewrites every field the
+		// capture reads (as for a new transaction's state).
+		updated = t.Graph.takeSpareGraphState()
 	}
 	updated.captureTopology = previous.captureTopology
 	updated.captureEdgeRoutes = previous.captureEdgeRoutes
@@ -663,7 +972,6 @@ func (t *Transaction) UpdateState() error {
 		return err
 	}
 	updated.existingOverlaps = previous.existingOverlaps
-	updated.existingExactOverlaps = previous.existingExactOverlaps
 	t.PriorGraphState = updated
 	if t.priorGraphStateShared {
 		t.spareGraphState = nil
@@ -674,14 +982,72 @@ func (t *Transaction) UpdateState() error {
 	return nil
 }
 
+// containerCheckOrder returns g.Containers' keys in the order the stepped
+// container check visits them: the nil key first, then by entity ID, then by
+// geometry (copies of one node share its ID). The check charges a unit per
+// key and stops at the first bad container; in map order the units it
+// charged, and so whether a commit hit MaxTransactionWorkUnits, varied from
+// run to run, and so did the error when one container's check fails with an
+// error and another is bad.
+func (t *Transaction) containerCheckOrder() []*Node {
+	t.ensureCommitScratch()
+	keys := t.containerKeys[:0]
+	for container := range t.Graph.Containers {
+		keys = append(keys, container)
+	}
+	slices.SortFunc(keys, compareNodeKeys)
+	t.containerKeys = keys
+	return keys
+}
+
+// compareNodeKeys orders map keys deterministically: nil first, then by
+// entity ID, then by geometry.
+func compareNodeKeys(a, b *Node) int {
+	if a == b {
+		return 0
+	}
+	if a == nil || b == nil {
+		if a == nil {
+			return -1
+		}
+		return 1
+	}
+	if c := cmp.Compare(a.ID, b.ID); c != 0 {
+		return c
+	}
+	if (a.TopLeft == nil) != (b.TopLeft == nil) {
+		if a.TopLeft == nil {
+			return -1
+		}
+		return 1
+	}
+	if a.TopLeft != nil {
+		if c := cmp.Compare(a.TopLeft.X, b.TopLeft.X); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.TopLeft.Y, b.TopLeft.Y); c != 0 {
+			return c
+		}
+	}
+	if c := cmp.Compare(a.Width, b.Width); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Height, b.Height)
+}
+
 func (t *Transaction) AddOp(fn func() error) {
 	t.Ops = append(t.Ops, fn)
 }
 
-func (t *Transaction) repositionContainers(ctx context.Context) error {
-	smallestToLargest := make([]*Node, 0, len(t.Graph.Containers))
+func (t *Transaction) repositionContainers(poll *contextPoll) error {
+	steps := batchedWork(t.guard)
+	smallestToLargest := t.containerScratch[:0]
+	defer func() {
+		clear(smallestToLargest)
+		t.containerScratch = smallestToLargest[:0]
+	}()
 	for container := range t.Graph.Containers {
-		if err := t.guard.Step(); err != nil {
+		if err := steps.step(); err != nil {
 			return err
 		}
 		if container == nil || container.TopLeft == nil {
@@ -689,18 +1055,34 @@ func (t *Transaction) repositionContainers(ctx context.Context) error {
 		}
 		smallestToLargest = append(smallestToLargest, container)
 	}
-	sort.Slice(smallestToLargest, func(i, j int) bool {
-		if smallestToLargest[i].area() == smallestToLargest[j].area() {
-			return smallestToLargest[i].ID < smallestToLargest[j].ID
+	// Charge the collection units before any container is resized.
+	if err := steps.flush(); err != nil {
+		return err
+	}
+	// slices.SortFunc runs the same pattern-defeating quicksort as sort.Slice
+	// (both are generated from one template and consult the order only as
+	// "less"), so this cmp, negative exactly when the former less holds,
+	// gives the same order without sort.Slice's reflection allocation.
+	slices.SortFunc(smallestToLargest, func(a, b *Node) int {
+		less := a.area() < b.area()
+		if a.area() == b.area() {
+			less = a.ID < b.ID
 		}
-		return smallestToLargest[i].area() < smallestToLargest[j].area()
+		if less {
+			return -1
+		}
+		return 1
 	})
 
 	for _, container := range smallestToLargest {
-		if err := ctx.Err(); err != nil {
+		if err := poll.err(); err != nil {
 			return err
 		}
-		container.wrapChildren()
+		if t.memo != nil {
+			t.memo.wrap(container)
+		} else {
+			container.wrapChildren()
+		}
 		if err := t.guard.Step(); err != nil {
 			return err
 		}
@@ -720,21 +1102,18 @@ func (gs *GraphState) hasOriginalNodeOrder(g *Graph) bool {
 	return true
 }
 
-func (gs *GraphState) geometryChanged(node *Node) bool {
-	if gs == nil || node == nil {
+// geometryChangedAt reports whether node, which is originalNodes[index] while
+// hasOriginalNodeOrder holds, has changed its geometry since the capture
+// (true for a nil node or a nil entry).
+func (gs *GraphState) geometryChangedAt(index int, node *Node) bool {
+	if node == nil {
 		return true
 	}
-	original, ok := gs.nodeGeometry[node]
-	if !ok {
+	original := gs.originalGeometry[index]
+	if !original.present {
 		return true
 	}
-	if node.TopLeft == nil {
-		return original.topLeft.pointer != nil ||
-			node.Width != original.width || node.Height != original.height
-	}
-	return original.topLeft.pointer == nil ||
-		node.TopLeft.X != original.topLeft.value.X || node.TopLeft.Y != original.topLeft.value.Y ||
-		node.Width != original.width || node.Height != original.height
+	return original.geometry.changedFrom(node)
 }
 
 func transactionBoxesMayInteract(first, second *Node) bool {
@@ -751,7 +1130,7 @@ func transactionBoxesMayInteract(first, second *Node) bool {
 		first.TopLeft.Y+first.Height+maxSafeDelta < second.TopLeft.Y)
 }
 
-func (t *Transaction) collectFixedOrigins(ctx context.Context) error {
+func (t *Transaction) collectFixedOrigins(poll *contextPoll) error {
 	if t.fixedOrigins == nil {
 		t.fixedOrigins = make(map[*Node]geo.Point)
 	} else {
@@ -760,12 +1139,13 @@ func (t *Transaction) collectFixedOrigins(ctx context.Context) error {
 	if !t.PriorGraphState.hasFixedTopLeft {
 		return t.guard.Finish()
 	}
+	steps := batchedWork(t.guard)
 	for _, node := range t.Graph.Nodes {
-		if err := t.guard.Step(); err != nil {
+		if err := steps.step(); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
-			return err
+		if err := poll.err(); err != nil {
+			return steps.flushWith(err)
 		}
 		if node == nil || node.TopLeft == nil || node.FixedTopLeft == nil {
 			continue
@@ -779,20 +1159,20 @@ func (t *Transaction) collectFixedOrigins(ctx context.Context) error {
 			Y: node.TopLeft.Y - node.FixedTopLeft.Y,
 		}
 	}
+	if err := steps.flush(); err != nil {
+		return err
+	}
 	return t.guard.Finish()
 }
 
 // collectOverlapValidationNodes records geometry changes for the legacy
 // non-exact-to-exact regression check. Ordered overlap validation itself uses a
 // complete post-state sweep, so it no longer needs a changed-node closure.
-func (t *Transaction) collectOverlapValidationNodes(ctx context.Context) (useDirtyValidation bool, err error) {
+func (t *Transaction) collectOverlapValidationNodes(poll *contextPoll) (useDirtyValidation bool, err error) {
+	t.ensureCommitScratch()
+	t.boxesReady = false
 	if !t.PriorGraphState.hasOriginalNodeOrder(t.Graph) {
 		return false, nil
-	}
-	if t.dirtyNodes == nil {
-		t.dirtyNodes = make(map[*Node]struct{})
-	} else {
-		clear(t.dirtyNodes)
 	}
 	if cap(t.dirtyNodeMarks) < len(t.Graph.Nodes) {
 		t.dirtyNodeMarks = make([]bool, len(t.Graph.Nodes))
@@ -801,18 +1181,114 @@ func (t *Transaction) collectOverlapValidationNodes(ctx context.Context) (useDir
 		clear(t.dirtyNodeMarks)
 	}
 
+	// g.Nodes equals originalNodes element for element here, so the snapshot
+	// is read by index rather than through the node set.
+	// One unit per node, added up where the loop stops.
+	state := t.PriorGraphState
+	steps := batchedWork(t.guard)
+	marks := t.dirtyNodeMarks
+	if poll.done != nil {
+		// With a Done channel the n strided polls are accounted at once, and
+		// the same pass reads every node's box for the overlap phase
+		// (buildPostStateOverlapCandidates) and the facts the structural loop
+		// needs: nothing moves until those run.
+		return t.collectOverlapValidationNodesFast(poll, &steps)
+	}
 	for index, node := range t.Graph.Nodes {
-		if err := t.guard.Step(); err != nil {
-			return false, err
+		if err := poll.err(); err != nil {
+			if addErr := steps.add(int64(index + 1)); addErr != nil {
+				return false, addErr
+			}
+			return false, steps.flushWith(err)
 		}
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		if t.PriorGraphState.geometryChanged(node) {
-			t.dirtyNodes[node] = struct{}{}
-			t.dirtyNodeMarks[index] = true
+		if state.geometryChangedAt(index, node) {
+			marks[index] = true
 		}
 	}
+	if err := steps.add(int64(len(t.Graph.Nodes))); err != nil {
+		return false, err
+	}
+	if err := steps.flush(); err != nil {
+		return false, err
+	}
+	return true, t.guard.Finish()
+}
+
+// collectOverlapValidationNodesFast is the dirty-node loop for a context
+// with a Done channel. Besides the dirty marks it records each g.Nodes
+// entry's box sums and finite flag (as buildPostStateOverlapCandidates'
+// first loop computes them), the dirty count, the number of positioned
+// nodes, and whether any node needs the structural loop's full check under
+// onlyFixedTopLeft (a positioned non-cluster node with FixedTopLeft) or is
+// nil. Units and polls are those of the per-node loop.
+func (t *Transaction) collectOverlapValidationNodesFast(poll *contextPoll, steps *batchedSteps) (bool, error) {
+	nodes := t.Graph.Nodes
+	nodeCount := len(nodes)
+	state := t.PriorGraphState
+	marks := t.dirtyNodeMarks
+	if cap(t.overlapInvalidBoxes) < nodeCount {
+		t.overlapInvalidBoxes = make([]bool, nodeCount)
+	} else {
+		t.overlapInvalidBoxes = t.overlapInvalidBoxes[:nodeCount]
+	}
+	if cap(t.overlapBoxes) < nodeCount {
+		t.overlapBoxes = make([]transactionBox, nodeCount)
+	}
+	boxes := t.overlapBoxes[:nodeCount]
+	invalid := t.overlapInvalidBoxes
+	dirty, positioned := 0, 0
+	structure, hasInvalid := false, false
+	for index, node := range nodes {
+		invalid[index] = false
+		if node == nil {
+			marks[index] = true
+			dirty++
+			structure = true
+			continue
+		}
+		topLeft := node.TopLeft
+		if topLeft == nil {
+			if state.geometryChangedAt(index, node) {
+				marks[index] = true
+				dirty++
+			}
+			continue
+		}
+		x, y, width, height := topLeft.X, topLeft.Y, node.Width, node.Height
+		original := state.originalGeometry[index]
+		if !original.present || original.geometry.topLeft.pointer == nil ||
+			x != original.geometry.topLeft.value.X || y != original.geometry.topLeft.value.Y ||
+			width != original.geometry.width || height != original.geometry.height {
+			marks[index] = true
+			dirty++
+		}
+		positioned++
+		right, bottom := x+width, y+height
+		boxes[index] = transactionBox{left: x, top: y, right: right, bottom: bottom}
+		// transactionNodeHasFiniteBox(node)
+		if !((x-x)+(y-y)+(width-width)+(height-height)+(right-right)+(bottom-bottom) == 0 &&
+			width >= 0 && height >= 0) {
+			invalid[index] = true
+			hasInvalid = true
+		}
+		if node.Cluster == nil && node.FixedTopLeft != nil {
+			structure = true
+		}
+	}
+	if err := steps.add(int64(nodeCount)); err != nil {
+		return false, err
+	}
+	if err := steps.flush(); err != nil {
+		return false, err
+	}
+	if err := poll.skip(int64(nodeCount)); err != nil {
+		return false, err
+	}
+	t.boxesReady = true
+	t.readyDirty = dirty
+	t.readyPositions = positioned
+	t.readyStructure = structure
+	t.readyInvalid = hasInvalid
 	return true, t.guard.Finish()
 }
 
@@ -821,55 +1297,78 @@ func (t *Transaction) collectOverlapValidationNodes(ctx context.Context) (useDir
 // pairs incident to a changed box; full geometry scans retain every pair.
 // Candidate lists are sorted by g.Nodes index so directional deltaTo and
 // first-rejection order remain unchanged.
-func (t *Transaction) buildPostStateOverlapCandidates(ctx context.Context, dirtyOnly bool) error {
+func (t *Transaction) buildPostStateOverlapCandidates(poll *contextPoll, dirtyOnly bool) error {
+	// Every unit below is charged in batches; each return flushes first. The
+	// function only fills transaction scratch, so deferring the charges within
+	// it cannot change what the guard or the caller observes.
+	steps := batchedWork(t.guard)
 	nodeCount := len(t.Graph.Nodes)
 	if nodeCount > maxEngineNodes {
 		return fmt.Errorf("TALA transaction node count exceeds limit %d", maxEngineNodes)
 	}
+	// Only the lists the previous build filled can be non-empty.
 	if cap(t.overlapCandidates) < nodeCount {
 		t.overlapCandidates = make([][]int, nodeCount)
+		t.candidateLists = t.candidateLists[:0]
 	} else {
+		full := t.overlapCandidates[:cap(t.overlapCandidates)]
+		for _, index := range t.candidateLists {
+			full[index] = full[index][:0]
+		}
+		t.candidateLists = t.candidateLists[:0]
 		t.overlapCandidates = t.overlapCandidates[:nodeCount]
 	}
-	for index := range t.overlapCandidates {
-		t.overlapCandidates[index] = t.overlapCandidates[index][:0]
-	}
-	if cap(t.overlapInvalidBoxes) < nodeCount {
-		t.overlapInvalidBoxes = make([]bool, nodeCount)
-	} else {
-		t.overlapInvalidBoxes = t.overlapInvalidBoxes[:nodeCount]
-		clear(t.overlapInvalidBoxes)
-	}
-	if cap(t.exceptionMarks) < nodeCount {
-		t.exceptionMarks = make([]uint32, nodeCount)
-	} else {
-		t.exceptionMarks = t.exceptionMarks[:nodeCount]
-	}
-
-	rebuildNodeIndex := !dirtyOnly || !t.overlapNodeIndexReady
-	if t.overlapNodeIndices == nil {
-		t.overlapNodeIndices = make(map[*Node][]int, nodeCount)
-		rebuildNodeIndex = true
-	} else if rebuildNodeIndex {
-		for node, indices := range t.overlapNodeIndices {
-			t.overlapNodeIndices[node] = indices[:0]
+	ready := t.boxesReady && dirtyOnly && len(t.overlapBoxes) >= nodeCount && len(t.overlapInvalidBoxes) == nodeCount
+	t.boxesReady = false
+	if !ready {
+		if cap(t.overlapInvalidBoxes) < nodeCount {
+			t.overlapInvalidBoxes = make([]bool, nodeCount)
+		} else {
+			t.overlapInvalidBoxes = t.overlapInvalidBoxes[:nodeCount]
+			clear(t.overlapInvalidBoxes)
 		}
+	}
+	rebuildNodeIndex := !dirtyOnly || !t.indexOrderReady
+	if rebuildNodeIndex {
+		t.indexOrder = append(t.indexOrder[:0], t.Graph.Nodes...)
+		t.indexSlotsState = nil
 	}
 	t.overlapSweepNodes = t.overlapSweepNodes[:0]
+	if cap(t.overlapBoxes) < nodeCount {
+		t.overlapBoxes = make([]transactionBox, nodeCount)
+	}
+	boxes := t.overlapBoxes[:nodeCount]
 	hasInvalidBox := false
 	dirtyCount := 0
-	for index, node := range t.Graph.Nodes {
-		if err := t.guard.Step(); err != nil {
-			return err
+	if ready {
+		// collectOverlapValidationNodes read every box, flag and the dirty
+		// count with nothing moved since; the first loop's units and strided
+		// polls are accounted at once.
+		hasInvalidBox = t.readyInvalid
+		dirtyCount = t.readyDirty
+		if err := poll.skip(int64(nodeCount)); err != nil {
+			if addErr := steps.add(int64(nodeCount)); addErr != nil {
+				return addErr
+			}
+			return steps.flushWith(err)
 		}
-		if err := ctx.Err(); err != nil {
-			return err
+	}
+	for index, node := range t.Graph.Nodes {
+		if ready {
+			break
+		}
+		// One unit per node, added where the loop stops.
+		if err := poll.err(); err != nil {
+			if addErr := steps.add(int64(index + 1)); addErr != nil {
+				return addErr
+			}
+			return steps.flushWith(err)
 		}
 		if node == nil {
-			return invariant.New("transaction overlap check encountered a nil graph node")
-		}
-		if rebuildNodeIndex {
-			t.overlapNodeIndices[node] = append(t.overlapNodeIndices[node], index)
+			if addErr := steps.add(int64(index + 1)); addErr != nil {
+				return addErr
+			}
+			return steps.flushWith(invariant.New("transaction overlap check encountered a nil graph node"))
 		}
 		if dirtyOnly && t.dirtyNodeMarks[index] {
 			dirtyCount++
@@ -877,21 +1376,53 @@ func (t *Transaction) buildPostStateOverlapCandidates(ctx context.Context, dirty
 		if node.TopLeft == nil {
 			continue
 		}
+		boxes[index] = transactionBox{
+			left: node.TopLeft.X, top: node.TopLeft.Y,
+			right: node.TopLeft.X + node.Width, bottom: node.TopLeft.Y + node.Height,
+		}
 		if !transactionNodeHasFiniteBox(node) {
 			t.overlapInvalidBoxes[index] = true
 			hasInvalidBox = true
-			continue
 		}
-		t.overlapSweepNodes = append(t.overlapSweepNodes, transactionSweepNode{node: node, index: index})
 	}
-	t.overlapNodeIndexReady = dirtyOnly
+	if err := steps.add(int64(nodeCount)); err != nil {
+		return err
+	}
+	t.indexOrderReady = dirtyOnly
+	// Exceptions are marked per node; candidate j is excepted when the node
+	// the index places at j is marked (the current node unless the index is
+	// stale). Positions the index does not cover are never excepted.
+	// Slots only change with the index order or the captured snapshot.
+	state := t.PriorGraphState
+	if t.indexSlotsState != state || t.indexSlotsCapture != state.captureID || len(t.indexSlots) != nodeCount {
+		slots := &state.slots
+		if cap(t.indexSlots) < nodeCount {
+			t.indexSlots = make([]int32, nodeCount)
+		} else {
+			t.indexSlots = t.indexSlots[:nodeCount]
+		}
+		for index := range t.indexSlots {
+			t.indexSlots[index] = noIndexSlot
+			if index < len(t.indexOrder) {
+				t.indexSlots[index] = int32(slots.slotOf(t.indexOrder[index]))
+			}
+		}
+		t.indexSlotsState = state
+		t.indexSlotsCapture = state.captureID
+	}
 
 	retainedReferences := int64(0)
 	addPair := func(first, second int) error {
 		if retainedReferences > maxTransactionOverlapReferences-2 {
 			return fmt.Errorf("TALA transaction overlap references exceed limit %d", maxTransactionOverlapReferences)
 		}
+		if len(t.overlapCandidates[first]) == 0 {
+			t.candidateLists = append(t.candidateLists, int32(first))
+		}
 		t.overlapCandidates[first] = append(t.overlapCandidates[first], second)
+		if len(t.overlapCandidates[second]) == 0 {
+			t.candidateLists = append(t.candidateLists, int32(second))
+		}
 		t.overlapCandidates[second] = append(t.overlapCandidates[second], first)
 		retainedReferences += 2
 		return nil
@@ -901,29 +1432,48 @@ func (t *Transaction) buildPostStateOverlapCandidates(ctx context.Context, dirty
 	// boxes move, the sweep avoids scanning pairs that are far apart.
 	useDirtyScan := dirtyOnly && dirtyCount*4 < nodeCount
 	if useDirtyScan {
+		// Every (first, second) step is charged: nodeCount units per changed
+		// first node, batched after its row (or up to the failing pair). The
+		// broad phase reads the same sums (x+width, y+height) from boxes.
 		for first, firstNode := range t.Graph.Nodes {
 			if !t.dirtyNodeMarks[first] || firstNode.TopLeft == nil {
 				continue
 			}
+			firstBox := boxes[first]
 			for second, secondNode := range t.Graph.Nodes {
-				if err := t.guard.Step(); err != nil {
-					return err
-				}
 				if second == first || firstNode == secondNode || secondNode.TopLeft == nil {
 					continue
 				}
 				if t.dirtyNodeMarks[second] && second < first {
 					continue
 				}
-				if !transactionBoxesMayInteract(firstNode, secondNode) {
+				// transactionBoxesMayInteract(firstNode, secondNode)
+				secondBox := boxes[second]
+				const maxSafeDelta = 500.0
+				if firstBox.left > secondBox.right+maxSafeDelta ||
+					firstBox.right+maxSafeDelta < secondBox.left ||
+					firstBox.top > secondBox.bottom+maxSafeDelta ||
+					firstBox.bottom+maxSafeDelta < secondBox.top {
 					continue
 				}
 				if err := addPair(first, second); err != nil {
-					return err
+					if addErr := steps.add(int64(second + 1)); addErr != nil {
+						return addErr
+					}
+					return steps.flushWith(err)
 				}
+			}
+			if err := steps.add(int64(nodeCount)); err != nil {
+				return err
 			}
 		}
 	} else {
+		// The positioned nodes with finite boxes, in g.Nodes order.
+		for index, node := range t.Graph.Nodes {
+			if node.TopLeft != nil && !t.overlapInvalidBoxes[index] {
+				t.overlapSweepNodes = append(t.overlapSweepNodes, transactionSweepNode{node: node, index: index})
+			}
+		}
 		slices.SortStableFunc(t.overlapSweepNodes, func(left, right transactionSweepNode) int {
 			if left.node.TopLeft.X != right.node.TopLeft.X {
 				switch {
@@ -942,12 +1492,12 @@ func (t *Transaction) buildPostStateOverlapCandidates(ctx context.Context, dirty
 		})
 		t.overlapActiveNodes = t.overlapActiveNodes[:0]
 		for _, current := range t.overlapSweepNodes {
-			if err := t.guard.Step(); err != nil {
+			if err := steps.step(); err != nil {
 				return err
 			}
 			kept := t.overlapActiveNodes[:0]
 			for _, other := range t.overlapActiveNodes {
-				if err := t.guard.Step(); err != nil {
+				if err := steps.step(); err != nil {
 					return err
 				}
 				// Equality remains active because the legacy broad phase only rejects
@@ -965,7 +1515,7 @@ func (t *Transaction) buildPostStateOverlapCandidates(ctx context.Context, dirty
 					}
 				}
 				if err := addPair(other.index, current.index); err != nil {
-					return err
+					return steps.flushWith(err)
 				}
 			}
 			t.overlapActiveNodes = append(kept, current)
@@ -984,7 +1534,7 @@ func (t *Transaction) buildPostStateOverlapCandidates(ctx context.Context, dirty
 							continue
 						}
 					}
-					if err := t.guard.Step(); err != nil {
+					if err := steps.step(); err != nil {
 						return err
 					}
 					firstNode, secondNode := t.Graph.Nodes[first], t.Graph.Nodes[second]
@@ -993,172 +1543,175 @@ func (t *Transaction) buildPostStateOverlapCandidates(ctx context.Context, dirty
 						continue
 					}
 					if err := addPair(first, second); err != nil {
-						return err
+						return steps.flushWith(err)
 					}
 				}
 			}
 		}
 	}
 
-	for _, candidates := range t.overlapCandidates {
-		if err := t.guard.Step(); err != nil {
-			return err
+	// Visit the filled lists in g.Nodes order (Commit's overlap loop reads
+	// candidateLists in this order).
+	slices.Sort(t.candidateLists)
+	for _, index := range t.candidateLists {
+		if candidates := t.overlapCandidates[index]; len(candidates) > 1 {
+			sort.Ints(candidates)
 		}
-		sort.Ints(candidates)
 	}
-	return t.guard.Finish()
-}
-
-func (t *Transaction) markOverlapException(node *Node, generation uint32) {
-	for _, index := range t.overlapNodeIndices[node] {
-		t.exceptionMarks[index] = generation
-	}
-}
-
-// markDescendantOverlapExceptions performs the same stable descendant walk as
-// allDescendantNodesGuarded, but retains its stack, result slice, and seen
-// set across the thousands of speculative transaction checks in a layout.
-func (t *Transaction) markDescendantOverlapExceptions(node *Node, includeClusterNodes bool, generation uint32) error {
-	t.descendantGeneration++
-	if t.descendantGeneration == 0 {
-		clear(t.descendantSeen)
-		t.descendantGeneration = 1
-	}
-	seenGeneration := t.descendantGeneration
-	if t.descendantSeen == nil {
-		t.descendantSeen = make(map[*Node]uint32)
-	}
-	t.descendantStack = t.descendantStack[:0]
-	t.descendantNodes = t.descendantNodes[:0]
-	if node != nil {
-		t.descendantSeen[node] = seenGeneration
-	}
-
-	pushChildren := func(parent *Node) error {
-		if sequence := t.Graph.Sequences[parent]; sequence != nil {
-			for i := len(sequence.Nodes) - 1; i >= 0; i-- {
-				if err := t.guard.Step(); err != nil {
-					return err
-				}
-				t.descendantStack = append(t.descendantStack, transactionPendingDescendant{
-					node: sequence.Nodes[i], emit: includeClusterNodes,
-				})
-			}
-		}
-		if parent != nil && parent.isClusterVessel {
-			if cluster := t.Graph.Clusters[parent]; cluster != nil {
-				for i := len(cluster.Nodes) - 1; i >= 0; i-- {
-					if err := t.guard.Step(); err != nil {
-						return err
-					}
-					t.descendantStack = append(t.descendantStack, transactionPendingDescendant{
-						node: cluster.Nodes[i], emit: includeClusterNodes,
-					})
-				}
-			}
-		}
-		if parent == nil || parent.isContainer {
-			children := t.Graph.Containers[parent]
-			for i := len(children) - 1; i >= 0; i-- {
-				if err := t.guard.Step(); err != nil {
-					return err
-				}
-				t.descendantStack = append(t.descendantStack, transactionPendingDescendant{
-					node: children[i], emit: true,
-				})
-			}
-		}
-		return nil
-	}
-	if err := pushChildren(node); err != nil {
+	if err := steps.add(int64(len(t.overlapCandidates))); err != nil {
 		return err
 	}
-	for len(t.descendantStack) > 0 {
-		if err := t.guard.Step(); err != nil {
-			return err
-		}
-		last := len(t.descendantStack) - 1
-		current := t.descendantStack[last]
-		t.descendantStack = t.descendantStack[:last]
-		if current.node == nil || t.descendantSeen[current.node] == seenGeneration {
-			continue
-		}
-		t.descendantSeen[current.node] = seenGeneration
-		if current.emit {
-			t.descendantNodes = append(t.descendantNodes, current.node)
-		}
-		if err := pushChildren(current.node); err != nil {
-			return err
-		}
-	}
-	for _, descendant := range t.descendantNodes {
-		if err := t.guard.Step(); err != nil {
-			return err
-		}
-		t.markOverlapException(descendant, generation)
+	if err := steps.flush(); err != nil {
+		return err
 	}
 	return t.guard.Finish()
 }
 
-func (t *Transaction) hasBadPostStateOverlap(nodeIndex int) (bool, error) {
+// noIndexSlot marks a candidate position the exception index does not cover.
+const noIndexSlot = int32(-2)
+
+// isOverlapException reports whether the candidate at g.Nodes position index
+// is marked with generation. node is the node being checked: the descendant
+// walk marks it too (the marks are also its seen set), but the legacy
+// exception index never held it, so a stale index entry naming node itself is
+// not an exception.
+func (t *Transaction) isOverlapException(index int, node *Node, generation uint32) bool {
+	slot := t.indexSlots[index]
+	if slot == noIndexSlot {
+		return false
+	}
+	if t.indexOrder[index] == node {
+		return false
+	}
+	return t.marks.hasSlot(slot, t.indexOrder[index], generation)
+}
+
+// markDescendantOverlapExceptions performs the descendant walk of
+// allDescendantNodesGuarded (with cluster nodes) and marks every descendant
+// as an exception. Its units are the walk's (one per push and pop) plus one
+// per descendant marked, all charged before Finish as the stepped walk did;
+// the walk's seen set is the same marks, so node itself is marked too, which
+// no check can observe (a node is never its own candidate).
+func (t *Transaction) markDescendantOverlapExceptions(node *Node, generation uint32) error {
+	// walkDescendants refills t.descendantNodes; read its length afterwards
+	// in a separate statement (the order inside one expression is unspecified).
+	units := t.walkDescendants(node, generation)
+	units += int64(len(t.descendantNodes))
+	if units != 0 {
+		if err := t.guard.Add(units); err != nil {
+			return err
+		}
+	}
+	return t.guard.Finish()
+}
+
+// hasBadPostStateOverlap records its units in steps (the caller's batch). It
+// flushes them before every call that charges the guard directly and before
+// returning, so the guard observes the legacy sequence of charges.
+func (t *Transaction) hasBadPostStateOverlap(nodeIndex int, steps *batchedSteps) (bool, error) {
 	node := t.Graph.Nodes[nodeIndex]
 	if node == nil || node.TopLeft == nil {
-		return node == nil, nil
+		return node == nil, steps.flush()
 	}
 	if node.Cluster != nil {
-		return false, nil
+		return false, steps.flush()
 	}
 
-	t.exceptionGeneration++
-	if t.exceptionGeneration == 0 {
-		clear(t.exceptionMarks)
-		t.exceptionGeneration = 1
-	}
-	generation := t.exceptionGeneration
+	generation := t.beginMarks()
 	if node.isContainer || node.isClusterVessel || t.Graph.Sequences[node] != nil {
-		if err := t.markDescendantOverlapExceptions(node, true, generation); err != nil {
+		if err := steps.flush(); err != nil {
+			return false, err
+		}
+		if err := t.markDescendantOverlapExceptions(node, generation); err != nil {
 			return false, err
 		}
 	}
 	if node.Container != nil || node.Cluster != nil || node.Sequence != nil {
-		ancestors, err := t.Graph.ancestorsOfGuarded(node, t.guard)
-		if err != nil {
+		if err := steps.flush(); err != nil {
 			return false, err
 		}
+		if t.walkScratch == nil {
+			t.walkScratch = &descendantWalkScratch{seen: make(map[*Node]struct{})}
+		}
+		ancestors, err := t.Graph.appendAncestorsGuarded(t.ancestorScratch[:0], t.walkScratch, node, t.guard)
+		t.walkScratch.resetVisited()
+		t.ancestorScratch = ancestors
+		if err != nil {
+			clear(ancestors)
+			return false, err
+		}
+		slots := &t.PriorGraphState.slots
 		for _, ancestor := range ancestors {
-			if err := t.guard.Step(); err != nil {
+			if err := steps.step(); err != nil {
 				return false, err
 			}
-			t.markOverlapException(ancestor, generation)
+			t.marks.mark(slots, ancestor, generation)
 		}
+		clear(ancestors)
 	}
 
-	pairwiseExceptions := t.PriorGraphState.existingOverlaps[node]
+	pairwiseExceptions, hasPairwiseExceptions := t.PriorGraphState.existingOverlaps.nearExceptionsOf(node)
 	right := node.TopLeft.X + node.Width
 	bottom := node.TopLeft.Y + node.Height
-	for _, otherIndex := range t.overlapCandidates[nodeIndex] {
-		if err := t.guard.Step(); err != nil {
-			return false, err
-		}
+	// buildPostStateOverlapCandidates left every positioned node's sums
+	// (x+width, y+height) in overlapBoxes; nothing has moved since.
+	boxes := t.overlapBoxes
+	nodeBox := boxes[nodeIndex]
+	// One unit per inspected candidate, added up where the loop stops.
+	candidates := t.overlapCandidates[nodeIndex]
+	for position, otherIndex := range candidates {
 		other := t.Graph.Nodes[otherIndex]
 		if other == nil {
-			return false, invariant.New("transaction overlap check encountered a nil graph node")
+			if err := steps.add(int64(position + 1)); err != nil {
+				return false, err
+			}
+			return false, steps.flushWith(invariant.New("transaction overlap check encountered a nil graph node"))
 		}
-		if _, excepted := pairwiseExceptions[other]; excepted || t.exceptionMarks[otherIndex] == generation {
+		if t.isOverlapException(otherIndex, node, generation) {
 			continue
 		}
-		if other.TopLeft == nil || !transactionBoxesMayInteract(node, other) {
+		if hasPairwiseExceptions && pairwiseExceptions.contains(other) {
 			continue
 		}
-		deltaValue, err := node.deltaToGuarded(other, node.TopLeft, t.guard)
+		if other.TopLeft == nil || other == node {
+			continue
+		}
+		// transactionBoxesMayInteract(node, other)
+		otherBox := boxes[otherIndex]
+		const maxSafeDelta = 500.0
+		if nodeBox.left > otherBox.right+maxSafeDelta ||
+			nodeBox.right+maxSafeDelta < otherBox.left ||
+			nodeBox.top > otherBox.bottom+maxSafeDelta ||
+			nodeBox.bottom+maxSafeDelta < otherBox.top {
+			continue
+		}
+		deltaValue, units, err := node.deltaToCounted(other, node.TopLeft)
+		if addErr := steps.add(units); addErr != nil {
+			return false, addErr
+		}
 		if err != nil {
-			return false, err
+			if addErr := steps.add(int64(position + 1)); addErr != nil {
+				return false, addErr
+			}
+			return false, steps.flushWith(err)
 		}
 		delta := float64(deltaValue)
-		if node.TopLeft.X < other.TopLeft.X+other.Width+delta && right+delta > other.TopLeft.X &&
-			node.TopLeft.Y < other.TopLeft.Y+other.Height+delta && bottom+delta > other.TopLeft.Y {
+		if node.TopLeft.X < otherBox.right+delta && right+delta > otherBox.left &&
+			node.TopLeft.Y < otherBox.bottom+delta && bottom+delta > otherBox.top {
+			if err := steps.add(int64(position + 1)); err != nil {
+				return false, err
+			}
+			if err := steps.flush(); err != nil {
+				return false, err
+			}
 			return true, nil
 		}
+	}
+	if err := steps.add(int64(len(candidates))); err != nil {
+		return false, err
+	}
+	if err := steps.flush(); err != nil {
+		return false, err
 	}
 	return false, t.guard.Finish()
 }
@@ -1183,43 +1736,84 @@ func (t *Transaction) Commit(ctx context.Context) (err error) {
 	if t.guard == nil {
 		return fmt.Errorf("TALA transaction commit requires a work guard")
 	}
+	// The deferred Rollback above uses no scratch, so returning it first
+	// (deferred calls run last-in first-out) is safe.
+	previousScratch := t.commitScratch
+	borrowed := t.Graph.borrowCommitScratch()
+	t.commitScratch = borrowed
+	// An operation that clears (and re-arms) its own transaction must not
+	// disturb the operation list iterated below: the range keeps running the
+	// operations it started with, as it always did (see Clear).
+	t.runningOps++
+	defer func() {
+		t.runningOps--
+		t.commitScratch = previousScratch
+		t.Graph.returnCommitScratch(borrowed)
+	}()
 	if err := t.guard.Finish(); err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
+	// The same polls as before, answered from the cached Done channel. Polls
+	// around caller operations always look (a context without a Done channel
+	// is asked Err every time); per-node polls are strided.
+	poll := newContextPoll(ctx)
+	if err := poll.check(); err != nil {
 		return err
 	}
 	for _, op := range t.Ops {
 		if err := t.guard.Step(); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
+		if err := poll.check(); err != nil {
 			return err
 		}
 		if err := op(); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
+		if err := poll.check(); err != nil {
 			return err
 		}
 		// Syncing clusters will reposition cluster nodes, which may shrink containers
 		// But repositioning containers can also expand clusters, since cluster nodes can be containers
 		// TODO by this logic I think we need to run reposition containers again after syncCluster, but can't find a scenario where it matter
 		if t.options.AffectContainers {
-			if err := t.repositionContainers(ctx); err != nil {
+			if err := t.repositionContainers(&poll); err != nil {
 				return err
 			}
-			for container := range t.Graph.Containers {
+			// No node moves while the containers are checked, so fixed-origin
+			// lookups and per-node scan data can be shared by all checks of
+			// this pass.
+			var origins fixedOriginCache
+			t.beginContainerPass()
+			if t.memo != nil && poll.done != nil && !t.PriorGraphState.hasFixedTopLeft {
+				handled, memoErr := t.checkContainersMemo(&poll, &origins)
+				if memoErr != nil {
+					return memoErr
+				}
+				if handled {
+					t.Graph.SyncClusters()
+					t.Graph.SyncSequences()
+					if err := poll.check(); err != nil {
+						return err
+					}
+					continue
+				}
+				// Some container is bad (or a check fails): the legacy loop
+				// below runs from the start and charges as it goes.
+				t.beginContainerPass()
+				origins = fixedOriginCache{}
+			}
+			for _, container := range t.containerCheckOrder() {
 				if err := t.guard.Step(); err != nil {
 					return err
 				}
-				if err := ctx.Err(); err != nil {
+				if err := poll.err(); err != nil {
 					return err
 				}
 				if container == nil || container.TopLeft == nil {
 					continue
 				}
-				bad, badErr := t.Graph.isBadStateContext(container, t.PriorGraphState, t.options.IgnoreContainerEscape, t.guard)
+				bad, badErr := t.containerBad(container, &origins)
 				if badErr != nil {
 					return badErr
 				}
@@ -1230,70 +1824,117 @@ func (t *Transaction) Commit(ctx context.Context) (err error) {
 		}
 		t.Graph.SyncClusters()
 		t.Graph.SyncSequences()
-		if err := ctx.Err(); err != nil {
+		if err := poll.check(); err != nil {
 			return err
 		}
 	}
 
-	useDirtyValidation, err := t.collectOverlapValidationNodes(ctx)
+	useDirtyValidation, err := t.collectOverlapValidationNodes(&poll)
 	if err != nil {
 		return err
 	}
-	if err := t.collectFixedOrigins(ctx); err != nil {
+	if err := t.collectFixedOrigins(&poll); err != nil {
 		return err
 	}
 	// Containment and fixed-position invariants remain graph-wide. Pairwise
-	// overlap is validated afterward from one stable post-state sweep.
-	for _, n := range t.Graph.Nodes {
-		if err := t.guard.Step(); err != nil {
-			return err
+	// overlap is validated afterward from one stable post-state sweep. The
+	// checks are pure, so their units are charged in one batch that is flushed
+	// before any return.
+	steps := batchedWork(t.guard)
+	// Without containment checks and without fixed origins, the structural
+	// check of a node charges its one unit and can only fail through
+	// FixedTopLeft (a cluster member is skipped after that unit).
+	onlyFixedTopLeft := t.options.IgnoreContainerEscape && len(t.fixedOrigins) == 0
+	// The loop's own unit per node and the skipped checks' units are counted
+	// locally and added to the batch where the loop stops.
+	var loopUnits int64
+	nodesToCheck := t.Graph.Nodes
+	if onlyFixedTopLeft && t.boxesReady && !t.readyStructure && poll.done != nil {
+		// collectOverlapValidationNodes found no nil node and no positioned
+		// node outside a cluster with FixedTopLeft, so every node takes the
+		// loop's one-unit (unpositioned) or two-unit (skipped) path.
+		loopUnits = int64(len(nodesToCheck)) + int64(t.readyPositions)
+		nodesToCheck = nil
+		if err := poll.skip(int64(len(t.Graph.Nodes))); err != nil {
+			if addErr := steps.add(loopUnits); addErr != nil {
+				return addErr
+			}
+			return steps.flushWith(err)
 		}
-		if err := ctx.Err(); err != nil {
-			return err
+	}
+	for _, n := range nodesToCheck {
+		loopUnits++
+		if err := poll.err(); err != nil {
+			if addErr := steps.add(loopUnits); addErr != nil {
+				return addErr
+			}
+			return steps.flushWith(err)
 		}
 		if n == nil {
-			return invariant.New("transaction bad-state check received a nil node")
+			if addErr := steps.add(loopUnits); addErr != nil {
+				return addErr
+			}
+			return steps.flushWith(invariant.New("transaction bad-state check received a nil node"))
 		}
 		if n.TopLeft == nil {
 			continue
 		}
-		fixedOrigin, hasFixedOrigin := t.fixedOrigins[n.container()]
-		var fixedOriginPointer *geo.Point
-		if hasFixedOrigin {
-			fixedOriginPointer = &fixedOrigin
+		if onlyFixedTopLeft && (n.Cluster != nil || n.FixedTopLeft == nil) {
+			loopUnits++
+			continue
 		}
-		bad, _, badErr := t.Graph.isStructurallyBadStateWithFixedOriginContext(
+		var fixedOriginPointer *geo.Point
+		if len(t.fixedOrigins) != 0 {
+			fixedOrigin, hasFixedOrigin := t.fixedOrigins[n.container()]
+			if hasFixedOrigin {
+				fixedOriginPointer = &fixedOrigin
+			}
+		}
+		bad, _, badErr := t.Graph.structurallyBadCounted(
 			n,
 			t.PriorGraphState,
 			t.options.IgnoreContainerEscape,
 			fixedOriginPointer,
 			true,
-			t.guard,
+			&steps,
 		)
 		if badErr != nil {
-			return badErr
+			if addErr := steps.add(loopUnits); addErr != nil {
+				return addErr
+			}
+			return steps.flushWith(badErr)
 		}
 		if bad {
-			return ErrInvalidCandidate
+			if addErr := steps.add(loopUnits); addErr != nil {
+				return addErr
+			}
+			return steps.flushWith(ErrInvalidCandidate)
 		}
 	}
-	if err := t.buildPostStateOverlapCandidates(ctx, useDirtyValidation); err != nil {
+	if err := steps.add(loopUnits); err != nil {
 		return err
 	}
-	for nodeIndex, n := range t.Graph.Nodes {
-		if len(t.overlapCandidates[nodeIndex]) == 0 {
-			continue
-		}
-		if err := t.guard.Step(); err != nil {
+	if err := steps.flush(); err != nil {
+		return err
+	}
+	if err := t.buildPostStateOverlapCandidates(&poll, useDirtyValidation); err != nil {
+		return err
+	}
+	// candidateLists holds exactly the indices with candidates, ascending.
+	for _, listIndex := range t.candidateLists {
+		nodeIndex := int(listIndex)
+		n := t.Graph.Nodes[nodeIndex]
+		if err := steps.step(); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
-			return err
+		if err := poll.err(); err != nil {
+			return steps.flushWith(err)
 		}
 		if n.TopLeft == nil {
 			continue
 		}
-		bad, badErr := t.hasBadPostStateOverlap(nodeIndex)
+		// hasBadPostStateOverlap flushes steps before it returns.
+		bad, badErr := t.hasBadPostStateOverlap(nodeIndex, &steps)
 		if badErr != nil {
 			return badErr
 		}
@@ -1301,52 +1942,188 @@ func (t *Transaction) Commit(ctx context.Context) (err error) {
 			return ErrInvalidCandidate
 		}
 	}
-
-	// If a non-exact overlap became an exact overlap, that's bad
-	for n1, overlaps := range t.PriorGraphState.existingOverlaps {
-		if err := t.guard.Step(); err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		for n2 := range overlaps {
-			if useDirtyValidation {
-				_, firstChanged := t.dirtyNodes[n1]
-				_, secondChanged := t.dirtyNodes[n2]
-				if !firstChanged && !secondChanged {
-					continue
-				}
-			}
-			if err := t.guard.Step(); err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			wasExact := false
-			if _, is := t.PriorGraphState.existingExactOverlaps[n1]; is {
-				if _, alsoIs := t.PriorGraphState.existingExactOverlaps[n1][n2]; alsoIs {
-					wasExact = true
-				}
-			}
-			if !wasExact {
-				if n1.DoesOverlapExact(n2) {
-					return ErrInvalidCandidate
-				}
-			}
-		}
+	if err := steps.flush(); err != nil {
+		return err
 	}
 
-	if err := ctx.Err(); err != nil {
+	// If a non-exact overlap became an exact overlap, that's bad
+	if err := t.checkExistingOverlapRegressions(&poll, &steps, useDirtyValidation); err != nil {
+		return err
+	}
+	if err := steps.flush(); err != nil {
+		return err
+	}
+
+	if err := poll.check(); err != nil {
 		return err
 	}
 	return t.guard.Finish()
 }
 
-// Clear only needs to be called if transaction will be reused
+// checkExistingOverlapRegressions rejects the commit when a pair that
+// overlapped with padding but not exactly at transaction creation now
+// overlaps exactly. The legacy loop iterates the near pairs as a map of maps
+// (key by key, in map order) and charges one unit per key and one per ordered
+// pair it inspects (with dirty validation, the pairs with a changed
+// endpoint), polling with each unit, and stops at the first regression.
+//
+// Without a regression the totals do not depend on the order, so they are
+// counted from the dirty nodes' pairs and charged at once, with the polls
+// accounted the same way. A regression (or a context without a Done channel,
+// whose Err calls are observable) runs the legacy loop itself over the map
+// form; its map order is then as arbitrary as before.
+func (t *Transaction) checkExistingOverlapRegressions(poll *contextPoll, steps *batchedSteps, useDirtyValidation bool) error {
+	t.ensureCommitScratch()
+	set := t.PriorGraphState.existingOverlaps
+	if set == nil || set.nearKeys == 0 {
+		return nil
+	}
+	if poll.done == nil || steps.direct == nil {
+		return t.checkExistingOverlapRegressionsLegacy(poll, steps, useDirtyValidation)
+	}
+	units := int64(set.nearKeys)
+	regression := false
+	if useDirtyValidation {
+		marks, generation := t.markOverlapDirtyNodes(set)
+		for _, i := range t.overlapDirtyList {
+			if len(set.near[i]) == 0 {
+				continue
+			}
+			exact := set.mark(true, int(i))
+			first := set.nodes[i]
+			for _, j := range set.near[i] {
+				// The ordered pair (i, j); and (j, i) when j has not changed,
+				// since a changed j counts it among its own pairs.
+				units++
+				if marks[j] != generation {
+					units++
+				}
+				if !set.marked(int(j), exact) && first.DoesOverlapExact(set.nodes[j]) {
+					regression = true
+				}
+			}
+		}
+	} else {
+		units += int64(set.nearRefs)
+		for i, neighbors := range set.near {
+			if len(neighbors) == 0 {
+				continue
+			}
+			exact := set.mark(true, i)
+			first := set.nodes[i]
+			for _, j := range neighbors {
+				if !set.marked(int(j), exact) && first.DoesOverlapExact(set.nodes[j]) {
+					regression = true
+				}
+			}
+		}
+	}
+	if regression {
+		return t.checkExistingOverlapRegressionsLegacy(poll, steps, useDirtyValidation)
+	}
+	if err := steps.add(units); err != nil {
+		return err
+	}
+	if err := poll.skip(units); err != nil {
+		return steps.flushWith(err)
+	}
+	return nil
+}
+
+// markOverlapDirtyNodes stamps the set's numbers of the changed g.Nodes
+// entries (collectOverlapValidationNodes marked them) with a new generation
+// and lists them, in g.Nodes order, in t.overlapDirtyList.
+func (t *Transaction) markOverlapDirtyNodes(set *existingOverlapSet) ([]uint32, uint32) {
+	if cap(t.overlapDirtyMarks) < len(set.nodes) {
+		t.overlapDirtyMarks = make([]uint32, len(set.nodes))
+		t.overlapDirtyGeneration = 0
+	}
+	marks := t.overlapDirtyMarks[:len(set.nodes)]
+	t.overlapDirtyGeneration++
+	if t.overlapDirtyGeneration == 0 {
+		clear(marks)
+		t.overlapDirtyGeneration = 1
+	}
+	generation := t.overlapDirtyGeneration
+	dirty := t.overlapDirtyList[:0]
+	for index, node := range t.Graph.Nodes {
+		if !t.dirtyNodeMarks[index] {
+			continue
+		}
+		i := set.indexOf(node)
+		if i < 0 || marks[i] == generation {
+			continue
+		}
+		marks[i] = generation
+		dirty = append(dirty, int32(i))
+	}
+	t.overlapDirtyList = dirty
+	return marks, generation
+}
+
+// checkExistingOverlapRegressionsLegacy is the stepped check: one unit and
+// one poll per node with a near pair and per ordered pair it inspects (with
+// dirty validation, the pairs with a changed endpoint), stopping at the first
+// regression. It walks the set in its own order: nodes in first-insertion
+// order, each node's neighbors in insertion order. The original walked the
+// pairs as a map of maps, so where it stopped, the units it charged, and,
+// when MaxTransactionWorkUnits binds, whether a commit failed varied from run
+// to run; the units of a check without a regression are the same in any
+// order.
+func (t *Transaction) checkExistingOverlapRegressionsLegacy(poll *contextPoll, steps *batchedSteps, useDirtyValidation bool) error {
+	set := t.PriorGraphState.existingOverlaps
+	if set == nil {
+		return nil
+	}
+	var marks []uint32
+	var generation uint32
+	if useDirtyValidation {
+		marks, generation = t.markOverlapDirtyNodes(set)
+	}
+	for i, neighbors := range set.near {
+		if len(neighbors) == 0 {
+			continue
+		}
+		if err := steps.step(); err != nil {
+			return err
+		}
+		if err := poll.err(); err != nil {
+			return steps.flushWith(err)
+		}
+		exact := set.mark(true, i)
+		first := set.nodes[i]
+		firstChanged := useDirtyValidation && marks[i] == generation
+		for _, j := range neighbors {
+			if useDirtyValidation && !firstChanged && marks[j] != generation {
+				continue
+			}
+			if err := steps.step(); err != nil {
+				return err
+			}
+			if err := poll.err(); err != nil {
+				return steps.flushWith(err)
+			}
+			if !set.marked(int(j), exact) && first.DoesOverlapExact(set.nodes[j]) {
+				return steps.flushWith(ErrInvalidCandidate)
+			}
+		}
+	}
+	return nil
+}
+
+// Clear only needs to be called if transaction will be reused. Outside
+// Commit the operation list keeps its storage; nothing else holds it (clones
+// copy it). While a Commit of this transaction runs its operations (an
+// operation clearing and re-arming its own transaction), Clear starts a new
+// list as it always did, so the running Commit still runs every operation it
+// started with and none added after the Clear.
 func (t *Transaction) Clear() {
-	t.Ops = make([]func() error, 0)
+	if t.runningOps > 0 {
+		t.Ops = make([]func() error, 0)
+		return
+	}
+	clear(t.Ops)
+	t.Ops = t.Ops[:0]
 }
 
 func (t *Transaction) Rollback() {
@@ -1389,25 +2166,25 @@ func (t *Transaction) Rollback() {
 		return
 	}
 
-	rollbackNode := func(node *Node) {
-		geometry := state.nodeGeometry[node]
-		node.TopLeft = geometry.topLeft.restore()
-		node.Width = geometry.width
-		node.Height = geometry.height
+	// Every restore writes only its own node (nodes sharing a TopLeft pointer
+	// recorded the same value for it), so the order is immaterial.
+	for i := range state.slots.entries {
+		entry := &state.slots.entries[i]
+		node := entry.node
+		node.TopLeft = entry.geometry.topLeft.restore()
+		node.Width = entry.geometry.width
+		node.Height = entry.geometry.height
 	}
-	for node := range state.nodeGeometry {
-		rollbackNode(node)
-	}
-	for cluster, arrangement := range state.clusterArrangements {
-		cluster.Arrangement = arrangement
-		cluster.DesiredArrangement = state.clusterDesired[cluster]
-		cluster.Padding = state.clusterPaddings[cluster]
+	for _, snapshot := range state.clusterStates {
+		snapshot.cluster.Arrangement = snapshot.arrangement
+		snapshot.cluster.DesiredArrangement = snapshot.desired
+		snapshot.cluster.Padding = snapshot.padding
 	}
 	for edge, snapshot := range state.edgeGeometry {
 		snapshot.restore(edge)
 	}
-	for tree, orientation := range state.treeOrientations {
-		tree.Orientation = orientation
+	for _, snapshot := range state.treeOrientations {
+		snapshot.tree.Orientation = snapshot.orientation
 	}
 	copy(state.originalNodesRef, state.originalNodes)
 	t.Graph.Nodes = state.originalNodesRef
@@ -1438,5 +2215,6 @@ func (t *Transaction) CloneGeometryContext() (*Transaction, error) {
 		guard:                 t.guard,
 		PriorGraphState:       t.PriorGraphState,
 		priorGraphStateShared: true,
+		sharedOverlaps:        true,
 	}, nil
 }

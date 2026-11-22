@@ -2,7 +2,12 @@ package layoutgraph
 
 import "github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
 
-const maxPooledOverlapExceptions = 4096
+const (
+	maxPooledOverlapExceptions = 4096
+	// Up to this many exceptions are matched by scanning the list instead of
+	// building a set; a list scan is cheaper than hashing at this size.
+	maxLinearOverlapExceptions = 16
+)
 
 type overlapExceptionScratch struct {
 	nodes map[*Node]struct{}

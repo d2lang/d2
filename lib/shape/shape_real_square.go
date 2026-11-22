@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeRealSquare struct {
@@ -13,12 +12,9 @@ type shapeRealSquare struct {
 
 func NewRealSquare(box *geo.Box) Shape {
 	shape := shapeRealSquare{
-		baseShape: &baseShape{
-			Type: REAL_SQUARE_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(REAL_SQUARE_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 

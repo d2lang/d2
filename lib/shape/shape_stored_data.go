@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeStoredData struct {
@@ -16,12 +15,9 @@ const storedDataWedgeWidth = 15.
 
 func NewStoredData(box *geo.Box) Shape {
 	shape := shapeStoredData{
-		baseShape: &baseShape{
-			Type: STORED_DATA_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(STORED_DATA_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -34,12 +30,17 @@ func (s shapeStoredData) GetInnerBox() *geo.Box {
 }
 
 func storedDataPath(box *geo.Box) *svg.SvgPathContext {
+	return storedDataOutline(box, svg.NewSVGPathContext)
+}
+
+// storedDataOutline draws the outline of storedDataPath into a path made by newPath.
+func storedDataOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	wedgeWidth := storedDataWedgeWidth
 	multiplier := 0.27
 	if box.Width < wedgeWidth*2 {
 		wedgeWidth = box.Width / 2.0
 	}
-	pc := svg.NewSVGPathContext(box.TopLeft, 1, 1)
+	pc := newPath(box.TopLeft, 1, 1)
 	pc.StartAt(pc.Absolute(wedgeWidth, 0))
 	pc.H(true, box.Width-wedgeWidth)
 	pc.C(false, box.Width-wedgeWidth*multiplier, 0, box.Width-wedgeWidth, box.Height*multiplier, box.Width-wedgeWidth, box.Height/2.0)
@@ -53,6 +54,10 @@ func storedDataPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeStoredData) Perimeter() []geo.Intersectable {
 	return storedDataPath(s.Box).Path
+}
+
+func (s shapeStoredData) traceBorder(t *borderTracer) {
+	storedDataOutline(s.Box, t.newPath)
 }
 
 func (s shapeStoredData) GetSVGPathData() []string {

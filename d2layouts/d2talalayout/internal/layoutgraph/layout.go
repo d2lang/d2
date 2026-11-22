@@ -312,23 +312,25 @@ func (fromGraph *Graph) abductEdges(container *Node, toGraph *Graph) []*EdgeAbdu
 }
 
 func (maybeDescendant *Node) isDescendantOf(maybeAncestor *Node) bool {
-	if maybeAncestor == maybeDescendant {
-		return true
+	// The former tail recursion as a loop: same steps, same answer.
+	for current := maybeDescendant; ; {
+		if maybeAncestor == current {
+			return true
+		}
+		if current == nil {
+			return false
+		}
+		if current.Container != nil {
+			current = current.Container
+		} else if current.Cluster != nil {
+			current = current.Cluster.Vessel
+		} else if current.Sequence != nil {
+			current = current.Sequence.Vessel
+		} else {
+			// Covers the case of nil ancestor
+			return maybeAncestor == nil
+		}
 	}
-	if maybeDescendant == nil {
-		return false
-	}
-	if maybeDescendant.Container != nil {
-		return maybeDescendant.Container.isDescendantOf(maybeAncestor)
-	}
-	if maybeDescendant.Cluster != nil {
-		return maybeDescendant.Cluster.Vessel.isDescendantOf(maybeAncestor)
-	}
-	if maybeDescendant.Sequence != nil {
-		return maybeDescendant.Sequence.Vessel.isDescendantOf(maybeAncestor)
-	}
-	// Covers the case of nil ancestor
-	return maybeAncestor == nil
 }
 
 // routes is provided when graph is still undergoing edge routing and the edges don't have points locked in yet.

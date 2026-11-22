@@ -25,7 +25,39 @@ type gridLines []gridLine
 
 type ovgCrossingIndex struct {
 	horizontal, vertical gridLines
-	crossed              map[*OVGEdge]struct{}
+	// The crossed grid edges: by position in edges (the OVG's Edges when the
+	// index was made) for edges at that position, else in crossedOther.
+	edges        []*OVGEdge
+	crossedSlots []bool
+	crossedOther map[*OVGEdge]struct{}
+}
+
+func newCrossingIndexState(ovg *OVG, horizontal, vertical gridLines) *ovgCrossingIndex {
+	return &ovgCrossingIndex{
+		horizontal:   horizontal,
+		vertical:     vertical,
+		edges:        ovg.Edges,
+		crossedSlots: make([]bool, len(ovg.Edges)),
+	}
+}
+
+func (index *ovgCrossingIndex) markCrossed(edge *OVGEdge) {
+	if slot := ovgEdgeSlot(index.edges, edge); slot >= 0 {
+		index.crossedSlots[slot] = true
+		return
+	}
+	if index.crossedOther == nil {
+		index.crossedOther = make(map[*OVGEdge]struct{})
+	}
+	index.crossedOther[edge] = struct{}{}
+}
+
+func (index *ovgCrossingIndex) isCrossed(edge *OVGEdge) bool {
+	if slot := ovgEdgeSlot(index.edges, edge); slot >= 0 {
+		return index.crossedSlots[slot]
+	}
+	_, ok := index.crossedOther[edge]
+	return ok
 }
 
 func indexGridLines(lines map[float64][]*OVGEdge, vertical bool, guard *routeSearchWorkGuard) (gridLines, error) {
@@ -63,6 +95,66 @@ func indexGridLines(lines map[float64][]*OVGEdge, vertical bool, guard *routeSea
 	return index, guard.check()
 }
 
+// ovgRouterShared carries what the flavor routers of one OVG can share. The
+// routers are built one after another from the same, unchanged OVG, so the
+// grid lines of their crossing indexes are identical; they are read-only once
+// built and can be read by the concurrent flavors.
+type ovgRouterShared struct {
+	ovg        *OVG
+	edgeCount  int
+	horizontal gridLines
+	vertical   gridLines
+	// units is what indexGridLines charges for building both line sets.
+	units uint64
+	// classes numbers the OVG's node points (see route_search_index.go).
+	classes *ovgPointClasses
+}
+
+// routeSortUnits is the work routeSearchWorkGuard.reserveSort charges.
+func routeSortUnits(length int) uint64 {
+	if length < 2 {
+		return 1
+	}
+	return uint64(length) * uint64(bits.Len(uint(length-1)))
+}
+
+// gridLinesUnits is the work indexGridLines charged for building lines.
+func gridLinesUnits(lines gridLines) uint64 {
+	units := routeSortUnits(len(lines))
+	for _, line := range lines {
+		units += routeSortUnits(len(line.intervals)) + 2*uint64(len(line.intervals))
+	}
+	return units
+}
+
+// newSharedOVGCrossingIndex is newOVGCrossingIndex for one of several routers
+// of the same OVG. The first builds the grid lines as before; the others reuse
+// them and are charged the same work in one addition, which fails exactly when
+// the building steps would.
+func newSharedOVGCrossingIndex(ovg *OVG, shared *ovgRouterShared, guard *routeSearchWorkGuard) (*ovgCrossingIndex, error) {
+	if shared == nil {
+		return newOVGCrossingIndex(ovg, guard)
+	}
+	if shared.ovg != ovg || shared.edgeCount != len(ovg.Edges) {
+		index, err := newOVGCrossingIndex(ovg, guard)
+		if err != nil {
+			return nil, err
+		}
+		*shared = ovgRouterShared{
+			ovg:        ovg,
+			edgeCount:  len(ovg.Edges),
+			horizontal: index.horizontal,
+			vertical:   index.vertical,
+			units:      gridLinesUnits(index.horizontal) + gridLinesUnits(index.vertical),
+		}
+		return index, nil
+	}
+	if err := guard.add(shared.units); err != nil {
+		return nil, err
+	}
+	return newCrossingIndexState(ovg, shared.horizontal, shared.vertical), guard.check()
+}
+
 func newOVGCrossingIndex(ovg *OVG, guard *routeSearchWorkGuard) (*ovgCrossingIndex, error) {
 	h, err := indexGridLines(ovg.HorizontalEdges, false, guard)
 	if err != nil {
@@ -72,7 +164,7 @@ func newOVGCrossingIndex(ovg *OVG, guard *routeSearchWorkGuard) (*ovgCrossingInd
 	if err != nil {
 		return nil, err
 	}
-	return &ovgCrossingIndex{horizontal: h, vertical: v, crossed: make(map[*OVGEdge]struct{})}, nil
+	return newCrossingIndexState(ovg, h, v), nil
 }
 
 // visit reports all grid edges in the closed coordinate and interval ranges.
@@ -120,7 +212,7 @@ func (index *ovgCrossingIndex) add(segment *OVGEdge, guard *routeSearchWorkGuard
 	start, end := min(a, b), max(a, b)
 	err := parallel.visit(axis, axis, start, end, guard, func(_ float64, i gridInterval) {
 		if start < i.end && i.start < end && !i.edge.sharePoints(*segment) {
-			index.crossed[i.edge] = struct{}{}
+			index.markCrossed(i.edge)
 		}
 	})
 	if err != nil {
@@ -128,7 +220,7 @@ func (index *ovgCrossingIndex) add(segment *OVGEdge, guard *routeSearchWorkGuard
 	}
 	return perpendicular.visit(start, end, axis, axis, guard, func(_ float64, i gridInterval) {
 		if !i.edge.sharePoints(*segment) {
-			index.crossed[i.edge] = struct{}{}
+			index.markCrossed(i.edge)
 		}
 	})
 }

@@ -10,43 +10,35 @@ type shapeCallout struct {
 	shape.Shape
 }
 
-func (s shapeCallout) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeCallout) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:      {},
-			label.InsideTopCenter:    {},
-			label.InsideTopRight:     {},
-			label.InsideMiddleLeft:   {},
-			label.InsideMiddleCenter: {},
-			label.InsideMiddleRight:  {},
-			label.InsideBottomLeft:   {},
-			label.InsideBottomCenter: {},
-			label.InsideBottomRight:  {},
-		}
+		return 1<<label.InsideTopLeft |
+			1<<label.InsideTopCenter |
+			1<<label.InsideTopRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleCenter |
+			1<<label.InsideMiddleRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomCenter |
+			1<<label.InsideBottomRight
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:      {},
-			label.OutsideTopCenter:    {},
-			label.OutsideTopRight:     {},
-			label.OutsideBottomCenter: {},
-		}
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideTopCenter |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideBottomCenter
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideLeftTop:     {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightTop:    {},
-			label.OutsideRightMiddle: {},
-		}
+		return 1<<label.OutsideLeftTop |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideRightMiddle
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-		}
+		return 1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightBottom |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight
 	}
-	return map[label.Position]struct{}{}
+	return 0
 }
 
 func (s shapeCallout) SnapPointPercentages() [][]*geo.RelativePoint {

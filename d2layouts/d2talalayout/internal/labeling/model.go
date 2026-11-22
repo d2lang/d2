@@ -105,7 +105,7 @@ func compareLabelPositions(node *layoutgraph.Node, first, second label.Position)
 	score := func(position label.Position) int {
 		score := -1
 		for index, tier := range []nodeshape.LabelTier{nodeshape.Good, nodeshape.OK, nodeshape.Unideal, nodeshape.Bad} {
-			if _, found := node.Shape.LabelPositionPreferences(tier)[position]; found {
+			if node.Shape.LabelPositionPreferences(tier).Has(position) {
 				score = index + 1
 			}
 		}
@@ -139,7 +139,7 @@ func labelPositionPreferenceTranches(node *layoutgraph.Node) [][]label.Position 
 		allowed := node.Shape.LabelPositionPreferences(tier)
 		var tranche []label.Position
 		for _, position := range baseOrder {
-			if _, found := allowed[position]; found {
+			if allowed.Has(position) {
 				tranche = append(tranche, position)
 			}
 		}

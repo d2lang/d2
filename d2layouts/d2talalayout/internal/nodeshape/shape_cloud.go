@@ -10,70 +10,39 @@ type shapeCloud struct {
 	shape.Shape
 }
 
-func (s shapeCloud) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeCloud) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideMiddleCenter:  {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomCenter: {},
-			label.InsideTopCenter:     {},
-		}
+		return 1<<label.InsideMiddleCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.OutsideBottomCenter |
+			1<<label.InsideTopCenter
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:   {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-			label.InsideTopLeft:      {},
-			label.InsideTopRight:     {},
-			label.InsideBottomLeft:   {},
-			label.InsideBottomRight:  {},
-			label.InsideMiddleLeft:   {},
-			label.InsideMiddleRight:  {},
-		}
+		return 1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight |
+			1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightMiddle: {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return 1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightBottom
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:  {},
-			label.OutsideTopRight: {},
-			label.OutsideLeftTop:  {},
-			label.OutsideRightTop: {},
-		}
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideRightTop
 	}
-	return map[label.Position]struct{}{}
+	return 0
 }
 
 func (s shapeCloud) SnapPointPercentages() [][]*geo.RelativePoint {
-	return [][]*geo.RelativePoint{
-		// Top
-		{
-			geo.NewRelativePoint(0.16, 0.368),
-			geo.NewRelativePoint(0.378, 0.155),
-			geo.NewRelativePoint(0.815, 0.328),
-		},
-		// Left
-		{
-			geo.NewRelativePoint(0, 0.7),
-			geo.NewRelativePoint(0.066, 0.935),
-		},
-		// Bottom
-		{
-			geo.NewRelativePoint(0.25, 1),
-			geo.NewRelativePoint(0.5, 1),
-			geo.NewRelativePoint(0.75, 1),
-		},
-		// Right
-		{
-			geo.NewRelativePoint(1, 0.7),
-			geo.NewRelativePoint(0.95, 0.89),
-		},
-	}
+	return cloudSnapPoints
 }
 
 func (s shapeCloud) PortIndices(orientation geo.Orientation) []int {
@@ -128,4 +97,30 @@ func (s shapeCloud) CenterPortIndex(o geo.Orientation) int {
 	}
 
 	return centerPorts[centerPortsIndex]
+}
+
+// cloudSnapPoints is shared by every call: callers only read it.
+var cloudSnapPoints = [][]*geo.RelativePoint{
+	// Top
+	{
+		geo.NewRelativePoint(0.16, 0.368),
+		geo.NewRelativePoint(0.378, 0.155),
+		geo.NewRelativePoint(0.815, 0.328),
+	},
+	// Left
+	{
+		geo.NewRelativePoint(0, 0.7),
+		geo.NewRelativePoint(0.066, 0.935),
+	},
+	// Bottom
+	{
+		geo.NewRelativePoint(0.25, 1),
+		geo.NewRelativePoint(0.5, 1),
+		geo.NewRelativePoint(0.75, 1),
+	},
+	// Right
+	{
+		geo.NewRelativePoint(1, 0.7),
+		geo.NewRelativePoint(0.95, 0.89),
+	},
 }

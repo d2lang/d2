@@ -45,8 +45,26 @@ func (bounds obstructionBounds) excludes(node *layoutgraph.Node) bool {
 	right, bottom := x+node.Width, y+node.Height
 	// Paired comparisons also handle negative dimensions, and never reject a
 	// dimension containing NaN. Infinite obstacle bounds use the original path.
-	if math.IsInf(x, 0) || math.IsInf(y, 0) || math.IsInf(right, 0) || math.IsInf(bottom, 0) ||
-		math.IsNaN(x) || math.IsNaN(y) || math.IsNaN(right) || math.IsNaN(bottom) {
+	// v-v is 0 exactly when v is finite (Inf-Inf and NaN-NaN are NaN), so the
+	// sum below is 0 exactly when all four values are finite and not NaN.
+	if (x-x)+(y-y)+(right-right)+(bottom-bottom) != 0 {
+		return false
+	}
+	return (x < bounds.left && right < bounds.left) ||
+		(x > bounds.right && right > bounds.right) ||
+		(y < bounds.top && bottom < bounds.top) ||
+		(y > bounds.bottom && bottom > bounds.bottom)
+}
+
+// excludesGeometry is excludes for a node whose TopLeft was (x, y) (present
+// when hasTopLeft) and whose size was width x height: the same operations on
+// the same values, for geometry an EdgeLengthSession recorded earlier.
+func (bounds obstructionBounds) excludesGeometry(hasTopLeft bool, x, y, width, height float64) bool {
+	if !bounds.usable || !hasTopLeft {
+		return false
+	}
+	right, bottom := x+width, y+height
+	if (x-x)+(y-y)+(right-right)+(bottom-bottom) != 0 {
 		return false
 	}
 	return (x < bounds.left && right < bounds.left) ||

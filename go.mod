@@ -8,8 +8,8 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/andybalholm/brotli v1.3.0
 	github.com/coder/websocket v1.8.15
-	github.com/d2lang/dagro v0.2.2-0.20261119124940-425238d7043d
-	github.com/d2lang/elk-go v0.2.1-0.20261119175052-8b285820520e
+	github.com/d2lang/dagro v0.3.1
+	github.com/d2lang/elk-go v0.3.1
 	github.com/d2lang/mathjax-go v0.1.1-0.20261002175158-94d80186bfd7
 	github.com/d2lang/rough-go v0.2.0
 	github.com/d2lang/util-go v0.2.0

@@ -84,6 +84,12 @@ func (node *Node) SpillsOutOf(container *Node) bool { return node.spillsOutOf(co
 func (node *Node) DeltaTo(other *Node, at *geo.Point) int {
 	return node.deltaTo(other, at)
 }
+
+// DeltaToCounted returns DeltaTo's spacing, the per-edge work units a guarded
+// spacing check charges for it, and the invariant error DeltaTo panics with.
+func (node *Node) DeltaToCounted(other *Node, at *geo.Point) (int, int64, error) {
+	return node.deltaToCounted(other, at)
+}
 func (node *Node) IsMajorityTarget() bool                   { return node.isMajorityTarget() }
 func (node *Node) FitToGraph(graph *Graph, padding Spacing) { node.fitNodeToGraph(graph, padding) }
 
@@ -101,7 +107,7 @@ func (sequence *Sequence) AbductedNodeByEdge(edge *Edge) *Node {
 func (tree *Tree) SentinelNode() *Node { return tree.sentinelNode() }
 
 func (transaction *Transaction) OriginalDimensions(node *Node) (width, height float64) {
-	geometry := transaction.PriorGraphState.nodeGeometry[node]
+	geometry, _ := transaction.PriorGraphState.slots.lookup(node)
 	return geometry.width, geometry.height
 }
 

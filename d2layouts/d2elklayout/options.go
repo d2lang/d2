@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2graph"
-	"github.com/d2lang/util-go/go2"
 )
 
 // LayeredOptions are applied to parent graphs. Nil spacing values keep the
@@ -44,12 +43,16 @@ func (opts *ConfigurableOpts) usesAlgorithm(name string) bool {
 	return opts.Algorithm == name || strings.HasSuffix(opts.Algorithm, "."+name)
 }
 
-func (opts *ConfigurableOpts) parentOptions(root bool) LayeredOptions {
+// parentOptionsInto returns the layered options of the root (root set) or of
+// a container, storing the default edge-node spacing, when it sets one, in
+// edgeNode.
+func (opts *ConfigurableOpts) parentOptionsInto(root bool, edgeNode *float64) LayeredOptions {
 	o := opts.LayeredOptions
 	// The 40px clearance belongs to D2's layered profile. Mr. Tree spaces
 	// levels 20px apart and needs its own default for routing between them.
 	if o.EdgeNode == nil && (!root || opts.usesAlgorithm("layered")) {
-		o.EdgeNode = go2.Pointer(float64(edge_node_spacing))
+		*edgeNode = float64(edge_node_spacing)
+		o.EdgeNode = edgeNode
 	}
 	// D2 disables model-order processing below the root for compound graphs.
 	o.ForceNodeModelOrder = root && o.ForceNodeModelOrder
@@ -230,4 +233,154 @@ func graphOptions(g *d2graph.Graph, defaults *ConfigurableOpts) (*ConfigurableOp
 		}
 	}
 	return &opts, nil
+}
+
+// graphOptionsMemo remembers graphOptions' result for the last defaults it
+// was given with a graph without diagram options. graphOptions copies the
+// defaults, validates the values their float pointers point to and
+// normalizes string fields, keeping the defaults' pointers: its result is a
+// function of the defaults' fields, of whether each pointer is set and of
+// the values they point to, except for the pointers themselves, which are
+// the defaults'. So for defaults equal in those, the result is the memo's
+// with the defaults' pointers.
+//
+// The memo outlives Layout calls in the scratch (a slot that garbage
+// collection never empties), so it keeps no pointer and no string of the
+// caller's: input and result hold copies of the strings (see owned), and
+// their pointer fields are markers (see markPointers), except that result's
+// are the caller's during the call that took it (release marks them again).
+type graphOptionsMemo struct {
+	valid    bool
+	input    ConfigurableOpts
+	pointees [6]uint64
+	result   ConfigurableOpts
+	// generation numbers the results stored in result (from 1): equal
+	// generations of one memo mean equal results.
+	generation uint64
+}
+
+// hasDiagramOptions reports whether g.Data holds any diagram option.
+func hasDiagramOptions(g *d2graph.Graph) bool {
+	if len(g.Data) == 0 {
+		return false
+	}
+	for _, name := range diagramOptions {
+		if _, ok := g.Data[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func optionPointees(opts *ConfigurableOpts) (bits [6]uint64) {
+	for i, value := range [...]*float64{opts.NodeNode, opts.EdgeNode, opts.EdgeEdge, opts.ForceRepulsion,
+		opts.StressDesiredEdgeLength, opts.RadialRadius} {
+		if value != nil {
+			bits[i] = math.Float64bits(*value)
+		}
+	}
+	return bits
+}
+
+// of is graphOptions(g, defaults); the result is only read.
+func (memo *graphOptionsMemo) of(g *d2graph.Graph, defaults *ConfigurableOpts) (*ConfigurableOpts, error) {
+	if defaults == nil {
+		defaults = &DefaultOpts
+	}
+	plain := !hasDiagramOptions(g)
+	if plain && memo.valid {
+		input := *defaults
+		input.markPointers()
+		if input == memo.input && optionPointees(defaults) == memo.pointees {
+			memo.result.setPointers(defaults)
+			return &memo.result, nil
+		}
+	}
+	opts, err := graphOptions(g, defaults)
+	if err == nil && plain && optionTextBytes(defaults) <= maxOwnedOptionText && optionTextBytes(opts) <= maxOwnedOptionText {
+		memo.valid, memo.input, memo.pointees, memo.result = true, owned(*defaults), optionPointees(defaults), owned(*opts)
+		memo.generation++
+	}
+	return opts, err
+}
+
+// release drops the caller's pointers from the memo's result.
+func (memo *graphOptionsMemo) release() {
+	memo.result.markPointers()
+}
+
+// maxOwnedOptionText bounds the text of the option structs the scratch's
+// caches copy and keep (longer ones are not remembered).
+const maxOwnedOptionText = 1 << 10
+
+// presentFloat and presentInt are what the pointer fields of option structs
+// that caches keep point to when set (see markPointers).
+var (
+	presentFloat float64
+	presentInt   int
+)
+
+// markPointers replaces every pointer field that is set by a pointer to
+// presentFloat or presentInt: what is left of a pointer is whether it is
+// set (its value is recorded separately).
+func (c *ConfigurableOpts) markPointers() {
+	for _, field := range [...]**float64{&c.NodeNode, &c.EdgeNode, &c.EdgeEdge, &c.ForceRepulsion,
+		&c.StressDesiredEdgeLength, &c.RadialRadius} {
+		if *field != nil {
+			*field = &presentFloat
+		}
+	}
+	if c.EdgeEdgeSpacing != nil {
+		c.EdgeEdgeSpacing = &presentInt
+	}
+}
+
+// setPointers sets c's pointer fields to those of other.
+func (c *ConfigurableOpts) setPointers(other *ConfigurableOpts) {
+	c.NodeNode, c.EdgeNode, c.EdgeEdge = other.NodeNode, other.EdgeNode, other.EdgeEdge
+	c.ForceRepulsion, c.StressDesiredEdgeLength, c.RadialRadius = other.ForceRepulsion, other.StressDesiredEdgeLength, other.RadialRadius
+	c.EdgeEdgeSpacing = other.EdgeEdgeSpacing
+}
+
+// stringFields returns pointers to every string field of c.
+func (c *ConfigurableOpts) stringFields() [9]*string {
+	return [...]*string{&c.EdgeRouting, &c.WrappingStrategy, &c.ForceModel, &c.MrTreeSearchOrder,
+		&c.MrTreeWeighting, &c.RadialWedgeCriteria, &c.RadialCompactor, &c.Algorithm, &c.Padding}
+}
+
+// optionTextBytes is the length of c's strings together.
+func optionTextBytes(c *ConfigurableOpts) int {
+	total := 0
+	for _, field := range c.stringFields() {
+		total += len(*field)
+	}
+	return total
+}
+
+// owned is c with marked pointers and strings of its own (see ownString).
+func owned(c ConfigurableOpts) ConfigurableOpts {
+	c.markPointers()
+	for _, field := range c.stringFields() {
+		ownString(field)
+	}
+	return c
+}
+
+// ownString replaces *s by a string that refers to nothing of the caller's:
+// the constant of the same text for the texts D2 sends most, else a copy.
+func ownString(s *string) {
+	if known, ok := knownString(*s); ok {
+		*s = known
+	} else {
+		*s = strings.Clone(*s)
+	}
+}
+
+// resultGeneration is the generation of opts when it is the memo's result
+// (as of returns on a hit), else 0.
+func (memo *graphOptionsMemo) resultGeneration(opts *ConfigurableOpts) uint64 {
+	if opts == &memo.result {
+		return memo.generation
+	}
+	return 0
 }

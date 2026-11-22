@@ -5,6 +5,7 @@ import (
 	"context"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -984,6 +985,23 @@ func placeTreesWithWorkLimit(ctx context.Context, g *layoutgraph.Graph, containe
 	}
 	guard.SetLimit(workLimit)
 
+	// Without a tree root among g.Nodes, placeTrees only charges its two node
+	// scans and changes nothing, so a rollback could only restore identical
+	// values: the snapshot is charged exactly but not taken.
+	if !hasTreeRootSentinel(g) {
+		tracked, err := layoutgraph.ChargeTopologySnapshot(g, guard, container)
+		if err != nil {
+			return err
+		}
+		if container != nil && !tracked {
+			return treePreprocessBadState("cannot place trees into an unknown container")
+		}
+		if err := placeTrees(ctx, g, container, guard); err != nil {
+			return err
+		}
+		return guard.Finish()
+	}
+
 	state := layoutgraph.NewGraphStateSnapshot(layoutgraph.GraphStateSnapshotOptions{
 		CaptureTopology:   true,
 		CaptureEdgeRoutes: true,
@@ -1014,8 +1032,53 @@ func placeTreesWithWorkLimit(ctx context.Context, g *layoutgraph.Graph, containe
 	return nil
 }
 
+// hasTreeRootSentinel reports whether any g.Nodes entry keys g.Trees, the
+// only case in which placeTrees builds placement trees or detaches roots.
+func hasTreeRootSentinel(g *layoutgraph.Graph) bool {
+	if len(g.Trees) == 0 {
+		return false
+	}
+	for _, node := range g.Nodes {
+		if _, has := g.Trees[node]; has {
+			return true
+		}
+	}
+	return false
+}
+
 func Place(ctx context.Context, g *layoutgraph.Graph, container *layoutgraph.Node) error {
 	return placeTreesWithWorkLimit(ctx, g, container, limits.MaxPlaceTreesWorkUnits)
+}
+
+// sortedTreeDirections returns the directions of an isolated tree's roots in
+// a fixed order (Outwards, Inwards, Bidirectional, then any other by name).
+// buildPlacementTrees creates the placement trees in this order, and the
+// order decides which tree undirected roots merge with on ties and how the
+// trees are laid out: in map order the layout varied from run to run (in the
+// original too).
+func sortedTreeDirections(byDirection map[TreeEdgeDirection][]*layoutgraph.Tree) []TreeEdgeDirection {
+	rank := func(direction TreeEdgeDirection) int {
+		switch direction {
+		case Outwards:
+			return 0
+		case Inwards:
+			return 1
+		case Bidirectional:
+			return 2
+		}
+		return 3
+	}
+	directions := make([]TreeEdgeDirection, 0, len(byDirection))
+	for direction := range byDirection {
+		directions = append(directions, direction)
+	}
+	slices.SortFunc(directions, func(a, b TreeEdgeDirection) int {
+		if c := cmp.Compare(rank(a), rank(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(string(a), string(b))
+	})
+	return directions
 }
 
 func buildPlacementTrees(g *layoutgraph.Graph, guard *limits.WorkGuard) ([]*layoutgraph.Tree, error) {
@@ -1043,7 +1106,8 @@ func buildPlacementTrees(g *layoutgraph.Graph, guard *limits.WorkGuard) ([]*layo
 			}
 			undirected := byDirection[Undirected]
 			delete(byDirection, Undirected)
-			for _, matchingRoots := range byDirection {
+			for _, direction := range sortedTreeDirections(byDirection) {
+				matchingRoots := byDirection[direction]
 				arrowheadSentinels := make(map[layoutgraph.Arrowhead]*layoutgraph.Tree)
 
 				for _, root := range matchingRoots {

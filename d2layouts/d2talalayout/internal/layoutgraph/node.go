@@ -564,6 +564,41 @@ func (nodes Nodes) boundingBox(roundDimensions bool) (*geo.Point, *geo.Point) {
 	return geo.NewPoint(minX, minY), geo.NewPoint(maxX, maxY)
 }
 
+// fixedBoundsValues is fixedBounds without allocating its points; ok is
+// false when fixedBounds would return nil bounds (a node without a position).
+// The bounds are the same float operations in the same order. fixedOrigin
+// only answers from a node with FixedTopLeft, so without one it is nil and its
+// pure container scan is skipped.
+func (nodes Nodes) fixedBoundsValues() (tl, br geo.Point, ok bool) {
+	if len(nodes) == 0 {
+		return geo.Point{X: math.Inf(-1), Y: math.Inf(-1)}, geo.Point{X: math.Inf(1), Y: math.Inf(1)}, true
+	}
+	minX := math.Inf(1)
+	minY := math.Inf(1)
+	maxX := math.Inf(-1)
+	maxY := math.Inf(-1)
+	hasFixed := false
+	for _, node := range nodes {
+		if node.TopLeft == nil {
+			return geo.Point{}, geo.Point{}, false
+		}
+		nodeTL, nodeBR := node.boundingBoxValues(nodes, true)
+		minX = math.Min(minX, nodeTL.X)
+		minY = math.Min(minY, nodeTL.Y)
+		maxX = math.Max(maxX, nodeBR.X)
+		maxY = math.Max(maxY, nodeBR.Y)
+		hasFixed = hasFixed || node.FixedTopLeft != nil
+	}
+	tl = geo.Point{X: minX, Y: minY}
+	br = geo.Point{X: maxX, Y: maxY}
+	if hasFixed {
+		if fixedOrigin := nodes.fixedOrigin(); fixedOrigin != nil {
+			tl = *fixedOrigin
+		}
+	}
+	return tl, br, true
+}
+
 // for nodes in the same container, return the bounding box accounting for any fixed node offset
 func (nodes Nodes) fixedBounds() (*geo.Point, *geo.Point) {
 	tl, br := nodes.bounds()
@@ -674,6 +709,23 @@ type Node struct {
 	// LongDistanceNeighborRequirements records optimizer-derived parallel-edge
 	// spacing by adjacent node.
 	LongDistanceNeighborRequirements map[*Node]LongDistanceNeighborRequirements
+
+	// snapSlot is the node's slot in the most recent transaction snapshot
+	// that recorded it. It is a lookup hint only (see snapshotSlots) and never
+	// affects layout.
+	snapSlot int32
+	// overlapSlot is the node's number in the most recent existing-overlap
+	// set that recorded it; a lookup hint like snapSlot.
+	overlapSlot int32
+	// imageSlot is the node's slot in the most recent GeometryImage that
+	// recorded it; a lookup hint like snapSlot.
+	imageSlot int32
+	// memoSlot is the node's entry in the most recent container memo that
+	// recorded it; a lookup hint like snapSlot.
+	memoSlot int32
+	// preflightSlot is the node's slot in the inventory of the most recent
+	// validateEngineGraph that recorded it; a lookup hint like snapSlot.
+	preflightSlot int32
 }
 
 func (n *Node) DebugID() string {
@@ -786,21 +838,35 @@ func (n1 *Node) deltaTo(n2 *Node, atPoint *geo.Point) int {
 }
 
 func (n1 *Node) deltaToGuarded(n2 *Node, atPoint *geo.Point, guard workStepper) (int, error) {
+	delta, units, err := n1.deltaToCounted(n2, atPoint)
+	if guard != nil {
+		// The spacing computation has no side effects, so charging its per-edge
+		// units afterwards fails exactly where the interleaved Steps did.
+		for range units {
+			if stepErr := guard.Step(); stepErr != nil {
+				return 0, stepErr
+			}
+		}
+	}
+	return delta, err
+}
+
+// deltaToCounted computes deltaToGuarded's spacing and reports the number of
+// per-edge work units deltaToGuarded charges for it (one before each inspected
+// edge, including an invalid edge that ends the scan).
+func (n1 *Node) deltaToCounted(n2 *Node, atPoint *geo.Point) (int, int64, error) {
 	if n1 == nil || n2 == nil || atPoint == nil {
-		return 0, invariant.New("spacing check received incomplete nodes")
+		return 0, 0, invariant.New("spacing check received incomplete nodes")
 	}
 	// n1 may have multiple edges to n2. We want to get the largest distance that we need to maintain
 	maxEdgeWidth := math.MinInt
 	maxEdgeHeight := math.MinInt
 	isConnected := false
+	var units int64
 	for _, e := range n1.Edges {
-		if guard != nil {
-			if err := guard.Step(); err != nil {
-				return 0, err
-			}
-		}
+		units++
 		if e == nil || e.From == nil || e.To == nil {
-			return 0, invariant.New("spacing check encountered an incomplete edge")
+			return 0, units, invariant.New("spacing check encountered an incomplete edge")
 		}
 		// TODO (Sun Apr 10 16:07:25 2022) this doesn't take edge abductions into consideration, so it may not find a minWidth to a child
 		if n1.adjacent(e) == n2 {
@@ -839,7 +905,7 @@ func (n1 *Node) deltaToGuarded(n2 *Node, atPoint *geo.Point, guard workStepper) 
 	// affect the result; retain the edge scan above for its validation and work.
 	if horizontalDelta == verticalDelta && len(n1.LoopOffsets) == 0 && len(n2.LoopOffsets) == 0 &&
 		n1.margin == (Spacing{}) && n2.margin == (Spacing{}) {
-		return horizontalDelta, nil
+		return horizontalDelta, units, nil
 	}
 	o := n1.orientationAtPoint(n2, atPoint)
 
@@ -913,14 +979,14 @@ func (n1 *Node) deltaToGuarded(n2 *Node, atPoint *geo.Point, guard workStepper) 
 
 	switch o {
 	case geo.Top, geo.Bottom:
-		return verticalDelta, nil
+		return verticalDelta, units, nil
 	case geo.Left, geo.Right:
-		return horizontalDelta, nil
+		return horizontalDelta, units, nil
 	default:
 		if horizontalDelta < verticalDelta {
-			return horizontalDelta, nil
+			return horizontalDelta, units, nil
 		}
-		return verticalDelta, nil
+		return verticalDelta, units, nil
 	}
 }
 
@@ -2138,9 +2204,11 @@ func (n *Node) moveNodeWithChildren(dx, dy float64) {
 		return
 	}
 	n.translate(dx, dy)
-	for _, child := range n.Graph.allDescendantNodes(n, true) {
+	// The walk completes before the first descendant moves, as when the list
+	// was copied out first; moving changes no ownership the walk reads.
+	n.Graph.forEachDescendant(n, true, func(child *Node) {
 		child.translate(dx, dy)
-	}
+	})
 }
 
 func (n *Node) translate(dx, dy float64) {
@@ -2199,7 +2267,18 @@ func (n *Node) wrapChildren() {
 	}
 	children = n.Graph.Containers[n]
 	padding := n.Graph.containerPadding(n, false)
-	tl, br := children.fixedBounds()
+	tlValue, brValue, ok := children.fixedBoundsValues()
+	if !ok {
+		// A child without a position: the legacy pointer path, whose nil
+		// bounds fail exactly as before.
+		tl, br := children.fixedBounds()
+		n.expandForLabels(tl, br)
+		n.fitToBoundingBox(tl, br, padding)
+		innerTL := n.InsidePlacement(br.X-tl.X, br.Y-tl.Y, padding)
+		n.translate(tl.X-innerTL.X, tl.Y-innerTL.Y)
+		return
+	}
+	tl, br := &tlValue, &brValue
 	n.expandForLabels(tl, br)
 	n.fitToBoundingBox(tl, br, padding)
 	innerTL := n.InsidePlacement(br.X-tl.X, br.Y-tl.Y, padding)

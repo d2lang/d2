@@ -174,13 +174,22 @@ func appendOptimizerTreeNears(nears []*layoutgraph.Node, tree *layoutgraph.Tree,
 }
 
 func optimizerAdjacents(node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction, guard *limits.OptimizationWorkGuard) ([]*layoutgraph.Node, error) {
+	return optimizerAdjacentsInto(node, edgeAbductions, guard, nil)
+}
+
+// optimizerAdjacentsInto is optimizerAdjacents appending to buffer[:0] (a
+// fresh slice when buffer is nil).
+func optimizerAdjacentsInto(node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction, guard *limits.OptimizationWorkGuard, buffer []*layoutgraph.Node) ([]*layoutgraph.Node, error) {
 	if node == nil || node.Graph == nil {
 		return nil, fmt.Errorf("TALA %s adjacency lookup requires a node with a graph", guard.Location())
 	}
 	if len(node.Edges) > limits.MaxEngineEdges || len(edgeAbductions) > limits.MaxEngineEdges {
 		return nil, fmt.Errorf("TALA %s adjacency inputs exceed edge limit %d", guard.Location(), limits.MaxEngineEdges)
 	}
-	adjacents := make([]*layoutgraph.Node, 0, len(node.Edges))
+	adjacents := buffer[:0]
+	if buffer == nil {
+		adjacents = make([]*layoutgraph.Node, 0, len(node.Edges))
+	}
 	usedEdgeAbductionsScratch := borrowEdgeAbductionBools(len(edgeAbductions))
 	defer returnEdgeAbductionBools(usedEdgeAbductionsScratch)
 	usedEdgeAbductions := usedEdgeAbductionsScratch.values
@@ -359,6 +368,36 @@ func optimizerMedian(nodes layoutgraph.Nodes, includeSizes bool, guard *limits.O
 		}
 		return node.TopLeft.X + 0.5, node.TopLeft.Y + 0.5, nil
 	}
+	if len(nodes) <= optimizerMedianStackNodes {
+		// Small neighbor sets sort on the stack. sort.Slice is not stable, but
+		// its comparator is a strict total order here (no NaN keys, and equal
+		// keys with equal IDs only for the same node), so every correct sort
+		// produces the same sequence; otherwise the reference code below runs.
+		var bufferX, bufferY [optimizerMedianStackNodes]*layoutgraph.Node
+		orderedByX, orderedByY := bufferX[:len(nodes)], bufferY[:len(nodes)]
+		for i, node := range nodes {
+			if err := guard.Step(); err != nil {
+				return 0, 0, err
+			}
+			if node == nil || node.TopLeft == nil {
+				return 0, 0, fmt.Errorf("TALA %s cannot compute a median with an unpositioned neighbor", guard.Location())
+			}
+			orderedByX[i] = node
+			orderedByY[i] = node
+		}
+		if optimizerMedianOrderUnique(orderedByX, includeSizes) {
+			if err := guard.AddSort(len(nodes)); err != nil {
+				return 0, 0, err
+			}
+			optimizerInsertionSort(orderedByX, func(a, b *layoutgraph.Node) bool { return optimizerMedianLessX(a, b, includeSizes) })
+			if err := guard.AddSort(len(nodes)); err != nil {
+				return 0, 0, err
+			}
+			optimizerInsertionSort(orderedByY, func(a, b *layoutgraph.Node) bool { return optimizerMedianLessY(a, b, includeSizes) })
+			return optimizerMedianOfSorted(orderedByX, orderedByY, includeSizes, nodes[0], guard)
+		}
+		return optimizerMedianSorted(slices.Clone(orderedByX), slices.Clone(orderedByY), includeSizes, nodes[0], guard)
+	}
 	orderedByX := make([]*layoutgraph.Node, len(nodes))
 	orderedByY := make([]*layoutgraph.Node, len(nodes))
 	for i, node := range nodes {
@@ -371,7 +410,76 @@ func optimizerMedian(nodes layoutgraph.Nodes, includeSizes bool, guard *limits.O
 		orderedByX[i] = node
 		orderedByY[i] = node
 	}
-	if err := guard.AddSort(len(nodes)); err != nil {
+	return optimizerMedianSorted(orderedByX, orderedByY, includeSizes, nodes[0], guard)
+}
+
+const optimizerMedianStackNodes = 8
+
+func optimizerMedianLessX(a, b *layoutgraph.Node, includeSizes bool) bool {
+	aX, bX := a.TopLeft.X, b.TopLeft.X
+	if includeSizes {
+		aX += a.Width / 2
+		bX += b.Width / 2
+	}
+	if aX == bX {
+		return a.ID < b.ID
+	}
+	return aX < bX
+}
+
+func optimizerMedianLessY(a, b *layoutgraph.Node, includeSizes bool) bool {
+	aY, bY := a.TopLeft.Y, b.TopLeft.Y
+	if includeSizes {
+		aY += a.Height / 2
+		bY += b.Height / 2
+	}
+	if aY == bY {
+		return a.ID < b.ID
+	}
+	return aY < bY
+}
+
+// optimizerMedianOrderUnique reports whether both median comparators order
+// nodes totally: no key is NaN and two different nodes never have equal keys
+// and equal IDs.
+func optimizerMedianOrderUnique(nodes []*layoutgraph.Node, includeSizes bool) bool {
+	for i, a := range nodes {
+		aX, aY := a.TopLeft.X, a.TopLeft.Y
+		if includeSizes {
+			aX += a.Width / 2
+			aY += a.Height / 2
+		}
+		if aX != aX || aY != aY {
+			return false
+		}
+		for _, b := range nodes[:i] {
+			if a == b || a.ID != b.ID {
+				continue
+			}
+			bX, bY := b.TopLeft.X, b.TopLeft.Y
+			if includeSizes {
+				bX += b.Width / 2
+				bY += b.Height / 2
+			}
+			if aX == bX || aY == bY {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func optimizerInsertionSort(nodes []*layoutgraph.Node, less func(a, b *layoutgraph.Node) bool) {
+	for i := 1; i < len(nodes); i++ {
+		for j := i; j > 0 && less(nodes[j], nodes[j-1]); j-- {
+			nodes[j], nodes[j-1] = nodes[j-1], nodes[j]
+		}
+	}
+}
+
+// optimizerMedianSorted is the reference: it sorts with sort.Slice.
+func optimizerMedianSorted(orderedByX, orderedByY []*layoutgraph.Node, includeSizes bool, first *layoutgraph.Node, guard *limits.OptimizationWorkGuard) (float64, float64, error) {
+	if err := guard.AddSort(len(orderedByX)); err != nil {
 		return 0, 0, err
 	}
 	sort.Slice(orderedByX, func(i, j int) bool {
@@ -386,7 +494,7 @@ func optimizerMedian(nodes layoutgraph.Nodes, includeSizes bool, guard *limits.O
 		}
 		return iX < jX
 	})
-	if err := guard.AddSort(len(nodes)); err != nil {
+	if err := guard.AddSort(len(orderedByY)); err != nil {
 		return 0, 0, err
 	}
 	sort.Slice(orderedByY, func(i, j int) bool {
@@ -401,17 +509,22 @@ func optimizerMedian(nodes layoutgraph.Nodes, includeSizes bool, guard *limits.O
 		}
 		return iY < jY
 	})
+	return optimizerMedianOfSorted(orderedByX, orderedByY, includeSizes, first, guard)
+}
 
-	middle := len(nodes) / 2
+// optimizerMedianOfSorted is the median of the sorted neighbor positions;
+// first is the first neighbor, whose graph's cell size scales the median.
+func optimizerMedianOfSorted(orderedByX, orderedByY []*layoutgraph.Node, includeSizes bool, first *layoutgraph.Node, guard *limits.OptimizationWorkGuard) (float64, float64, error) {
+	middle := len(orderedByX) / 2
 	var medianX, medianY float64
 	if includeSizes {
 		medianX = orderedByX[middle].TopLeft.X + orderedByX[middle].Width/2
 		medianY = orderedByY[middle].TopLeft.Y + orderedByY[middle].Height/2
-		if len(nodes)%2 == 0 {
+		if len(orderedByX)%2 == 0 {
 			medianX = (medianX + orderedByX[middle-1].TopLeft.X + orderedByX[middle-1].Width/2) / 2
 			medianY = (medianY + orderedByY[middle-1].TopLeft.Y + orderedByY[middle-1].Height/2) / 2
 		}
-		cellSize := nodes[0].Graph.CellSize
+		cellSize := first.Graph.CellSize
 		if cellSize <= 0 || math.IsNaN(cellSize) || math.IsInf(cellSize, 0) {
 			return 0, 0, fmt.Errorf("TALA %s requires a finite positive cell size", guard.Location())
 		}
@@ -420,7 +533,7 @@ func optimizerMedian(nodes layoutgraph.Nodes, includeSizes bool, guard *limits.O
 	} else {
 		medianX = orderedByX[middle].TopLeft.X + 0.5
 		medianY = orderedByY[middle].TopLeft.Y + 0.5
-		if len(nodes)%2 == 0 {
+		if len(orderedByX)%2 == 0 {
 			medianX = (medianX + orderedByX[middle-1].TopLeft.X) / 2
 			medianY = (medianY + orderedByY[middle-1].TopLeft.Y) / 2
 		}
@@ -428,8 +541,25 @@ func optimizerMedian(nodes layoutgraph.Nodes, includeSizes bool, guard *limits.O
 	return medianX, medianY, nil
 }
 
-func optimizerMedianToNeighbors(node *layoutgraph.Node, includeSizes bool, edgeAbductions []*layoutgraph.EdgeAbduction, guard *limits.OptimizationWorkGuard) (float64, float64, error) {
-	adjacents, err := optimizerAdjacents(node, edgeAbductions, guard)
+// optimizerMedianToNeighborsInto returns the median position of node's
+// neighbors (optimizerMedian over optimizerAdjacents), collecting the
+// neighbors in *buffer when buffer is not nil (reused across calls; the
+// median only reads them).
+func optimizerMedianToNeighborsInto(node *layoutgraph.Node, includeSizes bool, edgeAbductions []*layoutgraph.EdgeAbduction, guard *limits.OptimizationWorkGuard, buffer *[]*layoutgraph.Node) (float64, float64, error) {
+	var adjacents []*layoutgraph.Node
+	var err error
+	if buffer == nil {
+		adjacents, err = optimizerAdjacents(node, edgeAbductions, guard)
+	} else {
+		if *buffer == nil {
+			*buffer = make([]*layoutgraph.Node, 0, 8)
+		}
+		adjacents, err = optimizerAdjacentsInto(node, edgeAbductions, guard, *buffer)
+		if adjacents != nil {
+			*buffer = adjacents
+			defer clear(adjacents)
+		}
+	}
 	if err != nil {
 		return 0, 0, err
 	}
@@ -443,6 +573,78 @@ func optimizerDoesOverlap(node *layoutgraph.Node, point *geo.Point, exceptions [
 	if len(node.Graph.Nodes) > limits.MaxEngineNodes || len(exceptions) > limits.MaxEngineNodes {
 		return false, fmt.Errorf("TALA %s overlap inputs exceed node limit %d", guard.Location(), limits.MaxEngineNodes)
 	}
+	overlaps, units, complete := optimizerScanOverlap(node, point, exceptions)
+	if !complete {
+		return optimizerDoesOverlapStepped(node, point, exceptions, guard)
+	}
+	var replayed bool
+	var replayedOverlap bool
+	replayed, err := chargeOrReplay(guard, units, func() error {
+		var replayErr error
+		replayedOverlap, replayErr = optimizerDoesOverlapStepped(node, point, exceptions, guard)
+		return replayErr
+	})
+	if replayed {
+		return replayedOverlap, err
+	}
+	if err != nil {
+		return false, err
+	}
+	return overlaps, nil
+}
+
+// optimizerScanOverlap is optimizerDoesOverlapStepped without the guard: it
+// returns the answer and the units the stepped scan charges for it. complete
+// is false when the stepped scan would stop with an error or a panic (a nil
+// graph node or an invalid edge reached by DeltaTo); the caller then runs the
+// stepped scan itself so the same failure happens at the same point.
+func optimizerScanOverlap(node *layoutgraph.Node, point *geo.Point, exceptions []*layoutgraph.Node) (overlaps bool, units uint64, complete bool) {
+	right := point.X + node.Width
+	bottom := point.Y + node.Height
+	edgeUnits := uint64(len(node.Edges))
+	for _, otherNode := range node.Graph.Nodes {
+		units++
+		if otherNode == nil {
+			return false, units, false
+		}
+		if otherNode == node {
+			continue
+		}
+		excluded := false
+		for _, exception := range exceptions {
+			units++
+			if exception == otherNode {
+				excluded = true
+				break
+			}
+		}
+		if excluded || otherNode.TopLeft == nil {
+			continue
+		}
+		const maxSafeDelta = 500.0
+		if point.X > otherNode.TopLeft.X+otherNode.Width+maxSafeDelta ||
+			point.X+node.Width+maxSafeDelta < otherNode.TopLeft.X ||
+			point.Y > otherNode.TopLeft.Y+otherNode.Height+maxSafeDelta ||
+			point.Y+node.Height+maxSafeDelta < otherNode.TopLeft.Y {
+			continue
+		}
+		units += edgeUnits
+		deltaValue, _, err := node.DeltaToCounted(otherNode, point)
+		if err != nil {
+			return false, units, false
+		}
+		delta := float64(deltaValue)
+		if point.X < otherNode.TopLeft.X+otherNode.Width+delta && right+delta > otherNode.TopLeft.X &&
+			point.Y < otherNode.TopLeft.Y+otherNode.Height+delta && bottom+delta > otherNode.TopLeft.Y {
+			return true, units, true
+		}
+	}
+	return false, units, true
+}
+
+// optimizerDoesOverlapStepped is the reference overlap scan that charges the
+// guard as it goes.
+func optimizerDoesOverlapStepped(node *layoutgraph.Node, point *geo.Point, exceptions []*layoutgraph.Node, guard *limits.OptimizationWorkGuard) (bool, error) {
 	right := point.X + node.Width
 	bottom := point.Y + node.Height
 	for _, otherNode := range node.Graph.Nodes {
@@ -1041,22 +1243,34 @@ func captureOptimizerNodePositions(nodes []*layoutgraph.Node, guard *limits.Opti
 	return snapshots, nil
 }
 
-// withOptimizerPositionsSwapped owns the rollback point for a speculative swap
-// and its scoring callback. The former nested atomic swap captured the same
-// geometry twice without any intervening mutation. Reuse this rollback point,
-// replaying the second capture's exact work and cancellation checkpoints.
-func withOptimizerPositionsSwapped(nodeA, nodeB *layoutgraph.Node, guard *limits.OptimizationWorkGuard, fn func() error) (err error) {
-	before := guard.Used()
-	snapshots, err := captureOptimizerNodePositions([]*layoutgraph.Node{nodeA, nodeB}, guard)
-	if err != nil {
-		return err
+// optimizerLeaf is captureOptimizerNodePositions' test for a node that moves
+// alone (no container children, cluster or sequence members).
+func optimizerLeaf(node *layoutgraph.Node) bool {
+	return node != nil && node.Graph != nil && !node.IsContainer() && !node.IsClusterVessel() && node.Graph.Sequences[node] == nil
+}
+
+// withOptimizerLeavesSwapped is withOptimizerPositionsSwapped for two leaves,
+// without allocating: captureOptimizerNodePositions charges one step per
+// distinct leaf and snapshots its position, the capture's work is replayed,
+// and optimizerMoveNodeAbs moves a leaf by translation (one step when it is
+// already at the target).
+func withOptimizerLeavesSwapped(nodeA, nodeB *layoutgraph.Node, guard *limits.OptimizationWorkGuard, fn func() error) (err error) {
+	var buffer [2]nodePositionSnapshot
+	snapshots := buffer[:0]
+	for _, node := range [2]*layoutgraph.Node{nodeA, nodeB} {
+		if len(snapshots) == 1 && snapshots[0].node == node {
+			continue
+		}
+		if err := guard.Step(); err != nil {
+			return err
+		}
+		snapshots = append(snapshots, nodePositionSnapshot{node: node, topLeft: snapshotPointer(node.TopLeft)})
 	}
-	captureWork := guard.Used() - before
 	defer restoreNodePositions(snapshots)
-	if nodeA == nil || nodeB == nil || nodeA.TopLeft == nil || nodeB.TopLeft == nil {
+	if nodeA.TopLeft == nil || nodeB.TopLeft == nil {
 		return fmt.Errorf("TALA %s cannot swap unpositioned nodes", guard.Location())
 	}
-	for range captureWork {
+	for range snapshots {
 		if err := guard.Step(); err != nil {
 			return err
 		}

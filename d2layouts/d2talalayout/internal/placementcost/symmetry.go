@@ -2,7 +2,6 @@ package placementcost
 
 import (
 	"context"
-	"fmt"
 	"math"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -10,130 +9,310 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
-type symmetryBoolScratch struct {
-	values []bool
+// symmetryFrame holds the buffers of one nodeSymmetry level. They replace a
+// pooled bool slice, a pooled node slice with a membership map, a second
+// pooled bool slice and an allocated child slice per call.
+type symmetryFrame struct {
+	used     []bool
+	children []*layoutgraph.Node
+	deduped  []*layoutgraph.Node
+	matched  []bool
+	// set mirrors children ∪ deduped once they hold more than
+	// symmetrySetThreshold nodes; below that a linear scan is cheaper.
+	set   map[*layoutgraph.Node]struct{}
+	setOn bool
+	// High-water lengths and map use since the workspace was last put back:
+	// only these entries can hold node references, so only they are cleared.
+	childrenHigh, dedupedHigh int
+	setUsed                   bool
 }
 
-type symmetryNodeScratch struct {
-	nodes []*layoutgraph.Node
-	added map[*layoutgraph.Node]struct{}
+const maxPooledSymmetryFrameEntries = 4096
+
+// maxPooledSymmetryWorkspaceEntries bounds a pooled workspace as a whole.
+const maxPooledSymmetryWorkspaceEntries = 4 * maxPooledSymmetryFrameEntries
+
+// symmetrySetThreshold is a variable only so tests can force either
+// membership representation; both give identical answers.
+var symmetrySetThreshold = 32
+
+// symmetryWorkspace is a stack of frames for one top-level symmetry
+// evaluation (the recursion over container children and neighbors).
+type symmetryWorkspace struct {
+	frames []*symmetryFrame
+	depth  int
+	// memoOn enables memo: neighbor symmetry (checkNeighbors false) already
+	// computed in the same EdgeLength evaluation. See memoNodeSymmetry.
+	memoOn   bool
+	memoUsed bool
+	memo     map[*layoutgraph.Node]float64
 }
 
-var symmetryBoolPool = typedpool.New(func() *symmetryBoolScratch {
-	return &symmetryBoolScratch{values: make([]bool, 0, 16)}
-})
+var symmetryWorkspacePool = typedpool.New(func() *symmetryWorkspace { return new(symmetryWorkspace) })
 
-var symmetryNodePool = typedpool.New(func() *symmetryNodeScratch {
-	return &symmetryNodeScratch{
-		nodes: make([]*layoutgraph.Node, 0, 16),
-		added: make(map[*layoutgraph.Node]struct{}, 16),
+func getSymmetryWorkspace() *symmetryWorkspace {
+	ws := symmetryWorkspacePool.Get()
+	ws.depth = 0
+	return ws
+}
+
+// retainable reports whether the workspace is small enough to pool: the
+// frames' buffers and the memo together within
+// maxPooledSymmetryWorkspaceEntries (the frame count follows the symmetry
+// recursion's depth, so per-frame bounds alone do not bound it). TinyGo's
+// sync.Pool (d2's wasm build) never frees what it holds.
+func (ws *symmetryWorkspace) retainable() bool {
+	total := len(ws.memo)
+	for _, f := range ws.frames {
+		total += cap(f.used) + cap(f.children) + cap(f.deduped) + cap(f.matched) + len(f.set)
 	}
-})
+	return total <= maxPooledSymmetryWorkspaceEntries
+}
 
-func borrowSymmetryBools(length int) *symmetryBoolScratch {
-	scratch := symmetryBoolPool.Get()
-	if cap(scratch.values) < length {
-		scratch.values = make([]bool, length)
-		return scratch
+func putSymmetryWorkspace(ws *symmetryWorkspace) {
+	if !ws.retainable() {
+		return
 	}
-	scratch.values = scratch.values[:length]
-	clear(scratch.values)
-	return scratch
-}
-
-func returnSymmetryBools(scratch *symmetryBoolScratch) {
-	scratch.values = scratch.values[:0]
-	symmetryBoolPool.Put(scratch)
-}
-
-func borrowSymmetryNodes(capacity int) *symmetryNodeScratch {
-	scratch := symmetryNodePool.Get()
-	if cap(scratch.nodes) < capacity {
-		scratch.nodes = make([]*layoutgraph.Node, 0, capacity)
-	} else {
-		scratch.nodes = scratch.nodes[:0]
+	for _, f := range ws.frames {
+		if cap(f.children) > maxPooledSymmetryFrameEntries {
+			f.children = nil
+		} else {
+			clear(f.children[:f.childrenHigh])
+			f.children = f.children[:0]
+		}
+		if cap(f.deduped) > maxPooledSymmetryFrameEntries {
+			f.deduped = nil
+		} else {
+			clear(f.deduped[:f.dedupedHigh])
+			f.deduped = f.deduped[:0]
+		}
+		f.childrenHigh, f.dedupedHigh = 0, 0
+		if cap(f.used) > maxPooledSymmetryFrameEntries {
+			f.used = nil
+		}
+		if cap(f.matched) > maxPooledSymmetryFrameEntries {
+			f.matched = nil
+		}
+		if f.setUsed {
+			if len(f.set) > maxPooledSymmetryFrameEntries {
+				f.set = nil
+			} else {
+				clear(f.set)
+			}
+			f.setUsed = false
+		}
+		f.setOn = false
 	}
-	clear(scratch.added)
-	return scratch
+	ws.depth = 0
+	if ws.memoUsed {
+		if len(ws.memo) > maxPooledSymmetryFrameEntries {
+			ws.memo = nil
+		} else {
+			clear(ws.memo)
+		}
+		ws.memoUsed = false
+	}
+	ws.memoOn = false
+	symmetryWorkspacePool.Put(ws)
 }
 
-func returnSymmetryNodes(scratch *symmetryNodeScratch) {
-	clear(scratch.nodes[:cap(scratch.nodes)])
-	scratch.nodes = scratch.nodes[:0]
-	clear(scratch.added)
-	symmetryNodePool.Put(scratch)
+func clearedBools(values []bool, length int) []bool {
+	if cap(values) < length {
+		return make([]bool, length)
+	}
+	values = values[:length]
+	clear(values)
+	return values
+}
+
+func (ws *symmetryWorkspace) push(abductions int) *symmetryFrame {
+	if ws.depth == len(ws.frames) {
+		ws.frames = append(ws.frames, new(symmetryFrame))
+	}
+	f := ws.frames[ws.depth]
+	ws.depth++
+	f.used = clearedBools(f.used, abductions)
+	f.children = f.children[:0]
+	f.deduped = f.deduped[:0]
+	if f.setOn {
+		clear(f.set)
+		f.setOn = false
+	}
+	return f
+}
+
+func (ws *symmetryWorkspace) pop() {
+	ws.depth--
+}
+
+// added reports whether node is in children ∪ deduped, the set the original
+// code kept in its "added" map.
+func (f *symmetryFrame) added(node *layoutgraph.Node) bool {
+	if f.setOn {
+		_, ok := f.set[node]
+		return ok
+	}
+	for _, child := range f.children {
+		if child == node {
+			return true
+		}
+	}
+	for _, adjacent := range f.deduped {
+		if adjacent == node {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *symmetryFrame) addChild(node *layoutgraph.Node) {
+	f.children = append(f.children, node)
+	f.childrenHigh = max(f.childrenHigh, len(f.children))
+	f.noteAdded(node)
+}
+
+func (f *symmetryFrame) addAdjacent(node *layoutgraph.Node) {
+	f.deduped = append(f.deduped, node)
+	f.dedupedHigh = max(f.dedupedHigh, len(f.deduped))
+	f.noteAdded(node)
+}
+
+func (f *symmetryFrame) noteAdded(node *layoutgraph.Node) {
+	if f.setOn {
+		f.set[node] = struct{}{}
+		return
+	}
+	if len(f.children)+len(f.deduped) <= symmetrySetThreshold {
+		return
+	}
+	if f.set == nil {
+		f.set = make(map[*layoutgraph.Node]struct{}, 2*symmetrySetThreshold)
+	}
+	for _, child := range f.children {
+		f.set[child] = struct{}{}
+	}
+	for _, adjacent := range f.deduped {
+		f.set[adjacent] = struct{}{}
+	}
+	f.setOn = true
+	f.setUsed = true
 }
 
 // NodesSymmetry sums local symmetry scores for nodes in order.
 func NodesSymmetry(ctx context.Context, nodes layoutgraph.Nodes, edgeAbductions []*layoutgraph.EdgeAbduction) (float64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
 	}
+	p.symmetry = getSymmetryWorkspace()
+	defer putSymmetryWorkspace(p.symmetry)
 	sum := 0.0
 	for i, node := range nodes {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
-		symmetry, err := nodeSymmetry(ctx, node, edgeAbductions, true)
+		symmetry, err := pollNodeSymmetry(&p, node, edgeAbductions, true)
 		if err != nil {
 			return 0, err
 		}
 		sum += symmetry
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	return sum, nil
 }
 
 // NodeSymmetry evaluates a node and the neighboring symmetry it contributes to.
 func NodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction) (float64, error) {
-	return nodeSymmetry(ctx, node, edgeAbductions, true)
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
+	}
+	p.symmetry = getSymmetryWorkspace()
+	defer putSymmetryWorkspace(p.symmetry)
+	return nodeSymmetryPolled(&p, node, edgeAbductions, true)
 }
 
-func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction, checkNeighbors bool) (float64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+// memoNodeSymmetry is pollNodeSymmetry, reusing a neighbor symmetry
+// (checkNeighbors false) computed earlier in the same EdgeLength evaluation
+// when the workspace memoizes. nodeSymmetry is a deterministic function of the
+// graph, the abductions and its arguments, none of which change during that
+// evaluation, so the reused value is the value the call would compute. The
+// memo is only enabled for contexts with a Done channel, which cannot observe
+// the skipped polling points (see scoringPoll).
+func memoNodeSymmetry(p *scoringPoll, node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction, checkNeighbors bool) (float64, error) {
+	if p.sess != nil {
+		return p.sess.symmetry(p, node, edgeAbductions, checkNeighbors)
 	}
+	ws := p.symmetry
+	if checkNeighbors || !ws.memoOn {
+		return pollNodeSymmetry(p, node, edgeAbductions, checkNeighbors)
+	}
+	if value, ok := ws.memo[node]; ok {
+		return value, nil
+	}
+	value, err := pollNodeSymmetry(p, node, edgeAbductions, false)
+	if err != nil {
+		return 0, err
+	}
+	if ws.memo == nil {
+		ws.memo = make(map[*layoutgraph.Node]float64)
+	}
+	ws.memo[node] = value
+	ws.memoUsed = true
+	return value, nil
+}
+
+// pollNodeSymmetry is nodeSymmetry within an evaluation that already polls.
+func pollNodeSymmetry(p *scoringPoll, node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction, checkNeighbors bool) (float64, error) {
+	if err := p.check(); err != nil {
+		return 0, err
+	}
+	return nodeSymmetryPolled(p, node, edgeAbductions, checkNeighbors)
+}
+
+// nodeSymmetryPolled evaluates node's symmetry in a new workspace frame. The
+// frame is popped without defer (the evaluation has too many returns for an
+// open-coded defer): a panic leaves the depth raised, which only selects
+// which pooled, cleared-on-push frames later levels use, and every workspace
+// is reset when it is put back.
+func nodeSymmetryPolled(p *scoringPoll, node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction, checkNeighbors bool) (float64, error) {
+	frame := p.symmetry.push(len(edgeAbductions))
+	value, err := nodeSymmetryInFrame(p, frame, node, edgeAbductions, checkNeighbors)
+	p.symmetry.pop()
+	return value, err
+}
+
+func nodeSymmetryInFrame(p *scoringPoll, frame *symmetryFrame, node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction, checkNeighbors bool) (float64, error) {
 	score := 0.0
 	maxScore := 0
 
-	usedEdgeAbductionsScratch := borrowSymmetryBools(len(edgeAbductions))
-	defer returnSymmetryBools(usedEdgeAbductionsScratch)
-	usedEdgeAbductions := usedEdgeAbductionsScratch.values
-	symmetryNodesScratch := borrowSymmetryNodes(len(node.Edges))
-	dedupedAdjacentNodes := symmetryNodesScratch.nodes
-	defer func() {
-		symmetryNodesScratch.nodes = dedupedAdjacentNodes
-		returnSymmetryNodes(symmetryNodesScratch)
-	}()
-	added := symmetryNodesScratch.added
+	usedEdgeAbductions := frame.used
 
 	// We consider container children with protruding edges like neighbors for symmetry, their score matters for the container score
 	if node.IsContainer() {
-		childNodes := make([]*layoutgraph.Node, 0)
 		// Within node placement, we use edge abductions to discern children; otherwise, the AdjacentNodes are correct
 		if edgeAbductions == nil {
 			for i, child := range node.Graph.Containers[node] {
-				if err := scoringCancellationError(ctx, i); err != nil {
+				if err := p.at(i); err != nil {
 					return 0, err
 				}
 				for j, e := range child.Edges {
-					if err := scoringCancellationError(ctx, j); err != nil {
+					if err := p.at(j); err != nil {
 						return 0, err
 					}
 					adj := child.Adjacent(e)
 					// We only want to consider symmetry of child nodes with protrutions
 					if !adj.Container.IsDescendantOf(node) {
-						added[child] = struct{}{}
-						childNodes = append(childNodes, child)
+						frame.addChild(child)
 						break
 					}
 				}
 			}
 		} else {
 			for i, edgeAbduction := range edgeAbductions {
-				if err := scoringCancellationError(ctx, i); err != nil {
+				if err := p.at(i); err != nil {
 					return 0, err
 				}
 				if usedEdgeAbductions[i] {
@@ -142,31 +321,29 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 				if edgeAbduction.CurrentFrom == node {
 					if edgeAbduction.OriginallyFrom != nil {
 						usedEdgeAbductions[i] = true
-						if _, in := added[edgeAbduction.OriginallyFrom]; in {
+						if frame.added(edgeAbduction.OriginallyFrom) {
 							continue
 						}
-						added[edgeAbduction.OriginallyFrom] = struct{}{}
-						childNodes = append(childNodes, edgeAbduction.OriginallyFrom)
+						frame.addChild(edgeAbduction.OriginallyFrom)
 					}
 				}
 				if edgeAbduction.CurrentTo == node {
 					if edgeAbduction.OriginallyTo != nil {
 						usedEdgeAbductions[i] = true
-						if _, in := added[edgeAbduction.OriginallyTo]; in {
+						if frame.added(edgeAbduction.OriginallyTo) {
 							continue
 						}
-						added[edgeAbduction.OriginallyTo] = struct{}{}
-						childNodes = append(childNodes, edgeAbduction.OriginallyTo)
+						frame.addChild(edgeAbduction.OriginallyTo)
 					}
 				}
 			}
 		}
 
-		for i, nodeReplacement := range childNodes {
-			if err := scoringCancellationError(ctx, i); err != nil {
+		for i, nodeReplacement := range frame.children {
+			if err := p.at(i); err != nil {
 				return 0, err
 			}
-			symmetry, err := nodeSymmetry(ctx, nodeReplacement, edgeAbductions, checkNeighbors)
+			symmetry, err := memoNodeSymmetry(p, nodeReplacement, edgeAbductions, checkNeighbors)
 			if err != nil {
 				return 0, err
 			}
@@ -182,7 +359,7 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 	// │  │◄───────┤  ├──────►│  │
 	// └──┘        └──┘       └──┘
 	for edgeIndex, e := range node.Edges {
-		if err := scoringCancellationError(ctx, edgeIndex); err != nil {
+		if err := p.at(edgeIndex); err != nil {
 			return 0, err
 		}
 		adjacentNode := node.Adjacent(e)
@@ -202,7 +379,7 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 		isConnectedToChild := false
 		if node.IsContainer() {
 			for i, edgeAbduction := range edgeAbductions {
-				if err := scoringCancellationError(ctx, i); err != nil {
+				if err := p.at(i); err != nil {
 					return 0, err
 				}
 				if (edgeAbduction.CurrentFrom == node) && (edgeAbduction.CurrentTo == adjacentNode) {
@@ -226,7 +403,7 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 
 		// If we're considering symmetry for node B in the above diagram, we'll want to resolve to adjacent node to A, not container for A
 		for i, edgeAbduction := range edgeAbductions {
-			if err := scoringCancellationError(ctx, i); err != nil {
+			if err := p.at(i); err != nil {
 				return 0, err
 			}
 			if usedEdgeAbductions[i] {
@@ -277,17 +454,16 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 			adjacentNodeReplacement = adjacentNodeReplacement.Sequence.Vessel
 		}
 
-		if _, in := added[adjacentNodeReplacement]; in {
+		if frame.added(adjacentNodeReplacement) {
 			continue
 		}
 
-		dedupedAdjacentNodes = append(dedupedAdjacentNodes, adjacentNodeReplacement)
-		added[adjacentNodeReplacement] = struct{}{}
+		frame.addAdjacent(adjacentNodeReplacement)
 	}
 
 	// When we're resolving symmetry for children during node placement, all their edges were abducted to their containers, so here we find those
 	for i, edgeAbduction := range edgeAbductions {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		var connectedNode *layoutgraph.Node
@@ -313,17 +489,17 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 			}
 		}
 		if connectedNode != nil {
-			if _, in := added[connectedNode]; in {
+			if frame.added(connectedNode) {
 				continue
 			}
 
-			dedupedAdjacentNodes = append(dedupedAdjacentNodes, connectedNode)
-			added[connectedNode] = struct{}{}
+			frame.addAdjacent(connectedNode)
 		}
 	}
 
+	dedupedAdjacentNodes := frame.deduped
 	for i := 0; i < len(dedupedAdjacentNodes); i++ {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		d := node.DistanceTo(dedupedAdjacentNodes[i], true)
@@ -333,10 +509,10 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 		}
 	}
 
-	matchedScratch := borrowSymmetryBools(len(dedupedAdjacentNodes))
-	defer returnSymmetryBools(matchedScratch)
-	matched := matchedScratch.values
-	s, err := computeSymmetryScoreInto(ctx, node, dedupedAdjacentNodes, matched)
+	frame.deduped = dedupedAdjacentNodes
+	frame.matched = clearedBools(frame.matched, len(dedupedAdjacentNodes))
+	matched := frame.matched
+	s, err := symmetryScoreInto(p, node, dedupedAdjacentNodes, matched)
 	if err != nil {
 		return 0, err
 	}
@@ -350,13 +526,13 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 	// └──┘   └──┘   └──┘
 	if checkNeighbors {
 		for i, adjacentNode := range dedupedAdjacentNodes {
-			if err := scoringCancellationError(ctx, i); err != nil {
+			if err := p.at(i); err != nil {
 				return 0, err
 			}
 			if matched[i] {
 				continue
 			}
-			adjNodeSymm, err := nodeSymmetry(ctx, adjacentNode, edgeAbductions, false)
+			adjNodeSymm, err := memoNodeSymmetry(p, adjacentNode, edgeAbductions, false)
 			if err != nil {
 				return 0, err
 			}
@@ -368,8 +544,8 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 	if maxScore == 0 {
 		return 0.0, nil
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	return score / float64(maxScore), nil
 }
@@ -392,11 +568,11 @@ func nodeSymmetry(ctx context.Context, node *layoutgraph.Node, edgeAbductions []
 // └─┘    └──┘
 // So we give it a small score
 */
-// computeSymmetryScoreInto writes match state into caller-owned storage so the
+// symmetryScoreInto writes match state into caller-owned storage so the
 // optimizer can score symmetry without allocating.
-func computeSymmetryScoreInto(ctx context.Context, node *layoutgraph.Node, neigh []*layoutgraph.Node, matchedSlice []bool) (float64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+func symmetryScoreInto(p *scoringPoll, node *layoutgraph.Node, neigh []*layoutgraph.Node, matchedSlice []bool) (float64, error) {
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	n := len(neigh)
 	if n < 2 {
@@ -411,7 +587,7 @@ func computeSymmetryScoreInto(ctx context.Context, node *layoutgraph.Node, neigh
 	var otherSiblings []*layoutgraph.Node
 
 	for i, n1 := range neigh {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		if matchedSlice[i] {
@@ -436,7 +612,7 @@ func computeSymmetryScoreInto(ctx context.Context, node *layoutgraph.Node, neigh
 		//                    │          │
 		//                    └──────────┘
 		for j := i + 1; j < n; j++ {
-			if err := scoringCancellationError(ctx, j-i-1); err != nil {
+			if err := p.at(j - i - 1); err != nil {
 				return 0, err
 			}
 			if matchedSlice[j] {
@@ -483,7 +659,10 @@ func computeSymmetryScoreInto(ctx context.Context, node *layoutgraph.Node, neigh
 			// │   ◄─────┤  │  │ │  │  │
 			// └───┘     └──┘  │ │  └──┘
 			//                 └─┘
-			isObstructed, err := obstructed(ctx, node, n1, n2, ownSiblings, otherSiblings)
+			if p.sess != nil {
+				p.sess.recordSymmetryScan(node, n1, n2)
+			}
+			isObstructed, err := obstructed(p, node, n1, n2, ownSiblings, otherSiblings)
 			if err != nil {
 				return 0, err
 			}
@@ -505,26 +684,51 @@ func computeSymmetryScoreInto(ctx context.Context, node *layoutgraph.Node, neigh
 		}
 	}
 
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	return score, nil
 }
 
-func obstructed(ctx context.Context, center, a, b *layoutgraph.Node, sib1, sib2 []*layoutgraph.Node) (bool, error) {
+// obstructed reports whether a sibling in sib1 or sib2 blocks the straight
+// line from center's center to a's or b's.
+//
+// Every test before PassesThrough only skips a sibling and has no side
+// effects, so their order does not matter; bounds.excludes is written out
+// inline (the same operations on the same values). The centers are the
+// points Center() returns, computed where the first PassesThrough needs them
+// (b's where the second does) and kept for the rest of the scan: nothing
+// moves during it.
+func obstructed(p *scoringPoll, center, a, b *layoutgraph.Node, sib1, sib2 []*layoutgraph.Node) (bool, error) {
 	bounds := scoringNodeBounds(center).including(scoringNodeBounds(a)).including(scoringNodeBounds(b))
+	boundsUsable := bounds.usable
+	boundsLeft, boundsTop, boundsRight, boundsBottom := bounds.left, bounds.top, bounds.right, bounds.bottom
+	var centerPoint, aPoint, bPoint geo.Point
+	haveCenters, haveB := false, false
 	check := func(sibs []*layoutgraph.Node) (bool, error) {
 		for i, s := range sibs {
-			if err := scoringCancellationError(ctx, i); err != nil {
-				return false, err
+			// p.at(i) for i >= 0.
+			if i&(scoringCancellationCheckInterval-1) == 0 {
+				if err := p.check(); err != nil {
+					return false, err
+				}
 			}
-			if s == nil || s.TopLeft == nil || s.Graph != center.Graph {
+			if s == nil || s.TopLeft == nil {
 				continue
 			}
-			if s == center || s == a || s == b {
-				continue
+			// bounds.excludes(s)
+			if boundsUsable {
+				x, y := s.TopLeft.X, s.TopLeft.Y
+				right, bottom := x+s.Width, y+s.Height
+				if (x-x)+(y-y)+(right-right)+(bottom-bottom) == 0 &&
+					((x < boundsLeft && right < boundsLeft) ||
+						(x > boundsRight && right > boundsRight) ||
+						(y < boundsTop && bottom < boundsTop) ||
+						(y > boundsBottom && bottom > boundsBottom)) {
+					continue
+				}
 			}
-			if bounds.excludes(s) {
+			if s.Graph != center.Graph || s == center || s == a || s == b {
 				continue
 			}
 			if center.IsDescendantOf(s) || a.IsDescendantOf(s) || b.IsDescendantOf(s) {
@@ -533,8 +737,19 @@ func obstructed(ctx context.Context, center, a, b *layoutgraph.Node, sib1, sib2 
 			if s.IsDescendantOf(center) || s.IsDescendantOf(a) || s.IsDescendantOf(b) {
 				continue
 			}
-			if s.PassesThrough(center.Center(), a.Center()) ||
-				s.PassesThrough(center.Center(), b.Center()) {
+			if !haveCenters {
+				centerPoint = geo.Point{X: center.TopLeft.X + center.Width/2, Y: center.TopLeft.Y + center.Height/2}
+				aPoint = geo.Point{X: a.TopLeft.X + a.Width/2, Y: a.TopLeft.Y + a.Height/2}
+				haveCenters = true
+			}
+			if s.PassesThrough(&centerPoint, &aPoint) {
+				return true, nil
+			}
+			if !haveB {
+				bPoint = geo.Point{X: b.TopLeft.X + b.Width/2, Y: b.TopLeft.Y + b.Height/2}
+				haveB = true
+			}
+			if s.PassesThrough(&centerPoint, &bPoint) {
 				return true, nil
 			}
 		}
@@ -573,8 +788,9 @@ func putColumnCrossingScratch(scratch *columnCrossingScratch) {
 
 // ColumnCrossingCost scores crossings between labeled table-column edges.
 func ColumnCrossingCost(ctx context.Context, node *layoutgraph.Node, edgeAbductions []*layoutgraph.EdgeAbduction) (float64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
 	}
 	if !node.IsTable() {
 		return 0, nil
@@ -589,14 +805,14 @@ func ColumnCrossingCost(ctx context.Context, node *layoutgraph.Node, edgeAbducti
 		scratch.edgeToAbduction = make(map[*layoutgraph.Edge]*layoutgraph.EdgeAbduction, min(len(edgeAbductions), maxPooledColumnCrossingEntries))
 	}
 	for i, abduction := range edgeAbductions {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		scratch.edgeToAbduction[abduction.Edge] = abduction
 	}
 
 	for i, e := range node.Edges {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		var fromPort, toPort geo.Point

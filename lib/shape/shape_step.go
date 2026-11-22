@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeStep struct {
@@ -14,12 +13,9 @@ type shapeStep struct {
 
 func NewStep(box *geo.Box) Shape {
 	shape := shapeStep{
-		baseShape: &baseShape{
-			Type: STEP_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(STEP_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -34,11 +30,16 @@ func (s shapeStep) GetInnerBox() *geo.Box {
 }
 
 func stepPath(box *geo.Box) *svg.SvgPathContext {
+	return stepOutline(box, svg.NewSVGPathContext)
+}
+
+// stepOutline draws the outline of stepPath into a path made by newPath.
+func stepOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	wedgeWidth := STEP_WEDGE_WIDTH
 	if box.Width <= wedgeWidth {
 		wedgeWidth = box.Width / 2.0
 	}
-	pc := svg.NewSVGPathContext(box.TopLeft, 1, 1)
+	pc := newPath(box.TopLeft, 1, 1)
 	pc.StartAt(pc.Absolute(0, 0))
 	pc.L(false, box.Width-wedgeWidth, 0)
 	pc.L(false, box.Width, box.Height/2)
@@ -51,6 +52,10 @@ func stepPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeStep) Perimeter() []geo.Intersectable {
 	return stepPath(s.Box).Path
+}
+
+func (s shapeStep) traceBorder(t *borderTracer) {
+	stepOutline(s.Box, t.newPath)
 }
 
 func (s shapeStep) GetSVGPathData() []string {

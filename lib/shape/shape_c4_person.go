@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 // Constants to match frontend implementation
@@ -22,12 +21,9 @@ type shapeC4Person struct {
 
 func NewC4Person(box *geo.Box) Shape {
 	shape := shapeC4Person{
-		baseShape: &baseShape{
-			Type: C4_PERSON_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(C4_PERSON_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 

@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/util-go/go2"
 )
 
 const OVAL_AR_LIMIT = 3.
@@ -15,12 +14,9 @@ type shapeOval struct {
 
 func NewOval(box *geo.Box) Shape {
 	shape := shapeOval{
-		baseShape: &baseShape{
-			Type: OVAL_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(OVAL_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 

@@ -167,6 +167,12 @@ func (n *OVGNode) sharesPortOwner(other *OVGNode) bool {
 }
 
 func (node *OVGNode) addEdge(e *OVGEdge) {
+	if node.Edges == nil {
+		// Most nodes get two to four edges; start there instead of growing
+		// through capacities 1 and 2. Only addEdge appends to Edges (OVG
+		// Connect gives a node its first four slots from a chunk).
+		node.Edges = make([]*OVGEdge, 0, 4)
+	}
 	node.Edges = append(node.Edges, e)
 }
 
@@ -178,95 +184,6 @@ func (n *OVGNode) adjacent(e *OVGEdge) *OVGNode {
 }
 
 func (n *OVGNode) Adjacent(edge *OVGEdge) *OVGNode { return n.adjacent(edge) }
-
-// hasUnobstructedLineToPorts checks if an OVG node has unobstructed lines to non-container ports
-// numNodes indicates how many ports belonging to different nodes it must have lines to
-func (ovgNode *OVGNode) hasUnobstructedLineToPorts(ovg *OVG, portIndex *ovgPortIndex, numNodes int, guard *ovgBuildGuard) (bool, error) {
-	if err := guard.check(); err != nil {
-		return false, err
-	}
-	// Only care about ovg nodes which are port aligned
-	distinctPortNodeCount := 0
-
-	aligned := portIndex.alignedOwners(ovgNode.X, ovgNode.Y)
-	hasAlignedPort := len(aligned.byX) > 0 || len(aligned.byY) > 0
-	for {
-		ownerIndex, ok, err := aligned.next(guard)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			break
-		}
-		gNode := portIndex.owners[ownerIndex]
-		portNodes := ovg.Ports[gNode]
-		for _, portNode := range portNodes {
-			if err := guard.step(); err != nil {
-				return false, err
-			}
-			if portNode.X != ovgNode.X && portNode.Y != ovgNode.Y {
-				continue
-			}
-			// Port nodes which can make a straight line between it, its shape's edge, and the point, are NOT candidates for unobstructed path
-			// e.g. this is bad
-			// ┌──────┐
-			// │      │
-			// x      │
-			// ├──────┘
-			// │
-			// │
-			// x
-			//
-			// this is fine
-			//        ┌──────┐
-			//        │      │
-			// x──────x      │
-			//        └──────┘
-			if portNode.X == ovgNode.X && ((portNode.X == gNode.TopLeft.X) || (portNode.X == gNode.TopLeft.X+gNode.Width)) {
-				continue
-			}
-			if portNode.Y == ovgNode.Y && ((portNode.Y == gNode.TopLeft.Y) || (portNode.Y == gNode.TopLeft.Y+gNode.Height)) {
-				continue
-			}
-
-			// Remove nodes which are obstructed from a port by another node
-			hasDirectLineToThisPort := true
-			blockers := portIndex.horizontalBlockers[portNode.Y]
-			if portNode.X == ovgNode.X {
-				blockers = portIndex.verticalBlockers[portNode.X]
-			}
-			for _, otherGNode := range blockers {
-				if err := guard.step(); err != nil {
-					return false, err
-				}
-				if gNode == otherGNode {
-					continue
-				}
-				if gNode.IsInvisible {
-					continue
-				}
-				// don't count nodes of the same sequence as blocking each other
-				if gNode.Sequence != nil && otherGNode.Sequence != nil && gNode.Sequence == otherGNode.Sequence {
-					continue
-				}
-				if otherGNode.PassesThrough(portNode.Point, ovgNode.Point) {
-					hasDirectLineToThisPort = false
-					break
-				}
-			}
-
-			if hasDirectLineToThisPort {
-				distinctPortNodeCount++
-				if distinctPortNodeCount == numNodes {
-					return true, nil
-				}
-				break
-			}
-		}
-	}
-
-	return !hasAlignedPort, guard.check()
-}
 
 func (nodeA *OVGNode) distanceToBoundary(nodeB *layoutgraph.Node) float64 {
 	x1 := nodeA.Point.X

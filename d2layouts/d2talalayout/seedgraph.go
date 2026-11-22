@@ -28,6 +28,8 @@ func newSeedInput(ctx context.Context, graph *d2graph.Graph) (seedInput, error) 
 	if err != nil {
 		return seedInput{}, err
 	}
+	// Every seed reads (clones and validates) the input at the same time.
+	internal.MarkSharedInput()
 	return seedInput{graph: internal, bindings: bindings}, nil
 }
 

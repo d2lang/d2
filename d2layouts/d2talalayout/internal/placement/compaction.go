@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -114,20 +113,25 @@ func orderedAlongAxis(g *layoutgraph.Graph, isHorizontal bool) []*layoutgraph.No
 	orderedNodes := make([]*layoutgraph.Node, len(g.Nodes))
 	copy(orderedNodes, g.Nodes)
 
-	sort.Slice(orderedNodes, func(i, j int) bool {
-		if isHorizontal {
-			if orderedNodes[i].TopLeft.X == orderedNodes[j].TopLeft.X {
-				return orderedNodes[i].ID < orderedNodes[j].ID
-			}
-			return orderedNodes[i].TopLeft.X < orderedNodes[j].TopLeft.X
-		} else {
-			if orderedNodes[i].TopLeft.Y == orderedNodes[j].TopLeft.Y {
-				return orderedNodes[i].ID < orderedNodes[j].ID
-			}
-			return orderedNodes[i].TopLeft.Y < orderedNodes[j].TopLeft.Y
-		}
+	sortSliceExact(orderedNodes, func(a, b *layoutgraph.Node) bool {
+		return alongAxisLess(a, b, isHorizontal)
 	})
 	return orderedNodes
+}
+
+// alongAxisLess orders nodes by their top-left coordinate on the axis, then
+// by ID.
+func alongAxisLess(a, b *layoutgraph.Node, isHorizontal bool) bool {
+	if isHorizontal {
+		if a.TopLeft.X == b.TopLeft.X {
+			return a.ID < b.ID
+		}
+		return a.TopLeft.X < b.TopLeft.X
+	}
+	if a.TopLeft.Y == b.TopLeft.Y {
+		return a.ID < b.ID
+	}
+	return a.TopLeft.Y < b.TopLeft.Y
 }
 
 // shiftSubgraphs tries to move entire subgraphs of the visibility graph, for a more global attempt to close gaps
@@ -177,21 +181,14 @@ func shiftSubgraphs(ctx context.Context, g *layoutgraph.Graph, isHorizontal, inc
 	orderedSubgraphRoots = filtered
 	fixedNodes := g.FixedNodes()
 
-	sort.Slice(orderedSubgraphRoots, func(i, j int) bool {
-		if isHorizontal {
-			if orderedSubgraphRoots[i].TopLeft.X == orderedSubgraphRoots[j].TopLeft.X {
-				return orderedSubgraphRoots[i].ID < orderedSubgraphRoots[j].ID
-			}
-			return orderedSubgraphRoots[i].TopLeft.X < orderedSubgraphRoots[j].TopLeft.X
-		} else {
-			if orderedSubgraphRoots[i].TopLeft.Y == orderedSubgraphRoots[j].TopLeft.Y {
-				return orderedSubgraphRoots[i].ID < orderedSubgraphRoots[j].ID
-			}
-			return orderedSubgraphRoots[i].TopLeft.Y < orderedSubgraphRoots[j].TopLeft.Y
-		}
+	sortSliceExact(orderedSubgraphRoots, func(a, b *layoutgraph.Node) bool {
+		return alongAxisLess(a, b, isHorizontal)
 	})
 
 	globallyFurthestBehind := globallyFurthestBehind(g, isHorizontal)
+	// One buffer serves every root's non-subgraph list (rebuilt per root
+	// with the same contents and order).
+	nonSubgraphBuffer := make([]*layoutgraph.Node, 0, len(fixedNodes)+len(g.Nodes))
 	for _, furthestBehind := range orderedSubgraphRoots {
 		subgraph := subgraphSet[furthestBehind]
 		var possibleMoves []*geo.Point
@@ -215,8 +212,7 @@ func shiftSubgraphs(ctx context.Context, g *layoutgraph.Graph, isHorizontal, inc
 		possibleMoves = append(possibleMoves, furthestBehind.TopLeft.Copy())
 
 		// shifting subgraphs shouldn't introduce any overlaps between subgraph nodes, but we still need to check for overlaps with nodes not in this subgraph
-		nonSubgraphNodes := []*layoutgraph.Node{}
-		nonSubgraphNodes = append(nonSubgraphNodes, fixedNodes...)
+		nonSubgraphNodes := append(nonSubgraphBuffer[:0], fixedNodes...)
 		for _, otherN := range g.Nodes {
 			in := slices.Contains(subgraph, otherN)
 			if !in {
@@ -234,12 +230,24 @@ func shiftSubgraphs(ctx context.Context, g *layoutgraph.Graph, isHorizontal, inc
 		if err != nil {
 			return false, err
 		}
+		baseEdgeDistance := bestEdgeDistance
 		bestDelta := 0.0
 
 		originalPositions, err := snapshotNodePositionsContext(ctx, "Compaction", subgraph)
 		if err != nil {
 			return false, err
 		}
+		// A zero-delta move moves nothing, so when every earlier move was
+		// undone exactly, it scores the geometry the base distance was
+		// computed for. restoreNodePositions writes the snapshot values back
+		// in place; it undoes a move exactly when the snapshot holds every
+		// node MoveWithChildren moves.
+		zeroDeltaIsBase := snapshotCoversSubgraphMoves(originalPositions, subgraph)
+		// Moves end with the current position, usually also the last generated
+		// move. A zero delta moves nothing (MoveWithChildren returns at once),
+		// so two consecutive zero-delta evaluations see the same state and give
+		// the same cost; the second reuses the first's.
+		previousZero, previousZeroDistance := false, 0.0
 		for _, move := range possibleMoves {
 			var delta float64
 			if isHorizontal {
@@ -247,6 +255,14 @@ func shiftSubgraphs(ctx context.Context, g *layoutgraph.Graph, isHorizontal, inc
 			} else {
 				delta = furthestBehind.TopLeft.Y - move.Y
 			}
+			if delta == 0 && previousZero {
+				if previousZeroDistance < bestEdgeDistance {
+					bestEdgeDistance = previousZeroDistance
+					bestDelta = delta
+				}
+				continue
+			}
+			previousZero = false
 
 			overlaps := false
 			for _, n := range subgraph {
@@ -291,10 +307,15 @@ func shiftSubgraphs(ctx context.Context, g *layoutgraph.Graph, isHorizontal, inc
 				}
 			}
 
-			edgeDistanceAfter, err := placementcost.NodesEdgeLength(ctx, layoutgraph.Nodes(subgraph), placementcost.EdgeLengthOptions{EdgeAbductions: edgeAbductions, IncludeNodeSizes: includeSizes, EnforceMinimumGap: false, PenalizeDirection: true})
-			if err != nil {
-				restoreNodePositions(originalPositions)
-				return false, err
+			var edgeDistanceAfter float64
+			if delta == 0 && zeroDeltaIsBase {
+				edgeDistanceAfter = baseEdgeDistance
+			} else {
+				edgeDistanceAfter, err = placementcost.NodesEdgeLength(ctx, layoutgraph.Nodes(subgraph), placementcost.EdgeLengthOptions{EdgeAbductions: edgeAbductions, IncludeNodeSizes: includeSizes, EnforceMinimumGap: false, PenalizeDirection: true})
+				if err != nil {
+					restoreNodePositions(originalPositions)
+					return false, err
+				}
 			}
 			if includeSizes {
 				symmetry, err := placementcost.NodesSymmetry(ctx, layoutgraph.Nodes(subgraph), edgeAbductions)
@@ -307,6 +328,9 @@ func shiftSubgraphs(ctx context.Context, g *layoutgraph.Graph, isHorizontal, inc
 
 			restoreNodePositions(originalPositions)
 
+			if delta == 0 {
+				previousZero, previousZeroDistance = true, edgeDistanceAfter
+			}
 			if edgeDistanceAfter < bestEdgeDistance {
 				bestEdgeDistance = edgeDistanceAfter
 				bestDelta = delta
@@ -324,6 +348,47 @@ func shiftSubgraphs(ctx context.Context, g *layoutgraph.Graph, isHorizontal, inc
 		}
 	}
 	return changed, nil
+}
+
+// snapshotCoversSubgraphMoves reports whether snapshots hold every node that
+// MoveWithChildren moves for a node of subgraph: the node itself and its
+// graph's AllDescendantNodes(node, true).
+func snapshotCoversSubgraphMoves(snapshots []nodePositionSnapshot, subgraph []*layoutgraph.Node) bool {
+	holds := snapshotHolds(snapshots)
+	for _, node := range subgraph {
+		if !holds(node) || node.Graph == nil {
+			return false
+		}
+		for _, descendant := range node.Graph.AllDescendantNodes(node, true) {
+			if !holds(descendant) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// snapshotHolds returns a membership test for the snapshotted nodes: a scan
+// for short lists, a set otherwise.
+func snapshotHolds(snapshots []nodePositionSnapshot) func(*layoutgraph.Node) bool {
+	if len(snapshots) <= smallNodeSetScan {
+		return func(node *layoutgraph.Node) bool {
+			for i := range snapshots {
+				if snapshots[i].node == node {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	held := make(map[*layoutgraph.Node]struct{}, len(snapshots))
+	for _, snapshot := range snapshots {
+		held[snapshot.node] = struct{}{}
+	}
+	return func(node *layoutgraph.Node) bool {
+		_, ok := held[node]
+		return ok
+	}
 }
 
 // inflateAlongAxis makes sure that the appropriate amount of distance (based on factor) between connected (in vGraph) nodes
@@ -663,6 +728,9 @@ func candidateMoves(ctx context.Context, g *layoutgraph.Graph, node *layoutgraph
 		candidateCount = int(count)
 	}
 	positions := make([]*geo.Point, 0, candidateCount)
+	// The points live in one backing array instead of one allocation each;
+	// callers only read them.
+	points := make([]geo.Point, 0, candidateCount)
 	for i := start; i <= ceil; i++ {
 		if err := guard.Step(); err != nil {
 			return nil, err
@@ -670,19 +738,24 @@ func candidateMoves(ctx context.Context, g *layoutgraph.Graph, node *layoutgraph
 		var p geo.Point
 		if isHorizontal {
 			if includeSizes {
-				p = *geo.NewPoint(i*g.CellSize, node.TopLeft.Y)
+				p = geo.Point{X: i * g.CellSize, Y: node.TopLeft.Y}
 			} else {
-				p = *geo.NewPoint(i, node.TopLeft.Y)
+				p = geo.Point{X: i, Y: node.TopLeft.Y}
 			}
 		} else {
 			if includeSizes {
-				p = *geo.NewPoint(node.TopLeft.X, i*g.CellSize)
+				p = geo.Point{X: node.TopLeft.X, Y: i * g.CellSize}
 			} else {
-				p = *geo.NewPoint(node.TopLeft.X, i)
+				p = geo.Point{X: node.TopLeft.X, Y: i}
 			}
 		}
 
-		positions = append(positions, &p)
+		if len(points) == cap(points) {
+			// candidateCount bounds the loop; this is defensive only.
+			points = make([]geo.Point, 0, max(1, candidateCount))
+		}
+		points = append(points, p)
+		positions = append(positions, &points[len(points)-1])
 	}
 	if err := guard.Finish(); err != nil {
 		return nil, err

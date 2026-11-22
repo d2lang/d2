@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeCallout struct {
@@ -19,12 +18,9 @@ const (
 
 func NewCallout(box *geo.Box) Shape {
 	shape := shapeCallout{
-		baseShape: &baseShape{
-			Type: CALLOUT_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(CALLOUT_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -51,9 +47,14 @@ func (s shapeCallout) GetInnerBox() *geo.Box {
 }
 
 func calloutPath(box *geo.Box) *svg.SvgPathContext {
+	return calloutOutline(box, svg.NewSVGPathContext)
+}
+
+// calloutOutline draws the outline of calloutPath into a path made by newPath.
+func calloutOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	tipWidth := getTipWidth(box)
 	tipHeight := getTipHeight(box)
-	pc := svg.NewSVGPathContext(box.TopLeft, 1, 1)
+	pc := newPath(box.TopLeft, 1, 1)
 	pc.StartAt(pc.Absolute(0, 0))
 	pc.V(true, box.Height-tipHeight)
 	pc.H(true, box.Width/2.0)
@@ -68,6 +69,10 @@ func calloutPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeCallout) Perimeter() []geo.Intersectable {
 	return calloutPath(s.Box).Path
+}
+
+func (s shapeCallout) traceBorder(t *borderTracer) {
+	calloutOutline(s.Box, t.newPath)
 }
 
 func (s shapeCallout) GetSVGPathData() []string {

@@ -36,7 +36,7 @@ func TestCrossingIndexMatchesRouteSegments(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, edge := range ovg.Edges {
-			_, marked := index.crossed[edge]
+			marked := index.isCrossed(edge)
 			if want := set.intersectsWith(edge); marked != want {
 				t.Fatalf("after adding %v to %v, edge %v to %v: marked %v, want %v",
 					segment.From.Point, segment.To.Point, edge.From.Point, edge.To.Point, marked, want)

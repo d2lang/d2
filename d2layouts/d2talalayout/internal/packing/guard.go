@@ -22,7 +22,7 @@ func newWorkGuard(ctx context.Context, limit int64) (*limits.WorkGuard, error) {
 }
 
 func binPackScoreGuarded(nodes layoutgraph.Nodes, root *layoutgraph.Node, guard *limits.WorkGuard) (float64, error) {
-	topLeft, bottomRight, err := graphbounds.FixedBoundingBox(nodes, guard)
+	topLeft, bottomRight, err := packFixedBoundingBox(nodes, guard)
 	if err != nil {
 		return 0, err
 	}
@@ -178,7 +178,7 @@ func binPackOrderedNears(node *layoutgraph.Node, guard *limits.WorkGuard) ([]*la
 }
 
 type binPackHierarchyBox struct {
-	topLeft, bottomRight *geo.Point
+	topLeft, bottomRight geo.Point
 }
 
 func binPackHierarchyBoxes(packed []layoutgraph.Nodes, guard *limits.WorkGuard) ([]binPackHierarchyBox, error) {
@@ -193,7 +193,7 @@ func binPackHierarchyBoxes(packed []layoutgraph.Nodes, guard *limits.WorkGuard) 
 		if nodes[0].Hierarchy == nil {
 			continue
 		}
-		topLeft, bottomRight, err := graphbounds.BoundingBox(nodes, guard)
+		topLeft, bottomRight, err := packBoundingBox(nodes, guard)
 		if err != nil {
 			return nil, err
 		}
@@ -445,7 +445,7 @@ func binPackSmallestDeltas(subgraphs []layoutgraph.Nodes, guard *limits.WorkGuar
 		if err := guard.Step(); err != nil {
 			return 0, 0, err
 		}
-		topLeft, bottomRight, err := graphbounds.BoundingBox(subgraph, guard)
+		topLeft, bottomRight, err := packBoundingBox(subgraph, guard)
 		if err != nil {
 			return 0, 0, err
 		}
