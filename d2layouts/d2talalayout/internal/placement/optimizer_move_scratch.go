@@ -1,7 +1,9 @@
 package placement
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -315,80 +317,25 @@ func (scratch *optimizerMoveScratch) candidateMovement(node *layoutgraph.Node, g
 	}, nil
 }
 
-// descendantsOutside reports whether none of node's descendants (as
-// optimizerDescendants finds them) is the node of one of entries, and the
-// walk would succeed (no nil child, no limit); it charges nothing.
+// descendantsOutside reports whether node's descendant walk (descendantsInto)
+// succeeds and none of the descendants is the node of one of entries. It
+// charges nothing: the walk runs on a guard of its own, without a limit,
+// which fails where the walk does (a nil child, a node limit) and nowhere
+// else.
 func (scratch *optimizerMoveScratch) descendantsOutside(node *layoutgraph.Node, entries []optimizerScanEntry) bool {
-	g := node.Graph
-	if g == nil {
+	var unlimited limits.OptimizationWorkGuard
+	if unlimited.Init(context.Background(), "descendant scan", math.MaxUint64) != nil {
 		return false
 	}
-	if scratch.seen == nil {
-		scratch.seen = make(map[*layoutgraph.Node]struct{})
-	} else {
-		clear(scratch.seen)
-	}
-	seen := scratch.seen
-	defer clear(seen)
-	seen[node] = struct{}{}
-	stack := scratch.stack[:0]
-	defer func() {
-		clear(stack)
-		scratch.stack = stack[:0]
-	}()
-	ok := true
-	push := func(children []*layoutgraph.Node) {
-		if len(children) > limits.MaxEngineNodes {
-			ok = false
-			return
-		}
-		for _, child := range children {
-			if child == nil {
-				ok = false
-				return
-			}
-			if _, exists := seen[child]; exists {
-				continue
-			}
-			if len(seen) >= limits.MaxEngineNodes {
-				ok = false
-				return
-			}
-			seen[child] = struct{}{}
-			stack = append(stack, child)
-		}
-	}
-	pushChildren := func(parent *layoutgraph.Node) {
-		if sequence := g.Sequences[parent]; sequence != nil {
-			push(sequence.Nodes)
-		}
-		if ok && parent != nil && parent.IsClusterVessel() {
-			if cluster := g.Clusters[parent]; cluster != nil {
-				push(cluster.Nodes)
-			}
-		}
-		if ok && (parent == nil || parent.IsContainer()) {
-			push(g.Containers[parent])
-		}
-	}
-	pushChildren(node)
-	for ok && len(stack) > 0 {
-		last := len(stack) - 1
-		current := stack[last]
-		stack[last] = nil
-		stack = stack[:last]
-		pushChildren(current)
-	}
-	if !ok {
+	if _, err := scratch.descendantsInto(node, &unlimited); err != nil {
 		return false
 	}
+	// The walk leaves node and its descendants in scratch.seen.
 	for i := range entries {
-		other := entries[i].node
-		if other == node {
-			continue
-		}
-		if _, descendant := seen[other]; descendant {
-			return false
+		if other := entries[i].node; other != node {
+			if _, descendant := scratch.seen[other]; descendant {
+				return false
+			}
 		}
 	}
 	return true
