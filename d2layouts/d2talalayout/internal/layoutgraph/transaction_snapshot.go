@@ -362,189 +362,18 @@ type runtimeObjectCollection struct {
 // narrower field snapshots use this one bounded traversal so their ownership
 // coverage cannot drift apart.
 func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope string) (runtimeObjectCollection, error) {
-	nodes := make(map[*Node]struct{}, len(graph.Nodes))
-	var edges map[*Edge]struct{}
-	var clusters map[*Cluster]struct{}
-	var sequences map[*Sequence]struct{}
-	var trees map[*Tree]struct{}
-	var edgeAbductions map[*EdgeAbduction]struct{}
-	var herds map[*HerdAssignment]struct{}
-	var hierarchies map[*Hierarchy]struct{}
-
-	var nodeQueue []*Node
-	var edgeQueue []*Edge
-	var clusterQueue []*Cluster
-	var sequenceQueue []*Sequence
-	var treeQueue []*Tree
-	var abductionQueue []*EdgeAbduction
-	var herdQueue []*HerdAssignment
-	var hierarchyQueue []*Hierarchy
-	var captureErr error
-	charge := func() bool {
-		if captureErr != nil {
-			return false
-		}
-		captureErr = guard.Step()
-		return captureErr == nil
-	}
-
-	addNode := func(node *Node) {
-		if !charge() {
-			return
-		}
-		if node == nil {
-			return
-		}
-		if _, exists := nodes[node]; exists {
-			return
-		}
-		if len(nodes) >= maxEngineNodes {
-			captureErr = fmt.Errorf("TALA %s node snapshot exceeds limit %d", scope, maxEngineNodes)
-			return
-		}
-		nodes[node] = struct{}{}
-		nodeQueue = append(nodeQueue, node)
-	}
-	addEdge := func(edge *Edge) {
-		if !charge() {
-			return
-		}
-		if edge == nil {
-			return
-		}
-		if _, exists := edges[edge]; exists {
-			return
-		}
-		if len(edges) >= maxEngineEdges {
-			captureErr = fmt.Errorf("TALA %s edge snapshot exceeds limit %d", scope, maxEngineEdges)
-			return
-		}
-		if edges == nil {
-			edges = make(map[*Edge]struct{})
-		}
-		edges[edge] = struct{}{}
-		edgeQueue = append(edgeQueue, edge)
-	}
-	addCluster := func(cluster *Cluster) {
-		if !charge() {
-			return
-		}
-		if cluster == nil {
-			return
-		}
-		if _, exists := clusters[cluster]; exists {
-			return
-		}
-		if len(clusters) >= maxEngineNodes {
-			captureErr = fmt.Errorf("TALA %s cluster snapshot exceeds limit %d", scope, maxEngineNodes)
-			return
-		}
-		if clusters == nil {
-			clusters = make(map[*Cluster]struct{})
-		}
-		clusters[cluster] = struct{}{}
-		clusterQueue = append(clusterQueue, cluster)
-	}
-	addSequence := func(sequence *Sequence) {
-		if !charge() {
-			return
-		}
-		if sequence == nil {
-			return
-		}
-		if _, exists := sequences[sequence]; exists {
-			return
-		}
-		if len(sequences) >= maxEngineNodes {
-			captureErr = fmt.Errorf("TALA %s sequence snapshot exceeds limit %d", scope, maxEngineNodes)
-			return
-		}
-		if sequences == nil {
-			sequences = make(map[*Sequence]struct{})
-		}
-		sequences[sequence] = struct{}{}
-		sequenceQueue = append(sequenceQueue, sequence)
-	}
-	addTree := func(tree *Tree) {
-		if !charge() {
-			return
-		}
-		if tree == nil {
-			return
-		}
-		if _, exists := trees[tree]; exists {
-			return
-		}
-		if len(trees) >= maxEngineNodes {
-			captureErr = fmt.Errorf("TALA %s tree snapshot exceeds limit %d", scope, maxEngineNodes)
-			return
-		}
-		if trees == nil {
-			trees = make(map[*Tree]struct{})
-		}
-		trees[tree] = struct{}{}
-		treeQueue = append(treeQueue, tree)
-	}
+	c := runtimeCollector{guard: guard, scope: scope}
+	c.nodes.seen = make(map[*Node]struct{}, len(graph.Nodes))
+	addNode := func(node *Node) { collect(&c, &c.nodes, node, maxEngineNodes, "node") }
+	addEdge := func(edge *Edge) { collect(&c, &c.edges, edge, maxEngineEdges, "edge") }
+	addCluster := func(cluster *Cluster) { collect(&c, &c.clusters, cluster, maxEngineNodes, "cluster") }
+	addSequence := func(sequence *Sequence) { collect(&c, &c.sequences, sequence, maxEngineNodes, "sequence") }
+	addTree := func(tree *Tree) { collect(&c, &c.trees, tree, maxEngineNodes, "tree") }
 	addEdgeAbduction := func(abduction *EdgeAbduction) {
-		if !charge() {
-			return
-		}
-		if abduction == nil {
-			return
-		}
-		if _, exists := edgeAbductions[abduction]; exists {
-			return
-		}
-		if len(edgeAbductions) >= maxEngineEdges {
-			captureErr = fmt.Errorf("TALA %s edge-abduction snapshot exceeds limit %d", scope, maxEngineEdges)
-			return
-		}
-		if edgeAbductions == nil {
-			edgeAbductions = make(map[*EdgeAbduction]struct{})
-		}
-		edgeAbductions[abduction] = struct{}{}
-		abductionQueue = append(abductionQueue, abduction)
+		collect(&c, &c.edgeAbductions, abduction, maxEngineEdges, "edge-abduction")
 	}
-	addHerd := func(herd *HerdAssignment) {
-		if !charge() {
-			return
-		}
-		if herd == nil {
-			return
-		}
-		if _, exists := herds[herd]; exists {
-			return
-		}
-		if len(herds) >= maxEngineNodes {
-			captureErr = fmt.Errorf("TALA %s herd snapshot exceeds limit %d", scope, maxEngineNodes)
-			return
-		}
-		if herds == nil {
-			herds = make(map[*HerdAssignment]struct{})
-		}
-		herds[herd] = struct{}{}
-		herdQueue = append(herdQueue, herd)
-	}
-	addHierarchy := func(hierarchy *Hierarchy) {
-		if !charge() {
-			return
-		}
-		if hierarchy == nil {
-			return
-		}
-		if _, exists := hierarchies[hierarchy]; exists {
-			return
-		}
-		if len(hierarchies) >= maxEngineNodes {
-			captureErr = fmt.Errorf("TALA %s hierarchy snapshot exceeds limit %d", scope, maxEngineNodes)
-			return
-		}
-		if hierarchies == nil {
-			hierarchies = make(map[*Hierarchy]struct{})
-		}
-		hierarchies[hierarchy] = struct{}{}
-		hierarchyQueue = append(hierarchyQueue, hierarchy)
-	}
+	addHerd := func(herd *HerdAssignment) { collect(&c, &c.herds, herd, maxEngineNodes, "herd") }
+	addHierarchy := func(hierarchy *Hierarchy) { collect(&c, &c.hierarchies, hierarchy, maxEngineNodes, "hierarchy") }
 
 	for _, node := range graph.Nodes {
 		addNode(node)
@@ -591,21 +420,22 @@ func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope s
 	for node := range graph.Directions {
 		addNode(node)
 	}
-	if captureErr != nil {
-		return runtimeObjectCollection{}, captureErr
+	if c.err != nil {
+		return runtimeObjectCollection{}, c.err
 	}
 
 	var nodeIndex, edgeIndex, clusterIndex, sequenceIndex int
 	var treeIndex, abductionIndex, herdIndex, hierarchyIndex int
-	for nodeIndex < len(nodeQueue) || edgeIndex < len(edgeQueue) || clusterIndex < len(clusterQueue) ||
-		sequenceIndex < len(sequenceQueue) || treeIndex < len(treeQueue) || abductionIndex < len(abductionQueue) ||
-		herdIndex < len(herdQueue) || hierarchyIndex < len(hierarchyQueue) {
-		if captureErr != nil {
-			return runtimeObjectCollection{}, captureErr
+	for nodeIndex < len(c.nodes.queue) || edgeIndex < len(c.edges.queue) ||
+		clusterIndex < len(c.clusters.queue) || sequenceIndex < len(c.sequences.queue) ||
+		treeIndex < len(c.trees.queue) || abductionIndex < len(c.edgeAbductions.queue) ||
+		herdIndex < len(c.herds.queue) || hierarchyIndex < len(c.hierarchies.queue) {
+		if c.err != nil {
+			return runtimeObjectCollection{}, c.err
 		}
 		switch {
-		case nodeIndex < len(nodeQueue):
-			node := nodeQueue[nodeIndex]
+		case nodeIndex < len(c.nodes.queue):
+			node := c.nodes.queue[nodeIndex]
 			nodeIndex++
 			addNode(node.Container)
 			for near := range node.Nears {
@@ -622,14 +452,14 @@ func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope s
 			addHerd(node.HerdAssignment)
 			addHierarchy(node.Hierarchy)
 
-		case edgeIndex < len(edgeQueue):
-			edge := edgeQueue[edgeIndex]
+		case edgeIndex < len(c.edges.queue):
+			edge := c.edges.queue[edgeIndex]
 			edgeIndex++
 			addNode(edge.From)
 			addNode(edge.To)
 
-		case clusterIndex < len(clusterQueue):
-			cluster := clusterQueue[clusterIndex]
+		case clusterIndex < len(c.clusters.queue):
+			cluster := c.clusters.queue[clusterIndex]
 			clusterIndex++
 			addNode(cluster.Vessel)
 			addNode(cluster.Container)
@@ -640,8 +470,8 @@ func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope s
 				addEdgeAbduction(abduction)
 			}
 
-		case sequenceIndex < len(sequenceQueue):
-			sequence := sequenceQueue[sequenceIndex]
+		case sequenceIndex < len(c.sequences.queue):
+			sequence := c.sequences.queue[sequenceIndex]
 			sequenceIndex++
 			addNode(sequence.Vessel)
 			addNode(sequence.Container)
@@ -652,8 +482,8 @@ func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope s
 				addEdgeAbduction(abduction)
 			}
 
-		case treeIndex < len(treeQueue):
-			tree := treeQueue[treeIndex]
+		case treeIndex < len(c.trees.queue):
+			tree := c.trees.queue[treeIndex]
 			treeIndex++
 			addNode(tree.Node)
 			addEdge(tree.SentinelEdge)
@@ -662,8 +492,8 @@ func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope s
 				addTree(child)
 			}
 
-		case abductionIndex < len(abductionQueue):
-			abduction := abductionQueue[abductionIndex]
+		case abductionIndex < len(c.edgeAbductions.queue):
+			abduction := c.edgeAbductions.queue[abductionIndex]
 			abductionIndex++
 			addEdge(abduction.Edge)
 			addNode(abduction.OriginallyFrom)
@@ -671,8 +501,8 @@ func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope s
 			addNode(abduction.CurrentFrom)
 			addNode(abduction.CurrentTo)
 
-		case herdIndex < len(herdQueue):
-			herd := herdQueue[herdIndex]
+		case herdIndex < len(c.herds.queue):
+			herd := c.herds.queue[herdIndex]
 			herdIndex++
 			for node := range herd.oppositeSidePaired {
 				addNode(node)
@@ -681,29 +511,88 @@ func collectRuntimeObjectsContext(graph *Graph, guard *limits.WorkGuard, scope s
 				addNode(node)
 			}
 
-		case hierarchyIndex < len(hierarchyQueue):
-			hierarchy := hierarchyQueue[hierarchyIndex]
+		case hierarchyIndex < len(c.hierarchies.queue):
+			hierarchy := c.hierarchies.queue[hierarchyIndex]
 			hierarchyIndex++
 			for node := range hierarchy.level {
 				addNode(node)
 			}
 		}
-		if captureErr != nil {
-			return runtimeObjectCollection{}, captureErr
+		if c.err != nil {
+			return runtimeObjectCollection{}, c.err
 		}
 	}
 
 	return runtimeObjectCollection{
-		nodes:          nodes,
-		nodeOrder:      nodeQueue,
-		edges:          edges,
-		clusters:       clusters,
-		sequences:      sequences,
-		trees:          trees,
-		edgeAbductions: edgeAbductions,
-		herds:          herds,
-		hierarchies:    hierarchies,
+		nodes:          c.nodes.seen,
+		nodeOrder:      c.nodes.queue,
+		edges:          c.edges.seen,
+		clusters:       c.clusters.seen,
+		sequences:      c.sequences.seen,
+		trees:          c.trees.seen,
+		edgeAbductions: c.edgeAbductions.seen,
+		herds:          c.herds.seen,
+		hierarchies:    c.hierarchies.seen,
 	}, nil
+}
+
+// runtimeCollector is collectRuntimeObjectsContext's traversal state: a
+// visited set and a queue per kind of object, and the first error, after
+// which nothing more is charged or added.
+type runtimeCollector struct {
+	guard *limits.WorkGuard
+	scope string
+	err   error
+
+	nodes          runtimeObjects[*Node]
+	edges          runtimeObjects[*Edge]
+	clusters       runtimeObjects[*Cluster]
+	sequences      runtimeObjects[*Sequence]
+	trees          runtimeObjects[*Tree]
+	edgeAbductions runtimeObjects[*EdgeAbduction]
+	herds          runtimeObjects[*HerdAssignment]
+	hierarchies    runtimeObjects[*Hierarchy]
+}
+
+// runtimeObjects is the visited set and the queue of one kind of object, in
+// the order they were found.
+type runtimeObjects[T comparable] struct {
+	seen  map[T]struct{}
+	queue []T
+}
+
+// collect follows one reference to v. It charges one unit, then adds v to set
+// unless v is nil or already there; adding an object to a set that holds
+// limit objects fails instead. After the first error it does nothing.
+func collect[T comparable](c *runtimeCollector, set *runtimeObjects[T], v T, limit int, kind string) {
+	if c.err != nil {
+		return
+	}
+	if c.err = c.guard.Step(); c.err != nil {
+		return
+	}
+	var zero T
+	if v == zero {
+		return
+	}
+	if _, exists := set.seen[v]; exists {
+		return
+	}
+	if len(set.seen) >= limit {
+		c.err = c.limitError(kind, limit)
+		return
+	}
+	if set.seen == nil {
+		set.seen = make(map[T]struct{})
+	}
+	set.seen[v] = struct{}{}
+	set.queue = append(set.queue, v)
+}
+
+// limitError reports a snapshot that would hold more than limit objects of
+// kind.
+func (c *runtimeCollector) limitError(kind string, limit int) error {
+	return fmt.Errorf("TALA %s %s snapshot exceeds limit %d", c.scope, kind, limit)
 }
 
 // chargeRuntimeStateContext charges what captureRuntimeStateContext charges,
