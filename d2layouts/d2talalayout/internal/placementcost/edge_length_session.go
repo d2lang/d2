@@ -455,15 +455,62 @@ func (c *sessionCSR) buildFromPairs(keys int, pairs []sessionDep) {
 	}
 }
 
-func (s *EdgeLengthSession) track(n *layoutgraph.Node) {
-	if n == nil {
-		return
+// track gives each of nodes that has no slot yet the next one (nil is
+// skipped). buildTopology calls it from many places and runs once per session
+// build, so it stays out of line instead of being inlined at each.
+//
+//go:noinline
+func (s *EdgeLengthSession) track(nodes ...*layoutgraph.Node) {
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		if _, ok := s.slots[n]; ok {
+			continue
+		}
+		s.slots[n] = int32(len(s.tracked))
+		s.tracked = append(s.tracked, n)
 	}
-	if _, ok := s.slots[n]; ok {
-		return
+}
+
+// sessionReads records which tracked slots each owner (a term, or a node's
+// symmetry) reads: one (owner, slot) pair per slot and owner, in the order
+// first read. A read of an untracked node sets untracked.
+type sessionReads struct {
+	slots     map[*layoutgraph.Node]int32
+	mark      []int32 // per slot, the last owner that read it
+	pairs     []sessionDep
+	owner     int32
+	untracked bool
+}
+
+// reset forgets every pair and mark.
+func (r *sessionReads) reset() {
+	r.pairs = r.pairs[:0]
+	for i := range r.mark {
+		r.mark[i] = -1
 	}
-	s.slots[n] = int32(len(s.tracked))
-	s.tracked = append(s.tracked, n)
+}
+
+// add records the owner's reads of nodes (nil is skipped). It stays out of
+// line for the same reason as track.
+//
+//go:noinline
+func (r *sessionReads) add(nodes ...*layoutgraph.Node) {
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		slot, ok := r.slots[n]
+		if !ok {
+			r.untracked = true
+			continue
+		}
+		if r.mark[slot] != r.owner {
+			r.mark[slot] = r.owner
+			r.pairs = append(r.pairs, sessionDep{from: r.owner, to: slot})
+		}
+	}
 }
 
 func sortedNodesByID(nodes []*layoutgraph.Node) []*layoutgraph.Node {
@@ -524,9 +571,7 @@ func (s *EdgeLengthSession) buildTopology(p *scoringPoll) (bool, error) {
 	for i, key := range keys {
 		s.keyIDs[key] = int32(i)
 		s.track(key)
-		for _, child := range g.Containers[key] {
-			s.track(child)
-		}
+		s.track(g.Containers[key]...)
 	}
 
 	// Every cluster's and sequence's nodes, in a fixed order.
@@ -538,14 +583,9 @@ func (s *EdgeLengthSession) buildTopology(p *scoringPoll) (bool, error) {
 		s.track(vessel)
 		if c := g.Clusters[vessel]; c != nil {
 			s.track(c.Vessel)
-			for _, member := range c.Nodes {
-				s.track(member)
-			}
+			s.track(c.Nodes...)
 			for _, ea := range c.EdgeAbductions {
-				s.track(ea.CurrentFrom)
-				s.track(ea.CurrentTo)
-				s.track(ea.OriginallyFrom)
-				s.track(ea.OriginallyTo)
+				s.track(ea.CurrentFrom, ea.CurrentTo, ea.OriginallyFrom, ea.OriginallyTo)
 			}
 		}
 	}
@@ -557,9 +597,7 @@ func (s *EdgeLengthSession) buildTopology(p *scoringPoll) (bool, error) {
 		s.track(vessel)
 		if sequence := g.Sequences[vessel]; sequence != nil {
 			s.track(sequence.Vessel)
-			for _, member := range sequence.Nodes {
-				s.track(member)
-			}
+			s.track(sequence.Nodes...)
 		}
 	}
 
@@ -568,42 +606,27 @@ func (s *EdgeLengthSession) buildTopology(p *scoringPoll) (bool, error) {
 	for i := 0; i < len(s.tracked); i++ {
 		n := s.tracked[i]
 		for _, e := range n.Edges {
-			s.track(n.Adjacent(e))
-			s.track(e.From)
-			s.track(e.To)
+			s.track(n.Adjacent(e), e.From, e.To)
 		}
 		s.track(n.Container)
 		if n.Cluster != nil {
 			s.track(n.Cluster.Vessel)
-			for _, member := range n.Cluster.Nodes {
-				s.track(member)
-			}
+			s.track(n.Cluster.Nodes...)
 			for _, ea := range n.Cluster.EdgeAbductions {
-				s.track(ea.CurrentFrom)
-				s.track(ea.CurrentTo)
-				s.track(ea.OriginallyFrom)
-				s.track(ea.OriginallyTo)
+				s.track(ea.CurrentFrom, ea.CurrentTo, ea.OriginallyFrom, ea.OriginallyTo)
 			}
 		}
 		if n.Sequence != nil {
 			s.track(n.Sequence.Vessel)
-			for _, member := range n.Sequence.Nodes {
-				s.track(member)
-			}
+			s.track(n.Sequence.Nodes...)
 		}
-		for _, child := range g.Containers[n] {
-			s.track(child)
-		}
+		s.track(g.Containers[n]...)
 		nears = nears[:0]
 		for near := range n.Nears {
 			nears = append(nears, near)
 		}
-		for _, near := range sortedNodesByID(nears) {
-			s.track(near)
-		}
-		for _, sibling := range g.CommonUncleSiblings[n] {
-			s.track(sibling)
-		}
+		s.track(sortedNodesByID(nears)...)
+		s.track(g.CommonUncleSiblings[n]...)
 	}
 	tracked := len(s.tracked)
 
@@ -621,46 +644,25 @@ func (s *EdgeLengthSession) buildTopology(p *scoringPoll) (bool, error) {
 	s.numClusters = len(g.Clusters)
 
 	// What each term's NodeEdgeLength and ColumnCrossingCost read.
-	mark := make([]int32, tracked)
-	for i := range mark {
-		mark[i] = -1
-	}
-	var pairs []sessionDep
-	untracked := false
+	reads := sessionReads{slots: s.slots, mark: make([]int32, tracked)}
+	reads.reset()
 	for t, n := range s.nodes {
-		owner := int32(t)
-		add := func(read *layoutgraph.Node) {
-			if read == nil {
-				return
-			}
-			slot, ok := s.slots[read]
-			if !ok {
-				untracked = true
-				return
-			}
-			if mark[slot] != owner {
-				mark[slot] = owner
-				pairs = append(pairs, sessionDep{from: owner, to: slot})
-			}
-		}
+		reads.owner = int32(t)
 		// prepareNodeEdgeLength expects cleared scratch.
 		scratch := scratchPool.Get()
 		if _, err := prepareNodeEdgeLength(p, n, s.options, scratch); err != nil {
 			putEdgeScratch(scratch)
 			return false, err
 		}
-		add(n)
+		reads.add(n)
 		for i, e := range n.Edges {
-			add(n.Adjacent(e))
-			add(e.From)
-			add(e.To)
+			reads.add(n.Adjacent(e), e.From, e.To)
 			for _, r := range [2]*layoutgraph.Node{scratch.nRepl[i], scratch.aRepl[i]} {
-				add(r)
+				reads.add(r)
 				if r.Cluster != nil {
-					add(r.Cluster.Vessel)
+					reads.add(r.Cluster.Vessel)
 					for _, ea := range r.Cluster.EdgeAbductions {
-						add(ea.CurrentFrom)
-						add(ea.CurrentTo)
+						reads.add(ea.CurrentFrom, ea.CurrentTo)
 					}
 				}
 			}
@@ -670,24 +672,23 @@ func (s *EdgeLengthSession) buildTopology(p *scoringPoll) (bool, error) {
 				far := scratch.aRepl[i]
 				for _, e2 := range far.Edges {
 					if e2.IsBetweenTableColumns() {
-						add(far.Adjacent(e2))
+						reads.add(far.Adjacent(e2))
 					}
 				}
 			}
 		}
 		for near := range n.Nears {
-			add(near)
+			reads.add(near)
 		}
-		for _, sibling := range g.CommonUncleSiblings[n] {
-			add(sibling)
-		}
+		reads.add(g.CommonUncleSiblings[n]...)
 		putEdgeScratch(scratch)
-		if untracked {
+		if reads.untracked {
 			// A read outside the closure; cannot happen, but never guess.
 			s.unusable = true
 			return false, nil
 		}
 	}
+	pairs := reads.pairs
 	s.nelReads.buildFromPairs(len(s.nodes), pairs)
 	for i := range pairs {
 		pairs[i].from, pairs[i].to = pairs[i].to, pairs[i].from
@@ -695,41 +696,25 @@ func (s *EdgeLengthSession) buildTopology(p *scoringPoll) (bool, error) {
 	s.revNel.buildFromPairs(tracked, pairs)
 
 	// What each node's own symmetry reads (abductions are nil here).
-	pairs = pairs[:0]
-	for i := range mark {
-		mark[i] = -1
-	}
+	reads.reset()
 	for slot, n := range s.tracked {
-		owner := int32(slot)
-		add := func(read *layoutgraph.Node) {
-			if read == nil {
-				return
-			}
-			readSlot, ok := s.slots[read]
-			if !ok {
-				untracked = true
-				return
-			}
-			if mark[readSlot] != owner {
-				mark[readSlot] = owner
-				pairs = append(pairs, sessionDep{from: owner, to: readSlot})
-			}
-		}
-		add(n)
+		reads.owner = int32(slot)
+		reads.add(n)
 		for _, e := range n.Edges {
 			adjacent := n.Adjacent(e)
-			add(adjacent)
+			reads.add(adjacent)
 			if adjacent.Cluster.IsActive() {
-				add(adjacent.Cluster.Vessel)
+				reads.add(adjacent.Cluster.Vessel)
 			} else if adjacent.Sequence.IsActive() {
-				add(adjacent.Sequence.Vessel)
+				reads.add(adjacent.Sequence.Vessel)
 			}
 		}
 	}
-	if untracked {
+	if reads.untracked {
 		s.unusable = true
 		return false, nil
 	}
+	pairs = reads.pairs
 	s.symReads.buildFromPairs(tracked, pairs)
 	for i := range pairs {
 		pairs[i].from, pairs[i].to = pairs[i].to, pairs[i].from
