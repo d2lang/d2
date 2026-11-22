@@ -70,8 +70,8 @@
       "id": "b",
       "type": "image",
       "pos": {
-        "x": 0,
-        "y": 256
+        "x": 256,
+        "y": 0
       },
       "width": 128,
       "height": 128,
@@ -116,7 +116,7 @@
       "underline": false,
       "labelWidth": 8,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "zIndex": 0,
       "level": 1
     }
@@ -148,12 +148,12 @@
       "link": "",
       "route": [
         {
-          "x": 64,
-          "y": 128
+          "x": 128,
+          "y": 64
         },
         {
-          "x": 64,
-          "y": 256
+          "x": 256,
+          "y": 64
         }
       ],
       "animated": false,

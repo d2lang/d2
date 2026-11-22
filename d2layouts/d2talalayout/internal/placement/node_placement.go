@@ -242,6 +242,10 @@ func placeNodes(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Nod
 	return nil
 }
 
+// skipIdlePasses lets placeNodesOrthogonally skip the passes of levels
+// whose nodes the optimizers may not move (tests compare both ways).
+var skipIdlePasses = true
+
 // This routine is heavily based on the algorithm proposed in Graph Compact Orthogonal Layout Algorithm by Freivalds and Glagolevs
 func placeNodesOrthogonally(ctx context.Context, root *layoutgraph.Node, subgraph *layoutgraph.Graph,
 	edgeAbductions []*layoutgraph.EdgeAbduction, randGenerator *rand.Rand,
@@ -273,16 +277,31 @@ func placeNodesOrthogonally(ctx context.Context, root *layoutgraph.Node, subgrap
 	if err != nil {
 		return err
 	}
+	// In a level whose nodes the optimizers may not move (none has an edge
+	// or a near inside its container, or each is fixed or in a tree; a
+	// single node, typically) their passes change nothing: the sizeless
+	// passes are skipped, and the sized optimizer runs its first pass only
+	// (it still checks every node is placed). The compactions still run.
+	// The skipped passes would only have charged their budgets and made
+	// random draws that nothing after this level's passes uses.
+	idle := sizeless.idle() && skipIdlePasses
+	// The compactions every compactionIteration passes skip those known to
+	// change nothing (compactionSchedule).
+	var compactions compactionSchedule
+	compactions.stats, _ = ctx.Value(scoreMemoContextKey{}).(*scoreMemoStats)
+	defer compactions.release()
 	for i := 0; i < numIterations/2; i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("PlaceNodes: %w", err)
 		}
-		if err := sizeless.optimize(ctx, temp); err != nil {
-			return err
+		if !idle {
+			if err := sizeless.optimize(ctx, temp); err != nil {
+				return err
+			}
 		}
 
 		if (i % compactionIteration) == 0 {
-			if err := compaction(ctx, subgraph, compactionOptions{
+			if err := compactions.run(ctx, subgraph, compactionOptions{
 				axis:   compactionAxis,
 				factor: compactionFactor,
 			}); err != nil {
@@ -360,20 +379,64 @@ func placeNodesOrthogonally(ctx context.Context, root *layoutgraph.Node, subgrap
 	if err != nil {
 		return err
 	}
+	defer sized.release()
+	// Scores are kept across the optimize calls below; the stages between
+	// them are bracketed by begin/endExternalChanges.
+	sized.enableScoreMemo(ctx)
 
 	proximity.SyncHerdFences(subgraph)
-	for i := (numIterations / 2) + 1; i < numIterations; i++ {
+	// The sized phase anneals from the temperature the sizeless phase left
+	// down to 0.2, compacting every compactionIteration passes with a factor
+	// that falls to 1. A level whose phase would score more than
+	// maxSizedPhaseWork edge terms (passes times twice its edges: each pass
+	// scores every edge from both ends) runs only the first passes of the
+	// phase that fit, cooling to the same final temperature over them; its
+	// compactions are those of those first passes (the later stages compact
+	// the layout further).
+	firstSized := (numIterations / 2) + 1
+	endSized := numIterations
+	if edges := len(subgraph.Edges); edges > 0 && endSized-firstSized > maxSizedPhaseWork/(2*edges) {
+		passes := max(1, maxSizedPhaseWork/(2*edges))
+		endSized = firstSized + passes
+		coolingFactor = math.Pow(0.2/temp, 1.0/float64(passes))
+	}
+	quietPasses := 0
+	for i := firstSized; i < endSized; i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("PlaceNodes: %w", err)
 		}
-		_, err := sized.optimize(ctx, temp)
-		if err != nil {
-			return err
+		if idle {
+			if i == firstSized {
+				if _, err := sized.optimize(ctx, temp); err != nil {
+					return err
+				}
+			}
+		} else {
+			changed, err := sized.optimize(ctx, temp)
+			if err != nil {
+				return err
+			}
+			// The annealing has settled when maxQuietSizedPasses passes in a
+			// row moved, swapped and transposed nothing: the rest of the
+			// phase (and its compactions) is skipped; the temp-0 passes below
+			// still run.
+			if changed {
+				quietPasses = 0
+			} else if quietPasses++; quietPasses >= maxQuietSizedPasses {
+				break
+			}
 		}
 
 		if (i % compactionIteration) == 0 {
-			factor := math.Max(1.0, 1.0+(2.0*float64(numIterations-i-30)/(0.5*float64(numIterations))))
-			if err := compaction(ctx, subgraph, compactionOptions{
+			// These stages only move nodes and set herd fences: the
+			// optimizer keeps its scores if they leave the graph as it was.
+			sized.beginExternalChanges()
+			vi := i
+			if endSized < numIterations {
+				vi = firstSized + (i-firstSized)*(numIterations-firstSized)/(endSized-firstSized)
+			}
+			factor := math.Max(1.0, 1.0+(2.0*float64(numIterations-vi-30)/(0.5*float64(numIterations))))
+			if err := compactions.run(ctx, subgraph, compactionOptions{
 				edgeAbductions: edgeAbductions,
 				axis:           compactionAxis,
 				includeSizes:   true,
@@ -387,15 +450,18 @@ func placeNodesOrthogonally(ctx context.Context, root *layoutgraph.Node, subgrap
 				return err
 			}
 			proximity.SyncHerdFences(subgraph)
+			sized.endExternalChanges()
 		}
 		temp = temp * coolingFactor
 	}
+	sized.beginExternalChanges()
 	if err := grouping.JoinDistancedClusters(ctx, subgraph); err != nil {
 		return err
 	}
 	proximity.SyncHerdFences(subgraph)
+	sized.endExternalChanges()
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 10 && !idle; i++ {
 		changed, err := sized.optimize(ctx, 0.0)
 		if err != nil {
 			return err

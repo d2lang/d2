@@ -25,9 +25,13 @@ type optimizerSpatialEntry struct {
 	bottom     float64
 }
 
-type optimizerOccupancyEntry struct {
-	graphIndex int
-	generation uint64
+// optimizerOccupancySlot is one open-addressing slot of the occupancy table.
+// Keys are finite points compared with ==, exactly like a map[geo.Point] key
+// (the table never holds NaN or infinities; -0 hashes like +0).
+type optimizerOccupancySlot struct {
+	x, y       float64
+	graphIndex int32
+	used       bool
 }
 
 // optimizerSpatialIndex is rebuilt once for each node considered by the sized
@@ -43,8 +47,58 @@ type optimizerSpatialIndex struct {
 	maxRight        []float64
 	candidates      []int
 
-	occupied            map[geo.Point]optimizerOccupancyEntry
-	occupancyGeneration uint64
+	// occupied maps each finite top-left point to the first graph node (in
+	// g.Nodes order) placed there.
+	occupied []optimizerOccupancySlot
+
+	// poll answers guard.Finish() for the optimizer's guard while an
+	// optimization pass runs; its zero value defers to the guard.
+	poll optimizerPoll
+}
+
+func optimizerOccupancyHash(x, y float64) uint64 {
+	// == treats -0 and +0 as the same key; give them the same bits.
+	if x == 0 {
+		x = 0
+	}
+	if y == 0 {
+		y = 0
+	}
+	h := math.Float64bits(x)*0x9E3779B97F4A7C15 ^ math.Float64bits(y)*0xC2B2AE3D27D4EB4F
+	h ^= h >> 31
+	h *= 0x94D049BB133111EB
+	h ^= h >> 29
+	return h
+}
+
+// occupancyLookup returns the graph index stored for point, if any.
+func (index *optimizerSpatialIndex) occupancyLookup(x, y float64) (int, bool) {
+	mask := uint64(len(index.occupied) - 1)
+	for slot := optimizerOccupancyHash(x, y) & mask; ; slot = (slot + 1) & mask {
+		entry := &index.occupied[slot]
+		if !entry.used {
+			return 0, false
+		}
+		if entry.x == x && entry.y == y {
+			return int(entry.graphIndex), true
+		}
+	}
+}
+
+// occupancyInsert stores graphIndex for point unless the point already has a
+// node, so the first node in graph order wins as before.
+func (index *optimizerSpatialIndex) occupancyInsert(x, y float64, graphIndex int) {
+	mask := uint64(len(index.occupied) - 1)
+	for slot := optimizerOccupancyHash(x, y) & mask; ; slot = (slot + 1) & mask {
+		entry := &index.occupied[slot]
+		if !entry.used {
+			*entry = optimizerOccupancySlot{x: x, y: y, graphIndex: int32(graphIndex), used: true}
+			return
+		}
+		if entry.x == x && entry.y == y {
+			return
+		}
+	}
 }
 
 func (optim *sizedOptimizer) rebuildSpatialIndex(guard *limits.OptimizationWorkGuard) error {
@@ -115,16 +169,16 @@ func (index *optimizerSpatialIndex) rebuild(g *layoutgraph.Graph, guard *limits.
 	index.entries = index.entries[:0]
 	index.candidates = index.candidates[:0]
 
-	index.occupancyGeneration++
-	// Avoid clearing map buckets on every optimizer node while bounding stale
-	// coordinate retention when accepted moves continually introduce new keys.
-	maxRetained := max(64, 4*len(g.Nodes))
-	if index.occupancyGeneration == 0 || len(index.occupied) > maxRetained {
-		clear(index.occupied)
-		index.occupancyGeneration = 1
+	// A power-of-two table at most half full.
+	tableSize := 16
+	for tableSize < 2*len(g.Nodes) {
+		tableSize *= 2
 	}
-	if index.occupied == nil {
-		index.occupied = make(map[geo.Point]optimizerOccupancyEntry, len(g.Nodes))
+	if cap(index.occupied) < tableSize {
+		index.occupied = make([]optimizerOccupancySlot, tableSize)
+	} else {
+		index.occupied = index.occupied[:tableSize]
+		clear(index.occupied)
 	}
 
 	for graphIndex, node := range g.Nodes {
@@ -142,14 +196,7 @@ func (index *optimizerSpatialIndex) rebuild(g *layoutgraph.Graph, guard *limits.
 			index.spatialUsable = false
 			continue
 		}
-		point := *node.TopLeft
-		entry, found := index.occupied[point]
-		if !found || entry.generation != index.occupancyGeneration {
-			index.occupied[point] = optimizerOccupancyEntry{
-				graphIndex: graphIndex,
-				generation: index.occupancyGeneration,
-			}
-		}
+		index.occupancyInsert(node.TopLeft.X, node.TopLeft.Y, graphIndex)
 
 		if !index.spatialUsable {
 			continue
@@ -171,7 +218,7 @@ func (index *optimizerSpatialIndex) rebuild(g *layoutgraph.Graph, guard *limits.
 	}
 
 	if !index.spatialUsable || len(index.entries) == 0 {
-		return guard.Finish()
+		return index.poll.finish(guard)
 	}
 	if err := guard.AddSort(len(index.entries)); err != nil {
 		return err
@@ -197,7 +244,7 @@ func (index *optimizerSpatialIndex) rebuild(g *layoutgraph.Graph, guard *limits.
 		index.maxRight = index.maxRight[:requiredTreeSize]
 	}
 	index.buildMaxRight(1, 0, len(index.entries))
-	return guard.Finish()
+	return index.poll.finish(guard)
 }
 
 func (index *optimizerSpatialIndex) buildMaxRight(treeIndex, low, high int) float64 {
@@ -218,7 +265,7 @@ func (index *optimizerSpatialIndex) query(
 ) ([]int, error) {
 	index.candidates = index.candidates[:0]
 	if !index.spatialUsable || len(index.entries) == 0 {
-		return index.candidates, guard.Finish()
+		return index.candidates, index.poll.finish(guard)
 	}
 	if err := index.queryTree(1, 0, len(index.entries), left, top, right, bottom, guard); err != nil {
 		return nil, err
@@ -227,7 +274,7 @@ func (index *optimizerSpatialIndex) query(
 		return nil, err
 	}
 	sort.Ints(index.candidates)
-	return index.candidates, guard.Finish()
+	return index.candidates, index.poll.finish(guard)
 }
 
 func (index *optimizerSpatialIndex) queryTree(
@@ -268,14 +315,14 @@ func (index *optimizerSpatialIndex) isOccupied(
 	if err := guard.Step(); err != nil {
 		return nil, false, err
 	}
-	entry, found := index.occupied[*point]
-	if !found || entry.generation != index.occupancyGeneration {
-		return nil, false, guard.Finish()
+	graphIndex, found := index.occupancyLookup(point.X, point.Y)
+	if !found {
+		return nil, false, index.poll.finish(guard)
 	}
-	if entry.graphIndex < 0 || entry.graphIndex >= len(g.Nodes) {
+	if graphIndex < 0 || graphIndex >= len(g.Nodes) {
 		return nil, false, fmt.Errorf("TALA %s spatial occupancy index is stale", guard.Location())
 	}
-	return g.Nodes[entry.graphIndex], true, guard.Finish()
+	return g.Nodes[graphIndex], true, index.poll.finish(guard)
 }
 
 func (index *optimizerSpatialIndex) doesOverlap(
@@ -343,5 +390,5 @@ func (index *optimizerSpatialIndex) doesOverlap(
 			return true, nil
 		}
 	}
-	return false, guard.Finish()
+	return false, index.poll.finish(guard)
 }

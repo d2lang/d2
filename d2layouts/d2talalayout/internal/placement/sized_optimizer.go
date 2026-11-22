@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/bits"
 	"math/rand"
 	"slices"
 
@@ -26,9 +27,66 @@ type sizedOptimizer struct {
 	symmetryCost     float64
 	cellSize         float64
 	obstacles        []geo.Box
-	checkedPositions map[geo.Point]struct{}
+	checkedPositions optimizerCheckedSet
 	placementScratch placementPointsScratch
 	spatialIndex     optimizerSpatialIndex
+	unoccupied       optimizerUnoccupiedSearch
+	current          optimizerCurrentScore
+	// nodeOrder and swapOrder hold the shuffled node indices of one pass and
+	// of one swap search; movement is the leaf candidate movement's snapshot.
+	nodeOrder []int
+	swapOrder []int
+	movement  [1]nodePositionSnapshot
+	neighbors []*layoutgraph.Node
+	// scores keeps counted-path scores across passes (optimizerScoreMemo);
+	// moveExact reports that the last moveNodeToBest left every node it moved
+	// at its exact starting bits; txGuard is the running optimize call's
+	// transaction guard.
+	scores     optimizerScoreMemo
+	moveExact  bool
+	txGuard    *limits.WorkGuard
+	herdValues []uint64
+	// moveScratch holds the snapshots and descendant walks of nodes that
+	// move with descendants.
+	moveScratch optimizerMoveScratch
+	// quiet holds, per graph node, the states in which its swap search
+	// found nothing and its transpose failed (optimizerQuietNode).
+	quiet []optimizerQuietNode
+}
+
+// enableScoreMemo lets the optimizer reuse scores across optimize calls. The
+// caller must then bracket whatever it runs between optimize calls that may
+// change the graph with beginExternalChanges and endExternalChanges.
+func (optim *sizedOptimizer) enableScoreMemo(ctx context.Context) {
+	optim.scores.enable(ctx)
+}
+
+// release returns the optimizer's pooled storage; it must not be used for
+// scoring after that without enableScoreMemo again.
+func (optim *sizedOptimizer) release() {
+	optim.scores.release()
+	optim.releaseQuiet()
+}
+
+// beginExternalChanges records the graph's state before its owner runs stages
+// between optimize calls that may move nodes, resize them, flip clusters, set
+// herd fences or reset routing costs, but change nothing else (topology,
+// labels, ...); endExternalChanges after them keeps the scores if that state
+// is still bit-identical and discards them otherwise.
+func (optim *sizedOptimizer) beginExternalChanges() {
+	if optim.scores.enabled {
+		optim.scores.image.captureGraph(optim.g, optim.scores.version, optim.scores.clock)
+	}
+}
+
+func (optim *sizedOptimizer) endExternalChanges() {
+	memo := &optim.scores
+	if !memo.enabled {
+		return
+	}
+	if memo.image.version != memo.version || memo.image.clock != memo.clock || !memo.image.unchanged(optim.g) {
+		memo.invalidate()
+	}
 }
 
 func iterPlacementsAroundPoint(node *layoutgraph.Node, x, y float64, minimizingSelf bool, apply func(x, y float64) bool) {
@@ -235,7 +293,8 @@ func (optim *sizedOptimizer) optimize(ctx context.Context, temp float64) (bool, 
 }
 
 func (optim *sizedOptimizer) optimizeWithLimit(ctx context.Context, temp float64, workLimit uint64) (changed bool, err error) {
-	ctx, _, err = layoutgraph.EnsureTransactionWorkGuard(ctx, "LocalOptimizeTransactions")
+	var txGuard *limits.WorkGuard
+	ctx, txGuard, err = layoutgraph.EnsureTransactionWorkGuard(ctx, "LocalOptimizeTransactions")
 	if err != nil {
 		return false, err
 	}
@@ -255,13 +314,17 @@ func (optim *sizedOptimizer) optimizeWithLimit(ctx context.Context, temp float64
 		return false, err
 	}
 	complete := false
+	optim.txGuard = txGuard
 	defer func() {
+		optim.txGuard = nil
 		if recovered := recover(); recovered != nil {
 			snapshot.restore()
+			optim.scores.invalidate()
 			panic(recovered)
 		}
 		if !complete {
 			snapshot.restore()
+			optim.scores.invalidate()
 		}
 	}()
 
@@ -278,11 +341,18 @@ func (optim *sizedOptimizer) optimizeWithLimit(ctx context.Context, temp float64
 
 func (optim *sizedOptimizer) optimizeGuarded(ctx context.Context, temp float64, guard *limits.OptimizationWorkGuard) (bool, error) {
 	changed := false
+	// guard was created on ctx, so its Finish polls can be answered from ctx's
+	// Done channel for the duration of this pass.
+	optim.spatialIndex.poll = newOptimizerPoll(ctx)
+	defer func() { optim.spatialIndex.poll = optimizerPoll{} }()
 
 	if len(optim.g.Nodes) > limits.MaxEngineNodes {
 		return false, fmt.Errorf("TALA LocalOptimize node count exceeds limit %d", limits.MaxEngineNodes)
 	}
-	nodeIndices := make([]int, len(optim.g.Nodes))
+	if cap(optim.nodeOrder) < len(optim.g.Nodes) {
+		optim.nodeOrder = make([]int, len(optim.g.Nodes))
+	}
+	nodeIndices := optim.nodeOrder[:len(optim.g.Nodes)]
 	for i := 0; i < len(optim.g.Nodes); i++ {
 		if err := guard.Step(); err != nil {
 			return false, err
@@ -348,15 +418,11 @@ func (optim *sizedOptimizer) optimizeGuarded(ctx context.Context, temp float64, 
 			return false, err
 		}
 
-		var checkedPositionsCache map[geo.Point]struct{}
+		var checkedPositionsCache *optimizerCheckedSet
 		// Making and using a cache takes many allocs. Only worth it when this node has to search through many siblings for overlap
 		if len(nodeIndices) > 10 {
-			if optim.checkedPositions == nil {
-				optim.checkedPositions = make(map[geo.Point]struct{}, 64)
-			} else {
-				clear(optim.checkedPositions)
-			}
-			checkedPositionsCache = optim.checkedPositions
+			optim.checkedPositions.reset()
+			checkedPositionsCache = &optim.checkedPositions
 		}
 		d, err := optim.findClosestUnoccupiedDistanceGuarded(node, medianPoint, minimizingSelf, checkedPositionsCache, guard)
 		if err != nil {
@@ -372,33 +438,28 @@ func (optim *sizedOptimizer) optimizeGuarded(ctx context.Context, temp float64, 
 		}
 
 		// we want mustImprove to be true for the last 10 optimize calls where temp is 0
-		moved, err := optim.moveNodeToBestGuarded(ctx, node, points, temp == 0, guard)
+		moved, err := optim.moveNodeToBestAfterSearch(ctx, node, points, temp == 0, guard)
 		if err != nil {
 			return false, err
 		}
+		optim.recordMove(node, moved)
 
 		if !moved {
-			bestSwapCandidate, err := optim.bestSwapCandidateGuarded(ctx, node, guard)
+			// The swap search and the transpose are skipped where the node's
+			// last ones found nothing in this same state (optimizer_quiet.go).
+			quiet := optim.quietState(nodeIndex, node)
+			bestSwapCandidate, err := optim.swapCandidateUnlessQuiet(ctx, node, quiet, guard)
 			if err != nil {
 				return false, err
 			}
 			if bestSwapCandidate != nil {
 				changed = true
-				if err := optimizerSwapPositions(node, bestSwapCandidate, guard); err != nil {
-					return false, err
-				}
-				if err := optim.syncHerdFencesGuarded(guard); err != nil {
+				if err := optim.commitSwap(node, bestSwapCandidate, guard); err != nil {
 					return false, err
 				}
 			} else {
-				if err := chargeOptimizerTranspose(optim.g, node, optim.edgeAbductions, guard); err != nil {
-					return false, err
-				}
-				ok, err := transpose(ctx, optim.g, node, optim.edgeAbductions)
+				ok, err := optim.transposeUnlessQuiet(ctx, node, quiet, guard)
 				if err != nil {
-					return false, err
-				}
-				if err := guard.Step(); err != nil {
 					return false, err
 				}
 				if ok {
@@ -406,27 +467,7 @@ func (optim *sizedOptimizer) optimizeGuarded(ctx context.Context, temp float64, 
 				} else {
 					// The spokes don't need to move because in the next iteration they'll move
 					if spokes, ok := optim.g.Hubs[node]; ok && temp != 0 {
-						err := withHubSpokesSuppressed(node, spokes, guard, func() error {
-							medianPoint, err := optim.medianPointGuarded(node, temp, protrudingChildren, guard)
-							if err != nil {
-								return err
-							}
-
-							d, err := optim.findClosestUnoccupiedDistanceGuarded(node, medianPoint, minimizingSelf, checkedPositionsCache, guard)
-							if err != nil {
-								return err
-							}
-							points, err := optim.fillPlacementPointsGuarded(node, medianPoint, d, minimizingSelf, &optim.placementScratch, guard)
-							if err != nil {
-								return err
-							}
-							if err := limits.Shuffle(points, optim.randGenerator, guard); err != nil {
-								return err
-							}
-							_, err = optim.moveNodeToBestGuarded(ctx, node, points, temp == 0, guard)
-							return err
-						})
-						if err != nil {
+						if err := optim.reSearchHub(ctx, node, spokes, temp, protrudingChildren, minimizingSelf, checkedPositionsCache, guard); err != nil {
 							return false, err
 						}
 					}
@@ -442,10 +483,90 @@ func (optim *sizedOptimizer) optimizeGuarded(ctx context.Context, temp float64, 
 	return changed, guard.Finish()
 }
 
+// reSearchHub places a hub again with its spokes' edges suppressed. It scores
+// the hub with other edges, so the score memo is not used during it; a move
+// of the hub is recorded after it (the edges are restored by then).
+func (optim *sizedOptimizer) reSearchHub(ctx context.Context, node *layoutgraph.Node, spokes []*layoutgraph.Node, temp float64, protrudingChildren layoutgraph.Nodes, minimizingSelf bool, checkedPositionsCache *optimizerCheckedSet, guard *limits.OptimizationWorkGuard) error {
+	optim.scores.suspended = true
+	hubMoved := false
+	err := withHubSpokesSuppressed(node, spokes, guard, func() error {
+		medianPoint, err := optim.medianPointGuarded(node, temp, protrudingChildren, guard)
+		if err != nil {
+			return err
+		}
+
+		d, err := optim.findClosestUnoccupiedDistanceGuarded(node, medianPoint, minimizingSelf, checkedPositionsCache, guard)
+		if err != nil {
+			return err
+		}
+		points, err := optim.fillPlacementPointsGuarded(node, medianPoint, d, minimizingSelf, &optim.placementScratch, guard)
+		if err != nil {
+			return err
+		}
+		if err := limits.Shuffle(points, optim.randGenerator, guard); err != nil {
+			return err
+		}
+		moved, err := optim.moveNodeToBestAfterSearch(ctx, node, points, temp == 0, guard)
+		hubMoved = moved || !optim.moveExact
+		return err
+	})
+	optim.scores.suspended = false
+	if err != nil {
+		return err
+	}
+	if hubMoved {
+		optim.scores.moved(node)
+	}
+	return nil
+}
+
+// recordMove records for the score memo what the moveNodeToBest of node that
+// just returned did: moving node, or leaving it or a descendant on other bits,
+// is a move of node.
+func (optim *sizedOptimizer) recordMove(node *layoutgraph.Node, moved bool) {
+	if moved || !optim.moveExact {
+		optim.scores.moved(node)
+	}
+}
+
+// commitSwap swaps the positions of node and candidate and syncs the herd
+// fences; two nodes move, which starts a new score epoch.
+func (optim *sizedOptimizer) commitSwap(node, candidate *layoutgraph.Node, guard *limits.OptimizationWorkGuard) error {
+	optim.scores.invalidate()
+	if err := optimizerSwapPositions(node, candidate, guard); err != nil {
+		return err
+	}
+	return optim.syncHerdFencesGuarded(guard)
+}
+
+// transposeTracked is transpose for the optimizer's node, keeping the score
+// memo's version current: a successful transpose moved nodes; one that opened
+// a transaction (it charged the transaction guard) and failed rolled its
+// changes back, which is confirmed against an image of the state before it.
+func (optim *sizedOptimizer) transposeTracked(ctx context.Context, node *layoutgraph.Node) (bool, error) {
+	memo := &optim.scores
+	tracked := memo.enabled && optim.txGuard != nil && optim.mutationScratch.costSnapshot != nil
+	var before int64
+	if tracked {
+		if memo.image.version != memo.version || memo.image.clock != memo.clock {
+			memo.image.capture(optim.g, &optim.mutationScratch, memo.version, memo.clock)
+		}
+		before = optim.txGuard.Used()
+	}
+	ok, err := transpose(ctx, optim.g, node, optim.edgeAbductions)
+	switch {
+	case err != nil || ok || !tracked:
+		memo.invalidate()
+	case optim.txGuard.Used() != before && !memo.image.matches(optim.g, &optim.mutationScratch):
+		memo.invalidate()
+	}
+	return ok, err
+}
+
 func (optim *sizedOptimizer) medianPointGuarded(node *layoutgraph.Node, temp float64, protrudingChildren layoutgraph.Nodes, guard *limits.OptimizationWorkGuard) (*geo.Point, error) {
 	width := node.Width / optim.cellSize
 	height := node.Height / optim.cellSize
-	medianX, medianY, err := optimizerMedianToNeighbors(node, true, optim.edgeAbductions, guard)
+	medianX, medianY, err := optimizerMedianToNeighborsInto(node, true, optim.edgeAbductions, guard, &optim.neighbors)
 	if err != nil {
 		return nil, err
 	}
@@ -525,15 +646,33 @@ func (optim *sizedOptimizer) protrudingChildrenGuarded(node *layoutgraph.Node, g
 	return protrudingChildren, nil
 }
 
-func (optim sizedOptimizer) findClosestUnoccupiedDistanceGuarded(node *layoutgraph.Node, p *geo.Point, minimizingSelf bool, checked map[geo.Point]struct{}, guard *limits.OptimizationWorkGuard) (float64, error) {
+func (optim *sizedOptimizer) findClosestUnoccupiedDistanceGuarded(node *layoutgraph.Node, p *geo.Point, minimizingSelf bool, checked *optimizerCheckedSet, guard *limits.OptimizationWorkGuard) (float64, error) {
+	if err := optim.checkClosestUnoccupiedInputs(node, p, checked, guard); err != nil {
+		return 0, err
+	}
+	return optim.findClosestUnoccupiedDistanceCounted(node, p, minimizingSelf, checked, guard)
+}
+
+// checkClosestUnoccupiedInputs reports the input errors the search reports
+// before charging any work.
+func (optim *sizedOptimizer) checkClosestUnoccupiedInputs(node *layoutgraph.Node, p *geo.Point, checked *optimizerCheckedSet, guard *limits.OptimizationWorkGuard) error {
 	if node == nil || node.Graph == nil || node.TopLeft == nil || p == nil {
-		return 0, fmt.Errorf("TALA %s placement search requires a positioned node, graph, and point", guard.Location())
+		return fmt.Errorf("TALA %s placement search requires a positioned node, graph, and point", guard.Location())
 	}
 	if optim.cellSize <= 0 || math.IsNaN(optim.cellSize) || math.IsInf(optim.cellSize, 0) {
-		return 0, fmt.Errorf("TALA %s placement search requires a finite positive cell size", guard.Location())
+		return fmt.Errorf("TALA %s placement search requires a finite positive cell size", guard.Location())
 	}
-	if len(checked) > maxOptimizerPlacementCandidates {
-		return 0, fmt.Errorf("%w: TALA %s checked placement count exceeds limit %d", limits.ErrOptimizationResourceLimit, guard.Location(), maxOptimizerPlacementCandidates)
+	if checked != nil && checked.len() > maxOptimizerPlacementCandidates {
+		return fmt.Errorf("%w: TALA %s checked placement count exceeds limit %d", limits.ErrOptimizationResourceLimit, guard.Location(), maxOptimizerPlacementCandidates)
+	}
+	return nil
+}
+
+// findClosestUnoccupiedDistanceStepped is the reference search: it charges
+// the guard as it goes.
+func (optim *sizedOptimizer) findClosestUnoccupiedDistanceStepped(node *layoutgraph.Node, p *geo.Point, minimizingSelf bool, checked *optimizerCheckedSet, guard *limits.OptimizationWorkGuard) (float64, error) {
+	if err := optim.checkClosestUnoccupiedInputs(node, p, checked, guard); err != nil {
+		return 0, err
 	}
 	// example with distance=3, we iterate points from least to most distance
 	//          3
@@ -617,21 +756,20 @@ func (optim sizedOptimizer) findClosestUnoccupiedDistanceGuarded(node *layoutgra
 // findUnoccupied is a tailored closest-unoccupied-distance search over placements around a node.
 // It is called often enough to warrant a specialized implementation.
 func (optim *sizedOptimizer) findUnoccupiedGuarded(
-	x, y, width, height float64, minimizingSelf bool, node *layoutgraph.Node, p *geo.Point, checked map[geo.Point]struct{}, guard *limits.OptimizationWorkGuard,
+	x, y, width, height float64, minimizingSelf bool, node *layoutgraph.Node, p *geo.Point, checked *optimizerCheckedSet, guard *limits.OptimizationWorkGuard,
 ) (bool, error) {
 	if err := guard.Step(); err != nil {
 		return false, err
 	}
 	skip := false
-	offset := geo.Point{X: x, Y: y}
 	if checked != nil {
-		if _, ok := checked[offset]; ok {
+		if checked.has(x, y) {
 			skip = true
 		} else {
-			if len(checked) >= maxOptimizerPlacementCandidates {
+			if checked.len() >= maxOptimizerPlacementCandidates {
 				return false, fmt.Errorf("%w: TALA %s checked placement count exceeds limit %d", limits.ErrOptimizationResourceLimit, guard.Location(), maxOptimizerPlacementCandidates)
 			}
-			checked[offset] = struct{}{}
+			checked.add(x, y)
 		}
 	}
 
@@ -659,15 +797,13 @@ func (optim *sizedOptimizer) findUnoccupiedGuarded(
 				continue
 			}
 			if checked != nil {
-				offset.X = i
-				offset.Y = j
-				if _, ok := checked[offset]; ok {
+				if checked.has(i, j) {
 					continue
 				}
-				if len(checked) >= maxOptimizerPlacementCandidates {
+				if checked.len() >= maxOptimizerPlacementCandidates {
 					return false, fmt.Errorf("%w: TALA %s checked placement count exceeds limit %d", limits.ErrOptimizationResourceLimit, guard.Location(), maxOptimizerPlacementCandidates)
 				}
-				checked[offset] = struct{}{}
+				checked.add(i, j)
 			}
 			occupied, err := optim.isPointOccupiedGuarded(i, j, p, node, guard)
 			if err != nil {
@@ -706,8 +842,91 @@ func (optim *sizedOptimizer) isPointOccupiedGuarded(x, y float64, p *geo.Point, 
 
 // placementPointsScratch holds reusable candidate-generation memory.
 type placementPointsScratch struct {
-	seen   map[uint64]struct{} // Deduplicate coordinates
-	points []geo.Point         // Collection of placement points
+	// The dedupe set of packed cell keys: keys inside window live in its
+	// bitset, all other keys in seen. A key's place depends only on the key,
+	// so membership is exactly that of one set.
+	seen   map[uint64]struct{}
+	window placementKeyWindow
+	// seenCount is the number of keys in the set (window bits plus seen).
+	seenCount int
+	points    []geo.Point // Collection of placement points
+	// rows is countPlacementsAroundPoint's per-row scratch.
+	rows []placementRow
+}
+
+// placementKeyWindow is a bitset over a rectangle of packed cell keys
+// (uint32(ix), uint32(iy)), with wrap-around offsets from its base.
+type placementKeyWindow struct {
+	baseX, baseY  uint32
+	width, height uint32
+	words         []uint64
+}
+
+const maxPlacementKeyWindowBits = 1 << 20
+
+func (window *placementKeyWindow) reset(baseX, baseY int64, width, height int64) {
+	if width <= 0 || height <= 0 || width*height > maxPlacementKeyWindowBits {
+		window.width, window.height = 0, 0
+		window.words = window.words[:0]
+		return
+	}
+	window.baseX, window.baseY = uint32(baseX), uint32(baseY)
+	window.width, window.height = uint32(width), uint32(height)
+	words := int((width*height + 63) / 64)
+	if cap(window.words) < words {
+		window.words = make([]uint64, words)
+	} else {
+		window.words = window.words[:words]
+		clear(window.words)
+	}
+}
+
+// placementCharge either charges the guard as the legacy generator did
+// (guard != nil) or only counts the units it would charge.
+type placementCharge struct {
+	guard *limits.OptimizationWorkGuard
+	units uint64
+	// overflow is set when counted units no longer fit; the caller then
+	// generates again with the guard.
+	overflow bool
+}
+
+var errPlacementChargeOverflow = fmt.Errorf("TALA placement unit count overflow")
+
+func (charge *placementCharge) step() error {
+	if charge.guard != nil {
+		return charge.guard.Step()
+	}
+	return charge.add(1)
+}
+
+func (charge *placementCharge) add(units uint64) error {
+	if charge.guard != nil {
+		return charge.guard.Add(units)
+	}
+	sum, ok := limits.CheckedAddUint64(charge.units, units)
+	if !ok {
+		charge.overflow = true
+		return errPlacementChargeOverflow
+	}
+	charge.units = sum
+	return nil
+}
+
+func (charge *placementCharge) addSort(length int) error {
+	if charge.guard != nil {
+		return charge.guard.AddSort(length)
+	}
+	if length <= 1 {
+		// AddSort only polls the context here.
+		return nil
+	}
+	units, ok := limits.CheckedMulUint64(uint64(length), uint64(bits.Len64(uint64(length-1))))
+	if !ok {
+		charge.overflow = true
+		return errPlacementChargeOverflow
+	}
+	return charge.add(units)
 }
 
 // fillPlacementPointsGuarded fills caller-owned scratch so the optimizer can
@@ -736,30 +955,150 @@ func (optim *sizedOptimizer) fillPlacementPointsGuarded(
 		scratch.points = make([]geo.Point, 0, 128)
 	}
 
-	// Clear data structures for reuse
-	for k := range scratch.seen {
-		if err := guard.Step(); err != nil {
+	// Clear data structures for reuse. The legacy loop deleted the retained
+	// keys one by one with one unit each.
+	if retained := scratch.seenCount; retained > 0 {
+		_, err := chargeOrReplay(guard, uint64(retained), func() error {
+			for range retained {
+				if err := guard.Step(); err != nil {
+					return err
+				}
+				scratch.seenCount--
+			}
+			return nil
+		})
+		if err != nil {
 			return nil, err
 		}
-		delete(scratch.seen, k)
+		clear(scratch.seen)
+		scratch.seenCount = 0
 	}
-	scratch.points = scratch.points[:0]
 
 	// Calculate distance and estimate capacity
 	dist := minUnocc + 1
 
-	// Using bit shifting for faster encoding of coordinates
-	// No need to create a closure for this simple operation
-	// Use direct memoization in the add function
+	// Generation is pure apart from the scratch it fills, so count its units
+	// first and charge them at once; when the guard rejects them (or the count
+	// cannot be completed), generate again from the same cleared scratch with
+	// the guard stepping exactly as before.
+	resetGeneration := func() {
+		optim.resetPlacementWindow(node, median, dist, scratch)
+		clear(scratch.seen)
+		scratch.seenCount = 0
+		scratch.points = scratch.points[:0]
+	}
+	resetGeneration()
+	counted := placementCharge{}
+	countErr := optim.countPlacementPoints(node, median, dist, minimizingSelf, scratch, &counted)
+	stepped := func() error {
+		resetGeneration()
+		charge := placementCharge{guard: guard}
+		if err := optim.generatePlacementPoints(node, median, dist, minimizingSelf, scratch, &charge); err != nil {
+			return err
+		}
+		// Preserve the original work charge even when the internal caller consumes
+		// the scratch slice directly.
+		return guard.Add(uint64(len(scratch.points)))
+	}
+	if countErr != nil || counted.overflow {
+		if err := stepped(); err != nil {
+			return nil, err
+		}
+		return scratch.points, nil
+	}
+	units, ok := limits.CheckedAddUint64(counted.units, uint64(len(scratch.points)))
+	if !ok {
+		if err := stepped(); err != nil {
+			return nil, err
+		}
+		return scratch.points, nil
+	}
+	if units == 0 {
+		// guard.Add(0) only polls the context.
+		if err := guard.Finish(); err != nil {
+			return nil, err
+		}
+		return scratch.points, nil
+	}
+	if _, err := chargeOrReplay(guard, units, stepped); err != nil {
+		return nil, err
+	}
+	return scratch.points, nil
+}
 
+// resetPlacementWindow centers the dedupe window on the cells the diamond
+// around median can produce. Keys outside it still go to the map, so the
+// window only has to be a good guess.
+func (optim *sizedOptimizer) resetPlacementWindow(node *layoutgraph.Node, median *geo.Point, dist float64, scratch *placementPointsScratch) {
+	cellSize := optim.cellSize
+	spanX := math.Ceil(node.Width / cellSize)
+	spanY := math.Ceil(node.Height / cellSize)
+	centerX := math.Round(median.X / cellSize)
+	centerY := math.Round(median.Y / cellSize)
+	if math.IsNaN(spanX+spanY+centerX+centerY) || math.IsInf(spanX+spanY+centerX+centerY, 0) ||
+		math.Abs(centerX) > 1<<40 || math.Abs(centerY) > 1<<40 || spanX > 1<<20 || spanY > 1<<20 {
+		scratch.window.reset(0, 0, 0, 0)
+		return
+	}
+	reach := int64(dist) + 2
+	scratch.window.reset(
+		int64(centerX)-reach-int64(spanX)-1,
+		int64(centerY)-reach-int64(spanY)-1,
+		2*reach+int64(spanX)+3,
+		2*reach+int64(spanY)+3,
+	)
+}
+
+// generatePlacementPoints is the legacy candidate generator; charge either
+// steps the guard exactly as before or counts the same units.
+func (optim *sizedOptimizer) generatePlacementPoints(
+	node *layoutgraph.Node,
+	median *geo.Point,
+	dist float64,
+	minimizingSelf bool,
+	scratch *placementPointsScratch,
+	charge *placementCharge,
+) error {
 	// The add function checks for duplicates and adds valid points
 	var addErr error
-	add := func(offX, offY float64) bool {
-		if addErr != nil {
+	add := optim.placementAdder(median, scratch, charge, &addErr)
+
+	// Generate placement points in diamond pattern
+	// Use integer for loop counters when possible to reduce float ops
+	for x := dist; x >= -dist; x-- {
+		if err := charge.step(); err != nil {
+			return err
+		}
+		maxY := dist - math.Abs(x)
+		for y := 0.0; y <= maxY; y++ {
+			if err := charge.step(); err != nil {
+				return err
+			}
+			// Generate points in both positive and negative Y directions
+			if y != 0 {
+				iterPlacementsAroundPoint(node, x, -y, minimizingSelf, add)
+			}
+			iterPlacementsAroundPoint(node, x, y, minimizingSelf, add)
+			if addErr != nil {
+				return addErr
+			}
+		}
+	}
+	return optim.generatePlacementTail(node, median, scratch, charge)
+}
+
+// placementAdder returns the generator's add function: it charges one unit,
+// rounds the point, drops points past the fixed origin and duplicates (by
+// packed cell key) and appends the rest. It reports true, and sets *addErr,
+// when generation must stop.
+func (optim *sizedOptimizer) placementAdder(median *geo.Point, scratch *placementPointsScratch, charge *placementCharge, addErr *error) func(offX, offY float64) bool {
+	window := &scratch.window
+	return func(offX, offY float64) bool {
+		if *addErr != nil {
 			return true
 		}
-		if err := guard.Step(); err != nil {
-			addErr = err
+		if err := charge.step(); err != nil {
+			*addErr = err
 			return true
 		}
 		pX := roundToNearestCellSize(median.X+offX, optim.cellSize)
@@ -775,61 +1114,64 @@ func (optim *sizedOptimizer) fillPlacementPointsGuarded(
 		// Inlined the encode function to reduce overhead
 		ix := int64(pX / optim.cellSize)
 		iy := int64(pY / optim.cellSize)
-		key := uint64(uint32(ix))<<32 | uint64(uint32(iy))
+		kx, ky := uint32(ix), uint32(iy)
 
 		// Check if duplicate
-		if _, dup := scratch.seen[key]; dup {
-			return false
+		if dx, dy := kx-window.baseX, ky-window.baseY; dx < window.width && dy < window.height {
+			bit := dy*window.width + dx
+			word, mask := bit>>6, uint64(1)<<(bit&63)
+			if window.words[word]&mask != 0 {
+				return false
+			}
+			if len(scratch.points) >= maxOptimizerPlacementCandidates {
+				*addErr = fmt.Errorf("%w: TALA LocalOptimize placement candidates exceed limit %d", limits.ErrOptimizationResourceLimit, maxOptimizerPlacementCandidates)
+				return true
+			}
+			window.words[word] |= mask
+		} else {
+			key := uint64(kx)<<32 | uint64(ky)
+			if _, dup := scratch.seen[key]; dup {
+				return false
+			}
+			if len(scratch.points) >= maxOptimizerPlacementCandidates {
+				*addErr = fmt.Errorf("%w: TALA LocalOptimize placement candidates exceed limit %d", limits.ErrOptimizationResourceLimit, maxOptimizerPlacementCandidates)
+				return true
+			}
+			scratch.seen[key] = struct{}{}
 		}
-		if len(scratch.points) >= maxOptimizerPlacementCandidates {
-			addErr = fmt.Errorf("%w: TALA LocalOptimize placement candidates exceed limit %d", limits.ErrOptimizationResourceLimit, maxOptimizerPlacementCandidates)
-			return true
-		}
-
-		// Add to seen and points collections
-		scratch.seen[key] = struct{}{}
+		scratch.seenCount++
 		scratch.points = append(scratch.points, geo.Point{X: pX, Y: pY})
 		return false
 	}
+}
 
-	// Generate placement points in diamond pattern
-	// Use integer for loop counters when possible to reduce float ops
-	for x := dist; x >= -dist; x-- {
-		if err := guard.Step(); err != nil {
-			return nil, err
-		}
-		maxY := dist - math.Abs(x)
-		for y := 0.0; y <= maxY; y++ {
-			if err := guard.Step(); err != nil {
-				return nil, err
-			}
-			// Generate points in both positive and negative Y directions
-			if y != 0 {
-				iterPlacementsAroundPoint(node, x, -y, minimizingSelf, add)
-			}
-			iterPlacementsAroundPoint(node, x, y, minimizingSelf, add)
-			if addErr != nil {
-				return nil, addErr
-			}
-		}
-	}
+// generatePlacementTail is the generator after the diamond: long-distance
+// neighbor points, then the current position of herd nodes.
+func (optim *sizedOptimizer) generatePlacementTail(
+	node *layoutgraph.Node,
+	median *geo.Point,
+	scratch *placementPointsScratch,
+	charge *placementCharge,
+) error {
+	var addErr error
+	add := optim.placementAdder(median, scratch, charge, &addErr)
 
 	// Process long-distance neighbor requirements.
 	if data := node.LongDistanceNeighborRequirements; data != nil {
 		if int64(len(data)) > layoutgraph.MaxTopologyReferences {
-			return nil, fmt.Errorf("TALA %s long-distance neighbor references exceed limit %d", guard.Location(), layoutgraph.MaxTopologyReferences)
+			return fmt.Errorf("TALA %s long-distance neighbor references exceed limit %d", optimizerChargeLocation(charge), layoutgraph.MaxTopologyReferences)
 		}
 		cell := float64(int(optim.cellSize))
 
 		neighbors := make([]*layoutgraph.Node, 0, len(data))
 		for adjacent := range data {
-			if err := guard.Step(); err != nil {
-				return nil, err
+			if err := charge.step(); err != nil {
+				return err
 			}
 			neighbors = append(neighbors, adjacent)
 		}
-		if err := guard.AddSort(len(neighbors)); err != nil {
-			return nil, err
+		if err := charge.addSort(len(neighbors)); err != nil {
+			return err
 		}
 		slices.SortFunc(neighbors, func(a, b *layoutgraph.Node) int {
 			return cmp.Compare(a.IDValue(), b.IDValue())
@@ -837,12 +1179,12 @@ func (optim *sizedOptimizer) fillPlacementPointsGuarded(
 
 		// Avoid creating closures in loops by using direct function calls
 		for _, adj := range neighbors {
-			if err := guard.Step(); err != nil {
-				return nil, err
+			if err := charge.step(); err != nil {
+				return err
 			}
 			requirements := data[adj]
 			if adj == nil || adj.TopLeft == nil {
-				return nil, fmt.Errorf("TALA %s found an unpositioned long-distance neighbor", guard.Location())
+				return fmt.Errorf("TALA %s found an unpositioned long-distance neighbor", optimizerChargeLocation(charge))
 			}
 			maxW := requirements.MaxWidth
 			maxH := requirements.MaxHeight
@@ -863,7 +1205,7 @@ func (optim *sizedOptimizer) fillPlacementPointsGuarded(
 				add(ax, math.Ceil((ay+adj.Height+float64(maxH))/cell)*cell)
 			}
 			if addErr != nil {
-				return nil, addErr
+				return addErr
 			}
 		}
 	}
@@ -871,21 +1213,24 @@ func (optim *sizedOptimizer) fillPlacementPointsGuarded(
 	// Add current position for herd assignments
 	if node.HerdAssignment != nil {
 		if len(scratch.points) >= maxOptimizerPlacementCandidates {
-			return nil, fmt.Errorf("%w: TALA LocalOptimize placement candidates exceed limit %d", limits.ErrOptimizationResourceLimit, maxOptimizerPlacementCandidates)
+			return fmt.Errorf("%w: TALA LocalOptimize placement candidates exceed limit %d", limits.ErrOptimizationResourceLimit, maxOptimizerPlacementCandidates)
 		}
 		scratch.points = append(scratch.points, *node.TopLeft)
 	}
-
-	// Preserve the original work charge even when the internal caller consumes
-	// the scratch slice directly.
-	if err := guard.Add(uint64(len(scratch.points))); err != nil {
-		return nil, err
-	}
-	return scratch.points, nil
+	return nil
 }
 
-func (optim *sizedOptimizer) moveNodeToBestGuarded(ctx context.Context, node *layoutgraph.Node, points []geo.Point, mustImprove bool, guard *limits.OptimizationWorkGuard) (bool, error) {
-	scorer := placementcost.NewNodeEdgeLengthScorer(node, placementcost.EdgeLengthOptions{
+// optimizerChargeLocation names the guard in errors; a counting pass never
+// reports its errors (the stepped pass that follows does).
+func optimizerChargeLocation(charge *placementCharge) string {
+	if charge.guard == nil {
+		return "LocalOptimize"
+	}
+	return charge.guard.Location()
+}
+
+func (optim *sizedOptimizer) moveNodeToBestStepped(ctx context.Context, node *layoutgraph.Node, points []geo.Point, mustImprove bool, guard *limits.OptimizationWorkGuard) (bool, error) {
+	scorer := placementcost.NewNodeEdgeLengthSweepScorer(node, placementcost.EdgeLengthOptions{
 		EdgeAbductions: optim.edgeAbductions, IncludeNodeSizes: true,
 		EnforceMinimumGap: false, PenalizeDirection: true,
 	})
@@ -915,7 +1260,7 @@ func (optim *sizedOptimizer) moveNodeToBestGuarded(ctx context.Context, node *la
 	leastDistancePoint := node.TopLeft.Copy()
 	currentNodeX := node.TopLeft.X
 	currentNodeY := node.TopLeft.Y
-	movement, err := captureOptimizerCandidateMovement(node, guard)
+	movement, err := optim.moveScratch.candidateMovement(node, guard)
 	if err != nil {
 		return false, err
 	}
@@ -958,7 +1303,7 @@ func (optim *sizedOptimizer) moveNodeToBestGuarded(ctx context.Context, node *la
 				return false, err
 			}
 
-			edgeLength, err := scorer.Score(ctx)
+			edgeLength, err := scorer.ScoreUnlessAbove(ctx, symmetryCost, leastDistance)
 			if err != nil {
 				restoreNodePositions(originalPositions)
 				return false, err
@@ -1021,33 +1366,56 @@ func (optim *sizedOptimizer) moveNodeToBestGuarded(ctx context.Context, node *la
 	}
 
 	complete = true
+	optim.moveExact = positionsExact(originalPositions)
 	return (node.TopLeft.X != currentNodeX) || (node.TopLeft.Y != currentNodeY), nil
 }
 
-func (optim *sizedOptimizer) bestSwapCandidateGuarded(ctx context.Context, node *layoutgraph.Node, guard *limits.OptimizationWorkGuard) (*layoutgraph.Node, error) {
+// bestSwapCandidateAfterMove is bestSwapCandidateGuarded right after a
+// moveNodeToBest of node that did not move it: node's own scores at its
+// position, when that search computed them, are reused.
+func (optim *sizedOptimizer) bestSwapCandidateAfterMove(ctx context.Context, node *layoutgraph.Node, guard *limits.OptimizationWorkGuard) (*layoutgraph.Node, error) {
+	current := optim.current
+	optim.current = optimizerCurrentScore{}
+	if !current.matches(node) {
+		return optim.bestSwapCandidate(ctx, node, nil, guard)
+	}
+	return optim.bestSwapCandidate(ctx, node, &current, guard)
+}
+
+func (optim *sizedOptimizer) bestSwapCandidate(ctx context.Context, node *layoutgraph.Node, current *optimizerCurrentScore, guard *limits.OptimizationWorkGuard) (*layoutgraph.Node, error) {
 	minSwapL := math.Inf(1)
 
 	// TODO (Mon Sep 20 10:57:17 2021) These maybe should be true on enforcing gap size, since when we swap, we don't want resulting swap to be too squished
 	if err := chargeOptimizerScoring(node, optim.edgeAbductions, true, guard); err != nil {
 		return nil, err
 	}
-	currentL1, err := placementcost.NodeEdgeLength(ctx, node, placementcost.EdgeLengthOptions{EdgeAbductions: optim.edgeAbductions, IncludeNodeSizes: true, EnforceMinimumGap: false, PenalizeDirection: true})
-	if err != nil {
+	// The scores of node at its position are pure functions of the graph,
+	// which has not changed since current recorded them.
+	var currentL1, columnCrossingCost, symmetry float64
+	var err error
+	if current != nil && current.level >= optimizerScoredEdgeLength {
+		currentL1 = current.edgeLength
+	} else if currentL1, err = placementcost.NodeEdgeLength(ctx, node, placementcost.EdgeLengthOptions{EdgeAbductions: optim.edgeAbductions, IncludeNodeSizes: true, EnforceMinimumGap: false, PenalizeDirection: true}); err != nil {
 		return nil, err
 	}
-	columnCrossingCost, err := placementcost.ColumnCrossingCost(ctx, node, optim.edgeAbductions)
-	if err != nil {
-		return nil, err
-	}
-	symmetry, err := placementcost.NodeSymmetry(ctx, node, optim.edgeAbductions)
-	if err != nil {
-		return nil, err
+	if current != nil && current.level >= optimizerScoredAll {
+		columnCrossingCost, symmetry = current.columnCrossing, current.symmetry
+	} else {
+		if columnCrossingCost, err = placementcost.ColumnCrossingCost(ctx, node, optim.edgeAbductions); err != nil {
+			return nil, err
+		}
+		if symmetry, err = placementcost.NodeSymmetry(ctx, node, optim.edgeAbductions); err != nil {
+			return nil, err
+		}
 	}
 	currentL1 += columnCrossingCost
 	currentL1 -= symmetry * optim.symmetryCost * float64(len(node.Edges))
 	var bestSwapCandidate *layoutgraph.Node = nil
 
-	swapCandidateIndices := make([]int, len(optim.g.Nodes))
+	if cap(optim.swapOrder) < len(optim.g.Nodes) {
+		optim.swapOrder = make([]int, len(optim.g.Nodes))
+	}
+	swapCandidateIndices := optim.swapOrder[:len(optim.g.Nodes)]
 	for i := 0; i < len(optim.g.Nodes); i++ {
 		if err := guard.Step(); err != nil {
 			return nil, err
@@ -1090,15 +1458,7 @@ func (optim *sizedOptimizer) bestSwapCandidateGuarded(ctx context.Context, node 
 		if err := chargeOptimizerScoring(swapCandidate, optim.edgeAbductions, true, guard); err != nil {
 			return nil, err
 		}
-		currentL2, err := placementcost.NodeEdgeLength(ctx, swapCandidate, placementcost.EdgeLengthOptions{EdgeAbductions: optim.edgeAbductions, IncludeNodeSizes: true, EnforceMinimumGap: false, PenalizeDirection: true})
-		if err != nil {
-			return nil, err
-		}
-		columnCrossingCost, err := placementcost.ColumnCrossingCost(ctx, swapCandidate, optim.edgeAbductions)
-		if err != nil {
-			return nil, err
-		}
-		symmetry, err := placementcost.NodeSymmetry(ctx, swapCandidate, optim.edgeAbductions)
+		currentL2, columnCrossingCost, symmetry, err := optim.scoreInPlace(ctx, swapCandidate)
 		if err != nil {
 			return nil, err
 		}
@@ -1107,7 +1467,7 @@ func (optim *sizedOptimizer) bestSwapCandidateGuarded(ctx context.Context, node 
 
 		var swappedL1, swappedL2 float64
 		validSwap := false
-		err = withOptimizerPositionsSwapped(node, swapCandidate, guard, func() error {
+		err = optim.moveScratch.withPositionsSwapped(node, swapCandidate, guard, func() error {
 
 			// Have to check for overlap again, since swapping two of different sizes
 			// may cause one to overlap with the other -- so, no exceptions in this check
@@ -1184,6 +1544,43 @@ func (optim *sizedOptimizer) bestSwapCandidateGuarded(ctx context.Context, node 
 	return bestSwapCandidate, nil
 }
 
+// scoreInPlace returns NodeEdgeLength (with the scorer's options),
+// ColumnCrossingCost and NodeSymmetry of node at its position, from the
+// score memo when it holds them (leaves only: the key fixes a leaf's whole
+// geometry), storing what it computes.
+func (optim *sizedOptimizer) scoreInPlace(ctx context.Context, node *layoutgraph.Node) (edgeLength, columnCrossing, symmetry float64, err error) {
+	memo := &optim.scores
+	turnBits, crossingBits, memoOn := memo.usable(ctx, node)
+	memoOn = memoOn && node.TopLeft != nil && optimizerLeaf(node)
+	var known optimizerScoreSlot
+	var px, py uint64
+	if memoOn {
+		px, py = math.Float64bits(node.TopLeft.X), math.Float64bits(node.TopLeft.Y)
+		known = memo.lookup(node, px, py, turnBits, crossingBits)
+		if memo.stats != nil {
+			memo.verifyHit(node, optim.edgeAbductions, known, math.Inf(1), 0)
+		}
+	}
+	if known.level == scoreMemoAll {
+		return known.score, known.columnCrossing, known.symmetry, nil
+	}
+	if known.level == scoreMemoEdgeLength {
+		edgeLength = known.score
+	} else if edgeLength, err = placementcost.NodeEdgeLength(ctx, node, placementcost.EdgeLengthOptions{EdgeAbductions: optim.edgeAbductions, IncludeNodeSizes: true, EnforceMinimumGap: false, PenalizeDirection: true}); err != nil {
+		return 0, 0, 0, err
+	}
+	if columnCrossing, err = placementcost.ColumnCrossingCost(ctx, node, optim.edgeAbductions); err != nil {
+		return 0, 0, 0, err
+	}
+	if symmetry, err = placementcost.NodeSymmetry(ctx, node, optim.edgeAbductions); err != nil {
+		return 0, 0, 0, err
+	}
+	if memoOn {
+		memo.store(node, px, py, turnBits, crossingBits, scoreMemoAll, edgeLength, columnCrossing, symmetry)
+	}
+	return edgeLength, columnCrossing, symmetry, nil
+}
+
 func (optim *sizedOptimizer) syncHerdFencesGuarded(guard *limits.OptimizationWorkGuard) error {
 	// Preserve the legacy bounding-box semantics (outside labels, modifier
 	// elements, loop offsets, routed edges, and fixed origins). Precharging the
@@ -1195,6 +1592,29 @@ func (optim *sizedOptimizer) syncHerdFencesGuarded(guard *limits.OptimizationWor
 	if err := guard.Add(uint64(len(optim.g.Edges))); err != nil {
 		return err
 	}
+	// Herd fences are part of what scores read: other values start a new
+	// score epoch.
+	herds := optim.herdValues[:0]
+	if optim.scores.enabled {
+		for _, node := range optim.g.Nodes {
+			if node.HerdAssignment != nil {
+				herds = append(herds, math.Float64bits(node.HerdAssignment.Val))
+			}
+		}
+	}
 	proximity.SyncHerdFences(optim.g)
+	if optim.scores.enabled {
+		i := 0
+		for _, node := range optim.g.Nodes {
+			if node.HerdAssignment != nil {
+				if i >= len(herds) || herds[i] != math.Float64bits(node.HerdAssignment.Val) {
+					optim.scores.invalidate()
+					break
+				}
+				i++
+			}
+		}
+	}
+	optim.herdValues = herds
 	return guard.Finish()
 }

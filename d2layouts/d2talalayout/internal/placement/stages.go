@@ -173,6 +173,12 @@ func Place(ctx context.Context, graph *layoutgraph.Graph, seed int64) error {
 }
 
 func NormalizeGaps(ctx context.Context, graph *layoutgraph.Graph) (bool, error) {
+	return normalizeGaps(ctx, graph, true)
+}
+
+// normalizeGaps is NormalizeGaps; replayNoops false runs every no-op
+// transaction for real, which tests use as the reference.
+func normalizeGaps(ctx context.Context, graph *layoutgraph.Graph, replayNoops bool) (bool, error) {
 	ctx, guard, err := layoutgraph.EnsureTransactionWorkGuard(ctx, "GapNormalizationTransactions")
 	if err != nil {
 		return false, err
@@ -194,11 +200,15 @@ func NormalizeGaps(ctx context.Context, graph *layoutgraph.Graph) (bool, error) 
 			rollback.restore()
 		}
 	}()
+	// Every pass below uses txn and nothing else changes the graph between
+	// passes, so the no-op replay state carries over (see gapNoopReplay).
+	noops := &gapNoopReplay{guard: guard, disabled: !replayNoops}
 	bidirectional := func(nodes layoutgraph.Nodes, axis layoutAxis) (bool, error) {
 		forward, err := gapNormalization(ctx, nodes, txn, graph, gapNormalizationOptions{
 			axis:      axis,
 			direction: forwardDirection,
 			costTxn:   txn,
+			noops:     noops,
 		})
 		if err != nil {
 			return false, err
@@ -207,6 +217,7 @@ func NormalizeGaps(ctx context.Context, graph *layoutgraph.Graph) (bool, error) 
 			axis:      axis,
 			direction: backwardDirection,
 			costTxn:   txn,
+			noops:     noops,
 		})
 		return forward || backward, err
 	}
@@ -254,6 +265,7 @@ func Align(ctx context.Context, graph *layoutgraph.Graph) error {
 	if err != nil {
 		return err
 	}
+	defer txn.Release()
 	for range 100 {
 		changed, err := alignAxes(ctx, graph, txn)
 		if err != nil {

@@ -60,7 +60,7 @@ func TestPlacementPoints(t *testing.T) {
 		*geo.NewPoint(3, 2): {}, // bottom *
 	}
 	for _, p := range points {
-		delete(expected, *p)
+		delete(expected, p)
 	}
 	assert.Equal(t, 0, len(expected), "some points are missing")
 }

@@ -18,6 +18,10 @@ type gapNormalizationOptions struct {
 	axis      layoutAxis
 	direction traversalDirection
 	costTxn   *layoutgraph.Transaction
+	// noops carries the no-op replay state across consecutive passes that use
+	// the same transaction with nothing else changing the graph in between.
+	// Nil starts a fresh one.
+	noops *gapNoopReplay
 }
 
 type gapReductionOptions struct {
@@ -34,7 +38,7 @@ func gapNormalization(ctx context.Context, nodes layoutgraph.Nodes, txn *layoutg
 	if !options.direction.valid() {
 		return false, fmt.Errorf("TALA GapNormalization requires a direction")
 	}
-	ctx, _, err := layoutgraph.EnsureTransactionWorkGuard(ctx, "GapNormalizationTransactions")
+	ctx, guard, err := layoutgraph.EnsureTransactionWorkGuard(ctx, "GapNormalizationTransactions")
 	if err != nil {
 		return false, err
 	}
@@ -50,6 +54,10 @@ func gapNormalization(ctx context.Context, nodes layoutgraph.Nodes, txn *layoutg
 	})
 
 	changed := false
+	noops := options.noops
+	if noops == nil || (!noops.disabled && noops.guard != guard) {
+		noops = &gapNoopReplay{guard: guard}
+	}
 
 	// whole trees can move towards other nodes but we don't want to move within trees
 	for _, node := range sortedByConnections {
@@ -59,19 +67,59 @@ func gapNormalization(ctx context.Context, nodes layoutgraph.Nodes, txn *layoutg
 		if node.Hierarchy != nil {
 			continue
 		}
+		reductionOptions := gapReductionOptions{
+			axis:                   options.axis,
+			direction:              options.direction,
+			attemptRecoverSymmetry: true,
+			costTxn:                options.costTxn,
+		}
+		// reduceGapToNeighbors starts with this prelude; when it finds no
+		// connected node ahead the operation changes nothing (see gapNoopReplay).
+		_, _, nearestAhead, preludeErr := gapReductionPrelude(ctx, node, reductionOptions)
+		preludeNoop := preludeErr == nil && nearestAhead == nil
+		if preludeNoop && noops.replayable() {
+			if err := noops.replay(); err != nil {
+				return changed, err
+			}
+			changed = true
+			continue
+		}
+		noops.begin(g)
 		candidateTxn, err := txn.CloneGeometryContext()
 		if err != nil {
 			return changed, err
 		}
-		txn.AddOp(func() error {
-			_, _, err := reduceGapToNeighbors(ctx, node, candidateTxn, gapReductionOptions{
-				axis:                   options.axis,
-				direction:              options.direction,
-				attemptRecoverSymmetry: true,
-				costTxn:                options.costTxn,
-			})
-			return err
-		})
+		// The operation runs here rather than as the outer transaction's
+		// operation: Commit would run it first thing (after charging one step for
+		// it) and then validate whatever it left, which the Commit below does
+		// with an operation that changes nothing, charging that same step. A
+		// failed operation is committed as an operation returning its error, so
+		// Commit charges the step, rolls back and returns the same error.
+		if !preludeNoop {
+			_, _, operationErr := reduceGapToNeighbors(ctx, node, candidateTxn, reductionOptions)
+			// The clone is not used again: its own states go back to the graph.
+			candidateTxn.Release()
+			if operationErr != nil {
+				txn.AddOp(func() error { return operationErr })
+				if err := txn.Commit(ctx); !layoutgraph.IsCandidateRejection(err) {
+					return changed, err
+				}
+				txn.Clear()
+				noops.reset()
+				continue
+			}
+		}
+		operationUnchanged := preludeNoop || noops.unchangedSinceBegin(g)
+		if operationUnchanged && noops.replayable() {
+			if err := noops.replay(); err != nil {
+				return changed, err
+			}
+			changed = true
+			continue
+		}
+		usedBefore := guard.Used()
+		txn.AddOp(func() error { return nil })
+		accepted := false
 		if err := txn.Commit(ctx); err != nil {
 			if !layoutgraph.IsCandidateRejection(err) {
 				return changed, err
@@ -81,8 +129,10 @@ func gapNormalization(ctx context.Context, nodes layoutgraph.Nodes, txn *layoutg
 				return changed, err
 			}
 			changed = true
+			accepted = true
 		}
 		txn.Clear()
+		noops.finish(g, operationUnchanged && accepted, guard.Used()-usedBefore)
 	}
 
 	return changed, nil
@@ -194,6 +244,57 @@ func nearestBetween(nodes layoutgraph.Nodes, behind, ahead, inContainer *layoutg
 	return nearest
 }
 
+// nearestBetweenConnected is nearestBetween(ahead.ConnectedNodes(excluded,
+// graph), behind, ahead, inContainer, isHorizontal, forwards). nearestBetween
+// keeps the first node, in list order, whose key no later node beats, so when
+// exactly one candidate has the best key and no key is NaN the list order is
+// irrelevant, and ConnectedNodeSet (the same set, cheaper, unordered) gives
+// the same node. Otherwise the ordered list decides as before.
+func nearestBetweenConnected(ahead *layoutgraph.Node, excluded []*layoutgraph.Node, graph *layoutgraph.Graph, behind, inContainer *layoutgraph.Node, isHorizontal, forwards bool) *layoutgraph.Node {
+	var best *layoutgraph.Node
+	var bestKey float64
+	unique := true
+	for _, n := range ahead.ConnectedNodeSet(excluded, graph) {
+		if n == behind || n == ahead {
+			continue
+		}
+		if n.OwningContainer() != inContainer {
+			continue
+		}
+		if !isBetween(n, behind, ahead, isHorizontal, forwards) {
+			continue
+		}
+		var key float64
+		if isHorizontal {
+			if forwards {
+				key = n.TopLeft.X
+			} else {
+				key = n.TopLeft.X + n.Width
+			}
+		} else {
+			if forwards {
+				key = n.TopLeft.Y
+			} else {
+				key = n.TopLeft.Y + n.Height
+			}
+		}
+		if math.IsNaN(key) {
+			unique = false
+			break
+		}
+		// forwards keeps the least key, backwards the greatest.
+		if best == nil || (forwards && key < bestKey) || (!forwards && key > bestKey) {
+			best, bestKey, unique = n, key, true
+		} else if key == bestKey {
+			unique = false
+		}
+	}
+	if unique {
+		return best
+	}
+	return nearestBetween(layoutgraph.Nodes(ahead.ConnectedNodes(excluded, graph)), behind, ahead, inContainer, isHorizontal, forwards)
+}
+
 func nearestConnectedAhead(node *layoutgraph.Node, isHorizontal, forwards bool) *layoutgraph.Node {
 	var nearest *layoutgraph.Node
 
@@ -239,6 +340,29 @@ func nearestConnectedAhead(node *layoutgraph.Node, isHorizontal, forwards bool) 
 	return nearest
 }
 
+// gapReductionPrelude is the part of reduceGapToNeighbors before its first
+// possible mutation of node geometry. It returns the connected node ahead that
+// reduceGapToNeighbors would pull; when that is nil, reduceGapToNeighbors
+// returns (false, 0, nil) having done exactly this and nothing more.
+func gapReductionPrelude(ctx context.Context, node *layoutgraph.Node, options gapReductionOptions) (isHorizontal, forwards bool, nearestAhead *layoutgraph.Node, err error) {
+	if err := ctx.Err(); err != nil {
+		return false, false, nil, err
+	}
+	if !options.axis.valid() {
+		return false, false, nil, fmt.Errorf("TALA gap reduction requires an axis")
+	}
+	if !options.direction.valid() {
+		return false, false, nil, fmt.Errorf("TALA gap reduction requires a direction")
+	}
+	isHorizontal = options.axis.isHorizontal()
+	forwards = options.direction.isForward()
+	// Needed for calculating partial symmetry
+	if node.Graph.CellSize == 0 {
+		node.Graph.ComputeCellSize()
+	}
+	return isHorizontal, forwards, nearestConnectedAhead(node, isHorizontal, forwards), nil
+}
+
 // reduceGapToNeighbors attempts to reduce the gap between this node and its neighbors in front of it
 // returns true if reduced, false if no changes. If true, also returns the reduced global edge length
 //
@@ -271,24 +395,11 @@ func nearestConnectedAhead(node *layoutgraph.Node, isHorizontal, forwards bool) 
 // A's nearest ahead is C, but it won't be able to move to A
 // So we sweep, get node B, and consider the gap between C and B as the amount it should try to close
 func reduceGapToNeighbors(ctx context.Context, node *layoutgraph.Node, txn *layoutgraph.Transaction, options gapReductionOptions) (bool, float64, error) {
-	if err := ctx.Err(); err != nil {
+	isHorizontal, forwards, nearestAhead, err := gapReductionPrelude(ctx, node, options)
+	if err != nil {
 		return false, 0, err
 	}
-	if !options.axis.valid() {
-		return false, 0, fmt.Errorf("TALA gap reduction requires an axis")
-	}
-	if !options.direction.valid() {
-		return false, 0, fmt.Errorf("TALA gap reduction requires a direction")
-	}
-	isHorizontal := options.axis.isHorizontal()
-	forwards := options.direction.isForward()
 	attemptRecoverSymmetry := options.attemptRecoverSymmetry
-	// Needed for calculating partial symmetry
-	if node.Graph.CellSize == 0 {
-		node.Graph.ComputeCellSize()
-	}
-
-	nearestAhead := nearestConnectedAhead(node, isHorizontal, forwards)
 	if nearestAhead == nil {
 		return false, 0, nil
 	}
@@ -334,8 +445,7 @@ func reduceGapToNeighbors(ctx context.Context, node *layoutgraph.Node, txn *layo
 	}
 
 	sharedContainer := node.NearestSharedAncestor(nearestAhead)
-	nearestBetween := nearestBetween(layoutgraph.Nodes(nearestAhead.ConnectedNodes(excluded, node.Graph)), node,
-		nearestAhead,
+	nearestBetween := nearestBetweenConnected(nearestAhead, excluded, node.Graph, node,
 		sharedContainer,
 		isHorizontal,
 		forwards,

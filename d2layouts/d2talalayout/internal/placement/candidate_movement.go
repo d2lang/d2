@@ -17,19 +17,15 @@ type optimizerCandidateMovement struct {
 	descendantWork uint64
 }
 
-func captureOptimizerCandidateMovement(node *layoutgraph.Node, guard *limits.OptimizationWorkGuard) (optimizerCandidateMovement, error) {
-	before := guard.Used()
-	positions, err := captureOptimizerNodePositions([]*layoutgraph.Node{node}, guard)
-	if err != nil {
+// captureLeafCandidateMovement is captureOptimizerCandidateMovement for a node
+// that moves alone, with its snapshot in buffer: the capture charges one step
+// and there is no descendant work.
+func captureLeafCandidateMovement(node *layoutgraph.Node, buffer *[1]nodePositionSnapshot, guard *limits.OptimizationWorkGuard) (optimizerCandidateMovement, error) {
+	if err := guard.Step(); err != nil {
 		return optimizerCandidateMovement{}, err
 	}
-	// Single-root capture charges one Step for each retained position in addition
-	// to the descendant walk. Retain the latter's charge so every trial preserves
-	// the original work boundary and cancellation polling sequence.
-	return optimizerCandidateMovement{
-		positions:      positions,
-		descendantWork: guard.Used() - before - uint64(len(positions)),
-	}, nil
+	buffer[0] = nodePositionSnapshot{node: node, topLeft: snapshotPointer(node.TopLeft)}
+	return optimizerCandidateMovement{positions: buffer[:]}, nil
 }
 
 func (movement optimizerCandidateMovement) moveAbs(x, y float64, guard *limits.OptimizationWorkGuard) error {

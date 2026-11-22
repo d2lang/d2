@@ -22,7 +22,7 @@ func TestLayoutOutputAcrossSeeds(t *testing.T) {
 		seed    int64
 		sha256  string
 	}{
-		{fixture: "clusters", seed: 1, sha256: "79d04c0e5c4d00327a5d286e444446035a1c258981e6b07f161ad730c719abdd"},
+		{fixture: "clusters", seed: 1, sha256: "bcf99447349a3053b7eafd0fd257e8462aa41b8583a4f6274a3d820fb20b986c"},
 		{fixture: "clusters", seed: 123, sha256: "a7c8a0c80712a10754d0925c84ccd6cd880bb7497fefca69c86a286fb19cd7d1"},
 		{fixture: "clusters", seed: 8675309, sha256: "4f742ab0d3199a66b716e873fdba4c8bb9313d62c0a7a0102d710b7e82faf60f"},
 		{fixture: "hierarchy_subgraphs", seed: 1, sha256: "507b98b3e70c735c17ce177400737f86b29210276cded1d7e7d21aed0ac0812c"},
