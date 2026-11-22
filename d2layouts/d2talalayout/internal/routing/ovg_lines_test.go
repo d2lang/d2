@@ -32,8 +32,8 @@ func TestLineGroupingMatchesMaps(t *testing.T) {
 			eligible = append(eligible, NewOVGNode(geo.NewPoint(coordinate(), coordinate())))
 		}
 		mapped, counted := &ovgLineScratch{lineIndex: map[float64]int32{}}, &ovgLineScratch{lineIndex: map[float64]int32{}}
-		wantH, wantV := mapped.groupLines(eligible, false)
-		gotH, gotV := counted.groupLines(eligible, true)
+		wantH, wantV := mapped.groupLinesStepped(eligible)
+		gotH, gotV := counted.groupLines(eligible)
 		for axis, pair := range [][2]*ovgLineGroups{{wantH, gotH}, {wantV, gotV}} {
 			want, got := pair[0], pair[1]
 			if len(want.positions) != len(got.positions) {

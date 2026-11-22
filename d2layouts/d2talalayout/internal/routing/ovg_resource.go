@@ -412,22 +412,6 @@ func newOVGPointProximityIndex(graph *layoutgraph.Graph, xs []float64, guard *ov
 	return index, guard.check()
 }
 
-func (index *ovgPointProximityIndex) pointNear(x, y float64, guard *ovgBuildGuard) (bool, error) {
-	if err := guard.step(); err != nil {
-		return false, err
-	}
-	point := geo.Point{X: x, Y: y}
-	for _, node := range index.byX[x] {
-		if err := guard.step(); err != nil {
-			return false, err
-		}
-		if node.IsPointNear(&point) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (guard *ovgBuildGuard) tightBoundingBox(nodes layoutgraph.Nodes) (*geo.Point, *geo.Point, error) {
 	if len(nodes) == 0 {
 		return geo.NewPoint(math.Inf(-1), math.Inf(-1)), geo.NewPoint(math.Inf(1), math.Inf(1)), guard.check()
@@ -491,37 +475,6 @@ func (guard *ovgBuildGuard) portsByOrientation(ovg *OVG, owner *layoutgraph.Node
 		}
 	}
 	return ports, guard.check()
-}
-
-func (guard *ovgBuildGuard) passesThroughAllowingPorts(node *layoutgraph.Node, p1, p2 *geo.Point, direction geo.Orientation, ports []*OVGNode) (bool, error) {
-	if len(ports) == 0 {
-		return node.PassesThrough(p1, p2), guard.check()
-	}
-	// A port can exempt a segment only when it points outwards in the supplied
-	// direction. Most visibility nodes have no port owner (NONE), so do this
-	// invariant direction check before scanning a shape's complete port list.
-	allowsPort := false
-	switch direction {
-	case geo.Top:
-		allowsPort = p1.X == p2.X && p1.Y > p2.Y
-	case geo.Bottom:
-		allowsPort = p1.X == p2.X && p1.Y < p2.Y
-	case geo.Left:
-		allowsPort = p1.Y == p2.Y && p1.X > p2.X
-	case geo.Right:
-		allowsPort = p1.Y == p2.Y && p1.X < p2.X
-	}
-	if allowsPort {
-		for _, port := range ports {
-			if err := guard.step(); err != nil {
-				return false, err
-			}
-			if nonNilEquals(port.Point, p1) || nonNilEquals(port.Point, p2) {
-				return false, nil
-			}
-		}
-	}
-	return node.PassesThrough(p1, p2), guard.check()
 }
 
 func (guard *ovgBuildGuard) isDescendantOf(descendant, ancestor *layoutgraph.Node) (bool, error) {
@@ -904,69 +857,4 @@ func reservePortAxisSortWork(axis map[float64][]float64, guard *ovgBuildGuard) e
 		sort.Float64s(values)
 	}
 	return nil
-}
-
-// Owner indexes are appended in ascending order during index construction.
-// Merge the two axis lists so a query visits only aligned owners, once each,
-// in the same order as a full owners scan. Duplicate ports and owners aligned
-// on both axes do not count as distinct unobstructed graph nodes.
-func (index *ovgPortIndex) alignedOwners(x, y float64) ovgAlignedOwners {
-	return ovgAlignedOwners{byX: index.ownersByX[x], byY: index.ownersByY[y]}
-}
-
-type ovgAlignedOwners struct {
-	byX, byY []int
-}
-
-func (owners *ovgAlignedOwners) next(guard *ovgBuildGuard) (int, bool, error) {
-	if err := guard.step(); err != nil {
-		return 0, false, err
-	}
-	if len(owners.byX) == 0 && len(owners.byY) == 0 {
-		return 0, false, nil
-	}
-	var owner int
-	if len(owners.byY) == 0 || len(owners.byX) > 0 && owners.byX[0] < owners.byY[0] {
-		owner = owners.byX[0]
-	} else {
-		owner = owners.byY[0]
-	}
-	for len(owners.byX) > 0 && owners.byX[0] == owner {
-		if err := guard.step(); err != nil {
-			return 0, false, err
-		}
-		owners.byX = owners.byX[1:]
-	}
-	for len(owners.byY) > 0 && owners.byY[0] == owner {
-		if err := guard.step(); err != nil {
-			return 0, false, err
-		}
-		owners.byY = owners.byY[1:]
-	}
-	return owner, true, nil
-}
-
-func (guard *ovgBuildGuard) hasCoordinateWithin(sortedValues []float64, coordinate, distance float64) (bool, error) {
-	low, high := 0, len(sortedValues)
-	threshold := coordinate - distance
-	for low < high {
-		if err := guard.step(); err != nil {
-			return false, err
-		}
-		mid := int(uint(low+high) >> 1)
-		if sortedValues[mid] < threshold {
-			low = mid + 1
-		} else {
-			high = mid
-		}
-	}
-	return low < len(sortedValues) && sortedValues[low] <= coordinate+distance, guard.check()
-}
-
-func (index *ovgPortIndex) tooClose(x, y, distance float64, guard *ovgBuildGuard) (bool, error) {
-	tooClose, err := guard.hasCoordinateWithin(index.xByY[y], x, distance)
-	if err != nil || tooClose {
-		return tooClose, err
-	}
-	return guard.hasCoordinateWithin(index.yByX[x], y, distance)
 }

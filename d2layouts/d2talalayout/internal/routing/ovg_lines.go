@@ -78,43 +78,14 @@ func (scratch *ovgLineScratch) release() {
 }
 
 // groupLines groups the eligible nodes into horizontal lines (by Y) and
-// vertical lines (by X) as connectNodes' float64-keyed maps did. The stepped
-// path (contexts without Done) keeps the maps; the counted path counts nodes
-// per key with a key -> line index map (same == semantics: -0 and +0 share
-// a line, every NaN is a new key) and places them in one buffer, so no
+// vertical lines (by X) as connectNodes' float64-keyed maps did: it counts
+// nodes per key with a key -> line index map (same == semantics: -0 and +0
+// share a line, every NaN is a new key) and places them in one buffer, so no
 // per-line slice grows.
-func (scratch *ovgLineScratch) groupLines(eligible []*OVGNode, counted bool) (*ovgLineGroups, *ovgLineGroups) {
-	if !counted {
-		horizontal := map[float64][]*OVGNode{}
-		vertical := map[float64][]*OVGNode{}
-		for _, node := range eligible {
-			horizontal[node.Y] = append(horizontal[node.Y], node)
-			vertical[node.X] = append(vertical[node.X], node)
-		}
-		return linesFromMap(&scratch.horizontal, horizontal), linesFromMap(&scratch.vertical, vertical)
-	}
+func (scratch *ovgLineScratch) groupLines(eligible []*OVGNode) (*ovgLineGroups, *ovgLineGroups) {
 	scratch.groupCounted(&scratch.horizontal, eligible, true)
 	scratch.groupCounted(&scratch.vertical, eligible, false)
 	return &scratch.horizontal, &scratch.vertical
-}
-
-// linesFromMap is the map path: keys in slices.Sort order, each line the
-// map's slice (nil for a NaN key, whose lookup fails).
-func linesFromMap(lines *ovgLineGroups, byCoordinate map[float64][]*OVGNode) *ovgLineGroups {
-	positions := make([]float64, 0, len(byCoordinate))
-	for coordinate := range byCoordinate {
-		positions = append(positions, coordinate)
-	}
-	slices.Sort(positions)
-	lines.positions = positions
-	lines.starts = append(lines.starts[:0], 0)
-	nodes := lines.nodes[:0]
-	for _, position := range positions {
-		nodes = append(nodes, byCoordinate[position]...)
-		lines.starts = append(lines.starts, len(nodes))
-	}
-	lines.nodes = nodes
-	return lines
 }
 
 // groupCounted fills lines for one axis. Lines are ordered as slices.Sort

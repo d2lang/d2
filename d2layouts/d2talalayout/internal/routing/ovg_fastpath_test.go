@@ -249,7 +249,7 @@ func TestOVGIntersectionCandidatesCountedMatchesStepped(t *testing.T) {
 		full.counted.stage, full.countedStage = nil, nil
 		full.stepped.aggregate, full.counted.aggregate = nil, nil
 		steppedErr := steppedOVG.addIntersectionCandidatesStepped(xOrder, yOrder, portIndex, proximityIndex, full.stepped)
-		countedErr := countedOVG.addIntersectionCandidatesCounted(xOrder, yOrder, portIndex, proximityIndex, full.counted)
+		countedErr := countedOVG.addIntersectionCandidates(xOrder, yOrder, portIndex, proximityIndex, full.counted)
 		full.compare(t, "unlimited", steppedErr, countedErr)
 		if !slices.Equal(ovgNodePoints(steppedOVG), ovgNodePoints(countedOVG)) {
 			t.Fatalf("trial %d: counted nodes differ from stepped nodes", trial)
@@ -263,7 +263,7 @@ func TestOVGIntersectionCandidatesCountedMatchesStepped(t *testing.T) {
 			limit := uint64(random.Int63n(int64(total) + 1))
 			pair := newGuardPair(t, ctx, random, limit)
 			steppedErr := limitedStepped.addIntersectionCandidatesStepped(xOrder, yOrder, portIndex, proximityIndex, pair.stepped)
-			countedErr := limitedCounted.addIntersectionCandidatesCounted(xOrder, yOrder, portIndex, proximityIndex, pair.counted)
+			countedErr := limitedCounted.addIntersectionCandidates(xOrder, yOrder, portIndex, proximityIndex, pair.counted)
 			pair.compare(t, "limited", steppedErr, countedErr)
 			if !slices.Equal(ovgNodePoints(limitedStepped), ovgNodePoints(limitedCounted)) {
 				t.Fatalf("trial %d limit %d: counted nodes differ from stepped nodes", trial, limit)
@@ -318,7 +318,7 @@ func TestOVGBoundaryConnectionsCountedMatchesStepped(t *testing.T) {
 		full.counted.stage, full.countedStage = nil, nil
 		full.stepped.aggregate, full.counted.aggregate = nil, nil
 		steppedErr := steppedOVG.addPortConnectionNodesAtBoundariesStepped(graph, tl, br, full.stepped)
-		countedErr := countedOVG.addPortConnectionNodesAtBoundariesCounted(graph, tl, br, full.counted)
+		countedErr := countedOVG.addPortConnectionNodesAtBoundaries(graph, tl, br, full.counted)
 		full.compare(t, "unlimited", steppedErr, countedErr)
 		if !slices.Equal(sortedOVGNodePoints(steppedOVG), sortedOVGNodePoints(countedOVG)) {
 			t.Fatalf("trial %d: counted node set differs from stepped node set", trial)
@@ -329,7 +329,7 @@ func TestOVGBoundaryConnectionsCountedMatchesStepped(t *testing.T) {
 			limit := uint64(random.Int63n(int64(total) + 1))
 			pair := newGuardPair(t, ctx, random, limit)
 			steppedErr := limitedStepped.addPortConnectionNodesAtBoundariesStepped(graph, tl, br, pair.stepped)
-			countedErr := limitedCounted.addPortConnectionNodesAtBoundariesCounted(graph, tl, br, pair.counted)
+			countedErr := limitedCounted.addPortConnectionNodesAtBoundaries(graph, tl, br, pair.counted)
 			if (steppedErr == nil) != (countedErr == nil) || (steppedErr != nil && steppedErr.Error() != countedErr.Error()) {
 				t.Fatalf("trial %d limit %d: error %v, want %v", trial, limit, countedErr, steppedErr)
 			}
@@ -417,8 +417,8 @@ func TestOVGConnectNodesCountedMatchesStepped(t *testing.T) {
 				pair.counted.stage, pair.countedStage = nil, nil
 				pair.stepped.aggregate, pair.counted.aggregate = nil, nil
 			}
-			steppedErr := stepped.connectNodesWith(graph, pair.stepped, false)
-			countedErr := counted.connectNodesWith(graph, pair.counted, true)
+			steppedErr := stepped.connectNodesStepped(graph, pair.stepped)
+			countedErr := counted.connectNodes(graph, pair.counted)
 			pair.compare(t, "connectNodes", steppedErr, countedErr)
 			if !slices.Equal(ovgEdgeEndpoints(stepped), ovgEdgeEndpoints(counted)) {
 				t.Fatalf("trial %d attempt %d: counted edges differ from stepped edges", trial, attempt)
@@ -475,8 +475,8 @@ func TestOVGEdgesNodesCountedMatchesStepped(t *testing.T) {
 				pair.counted.stage, pair.countedStage = nil, nil
 				pair.stepped.aggregate, pair.counted.aggregate = nil, nil
 			}
-			steppedErr := stepped.addEdgeFillPoints(graph, hierarchies, portIndex, pair.stepped, false)
-			countedErr := counted.addEdgeFillPoints(graph, hierarchies, portIndex, pair.counted, true)
+			steppedErr := stepped.addEdgeFillPointsStepped(graph, hierarchies, portIndex, pair.stepped)
+			countedErr := counted.addEdgeFillPoints(graph, hierarchies, portIndex, pair.counted)
 			pair.compare(t, "addEdgesNodes", steppedErr, countedErr)
 			if !slices.Equal(ovgNodePoints(stepped), ovgNodePoints(counted)) {
 				t.Fatalf("trial %d attempt %d: counted nodes differ from stepped nodes", trial, attempt)

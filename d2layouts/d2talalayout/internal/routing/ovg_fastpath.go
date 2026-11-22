@@ -12,13 +12,13 @@ import (
 )
 
 // OVG construction charges one guard step per elementary operation, which
-// makes the guard calls themselves a large part of the build. The fast paths
-// in this file evaluate the pure predicates of one candidate without calling
-// the guard, count the steps the stepped code charges for that candidate, and
-// charge them with stepN before any mutation. They run only for contexts with
+// makes the guard calls themselves a large part of the build. The loops in
+// this file evaluate the pure predicates of one candidate without calling
+// the guard, count the steps the stepped loops (kept in ovg_stepped_test.go
+// as the tests' reference) charge for that candidate, and charge them with
+// stepN before any mutation. TALA's entry points give routing a context with
 // a Done channel, where a poll has no effect other than noticing a
-// cancellation; synthetic contexts without Done keep the stepped code and its
-// per-operation Err polling.
+// cancellation.
 
 // stepN charges n units exactly as n consecutive step calls would: the same
 // work count, the same stage-aggregate charges (pending while it has room,
@@ -334,15 +334,15 @@ func evaluateIntersectionCandidate(column *ovgCandidateColumn, row *ovgCandidate
 
 // ovgParallelCandidateThreshold is the number of intersection candidates from
 // which their evaluation is spread over goroutines (see
-// addIntersectionCandidatesCounted). Tests lower it.
+// addIntersectionCandidates). Tests lower it.
 var ovgParallelCandidateThreshold = 20_000
 
-// addIntersectionCandidatesCounted is the candidate loop of addIntersections
-// for contexts with a Done channel. Per candidate it evaluates tooClose,
-// pointNear and hasUnobstructedLineToPorts in the same order with the same
-// early exits, charges the steps they charge with one stepN (before the
-// candidate is added, which is the first mutation), and adds the node through
-// the same guard.addNode.
+// addIntersectionCandidates is the candidate loop of addIntersections:
+// addIntersectionCandidatesStepped with counted steps. Per candidate it
+// evaluates tooClose, pointNear and hasUnobstructedLineToPorts in the same
+// order with the same early exits, charges the steps they charge with one
+// stepN (before the candidate is added, which is the first mutation), and
+// adds the node through the same guard.addNode.
 //
 // The evaluations are pure (they read the port index, the port view and the
 // graph, none of which the loop changes), so for large sweeps they run first,
@@ -350,7 +350,7 @@ var ovgParallelCandidateThreshold = 20_000
 // additions then run on this goroutine in candidate order, exactly as in the
 // sequential loop. A panic in an evaluation discards the table and reruns the
 // sequential loop, which panics where the stepped loop would.
-func (ovg *OVG) addIntersectionCandidatesCounted(xOrder, yOrder []float64, portIndex *ovgPortIndex, proximityIndex *ovgPointProximityIndex, guard *ovgBuildGuard) error {
+func (ovg *OVG) addIntersectionCandidates(xOrder, yOrder []float64, portIndex *ovgPortIndex, proximityIndex *ovgPointProximityIndex, guard *ovgBuildGuard) error {
 	view := newOVGPortView(ovg, portIndex)
 	rows := make([]ovgCandidateRow, len(yOrder))
 	for j, py := range yOrder {
@@ -563,8 +563,8 @@ func (scan *ovgNearScan) nearCounted(point *geo.Point) (bool, uint64) {
 	return false, units
 }
 
-// rayBlockedCounted is the rectangle scan of addPortConnectionNodesAtBoundaries
-// for the segment p1 (a port of owner) to p2 without the guard: the same
+// rayBlockedCounted is addPortConnectionNodesAtBoundariesStepped's rectangle
+// scan for the segment p1 (a port of owner) to p2 without the guard: the same
 // rectangles in order, passesThroughAllowingPorts' port exemption and its
 // per-port steps, the container exception with isDescendantOf's steps, and the
 // first blocking rectangle ends the scan. allowsPort depends only on the
@@ -610,12 +610,14 @@ func rayBlockedCounted(owner *layoutgraph.Node, p1, p2 *geo.Point, direction geo
 	return false, units
 }
 
-// addPortConnectionNodesAtBoundariesCounted is addPortConnectionNodesAtBoundaries
-// for contexts with a Done channel: the same layers, owners (map order, as
-// before), ports, directions and boundary points; per boundary point the pure
-// rectangle scan and near check are evaluated without the guard and their
-// steps charged with one stepN before the point is added.
-func (ovg *OVG) addPortConnectionNodesAtBoundariesCounted(g *layoutgraph.Graph, tl, br *geo.Point, guard *ovgBuildGuard) error {
+// addPortConnectionNodesAtBoundaries tries, for each port node, to add nodes
+// at the graph boundaries that make a direct connection to it:
+// addPortConnectionNodesAtBoundariesStepped with counted steps. It visits the
+// same layers, owners (map order, as before), ports, directions and boundary
+// points; per boundary point the pure rectangle scan and near check are
+// evaluated without the guard and their steps charged with one stepN before
+// the point is added.
+func (ovg *OVG) addPortConnectionNodesAtBoundaries(g *layoutgraph.Graph, tl, br *geo.Point, guard *ovgBuildGuard) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
@@ -731,7 +733,7 @@ func passesThroughAllowingPortsCounted(node *layoutgraph.Node, box *ovgSegmentBo
 	return box.passesThrough(node, p1, p2), units
 }
 
-// segmentPassesThroughCounted is connectNodesOnSameLine's passesThrough
+// segmentPassesThroughCounted is connectNodesOnSameLineStepped's passesThrough
 // closure: whether the segment from -> to passes through rectangle for every
 // direction in which from is a port of it (portDirectionSet.any order, NONE
 // for none), stopping at the first that does not; plus its step count.
@@ -817,13 +819,14 @@ func newOVGLineView(ovg *OVG, fixedOverlaps map[*layoutgraph.Node]struct{}) *ovg
 	return view
 }
 
-// connectNodesOnSameLineCounted is connectNodesOnSameLine for contexts with a
-// Done channel: the same candidate rectangles (graph order, then the same
-// sort.Slice call, which yields the same permutation for the same keys), the
-// same node sort, and per pair the misdirection test and rectangle scan
-// evaluated without the guard, their steps charged with one stepN before the
-// pair is connected.
-func (ovg *OVG) connectNodesOnSameLineCounted(nodes []*OVGNode, linePosition float64, isHorizontal bool, view *ovgLineView, guard *ovgBuildGuard) error {
+// connectNodesOnSameLine connects consecutive nodes of one horizontal or
+// vertical line (see connectNodes): connectNodesOnSameLineStepped with
+// counted steps. It uses the same candidate rectangles (graph order, then
+// the same sort.Slice call, which yields the same permutation for the same
+// keys) and the same node sort, and per pair evaluates the misdirection test
+// and rectangle scan without the guard, their steps charged with one stepN
+// before the pair is connected.
+func (ovg *OVG) connectNodesOnSameLine(nodes []*OVGNode, linePosition float64, isHorizontal bool, view *ovgLineView, guard *ovgBuildGuard) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
