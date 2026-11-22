@@ -35,13 +35,10 @@ type shapeCloud struct {
 
 func NewCloud(box *geo.Box) Shape {
 	shape := shapeCloud{
-		baseShape: &baseShape{
-			Type: CLOUD_TYPE,
-			Box:  box,
-		},
+		baseShape:           newShapeBase(CLOUD_TYPE, box),
 		innerBoxAspectRatio: go2.Pointer(0.),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -106,7 +103,12 @@ func (s shapeCloud) GetInsidePlacement(width, height, paddingX, paddingY float64
 }
 
 func cloudPath(box *geo.Box) *svg.SvgPathContext {
-	pc := svg.NewSVGPathContext(box.TopLeft, box.Width/834, box.Height/523)
+	return cloudOutline(box, svg.NewSVGPathContext)
+}
+
+// cloudOutline draws the outline of cloudPath into a path made by newPath.
+func cloudOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
+	pc := newPath(box.TopLeft, box.Width/834, box.Height/523)
 	// Note: original path TopLeft=(83, 238), absolute values updated so top left is at 0,0
 	pc.StartAt(pc.Absolute(137.833, 182.833))
 	pc.C(true, 0, 5.556, -5.556, 11.111, -11.111, 11.111)
@@ -127,6 +129,10 @@ func cloudPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeCloud) Perimeter() []geo.Intersectable {
 	return cloudPath(s.Box).Path
+}
+
+func (s shapeCloud) traceBorder(t *borderTracer) {
+	cloudOutline(s.Box, t.newPath)
 }
 
 func (s shapeCloud) GetSVGPathData() []string {

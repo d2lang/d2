@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapePackage struct {
@@ -23,12 +22,9 @@ const (
 
 func NewPackage(box *geo.Box) Shape {
 	shape := shapePackage{
-		baseShape: &baseShape{
-			Type: PACKAGE_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(PACKAGE_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -52,9 +48,14 @@ func getTopDimensions(box *geo.Box) (width, height float64) {
 }
 
 func packagePath(box *geo.Box) *svg.SvgPathContext {
+	return packageOutline(box, svg.NewSVGPathContext)
+}
+
+// packageOutline draws the outline of packagePath into a path made by newPath.
+func packageOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	topWidth, topHeight := getTopDimensions(box)
 
-	pc := svg.NewSVGPathContext(box.TopLeft, 1, 1)
+	pc := newPath(box.TopLeft, 1, 1)
 	pc.StartAt(pc.Absolute(0, 0))
 	pc.L(false, topWidth, 0)
 	pc.L(false, topWidth, topHeight)
@@ -67,6 +68,10 @@ func packagePath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapePackage) Perimeter() []geo.Intersectable {
 	return packagePath(s.Box).Path
+}
+
+func (s shapePackage) traceBorder(t *borderTracer) {
+	packageOutline(s.Box, t.newPath)
 }
 
 func (s shapePackage) GetSVGPathData() []string {

@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapePage struct {
@@ -20,12 +19,9 @@ const (
 
 func NewPage(box *geo.Box) Shape {
 	shape := shapePage{
-		baseShape: &baseShape{
-			Type: PAGE_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(PAGE_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -40,8 +36,13 @@ func (s shapePage) GetInnerBox() *geo.Box {
 }
 
 func pageOuterPath(box *geo.Box) *svg.SvgPathContext {
+	return pageOuterOutline(box, svg.NewSVGPathContext)
+}
+
+// pageOuterOutline draws the outline of pageOuterPath into a path made by newPath.
+func pageOuterOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	// TODO: cleanup
-	pc := svg.NewSVGPathContext(box.TopLeft, 1., 1.)
+	pc := newPath(box.TopLeft, 1., 1.)
 	pc.StartAt(pc.Absolute(0.5, 0))
 	pc.H(false, box.Width-20.8164)
 	pc.C(false, box.Width-19.6456, 0.0, box.Width-18.521, 0.456297, box.Width-17.6811, 1.27202)
@@ -80,6 +81,10 @@ func pageInnerPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapePage) Perimeter() []geo.Intersectable {
 	return pageOuterPath(s.Box).Path
+}
+
+func (s shapePage) traceBorder(t *borderTracer) {
+	pageOuterOutline(s.Box, t.newPath)
 }
 
 func (s shapePage) GetSVGPathData() []string {

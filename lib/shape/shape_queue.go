@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeQueue struct {
@@ -14,12 +13,9 @@ type shapeQueue struct {
 
 func NewQueue(box *geo.Box) Shape {
 	shape := shapeQueue{
-		baseShape: &baseShape{
-			Type: QUEUE_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(QUEUE_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -43,9 +39,14 @@ func (s shapeQueue) GetInnerBox() *geo.Box {
 }
 
 func queueOuterPath(box *geo.Box) *svg.SvgPathContext {
+	return queueOuterOutline(box, svg.NewSVGPathContext)
+}
+
+// queueOuterOutline draws the outline of queueOuterPath into a path made by newPath.
+func queueOuterOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	arcWidth := getArcWidth(box)
 	multiplier := 0.45
-	pc := svg.NewSVGPathContext(box.TopLeft, 1, 1)
+	pc := newPath(box.TopLeft, 1, 1)
 	pc.StartAt(pc.Absolute(arcWidth, 0))
 	pc.H(true, box.Width-2*arcWidth)
 	pc.C(false, box.Width, 0, box.Width, box.Height*multiplier, box.Width, box.Height/2.0)
@@ -69,6 +70,10 @@ func queueInnerPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeQueue) Perimeter() []geo.Intersectable {
 	return queueOuterPath(s.Box).Path
+}
+
+func (s shapeQueue) traceBorder(t *borderTracer) {
+	queueOuterOutline(s.Box, t.newPath)
 }
 
 func (s shapeQueue) GetSVGPathData() []string {

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"math"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1293,26 +1294,80 @@ func (e *Edge) Move(dx, dy float64) {
 	}
 }
 
+// AbsID returns "<common>(<src> <arrow> <dst>)[<index>]": the ID paths
+// (AbsIDArray) of the endpoints joined with ".", without the leading IDs they
+// share (compared with strings.EqualFold, spelled as in the source; each
+// path keeps at least its last ID), which form <common>, each followed by ".".
 func (e *Edge) AbsID() string {
-	srcIDA := e.Src.AbsIDArray()
-	dstIDA := e.Dst.AbsIDArray()
+	// The paths live on the stack unless an endpoint is deeply nested.
+	var srcBuf, dstBuf [16]string
+	srcIDA := appendAbsIDArray(srcBuf[:0], e.Src)
+	dstIDA := appendAbsIDArray(dstBuf[:0], e.Dst)
 
-	var commonIDA []string
-	for len(srcIDA) > 1 && len(dstIDA) > 1 {
-		if !strings.EqualFold(srcIDA[0], dstIDA[0]) {
+	common := 0
+	for len(srcIDA)-common > 1 && len(dstIDA)-common > 1 {
+		if !strings.EqualFold(srcIDA[common], dstIDA[common]) {
 			break
 		}
-		commonIDA = append(commonIDA, srcIDA[0])
-		srcIDA = srcIDA[1:]
-		dstIDA = dstIDA[1:]
+		common++
 	}
+	arrow := e.ArrowString()
+	var indexBuf [20]byte
+	index := strconv.AppendInt(indexBuf[:0], int64(e.Index), 10)
 
-	commonKey := ""
-	if len(commonIDA) > 0 {
-		commonKey = strings.Join(commonIDA, ".") + "."
+	size := len(arrow) + len(index) + 5
+	for _, id := range srcIDA {
+		size += len(id) + 1
 	}
+	for _, id := range dstIDA[common:] {
+		size += len(id) + 1
+	}
+	var b strings.Builder
+	b.Grow(size)
+	for _, id := range srcIDA[:common] {
+		b.WriteString(id)
+		b.WriteByte('.')
+	}
+	b.WriteByte('(')
+	for i, id := range srcIDA[common:] {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(id)
+	}
+	b.WriteByte(' ')
+	b.WriteString(arrow)
+	b.WriteByte(' ')
+	for i, id := range dstIDA[common:] {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(id)
+	}
+	b.WriteString(")[")
+	b.Write(index)
+	b.WriteByte(']')
+	return b.String()
+}
 
-	return fmt.Sprintf("%s(%s %s %s)[%d]", commonKey, strings.Join(srcIDA, "."), e.ArrowString(), strings.Join(dstIDA, "."), e.Index)
+// appendAbsIDArray appends obj.AbsIDArray() to ids.
+func appendAbsIDArray(ids []string, obj *Object) []string {
+	depth := 0
+	for o := obj; o.Parent != nil; o = o.Parent {
+		depth++
+		if depth > 1<<16 {
+			// A cycle of parents: fail as AbsIDArray does.
+			return append(ids, obj.AbsIDArray()...)
+		}
+	}
+	n := len(ids)
+	ids = slices.Grow(ids, depth)[:n+depth]
+	i := n + depth
+	for o := obj; o.Parent != nil; o = o.Parent {
+		i--
+		ids[i] = o.ID
+	}
+	return ids
 }
 
 func (obj *Object) Connect(srcID, dstID []d2ast.String, srcArrow, dstArrow bool, label string) (*Edge, error) {

@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 const (
@@ -92,6 +91,21 @@ type baseShape struct {
 	Type      string
 	Box       *geo.Box
 	FullShape *Shape
+}
+
+// shapeAlloc holds a shape's baseShape and the Shape its FullShape points to,
+// so that a constructor allocates them together.
+type shapeAlloc struct {
+	base baseShape
+	full Shape
+}
+
+// newShapeBase returns a new baseShape whose FullShape points to a Shape the
+// constructor sets (*shape.FullShape = shape) once it has made the shape.
+func newShapeBase(shapeType string, box *geo.Box) *baseShape {
+	a := &shapeAlloc{base: baseShape{Type: shapeType, Box: box}}
+	a.base.FullShape = &a.full
+	return &a.base
 }
 
 func (s baseShape) Is(shapeType string) bool {
@@ -201,12 +215,9 @@ func NewShape(shapeType string, box *geo.Box) Shape {
 
 	default:
 		shape := shapeSquare{
-			baseShape: &baseShape{
-				Type: shapeType,
-				Box:  box,
-			},
+			baseShape: newShapeBase(shapeType, box),
 		}
-		shape.FullShape = go2.Pointer(Shape(shape))
+		*shape.FullShape = shape
 		return shape
 	}
 }
@@ -244,17 +255,30 @@ func TraceToShapeBorder(shape Shape, rectBorderPoint, prevPoint *geo.Point) *geo
 	}
 	vector := prevPoint.VectorTo(rectBorderPoint)
 	vector = vector.AddLength(scaleSize)
-	extendedSegment := geo.Segment{Start: prevPoint, End: prevPoint.AddVector(vector)}
 
 	closestD := math.Inf(1)
 	closestPoint := rectBorderPoint
 
-	for _, perimeterSegment := range shape.Perimeter() {
-		for _, intersectingPoint := range perimeterSegment.Intersections(extendedSegment) {
-			d := geo.EuclideanDistance(rectBorderPoint.X, rectBorderPoint.Y, intersectingPoint.X, intersectingPoint.Y)
-			if d < closestD {
-				closestD = d
-				closestPoint = intersectingPoint
+	if outline, ok := shape.(borderOutline); ok {
+		// The same search, done while the outline is drawn instead of over
+		// a Perimeter() built for it, on point values: the segment's ends,
+		// read now, and rectBorderPoint do not change while it runs.
+		t := borderTracer{seg0: *prevPoint, seg1: *prevPoint.AddVector(vector), ref: *rectBorderPoint, closestD: closestD}
+		outline.traceBorder(&t)
+		if t.found {
+			// A fresh point, as the intersections are: truncating it
+			// changes none of the caller's points.
+			closestPoint = &t.closest
+		}
+	} else {
+		extendedSegment := geo.Segment{Start: prevPoint, End: prevPoint.AddVector(vector)}
+		for _, perimeterSegment := range shape.Perimeter() {
+			for _, intersectingPoint := range perimeterSegment.Intersections(extendedSegment) {
+				d := geo.EuclideanDistance(rectBorderPoint.X, rectBorderPoint.Y, intersectingPoint.X, intersectingPoint.Y)
+				if d < closestD {
+					closestD = d
+					closestPoint = intersectingPoint
+				}
 			}
 		}
 	}

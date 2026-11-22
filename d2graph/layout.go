@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/internal/geomath"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
@@ -411,9 +412,47 @@ func (obj *Object) GetIconTopLeft() *geo.Point {
 	return iconPosition.GetPointOnBox(box, label.PADDING, d2target.MAX_ICON_SIZE, d2target.MAX_ICON_SIZE)
 }
 
+// tracedShapeType reports whether shape.TraceToShapeBorder traces to the
+// border of a shape of this type (shape.NewShape's type) rather than return
+// the rectangle point unchanged, which it does for the type "" and the
+// rectangular shapes (square and the shapes built on it, real square, image,
+// and the unknown types NewShape makes squares).
+func tracedShapeType(shapeType string) bool {
+	switch shapeType {
+	case shape.CALLOUT_TYPE, shape.CIRCLE_TYPE, shape.CLOUD_TYPE, shape.CYLINDER_TYPE, shape.DIAMOND_TYPE,
+		shape.DOCUMENT_TYPE, shape.HEXAGON_TYPE, shape.OVAL_TYPE, shape.PACKAGE_TYPE, shape.PAGE_TYPE,
+		shape.PARALLELOGRAM_TYPE, shape.PERSON_TYPE, shape.C4_PERSON_TYPE, shape.QUEUE_TYPE, shape.STEP_TYPE,
+		shape.STORED_DATA_TYPE:
+		return true
+	}
+	return false
+}
+
+// firstBoxIntersection is b.Intersections(s)[0], or nil when there is none,
+// without the slice and the other intersections.
+func firstBoxIntersection(b *geo.Box, s geo.Segment) *geo.Point {
+	x, y, ok := geomath.FirstBoxIntersection(b.TopLeft.X, b.TopLeft.Y, b.Width, b.Height, s.Start.X, s.Start.Y, s.End.X, s.End.Y)
+	if !ok {
+		return nil
+	}
+	return &geo.Point{X: x, Y: y}
+}
+
+// traceToBorder is shape.TraceToShapeBorder(obj.ToShape(), rect, prev) without
+// making the shape when the trace returns rect unchanged.
+func (obj *Object) traceToBorder(rect, prev *geo.Point) *geo.Point {
+	if !tracedShapeType(d2target.DSL_SHAPE_TO_SHAPE_TYPE[strings.ToLower(obj.Shape.Value)]) {
+		return rect
+	}
+	return shape.TraceToShapeBorder(obj.ToShape(), rect, prev)
+}
+
 func (edge *Edge) TraceToShape(points []*geo.Point, startIndex, endIndex int) (newStart, newEnd int) {
-	srcShape := edge.Src.ToShape()
-	dstShape := edge.Dst.ToShape()
+	// The endpoints' shapes are made where they are traced to (nothing
+	// changes the objects before that), and not at all when the trace
+	// returns its point unchanged. Reading TopLeft here keeps the panics of
+	// a nil endpoint or box at the point where ToShape raised them.
+	_, _ = edge.Src.TopLeft, edge.Dst.TopLeft
 
 	startingSegment := geo.Segment{Start: points[startIndex+1], End: points[startIndex]}
 	// if an edge runs into an outside label, stop the edge at the label instead
@@ -485,10 +524,10 @@ func (edge *Edge) TraceToShape(points []*geo.Point, startIndex, endIndex int) (n
 		}
 	}
 	if !overlapsOutsideLabel && !overlapsOutsideIcon {
-		if intersections := edge.Src.Intersections(startingSegment); len(intersections) > 0 {
+		if p := firstBoxIntersection(edge.Src.Box, startingSegment); p != nil {
 			// move starting segment to intersection point
-			points[startIndex] = intersections[0]
-			startingSegment.End = intersections[0]
+			points[startIndex] = p
+			startingSegment.End = p
 			// if the segment becomes too short, just merge it with the next segment
 			if startIndex+1 < endIndex && startingSegment.Length() < MIN_SEGMENT_LEN {
 				points[startIndex+1] = points[startIndex]
@@ -496,7 +535,7 @@ func (edge *Edge) TraceToShape(points []*geo.Point, startIndex, endIndex int) (n
 			}
 		}
 		// trace the edge to the specific shape's border
-		points[startIndex] = shape.TraceToShapeBorder(srcShape, points[startIndex], points[startIndex+1])
+		points[startIndex] = edge.Src.traceToBorder(points[startIndex], points[startIndex+1])
 	}
 	endingSegment := geo.Segment{Start: points[endIndex-1], End: points[endIndex]}
 	overlapsOutsideLabel = false
@@ -568,17 +607,17 @@ func (edge *Edge) TraceToShape(points []*geo.Point, startIndex, endIndex int) (n
 		}
 	}
 	if !overlapsOutsideLabel && !overlapsOutsideIcon {
-		if intersections := edge.Dst.Intersections(endingSegment); len(intersections) > 0 {
+		if p := firstBoxIntersection(edge.Dst.Box, endingSegment); p != nil {
 			// move ending segment to intersection point
-			points[endIndex] = intersections[0]
-			endingSegment.End = intersections[0]
+			points[endIndex] = p
+			endingSegment.End = p
 			// if the segment becomes too short, just merge it with the previous segment
 			if endIndex-1 > startIndex && endingSegment.Length() < MIN_SEGMENT_LEN {
 				points[endIndex-1] = points[endIndex]
 				endIndex--
 			}
 		}
-		points[endIndex] = shape.TraceToShapeBorder(dstShape, points[endIndex], points[endIndex-1])
+		points[endIndex] = edge.Dst.traceToBorder(points[endIndex], points[endIndex-1])
 	}
 	return startIndex, endIndex
 }
@@ -586,21 +625,37 @@ func (edge *Edge) TraceToShape(points []*geo.Point, startIndex, endIndex int) (n
 func findOuterIntersection(labelPosition label.Position, intersections []*geo.Point) *geo.Point {
 	switch labelPosition {
 	case label.OutsideTopLeft, label.OutsideTopRight, label.OutsideTopCenter:
-		sort.Slice(intersections, func(i, j int) bool {
+		sortPoints(intersections, func(i, j int) bool {
 			return intersections[i].Y < intersections[j].Y
 		})
 	case label.OutsideBottomLeft, label.OutsideBottomRight, label.OutsideBottomCenter:
-		sort.Slice(intersections, func(i, j int) bool {
+		sortPoints(intersections, func(i, j int) bool {
 			return intersections[i].Y > intersections[j].Y
 		})
 	case label.OutsideLeftTop, label.OutsideLeftMiddle, label.OutsideLeftBottom:
-		sort.Slice(intersections, func(i, j int) bool {
+		sortPoints(intersections, func(i, j int) bool {
 			return intersections[i].X < intersections[j].X
 		})
 	case label.OutsideRightTop, label.OutsideRightMiddle, label.OutsideRightBottom:
-		sort.Slice(intersections, func(i, j int) bool {
+		sortPoints(intersections, func(i, j int) bool {
 			return intersections[i].X > intersections[j].X
 		})
 	}
 	return intersections[0]
+}
+
+// sortPoints is sort.Slice(points, less). For up to 12 points sort.Slice runs
+// exactly this insertion sort (pdqsort's maxInsertion), so the same compares
+// and swaps give the same order, ties included, without the reflection-based
+// swapper sort.Slice allocates; a box crossing has at most 4 points.
+func sortPoints(points []*geo.Point, less func(i, j int) bool) {
+	if len(points) > 12 {
+		sort.Slice(points, less)
+		return
+	}
+	for i := 1; i < len(points); i++ {
+		for j := i; j > 0 && less(j, j-1); j-- {
+			points[j], points[j-1] = points[j-1], points[j]
+		}
+	}
 }

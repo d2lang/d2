@@ -2,7 +2,6 @@ package shape
 
 import (
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeSquare struct {
@@ -11,12 +10,9 @@ type shapeSquare struct {
 
 func NewSquare(box *geo.Box) Shape {
 	shape := shapeSquare{
-		baseShape: &baseShape{
-			Type: SQUARE_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(SQUARE_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
