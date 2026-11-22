@@ -13,14 +13,11 @@ import (
 	"archive/zip"
 	"bytes"
 	_ "embed"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"image/png"
 	"io"
 	"os"
-	"strings"
-	"text/template"
 )
 
 type BoardTitle struct {
@@ -212,9 +209,9 @@ func (p *Presentation) writeTo(output io.Writer) (err error) {
 		slideFileNames = append(slideFileNames, slideFileName)
 	}
 
-	err = addFileFromTemplate(zipWriter, "[Content_Types].xml", CONTENT_TYPES_XML, ContentTypesXmlContent{
+	err = addFile(zipWriter, "[Content_Types].xml", contentTypesXML(ContentTypesXmlContent{
 		FileNames: slideFileNames,
-	})
+	}))
 	if err != nil {
 		return err
 	}
@@ -223,12 +220,12 @@ func (p *Presentation) writeTo(output io.Writer) (err error) {
 		return err
 	}
 
-	err = addFileFromTemplate(zipWriter, "_rels/.rels", ROOT_RELS_XML, nil)
+	err = addFile(zipWriter, "_rels/.rels", []byte(ROOT_RELS_XML))
 	if err != nil {
 		return err
 	}
 
-	err = addFileFromTemplate(zipWriter, "ppt/slideMasters/_rels/slideMaster1.xml.rels", SLIDEMASTER_RELS_XML, nil)
+	err = addFile(zipWriter, "ppt/slideMasters/_rels/slideMaster1.xml.rels", []byte(SLIDEMASTER_RELS_XML))
 	if err != nil {
 		return err
 	}
@@ -246,34 +243,34 @@ func (p *Presentation) writeTo(output io.Writer) (err error) {
 			return err
 		}
 
-		err = addFileFromTemplate(zipWriter, fmt.Sprintf("ppt/slides/_rels/%s.xml.rels", slideFileName), RELS_SLIDE_XML, getSlideXmlRelsContent(imageID, slide, i+1))
+		err = addFile(zipWriter, fmt.Sprintf("ppt/slides/_rels/%s.xml.rels", slideFileName), slideRelsXML(getSlideXmlRelsContent(imageID, slide, i+1)))
 		if err != nil {
 			return err
 		}
 
-		err = addFileFromTemplate(zipWriter, fmt.Sprintf("ppt/slides/%s.xml", slideFileName), SLIDE_XML, p.getSlideXmlContent(imageID, slide))
+		err = addFile(zipWriter, fmt.Sprintf("ppt/slides/%s.xml", slideFileName), slideXML(p.getSlideXmlContent(imageID, slide)))
 		if err != nil {
 			return err
 		}
 	}
 
-	err = addFileFromTemplate(zipWriter, "ppt/_rels/presentation.xml.rels", RELS_PRESENTATION_XML, getRelsPresentationXmlContent(slideFileNames))
+	err = addFile(zipWriter, "ppt/_rels/presentation.xml.rels", presentationRelsXML(getRelsPresentationXmlContent(slideFileNames)))
 	if err != nil {
 		return err
 	}
 
-	err = addFileFromTemplate(zipWriter, "ppt/presentation.xml", PRESENTATION_XML, getPresentationXmlContent(slideFileNames))
+	err = addFile(zipWriter, "ppt/presentation.xml", presentationXML(getPresentationXmlContent(slideFileNames)))
 	if err != nil {
 		return err
 	}
 
-	err = addFileFromTemplate(zipWriter, "docProps/core.xml", CORE_XML, CoreXmlContent{
+	err = addFile(zipWriter, "docProps/core.xml", coreXML(CoreXmlContent{
 		Creator:        p.Creator,
 		Subject:        p.Subject,
 		Description:    p.Description,
 		LastModifiedBy: p.Creator,
 		Title:          p.Title,
-	})
+	}))
 	if err != nil {
 		return err
 	}
@@ -282,17 +279,27 @@ func (p *Presentation) writeTo(output io.Writer) (err error) {
 	for _, slide := range p.Slides {
 		titles = append(titles, slide.BoardTitle[len(slide.BoardTitle)-1].BoardID)
 	}
-	err = addFileFromTemplate(zipWriter, "docProps/app.xml", APP_XML, AppXmlContent{
+	err = addFile(zipWriter, "docProps/app.xml", appXML(AppXmlContent{
 		SlideCount:         len(p.Slides),
 		TitlesOfPartsCount: len(p.Slides) + 3, // + 3 for fonts and theme
 		D2Version:          p.D2Version,
 		Titles:             titles,
-	})
+	}))
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// addFile adds a file with the given content to the archive.
+func addFile(zipWriter *zip.Writer, name string, content []byte) error {
+	w, err := zipWriter.Create(name)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(content)
+	return err
 }
 
 func combineErrors(primary, secondary error) error {
@@ -342,9 +349,6 @@ func copyPptxTemplateTo(w *zip.Writer) error {
 	return nil
 }
 
-//go:embed templates/slide.xml.rels
-var RELS_SLIDE_XML string
-
 type RelsSlideXmlLinkContent struct {
 	RelationshipID string
 	ExternalUrl    string
@@ -380,9 +384,6 @@ func getSlideXmlRelsContent(imageID string, slide *Slide, currentSlideNum int) R
 
 	return content
 }
-
-//go:embed templates/slide.xml
-var SLIDE_XML string
 
 type SlideLinkXmlContent struct {
 	ID             int
@@ -457,9 +458,6 @@ func (p *Presentation) getSlideXmlContent(imageID string, slide *Slide) SlideXml
 	return content
 }
 
-//go:embed templates/rels_presentation.xml
-var RELS_PRESENTATION_XML string
-
 type RelsPresentationSlideXmlContent struct {
 	RelationshipID string
 	FileName       string
@@ -481,15 +479,9 @@ func getRelsPresentationXmlContent(slideFileNames []string) RelsPresentationXmlC
 	return content
 }
 
-//go:embed templates/content_types.xml
-var CONTENT_TYPES_XML string
-
 type ContentTypesXmlContent struct {
 	FileNames []string
 }
-
-//go:embed templates/presentation.xml
-var PRESENTATION_XML string
 
 type PresentationSlideXmlContent struct {
 	ID             int
@@ -516,9 +508,6 @@ func getPresentationXmlContent(slideFileNames []string) PresentationXmlContent {
 	return content
 }
 
-//go:embed templates/core.xml
-var CORE_XML string
-
 type CoreXmlContent struct {
 	Title          string
 	Subject        string
@@ -526,9 +515,6 @@ type CoreXmlContent struct {
 	Description    string
 	LastModifiedBy string
 }
-
-//go:embed templates/app.xml
-var APP_XML string
 
 //go:embed templates/root_rels.xml
 var ROOT_RELS_XML string
@@ -541,26 +527,4 @@ type AppXmlContent struct {
 	TitlesOfPartsCount int
 	Titles             []string
 	D2Version          string
-}
-
-func addFileFromTemplate(zipFile *zip.Writer, filePath, templateContent string, templateData interface{}) error {
-	w, err := zipFile.Create(filePath)
-	if err != nil {
-		return err
-	}
-
-	tmpl, err := template.New(filePath).Funcs(template.FuncMap{
-		"xmlAttr": escapeXML,
-		"xmlText": escapeXML,
-	}).Parse(templateContent)
-	if err != nil {
-		return err
-	}
-	return tmpl.Execute(w, templateData)
-}
-
-func escapeXML(value any) (string, error) {
-	var escaped strings.Builder
-	err := xml.EscapeText(&escaped, []byte(fmt.Sprint(value)))
-	return escaped.String(), err
 }
