@@ -168,7 +168,7 @@ func (s *crossRankShifter) keepStorage() {
 // wrote records, while recordWrites is set, that the original's
 // processQueue wrote k into the map what.
 func (s *crossRankShifter) wrote(what, k int32) {
-	if s.recordWrites {
+	if shadowMaps && s.recordWrites {
 		s.writes = append(s.writes, k<<2|what)
 	}
 }
@@ -567,12 +567,14 @@ func (s *crossRankShifter) growContainers() {
 // pass ends: TinyGo's compiler removes a map that is only written to
 // (transform.OptimizeMaps).
 //
-// No CI job checks this code: it runs only under TinyGo, d2's
-// ci/test-wasm.sh does not run this package, and the one TinyGo test that
-// fails without it, TestGrowPassVisitOrder, is slow and gated.
-// After changing it, the grow pass, what processQueue records in s.writes,
-// or sortAncestors' tie maps, run from the module root, with TinyGo 0.44 and
-// node on PATH:
+// It runs only under TinyGo, or under gc with -tags dagre_shadowmaps, with
+// which CI runs this package's tests: TestShadowWritesMatchLegacy checks
+// that it repeats the original's writes. No CI job checks its effect on
+// TinyGo's map orders: d2's ci/test-wasm.sh does not run this package, and
+// the one TinyGo test that fails without it, TestGrowPassVisitOrder, is slow
+// and gated. After changing it, the grow pass, what processQueue records in
+// s.writes, or sortAncestors' tie maps, run from the module root, with
+// TinyGo 0.44 and node on PATH:
 //
 //	tinygo test -target=wasm -stack-size=1MB -no-debug -tags slowtests -run 'TieOrderDistribution|GrowPassVisitOrder' -v ./d2layouts/d2dagrelayout
 //

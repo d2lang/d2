@@ -1,8 +1,6 @@
 package d2dagrelayout
 
 import (
-	"runtime"
-
 	"github.com/d2lang/d2/d2graph"
 )
 
@@ -92,9 +90,3 @@ type mapOrders interface {
 	// every getRanks, with nil when no coordinate is NaN.
 	levels(aligned map[float64][]*d2graph.Object) []float64
 }
-
-// shadowMaps makes each cross-rank shift whose grow pass may grow a
-// container make and fill the original's other maps of the shift as well
-// (crossRankShifter.originalMaps). Only TinyGo needs them (see above); tests
-// set it under gc too.
-var shadowMaps = runtime.Compiler == "tinygo"

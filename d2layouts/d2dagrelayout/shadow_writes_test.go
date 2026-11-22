@@ -60,17 +60,22 @@ func largeCrossRankTestGraph(seed int64) (*d2graph.Graph, *objectIndex) {
 }
 
 // TestShadowWritesMatchLegacy runs the cross-rank pass with the
-// original's maps repeated before every grow pass (shadowMaps, as under
-// TinyGo) against the legacy pass, replaying the legacy run's map orders,
-// on crossRankTestGraph's graphs and on larger ones. Before every grow pass
+// original's maps repeated before every grow pass (shadowMaps) against the
+// legacy pass, replaying the legacy run's map orders, on
+// crossRankTestGraph's graphs and on larger ones. Before every grow pass
 // that ranges over its map, the writes the rewrite repeats into the
 // original's maps (originalMaps) must be the legacy run's writes into its
 // maps up to that point, in the same order, and the results must be the
-// legacy's bit for bit.
+// legacy's bit for bit. The shadow maps are compiled in under TinyGo only,
+// so under gc this test needs the build tag dagre_shadowmaps. CI runs the
+// package's tests with it, so in the other tests too, every grow pass that
+// may grow a container ranges over the map originalMaps makes:
+//
+//	go test -tags dagre_shadowmaps ./d2layouts/d2dagrelayout
 func TestShadowWritesMatchLegacy(t *testing.T) {
-	saved := shadowMaps
-	shadowMaps = true
-	defer func() { shadowMaps = saved }()
+	if !shadowMaps {
+		t.Skip("shadow maps not compiled in; run with -tags dagre_shadowmaps")
+	}
 	var writes, passes, large int
 	for _, gen := range []func(int64) (*d2graph.Graph, *objectIndex){crossRankTestGraph, largeCrossRankTestGraph} {
 		for seed := int64(0); seed < 300; seed++ {

@@ -57,6 +57,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Test TALA with the race detector
         run: go test -race ./d2layouts/d2talalayout/... -count=1 -timeout=15m
+      - name: Test the dagre adapter with its TinyGo-only shadow maps compiled in
+        run: go test -tags dagre_shadowmaps ./d2layouts/d2dagrelayout -count=1
       - name: Verify representative release archive and size budget
         run: ./ci/release/build.sh --rebuild --run=linux/amd64 --version=v0.0.0-ci
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
