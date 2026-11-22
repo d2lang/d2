@@ -713,52 +713,10 @@ var staticPrepared struct {
 	sets [staticOptionSetCount]*elk.Options
 }
 
-// knownString returns the constant with value's text for the option strings
-// boxedString knows (and false for other texts): a string that refers to
-// nothing of the caller's.
-func knownString(value string) (string, bool) {
-	switch value {
-	case "":
-		return "", true
-	case "BALANCED":
-		return "BALANCED", true
-	case "DOWN":
-		return "DOWN", true
-	case "UP":
-		return "UP", true
-	case "RIGHT":
-		return "RIGHT", true
-	case "LEFT":
-		return "LEFT", true
-	case "INCLUDE_CHILDREN":
-		return "INCLUDE_CHILDREN", true
-	case "NODES_AND_EDGES":
-		return "NODES_AND_EDGES", true
-	case "NONE":
-		return "NONE", true
-	case "GREEDY_MODEL_ORDER":
-		return "GREEDY_MODEL_ORDER", true
-	case "GREEDY":
-		return "GREEDY", true
-	case "MINIMUM_SIZE":
-		return "MINIMUM_SIZE", true
-	case "H_CENTER V_CENTER":
-		return "H_CENTER V_CENTER", true
-	case "EQUALLY":
-		return "EQUALLY", true
-	case "FIXED_POS":
-		return "FIXED_POS", true
-	case "layered":
-		return "layered", true
-	case "[top=50,left=50,bottom=50,right=50]":
-		return "[top=50,left=50,bottom=50,right=50]", true
-	}
-	return "", false
-}
-
-// boxedString is any(value), without allocating for the option strings d2
-// sends most (a constant converts to an interface statically).
-func boxedString(value string) any {
+// knownOption returns value converted to an interface without allocating (a
+// constant converts statically) when it is one of the option strings d2
+// sends most, else nil.
+func knownOption(value string) any {
 	switch value {
 	case "":
 		return ""
@@ -795,6 +753,22 @@ func boxedString(value string) any {
 	case "[top=50,left=50,bottom=50,right=50]":
 		return "[top=50,left=50,bottom=50,right=50]"
 	}
+	return nil
+}
+
+// knownString returns the known option string with value's text (and false
+// for other texts): a string that refers to nothing of the caller's.
+func knownString(value string) (string, bool) {
+	known, ok := knownOption(value).(string)
+	return known, ok
+}
+
+// boxedString is any(value), without allocating for the known option
+// strings.
+func boxedString(value string) any {
+	if known := knownOption(value); known != nil {
+		return known
+	}
 	return value
 }
 
@@ -824,90 +798,112 @@ func boxedFloat(value float64) any {
 // when member i is present; ok is false when json.Marshal rejects a value (a
 // NaN or infinite number, which is left out).
 func appendOptionPairs(pairs []elkOptionPair, o *elkOpts) (_ []elkOptionPair, mask uint64, ok bool) {
-	ok = true
-	member := 0
-	add := func(key string, value any) {
-		mask |= 1 << member
-		pairs = append(pairs, elkOptionPair{key, value})
-	}
-	str := func(key, value string, omitEmpty bool) {
-		if !(omitEmpty && value == "") {
-			add(key, boxedString(jsonText(value)))
-		}
-		member++
-	}
-	// JSON numbers in option maps decode to float64: elk-go's element
-	// decoders call json.Unmarshal without UseNumber. The decimal text of an
-	// int parses to float64(value), both rounding to nearest even.
-	integer := func(key string, value int, omitEmpty bool) {
-		if !(omitEmpty && value == 0) {
-			add(key, boxedFloat(float64(value)))
-		}
-		member++
-	}
-	boolean := func(key string, value bool) {
-		if value {
-			add(key, true)
-		}
-		member++
-	}
-	// A finite float64 is written as the shortest decimal that parses back
-	// to it, so it decodes unchanged (negative zero included).
-	float := func(key string, value *float64) {
-		if value != nil {
-			if math.IsNaN(*value) || math.IsInf(*value, 0) {
-				ok = false
-			} else {
-				add(key, boxedFloat(*value))
-			}
-		}
-		member++
-	}
-	str("elk.layered.nodePlacement.bk.fixedAlignment", o.FixedAlignment, true)
-	integer("elk.layered.thoroughness", o.Thoroughness, true)
-	str("elk.direction", string(o.Direction), false)
-	str("elk.hierarchyHandling", o.HierarchyHandling, true)
-	boolean("elk.edgeLabels.inline", o.InlineEdgeLabels)
-	str("elk.layered.considerModelOrder.strategy", o.ConsiderModelOrder, true)
-	str("elk.layered.cycleBreaking.strategy", o.CycleBreakingStrategy, true)
-	str("elk.layered.edgeRouting.selfLoopDistribution", o.SelfLoopDistribution, true)
-	str("elk.layered.layering.layerConstraint", o.LayerConstraint, true)
-	str("elk.nodeSize.constraints", o.NodeSizeConstraints, true)
-	str("elk.contentAlignment", o.ContentAlignment, true)
-	str("elk.nodeSize.minimum", o.NodeSizeMinimum, true)
-	str("elk.port.side", string(o.PortSide), true)
-	str("elk.portConstraints", o.PortConstraints, true)
+	b := optionPairs{pairs: pairs, ok: true}
+	b.str("elk.layered.nodePlacement.bk.fixedAlignment", o.FixedAlignment, true)
+	b.integer("elk.layered.thoroughness", o.Thoroughness, true)
+	b.str("elk.direction", string(o.Direction), false)
+	b.str("elk.hierarchyHandling", o.HierarchyHandling, true)
+	b.boolean("elk.edgeLabels.inline", o.InlineEdgeLabels)
+	b.str("elk.layered.considerModelOrder.strategy", o.ConsiderModelOrder, true)
+	b.str("elk.layered.cycleBreaking.strategy", o.CycleBreakingStrategy, true)
+	b.str("elk.layered.edgeRouting.selfLoopDistribution", o.SelfLoopDistribution, true)
+	b.str("elk.layered.layering.layerConstraint", o.LayerConstraint, true)
+	b.str("elk.nodeSize.constraints", o.NodeSizeConstraints, true)
+	b.str("elk.contentAlignment", o.ContentAlignment, true)
+	b.str("elk.nodeSize.minimum", o.NodeSizeMinimum, true)
+	b.str("elk.port.side", string(o.PortSide), true)
+	b.str("elk.portConstraints", o.PortConstraints, true)
 
 	c := &o.ConfigurableOpts
-	float("elk.spacing.nodeNode", c.NodeNode)
-	float("elk.spacing.edgeNode", c.EdgeNode)
-	float("elk.spacing.edgeEdge", c.EdgeEdge)
-	str("elk.edgeRouting", c.EdgeRouting, true)
-	str("elk.layered.wrapping.strategy", c.WrappingStrategy, true)
-	boolean("elk.layered.crossingMinimization.forceNodeModelOrder", c.ForceNodeModelOrder)
-	boolean("elk.layered.feedbackEdges", c.FeedbackEdges)
-	boolean("elk.layered.mergeEdges", c.MergeEdges)
+	b.float("elk.spacing.nodeNode", c.NodeNode)
+	b.float("elk.spacing.edgeNode", c.EdgeNode)
+	b.float("elk.spacing.edgeEdge", c.EdgeEdge)
+	b.str("elk.edgeRouting", c.EdgeRouting, true)
+	b.str("elk.layered.wrapping.strategy", c.WrappingStrategy, true)
+	b.boolean("elk.layered.crossingMinimization.forceNodeModelOrder", c.ForceNodeModelOrder)
+	b.boolean("elk.layered.feedbackEdges", c.FeedbackEdges)
+	b.boolean("elk.layered.mergeEdges", c.MergeEdges)
 
-	str("elk.force.model", c.ForceModel, true)
-	float("elk.force.repulsion", c.ForceRepulsion)
-	float("elk.stress.desiredEdgeLength", c.StressDesiredEdgeLength)
-	str("elk.mrtree.searchOrder", c.MrTreeSearchOrder, true)
-	str("elk.mrtree.weighting", c.MrTreeWeighting, true)
-	float("elk.radial.radius", c.RadialRadius)
-	str("elk.radial.wedgeCriteria", c.RadialWedgeCriteria, true)
-	str("elk.radial.compactor", c.RadialCompactor, true)
+	b.str("elk.force.model", c.ForceModel, true)
+	b.float("elk.force.repulsion", c.ForceRepulsion)
+	b.float("elk.stress.desiredEdgeLength", c.StressDesiredEdgeLength)
+	b.str("elk.mrtree.searchOrder", c.MrTreeSearchOrder, true)
+	b.str("elk.mrtree.weighting", c.MrTreeWeighting, true)
+	b.float("elk.radial.radius", c.RadialRadius)
+	b.str("elk.radial.wedgeCriteria", c.RadialWedgeCriteria, true)
+	b.str("elk.radial.compactor", c.RadialCompactor, true)
 
-	str("elk.algorithm", c.Algorithm, true)
-	integer("spacing.nodeNodeBetweenLayers", c.NodeSpacing, true)
-	str("elk.padding", c.Padding, true)
-	integer("spacing.edgeNodeBetweenLayers", c.EdgeNodeSpacing, true)
+	b.str("elk.algorithm", c.Algorithm, true)
+	b.integer("spacing.nodeNodeBetweenLayers", c.NodeSpacing, true)
+	b.str("elk.padding", c.Padding, true)
+	b.integer("spacing.edgeNodeBetweenLayers", c.EdgeNodeSpacing, true)
 	if c.EdgeEdgeSpacing != nil {
-		integer("spacing.edgeEdgeBetweenLayers", *c.EdgeEdgeSpacing, false)
+		b.integer("spacing.edgeEdgeBetweenLayers", *c.EdgeEdgeSpacing, false)
 	} else {
-		member++
+		b.member++
 	}
-	integer("elk.spacing.nodeSelfLoop", c.SelfLoopSpacing, false)
-	return pairs, mask, ok
+	b.integer("elk.spacing.nodeSelfLoop", c.SelfLoopSpacing, false)
+	return b.pairs, b.mask, b.ok
+}
+
+// optionPairs is appendOptionPairs' builder, called once per member of the
+// option struct in member order. Its methods are not inlined: a call per
+// member is a fraction of the code an inlined copy per member would be.
+type optionPairs struct {
+	pairs  []elkOptionPair
+	mask   uint64
+	member int
+	ok     bool
+}
+
+func (b *optionPairs) add(key string, value any) {
+	b.mask |= 1 << b.member
+	b.pairs = append(b.pairs, elkOptionPair{key, value})
+}
+
+//go:noinline
+func (b *optionPairs) str(key, value string, omitEmpty bool) {
+	if !(omitEmpty && value == "") {
+		b.add(key, boxedString(jsonText(value)))
+	}
+	b.member++
+}
+
+// integer adds an int member. JSON numbers in option maps decode to float64:
+// elk-go's element decoders call json.Unmarshal without UseNumber. The
+// decimal text of an int parses to float64(value), both rounding to nearest
+// even.
+//
+//go:noinline
+func (b *optionPairs) integer(key string, value int, omitEmpty bool) {
+	if !(omitEmpty && value == 0) {
+		b.add(key, boxedFloat(float64(value)))
+	}
+	b.member++
+}
+
+//go:noinline
+func (b *optionPairs) boolean(key string, value bool) {
+	if value {
+		b.add(key, true)
+	}
+	b.member++
+}
+
+// float adds a *float64 member. A finite float64 is written as the shortest
+// decimal that parses back to it, so it decodes unchanged (negative zero
+// included); a NaN or an infinity makes json.Marshal fail.
+//
+//go:noinline
+func (b *optionPairs) float(key string, value *float64) {
+	if value != nil {
+		if math.IsNaN(*value) || math.IsInf(*value, 0) {
+			b.ok = false
+		} else {
+			b.add(key, boxedFloat(*value))
+		}
+	}
+	b.member++
 }
 
 // setFromJSONNumber stores value as decoding its JSON encoding would: a

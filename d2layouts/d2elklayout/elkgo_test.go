@@ -383,6 +383,9 @@ func TestBoxedValuesMatch(t *testing.T) {
 		if boxed := boxedString(value); boxed != any(value) {
 			t.Fatalf("boxedString(%q) = %#v", value, boxed)
 		}
+		if text, ok := knownString(value); ok != (knownOption(value) != nil) || ok && text != value {
+			t.Fatalf("knownString(%q) = %q, %v", value, text, ok)
+		}
 	}
 	values := []float64{0, math.Copysign(0, -1), 1, 8, 40, 255, 255.5, 256, -1, 0.5, math.NaN(), math.Inf(1), 1e300}
 	for i := 0; i < 300; i++ {
