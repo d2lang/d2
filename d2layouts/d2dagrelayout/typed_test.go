@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"slices"
 	"strings"
 	"testing"
 
@@ -98,9 +99,8 @@ func compileForDagre(t *testing.T, ruler *textmeasure.Ruler, source string) (*d2
 	return g, true
 }
 
-// dagroCallInputs computes what Layout passes to dagroInput and
-// buildDagroGraph.
-func dagroCallInputs(g *d2graph.Graph, rootAttrs dagreOpts) (ix *objectIndex, resolvedSrc, resolvedDst []*d2graph.Object, sameWay, bothWays []int) {
+// dagroCallInputs computes what Layout passes to dagroInput.
+func dagroCallInputs(g *d2graph.Graph) (ix *objectIndex, resolvedSrc, resolvedDst []*d2graph.Object, sameWay, bothWays []int) {
 	ix = newObjectIndex(g)
 	resolver := newEndpointResolver(g)
 	resolvedSrc = make([]*d2graph.Object, len(g.Edges))
@@ -110,6 +110,72 @@ func dagroCallInputs(g *d2graph.Graph, rootAttrs dagreOpts) (ix *objectIndex, re
 	}
 	sameWay, bothWays = countParallelEdges(resolvedSrc, resolvedDst)
 	return ix, resolvedSrc, resolvedDst, sameWay, bothWays
+}
+
+// originalDagroGraph makes the dagro Graph calls of the original adapter
+// (e22f4d566) for g and returns the Graph, or the error of the SetParent call
+// that failed, which the original returned before anything else. It also
+// returns the error the original returned after the layout, when it read the
+// result: a node without a label (the node "" that SetParent or SetEdge
+// created for an object outside g.Objects) or fewer edges than g has.
+func originalDagroGraph(g *d2graph.Graph, rootAttrs dagreOpts) (*dagro.Graph, string, error) {
+	mapper := NewObjectMapper()
+	for _, obj := range g.Objects {
+		mapper.Register(obj)
+	}
+	resolver := newEndpointResolver(g)
+	type endpointPair struct {
+		src, dst *d2graph.Object
+	}
+	resolved := make([]endpointPair, len(g.Edges))
+	counts := make(map[endpointPair]int, len(g.Edges))
+	for i, edge := range g.Edges {
+		src, dst := resolver.resolve(edge)
+		resolved[i] = endpointPair{src: src, dst: dst}
+		counts[resolved[i]]++
+	}
+	graph := dagro.NewGraph(dagro.GraphOptions{Compound: true, Multigraph: true}).SetGraph(dagro.Attrs{
+		"ranksep": float64(rootAttrs.ranksep),
+		"edgesep": float64(rootAttrs.EdgeSep),
+		"nodesep": float64(rootAttrs.NodeSep),
+		"rankdir": rootAttrs.rankdir,
+	})
+	for _, obj := range g.Objects {
+		id := mapper.ToID(obj)
+		graph.SetNode(id, dagro.Attrs{"id": id, "width": float64(int(obj.Width)), "height": float64(int(obj.Height))})
+		if obj.Parent != g.Root {
+			if err := graph.SetParent(id, mapper.ToID(obj.Parent)); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+	for i, edge := range g.Edges {
+		pair := resolved[i]
+		width, height := edge.LabelDimensions.Width, edge.LabelDimensions.Height
+		numEdges := counts[pair]
+		if pair.src != pair.dst {
+			numEdges += counts[endpointPair{src: pair.dst, dst: pair.src}]
+		}
+		if numEdges > 1 {
+			switch g.Root.Direction.Value {
+			case "down", "up", "":
+				width += EDGE_LABEL_GAP
+			case "left", "right":
+				height += EDGE_LABEL_GAP
+			}
+		}
+		graph.SetEdge(mapper.ToID(pair.src), mapper.ToID(pair.dst), dagro.Attrs{
+			"width": float64(width), "height": float64(height), "labelpos": "c",
+		}, edge.AbsID())
+	}
+	readErr := ""
+	switch {
+	case graph.HasNode(""):
+		readErr = fmt.Sprintf("dagro returned invalid node label for %q", "")
+	case graph.EdgeCount() != len(g.Edges):
+		readErr = fmt.Sprintf("dagro returned %d edges, expected %d", graph.EdgeCount(), len(g.Edges))
+	}
+	return graph, readErr, nil
 }
 
 // sameDagroValue compares two attribute values, floats by their bits.
@@ -122,9 +188,13 @@ func sameDagroValue(a, b any) bool {
 	return a == b
 }
 
-// sameDagroGraph fails unless the two graphs have the same graph attributes,
-// nodes, node labels, parents and children (in order), and edges with the
-// same keys and, after dagro's edge defaults, the same attribute values.
+// sameDagroGraph fails unless the two graphs lay out alike: the same graph
+// attributes, nodes, parents and children (in order), node sizes (a node
+// without a label has size 0 by dagro's defaults), and edges between the same
+// nodes in the same order with, after dagro's edge defaults, the same
+// attribute values. An edge's name only makes its id: the edges' names must
+// be equal or empty in got, and the edge counts equal, so that the same calls
+// replaced an earlier edge's label.
 func sameDagroGraph(t *testing.T, what string, want, got *dagro.Graph) {
 	t.Helper()
 	wantGraph, _ := want.Graph().(dagro.Attrs)
@@ -144,16 +214,19 @@ func sameDagroGraph(t *testing.T, what string, want, got *dagro.Graph) {
 	for _, v := range wantNodes {
 		wl, _ := want.Node(v).(dagro.Attrs)
 		gl, _ := got.Node(v).(dagro.Attrs)
-		if len(wl) != 2 || len(gl) != 2 || !sameDagroValue(wl["width"], gl["width"]) || !sameDagroValue(wl["height"], gl["height"]) {
-			t.Fatalf("%s: node %s label %v, typed input gives %v", what, v, wl, gl)
+		if wl == nil {
+			wl = dagro.Attrs{"width": 0.0, "height": 0.0}
+		}
+		if len(gl) != 2 || !sameDagroValue(wl["width"], gl["width"]) || !sameDagroValue(wl["height"], gl["height"]) {
+			t.Fatalf("%s: node %q label %v, typed input gives %v", what, v, wl, gl)
 		}
 		wp, wok := want.Parent(v)
 		gp, gok := got.Parent(v)
 		if wp != gp || wok != gok {
-			t.Fatalf("%s: node %s parent %q %v, typed input gives %q %v", what, v, wp, wok, gp, gok)
+			t.Fatalf("%s: node %q parent %q %v, typed input gives %q %v", what, v, wp, wok, gp, gok)
 		}
 		if fmt.Sprint(want.Children(v)) != fmt.Sprint(got.Children(v)) {
-			t.Fatalf("%s: node %s children %v, typed input gives %v", what, v, want.Children(v), got.Children(v))
+			t.Fatalf("%s: node %q children %v, typed input gives %v", what, v, want.Children(v), got.Children(v))
 		}
 	}
 	wantEdges, gotEdges := want.Edges(), got.Edges()
@@ -163,7 +236,7 @@ func sameDagroGraph(t *testing.T, what string, want, got *dagro.Graph) {
 	defaults := dagro.Attrs{"minlen": 1.0, "weight": 1.0, "width": 0.0, "height": 0.0, "labeloffset": 10.0, "labelpos": "r"}
 	for i, we := range wantEdges {
 		ge := gotEdges[i]
-		if we != ge {
+		if we.V != ge.V || we.W != ge.W || ge.Name != "" && ge.Name != we.Name {
 			t.Fatalf("%s: edge %d is %+v, typed input gives %+v", what, i, we, ge)
 		}
 		wl, _ := want.Edge(we).(dagro.Attrs)
@@ -185,9 +258,42 @@ func sameDagroGraph(t *testing.T, what string, want, got *dagro.Graph) {
 	}
 }
 
-// TestDagroInputMatchesGraphCalls checks that the typed input is the Graph
-// the Attrs path builds, on random diagrams: dagro.LayoutTyped(in) is defined
-// as Layout(in.Graph()), so equal graphs give equal layouts.
+// breakGraph changes g as only a Go caller can: it repeats an object in
+// g.Objects, leaves one out (its children's parent and the endpoints of its
+// edges are then outside g.Objects), repeats an edge, or swaps the parents of
+// two objects (a parent cycle; it then drops the edges, whose endpoints'
+// resolution would walk the cycle forever, in the original too). It returns
+// what it did, or "" when it left g as it was (no edge to repeat).
+func breakGraph(r *rand.Rand, g *d2graph.Graph) string {
+	switch r.Intn(4) {
+	case 0:
+		o := g.Objects[r.Intn(len(g.Objects))]
+		g.Objects = slices.Insert(g.Objects, r.Intn(len(g.Objects)+1), o)
+		return "repeated object"
+	case 1:
+		i := r.Intn(len(g.Objects))
+		g.Objects = slices.Delete(g.Objects, i, i+1)
+		return "object outside g.Objects"
+	case 2:
+		if len(g.Edges) == 0 {
+			return ""
+		}
+		g.Edges = append(g.Edges, g.Edges[r.Intn(len(g.Edges))])
+		return "repeated edge"
+	default:
+		a, b := g.Objects[r.Intn(len(g.Objects))], g.Objects[r.Intn(len(g.Objects))]
+		a.Parent, b.Parent = b, a
+		g.Edges = nil
+		return "parent cycle"
+	}
+}
+
+// TestDagroInputMatchesGraphCalls checks, on random diagrams and on random
+// diagrams broken as only Go callers can break them, that the typed input
+// describes the Graph the original adapter built, and that dagroInput
+// returns the errors the original returned besides the layout's own:
+// dagro.LayoutTyped(in) is defined as Layout(in.Graph()), so equal graphs
+// give equal layouts.
 func TestDagroInputMatchesGraphCalls(t *testing.T) {
 	t.Parallel()
 	ruler, err := textmeasure.NewRuler()
@@ -196,31 +302,42 @@ func TestDagroInputMatchesGraphCalls(t *testing.T) {
 	}
 	r := rand.New(rand.NewSource(7))
 	checked, named := 0, 0
-	for c := 0; c < 400; c++ {
+	broken := map[string]int{}
+	for c := 0; c < 800; c++ {
 		source := randomDagreSource(r)
 		g, ok := compileForDagre(t, ruler, source)
 		if !ok {
 			continue
+		}
+		what := fmt.Sprintf("case %d:\n%s\n", c, source)
+		if c%2 == 1 {
+			if how := breakGraph(r, g); how != "" {
+				broken[how]++
+				what += how + "\n"
+			}
 		}
 		rootAttrs := dagreOpts{
 			ranksep:          100 + r.Intn(60),
 			rankdir:          []string{"TB", "LR", "RL", "BT"}[r.Intn(4)],
 			ConfigurableOpts: ConfigurableOpts{NodeSep: 60, EdgeSep: 20},
 		}
-		ix, resolvedSrc, resolvedDst, sameWay, bothWays := dagroCallInputs(g, rootAttrs)
-		in, ok := dagroInput(g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays)
-		if !ok {
-			t.Fatalf("case %d: dagroInput refused a compiled graph:\n%s", c, source)
+		ix, resolvedSrc, resolvedDst, sameWay, bothWays := dagroCallInputs(g)
+		in, buildErr, readErr := dagroInput(g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays)
+		want, wantReadErr, wantBuildErr := originalDagroGraph(g, rootAttrs)
+		if fmt.Sprint(buildErr) != fmt.Sprint(wantBuildErr) {
+			t.Fatalf("%s: error %v, original's %v", what, buildErr, wantBuildErr)
 		}
-		want, _, _, err := buildDagroGraph(g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays)
-		if err != nil {
-			t.Fatal(err)
+		if wantBuildErr != nil {
+			continue
+		}
+		if readErr != nil && readErr.Error() != wantReadErr || readErr == nil && wantReadErr != "" {
+			t.Fatalf("%s: result error %v, original's %q", what, readErr, wantReadErr)
 		}
 		got, err := in.Graph()
 		if err != nil {
 			t.Fatal(err)
 		}
-		sameDagroGraph(t, fmt.Sprintf("case %d:\n%s\n", c, source), want, got)
+		sameDagroGraph(t, what, want, got)
 		checked++
 		for _, n := range sameWay {
 			if n > 1 {
@@ -228,65 +345,56 @@ func TestDagroInputMatchesGraphCalls(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d graphs compared, %d named edges", checked, named)
-	if checked < 300 || named == 0 {
-		t.Fatalf("only %d graphs compiled (%d named edges)", checked, named)
+	t.Logf("%d graphs compared, %d named edges; broken: %v", checked, named, broken)
+	if checked < 600 || named == 0 || len(broken) < 4 {
+		t.Fatalf("only %d graphs compiled (%d named edges, broken: %v)", checked, named, broken)
 	}
 }
 
-// TestDagroInputRefusesIrregularGraphs checks the graphs that keep the Attrs
-// path, and that Layout still reports their errors.
-func TestDagroInputRefusesIrregularGraphs(t *testing.T) {
+// TestLayoutIrregularGraphs checks that Layout lays out a graph with a
+// repeated object and returns the original's errors for graphs with an edge
+// endpoint outside g.Objects, a parent cycle or a repeated edge, which only a
+// Go caller can make.
+func TestLayoutIrregularGraphs(t *testing.T) {
 	t.Parallel()
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		t.Fatal(err)
 	}
-	compile := func() *d2graph.Graph {
-		g, ok := compileForDagre(t, ruler, "a: {b; c}\nd\na.b -> d\nd -> a.c\nd -> a.c")
+	compileSource := func(source string) *d2graph.Graph {
+		g, ok := compileForDagre(t, ruler, source)
 		if !ok {
 			t.Fatal("does not compile")
 		}
 		return g
 	}
-	refused := func(what string, g *d2graph.Graph) {
+	compile := func() *d2graph.Graph { return compileSource("a: {b; c}\nd\na.b -> d\nd -> a.c\nd -> a.c") }
+	layout := func(what string, g *d2graph.Graph, want string) {
 		t.Helper()
-		ix, resolvedSrc, resolvedDst, sameWay, bothWays := dagroCallInputs(g, dagreOpts{rankdir: "TB"})
-		if _, ok := dagroInput(g, ix, dagreOpts{rankdir: "TB"}, resolvedSrc, resolvedDst, sameWay, bothWays); ok {
-			t.Errorf("%s: dagroInput took the graph", what)
-		}
-	}
-
-	if g := compile(); true {
-		ix, resolvedSrc, resolvedDst, sameWay, bothWays := dagroCallInputs(g, dagreOpts{rankdir: "TB"})
-		if _, ok := dagroInput(g, ix, dagreOpts{rankdir: "TB"}, resolvedSrc, resolvedDst, sameWay, bothWays); !ok {
-			t.Fatal("regular graph refused")
+		err := DefaultLayout(context.Background(), g)
+		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Errorf("%s: Layout error %v, want %q", what, err, want)
 		}
 	}
 
 	g := compile()
 	g.Objects = append(g.Objects, g.Objects[0])
-	refused("repeated object", g)
-
-	g = compile()
-	var kept []*d2graph.Object
+	layout("repeated object", g, "")
 	for _, obj := range g.Objects {
-		if obj.ID != "a" {
-			kept = append(kept, obj)
+		if obj.TopLeft == nil {
+			t.Errorf("repeated object: %s has no position", obj.ID)
 		}
 	}
-	g.Objects = kept
-	refused("parent outside g.Objects", g)
+
+	g = compileSource("a -> b")
+	g.Objects = slices.DeleteFunc(g.Objects, func(obj *d2graph.Object) bool { return obj.ID == "b" })
+	layout("edge endpoint outside g.Objects", g, `dagro returned invalid node label for ""`)
 
 	g = compile()
 	g.Objects[0].Parent, g.Objects[1].Parent = g.Objects[1], g.Objects[0]
-	refused("parent cycle", g)
+	layout("parent cycle", g, "would create a cycle")
 
 	g = compile()
 	g.Edges = append(g.Edges, g.Edges[len(g.Edges)-1])
-	refused("duplicate edge key", g)
-	err = DefaultLayout(context.Background(), g)
-	if err == nil || !strings.Contains(err.Error(), "dagro returned 3 edges, expected 4") {
-		t.Errorf("duplicate edge key: Layout error %v", err)
-	}
+	layout("repeated edge", g, "dagro returned 3 edges, expected 4")
 }

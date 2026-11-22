@@ -125,67 +125,48 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 	sameWay, bothWays := countParallelEdgesInto(sc.counts, resolvedSrc, resolvedDst)
 
 	topLefts := make([]geo.Point, ix.distinct)
-	// The route of edge i is edgeRoutes[i] (typed) or the "points" of
-	// edgeLabels[i].
-	typed := false
-	var edgeRoutes []dagro.EdgeLayout
-	var edgeLabels []dagro.Attrs
-	if in, ok := dagroInput(g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays); ok {
-		typed = true
-		sc.in = in
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		// dagro does not accept a context. Check immediately around the call; the
-		// topology preflight above bounds inputs before entering this section.
-		out := &sc.out
-		if err := dagro.LayoutTyped(&sc.in, out); err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		for i, obj := range g.Objects {
-			// dagre gives center of node
-			n := &out.Nodes[i]
-			topLefts[i] = geo.Point{X: math.Round(n.X - n.Width/2), Y: math.Round(n.Y - n.Height/2)}
-			obj.TopLeft = &topLefts[i]
-			obj.Width = math.Ceil(n.Width)
-			obj.Height = math.Ceil(n.Height)
-		}
-		edgeRoutes = out.Edges
-	} else {
-		var err error
-		edgeLabels, err = layoutAttrs(ctx, g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays, topLefts)
-		if err != nil {
-			return err
-		}
+	in, buildErr, readErr := dagroInput(g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays)
+	if buildErr != nil {
+		return buildErr
+	}
+	sc.in = in
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// dagro does not accept a context. Check immediately around the call; the
+	// topology preflight above bounds inputs before entering this section.
+	out := &sc.out
+	if err := dagro.LayoutTyped(&sc.in, out); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for i, obj := range g.Objects {
+		// dagre gives center of node. A repeated object gets the same
+		// position at each of its occurrences.
+		k := ix.at[i]
+		n := &out.Nodes[i]
+		topLefts[k] = geo.Point{X: math.Round(n.X - n.Width/2), Y: math.Round(n.Y - n.Height/2)}
+		obj.TopLeft = &topLefts[k]
+		obj.Width = math.Ceil(n.Width)
+		obj.Height = math.Ceil(n.Height)
+	}
+	// The original found these errors reading the result, after it had set
+	// every object's position (see dagroInput).
+	if readErr != nil {
+		return readErr
 	}
 
 	totalPoints := 0
 	for i := range g.Edges {
-		if typed {
-			totalPoints += len(edgeRoutes[i].Points)
-		} else {
-			dagrePoints, _ := edgeLabels[i]["points"].([]dagro.Point)
-			totalPoints += len(dagrePoints)
-		}
+		totalPoints += len(out.Edges[i].Points)
 	}
 	// Each route may also take a new start and end point (the box chops).
 	routeValues := pointArena{chunk: totalPoints + 2*len(g.Edges)}
 	routeRefs := pointRefArena{chunk: totalPoints}
 	for i, edge := range g.Edges {
-		var dagrePoints []dagro.Point
-		if typed {
-			dagrePoints = edgeRoutes[i].Points
-		} else {
-			var ok bool
-			dagrePoints, ok = edgeLabels[i]["points"].([]dagro.Point)
-			if !ok {
-				return fmt.Errorf("dagro returned edge %q without points", edge.AbsID())
-			}
-		}
-
+		dagrePoints := out.Edges[i].Points
 		pointValues := routeValues.take(len(dagrePoints))
 		points := routeRefs.take(len(dagrePoints))
 		for i, point := range dagrePoints {
@@ -381,133 +362,6 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 
 	putScratch(sc)
 	return nil
-}
-
-// layoutAttrs lays g out through dagro's Graph API, for the graphs dagroInput
-// does not take. It sets the TopLeft (in topLefts), Width and Height of every
-// object and returns the edge labels, into which dagro wrote the routes.
-func layoutAttrs(ctx context.Context, g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolvedSrc, resolvedDst []*d2graph.Object, sameWay, bothWays []int, topLefts []geo.Point) ([]dagro.Attrs, error) {
-	dagreGraph, nodeLabels, edgeLabels, err := buildDagroGraph(g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	// dagro does not accept a context. Check immediately around the call; the
-	// topology preflight above bounds inputs before entering this section.
-	if err := dagro.Layout(dagreGraph); err != nil {
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	// Read the nodes in the order of dagreGraph.Nodes(): the numeric ids
-	// ascending, which is the order of the objects' positions.
-	for i, obj := range g.Objects {
-		k := ix.at[i]
-		if int(ix.lastAt[k]) != i {
-			// A repeated object is the node of its last position only.
-			continue
-		}
-		dn := nodeLabels[k]
-		x, xOK := dn["x"].(float64)
-		y, yOK := dn["y"].(float64)
-		width, widthOK := dn["width"].(float64)
-		height, heightOK := dn["height"].(float64)
-		if !xOK || !yOK || !widthOK || !heightOK {
-			return nil, fmt.Errorf("dagro returned invalid geometry for node %q", nodeID(i))
-		}
-
-		// dagre gives center of node
-		topLefts[k] = geo.Point{X: math.Round(x - width/2), Y: math.Round(y - height/2)}
-		obj.TopLeft = &topLefts[k]
-		obj.Width = math.Ceil(width)
-		obj.Height = math.Ceil(height)
-	}
-	if dagreGraph.NodeCount() != ix.distinct {
-		// The only node dagro can hold besides the objects' is "", which
-		// SetParent or SetEdge create without a label when an object's parent
-		// or an edge endpoint is not in g.Objects. It comes last in Nodes().
-		return nil, fmt.Errorf("dagro returned invalid node label for %q", "")
-	}
-
-	if n := dagreGraph.EdgeCount(); n != len(g.Edges) {
-		return nil, fmt.Errorf("dagro returned %d edges, expected %d", n, len(g.Edges))
-	}
-	// All edge ids are distinct (the count matched), so edgeLabels[i] is the
-	// label of the i-th edge of dagreGraph.Edges().
-	return edgeLabels, nil
-}
-
-// buildDagroGraph builds the dagro Graph for g and returns it with the label
-// of the node of each distinct object (indexed like ix.objs) and of each
-// edge, or the error of a SetParent call.
-func buildDagroGraph(g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolvedSrc, resolvedDst []*d2graph.Object, sameWay, bothWays []int) (*dagro.Graph, []dagro.Attrs, []dagro.Attrs, error) {
-	dagreGraph := dagro.NewGraph(dagro.GraphOptions{Compound: true, Multigraph: true}).SetGraph(dagro.Attrs{
-		"ranksep": boxFloat(float64(rootAttrs.ranksep)),
-		"edgesep": boxFloat(float64(rootAttrs.EdgeSep)),
-		"nodesep": boxFloat(float64(rootAttrs.NodeSep)),
-		"rankdir": rootAttrs.rankdir,
-	})
-	// Node and edge labels are kept so that the result can be read from them:
-	// dagro.Layout writes its coordinates into the label maps it was given.
-	// dagro reads only width and height from a node label, so no id is stored.
-	nodeLabels := make([]dagro.Attrs, ix.distinct)
-	for i, obj := range g.Objects {
-		k := ix.at[i]
-		id := nodeID(int(ix.lastAt[k]))
-		nodeLabel := dagro.Attrs{
-			"width":  boxFloat(float64(int(obj.Width))),
-			"height": boxFloat(float64(int(obj.Height))),
-		}
-		dagreGraph.SetNode(id, nodeLabel)
-		nodeLabels[k] = nodeLabel
-		if obj.Parent != g.Root {
-			if err := dagreGraph.SetParent(id, ix.nodeIDOf(obj.Parent)); err != nil {
-				return nil, nil, nil, err
-			}
-		}
-	}
-
-	edgeLabels := make([]dagro.Attrs, len(g.Edges))
-	for i, edge := range g.Edges {
-		width := edge.LabelDimensions.Width
-		height := edge.LabelDimensions.Height
-
-		// We want to leave some gap between multiple edges
-		if bothWays[i] > 1 {
-			switch g.Root.Direction.Value {
-			case "down", "up", "":
-				width += EDGE_LABEL_GAP
-			case "left", "right":
-				height += EDGE_LABEL_GAP
-			}
-		}
-
-		// dagro's edge defaults include width 0 and height 0, so a zero
-		// dimension is left out.
-		edgeLabel := dagro.Attrs{"labelpos": "c"}
-		if width != 0 {
-			edgeLabel["width"] = boxFloat(float64(width))
-		}
-		if height != 0 {
-			edgeLabel["height"] = boxFloat(float64(height))
-		}
-		// dagro uses an edge's name only as part of its id (v, w, name), so
-		// only edges from the same node to the same node can share an id.
-		// Those keep their AbsID as name, so they collide exactly when they
-		// did; any other edge's id is unique whatever its name.
-		name := ""
-		if sameWay[i] > 1 {
-			name = edge.AbsID()
-		}
-		dagreGraph.SetEdge(ix.nodeIDOf(resolvedSrc[i]), ix.nodeIDOf(resolvedDst[i]), edgeLabel, name)
-		edgeLabels[i] = edgeLabel
-	}
-	return dagreGraph, nodeLabels, edgeLabels, nil
 }
 
 func deduplicateRoutePoints(points []*geo.Point) []*geo.Point {

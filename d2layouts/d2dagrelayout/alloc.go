@@ -1,8 +1,6 @@
 package d2dagrelayout
 
 import (
-	"sync"
-
 	"github.com/d2lang/d2/lib/geo"
 )
 
@@ -11,29 +9,6 @@ import (
 // every slice is capped at its length, so an append copies it instead of
 // growing into its neighbor. The arenas' methods are not inlined: they are
 // called from many places, where inlined copies would only add code.
-
-const boxedIntCount = 4096
-
-var (
-	boxedIntsOnce sync.Once
-	boxedInts     []any
-)
-
-// boxFloat returns v as an interface value. The sizes the adapter stores in
-// dagro labels are small integers, whose boxes are made once and shared;
-// dagro only reads them.
-func boxFloat(v float64) any {
-	if v >= 0 && v < boxedIntCount && v == float64(int(v)) && (v != 0 || 1/v > 0) {
-		boxedIntsOnce.Do(func() {
-			boxedInts = make([]any, boxedIntCount)
-			for i := range boxedInts {
-				boxedInts[i] = float64(i)
-			}
-		})
-		return boxedInts[int(v)]
-	}
-	return v
-}
 
 // pointArena hands out points from chunks of at least chunk points.
 type pointArena struct {

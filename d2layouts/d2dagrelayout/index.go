@@ -135,14 +135,13 @@ func (ix *objectIndex) insert(obj *d2graph.Object) int32 {
 	return k
 }
 
-// nodeIDOf returns the dagro node id of obj, or "" when obj is not in
-// g.Objects (objectMapper.ToID).
-func (ix *objectIndex) nodeIDOf(obj *d2graph.Object) string {
-	k, ok := ix.lookup(obj)
-	if !ok || ix.lastAt[k] < 0 {
-		return ""
+// node returns the index of obj's node in dagroInput's nodes: the position
+// of its last occurrence in g.Objects, or empty when obj is not in g.Objects.
+func (ix *objectIndex) node(obj *d2graph.Object, empty int) int {
+	if k, ok := ix.lookup(obj); ok && ix.lastAt[k] >= 0 {
+		return int(ix.lastAt[k])
 	}
-	return nodeID(int(ix.lastAt[k]))
+	return empty
 }
 
 // add returns the index of obj, appending it if it has none.
