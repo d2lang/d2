@@ -2,6 +2,7 @@ package placementcost
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"runtime"
@@ -81,14 +82,51 @@ func plainEdgeLength(t *testing.T, g *layoutgraph.Graph, options EdgeLengthOptio
 	return addCrossingCost(total, g, crossings), crossings
 }
 
+// plainEvaluationChecks compares every incremental result of the sessions
+// with the plain evaluation and panics on a difference (see sessionVerifier).
+type plainEvaluationChecks struct{}
+
+func (plainEvaluationChecks) resumedState(graph *layoutgraph.Graph, costs layoutgraph.RoutingCostState, options EdgeLengthOptions, state uint64) {
+	if state != placementEdgeLengthState(graph, costs, options) {
+		panic("EdgeLengthSession: resumed cache key differs from placementEdgeLengthState")
+	}
+}
+
+func (plainEvaluationChecks) edgeLength(graph *layoutgraph.Graph, options EdgeLengthOptions, got float64) {
+	ctx := context.Background()
+	p := newScoringPoll(ctx)
+	want, err := sumNodeEdgeLengths(ctx, &p, graph, options)
+	if err != nil {
+		panic(err)
+	}
+	crossings, err := GraphEdgeCrossings(ctx, graph)
+	if err != nil {
+		panic(err)
+	}
+	want = addCrossingCost(want, graph, crossings)
+	if math.Float64bits(want) != math.Float64bits(got) {
+		panic(fmt.Sprintf("EdgeLengthSession: EdgeLength %v (%#x), plain evaluation %v (%#x)", got, math.Float64bits(got), want, math.Float64bits(want)))
+	}
+}
+
+func (plainEvaluationChecks) crossings(graph *layoutgraph.Graph, got int64) {
+	want, err := GraphEdgeCrossings(context.Background(), graph)
+	if err != nil {
+		panic(err)
+	}
+	if want != got {
+		panic(fmt.Sprintf("EdgeLengthSession: GraphEdgeCrossings %d, plain count %d", got, want))
+	}
+}
+
 // TestEdgeLengthSessionMatchesEdgeLength moves random nodes (with their
 // children) around, back, and far away, resizes some, and compares every
 // session result with the plain evaluation bit for bit.
 func TestEdgeLengthSessionMatchesEdgeLength(t *testing.T) {
 	skipSlowUnderRace(t, 92)
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(0))
-	edgeLengthSessionVerify = true
-	defer func() { edgeLengthSessionVerify = false }()
+	sessionVerifier = plainEvaluationChecks{}
+	defer func() { sessionVerifier = nil }()
 	fixtures := map[string]func(*testing.T) *layoutgraph.Graph{
 		"large":     func(*testing.T) *layoutgraph.Graph { return newLargeEdgeLengthGraph() },
 		"symmetry":  func(*testing.T) *layoutgraph.Graph { return newWideSymmetryGraph() },

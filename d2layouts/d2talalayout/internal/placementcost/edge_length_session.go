@@ -3,7 +3,6 @@ package placementcost
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"math"
 	"runtime"
 	"slices"
@@ -204,8 +203,8 @@ func (s *EdgeLengthSession) edgeLength(ctx context.Context, rebase bool) (float6
 	var state uint64
 	if diffed {
 		state = s.resumedState()
-		if edgeLengthSessionVerify && state != placementEdgeLengthState(graph, costs, s.options) {
-			panic("EdgeLengthSession: resumed cache key differs from placementEdgeLengthState")
+		if sessionVerifier != nil {
+			sessionVerifier.resumedState(graph, costs, s.options, state)
 		}
 	} else {
 		state = placementEdgeLengthState(graph, costs, s.options)
@@ -232,8 +231,8 @@ func (s *EdgeLengthSession) edgeLength(ctx context.Context, rebase bool) (float6
 	if err := p.check(); err != nil {
 		return 0, err
 	}
-	if edgeLengthSessionVerify {
-		verifySessionEdgeLength(graph, s.options, total)
+	if sessionVerifier != nil {
+		sessionVerifier.edgeLength(graph, s.options, total)
 	}
 	graph.StoreEdgeLengthCost(state, total)
 	return total, nil
@@ -260,41 +259,18 @@ func (s *EdgeLengthSession) GraphEdgeCrossings(ctx context.Context) (int64, erro
 	if err := p.check(); err != nil {
 		return 0, err
 	}
-	if edgeLengthSessionVerify {
-		verifySessionCrossings(s.graph, crossings)
+	if sessionVerifier != nil {
+		sessionVerifier.crossings(s.graph, crossings)
 	}
 	return crossings, nil
 }
 
-// edgeLengthSessionVerify makes every incremental result also be computed by
-// the plain functions, and panics if they differ. Tests set it.
-var edgeLengthSessionVerify bool
-
-func verifySessionEdgeLength(graph *layoutgraph.Graph, options EdgeLengthOptions, got float64) {
-	ctx := context.Background()
-	p := newScoringPoll(ctx)
-	want, err := sumNodeEdgeLengths(ctx, &p, graph, options)
-	if err != nil {
-		panic(err)
-	}
-	crossings, err := GraphEdgeCrossings(ctx, graph)
-	if err != nil {
-		panic(err)
-	}
-	want = addCrossingCost(want, graph, crossings)
-	if math.Float64bits(want) != math.Float64bits(got) {
-		panic(fmt.Sprintf("EdgeLengthSession: EdgeLength %v (%#x), plain evaluation %v (%#x)", got, math.Float64bits(got), want, math.Float64bits(want)))
-	}
-}
-
-func verifySessionCrossings(graph *layoutgraph.Graph, got int64) {
-	want, err := GraphEdgeCrossings(context.Background(), graph)
-	if err != nil {
-		panic(err)
-	}
-	if want != got {
-		panic(fmt.Sprintf("EdgeLengthSession: GraphEdgeCrossings %d, plain count %d", got, want))
-	}
+// sessionVerifier, when set (by tests), checks every incremental result
+// against the plain evaluation and panics if they differ.
+var sessionVerifier interface {
+	resumedState(graph *layoutgraph.Graph, costs layoutgraph.RoutingCostState, options EdgeLengthOptions, state uint64)
+	edgeLength(graph *layoutgraph.Graph, options EdgeLengthOptions, got float64)
+	crossings(graph *layoutgraph.Graph, got int64)
 }
 
 // evaluate computes EdgeLength for the current state (with the crossing
