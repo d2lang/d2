@@ -389,10 +389,10 @@ func placeNodesOrthogonally(ctx context.Context, root *layoutgraph.Node, subgrap
 	// down to 0.2, compacting every compactionIteration passes with a factor
 	// that falls to 1. A level whose phase would score more than
 	// maxSizedPhaseWork edge terms (passes times twice its edges: each pass
-	// scores every edge from both ends) runs only the first passes of the
-	// phase that fit, cooling to the same final temperature over them; its
-	// compactions are those of those first passes (the later stages compact
-	// the layout further).
+	// scores every edge from both ends) runs only as many passes as fit. They
+	// cool to the same final temperature, and each compaction among them takes
+	// the factor of the matching point of the full schedule (vi below), so the
+	// factor still falls to 1.
 	firstSized := (numIterations / 2) + 1
 	endSized := numIterations
 	if edges := len(subgraph.Edges); edges > 0 && endSized-firstSized > maxSizedPhaseWork/(2*edges) {

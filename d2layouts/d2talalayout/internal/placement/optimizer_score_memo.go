@@ -25,14 +25,16 @@ import (
 //   - a move of one node (moveNodeToBest of X that moved X, or left X or a
 //     descendant on other bits) advances the move clock; X's own entries stay
 //     valid, every other node's entries stored before it become invalid;
+//   - a hub re-search scores with the hub's spoke edges suppressed, so the
+//     memo is not used during it, and a move of the hub is recorded after it,
+//     once the edges are restored (reSearchHub);
 //   - everything else that may change the graph starts a new epoch, which
 //     invalidates every entry: a swap, a transpose that succeeded or erred, a
 //     failed transpose that opened a transaction (it charged the transaction
 //     guard) unless an image of every node's geometry, every cluster's
 //     arrangement and every herd fence is unchanged, herd fences synced to
-//     other values, a hub re-search (it changes the hub's edges, before and
-//     after), an optimize call that fails and restores its snapshot, and every
-//     stage the owner runs between optimize calls unless the state
+//     other values, an optimize call that fails and restores its snapshot, and
+//     every stage the owner runs between optimize calls unless the state
 //     beginExternalChanges recorded before it is bit-identical after it
 //     (endExternalChanges).
 //
