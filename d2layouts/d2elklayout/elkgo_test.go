@@ -92,15 +92,17 @@ func decodeLikeLayoutJSON(t *testing.T, raw []byte) *elk.Graph {
 
 // TestELKGoRequestMatchesJSON checks that every request Layout builds converts
 // to exactly the values elk.LayoutJSON decodes from its JSON, member orders
-// included, and that both paths leave identical graphs behind.
+// included, and that the typed path and the original's JSON round trip
+// (runELKViaJSON) leave identical graphs behind.
 func TestELKGoRequestMatchesJSON(t *testing.T) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { beforeELKHook, useJSONForELK, typedELKHook = nil, false, nil }()
-	typedRuns := 0
-	typedELKHook = func() { typedRuns++ }
+	defer func() {
+		beforeELKHook = nil
+		setJSONOracle(false)
+	}()
 	for _, input := range elkGoDiagrams {
 		for vi, opts := range elkGoOptionVariants() {
 			if opts.Algorithm == "mrtree" && strings.Contains(input, "sql_table") {
@@ -116,9 +118,6 @@ func TestELKGoRequestMatchesJSON(t *testing.T) {
 					t.Fatal(err)
 				}
 				request := newELKGoGraph(elkGraph)
-				if request == nil {
-					t.Fatalf("variant %d of %q: request not converted", vi, input)
-				}
 				if want := decodeLikeLayoutJSON(t, raw); !reflect.DeepEqual(request.graph, want) {
 					got, _ := json.Marshal(request.graph)
 					wantJSON, _ := json.Marshal(want)
@@ -129,8 +128,7 @@ func TestELKGoRequestMatchesJSON(t *testing.T) {
 			// error or the same panic.
 			outputs := make([]string, 2)
 			for path, viaJSON := range []bool{false, true} {
-				useJSONForELK = viaJSON
-				typedRuns = 0
+				setJSONOracle(viaJSON)
 				g := compileELKGoDiagram(t, ruler, input)
 				o := opts
 				outputs[path] = func() (outcome string) {
@@ -148,12 +146,6 @@ func TestELKGoRequestMatchesJSON(t *testing.T) {
 					}
 					return string(serialized)
 				}()
-				// The typed path must lay out every request it can (one
-				// per diagram), not leave it to JSON.
-				failed := strings.HasPrefix(outputs[path], "panic: ") || strings.HasPrefix(outputs[path], "error: ")
-				if want := map[bool]int{false: 1, true: 0}[viaJSON]; !failed && typedRuns != want {
-					t.Fatalf("variant %d of %q: %d typed layouts, want %d", vi, input, typedRuns, want)
-				}
 			}
 			if requests != 2 {
 				t.Fatalf("saw %d requests, want 2", requests)
@@ -216,20 +208,21 @@ func TestELKGoOptionsMatchJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := decodeLikeLayoutJSON(t, raw)
-		r := &elkGoGraph{ok: true}
+		r := &elkGoGraph{}
 		options, keys := r.options(o)
-		if !r.ok {
-			t.Fatalf("options %d rejected", i)
-		}
 		if !reflect.DeepEqual(options, want.LayoutOptions) || !reflect.DeepEqual(keys, want.LayoutOptionKeys()) {
 			t.Fatalf("options %d differ:\n got %v %v\nwant %v %v", i, keys, options, want.LayoutOptionKeys(), want.LayoutOptions)
 		}
 	}
 }
 
-// TestELKGoRequestFallsBackToJSON checks the values the typed path leaves to
-// JSON, and that what it converts keeps the bits of negative zero.
-func TestELKGoRequestFallsBackToJSON(t *testing.T) {
+// TestELKGoRequestFormerFallbacks checks what the typed path takes from the
+// requests it once left to JSON. Strings that are not valid UTF-8 (IDs,
+// texts, edge ends, option values) convert to what elk-go decodes from their
+// JSON; a non-finite number, which json.Marshal rejects, or nesting deeper
+// than jsonSafeDepth makes build flag the request for json.Marshal. Negative
+// zero keeps its bits.
+func TestELKGoRequestFormerFallbacks(t *testing.T) {
 	base := func() *ELKGraph {
 		return &ELKGraph{
 			LayoutOptions: &elkOpts{Direction: Down},
@@ -241,47 +234,75 @@ func TestELKGoRequestFallsBackToJSON(t *testing.T) {
 			Edges: []*ELKEdge{{ID: "e", Sources: []string{"a"}, Targets: []string{"b.p"}}, nil, {ID: "f", Sources: []string{}}},
 		}
 	}
-	request := newELKGoGraph(base())
-	if request == nil {
-		t.Fatal("plain request not converted")
+	matchesJSON := func(name string, g *ELKGraph) {
+		t.Helper()
+		raw, err := json.Marshal(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := newELKGoGraph(g).graph; !reflect.DeepEqual(got, decodeLikeLayoutJSON(t, raw)) {
+			gotJSON, _ := json.Marshal(got)
+			t.Errorf("%s: converted request differs\n got %s\nwant %s", name, gotJSON, raw)
+		}
 	}
-	raw, err := json.Marshal(base())
-	if err != nil {
-		t.Fatal(err)
+	// flagged builds the typed request for g and reports whether build
+	// flagged it for json.Marshal.
+	flagged := func(g *ELKGraph) bool {
+		var request elkGoRequest
+		request.reserve(0, 0, 0, 0)
+		request.build(g).Release()
+		defer request.release()
+		return request.marshalMayFail
 	}
-	if want := decodeLikeLayoutJSON(t, raw); !reflect.DeepEqual(request.graph, want) {
-		got, _ := json.Marshal(request.graph)
-		t.Fatalf("converted request differs\n got %s\nwant %s", got, raw)
+	matchesJSON("plain", base())
+	if flagged(base()) {
+		t.Error("plain request flagged for json.Marshal")
 	}
-	if x := *request.graph.Children[0].X; x != 0 || !math.Signbit(x) {
+	if x := *newELKGoGraph(base()).graph.Children[0].X; x != 0 || !math.Signbit(x) {
 		t.Fatalf("x = %v, want -0", x)
 	}
 	for name, mutate := range map[string]func(*ELKGraph){
-		"NaN width":         func(g *ELKGraph) { g.Children[0].Width = math.NaN() },
-		"infinite label":    func(g *ELKGraph) { g.Children[0].Labels[0].Y = math.Inf(-1) },
-		"infinite option":   func(g *ELKGraph) { g.LayoutOptions.NodeNode = go2.Pointer(math.Inf(1)) },
 		"invalid UTF-8 id":  func(g *ELKGraph) { g.Children[2].ID = "b\xff" },
 		"invalid UTF-8 txt": func(g *ELKGraph) { g.Children[0].Labels[0].Text = "\xc3" },
 		"invalid option":    func(g *ELKGraph) { g.Children[2].Ports[0].LayoutOptions.LayerConstraint = "\xe2\x82" },
 		"invalid target":    func(g *ELKGraph) { g.Edges[0].Targets[0] = "\xff" },
 		"invalid container": func(g *ELKGraph) { g.Edges[0].Container = "\xff" },
-		"preset sections":   func(g *ELKGraph) { g.Edges[0].Sections = []ELKEdgeSection{{}} },
 	} {
 		g := base()
 		mutate(g)
-		if newELKGoGraph(g) != nil {
-			t.Errorf("%s: converted, want the JSON path", name)
+		matchesJSON(name, g)
+		if flagged(g) {
+			t.Errorf("%s: flagged for json.Marshal", name)
 		}
 	}
-	deep := &ELKGraph{}
-	children := &deep.Children
-	for i := 0; i <= maxTypedDepth; i++ {
-		n := &ELKNode{ID: "n" + string(rune('a'+i%26))}
-		*children = []*ELKNode{n}
-		children = &n.Children
+	for name, mutate := range map[string]func(*ELKGraph){
+		"NaN width":       func(g *ELKGraph) { g.Children[0].Width = math.NaN() },
+		"infinite label":  func(g *ELKGraph) { g.Children[0].Labels[0].Y = math.Inf(-1) },
+		"infinite option": func(g *ELKGraph) { g.LayoutOptions.NodeNode = go2.Pointer(math.Inf(1)) },
+	} {
+		g := base()
+		mutate(g)
+		if _, err := json.Marshal(g); err == nil {
+			t.Errorf("%s: json.Marshal succeeded", name)
+		}
+		if !flagged(g) {
+			t.Errorf("%s: not flagged for json.Marshal", name)
+		}
 	}
-	if newELKGoGraph(deep) != nil {
-		t.Errorf("deep graph converted, want the JSON path")
+	nested := func(depth int) *ELKGraph {
+		g := &ELKGraph{}
+		children := &g.Children
+		for i := 0; i < depth; i++ {
+			n := &ELKNode{ID: "n" + string(rune('a'+i%26))}
+			*children = []*ELKNode{n}
+			children = &n.Children
+		}
+		return g
+	}
+	for _, depth := range []int{jsonSafeDepth, jsonSafeDepth + 1} {
+		if got := flagged(nested(depth)); got != (depth > jsonSafeDepth) {
+			t.Errorf("nesting of depth %d flagged %v", depth, got)
+		}
 	}
 }
 
@@ -304,9 +325,6 @@ func TestELKGoApplyMatchesJSON(t *testing.T) {
 	}
 	viaTyped, viaJSON := build(), build()
 	request := newELKGoGraph(viaTyped)
-	if request == nil {
-		t.Fatal("request not converted")
-	}
 	if err := elk.Layout(request.graph); err != nil {
 		t.Fatal(err)
 	}

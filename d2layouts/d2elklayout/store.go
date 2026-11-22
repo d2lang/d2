@@ -255,15 +255,13 @@ type elkScratch struct {
 	graphOptions graphOptionsMemo
 	paddingTexts paddingTexts
 
-	// Layout's maps, emptied on release (byID is only filled when the
-	// request goes through JSON).
+	// Layout's maps, emptied on release.
 	objectStates map[*d2graph.Object]*elkObject
 	edgeStates   map[*d2graph.Edge]*elkEdgeState
-	byID         map[string]*d2graph.Object
 
 	// The sizes bound the entries each map's storage was made or grown for
 	// (maps never shrink).
-	objectStatesSize, edgeStatesSize, byIDSize int
+	objectStatesSize, edgeStatesSize int
 }
 
 // releasedScratch keeps released scratch storage for reuse: one in a slot
@@ -296,9 +294,6 @@ func acquireScratch(g *d2graph.Graph) *elkScratch {
 	if scratch.edgeStates == nil {
 		scratch.edgeStates = make(map[*d2graph.Edge]*elkEdgeState, len(g.Edges))
 		scratch.edgeStatesSize = len(g.Edges)
-	}
-	if scratch.byID == nil {
-		scratch.byID = make(map[string]*d2graph.Object)
 	}
 	labels, ports := 0, 0
 	for _, obj := range g.Objects {
@@ -383,7 +378,6 @@ func releaseScratch(scratch *elkScratch) {
 	scratch.graphOptions.release()
 	scratch.objectStates, scratch.objectStatesSize = emptiedMap(scratch.objectStates, scratch.objectStatesSize)
 	scratch.edgeStates, scratch.edgeStatesSize = emptiedMap(scratch.edgeStates, scratch.edgeStatesSize)
-	scratch.byID, scratch.byIDSize = emptiedMap(scratch.byID, scratch.byIDSize)
 	if scratch.retainedBytes() > maxScratchBytes {
 		// Dropped, and emptied in case something (TinyGo's sync.Pool keeps
 		// the items it handed out in its list) still refers to it.
@@ -437,7 +431,6 @@ const (
 	anyBytes           = 16
 	// A map entry (key and value) with its share of the map's tables.
 	pointerEntryBytes = 48
-	stringEntryBytes  = 64
 )
 
 // retainedBytes bounds the storage scratch keeps once released: everything
@@ -453,7 +446,7 @@ func (scratch *elkScratch) retainedBytes() int {
 	bytes += stringBytes * scratch.idLists.capacity()
 	bytes += elkEdgeStateBytes*scratch.edgeStateValues.capacity() + elkVisitBytes*cap(scratch.visits) +
 		pointerBytes*(cap(scratch.edgeAt)+cap(scratch.nodeObjects))
-	bytes += pointerEntryBytes*(scratch.objectStatesSize+scratch.edgeStatesSize) + stringEntryBytes*scratch.byIDSize
+	bytes += pointerEntryBytes * (scratch.objectStatesSize + scratch.edgeStatesSize)
 	return bytes + scratch.request.retainedBytes() + scratch.bendGrids.retainedBytes()
 }
 

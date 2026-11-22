@@ -32,97 +32,89 @@ import (
 //     numbers, which is float64(n) for an int n; their member order is the
 //     struct field order.
 //   - Finite float64 values survive JSON exactly (shortest round-trip
-//     formatting, -0 included), so they are passed unchanged. A NaN or an
-//     infinity makes json.Marshal fail, and a string that is not valid UTF-8
-//     is changed by it; requests holding either, edges with sections set
-//     before layout, nesting deep enough to approach JSON's depth limit, and
-//     requests elk-go rejects (duplicate IDs, missing edge ends, ...) go
-//     through JSON as before.
+//     formatting, -0 included), so they are passed unchanged. Strings are
+//     passed as JSON gives them back (jsonText: json.Marshal writes each byte
+//     that is not part of valid UTF-8 as U+FFFD).
+//   - Failures: json.Marshal fails for a NaN or an infinity, and for nesting
+//     beyond encoding/json's depth limit, before anything is laid out; such
+//     requests return the error json.Marshal returns for them. A request
+//     elk-go rejects (duplicate IDs, missing edge ends, ...) fails with the
+//     error LayoutJSON gave, since the typed Request reports Layout(graph)'s
+//     error for d2's requests.
 //   - Results: a non-finite coordinate is encoded as null, which leaves the
 //     decoded field unchanged: a node keeps its value and a point of a new
 //     section stays 0. Sections and container are replaced only when the
-//     response has them. Ports and labels are not copied back: nothing reads
+//     response has them; a container whose ID JSON changed names no object
+//     (see readBack). Ports and labels are not copied back: nothing reads
 //     their layout.
+//
+// The request gives no edge sections: Layout builds every edge zeroed, so
+// the JSON had none either (elk-go's JSON import would have read them). Nor
+// does it give edge containers, which that import never reads.
 
-// maxTypedDepth bounds the node nesting the typed path accepts; JSON
-// encoding fails beyond 10000 nested values, two per node level.
-const maxTypedDepth = 1000
+// jsonSafeDepth is the node nesting up to which json.Marshal of a request
+// cannot fail for depth: encoding/json fails beyond 10000 nested values, two
+// or more per node level. runELK asks json.Marshal about deeper requests
+// (rare: Layout's graph guard allows at most 1024 objects in g.Objects).
+const jsonSafeDepth = 1000
 
-// For tests: useJSONForELK makes runELK take the JSON path, beforeELKHook
-// sees every request runELK receives, and typedELKHook is called when the
-// typed path laid one out.
+// For tests: beforeELKHook sees every request runELK receives, and
+// jsonOracle, when set, lays requests out instead of the typed path, the
+// original's way through elk-go's JSON interface, as the reference the tests
+// compare the typed path with (oracle_test.go).
 var (
-	useJSONForELK = false
 	beforeELKHook func(*ELKGraph)
-	typedELKHook  func()
+	jsonOracle    func(context.Context, *ELKGraph, *elkGoRequest) error
 )
 
 // runELK lays out elkGraph in place with elk-go, through request (empty; see
-// elkGoRequest.reserve) unless it must go through JSON.
+// elkGoRequest.reserve).
 func runELK(ctx context.Context, elkGraph *ELKGraph, request *elkGoRequest) error {
 	if beforeELKHook != nil {
 		request.sharedSet = false          // the hook may write the shared structs
 		request.rootKey = rootOptionsKey{} // and the root's
 		beforeELKHook(elkGraph)
 	}
-	if useJSONForELK {
-		request.sharedSet = false // decoding the response writes them
-		return runELKJSON(ctx, elkGraph)
+	if jsonOracle != nil {
+		return jsonOracle(ctx, elkGraph, request)
 	}
 	typed := request.build(elkGraph)
-	if typed == nil {
-		request.sharedSet = false // decoding the response writes them
-		return runELKJSON(ctx, elkGraph)
+	err := request.layOut(ctx, elkGraph, typed)
+	typed.Release()
+	return err
+}
+
+// layOut lays out typed, built from elkGraph, and copies the layout into
+// elkGraph, failing where the original's JSON round trip failed.
+func (r *elkGoRequest) layOut(ctx context.Context, elkGraph *ELKGraph, typed *elk.Request) error {
+	if r.marshalMayFail {
+		// The original's first step was json.Marshal(elkGraph).
+		if _, err := json.Marshal(elkGraph); err != nil {
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
-		typed.Release()
 		return err
 	}
 	// ELK does not accept a context. Check immediately around the call; the
 	// topology preflight bounds inputs before entering this section.
 	if err := typed.Layout(); err != nil {
-		typed.Release()
 		return fmt.Errorf("native ELK layout failed: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		typed.Release()
 		return err
 	}
-	request.readBack(typed)
-	request.laidOut = true
-	typed.Release()
-	if typedELKHook != nil {
-		typedELKHook()
-	}
+	r.readBack(typed)
 	return nil
-}
-
-// runELKJSON lays out elkGraph in place through elk-go's JSON interface.
-func runELKJSON(ctx context.Context, elkGraph *ELKGraph) error {
-	raw, err := json.Marshal(elkGraph)
-	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// ELK does not accept a context. Check immediately around the call; the
-	// topology preflight above bounds inputs before entering this section.
-	jsonOut, err := elk.LayoutJSON(raw)
-	if err != nil {
-		return fmt.Errorf("native ELK layout failed: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return json.Unmarshal(jsonOut, &elkGraph)
 }
 
 // elkGoRequest gives an ELKGraph to elk-go as a typed Request and copies
 // the layout back. Its storage is kept across Layout calls (inside
 // elkScratch): release empties it.
 type elkGoRequest struct {
-	ok bool
+	// marshalMayFail is set when json.Marshal of the request may fail (a
+	// non-finite number, nesting deeper than jsonSafeDepth).
+	marshalMayFail bool
 	// counts size the next elk.Request.
 	nodes, ports, labels, edgeCount int
 
@@ -141,8 +133,8 @@ type elkGoRequest struct {
 	sharedIntact bool
 	// sharedSet is true while the shared structs hold their sources with
 	// nothing having been able to write them since they were set: only a
-	// beforeELKHook and the JSON path's decoding of a response (through the
-	// ELKGraph's option pointers) can, and both clear it.
+	// beforeELKHook and the tests' JSON oracle, decoding a response through
+	// the ELKGraph's option pointers, can, and both clear it.
 	sharedSet bool
 	// recent are the option sets prepared last for this request.
 	recent []elkPreparedSet
@@ -161,10 +153,8 @@ type elkGoRequest struct {
 	sections lists[ELKEdgeSection]
 	bends    lists[ELKPoint]
 
-	// laidOut is set when the typed path laid the request out; then
-	// containerRefs holds per ELK edge the node named as its container
-	// (elk.NodeRef, -1 when the container was left as it was).
-	laidOut       bool
+	// containerRefs holds per ELK edge, once laid out, the node named as its
+	// container (elk.NodeRef; -1 when the container was left as it was).
 	containerRefs []int32
 }
 
@@ -207,7 +197,6 @@ func (r *elkGoRequest) release() {
 	r.rootKey = rootOptionsKey{}
 	r.sections.release()
 	r.bends.release()
-	r.laidOut = false
 	r.containerRefs = r.containerRefs[:0]
 }
 
@@ -223,11 +212,10 @@ func (r *elkGoRequest) retainedBytes() int {
 	return bytes
 }
 
-// build adds g's elements to a new elk-go Request, or returns nil when g must
-// go through JSON (see above): every element as elk-go imports the
-// corresponding element of g's JSON, in its import order.
+// build adds g's elements to a new elk-go Request: every element as elk-go
+// imports the corresponding element of g's JSON, in its import order.
 func (r *elkGoRequest) build(g *ELKGraph) *elk.Request {
-	r.ok = true
+	r.marshalMayFail = false
 	r.sharedIntact = true
 	if !r.sharedSet {
 		sources := staticOptionSets()
@@ -238,10 +226,9 @@ func (r *elkGoRequest) build(g *ELKGraph) *elk.Request {
 		}
 	}
 	typed := elk.NewRequest(r.nodes, r.ports, r.labels, r.edgeCount)
-	r.checkID(g.ID)
-	r.rootID = g.ID
+	r.rootID = jsonText(g.ID)
 	r.nodeList = append(r.nodeList[:0], nil)
-	root := typed.Root(g.ID, r.preparedIn(typed, g.LayoutOptions, &r.rootSets))
+	root := typed.Root(r.rootID, r.preparedIn(typed, g.LayoutOptions, &r.rootSets))
 	for _, child := range g.Children {
 		if child != nil {
 			r.node(typed, child, root, 1)
@@ -252,23 +239,40 @@ func (r *elkGoRequest) build(g *ELKGraph) *elk.Request {
 			r.edge(typed, edge, root)
 		}
 	}
-	if !r.ok || typed.Err() != nil {
-		typed.Release()
-		return nil
-	}
 	return typed
 }
 
-func (r *elkGoRequest) checkID(value string) {
-	if !utf8.ValidString(value) {
-		r.ok = false
+// jsonText is s as JSON gives it back: json.Marshal writes each byte that is
+// not part of valid UTF-8 as U+FFFD.
+func jsonText(s string) string {
+	if utf8.ValidString(s) {
+		return s
 	}
+	encoded, _ := json.Marshal(s)
+	var decoded string
+	_ = json.Unmarshal(encoded, &decoded)
+	return decoded
+}
+
+// jsonTexts is list with jsonText of every string (list itself when they are
+// all valid).
+func jsonTexts(list []string) []string {
+	for i, s := range list {
+		if !utf8.ValidString(s) {
+			texts := append([]string(nil), list...)
+			for j := i; j < len(texts); j++ {
+				texts[j] = jsonText(texts[j])
+			}
+			return texts
+		}
+	}
+	return list
 }
 
 func (r *elkGoRequest) checkNumbers(values ...float64) {
 	for _, value := range values {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			r.ok = false
+			r.marshalMayFail = true
 		}
 	}
 }
@@ -276,25 +280,22 @@ func (r *elkGoRequest) checkNumbers(values ...float64) {
 // node adds n, a child of parent at the given depth below the root, with
 // its ports, labels and children.
 func (r *elkGoRequest) node(typed *elk.Request, n *ELKNode, parent elk.NodeRef, depth int) {
-	if depth > maxTypedDepth {
-		r.ok = false
-		return
+	if depth > jsonSafeDepth {
+		r.marshalMayFail = true
 	}
-	r.checkID(n.ID)
 	r.checkNumbers(n.X, n.Y, n.Width, n.Height)
-	ref := typed.Node(parent, n.ID, n.X, n.Y, n.Width, n.Height, r.prepared(typed, n.LayoutOptions))
+	ref := typed.Node(parent, jsonText(n.ID), n.X, n.Y, n.Width, n.Height, r.prepared(typed, n.LayoutOptions))
 	r.nodeList = append(r.nodeList, n)
 	for _, port := range n.Ports {
 		if port != nil {
-			r.checkID(port.ID)
 			r.checkNumbers(port.X, port.Y, port.Width, port.Height)
-			typed.Port(ref, port.ID, port.X, port.Y, port.Width, port.Height, r.prepared(typed, port.LayoutOptions))
+			typed.Port(ref, jsonText(port.ID), port.X, port.Y, port.Width, port.Height, r.prepared(typed, port.LayoutOptions))
 		}
 	}
 	for _, label := range n.Labels {
 		if label != nil {
-			r.checkLabel(label)
-			typed.NodeLabel(ref, label.Text, label.X, label.Y, label.Width, label.Height, r.prepared(typed, label.LayoutOptions))
+			r.checkNumbers(label.X, label.Y, label.Width, label.Height)
+			typed.NodeLabel(ref, jsonText(label.Text), label.X, label.Y, label.Width, label.Height, r.prepared(typed, label.LayoutOptions))
 		}
 	}
 	for _, child := range n.Children {
@@ -304,28 +305,14 @@ func (r *elkGoRequest) node(typed *elk.Request, n *ELKNode, parent elk.NodeRef, 
 	}
 }
 
-func (r *elkGoRequest) checkLabel(label *ELKLabel) {
-	r.checkID(label.Text)
-	r.checkNumbers(label.X, label.Y, label.Width, label.Height)
-}
-
 // edge adds e, an edge of the root, with its labels.
 func (r *elkGoRequest) edge(typed *elk.Request, e *ELKEdge, root elk.NodeRef) {
-	r.checkID(e.ID)
-	// Sources and targets need no check: elk-go finds a source or target
-	// only by the ID of a node or port, whose ID was checked, and a request
-	// naming one it does not find goes through JSON anyway.
-	if len(e.Sections) > 0 {
-		// Sections before layout would need IDs that the JSON does not have.
-		r.ok = false
-	}
-	r.checkID(e.Container)
-	ref := typed.Edge(root, e.ID, e.Sources, e.Targets, nil)
+	ref := typed.Edge(root, jsonText(e.ID), jsonTexts(e.Sources), jsonTexts(e.Targets), nil)
 	r.edgeList = append(r.edgeList, e)
 	for _, label := range e.Labels {
 		if label != nil {
-			r.checkLabel(label)
-			typed.EdgeLabel(ref, label.Text, label.X, label.Y, label.Width, label.Height, r.prepared(typed, label.LayoutOptions))
+			r.checkNumbers(label.X, label.Y, label.Width, label.Height)
+			typed.EdgeLabel(ref, jsonText(label.Text), label.X, label.Y, label.Width, label.Height, r.prepared(typed, label.LayoutOptions))
 		}
 	}
 }
@@ -384,10 +371,10 @@ func (r *elkGoRequest) preparedIn(typed *elk.Request, opts *elkOpts, cache *opti
 	var ok bool
 	r.pairs, _, ok = appendOptionPairs(r.pairs[:0], opts)
 	if !ok {
-		r.ok = false
+		r.marshalMayFail = true
 	}
 	// The root's set is kept across requests (see optionCache) when the
-	// request can take the typed path and the struct's texts are short.
+	// request can be laid out and the struct's texts are short.
 	keep := cache != nil && ok && opts.textBytes() <= maxOwnedOptionText
 	var options *elk.Options
 	if keep {
@@ -574,7 +561,9 @@ func sameOptionValue(a, b any) bool {
 }
 
 // readBack copies the layout of typed into the ELKGraph's nodes and edges
-// as json.Unmarshal of the JSON response would.
+// as json.Unmarshal of the JSON response would. The original then looked
+// each container up by the ID the response gave: a container whose ID JSON
+// changed (not valid UTF-8) is no object's, and its ref is 0 (no object).
 func (r *elkGoRequest) readBack(typed *elk.Request) {
 	for ref := 1; ref < len(r.nodeList); ref++ {
 		n := r.nodeList[ref]
@@ -608,7 +597,11 @@ func (r *elkGoRequest) readBack(typed *elk.Request) {
 			if container == 0 {
 				e.Container = r.rootID
 			} else {
-				e.Container = r.nodeList[container].ID
+				id := r.nodeList[container].ID
+				e.Container = jsonText(id)
+				if e.Container != id {
+					ref = 0 // no object has the ID JSON gives back
+				}
 			}
 		}
 		r.containerRefs = append(r.containerRefs, ref)
@@ -828,8 +821,8 @@ func boxedFloat(value float64) any {
 
 // appendOptionPairs appends the members json.Marshal writes for o, in its
 // order, with the values elk-go's decoder gives them. mask has bit i set
-// when member i is present; ok is false when JSON would change or reject a
-// value (a string that is not valid UTF-8, a NaN or infinite number).
+// when member i is present; ok is false when json.Marshal rejects a value (a
+// NaN or infinite number, which is left out).
 func appendOptionPairs(pairs []elkOptionPair, o *elkOpts) (_ []elkOptionPair, mask uint64, ok bool) {
 	ok = true
 	member := 0
@@ -839,10 +832,7 @@ func appendOptionPairs(pairs []elkOptionPair, o *elkOpts) (_ []elkOptionPair, ma
 	}
 	str := func(key, value string, omitEmpty bool) {
 		if !(omitEmpty && value == "") {
-			if !utf8.ValidString(value) {
-				ok = false
-			}
-			add(key, boxedString(value))
+			add(key, boxedString(jsonText(value)))
 		}
 		member++
 	}

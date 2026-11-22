@@ -23,7 +23,7 @@ func TestRootOptionsKeyFollowsOptions(t *testing.T) {
 	saved, savedEdgeEdge := DefaultOpts, *DefaultOpts.EdgeEdgeSpacing
 	defer func() {
 		DefaultOpts, *DefaultOpts.EdgeEdgeSpacing = saved, savedEdgeEdge
-		useJSONForELK = false
+		setJSONOracle(false)
 	}()
 	inputs := []string{
 		"a -> b",
@@ -47,7 +47,7 @@ func TestRootOptionsKeyFollowsOptions(t *testing.T) {
 	}()...)
 	// Both paths must end the same way: the same graph, error or panic.
 	run := func(input string, opts *ConfigurableOpts, viaJSON bool) (outcome string) {
-		useJSONForELK = viaJSON
+		setJSONOracle(viaJSON)
 		g := compileELKGoDiagram(t, ruler, input)
 		defer func() {
 			if recovered := recover(); recovered != nil {

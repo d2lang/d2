@@ -1,9 +1,6 @@
 package d2elklayout
 
 import (
-	"math"
-	"unicode/utf8"
-
 	elk "github.com/d2lang/elk-go"
 )
 
@@ -11,7 +8,7 @@ import (
 // pairs of corresponding elements the result is copied back through. Layout
 // gives elk-go its request through the typed Request (elkGoRequest) instead;
 // the tests check with this conversion that the values both take from the
-// ELKGraph (appendOptionPairs, id, number) are what elk-go decodes from its
+// ELKGraph (appendOptionPairs, jsonText) are what elk-go decodes from its
 // JSON, and that elk-go lays out the converted graph as the request.
 type elkGoGraph struct {
 	graph  *elk.Graph
@@ -19,7 +16,6 @@ type elkGoGraph struct {
 	ports  []elkPortPair
 	labels []elkLabelPair
 	edges  []elkEdgePair
-	ok     bool
 
 	floats      slab[float64]
 	nodeValues  slab[elk.Node]
@@ -56,7 +52,6 @@ type elkGoGraph struct {
 // reserve sizes the storage for a request of the given element counts and
 // sets the shared option structs; the request must be empty.
 func (r *elkGoGraph) reserve(nodes, ports, labels, edges int) {
-	r.ok = true
 	r.nodeValues.reserve(nodes + 1)
 	r.portValues.reserve(ports)
 	r.labelValues.reserve(labels)
@@ -97,22 +92,17 @@ type elkEdgePair struct {
 	elk *elk.Edge
 }
 
-// newELKGoGraph converts g into a new request, or returns nil when g must
-// go through JSON.
+// newELKGoGraph converts g into a new request.
 func newELKGoGraph(g *ELKGraph) *elkGoGraph {
 	r := &elkGoGraph{}
 	nodes, ports, labels := countELKGraph(g)
 	r.reserve(nodes, ports, labels, len(g.Edges))
-	if !r.convert(g) {
-		return nil
-	}
+	r.convert(g)
 	return r
 }
 
-// convert fills the request (reserved and empty) with g's values and
-// reports whether they are exactly what JSON would deliver; when it returns
-// false, g must go through JSON.
-func (r *elkGoGraph) convert(g *ELKGraph) bool {
+// convert fills the request (reserved and empty) with g's values.
+func (r *elkGoGraph) convert(g *ELKGraph) {
 	r.sharedIntact = true
 	for i := range r.shared {
 		if r.shared[i] != staticOptionSets()[i].source {
@@ -125,7 +115,7 @@ func (r *elkGoGraph) convert(g *ELKGraph) bool {
 		r.setNodeOptions(root, g.LayoutOptions)
 	}
 	if len(g.Children) > 0 {
-		root.Children = r.nodeSlice(g.Children, 1)
+		root.Children = r.nodeSlice(g.Children)
 	}
 	if len(g.Edges) > 0 {
 		root.Edges = r.edgeLists.make(len(g.Edges))
@@ -136,27 +126,22 @@ func (r *elkGoGraph) convert(g *ELKGraph) bool {
 		}
 	}
 	r.graph = root
-	return r.ok
 }
 
-// countELKGraph counts the nodes, ports and labels of g that a conversion
-// visits.
+// countELKGraph counts the nodes, ports and labels of g.
 func countELKGraph(g *ELKGraph) (nodes, ports, labels int) {
-	var count func([]*ELKNode, int)
-	count = func(children []*ELKNode, depth int) {
-		if depth > maxTypedDepth {
-			return
-		}
+	var count func([]*ELKNode)
+	count = func(children []*ELKNode) {
 		for _, n := range children {
 			if n != nil {
 				nodes++
 				ports += len(n.Ports)
 				labels += len(n.Labels)
-				count(n.Children, depth+1)
+				count(n.Children)
 			}
 		}
 	}
-	count(g.Children, 1)
+	count(g.Children)
 	for _, edge := range g.Edges {
 		if edge != nil {
 			labels += len(edge.Labels)
@@ -166,42 +151,32 @@ func countELKGraph(g *ELKGraph) (nodes, ports, labels int) {
 }
 
 func (r *elkGoGraph) id(value string) elk.ID {
-	if !utf8.ValidString(value) {
-		r.ok = false
-	}
-	return elk.StringID(value)
+	return elk.StringID(jsonText(value))
 }
 
 func (r *elkGoGraph) number(value float64) *float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		r.ok = false
-	}
 	pointer := r.floats.new()
 	*pointer = value
 	return pointer
 }
 
-func (r *elkGoGraph) nodeSlice(children []*ELKNode, depth int) []*elk.Node {
-	if depth > maxTypedDepth {
-		r.ok = false
-		return nil
-	}
+func (r *elkGoGraph) nodeSlice(children []*ELKNode) []*elk.Node {
 	out := r.nodeLists.make(len(children))
 	for i, child := range children {
 		if child != nil {
-			out[i] = r.node(child, depth)
+			out[i] = r.node(child)
 		}
 	}
 	return out
 }
 
-func (r *elkGoGraph) node(n *ELKNode, depth int) *elk.Node {
+func (r *elkGoGraph) node(n *ELKNode) *elk.Node {
 	out := r.nodeValues.new()
 	out.ID = r.id(n.ID)
 	out.X, out.Y = r.number(n.X), r.number(n.Y)
 	out.Width, out.Height = r.number(n.Width), r.number(n.Height)
 	if len(n.Children) > 0 {
-		out.Children = r.nodeSlice(n.Children, depth+1)
+		out.Children = r.nodeSlice(n.Children)
 	}
 	if len(n.Ports) > 0 {
 		out.Ports = r.portLists.make(len(n.Ports))
@@ -253,11 +228,8 @@ func (r *elkGoGraph) labelSlice(labels []*ELKLabel) []*elk.Label {
 
 func (r *elkGoGraph) label(l *ELKLabel) *elk.Label {
 	out := r.labelValues.new()
-	if !utf8.ValidString(l.Text) {
-		r.ok = false
-	}
 	text := r.textValues.new()
-	*text = l.Text
+	*text = jsonText(l.Text)
 	out.Text = text
 	out.X, out.Y = r.number(l.X), r.number(l.Y)
 	out.Width, out.Height = r.number(l.Width), r.number(l.Height)
@@ -275,10 +247,6 @@ func (r *elkGoGraph) edge(e *ELKEdge) *elk.Edge {
 	out.ID = r.id(e.ID)
 	out.Sources = r.ids(e.Sources)
 	out.Targets = r.ids(e.Targets)
-	if len(e.Sections) > 0 {
-		// Sections before layout would need IDs that the JSON does not have.
-		r.ok = false
-	}
 	if len(e.Labels) > 0 {
 		out.Labels = r.labelSlice(e.Labels)
 	}
@@ -321,11 +289,7 @@ func (r *elkGoGraph) options(opts *elkOpts) (elk.LayoutOptions, []string) {
 		}
 	}
 	var mask uint64
-	var ok bool
-	r.pairs, mask, ok = appendOptionPairs(r.pairs[:0], opts)
-	if !ok {
-		r.ok = false
-	}
+	r.pairs, mask, _ = appendOptionPairs(r.pairs[:0], opts)
 	var keys []string
 	for _, order := range r.keyOrders {
 		if order.mask == mask {

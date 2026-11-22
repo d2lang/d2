@@ -606,10 +606,8 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		return err
 	}
 
-	// The typed path names edge containers by node (whose IDs, being unique
-	// for it, are those of their objects); the JSON path by ID.
-	typed := scratch.request.laidOut
-	byID := scratch.byID
+	// The request names edge containers by node: nodeObjects holds every
+	// node's object by elk.NodeRef (none for the root).
 	nodeObjects := append(scratch.nodeObjects[:0], nil)
 	for _, visit := range visits {
 		obj, parent := visit.obj, visit.parent
@@ -625,11 +623,7 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		obj.Width = math.Ceil(n.Width)
 		obj.Height = math.Ceil(n.Height)
 
-		if typed {
-			nodeObjects = append(nodeObjects, obj)
-		} else {
-			byID[absID(obj)] = obj
-		}
+		nodeObjects = append(nodeObjects, obj)
 	}
 	scratch.nodeObjects = nodeObjects
 
@@ -651,12 +645,7 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		parentX := 0.0
 		parentY := 0.0
 		if e.Container != "" {
-			var container *d2graph.Object
-			if typed {
-				container = nodeObjects[scratch.request.containerRefs[edgeState.index]]
-			} else {
-				container = byID[e.Container]
-			}
+			container := nodeObjects[scratch.request.containerRefs[edgeState.index]]
 			parentX = container.TopLeft.X
 			parentY = container.TopLeft.Y
 		}

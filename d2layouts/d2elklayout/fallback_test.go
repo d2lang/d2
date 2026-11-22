@@ -8,19 +8,23 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"testing"
 
+	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
-// layoutOutcome lays input out with opts, through the typed path or JSON, and
-// returns the serialized graph or the error.
+// layoutOutcome lays input out with opts, through the typed path or the
+// original's JSON round trip (runELKViaJSON), and returns the serialized
+// graph, the error or the panic.
 func layoutOutcome(t *testing.T, ruler *textmeasure.Ruler, input string, opts *ConfigurableOpts, viaJSON bool) (outcome string) {
 	t.Helper()
-	saved := useJSONForELK
-	useJSONForELK = viaJSON
-	defer func() { useJSONForELK = saved }()
+	saved := jsonOracle
+	setJSONOracle(viaJSON)
+	defer func() { jsonOracle = saved }()
 	g := compileELKGoDiagram(t, ruler, input)
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -75,16 +79,18 @@ func TestEdgeEdgePointee(t *testing.T) {
 // raceDetector is set when the race detector is on (race_test.go).
 var raceDetector bool
 
-// TestFallbackCoverage checks which requests take the typed path
-// and which go through JSON, and that both give the JSON path's result. The
-// d2 compiler replaces invalid UTF-8 in its input, so invalid strings are put
-// into compiled graphs directly here.
+// TestFallbackCoverage lays out, through the typed path and through the
+// original's JSON round trip (runELKViaJSON), the requests the typed path
+// once left to JSON, and expects the same graph, error or panic from both:
+// strings that are not valid UTF-8 (JSON replaces their bytes), non-finite
+// numbers (json.Marshal rejects them), requests elk-go rejects, and deep
+// nesting. The d2 compiler replaces invalid UTF-8 in its input, so invalid
+// strings are put into compiled graphs directly here.
 func TestFallbackCoverage(t *testing.T) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { typedELKHook = nil }()
 	deep := func(depth int) string {
 		path := "n"
 		for i := 1; i < depth; i++ {
@@ -92,24 +98,75 @@ func TestFallbackCoverage(t *testing.T) {
 		}
 		return path + "\nx -> " + path + "\n"
 	}
+	sqlColumns := func(names ...string) func(g *d2graph.Graph) {
+		return func(g *d2graph.Graph) {
+			for i, name := range names {
+				objectByID(t, g, "t").SQLTable.Columns[i].Name.Label = name
+			}
+		}
+	}
+	// nestBelow nests depth objects below the object id, each the only child
+	// of the one before, and leaves them out of g.Objects: the graph guard
+	// counts g.Objects, the layout walks ChildrenArray.
+	nestBelow := func(id string, depth int) func(g *d2graph.Graph) {
+		return func(g *d2graph.Graph) {
+			objects := len(g.Objects)
+			parent := objectByID(t, g, id)
+			for i := 0; i < depth; i++ {
+				parent = parent.EnsureChild([]d2ast.String{d2ast.FlatUnquotedString("n")})
+				parent.Box = geo.NewBox(nil, 40, 30)
+			}
+			g.Objects = g.Objects[:objects]
+		}
+	}
 	type testCase struct {
 		name, input string
 		mutate      func(g *d2graph.Graph)
-		typed       bool
+		// panics marks the cases that end in a panic (on both paths), which
+		// TinyGo's wasm target cannot recover from: they run under gc only.
+		panics bool
 	}
 	// The deep cases compare what Layout wrote (layoutDigest) instead of
 	// the serialized graph, whose size grows with the square of the nesting
 	// depth (70 MB, and 1.4 GB of heap to make it, at depth 600).
 	digest := map[string]bool{}
 	cases := []testCase{
-		{"plain", "a -> b", nil, true},
-		{"compiled invalid UTF-8 label", "a: \"bad \xff label\"\na -> b", nil, true},
+		{"plain", "a -> b", nil, false},
+		{"compiled invalid UTF-8 label", "a: \"bad \xff label\"\na -> b", nil, false},
 		{"invalid UTF-8 label", "a -> b", func(g *d2graph.Graph) { g.Objects[0].Label.Value = "bad \xff" }, false},
 		{"invalid UTF-8 id", "a -> b", func(g *d2graph.Graph) { g.Objects[1].ID = "b\xfe" }, false},
+		{"invalid UTF-8 ids colliding", "a -> b", func(g *d2graph.Graph) { g.Objects[0].ID, g.Objects[1].ID = "x\xfe", "x\xff" }, false},
+		// The original found no object with the container's ID JSON gave
+		// back and dereferenced nil.
+		{"invalid UTF-8 container id", "a.b -> a.c", func(g *d2graph.Graph) { objectByID(t, g, "a").ID = "a\xfe" }, true},
 		{"invalid UTF-8 edge label", "a -> b: e", func(g *d2graph.Graph) { g.Edges[0].Label.Value = "e\xc3" }, false},
+		// Layout upper-cases the constraint, which already writes the
+		// invalid byte as U+FFFD.
+		{"invalid UTF-8 layer constraint", "a -> b", func(g *d2graph.Graph) { g.Objects[0].ELKLayerConstraint = "fi\xffrst" }, false},
+		{"invalid UTF-8 SQL column", "t: {shape: sql_table; a: int; b: int}\nt.a -> x", sqlColumns("a\xfe"), false},
+		{"invalid UTF-8 SQL columns colliding", "t: {shape: sql_table; a: int; b: int}\nt.a -> x", sqlColumns("c\xfe", "c\xff"), false},
 		{"NaN width", "a -> b", func(g *d2graph.Graph) { g.Objects[0].Width = math.NaN() }, false},
 		{"infinite height", "a -> b", func(g *d2graph.Graph) { g.Objects[1].Height = math.Inf(1) }, false},
-		{"negative zero width", "a -> b", func(g *d2graph.Graph) { g.Objects[1].Width = math.Copysign(0, -1) }, true},
+		{"negative zero width", "a -> b", func(g *d2graph.Graph) { g.Objects[1].Width = math.Copysign(0, -1) }, false},
+		{"duplicate ids", "a -> b", func(g *d2graph.Graph) { g.Objects[1].ID = g.Objects[0].ID }, false},
+		{"duplicate container ids", "a.x -> b.y", func(g *d2graph.Graph) { objectByID(t, g, "b").ID = "a" }, false},
+		// json.Marshal's error comes first, as in the original.
+		{"NaN and duplicate ids", "a -> b", func(g *d2graph.Graph) {
+			g.Objects[1].ID = g.Objects[0].ID
+			g.Objects[1].Height = math.NaN()
+		}, false},
+		// An edge end outside the walk (not in a ChildrenArray) is no node.
+		{"edge end not laid out", "a -> b", func(g *d2graph.Graph) { g.Root.ChildrenArray = g.Root.ChildrenArray[1:] }, false},
+	}
+	// Nesting json.Marshal rejects (encoding/json's depth limit) fails with
+	// its error on both paths. The graph guard stops compiled diagrams this
+	// deep, but a caller can nest objects through ChildrenArray. TinyGo's
+	// wasm stack is too small for it.
+	failing := map[string]bool{}
+	if runtime.Compiler != "tinygo" {
+		name := "nesting json.Marshal rejects"
+		cases = append(cases, testCase{name, "a -> b", nestBelow("b", 6000), false})
+		failing[name] = true
 	}
 	// The two deep diagrams take almost all of the test's time: the JSON
 	// path lays a 1000-level nesting out the original's way (about 3 s each
@@ -125,13 +182,18 @@ func TestFallbackCoverage(t *testing.T) {
 		slow = false
 	}
 	if slow {
-		cases = append(cases, testCase{"depth 1000", deep(1000), nil, true}, testCase{"depth 1001", deep(1001), nil, false})
-		digest["depth 1000"], digest["depth 1001"] = true, true
+		// Beyond jsonSafeDepth the typed path asks json.Marshal, which
+		// succeeds at these depths.
+		for _, depth := range []int{jsonSafeDepth, jsonSafeDepth + 1, 1023} {
+			name := fmt.Sprint("depth ", depth)
+			cases = append(cases, testCase{name, deep(depth), nil, false})
+			digest[name] = true
+		}
 	}
 	run := func(c testCase, viaJSON bool) (outcome string) {
-		saved := useJSONForELK
-		useJSONForELK = viaJSON
-		defer func() { useJSONForELK = saved }()
+		saved := jsonOracle
+		setJSONOracle(viaJSON)
+		defer func() { jsonOracle = saved }()
 		g := compileELKGoDiagram(t, ruler, c.input)
 		if c.mutate != nil {
 			c.mutate(g)
@@ -162,19 +224,26 @@ func TestFallbackCoverage(t *testing.T) {
 		}
 	}
 	for _, c := range cases {
-		typed := false
-		typedELKHook = func() { typed = true }
-		got := run(c, false)
-		typedELKHook = nil
-		freeAfter()
-		if typed != c.typed {
-			t.Errorf("%s: typed path %v, want %v (%.80s)", c.name, typed, c.typed, got)
+		if c.panics && runtime.Compiler == "tinygo" {
+			continue
 		}
+		got := run(c, false)
+		freeAfter()
 		want := run(c, true)
 		freeAfter()
 		if got != want {
 			t.Errorf("%s: result differs from the JSON path:\n%.200s\n%.200s", c.name, got, want)
 		}
+		if strings.HasPrefix(got, "panic: ") != c.panics {
+			t.Errorf("%s: panics %v, want %v (%.80s)", c.name, !c.panics, c.panics, got)
+		}
+		if failing[c.name] && !strings.HasPrefix(got, "error: ") {
+			t.Errorf("%s: %.80s, want an error", c.name, got)
+		}
+		if !strings.HasPrefix(got, "panic: ") && !strings.HasPrefix(got, "error: ") {
+			got = "laid out"
+		}
+		t.Logf("%s: %s", c.name, got)
 	}
 }
 
