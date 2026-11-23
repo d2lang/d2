@@ -13,6 +13,8 @@
 
 #### Improvements 🧹
 
+- cli: `--allow-local-files=false` (or `$D2_ALLOW_LOCAL_FILES=false`) denies every local-file access, so imports and local images fail instead of reading files on the host. Use it with the default network policy to render untrusted diagrams. [#3002](https://github.com/d2lang/d2/pull/3002)
+
 - performance: layouts are faster with identical output: Dagre about 13× and ELK about 7× in the end-to-end suite (17.5× and 10.7× for the layout calls alone), and about 12× each in D2.js. TALA lays out about 3.7× faster, and a few of its layouts change slightly. [#2999](https://github.com/d2lang/d2/pull/2999)
 
 - Ordinary labeled diagrams render faster and allocate fewer bytes because the SVG writer records fonts and theme colors as it draws. [#2995](https://github.com/d2lang/d2/pull/2995)

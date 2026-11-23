@@ -1189,6 +1189,34 @@ bank.Equities.app14522 -> bank.Fixed Income.app14500: security reference
 			},
 		},
 		{
+			name: "allow_local_files_false_import",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				writeFile(t, dir, "hello-world.d2", `x: @x`)
+				writeFile(t, dir, "x.d2", `shape: circle`)
+				err := runTestMain(t, ctx, dir, env, "--allow-local-files=false", filepath.Join(dir, "hello-world.d2"))
+				assert.Error(t, err)
+				if !strings.Contains(err.Error(), "local-file access is disabled") {
+					t.Fatalf("expected the import to be denied, got: %v", err)
+				}
+			},
+		},
+		{
+			name: "allow_local_files_false_icon",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				writeFile(t, dir, "hello-world.d2", `x: { icon: ./secret.svg }`)
+				writeFile(t, dir, "secret.svg", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><desc>local-secret</desc></svg>`)
+				err := runTestMain(t, ctx, dir, env, "--allow-local-files=false", filepath.Join(dir, "hello-world.d2"))
+				assert.Error(t, err)
+				if !strings.Contains(err.Error(), "local-file access is disabled") {
+					t.Fatalf("expected the icon to be denied, got: %v", err)
+				}
+				svg := readFile(t, dir, "hello-world.svg")
+				if bytes.Contains(svg, []byte("data:image/svg+xml")) || bytes.Contains(svg, []byte("local-secret")) {
+					t.Fatal("the local icon was embedded in the SVG")
+				}
+			},
+		},
+		{
 			name: "chain_import",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				writeFile(t, dir, "hello-world.d2", `...@x`)
