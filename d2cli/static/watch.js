@@ -36,7 +36,13 @@ function init(reconnectDelay) {
       if (scale !== previousScale) {
         previousScale = scale;
         // Automatic sizing fits inside the body's 8px margin on each side.
-        ratio = scale ?? Math.min(1, Math.max(1, window.innerWidth - 16) / width, Math.max(1, window.innerHeight - 16) / height);
+        ratio =
+          scale ??
+          Math.min(
+            1,
+            Math.max(1, window.innerWidth - 16) / width,
+            Math.max(1, window.innerHeight - 16) / height
+          );
       }
       svgEl.setAttribute("width", Math.ceil(width * ratio));
       svgEl.setAttribute("height", Math.ceil(height * ratio));
