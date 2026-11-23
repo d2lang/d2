@@ -46,6 +46,7 @@ const (
 var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
+	AnimateSequence    string          `json:"animateSequence,omitempty"` // Sequence message playback mode.
 	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
 	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds to interpolate step values.
 	Scale              *float64        `json:"scale,omitempty"`
@@ -71,6 +72,27 @@ func (c *Config) ResolveAnimateInterval(override *int64) *int64 {
 		return override
 	}
 	return c.AnimateInterval
+}
+
+// ValidSequenceMode reports whether an explicit playback setting is supported.
+func ValidSequenceMode(mode string) bool {
+	return mode == "trace" || mode == "reveal" || mode == "off"
+}
+
+// HasSequencePlayback reports whether this board or one of its authored
+// children has messages to play when no explicit SVG interval was supplied.
+func (d *Diagram) HasSequencePlayback() bool {
+	if len(d.SequenceTimelines) > 0 {
+		return true
+	}
+	for _, group := range [][]*Diagram{d.Layers, d.Scenarios, d.Steps} {
+		for _, child := range group {
+			if child.HasSequencePlayback() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ResolveForceAppendix preserves an explicit false when the source enables footnotes.
@@ -109,6 +131,9 @@ const (
 )
 
 type Diagram struct {
+	// A partial sequence frame keeps its authored viewport as messages appear.
+	frameBounds *[2]Point
+
 	Name   string  `json:"name"`
 	Config *Config `json:"config,omitempty"`
 	// See docs on the same field in d2graph to understand what it means.
@@ -131,6 +156,9 @@ type Diagram struct {
 	Layers    []*Diagram `json:"layers,omitempty"`
 	Scenarios []*Diagram `json:"scenarios,omitempty"`
 	Steps     []*Diagram `json:"steps,omitempty"`
+
+	// A board can contain multiple independent sequence diagrams.
+	SequenceTimelines []SequenceTimeline `json:"sequenceTimelines,omitempty"`
 
 	// TweenFrames are equally spaced samples of this board's incoming transition,
 	// starting at time zero. The board itself is the endpoint at TweenDurationMS.
@@ -226,6 +254,14 @@ func (diagram Diagram) Bytes() ([]byte, error) {
 
 	if diagram.Config != nil {
 		b, err := json.Marshal(diagram.Config)
+		if err != nil {
+			return nil, err
+		}
+		base = append(base, b...)
+	}
+
+	if len(diagram.SequenceTimelines) > 0 {
+		b, err := json.Marshal(diagram.SequenceTimelines)
 		if err != nil {
 			return nil, err
 		}
@@ -463,6 +499,9 @@ func (diagram Diagram) NestedBoundingBox() (topLeft, bottomRight Point) {
 }
 
 func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
+	if diagram.frameBounds != nil {
+		return diagram.frameBounds[0], diagram.frameBounds[1]
+	}
 	if len(diagram.Shapes) == 0 {
 		return Point{0, 0}, Point{0, 0}
 	}
@@ -923,6 +962,9 @@ func BaseShape() *Shape {
 }
 
 type Connection struct {
+	// Captions stay at their laid-out position while a sequence arrow is drawn.
+	sequenceTrace *sequenceTrace
+
 	ID string `json:"id"`
 
 	Classes []string `json:"classes,omitempty"`
@@ -1035,6 +1077,9 @@ func (c Connection) CSSStyle() string {
 }
 
 func (c *Connection) GetLabelTopLeft() *geo.Point {
+	if c.sequenceTrace != nil && c.sequenceTrace.labelTopLeft != nil {
+		return c.sequenceTrace.labelTopLeft.Copy()
+	}
 	point, _ := label.FromString(c.LabelPosition).GetPointOnRoute(
 		c.Route,
 		float64(c.StrokeWidth),

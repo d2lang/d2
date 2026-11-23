@@ -86,6 +86,9 @@ func ValidateRenderTarget(root *Diagram) error {
 }
 
 func validateRenderBoard(diagram *Diagram, path string) error {
+	if err := validateSequenceTimelines(diagram, path); err != nil {
+		return err
+	}
 	if len(diagram.TweenFrames) > MaxTweenFrames {
 		return fmt.Errorf("render target %s has more than %d tween frames", path, MaxTweenFrames)
 	}

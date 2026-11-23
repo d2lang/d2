@@ -259,6 +259,9 @@ func parseCompileRequest(args []js.Value) (*CompileRequest, error) {
 	if input.Opts == nil {
 		input.Opts = &CompileOptions{}
 	}
+	if mode := input.Opts.AnimateSequence; mode != "" && !d2target.ValidSequenceMode(mode) {
+		return nil, &WASMError{Message: "animateSequence must be trace, reveal, or off", Code: 400}
+	}
 	if duration := input.Opts.AnimateDuration; duration != nil && (*duration < 0 || *duration > d2target.MaxTweenDurationMS) {
 		return nil, &WASMError{Message: fmt.Sprintf("animateDuration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS), Code: 400}
 	}
@@ -275,6 +278,7 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		LayoutReuse:     true,
 		AnimateTweens:   animateTweens,
 		AnimateDuration: input.Opts.AnimateDuration,
+		AnimateSequence: input.Opts.AnimateSequence,
 	}
 
 	inputPath := DEFAULT_INPUT_PATH
@@ -442,7 +446,8 @@ func render(input RenderRequest) ([]byte, error) {
 		input.Opts = &RenderOptions{}
 	}
 	animateInterval := 0
-	if interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval); interval != nil && *interval > 0 {
+	interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval)
+	if interval != nil && *interval > 0 {
 		if *interval > math.MaxInt {
 			return nil, &WASMError{Message: "animation interval exceeds the supported range", Code: 400}
 		}
@@ -478,9 +483,6 @@ func render(input RenderRequest) ([]byte, error) {
 			}
 			boardPath = key.StringIDA()
 		}
-		if !noChildren && animateInterval <= 0 {
-			return nil, &WASMError{Message: fmt.Sprintf("target '%s' only supported for animated SVGs", *input.Opts.Target), Code: 500}
-		}
 	}
 
 	diagram := input.Diagram.GetBoard(boardPath)
@@ -493,6 +495,13 @@ func render(input RenderRequest) ([]byte, error) {
 		diagram.Steps = nil
 		diagram.TweenFrames = nil
 		diagram.TweenDurationMS = 0
+	}
+
+	if interval == nil && diagram.HasSequencePlayback() && (input.Opts.ASCII == nil || !*input.Opts.ASCII) && (input.Opts.Isometric == nil || !*input.Opts.Isometric) {
+		animateInterval = 1000
+	}
+	if !noChildren && animateInterval <= 0 {
+		return nil, &WASMError{Message: fmt.Sprintf("target '%s' only supported for animated SVGs", *input.Opts.Target), Code: 500}
 	}
 
 	renderOpts := &d2svg.RenderOpts{Scale: scale}

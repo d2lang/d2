@@ -187,6 +187,7 @@ All [RenderOptions](#renderoptions) properties in addition to:
 
 - `layout`: Layout engine to use (`'dagre' | 'elk' | 'tala'`) [default: `'dagre'`]
 - `animateDuration`: Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps (0–600000, default 0). Overrides `vars.d2-config.animate-duration`. Set this when calling `compile()` or `renderSVG()`. A shorter transition uses the rest of the board interval to hold its final value. A longer transition extends the step.
+- `animateSequence`: Play sequence messages in authored order. Use `"trace"` to draw each arrow toward its receiver, `"reveal"` to show each complete row, or `"off"` to disable playback. The setting overrides `vars.d2-config.animate-sequence`. Playback defaults to a one-second interval per message. `animateDuration` sets the arrow travel time.
 - `fontRegular` A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used.
 - `fontItalic` A byte array containing .ttf file to use for the italic font. If none provided, Source Sans Pro Italic is used.
 - `fontBold` A byte array containing .ttf file to use for the bold font. If none provided, Source Sans Pro Bold is used.

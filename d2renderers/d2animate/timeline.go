@@ -13,6 +13,9 @@ type Frame struct {
 	// TweenSample distinguishes an already sampled transition from a board
 	// whose independent shape and connection animations still need sampling.
 	TweenSample bool
+	// Continues marks an interior sequence hold. GIF delays round down at
+	// interior boundaries so fractional centiseconds carry to the next frame.
+	Continues bool
 	// ElapsedMS is the local time of a sampled frame within its step.
 	ElapsedMS int
 }
@@ -27,23 +30,62 @@ func Timeline(root *d2target.Diagram, intervalMS int) ([]Frame, error) {
 		return nil, fmt.Errorf("animation interval must be positive")
 	}
 	var frames []Frame
-	var walk func(*d2target.Diagram)
-	walk = func(board *d2target.Diagram) {
+	var playback Playback
+	var walk func(*d2target.Diagram) error
+	walk = func(board *d2target.Diagram) error {
 		if !board.IsFolderOnly {
-			frames = AppendBoardFrames(frames, board, intervalMS)
+			var err error
+			frames, err = playback.AppendBoard(frames, board, intervalMS)
+			if err != nil {
+				return err
+			}
 		}
 		for _, group := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
 			for _, child := range group {
-				walk(child)
+				if err := walk(child); err != nil {
+					return err
+				}
 			}
 		}
+		return nil
 	}
-	walk(root)
+	if err := walk(root); err != nil {
+		return nil, err
+	}
 	return frames, nil
 }
 
-// AppendBoardFrames expands one validated, drawable board. Raster exporters
-// impose their own traversal limits before expanding its samples.
+// Playback shares the sequence sampling budget across all boards in an export.
+// Its zero value is ready to use.
+type Playback struct {
+	sequence sequenceBudget
+}
+
+// AppendBoard appends the incoming value transition and the message sequence
+// for one validated board. Raster exporters can supply their own traversal.
+func (p *Playback) AppendBoard(frames []Frame, board *d2target.Diagram, intervalMS int) ([]Frame, error) {
+	if len(board.SequenceTimelines) == 0 || board.Config == nil || board.Config.AnimateSequence == "" || board.Config.AnimateSequence == "off" {
+		return AppendBoardFrames(frames, board, intervalMS), nil
+	}
+	duration := min(intervalMS, 600)
+	if configured := board.Config.AnimateDuration; configured != nil {
+		if *configured < 0 || *configured > d2target.MaxTweenDurationMS {
+			return nil, fmt.Errorf("sequence animation duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
+		}
+		duration = int(*configured)
+	}
+	var incoming []Frame
+	if len(board.TweenFrames) > 0 {
+		incoming = AppendBoardFrames(nil, board, intervalMS)
+	}
+	sequence, err := sequenceFrames(board, board.Config.AnimateSequence, intervalMS, duration, &p.sequence, incoming)
+	if err != nil {
+		return nil, err
+	}
+	return append(frames, sequence...), nil
+}
+
+// AppendBoardFrames appends the incoming value transition and settled state of one board.
 func AppendBoardFrames(frames []Frame, board *d2target.Diagram, intervalMS int) []Frame {
 	if len(board.TweenFrames) == 0 {
 		return append(frames, Frame{Diagram: board, DurationMS: intervalMS})

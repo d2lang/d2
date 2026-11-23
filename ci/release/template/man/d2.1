@@ -161,6 +161,16 @@ The source value accepts integer milliseconds or a duration such as 1.5s.
 The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over the file.
 Zero selects ordinary SVG export or the default GIF interval of 1000ms.
 .Ns .
+.It Fl -animate-sequence Ar mode
+Play messages in a sequence diagram in authored order in animated SVG and GIF.
+Use trace to draw each arrow toward its receiver, reveal to show each complete row, or off to disable playback.
+Set the mode in D2 source with
+.Li "vars: {d2-config: {animate-sequence: trace}}" .
+The interval defaults to 1000ms. The participants appear for one interval before the first send.
+Each message gets one interval, extended when the travel duration is longer.
+The default travel duration is the shorter of 600ms and the interval.
+Explicit activation spans appear when their first message is sent or received.
+.Ns .
 .It Fl -animate-duration Ar 0
 Set how long numeric properties and colors take to reach their values in a step.
 Changes can be authored directly or through variables.
@@ -171,7 +181,8 @@ The flag takes milliseconds. The file also accepts durations, for example
 .Li "vars: {d2-config: {animate-interval: 800ms; animate-duration: 300ms}}" .
 All interpolated values change together for 300ms, then hold their values for the remaining 500ms.
 A longer transition extends the step to its duration.
-The duration defaults to zero, which disables interpolation, and accepts values up to ten minutes.
+For step values, the duration defaults to zero, which disables interpolation.
+The maximum duration is ten minutes.
 The flag takes precedence over D2_ANIMATE_DURATION, which takes precedence over the file.
 Static exports show the authored values.
 .Ns .
@@ -342,6 +353,8 @@ See --font-mono-italic flag.
 See --font-mono-semibold flag.
 .It Ev Sy D2_ANIMATE_INTERVAL
 See --animate-interval flag.
+.It Ev Sy D2_ANIMATE_SEQUENCE
+See --animate-sequence flag.
 .It Ev Sy D2_ANIMATE_DURATION
 See --animate-duration flag.
 .It Ev Sy D2_TIMEOUT

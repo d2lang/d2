@@ -319,12 +319,16 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 		return &resolved
 	}
 	edgeIDs := map[string]bool{}
-	for _, c := range owned.Connections {
+	for i, c := range owned.Connections {
 		if c.ID == "" || edgeIDs[c.ID] {
 			return nil, fmt.Errorf("isometric: empty or duplicate edge ID %q", c.ID)
 		}
 		edgeIDs[c.ID] = true
+		tracing := c.CopySequenceTraceFrom(&diagram.Connections[i])
 		e := Edge{ID: c.ID, Source: c.Src, Target: c.Dst, Label: c.Label, SourceLabel: c.SrcLabel, TargetLabel: c.DstLabel, SourceArrow: c.SrcArrow, TargetArrow: c.DstArrow, Stroke: paint(c.Stroke), FontColor: paint(c.Color), StrokeWidth: c.StrokeWidth, StrokeDash: c.StrokeDash, Opacity: c.Opacity, Link: c.Link, Tooltip: c.Tooltip, Metadata: EdgeMetadata{Original: c}}
+		if tracing {
+			e.SequenceRole = "message"
+		}
 		e.StrokeExplicit = keepPaint(c.Stroke)
 		e.FontExplicit = keepPaint(c.Color)
 		if themeID != 0 || overrides != nil {

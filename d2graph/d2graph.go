@@ -1239,6 +1239,10 @@ type Edge struct {
 	References []EdgeReference `json:"references,omitempty"`
 	Attributes `json:"attributes,omitempty"`
 
+	// SequenceOrder is the one-based message order assigned by sequence layout.
+	// Zero identifies ordinary edges and synthetic actor lifelines.
+	SequenceOrder int `json:"-"`
+
 	ZIndex int `json:"zIndex"`
 }
 

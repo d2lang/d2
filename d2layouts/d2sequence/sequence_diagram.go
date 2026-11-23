@@ -82,7 +82,7 @@ func newSequenceDiagram(objects []*d2graph.Object, messages []*d2graph.Edge) (*s
 	slices.SortFunc(objects, func(a, b *d2graph.Object) int {
 		return cmp.Compare(getObjEarliestLineNum(a), getObjEarliestLineNum(b))
 	})
-	slices.SortFunc(messages, func(a, b *d2graph.Edge) int {
+	slices.SortStableFunc(messages, func(a, b *d2graph.Edge) int {
 		return cmp.Compare(getEdgeEarliestLineNum(a), getEdgeEarliestLineNum(b))
 	})
 
@@ -589,7 +589,8 @@ func (sd *sequenceDiagram) placeSpans() {
 // in another step, routes are adjusted to spans borders when necessary
 func (sd *sequenceDiagram) routeMessages() error {
 	messageOffset := sd.maxActorHeight + sd.yStep
-	for _, message := range sd.messages {
+	for i, message := range sd.messages {
+		message.SequenceOrder = i + 1
 		message.ZIndex = MESSAGE_Z_INDEX
 		noteOffset := 0.
 		for _, note := range sd.notes {

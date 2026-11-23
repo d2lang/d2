@@ -89,6 +89,8 @@ export interface RenderOptions {
 export interface CompileOptions extends RenderOptions {
   /** Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
   animateDuration?: number;
+  /** Play sequence messages in authored order. Overrides vars.d2-config.animate-sequence at compile time. */
+  animateSequence?: "trace" | "reveal" | "off";
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";
   /** A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used. */
@@ -121,7 +123,7 @@ export interface CompileResponse {
 }
 
 export interface Diagram {
-  config?: RenderOptions & Pick<CompileOptions, "animateDuration">;
+  config?: RenderOptions & Pick<CompileOptions, "animateDuration" | "animateSequence">;
   name: string;
   /**
    * See docs on the same field in d2graph to understand what it means.
@@ -136,9 +138,23 @@ export interface Diagram {
   layers?: (Diagram | undefined)[];
   scenarios?: (Diagram | undefined)[];
   steps?: (Diagram | undefined)[];
+  /** Message and activation order for each independently laid-out sequence diagram. */
+  sequenceTimelines?: SequenceTimeline[];
   /** Intermediate samples of this step’s incoming variable tween. */
   tweenFrames?: Diagram[];
   tweenDurationMS?: number;
+}
+
+export interface SequenceTimeline {
+  messages: { connectionID: string; reverse?: boolean }[];
+  spans?: { shapeID: string; start: SequenceMoment; end: SequenceMoment }[];
+}
+
+export interface SequenceMoment {
+  /** Zero-based message index in this sequence. */
+  message: number;
+  /** True at arrival, false or omitted at send. */
+  arrival?: boolean;
 }
 
 export interface Legend {

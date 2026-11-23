@@ -147,7 +147,7 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 			timings[i] = d2isometricimg.BoardTiming{
 				Duration:    time.Duration(frame.DurationMS) * time.Millisecond,
 				Elapsed:     time.Duration(frame.ElapsedMS) * time.Millisecond,
-				TweenSample: frame.TweenSample,
+				TweenSample: frame.TweenSample || frame.Continues,
 			}
 		}
 		data, err := d2isometricimg.RenderTimedTimeline(ctx, frames, &o, timings)

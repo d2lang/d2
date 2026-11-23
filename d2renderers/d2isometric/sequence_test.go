@@ -189,3 +189,27 @@ func TestSequenceRealMixedActorSubgraphsAndSemanticChildren(t *testing.T) {
 		})
 	}
 }
+
+func TestInFlightSequenceMessageToHiddenSpan(t *testing.T) {
+	for _, text := range []string{"Reserve stock", ""} {
+		d := d2target.NewDiagram()
+		d.Root.Type = d2target.ShapeSequenceDiagram
+		d.Shapes = []d2target.Shape{testNode("caller", 0, 0), testNode("callee", 200, 0)}
+		c := testEdge("send", "caller", "callee.work")
+		c.Label, c.LabelPosition = text, "INSIDE_MIDDLE_CENTER"
+		c.ZIndex = d2sequence.MESSAGE_Z_INDEX
+		c.Route = geo.Route{{X: 10, Y: 90}, {X: 210, Y: 90}}
+		d.Connections = []d2target.Connection{c.WithTracedRoute(geo.Route{{X: 10, Y: 90}, {X: 60, Y: 90}})}
+		s, err := BuildScene(d, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := s.Edges[0]
+		if got.SequenceRole != "message" {
+			t.Fatalf("in-flight message to a hidden span has role %q", got.SequenceRole)
+		}
+		if text != "" && *got.Metadata.Original.GetLabelTopLeft() != *c.GetLabelTopLeft() {
+			t.Fatal("isometric message caption moved with the tip")
+		}
+	}
+}

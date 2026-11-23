@@ -23,6 +23,8 @@ import (
 
 type CompileOptions struct {
 	UTF16Pos bool
+	// AnimateSequence overrides vars.d2-config.animate-sequence when nonempty.
+	AnimateSequence string
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
 	// AnimateTweens controls sampling of step transitions. Nil follows
@@ -102,6 +104,7 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 		UTF16Pos:             compileOpts.UTF16Pos,
 		AnimateTweens:        compileOpts.AnimateTweens,
 		AnimateDuration:      compileOpts.AnimateDuration,
+		AnimateSequence:      compileOpts.AnimateSequence,
 		MaxVariableExpansion: compileOpts.MaxVariableExpansion,
 		MaxGlobExpansion:     compileOpts.MaxGlobExpansion,
 		MaxEdgeExpansion:     compileOpts.MaxEdgeExpansion,
@@ -128,7 +131,11 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 		applyGraphData(g, config.Data)
 	}
 
-	d, err := compile(ctx, g, compileOpts, renderOpts)
+	var playback *d2target.Config
+	if config != nil && config.AnimateSequence != "" && config.AnimateSequence != "off" {
+		playback = config
+	}
+	d, _, err := compileBoard(ctx, g, compileOpts, renderOpts, nil, false, playback)
 	if d != nil {
 		if config == nil {
 			config = &d2target.Config{}
@@ -183,18 +190,13 @@ func cloneGraphDataValue(value interface{}) interface{} {
 	}
 }
 
-func compile(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts) (*d2target.Diagram, error) {
-	d, _, err := compileBoard(ctx, g, compileOpts, renderOpts, nil, false)
-	return d, err
-}
-
-func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts, reuse *layoutGeometry, captureForCaller bool) (*d2target.Diagram, *layoutGeometry, error) {
+func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts, reuse *layoutGeometry, captureForCaller bool, playback *d2target.Config) (*d2target.Diagram, *layoutGeometry, error) {
 	var frames []*d2target.Diagram
 	for _, sample := range g.TweenFrames {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		frame, geometry, err := compileBoard(ctx, sample, compileOpts, renderOpts, reuse, true)
+		frame, geometry, err := compileBoard(ctx, sample, compileOpts, renderOpts, reuse, true, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -255,20 +257,27 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 		return nil, nil, err
 	}
 
+	if playback != nil {
+		d.SequenceTimelines = d2exporter.SequenceTimelines(g)
+		if len(d.SequenceTimelines) > 0 {
+			// A directly selected child board can also play on its own.
+			d.Config = playback
+		}
+	}
 	d.TweenFrames = frames
 	d.TweenDurationMS = g.TweenDurationMS
 
 	for _, l := range g.Layers {
 		// Layers are independent boards rather than overlays of their parent, so
 		// retain their existing always-layout behavior.
-		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, nil, false)
+		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, nil, false, playback)
 		if err != nil {
 			return nil, nil, err
 		}
 		d.Layers = append(d.Layers, ld)
 	}
 	for _, l := range g.Scenarios {
-		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, geometry, false)
+		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, geometry, false, playback)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -276,7 +285,7 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 	}
 	previous := geometry
 	for i, l := range g.Steps {
-		ld, stepGeometry, err := compileBoard(ctx, l, compileOpts, renderOpts, previous, i+1 < len(g.Steps))
+		ld, stepGeometry, err := compileBoard(ctx, l, compileOpts, renderOpts, previous, i+1 < len(g.Steps), playback)
 		if err != nil {
 			return nil, nil, err
 		}

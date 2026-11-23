@@ -147,7 +147,20 @@ func (c *compiler) compileTweens(root *Map, opts *CompileOptions) {
 		return 0
 	}
 	if opts.AnimateTweens == nil && getTiming("animate-interval") == 0 {
-		return
+		// Sequence playback supplies an implicit interval for animated SVGs.
+		// An authored zero takes precedence, including when the mode is enabled.
+		mode := opts.AnimateSequence
+		if config != nil {
+			if config.getFieldIndexed(d2ast.FlatUnquotedString("animate-interval")) != nil {
+				return
+			}
+			if f := config.getFieldIndexed(d2ast.FlatUnquotedString("animate-sequence")); mode == "" && f != nil && f.Primary() != nil {
+				mode = f.Primary().Value.ScalarString()
+			}
+		}
+		if mode != "trace" && mode != "reveal" {
+			return
+		}
 	}
 	duration := getTiming("animate-duration")
 	if opts.AnimateDuration != nil {

@@ -595,11 +595,15 @@ func renderGIFWithSession(
 	}
 	var timeline []gifSegment
 	totalFrames := 0
+	var playback d2animate.Playback
 	var boardFrames []d2animate.Frame
 	for _, board := range boards {
-		boardFrames = d2animate.AppendBoardFrames(boardFrames[:0], board, intervalMs)
+		boardFrames, err = playback.AppendBoard(boardFrames[:0], board, intervalMs)
+		if err != nil {
+			return summary, err
+		}
 		for _, segment := range boardFrames {
-			delay := xgif.StepDelay(time.Duration(segment.ElapsedMS)*time.Millisecond, time.Duration(segment.DurationMS)*time.Millisecond, segment.TweenSample)
+			delay := xgif.StepDelay(time.Duration(segment.ElapsedMS)*time.Millisecond, time.Duration(segment.DurationMS)*time.Millisecond, segment.TweenSample || segment.Continues)
 			if delay == 0 {
 				continue
 			}
@@ -661,7 +665,7 @@ func renderGIFWithSession(
 		if err := validateGIFNormalizedFootprint(summary.maxWidth, summary.maxHeight, totalFrames); err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
-		if plan != nil && len(boards) == 1 && len(boards[0].TweenFrames) == 0 {
+		if plan != nil && len(boards) == 1 && len(boards[0].TweenFrames) == 0 && len(boards[0].SequenceTimelines) == 0 {
 			if err := plan(totalFrames, plannedBounds); err != nil {
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}

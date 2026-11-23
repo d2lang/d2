@@ -78,3 +78,31 @@ func TestValidateRenderTargetTweenFrames(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateSequenceMetadata(t *testing.T) {
+	for name, mutate := range map[string]func(*Diagram){
+		"missing connection":    func(d *Diagram) { d.SequenceTimelines[0].Messages[0].ConnectionID = "absent" },
+		"missing span":          func(d *Diagram) { d.SequenceTimelines[0].Spans[0].ShapeID = "absent" },
+		"shared connection":     func(d *Diagram) { d.SequenceTimelines = append(d.SequenceTimelines, d.SequenceTimelines[0]) },
+		"invalid message index": func(d *Diagram) { d.SequenceTimelines[0].Spans[0].End.Message = 1 },
+		"arrival before send":   func(d *Diagram) { d.SequenceTimelines[0].Spans[0].Start.Arrival = true },
+		"curved message":        func(d *Diagram) { d.Connections[0].IsCurve = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &Diagram{
+				Shapes: []Shape{{ID: "activation"}}, Connections: []Connection{{ID: "message"}},
+				SequenceTimelines: []SequenceTimeline{{
+					Messages: []SequenceMessage{{ConnectionID: "message"}},
+					Spans:    []SequenceSpan{{ShapeID: "activation"}},
+				}},
+			}
+			if err := validateSequenceTimelines(d, "root"); err != nil {
+				t.Fatal(err)
+			}
+			mutate(d)
+			if err := validateSequenceTimelines(d, "root"); err == nil {
+				t.Fatal("accepted invalid sequence metadata")
+			}
+		})
+	}
+}

@@ -436,3 +436,29 @@ func assertSingleWASMWarning(t *testing.T, warnings []string, want string) {
 		t.Fatalf("warning = %q, want %q", warnings[0], want)
 	}
 }
+
+func TestSequencePlaybackWASM(t *testing.T) {
+	const src = "shape: sequence_diagram\na -> b.s: hello"
+	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{
+		FS: map[string]string{"index": src}, Opts: &CompileOptions{AnimateSequence: "trace"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := compiled.(CompileResponse)
+	out, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: &result.RenderOptions}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg := string(out.([]byte))
+	if n := strings.Count(svg, "@keyframes d2Transition-"); n < 3 || !strings.Contains(svg, "2000ms") {
+		t.Fatalf("expected a two-second traced sequence, got %d frames", n)
+	}
+	out, err = RenderSVG(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": "vars: {d2-config.animate-sequence: reveal}\n" + src}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.(string), "@keyframes d2Transition-") != 2 {
+		t.Fatal("expected an empty stage followed by one complete message")
+	}
+}
