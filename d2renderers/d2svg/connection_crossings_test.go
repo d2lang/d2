@@ -110,6 +110,31 @@ func TestSketchGapFitsHandDrawnStrokes(t *testing.T) {
 	}
 }
 
+func TestSketchGapOnLongLegBeforeBend(t *testing.T) {
+	for _, length := range []float64{1500, 10000} {
+		bent := *d2target.BaseConnection()
+		bent.ID, bent.Stroke = "bent", "black"
+		bent.Route = []*geo.Point{{X: 0, Y: 0}, {X: length, Y: 0}, {X: length, Y: 30}}
+		straight := bent
+		straight.ID = "straight"
+		straight.Route = []*geo.Point{{X: length / 2, Y: -100}, {X: length / 2, Y: 100}}
+		d := d2target.NewDiagram()
+		for _, edges := range [][]d2target.Connection{{straight, bent}, {bent, straight}} {
+			d.Connections = edges
+			for _, sketch := range []bool{false, true} {
+				out, err := d2svg.Render(d, &d2svg.RenderOpts{Sketch: &sketch})
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := !sketch || length == 1500
+				if got := bytes.Contains(out, []byte(`id="crossings-`)); got != want {
+					t.Errorf("back %s, sketch %t, length %v: gap = %t, want %t", edges[0].ID, sketch, length, got, want)
+				}
+			}
+		}
+	}
+}
+
 func TestCompoundDashedSketchCrossing(t *testing.T) {
 	solid := *d2target.BaseConnection()
 	solid.ID, solid.Stroke = "solid", "black"
