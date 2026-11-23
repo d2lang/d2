@@ -102,9 +102,27 @@ const svg = await d2.render(result.diagram, result.renderOptions);
 
 ## API Reference
 
-### `new D2()`
+### `new D2(options?)`
 
-Creates a new D2 instance.
+Creates a D2 instance with its own worker. Browsers use a blob URL by default.
+Calling the constructor from a dedicated browser worker starts a nested worker.
+Node.js uses its bundled worker.
+
+The browser option `workerURL` accepts a string or a `URL`. For a site with a
+Content Security Policy such as `worker-src 'self'`, serve the JavaScript file
+exported as `@d2lang/d2/worker` from the same origin. For example, if your app
+serves `public/` at its root, copy the worker from the same installed package
+during your build.
+
+```sh
+node -e "require('node:fs').copyFileSync(require.resolve('@d2lang/d2/worker'), 'public/d2-worker.js')"
+```
+
+```javascript
+const d2 = new D2({ workerURL: '/d2-worker.js' });
+```
+
+The worker's Content Security Policy must also allow WebAssembly compilation.
 
 ### `compile(input: string | CompileRequest, options?: CompileOptions): Promise<CompileResponse>`
 

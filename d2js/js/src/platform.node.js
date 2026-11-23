@@ -1,5 +1,7 @@
 let nodeModules = null;
 
+export const isNode = true;
+
 // Injected at runtime by the node bundle banners in build.js.
 const moduleDir = __D2_NODE_MODULE_DIR__;
 

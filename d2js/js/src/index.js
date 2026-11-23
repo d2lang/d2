@@ -1,12 +1,12 @@
-import { createWorker, loadFile } from "./platform.js";
+import { createWorker, isNode, loadFile } from "./platform.js";
 
 export class D2 {
-  constructor() {
+  constructor(options = {}) {
     this.nextRequestId = 0;
     this.pendingRequests = new Map();
     this.disposed = false;
     this.disposePromise = null;
-    this.ready = this.init();
+    this.ready = this.init(options.workerURL);
   }
 
   rejectPendingRequests(error) {
@@ -16,7 +16,7 @@ export class D2 {
     this.pendingRequests.clear();
   }
 
-  setupMessageHandler(isNode = typeof window === "undefined") {
+  setupMessageHandler(isNodeWorker = isNode) {
     return new Promise((resolve, reject) => {
       let isReady = false;
 
@@ -28,7 +28,7 @@ export class D2 {
         if (!isReady) reject(workerError);
         this.rejectPendingRequests(workerError);
         console.error(
-          `Worker${isNode ? " (node)" : ""} encountered an error:`,
+          `Worker${isNodeWorker ? " (node)" : ""} encountered an error:`,
           workerError.message
         );
       };
@@ -62,7 +62,7 @@ export class D2 {
         }
       };
 
-      if (isNode) {
+      if (isNodeWorker) {
         this.worker.on("message", handleMessage);
         this.worker.on("error", handleWorkerError);
       } else {
@@ -72,10 +72,9 @@ export class D2 {
     });
   }
 
-  async init() {
-    this.worker = await createWorker();
+  async init(workerURL) {
+    this.worker = await createWorker(workerURL);
 
-    const isNode = typeof window === "undefined";
     const wasmExecContent = isNode ? await loadFile("./wasm_exec.js") : null;
     const wasm = await loadFile("./d2.wasm");
 
