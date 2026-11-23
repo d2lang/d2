@@ -8,6 +8,7 @@ import (
 	"github.com/d2lang/d2/d2exporter"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
@@ -43,8 +44,14 @@ func TestNativeCrossContainerRoutes(t *testing.T) {
 				if _, err := d2svg.Render(diagram, nil); err != nil {
 					t.Fatal(err)
 				}
-				for _, edge := range g.Edges {
+				shapeByID := make(map[string]d2target.Shape, len(diagram.Shapes))
+				for _, shape := range diagram.Shapes {
+					shapeByID[shape.ID] = shape
+				}
+				for i, edge := range g.Edges {
 					route := edge.Route
+					assertForwardArrowhead(t, diagram.Connections[i], shapeByID)
+
 					for _, end := range []struct {
 						obj   *d2graph.Object
 						point *geo.Point
@@ -69,11 +76,18 @@ func TestNativeCrossContainerRoutes(t *testing.T) {
 							}
 						}
 					}
-					obj, column, point := edge.Dst, edge.DstTableColumnIndex, route[len(route)-1]
+					obj, column := edge.Dst, edge.DstTableColumnIndex
+					point, neighbor := route[len(route)-1], route[len(route)-2]
 					if edge.SrcTableColumnIndex != nil {
-						obj, column, point = edge.Src, edge.SrcTableColumnIndex, route[0]
+						obj, column = edge.Src, edge.SrcTableColumnIndex
+						point, neighbor = route[0], route[1]
 					}
 					if column != nil {
+						// A side port needs a horizontal terminal segment for the SVG
+						// arrowhead to point into the row after stroke adjustment.
+						if math.Abs(neighbor.Y-point.Y) > 1 || (point.X-neighbor.X)*(obj.Center().X-point.X) <= 0 {
+							t.Errorf("%s has an oblique or reversed attachment at %v from %v", edge.AbsID(), point, neighbor)
+						}
 						rowHeight := obj.Height / float64(len(obj.SQLTable.Columns)+1)
 						wantY := obj.TopLeft.Y + (float64(*column)+1.5)*rowHeight
 						if math.Abs(point.Y-wantY) > 1 || math.Min(math.Abs(point.X-obj.TopLeft.X), math.Abs(point.X-obj.TopLeft.X-obj.Width)) > 1 {
@@ -83,6 +97,24 @@ func TestNativeCrossContainerRoutes(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A tiny last bend can put the rounded SVG path end behind the preceding
+// command once the renderer makes room for the arrowhead.
+func assertForwardArrowhead(t *testing.T, c d2target.Connection, shapes map[string]d2target.Shape) {
+	t.Helper()
+	srcAdj, dstAdj := c.ArrowheadAdjustments(shapes)
+	var previous, lastSegment geo.Point
+	for cmd := range c.PathCommands(srcAdj, dstAdj) {
+		if cmd.Kind != 'M' && cmd.End != previous {
+			lastSegment = geo.Point{X: cmd.End.X - previous.X, Y: cmd.End.Y - previous.Y}
+		}
+		previous = cmd.End
+	}
+	a, b := c.Route[len(c.Route)-2], c.Route[len(c.Route)-1]
+	if lastSegment.X*(b.X-a.X)+lastSegment.Y*(b.Y-a.Y) <= 0 {
+		t.Errorf("%s SVG arrowhead points against its route", c.ID)
 	}
 }
 
