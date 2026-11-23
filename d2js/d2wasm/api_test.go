@@ -35,8 +35,10 @@ func TestRenderRejectsMalformedDiagramBeforeBoardTraversal(t *testing.T) {
 
 func TestRenderAnimationDefaultsMissingPadding(t *testing.T) {
 	animateInterval := int64(1_000)
+	diagram := d2target.NewDiagram()
+	diagram.IsFolderOnly = true
 	request := RenderRequest{
-		Diagram: d2target.NewDiagram(),
+		Diagram: diagram,
 		Opts:    &RenderOptions{AnimateInterval: &animateInterval},
 	}
 	response := invokeRenderRequest(t, request)
@@ -71,6 +73,42 @@ func TestRenderAnimatedAppendix(t *testing.T) {
 	svg := string(out.([]byte))
 	if strings.Count(svg, `class="appendix"`) != 1 || !strings.Contains(svg, ">root</text>") {
 		t.Fatal("expected one appendix containing the parent-board link")
+	}
+}
+
+func TestRenderVariableTweenAfterCompile(t *testing.T) {
+	source := `vars: {charge: 100%}
+bar: "${charge}" {style.fill: "linear-gradient(to right, green ${charge}, transparent ${charge})"}
+steps: {drain: {vars: {charge: 0% {tween: 160ms}}}}`
+	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{
+		FS: map[string]string{"index": source}, Opts: &CompileOptions{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagram := compiled.(CompileResponse).Diagram
+	interval := int64(800)
+	target := "*"
+	out, err := Render(wasmJSONArgument(t, RenderRequest{
+		Diagram: &diagram, Opts: &RenderOptions{AnimateInterval: &interval, Target: &target},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg := string(out.([]byte))
+	if !strings.Contains(svg, ">50%</text>") || !strings.Contains(svg, `offset="50%"`) {
+		t.Fatal("animated render is missing the intermediate label or gradient stop")
+	}
+	target = "steps.drain"
+	out, err = Render(wasmJSONArgument(t, RenderRequest{
+		Diagram: &diagram, Opts: &RenderOptions{Target: &target},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg = string(out.([]byte))
+	if !strings.Contains(svg, ">0%</text>") || strings.Contains(svg, ">50%</text>") {
+		t.Fatal("static render should show the authored destination")
 	}
 }
 

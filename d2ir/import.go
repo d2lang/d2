@@ -159,7 +159,10 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 	// importer
 	savedErrors := make([]d2ast.Error, len(c.err.Errors))
 	copy(savedErrors, c.err.Errors)
+	previous := c.resolvingImport
+	c.resolvingImport = true
 	c.compileSubstitutions(ir, nil)
+	c.resolvingImport = previous
 	c.err.Errors = savedErrors
 	if c.stopped() {
 		return nil, false

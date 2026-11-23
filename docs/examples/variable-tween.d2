@@ -1,0 +1,19 @@
+# d2 --animate-interval=800 --pad=20 variable-tween.d2 battery.svg
+vars: {charge: 65%}
+
+battery: "Battery · ${charge}" {
+  width: 300
+  height: 64
+  style: {
+    border-radius: 14
+    stroke: "#295641"
+    font-color: "#183c2c"
+    fill: "linear-gradient(to right, #82d6a7 ${charge}, #eff5f1 ${charge})"
+  }
+}
+
+steps: {
+  drain: {
+    vars: {charge: 0% {tween: 4s}}
+  }
+}

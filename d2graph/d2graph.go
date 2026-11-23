@@ -58,6 +58,11 @@ type Graph struct {
 	Scenarios []*Graph `json:"scenarios,omitempty"`
 	Steps     []*Graph `json:"steps,omitempty"`
 
+	// TweenFrames are the sampled incoming transition, in playback order. Each
+	// frame belongs to this board and shares its navigation identity.
+	TweenFrames     []*Graph `json:"-"`
+	TweenDurationMS int      `json:"-"`
+
 	Theme *d2themes.Theme `json:"theme,omitempty"`
 
 	// Object.Level uses the location of a nested graph
@@ -93,6 +98,10 @@ func (g *Graph) RootBoard() *Graph {
 func (g *Graph) IDA() []string {
 	if g == nil {
 		return nil
+	}
+
+	if g.Parent != nil && slices.Contains(g.Parent.TweenFrames, g) {
+		return g.Parent.IDA()
 	}
 
 	var parts []string
@@ -1823,21 +1832,11 @@ func (g *Graph) Texts() []*d2target.MText {
 		}
 	}
 
-	for _, board := range g.Layers {
-		for _, t := range board.Texts() {
-			texts = appendTextDedup(texts, t)
-		}
-	}
-
-	for _, board := range g.Scenarios {
-		for _, t := range board.Texts() {
-			texts = appendTextDedup(texts, t)
-		}
-	}
-
-	for _, board := range g.Steps {
-		for _, t := range board.Texts() {
-			texts = appendTextDedup(texts, t)
+	for _, group := range [][]*Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
+		for _, board := range group {
+			for _, t := range board.Texts() {
+				texts = appendTextDedup(texts, t)
+			}
 		}
 	}
 

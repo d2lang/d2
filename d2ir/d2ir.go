@@ -169,6 +169,11 @@ func (s *Scalar) Equal(n2 Node) bool {
 }
 
 type Map struct {
+	// TweenFrames are fully resolved, read-only samples of this board's incoming
+	// transition. They are shared across IR copies, outside the authored board tree.
+	TweenFrames     []*Map `json:"-"`
+	TweenDurationMS int    `json:"-"`
+
 	parent    Node
 	importAST d2ast.Node
 	// variableExpansion is shared across automatic copies created during one

@@ -46,8 +46,29 @@ func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash stri
 }
 
 func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, intervalMS int) ([]byte, error) {
+	durations := make([]int, len(svgs))
+	for i := range durations {
+		durations[i] = intervalMS
+	}
+	return WrapTimed(rootDiagram, svgs, renderOpts, durations)
+}
+
+// WrapTimed composes independently rendered SVG frames on a shared playback clock.
+func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, durationsMS []int) ([]byte, error) {
 	if err := d2target.ValidateRenderTarget(rootDiagram); err != nil {
 		return nil, err
+	}
+	if len(svgs) != len(durationsMS) {
+		return nil, fmt.Errorf("animation requires one duration per SVG frame")
+	}
+	totalMS := 0
+	uniform := true
+	for _, ms := range durationsMS {
+		if ms <= 0 || ms > math.MaxInt-totalMS {
+			return nil, fmt.Errorf("animation duration must be positive and fit in milliseconds")
+		}
+		totalMS += ms
+		uniform = uniform && ms == durationsMS[0]
 	}
 	buf := &bytes.Buffer{}
 
@@ -88,10 +109,12 @@ func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderO
 		width, height, left, top, width, height)
 	fmt.Fprint(buf, innerOpening)
 
-	svgsStr := ""
+	var source strings.Builder
 	for _, svg := range svgs {
-		svgsStr += string(svg) + " "
+		source.Write(svg)
+		source.WriteByte(' ')
 	}
+	svgsStr := source.String()
 
 	diagramHash, err := rootDiagram.HashID(renderOpts.Salt)
 	if err != nil {
@@ -111,14 +134,36 @@ func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderO
 	}
 
 	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)
-	for i := range svgs {
-		fmt.Fprint(buf, makeKeyframe(i*intervalMS, intervalMS, len(svgs)*intervalMS, i, diagramHash))
+	startMS := 0
+	for i, duration := range durationsMS {
+		if uniform && len(svgs) <= 100 {
+			fmt.Fprint(buf, makeKeyframe(startMS, duration, totalMS, i, diagramHash))
+		} else {
+			// Use a discrete cut at exact boundaries. A 1 ms cross-fade or a
+			// whole-percent rounding error can hide an entire short sample.
+			fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d {", diagramHash, i)
+			if startMS > 0 {
+				fmt.Fprint(buf, "0%{opacity:0}")
+			}
+			fmt.Fprintf(buf, "%.9f%%{opacity:1}", 100*float64(startMS)/float64(totalMS))
+			if endMS := startMS + duration; endMS < totalMS {
+				fmt.Fprintf(buf, "%.9f%%,100%%{opacity:0}", 100*float64(endMS)/float64(totalMS))
+			} else {
+				fmt.Fprint(buf, "100%{opacity:1}")
+			}
+			fmt.Fprint(buf, "}")
+		}
+		startMS += duration
 	}
 	fmt.Fprint(buf, `]]></style>`)
 
+	timing := ""
+	if !uniform || len(svgs) > 100 {
+		timing = " steps(1,end)"
+	}
 	for i, svg := range svgs {
 		str := string(svg)
-		str = strings.Replace(str, "<g", fmt.Sprintf(`<g style="animation: d2Transition-%s-%d %dms infinite"`, diagramHash, i, len(svgs)*intervalMS), 1)
+		str = strings.Replace(str, "<g", fmt.Sprintf(`<g style="animation: d2Transition-%s-%d %dms%s infinite"`, diagramHash, i, totalMS, timing), 1)
 		buf.Write([]byte(str))
 	}
 

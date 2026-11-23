@@ -485,6 +485,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		RouterResolver: RouterResolver(ctx, ms),
 		FS:             fs,
 		LayoutReuse:    true,
+		AnimateTweens:  animateInterval > 0 || ext == GIF || ext == isometricGIF,
 	}
 
 	if os.Getenv("D2_LSP_MODE") == "1" {
@@ -701,29 +702,66 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		return preview, true, nil
 	default:
 		compileDur := time.Since(start)
-		if animateInterval <= 0 {
-			// Rename all the "root.layers.x" to the paths that the boards get output to
-			linkToOutput, err := resolveLinks("root", outputPath, rootDiagram)
+		if animateInterval > 0 {
+			timeline, err := d2animate.Timeline(diagram, int(animateInterval))
 			if err != nil {
 				return nil, false, err
 			}
-			err = relink("root", rootDiagram, linkToOutput)
+			if len(timeline) == 0 {
+				if !noChildren {
+					return nil, true, nil
+				}
+				// An explicitly selected, empty board is still a single image.
+				timeline = append(timeline, d2animate.Frame{Diagram: diagram, DurationMS: int(animateInterval)})
+			}
+			svgs := make([][]byte, 0, len(timeline))
+			durations := make([]int, 0, len(timeline))
+			for _, frame := range timeline {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
+				svg, _, err := _renderWithPNGEncoder(ctx, ms, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, frame.Diagram, ext, asciiMode, wantPreview, nil)
+				if err != nil {
+					return nil, false, err
+				}
+				svgs = append(svgs, svg)
+				durations = append(durations, frame.DurationMS)
+			}
+			out, err := d2animate.WrapTimed(diagram, svgs, renderOpts, durations)
 			if err != nil {
 				return nil, false, err
 			}
+			if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+				return nil, false, err
+			}
+			written, err := runStatusFinalizer(ctx, func() (bool, error) {
+				return writeWithStatus(ms, outputPath, out)
+			})
+			if err != nil {
+				return nil, written, err
+			}
+			ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(outputPath), time.Since(start))
+			return out, written, nil
+		}
+		// Rename all the "root.layers.x" links to their exported paths.
+		linkToOutput, err := resolveLinks("root", outputPath, rootDiagram)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := relink("root", rootDiagram, linkToOutput); err != nil {
+			return nil, false, err
 		}
 
 		var boards [][]byte
 		var outputWritten bool
-		var err error
-		if animateInterval <= 0 && !noChildren {
+		if !noChildren {
 			if err := validateBoardOutputPaths(outputPath, diagram); err != nil {
 				return nil, false, err
 			}
 		}
 		outputPaths := newBoardOutputPaths(outputPath)
 		var outputWorkspace *boardOutputWorkspace
-		if animateInterval <= 0 && outputPath != "-" && (len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0) {
+		if outputPath != "-" && (len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0) {
 			outputWorkspace, err = newBoardOutputWorkspace(outputPath)
 			if err != nil {
 				return nil, false, err
@@ -751,25 +789,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		var out []byte
 		if len(boards) > 0 {
 			out = boards[0]
-			if animateInterval > 0 {
-				out, err = d2animate.Wrap(diagram, boards, renderOpts, int(animateInterval))
-				if err != nil {
-					return nil, false, err
-				}
-				err = os.MkdirAll(filepath.Dir(outputPath), 0755)
-				if err != nil {
-					return nil, false, err
-				}
-				var finalWritten bool
-				finalWritten, err = runStatusFinalizer(ctx, func() (bool, error) {
-					return writeWithStatus(ms, outputPath, out)
-				})
-				outputWritten = outputWritten || finalWritten
-				if err != nil {
-					return nil, outputWritten, err
-				}
-				ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(outputPath), time.Since(start))
-			}
 		}
 		return out, true, nil
 	}

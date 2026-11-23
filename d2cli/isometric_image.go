@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2isometric/d2isometricimg"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
@@ -129,7 +130,7 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 		return nil, false, fmt.Errorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
 	}
 	hasSubboards := len(diagram.Layers)+len(diagram.Scenarios)+len(diagram.Steps) > 0
-	if ext == isometricGIF && (hasSubboards || len(boards) > 1 || intervalMS > 0) {
+	if ext == isometricGIF && (hasSubboards || len(boards) > 1 || intervalMS > 0 || len(diagram.TweenFrames) > 0) {
 		if intervalMS == 0 {
 			intervalMS = 1000
 		}
@@ -138,7 +139,17 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 			return nil, false, err
 		}
 		defer o.Assets.Resolver.CloseIdleConnections()
-		data, err := d2isometricimg.RenderTimeline(ctx, boards, &o, time.Duration(intervalMS)*time.Millisecond)
+		timeline, err := d2animate.Timeline(diagram, int(intervalMS))
+		if err != nil {
+			return nil, false, err
+		}
+		frames := make([]*d2target.Diagram, len(timeline))
+		timings := make([]d2isometricimg.BoardTiming, len(timeline))
+		for i, frame := range timeline {
+			frames[i] = frame.Diagram
+			timings[i] = d2isometricimg.BoardTiming{Duration: time.Duration(frame.DurationMS) * time.Millisecond, Elapsed: time.Duration(frame.ElapsedMS) * time.Millisecond}
+		}
+		data, err := d2isometricimg.RenderTimedTimeline(ctx, frames, &o, timings)
 		if err != nil {
 			return nil, false, err
 		}

@@ -38,6 +38,8 @@ type compiler struct {
 	globExpansionErr   error
 	halted             bool
 	variableExpansion  *variableExpansionBudget
+	tweenExpansion     *variableExpansionBudget
+	resolvingImport    bool
 	globExpansion      *globExpansionBudget
 	edgeExpansion      *edgeExpansionBudget
 	edgeExpansionWork  *edgeExpansionWorkBudget
@@ -79,6 +81,8 @@ type compiler struct {
 }
 
 type CompileOptions struct {
+	// AnimateTweens generates incoming samples for steps with tweened variables.
+	AnimateTweens bool
 	// Context stops parsing and compilation when canceled. A nil Context is
 	// treated as context.Background().
 	Context  context.Context
@@ -168,7 +172,18 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if err := c.compileLimitError(); err != nil {
 		return nil, nil, err
 	}
+	// Capture the unresolved step templates before variable substitution consumes their
+	// bindings. Ordinary compilation validates the same declarations without sampling.
+	tweens := c.prepareTweens(m, nil, opts.AnimateTweens)
 	c.compileSubstitutions(m, nil)
+	if c.err.Empty() {
+		for _, tween := range tweens {
+			if c.stopped() {
+				break
+			}
+			c.finishTween(tween)
+		}
+	}
 	if c.contextErr != nil {
 		return nil, nil, c.contextErr
 	}
@@ -271,6 +286,11 @@ func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
 
 func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[Node]struct{}, source d2ast.Node) {
 	if c.stopped() {
+		return
+	}
+	// Imported boards must retain their bindings until the final importer supplies
+	// the starting value and each sample can substitute its own variable state.
+	if c.resolvingImport && NodeBoardKind(m) != "" && m.hasTweenAnnotations() {
 		return
 	}
 	if !c.visitSubstitutionNode(m, source, seen) {
@@ -905,7 +925,12 @@ func (c *compiler) overlay(base *Map, f *Field) {
 	if !c.reserveVariableCopy(f.LastRef().AST(), base) {
 		return
 	}
+	inheritedStep := NodeBoardKind(base) == BoardStep
 	base = base.CopyBase(f)
+	if inheritedStep {
+		// Inherit each variable's endpoint, never its incoming motion.
+		base.takeTweenAnnotations()
+	}
 	// Certain fields should never carry forward.
 	// If you give your scenario a label, you don't want all steps in a scenario to be labeled the same.
 	base.DeleteField("label")

@@ -27,3 +27,30 @@ func TestWrapRejectsMalformedTargetBeforeTraversal(t *testing.T) {
 		t.Fatalf("Wrap() error = %v, want malformed-target error", err)
 	}
 }
+
+func TestTimelineSampleBoundaries(t *testing.T) {
+	root := d2target.NewDiagram()
+	step := d2target.NewDiagram()
+	root.Steps = []*d2target.Diagram{step}
+	step.TweenFrames = []*d2target.Diagram{d2target.NewDiagram(), d2target.NewDiagram(), d2target.NewDiagram()}
+	step.TweenDurationMS = 101
+	frames, err := Timeline(root, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 5 {
+		t.Fatalf("timeline length %d", len(frames))
+	}
+	wantMS := []int{400, 33, 34, 34, 400}
+	for i, frame := range frames {
+		if frame.DurationMS != wantMS[i] {
+			t.Fatalf("frame %d duration %d", i, frame.DurationMS)
+		}
+		if i >= 1 && i <= 3 && frame.Diagram != step.TweenFrames[i-1] {
+			t.Fatalf("frame %d is out of order", i)
+		}
+	}
+	if frames[4].Diagram != step {
+		t.Fatal("last frame should hold authored endpoint")
+	}
+}

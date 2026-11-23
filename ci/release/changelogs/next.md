@@ -1,5 +1,7 @@
 #### Features 🚀
 
+- Animate a number or percentage between steps with `vars: {charge: 0% {tween: 4s}}`. The new step interpolates from its inherited value. Labels, gradient stops, and other uses of the variable update together in animated SVG and GIF exports.
+
 - elk: choose the layout algorithm in `vars.d2-config.data`. Configure the force model and repulsion, target edge length for stress, tree traversal and sibling order, and radial spacing, branch angles and compaction in D2 or on the CLI. Layered layout also supports edge merging and routing, spacing within layers, pipeline wrapping, declaration order and feedback edges. Set `elk-layer-constraint` on a shape to place it in the first or last layer.
 
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.

@@ -50,6 +50,7 @@ func ValidateRenderTarget(root *Diagram) error {
 			{name: "layers", children: entry.diagram.Layers},
 			{name: "scenarios", children: entry.diagram.Scenarios},
 			{name: "steps", children: entry.diagram.Steps},
+			{name: "tweenFrames", children: entry.diagram.TweenFrames},
 		}
 		// Push in reverse so errors follow the renderer's layers, scenarios,
 		// steps traversal order without using recursive calls.
@@ -60,6 +61,9 @@ func ValidateRenderTarget(root *Diagram) error {
 				childPath := fmt.Sprintf("%s.%s[%d]", entry.path, group.name, childIndex)
 				if child == nil {
 					return fmt.Errorf("render target board %s is nil", childPath)
+				}
+				if group.name == "tweenFrames" && (len(child.Layers) != 0 || len(child.Scenarios) != 0 || len(child.Steps) != 0 || len(child.TweenFrames) != 0) {
+					return fmt.Errorf("render target tween frame %s must not contain other boards", childPath)
 				}
 				childDepth := entry.depth + 1
 				if childDepth > maxRenderTargetBoardDepth {
@@ -82,6 +86,12 @@ func ValidateRenderTarget(root *Diagram) error {
 }
 
 func validateRenderBoard(diagram *Diagram, path string) error {
+	if len(diagram.TweenFrames) > MaxTweenFrames {
+		return fmt.Errorf("render target %s has more than %d tween frames", path, MaxTweenFrames)
+	}
+	if diagram.TweenDurationMS > MaxTweenDurationMS || diagram.TweenDurationMS < len(diagram.TweenFrames) || (len(diagram.TweenFrames) == 0 && diagram.TweenDurationMS != 0) {
+		return fmt.Errorf("render target %s has inconsistent tween duration %dms for %d frames", path, diagram.TweenDurationMS, len(diagram.TweenFrames))
+	}
 	if err := validateRenderFontFamily(diagram.FontFamily, path+".fontFamily"); err != nil {
 		return err
 	}

@@ -31,6 +31,8 @@ type CompileOptions struct {
 	// context.Background().
 	Context  context.Context
 	UTF16Pos bool
+	// AnimateTweens includes intermediate variable tween samples on step graphs.
+	AnimateTweens bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
 	// automatic copies they induce. Zero uses d2ir.DefaultMaxVariableExpansion.
 	MaxVariableExpansion int64
@@ -67,6 +69,7 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 	ir, _, err := d2ir.Compile(ast, &d2ir.CompileOptions{
 		Context:              opts.Context,
 		UTF16Pos:             opts.UTF16Pos,
+		AnimateTweens:        opts.AnimateTweens,
 		MaxVariableExpansion: opts.MaxVariableExpansion,
 		MaxGlobExpansion:     opts.MaxGlobExpansion,
 		MaxEdgeExpansion:     opts.MaxEdgeExpansion,
@@ -357,6 +360,20 @@ func (c *compiler) compileBoardsField(g *d2graph.Graph, ir *d2ir.Map, fieldName 
 			g.Scenarios = append(g.Scenarios, g2)
 		case "steps":
 			g.Steps = append(g.Steps, g2)
+			g2.TweenDurationMS = m.TweenDurationMS
+			for _, sample := range m.TweenFrames {
+				if c.stopped() {
+					return
+				}
+				frame := d2graph.NewGraph()
+				frame.Parent, frame.Name = g2, g2.Name
+				frame.AST, frame.BaseAST = g2.AST, g2.BaseAST
+				c.compileBoard(frame, sample)
+				if f.Primary() != nil {
+					c.compileLabel(&frame.Root.Attributes, f)
+				}
+				g2.TweenFrames = append(g2.TweenFrames, frame)
+			}
 		}
 	}
 }
@@ -1787,23 +1804,13 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 			continue
 		}
 	}
-	for _, b := range g.Layers {
-		if c.stopped() {
-			return
+	for _, group := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
+		for _, b := range group {
+			if c.stopped() {
+				return
+			}
+			c.validateBoardLinks(b)
 		}
-		c.validateBoardLinks(b)
-	}
-	for _, b := range g.Scenarios {
-		if c.stopped() {
-			return
-		}
-		c.validateBoardLinks(b)
-	}
-	for _, b := range g.Steps {
-		if c.stopped() {
-			return
-		}
-		c.validateBoardLinks(b)
 	}
 }
 

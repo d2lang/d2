@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -524,8 +525,8 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	if len(palettedFrames) != summary.totalFrames {
 		return nil, nil, fmt.Errorf("GIF encoded frame count %d differs from render schedule %d", len(palettedFrames), summary.totalFrames)
 	}
-	encoded, err = xgif.AnimateCenteredOpaquePalettedImagesWithLimit(
-		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, intervalMs, gifMaxEncodedBytes,
+	encoded, err = xgif.AnimateTimedCenteredOpaquePalettedImages(
+		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, summary.delays, gifMaxEncodedBytes,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -548,6 +549,7 @@ func newGIFRenderSession() (*d2raster.RenderSession, error) {
 type gifRenderSummary struct {
 	previewSVG          []byte
 	totalFrames         int
+	delays              []int
 	maxWidth, maxHeight int
 }
 
@@ -588,23 +590,39 @@ func renderGIFWithSession(
 	if len(boards) == 0 {
 		return summary, fmt.Errorf("GIF animation requires at least one renderable board")
 	}
-	assetOptions, err := gifSceneAssetOptions(ctx, inputPath, cacheImages, len(boards))
+	if err := d2target.ValidateRenderTarget(diagram); err != nil {
+		return summary, err
+	}
+	totalFrames := len(boards) * framesPerBoard
+	ordinaryDelays, err := xgif.BoardFrameDelays(intervalMs)
+	if err != nil {
+		return summary, err
+	}
+	var timeline []d2animate.Frame
+	for _, board := range boards {
+		if len(board.TweenFrames) > gifMaxFrames-totalFrames {
+			return summary, fmt.Errorf("GIF tween exceeds the %d-frame limit", gifMaxFrames)
+		}
+		totalFrames += len(board.TweenFrames)
+		timeline = d2animate.AppendBoardFrames(timeline, board, intervalMs)
+	}
+	assetOptions, err := gifSceneAssetOptions(ctx, inputPath, cacheImages, len(timeline))
 	if err != nil {
 		return summary, err
 	}
 	defer assetOptions.Resolver.CloseIdleConnections()
-	fontOptions, err := newFontFallbackOptions(len(boards))
+	fontOptions, err := newFontFallbackOptions(len(timeline))
 	if err != nil {
 		return summary, err
 	}
-	linkBudget, err := gifLinkBudget(len(boards))
+	linkBudget, err := gifLinkBudget(len(timeline))
 	if err != nil {
 		return summary, err
 	}
-	totalFrames := len(boards) * framesPerBoard
 	summary.totalFrames = totalFrames
 	renderedFrameCount := 0
-	for boardIndex, board := range boards {
+	for boardIndex, segment := range timeline {
+		board := segment.Diagram
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
@@ -632,13 +650,25 @@ func renderGIFWithSession(
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
 		if plan != nil {
-			if err := plan(len(boards), totalFrames, plannedBounds); err != nil {
+			if err := plan(len(timeline), totalFrames, plannedBounds); err != nil {
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}
 		}
+		count := framesPerBoard
+		if segment.TweenSample {
+			count = 1
+			// Round the cumulative boundaries, so rounding each sample cannot
+			// add up to a noticeable pause over a long transition.
+			startCS := (segment.ElapsedMS + 9) / 10
+			endCS := (segment.ElapsedMS + segment.DurationMS + 9) / 10
+			summary.delays = append(summary.delays, endCS-startCS)
+		} else {
+			summary.delays = append(summary.delays, ordinaryDelays...)
+		}
 		err = renderGIFBoardFrames(
-			ctx, 0, framesPerBoard, totalFrames,
+			ctx, 0, count, totalFrames,
 			func(renderCtx context.Context, _ int, _ time.Duration, frameOptions d2raster.FrameOptions, emit func(image.Image) error) error {
+				frameOptions.Time += time.Duration(segment.ElapsedMS) * time.Millisecond
 				if workspace == nil {
 					frame, renderErr := session.Render(renderCtx, document, frameOptions)
 					if renderErr != nil {

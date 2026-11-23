@@ -1589,6 +1589,16 @@ func AnimationFrameTime(frameIndex int) (time.Duration, error) {
 	return time.Duration(wholeSeconds)*time.Second + time.Duration(remainder)*time.Second/fps, nil
 }
 
+// BoardFrameDelays returns the centisecond delays for one board sampled at the
+// GIF capture rate. Callers can interleave the result with tween sample delays.
+func BoardFrameDelays(intervalMS int) ([]int, error) {
+	count, err := AnimationFrameCount(intervalMS)
+	if err != nil {
+		return nil, err
+	}
+	return gifFrameDelays(count, intervalMS)
+}
+
 // gifFrameDelays distributes GIF's centisecond delays across each board's
 // sampled frames. The quantized duration rounds upward to avoid shortening the
 // requested interval. A non-sampled frame count is treated as one board.

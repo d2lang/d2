@@ -24,11 +24,32 @@ const maxTimelineFrames = 1000
 // during their board; static boards need only one held frame. A single palette
 // covers all boards. Only one board's raster is retained at a time.
 func RenderTimeline(ctx context.Context, boards []*d2target.Diagram, opts *Options, interval time.Duration) ([]byte, error) {
+	if len(boards) > MaxTimelineBoards {
+		return nil, fmt.Errorf("isometric timeline exceeds %d boards", MaxTimelineBoards)
+	}
+	timings := make([]BoardTiming, len(boards))
+	for i := range timings {
+		timings[i].Duration = interval
+	}
+	return RenderTimedTimeline(ctx, boards, opts, timings)
+}
+
+// BoardTiming places a rendered board on its step's clock. Successive tween
+// samples share that clock so their centisecond delays and intrinsic animations
+// stay in phase. An ordinary board starts at zero.
+type BoardTiming struct {
+	Duration time.Duration
+	Elapsed  time.Duration
+}
+
+// RenderTimedTimeline renders one duration per board, supporting variable
+// holds between samples of a tween.
+func RenderTimedTimeline(ctx context.Context, boards []*d2target.Diagram, opts *Options, timings []BoardTiming) ([]byte, error) {
 	o, err := normalize(opts)
 	if err != nil {
 		return nil, err
 	}
-	if o.Format != GIF || len(boards) == 0 || len(boards) > MaxTimelineBoards || interval <= 0 || interval > 10*time.Minute {
+	if o.Format != GIF || len(boards) == 0 || len(boards) > MaxTimelineBoards || len(timings) != len(boards) {
 		return nil, fmt.Errorf("isometric timeline requires GIF, 1..%d boards, and an interval in (0,10m]", MaxTimelineBoards)
 	}
 	if ctx == nil {
@@ -41,6 +62,10 @@ func RenderTimeline(ctx context.Context, boards []*d2target.Diagram, opts *Optio
 	for i, board := range boards {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		interval := timings[i].Duration
+		if interval <= 0 || interval > 10*time.Minute || timings[i].Elapsed < 0 || timings[i].Elapsed > 10*time.Minute {
+			return nil, fmt.Errorf("isometric timeline board %d duration must be in (0,10m]", i)
 		}
 		if board == nil || board.IsFolderOnly {
 			return nil, fmt.Errorf("isometric timeline board %d has no drawable diagram", i)
@@ -72,7 +97,7 @@ func RenderTimeline(ctx context.Context, boards []*d2target.Diagram, opts *Optio
 			return nil, fmt.Errorf("isometric timeline board %d: %w", i, err)
 		}
 		for phase := 0; phase < 4; phase++ {
-			frame, err := s.frameImage(float64(phase)*interval.Seconds()/4, true)
+			frame, err := s.frameImage(timings[i].Elapsed.Seconds()+float64(phase)*timings[i].Duration.Seconds()/4, true)
 			if err != nil {
 				s.close()
 				return nil, err
@@ -92,14 +117,17 @@ func RenderTimeline(ctx context.Context, boards []*d2target.Diagram, opts *Optio
 	}
 	animation := &gif.GIF{LoopCount: 0, Config: image.Config{ColorModel: palette, Width: o.Width, Height: o.Height}}
 	var previous *image.Paletted
-	delay := max(1, int(math.Round(float64(interval)/float64(10*time.Millisecond))))
 	for boardIndex, board := range boards {
+		interval := timings[boardIndex].Duration
+		elapsed := timings[boardIndex].Elapsed
+		// Quantize boundaries on the tween clock to avoid cumulative drift.
+		delay := max(1, int((elapsed+interval).Round(10*time.Millisecond)/(10*time.Millisecond)-elapsed.Round(10*time.Millisecond)/(10*time.Millisecond)))
 		s, err := openCapture(ctx, board, o)
 		if err != nil {
 			return nil, err
 		}
 		for i := 0; i < counts[boardIndex]; i++ {
-			frame, err := s.frameImage(float64(i)*interval.Seconds()/float64(counts[boardIndex]), true)
+			frame, err := s.frameImage(elapsed.Seconds()+float64(i)*interval.Seconds()/float64(counts[boardIndex]), true)
 			if err != nil {
 				s.close()
 				return nil, err
