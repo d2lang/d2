@@ -175,8 +175,8 @@ All [RenderOptions](#renderoptions) properties in addition to:
 - `darkThemeID`: Theme ID to use when client is in dark mode
 - `center`: Center the SVG in the containing viewbox [default: false]
 - `pad`: Pixels padded around the rendered diagram [default: 100]
-- `scale`: Scale the output. E.g., 0.5 to halve the default size. The default will render SVG's that will fit to screen. Setting to 1 turns off SVG fitting to screen.
-- `forceAppendix`: Adds an appendix for tooltips and links [default: false]
+- `scale`: Overrides the diagram’s `vars.d2-config.scale`. A positive multiplier sets the SVG dimensions. For example, `0.5` halves its natural size. Use `-1` to fit the screen (default).
+- `forceAppendix`: Adds a numbered SVG appendix for tooltips and links (default `false`). An explicit option overrides `vars.d2-config.force-appendix`, including `false`.
 - `target`: Target board/s to render. If target ends with '*', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. `target: 'layers.x.*'` to render layer 'x' with all of its children. Pass '*' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board SVG requires a positive animation interval.
 - `animateInterval`: Milliseconds to display each board in an animated SVG. Defaults to the diagram’s `vars.d2-config.animate-interval` setting. An explicit option overrides the source setting, including `0` to disable animation.
 - `salt`: Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output.

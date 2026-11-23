@@ -3257,12 +3257,9 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		fmt.Fprint(upperBuf, "</defs>")
 	}
 
-	var dimensions string
-	if scale != nil {
-		dimensions = fmt.Sprintf(` width="%d" height="%d"`,
-			int(math.Ceil((*scale)*float64(w))),
-			int(math.Ceil((*scale)*float64(h))),
-		)
+	dimensions, err := svg.ScaledDimensions(w, h, scale)
+	if err != nil {
+		return nil, err
 	}
 
 	alignment := "xMinYMin"

@@ -1,10 +1,25 @@
 package svg
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
 )
+
+// ScaledDimensions returns the outer SVG's explicit size. An absent scale
+// leaves sizing to the containing document.
+func ScaledDimensions(width, height int, scale *float64) (string, error) {
+	if scale == nil {
+		return "", nil
+	}
+	w, h := math.Ceil(*scale*float64(width)), math.Ceil(*scale*float64(height))
+	limit := -float64(math.MinInt)
+	if !(*scale > 0 && w >= 0 && w < limit && h >= 0 && h < limit) {
+		return "", fmt.Errorf("SVG scale %g produces invalid dimensions", *scale)
+	}
+	return fmt.Sprintf(` width="%d" height="%d"`, int(w), int(h)), nil
+}
 
 // FormatFloat serializes an SVG coordinate with the same six decimal places
 // as %f, but omits redundant trailing zeros. Keeping the original rounding is

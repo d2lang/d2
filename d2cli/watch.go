@@ -54,7 +54,7 @@ type watcherOpts struct {
 	outputPath      string
 	boardPath       string
 	bundle          bool
-	forceAppendix   bool
+	forceAppendix   *bool
 	fontFamily      *d2fonts.FontFamily
 	monoFontFamily  *d2fonts.FontFamily
 	outputFormat    exportExtension
@@ -453,7 +453,8 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 		if w.boardPath != "" {
 			boardPath = strings.Split(w.boardPath, string(os.PathSeparator))
 		}
-		svg, _, err := compile(ctx, w.ms, &fs, w.layout, w.renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.inputPath, w.outputPath, boardPath, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, true)
+		renderOpts := w.renderOpts
+		svg, _, err := compile(ctx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.inputPath, w.outputPath, boardPath, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, true)
 		w.boardpathMu.Unlock()
 		errs := ""
 		if err != nil {
@@ -470,11 +471,11 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 			return err
 		}
 
-		w.broadcast(&compileResult{
-			SVG:   string(svg),
-			Scale: w.renderOpts.Scale,
-			Err:   errs,
-		})
+		result := &compileResult{SVG: string(svg), Err: errs}
+		if len(svg) > 0 {
+			result.Scale = renderOpts.Scale
+		}
+		w.broadcast(result)
 
 		if firstCompile {
 			firstCompile = false

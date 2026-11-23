@@ -395,7 +395,7 @@ func (input *CompileRequest) compile() (*CompileResponse, error) {
 			Pad:                renderOpts.Pad,
 			Center:             renderOpts.Center,
 			Scale:              renderOpts.Scale,
-			ForceAppendix:      input.Opts.ForceAppendix,
+			ForceAppendix:      diagram.Config.ResolveForceAppendix(input.Opts.ForceAppendix),
 			Target:             input.Opts.Target,
 			AnimateInterval:    diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval),
 			Salt:               input.Opts.Salt,
@@ -436,7 +436,15 @@ func render(input RenderRequest) ([]byte, error) {
 		}
 		animateInterval = int(*interval)
 	}
-	forceAppendix := input.Opts != nil && input.Opts.ForceAppendix != nil && *input.Opts.ForceAppendix
+	appendixOption := input.Diagram.Config.ResolveForceAppendix(input.Opts.ForceAppendix)
+	forceAppendix := appendixOption != nil && *appendixOption
+	scale := input.Opts.Scale
+	if scale == nil && input.Diagram.Config != nil {
+		scale = input.Diagram.Config.Scale
+	}
+	if scale != nil && *scale == -1 {
+		scale = nil
+	}
 
 	var boardPath []string
 	noChildren := true
@@ -473,7 +481,7 @@ func render(input RenderRequest) ([]byte, error) {
 		diagram.Steps = nil
 	}
 
-	renderOpts := &d2svg.RenderOpts{}
+	renderOpts := &d2svg.RenderOpts{Scale: scale}
 
 	if input.Opts != nil && input.Opts.Salt != nil {
 		renderOpts.Salt = input.Opts.Salt
@@ -516,9 +524,6 @@ func render(input RenderRequest) ([]byte, error) {
 	if input.Opts != nil && input.Opts.DarkThemeOverrides != nil {
 		renderOpts.DarkThemeOverrides = input.Opts.DarkThemeOverrides
 	}
-	if input.Opts != nil && input.Opts.Scale != nil {
-		renderOpts.Scale = input.Opts.Scale
-	}
 	if input.Opts != nil && input.Opts.NoXMLTag != nil {
 		renderOpts.NoXMLTag = input.Opts.NoXMLTag
 	}
@@ -530,7 +535,7 @@ func render(input RenderRequest) ([]byte, error) {
 		if animateInterval > 0 {
 			return nil, &WASMError{Message: "isometric rendering does not yet support multi-board SVG animation", Code: 400}
 		}
-		if input.Opts.ForceAppendix != nil && *input.Opts.ForceAppendix {
+		if forceAppendix {
 			return nil, &WASMError{Message: "isometric rendering does not yet support an SVG appendix", Code: 400}
 		}
 	}
@@ -545,10 +550,7 @@ func render(input RenderRequest) ([]byte, error) {
 
 		ctx := log.WithDefault(context.Background())
 		artist := d2ascii.NewASCIIartist()
-		asciiOpts := &d2ascii.RenderOpts{}
-		if input.Opts.Scale != nil {
-			asciiOpts.Scale = input.Opts.Scale
-		}
+		asciiOpts := &d2ascii.RenderOpts{Scale: scale}
 		// Set charset based on ASCII mode (default to "extended"/Unicode)
 		var charsetType charset.Type
 		asciiMode := "extended" // Default

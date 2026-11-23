@@ -1870,6 +1870,18 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
 		config.Sketch = &val
 	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("scale"))
+	if f != nil {
+		val, _ := strconv.ParseFloat(f.Primary().Value.ScalarString(), 64)
+		if val != -1 {
+			config.Scale = &val
+		}
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("force-appendix"))
+	if f != nil {
+		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
+		config.ForceAppendix = &val
+	}
 	f = configMap.GetField(d2ast.FlatUnquotedString("isometric"))
 	if f != nil {
 		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())

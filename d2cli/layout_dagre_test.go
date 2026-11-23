@@ -4,11 +4,41 @@ package d2cli
 
 import (
 	"context"
+	"encoding/xml"
 	"testing"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2dagrelayout"
 )
+
+func TestDagreDiagramSpacing(t *testing.T) {
+	const graph = "a -> b\na -> c"
+	viewBox := func(source string, flags ...string) string {
+		t.Helper()
+		svg, err := imageCLI(t, t.TempDir(), source, append(flags, "--stdout-format=svg", "-")...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var root struct {
+			ViewBox string `xml:"viewBox,attr"`
+		}
+		if err := xml.Unmarshal(svg, &root); err != nil {
+			t.Fatal(err)
+		}
+		return root.ViewBox
+	}
+	defaults := viewBox(graph)
+	for _, key := range []string{"dagre-nodesep", "dagre-edgesep"} {
+		want := viewBox(graph, "--"+key+"=180")
+		if want == defaults {
+			t.Fatalf("%s did not change the layout's viewBox", key)
+		}
+		source := "vars: {d2-config: {data: {" + key + ": 180}}}\n" + graph
+		if got := viewBox(source, "--"+key+"=40"); got != want {
+			t.Errorf("%s: source and conflicting flag produced %q, want %q", key, got, want)
+		}
+	}
+}
 
 func TestDagreLayoutOptions(t *testing.T) {
 	wantOpts := d2dagrelayout.ConfigurableOpts{NodeSep: 123, EdgeSep: 67}

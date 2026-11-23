@@ -4,7 +4,10 @@ package d2wasm
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -90,6 +93,67 @@ func TestSourceAnimateInterval(t *testing.T) {
 				}
 			} else if !strings.Contains(svg, fmt.Sprintf(" %dms infinite", 2*tc.want)) || !strings.Contains(svg, ">second</text>") {
 				t.Fatalf("expected two animated boards displayed for %dms each", tc.want)
+			}
+		})
+	}
+}
+
+func TestSourceScaleAndAppendix(t *testing.T) {
+	const source = "vars: {d2-config: {scale: 0.5; force-appendix: true}}\nservice.tooltip: Receives requests"
+	for _, tc := range []struct {
+		name     string
+		opts     *CompileOptions
+		scale    float64
+		appendix bool
+	}{
+		{"source", nil, 0.5, true},
+		{"explicit options", &CompileOptions{RenderOptions: RenderOptions{Scale: go2.Pointer(2.0), ForceAppendix: go2.Pointer(false)}}, 2, false},
+		{"responsive SVG", &CompileOptions{RenderOptions: RenderOptions{Scale: go2.Pointer(-1.0)}}, -1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := CompileRequest{FS: map[string]string{"index": source}, Opts: tc.opts}
+			compiled, err := Compile(wasmJSONArgument(t, request))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := compiled.(CompileResponse)
+			opts := &result.RenderOptions
+			if opts.Scale == nil || *opts.Scale != tc.scale || opts.ForceAppendix == nil || *opts.ForceAppendix != tc.appendix {
+				t.Fatalf("unexpected compiled render options: %+v", opts)
+			}
+			if tc.opts == nil {
+				opts = nil // Use just the source config in the serialized diagram.
+			}
+			rendered, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: opts}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			direct, err := RenderSVG(wasmJSONArgument(t, request))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, svg := range []string{string(rendered.([]byte)), direct.(string)} {
+				if strings.Contains(svg, `class="appendix"`) != tc.appendix {
+					t.Fatalf("expected appendix = %v", tc.appendix)
+				}
+				var root struct {
+					Width   string `xml:"width,attr"`
+					ViewBox string `xml:"viewBox,attr"`
+				}
+				if err := xml.Unmarshal([]byte(svg), &root); err != nil {
+					t.Fatal(err)
+				}
+				var expectedWidth string
+				if tc.scale > 0 {
+					var width, height int
+					if _, err := fmt.Sscanf(root.ViewBox, "0 0 %d %d", &width, &height); err != nil {
+						t.Fatal(err)
+					}
+					expectedWidth = strconv.Itoa(int(math.Ceil(float64(width) * tc.scale)))
+				}
+				if root.Width != expectedWidth {
+					t.Fatalf("SVG width = %q, want %q for viewBox %q at scale %g", root.Width, expectedWidth, root.ViewBox, tc.scale)
+				}
 			}
 		})
 	}

@@ -312,6 +312,9 @@ func applyConfigs(config *d2target.Config, compileOpts *CompileOptions, renderOp
 	if renderOpts.Pad == nil {
 		renderOpts.Pad = config.Pad
 	}
+	if renderOpts.Scale == nil {
+		renderOpts.Scale = config.Scale
+	}
 	if renderOpts.Center == nil {
 		renderOpts.Center = config.Center
 	}

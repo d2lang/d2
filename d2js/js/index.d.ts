@@ -62,9 +62,9 @@ export interface RenderOptions {
   center?: boolean;
   /** Pixels padded around the rendered diagram [default: 100] */
   pad?: number;
-  /** Scale the output. E.g., 0.5 to halve the default size. The default will render SVG's that will fit to screen. Setting to 1 turns off SVG fitting to screen. */
+  /** Overrides vars.d2-config.scale. A positive multiplier sets the SVG dimensions. Use -1 to fit the screen (default). */
   scale?: number;
-  /** Adds an appendix for tooltips and links [default: false] */
+  /** Adds a numbered SVG appendix for tooltips and links. Overrides vars.d2-config.force-appendix, including false. */
   forceAppendix?: boolean;
   /** Board to render (default: root). Use '*' for all boards or 'layers.x.*' for a board and its children. Multi-board SVG requires a positive animation interval. */
   target?: string;

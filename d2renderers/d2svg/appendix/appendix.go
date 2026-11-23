@@ -4,6 +4,7 @@ package appendix
 import (
 	"fmt"
 	"image"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -111,12 +112,16 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		if err != nil {
 			return nil
 		}
-		svg = appendToStandaloneSVG(svg, appendix, w, h)
+		scale := 1.0
+		if renderOpts != nil && renderOpts.Scale != nil {
+			scale = *renderOpts.Scale
+		}
+		svg = appendToStandaloneSVG(svg, appendix, w, h, scale)
 	}
 	return []byte(numberIcons(diagram, diagramHash, svg))
 }
 
-func appendToStandaloneSVG(svg, appendix string, w, h int) string {
+func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) string {
 	// match 1st two viewboxes, 1st is outer fit-to-screen viewbox="0 0 innerWidth innerHeight"
 	viewboxMatches := viewboxRegex.FindAllStringSubmatch(svg, 2)
 	viewboxMatch := viewboxMatches[1]
@@ -137,25 +142,21 @@ func appendToStandaloneSVG(svg, appendix string, w, h int) string {
 	newOuterViewbox := fmt.Sprintf(`viewBox="0 0 %d %d"`, viewboxWidth, viewboxHeight)
 	newViewbox := fmt.Sprintf(`viewBox="%s %s %s %s"`, viewboxSlice[0], viewboxSlice[1], strconv.Itoa(viewboxWidth), strconv.Itoa(viewboxHeight))
 
-	dimensionsToUpdate := 2
-	outerSVG := svgRegex.FindString(svg)
-	// if outer svg has dimensions set we also need to update it
-	if widthRegex.FindString(outerSVG) != "" {
-		dimensionsToUpdate++
+	// The outer SVG carries display dimensions. The inner SVG and its
+	// background use unscaled diagram coordinates.
+	outerEnd := svgRegex.FindStringIndex(svg)[1]
+	outer, inner := svg[:outerEnd], svg[outerEnd:]
+	outer = strings.Replace(outer, viewboxMatches[0][0], newOuterViewbox, 1)
+	outer = widthRegex.ReplaceAllString(outer, fmt.Sprintf(`width="%.0f"`, math.Ceil(scale*float64(viewboxWidth))))
+	outer = heightRegex.ReplaceAllString(outer, fmt.Sprintf(`height="%.0f"`, math.Ceil(scale*float64(viewboxHeight))))
+	inner = strings.Replace(inner, viewboxMatch[0], newViewbox, 1)
+	for _, match := range widthRegex.FindAllString(inner, 2) {
+		inner = strings.Replace(inner, match, fmt.Sprintf(`width="%d"`, viewboxWidth), 1)
 	}
-
-	// update 1st 3 matches of width and height 1st is outer svg (if dimensions are set), 2nd inner svg, 3rd is background color rect
-	widthMatches := widthRegex.FindAllStringSubmatch(svg, dimensionsToUpdate)
-	heightMatches := heightRegex.FindAllStringSubmatch(svg, dimensionsToUpdate)
-	newWidth := fmt.Sprintf(`width="%s"`, strconv.Itoa(viewboxWidth))
-	newHeight := fmt.Sprintf(`height="%s"`, strconv.Itoa(viewboxHeight))
-
-	svg = strings.Replace(svg, viewboxMatches[0][0], newOuterViewbox, 1)
-	svg = strings.Replace(svg, viewboxMatch[0], newViewbox, 1)
-	for i := 0; i < dimensionsToUpdate; i++ {
-		svg = strings.Replace(svg, widthMatches[i][0], newWidth, 1)
-		svg = strings.Replace(svg, heightMatches[i][0], newHeight, 1)
+	for _, match := range heightRegex.FindAllString(inner, 2) {
+		inner = strings.Replace(inner, match, fmt.Sprintf(`height="%d"`, viewboxHeight), 1)
 	}
+	svg = outer + inner
 
 	if !strings.Contains(svg, `font-family: "font-regular"`) {
 		appendix += fmt.Sprintf(`<style type="text/css"><![CDATA[

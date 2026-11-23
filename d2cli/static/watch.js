@@ -9,7 +9,7 @@ function init(reconnectDelay) {
 
   const devMode = document.body.dataset.d2DevMode === "true";
   const ws = new WebSocket(`ws://${window.location.host}/watch`);
-  let isInit = true;
+  let previousScale;
   let ratio;
   ws.onopen = () => {
     reconnectDelay = 1000;
@@ -32,10 +32,11 @@ function init(reconnectDelay) {
       svgEl.parentElement.replaceWith(svgEl);
       let width = parseInt(svgEl.getAttribute("width"), 10);
       let height = parseInt(svgEl.getAttribute("height"), 10);
-      if (isInit) {
-        if (msg.scale) {
-          ratio = msg.scale;
-        } else {
+      const scale = msg.scale ?? null;
+      if (scale !== previousScale) {
+        previousScale = scale;
+        ratio = scale;
+        if (!ratio) {
           if (width > height) {
             if (width > window.innerWidth) {
               ratio = window.innerWidth / width;
@@ -44,8 +45,6 @@ function init(reconnectDelay) {
             ratio = window.innerHeight / height;
           }
         }
-        // Scale svg fit to zoom
-        isInit = false;
       }
       if (ratio) {
         // body padding is 8px

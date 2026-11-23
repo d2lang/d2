@@ -11,6 +11,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/internal/svgframe"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/svg"
 	"github.com/d2lang/d2/lib/version"
 )
 
@@ -73,12 +74,9 @@ func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderO
 		return nil, fmt.Errorf("animation viewport dimensions exceed the supported range")
 	}
 
-	var dimensions string
-	if renderOpts.Scale != nil {
-		dimensions = fmt.Sprintf(` width="%d" height="%d"`,
-			int(math.Ceil((*renderOpts.Scale)*float64(width))),
-			int(math.Ceil((*renderOpts.Scale)*float64(height))),
-		)
+	dimensions, err := svg.ScaledDimensions(width, height, renderOpts.Scale)
+	if err != nil {
+		return nil, err
 	}
 
 	fitToScreenWrapperOpening := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" d2Version="%s" preserveAspectRatio="xMinYMin meet" viewBox="0 0 %d %d"%s>`,

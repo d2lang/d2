@@ -5,6 +5,7 @@ import (
 	"errors"
 	"html"
 	"io/fs"
+	"math"
 	"net/url"
 	"path"
 	"strconv"
@@ -403,9 +404,14 @@ func (c *compiler) validateConfigs(configs *Field) {
 			if _, ok := ParseAnimateInterval(val); !ok || f.Composite != nil {
 				c.errorf(f.LastRef().AST(), `expected a non-negative whole number of milliseconds or a duration in whole milliseconds for "animate-interval", got %q`, val)
 			}
-		case "sketch", "isometric", "center":
+		case "scale":
+			scale, err := strconv.ParseFloat(val, 64)
+			if err != nil || math.IsNaN(scale) || math.IsInf(scale, 0) || (scale <= 0 && scale != -1) || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected a finite positive scale or -1 for automatic sizing, got %q`, val)
+			}
+		case "sketch", "isometric", "center", "force-appendix":
 			_, err := strconv.ParseBool(val)
-			if err != nil {
+			if err != nil || (f.Name.ScalarString() == "force-appendix" && f.Composite != nil) {
 				c.errorf(f.LastRef().AST(), `expected a boolean for "%s", got "%s"`, f.Name.ScalarString(), val)
 				continue
 			}
