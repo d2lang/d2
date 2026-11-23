@@ -347,3 +347,86 @@ func TestSameRankPlaybackTransitions(t *testing.T) {
 		})
 	}
 }
+
+func TestTreeForkUsesAvailableRankGap(t *testing.T) {
+	for _, direction := range []string{"down", "up", "right", "left"} {
+		for _, ranked := range []bool{false, true} {
+			mode := "automatic"
+			if ranked {
+				mode = "ranked"
+			}
+			t.Run(direction+"/"+mode, func(t *testing.T) {
+				g := d2graph.NewGraph()
+				g.Root.Direction.Value = direction
+				g.Root.Shape.Value = d2target.ShapeHierarchy
+				newNode := func(name string, width float64) *d2graph.Object {
+					n := appendD2Object(g.Root, name)
+					n.Width, n.Height = width, 66
+					return n
+				}
+				push, lint, build := newNode("push", 79), newNode("lint", 72), newNode("build", 81)
+				test := newNode("test", 76)
+				lintReport, testReport := newNode("lintReport", 121), newNode("testReport", 124)
+				if ranked {
+					lintReport.Rank = &d2graph.Scalar{Value: "reports"}
+					testReport.Rank = &d2graph.Scalar{Value: "reports"}
+				}
+				fork := []*d2graph.Edge{{Src: push, Dst: lint, DstArrow: true}, {Src: push, Dst: build, DstArrow: true}}
+				g.Edges = []*d2graph.Edge{
+					fork[0], {Src: lint, Dst: lintReport, DstArrow: true},
+					fork[1], {Src: build, Dst: test, DstArrow: true}, {Src: test, Dst: testReport, DstArrow: true},
+				}
+				if err := DefaultLayout(context.Background(), g); err != nil {
+					t.Fatal(err)
+				}
+				axis := func(p *geo.Point) float64 {
+					switch direction {
+					case "left":
+						return -p.X
+					case "right":
+						return p.X
+					case "up":
+						return -p.Y
+					default:
+						return p.Y
+					}
+				}
+				nearest := math.Inf(1)
+				for _, edge := range fork {
+					r := edge.Route
+					if len(r) < 2 {
+						t.Fatalf("missing fork route to %s", edge.Dst.ID)
+					}
+					nearest = min(nearest, axis(r[len(r)-1])-axis(r[0]))
+				}
+				if nearest <= 0 {
+					t.Fatalf("children must be ahead of the parent, got %g px gap", nearest)
+				}
+				bends := 0
+				for _, edge := range fork {
+					r := edge.Route
+					if !r[0].Equals(fork[0].Route[0]) {
+						t.Fatal("siblings must leave the same centered tree port")
+					}
+					if len(r) == 2 {
+						continue
+					}
+					bends++
+					if len(r) != 4 || axis(r[1]) != axis(r[2]) {
+						t.Fatalf("unexpected branch route to %s: %v", edge.Dst.ID, r)
+					}
+					if stem := axis(r[1]) - axis(r[0]); math.Abs(stem-nearest/2) > 0.5 {
+						t.Errorf("branch to %s turns after %g px in the %g px gap", edge.Dst.ID, stem, nearest)
+					}
+				}
+				wantBent := 1 // The unranked tree has a straight continuation to one child.
+				if ranked {
+					wantBent = 2
+				}
+				if bends != wantBent {
+					t.Errorf("got %d bent branches, want %d", bends, wantBent)
+				}
+			})
+		}
+	}
+}

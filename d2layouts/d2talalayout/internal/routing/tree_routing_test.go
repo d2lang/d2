@@ -51,7 +51,7 @@ func TestTreePathAlignment(t *testing.T) {
 	g.AddIsolatedTreeEdges(isTreeEdge)
 
 	tree := g.NodeToTree[n4]
-	route, err := routeSentinelEdge(tree, ovg.Ports, ovg.Centers, nil)
+	route, err := ovg.routeSentinelEdge(tree, nil)
 	if err != nil {
 		t.Fatalf("Error routing tree edge %v", err)
 	}

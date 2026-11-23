@@ -337,7 +337,7 @@ func TestAddTreeNodesSharesOccupiedAlignedPort(t *testing.T) {
 				t.Fatal("child port list did not receive canonical aligned port")
 			}
 
-			treePath := treeEdgePath(tree, ovg.Ports, nil)
+			treePath := ovg.treeEdgePath(tree, nil)
 			childPort := treePath.TargetPortNode
 			if tc.childIsSource {
 				childPort = treePath.SourcePortNode
@@ -345,7 +345,7 @@ func TestAddTreeNodesSharesOccupiedAlignedPort(t *testing.T) {
 			if childPort != canonical {
 				t.Fatalf("tree path used disconnected aligned port %p, want canonical %p", childPort, canonical)
 			}
-			route, err := routeSentinelEdge(tree, ovg.Ports, ovg.Centers, nil)
+			route, err := ovg.routeSentinelEdge(tree, nil)
 			if err != nil {
 				t.Fatalf("routeSentinelEdge failed: %v (child port=%v edges=%d source midpoint=%v target midpoint=%v)", err, canonical.Point, len(canonical.Edges), treePath.SourceMidpoint, treePath.TargetMidpoint)
 			}

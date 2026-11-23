@@ -20,12 +20,12 @@ func isSentinelEdgeSource(tree *layoutgraph.Tree) bool {
 }
 
 // get the S-shaped path information for the tree node's sentinelEdge
-func treeEdgePath(t *layoutgraph.Tree, portNodes map[*layoutgraph.Node][]*OVGNode, portArrowheads map[*OVGNode]map[layoutgraph.Arrowhead]struct{}) TreeEdgePath {
-	path, _ := treeEdgePathForBuild(t, portNodes, portArrowheads, nil)
+func (ovg *OVG) treeEdgePath(t *layoutgraph.Tree, portArrowheads map[*OVGNode]map[layoutgraph.Arrowhead]struct{}) TreeEdgePath {
+	path, _ := ovg.treeEdgePathForBuild(t, portArrowheads, nil)
 	return path
 }
 
-func treeEdgePathForBuild(t *layoutgraph.Tree, portNodes map[*layoutgraph.Node][]*OVGNode, portArrowheads map[*OVGNode]map[layoutgraph.Arrowhead]struct{}, guard *ovgBuildGuard) (TreeEdgePath, error) {
+func (ovg *OVG) treeEdgePathForBuild(t *layoutgraph.Tree, portArrowheads map[*OVGNode]map[layoutgraph.Arrowhead]struct{}, guard *ovgBuildGuard) (TreeEdgePath, error) {
 	step := func() error {
 		if guard == nil {
 			return nil
@@ -40,8 +40,8 @@ func treeEdgePathForBuild(t *layoutgraph.Tree, portNodes map[*layoutgraph.Node][
 
 	parentPortIndex := parent.CenterPortIndex(t.Orientation)
 	childPortIndex := child.CenterPortIndex(t.Orientation.GetOpposite())
-	parentPortNode := portNodes[parent][parentPortIndex]
-	childPortNode := portNodes[child][childPortIndex]
+	parentPortNode := ovg.Ports[parent][parentPortIndex]
+	childPortNode := ovg.Ports[child][childPortIndex]
 
 	if arrowheads, has := portArrowheads[parentPortNode]; has {
 		// check the arrowhead on the parent
@@ -62,7 +62,7 @@ func treeEdgePathForBuild(t *layoutgraph.Tree, portNodes map[*layoutgraph.Node][
 						continue
 					}
 					usePort := false
-					port := portNodes[parent][portIndex]
+					port := ovg.Ports[parent][portIndex]
 					_, hasArrowheads := portArrowheads[port]
 					if !hasArrowheads {
 						usePort = true
@@ -98,7 +98,7 @@ func treeEdgePathForBuild(t *layoutgraph.Tree, portNodes map[*layoutgraph.Node][
 	// OVG and records it in the child's port list. Resolve it here on subsequent
 	// route lookups; otherwise child-as-source routing starts from a fresh node
 	// with no OVG edges, and shared points lose their canonical owner metadata.
-	for _, portNode := range portNodes[child] {
+	for _, portNode := range ovg.Ports[child] {
 		if err := step(); err != nil {
 			return TreeEdgePath{}, err
 		}
@@ -108,7 +108,7 @@ func treeEdgePathForBuild(t *layoutgraph.Tree, portNodes map[*layoutgraph.Node][
 		}
 	}
 
-	parentMidpoint, childMidpoint := treeEdgeMidpoints(parent, t.Orientation, parentPortNode.Point, childPortNode.Point)
+	parentMidpoint, childMidpoint := ovg.treeEdgeMidpoints(parent, t.Orientation, parentPortNode.Point, childPortNode.Point)
 
 	// if we are the target, swap these around
 	if isSentinelEdgeSource(t) {
@@ -166,37 +166,75 @@ func alignedPortNodeForBuild(tree *layoutgraph.Tree, parentPort, childPort *OVGN
 	return childPort, nil
 }
 
-// treeEdgeMidpoints computes the two bends in a tree edge's S-shaped route.
-// The bend distance is relative to the parent, even when the child is farther
-// away to accommodate an edge label.
-func treeEdgeMidpoints(parent *layoutgraph.Node, treeOrientation geo.Orientation, parentPortPosition, childPortPosition *geo.Point) (*geo.Point, *geo.Point) {
-	parentMidpoint := new(geo.Point)
-	childMidpoint := new(geo.Point)
-	switch treeOrientation {
-	case geo.Left:
-		parentMidpoint.Y = parentPortPosition.Y
-		childMidpoint.Y = childPortPosition.Y
-		centerX := parent.TopLeft.X - layoutgraph.TreeParentSpacing/2
-		parentMidpoint.X = centerX
-		childMidpoint.X = centerX
-	case geo.Right:
-		parentMidpoint.Y = parentPortPosition.Y
-		childMidpoint.Y = childPortPosition.Y
-		centerX := parent.TopLeft.X + parent.Width + layoutgraph.TreeParentSpacing/2
-		parentMidpoint.X = centerX
-		childMidpoint.X = centerX
-	case geo.Top:
-		parentMidpoint.X = parentPortPosition.X
-		childMidpoint.X = childPortPosition.X
-		centerY := parent.TopLeft.Y - layoutgraph.TreeParentSpacing/2
-		parentMidpoint.Y = centerY
-		childMidpoint.Y = centerY
-	case geo.Bottom:
-		parentMidpoint.X = parentPortPosition.X
-		childMidpoint.X = childPortPosition.X
-		centerY := parent.TopLeft.Y + parent.Height + layoutgraph.TreeParentSpacing/2
-		parentMidpoint.Y = centerY
-		childMidpoint.Y = centerY
+type treeFace struct {
+	parent *layoutgraph.Node
+	side   geo.Orientation
+}
+
+// All tree edges leaving the same face use one track, including siblings
+// with different widths or heights. Where placement shrinks the gap, bring
+// the track halfway to the nearest facing box. Keep the usual parent-relative
+// bend when placement adds space for an edge label.
+func measureShortTreeGaps(g *layoutgraph.Graph, guard *ovgBuildGuard) (map[treeFace]float64, error) {
+	var gaps map[treeFace]float64
+	if len(g.NodeToTree) == 0 {
+		return nil, nil
 	}
-	return parentMidpoint, childMidpoint
+	// Split subgraphs can share NodeToTree. Only local children participate.
+	for _, node := range g.Nodes {
+		if err := guard.step(); err != nil {
+			return nil, err
+		}
+		t := g.NodeToTree[node]
+		if t == nil {
+			continue
+		}
+		parent := t.SentinelNode()
+		var gap float64
+		switch t.Orientation {
+		case geo.Top:
+			gap = parent.TopLeft.Y - (node.TopLeft.Y + node.Height)
+		case geo.Bottom:
+			gap = node.TopLeft.Y - (parent.TopLeft.Y + parent.Height)
+		case geo.Left:
+			gap = parent.TopLeft.X - (node.TopLeft.X + node.Width)
+		case geo.Right:
+			gap = node.TopLeft.X - (parent.TopLeft.X + parent.Width)
+		}
+		// A child overlapping the parent on this axis has no inter-layer
+		// channel. It must not collapse the whole fork's track.
+		if gap <= 0 || gap >= layoutgraph.TreeParentSpacing {
+			continue
+		}
+		if gaps == nil {
+			gaps = make(map[treeFace]float64)
+		}
+		face := treeFace{parent, t.Orientation}
+		if old, ok := gaps[face]; !ok || gap < old {
+			gaps[face] = gap
+		}
+	}
+	return gaps, nil
+}
+
+func (ovg *OVG) treeEdgeMidpoints(parent *layoutgraph.Node, side geo.Orientation, parentPort, childPort *geo.Point) (*geo.Point, *geo.Point) {
+	gap, ok := ovg.shortTreeGaps[treeFace{parent, side}]
+	if !ok {
+		gap = layoutgraph.TreeParentSpacing
+	}
+	switch side {
+	case geo.Left:
+		x := parent.TopLeft.X - gap/2
+		return geo.NewPoint(x, parentPort.Y), geo.NewPoint(x, childPort.Y)
+	case geo.Right:
+		x := parent.TopLeft.X + parent.Width + gap/2
+		return geo.NewPoint(x, parentPort.Y), geo.NewPoint(x, childPort.Y)
+	case geo.Top:
+		y := parent.TopLeft.Y - gap/2
+		return geo.NewPoint(parentPort.X, y), geo.NewPoint(childPort.X, y)
+	case geo.Bottom:
+		y := parent.TopLeft.Y + parent.Height + gap/2
+		return geo.NewPoint(parentPort.X, y), geo.NewPoint(childPort.X, y)
+	}
+	return new(geo.Point), new(geo.Point)
 }

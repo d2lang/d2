@@ -445,7 +445,7 @@ func routeEdgesWithResourceGuards(
 				continue
 			}
 
-			route, err := routeSentinelEdge(tree, ovg.Ports, ovg.Centers, existingPortArrowheads)
+			route, err := ovg.routeSentinelEdge(tree, existingPortArrowheads)
 			if err != nil {
 				continue
 			}
@@ -688,14 +688,12 @@ func routeAdditionalEdgesWithResourceLimits(
 // . ┌─┴─┐   ┌─┴─┐        ┌─┴─┐
 // . │   │   │   │        │   │
 // . └───┘   └───┘        └───┘
-func routeSentinelEdge(tree *layoutgraph.Tree,
-	portNodes map[*layoutgraph.Node][]*OVGNode,
-	centers map[*layoutgraph.Node]*OVGNode,
+func (ovg *OVG) routeSentinelEdge(tree *layoutgraph.Tree,
 	portArrowheads map[*OVGNode]map[layoutgraph.Arrowhead]struct{},
 ) (*Route, error) {
 	// Note: we are the child node since we are considering the sentinel edge
 	edge := tree.SentinelEdge
-	treePath := treeEdgePath(tree, portNodes, portArrowheads)
+	treePath := ovg.treeEdgePath(tree, portArrowheads)
 
 	nodesFromSourcePortToTargetPort, err := routeInSShape(treePath)
 	if err != nil {
@@ -719,9 +717,9 @@ func routeSentinelEdge(tree *layoutgraph.Tree,
 	}
 
 	ovgNodes := make([]*OVGNode, 0)
-	ovgNodes = append(ovgNodes, centers[edge.From])
+	ovgNodes = append(ovgNodes, ovg.Centers[edge.From])
 	ovgNodes = append(ovgNodes, nodesFromSourcePortToTargetPort...)
-	ovgNodes = append(ovgNodes, centers[edge.To])
+	ovgNodes = append(ovgNodes, ovg.Centers[edge.To])
 
 	return &Route{
 		GEdge:    edge,

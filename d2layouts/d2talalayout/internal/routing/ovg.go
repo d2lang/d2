@@ -25,6 +25,7 @@ type OVG struct {
 	Ports                  map[*layoutgraph.Node][]*OVGNode
 	Centers                map[*layoutgraph.Node]*OVGNode
 
+	shortTreeGaps      map[treeFace]float64
 	fixedOverlapsMu    sync.Mutex
 	fixedOverlapsCache []fixedOverlapsCacheEntry
 	buildGuard         *ovgBuildGuard
@@ -772,6 +773,11 @@ func (ovg *OVG) addTreeNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 	if err := guard.check(); err != nil {
 		return err
 	}
+	gaps, err := measureShortTreeGaps(g, guard)
+	if err != nil {
+		return err
+	}
+	ovg.shortTreeGaps = gaps
 	portArrowheads := make(map[*OVGNode]map[layoutgraph.Arrowhead]struct{})
 	// If there are trees in this subgraph, we need to add ovg nodes for the specific tree edge routes
 	for _, node := range g.Nodes {
@@ -779,7 +785,7 @@ func (ovg *OVG) addTreeNodes(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 			return err
 		}
 		if tree, has := g.NodeToTree[node]; has {
-			treePath, err := treeEdgePathForBuild(tree, ovg.Ports, portArrowheads, guard)
+			treePath, err := ovg.treeEdgePathForBuild(tree, portArrowheads, guard)
 			if err != nil {
 				return err
 			}
