@@ -27,6 +27,8 @@ const configured: Promise<CompileResponse> = d2.compile(source, options);
 const imported: Promise<CompileResponse> = d2.compile(request);
 const overridden: Promise<CompileResponse> = d2.compile(request, options);
 const dynamic: Promise<CompileResponse> = d2.compile(input, options);
+const svg: Promise<string> = d2.renderSVG(source);
+const importedSVG: Promise<string> = d2.renderSVG(input, options);
 
 for (const layout of ["dagre", "elk", "tala"] as const) {
   d2.compile(source, { layout });
