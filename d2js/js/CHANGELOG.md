@@ -5,6 +5,7 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Release the embedded browser worker's blob URL after startup, including when startup fails.
 - Add `d2.format(source)` to format a D2 file without compiling or rendering it.
 - Add `d2.renderSVG(source, options)` to compile D2 source or a multi-file project directly to SVG.
 - Fix passing custom TrueType font bytes as a `Uint8Array` in compile options.
