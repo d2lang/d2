@@ -669,7 +669,7 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		return nil, err
 	}
 	b.connectionMask = connectionMask
-	crossings := d2target.ConnectionCrossings(b.diagram.Connections, b.idToShape)
+	crossings := d2target.ConnectionCrossings(b.diagram.Connections, b.idToShape, b.options.Sketch, d2themes.PaintVisibleIn(b.theme))
 
 	objects := make([]diagramObject, 0, len(b.diagram.Shapes)+len(b.diagram.Connections))
 	for i, targetShape := range b.diagram.Shapes {

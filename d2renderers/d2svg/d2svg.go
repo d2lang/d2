@@ -2941,7 +2941,18 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	for i := range diagram.Connections {
 		allObjects = append(allObjects, indexedConnection{&diagram.Connections[i], i})
 	}
-	crossings := d2target.ConnectionCrossings(diagram.Connections, idToShape)
+	lightTheme := d2themescatalog.Find(themeID)
+	lightTheme.ApplyOverrides(opts.ThemeOverrides)
+	inlineTheme := &lightTheme
+	strokeVisible := d2themes.PaintVisibleIn(lightTheme)
+	if darkThemeID != nil {
+		darkTheme := d2themescatalog.Find(*darkThemeID)
+		darkTheme.ApplyOverrides(opts.DarkThemeOverrides)
+		strokeVisible = d2themes.PaintVisibleIn(lightTheme, darkTheme)
+		// Let the responsive stylesheet select the user's palette.
+		inlineTheme = nil
+	}
+	crossings := d2target.ConnectionCrossings(diagram.Connections, idToShape, sketch, strokeVisible)
 
 	sortObjects(allObjects)
 
@@ -2949,12 +2960,6 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 
 	var labelMasks []string
 	markers := map[string]struct{}{}
-	var inlineTheme *d2themes.Theme
-	// We only want to inline when no dark theme is specified, otherwise the inline style will override the CSS
-	if darkThemeID == nil {
-		inlineTheme = go2.Pointer(d2themescatalog.Find(themeID))
-		inlineTheme.ApplyOverrides(opts.ThemeOverrides)
-	}
 	markdown := newMarkdownRenderer(diagram.FontFamily, diagram.MonoFontFamily, inlineTheme)
 	for _, obj := range allObjects {
 		if c, is := obj.(indexedConnection); is {

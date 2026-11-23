@@ -24,6 +24,28 @@ type ColorStop struct {
 	Position string
 }
 
+// Offset returns the rendered stop position, clamped to [previous, 1] so
+// authored stops cannot move backwards along the gradient.
+func (stop ColorStop) Offset(index, total int, previous float64) (float64, error) {
+	if stop.Position == "" {
+		if total == 1 {
+			return 0, nil
+		}
+		return max(previous, float64(index)/float64(total-1)), nil
+	}
+	position := strings.TrimSpace(stop.Position)
+	divisor := 1.0
+	if strings.HasSuffix(position, "%") {
+		position = strings.TrimSpace(strings.TrimSuffix(position, "%"))
+		divisor = 100
+	}
+	value, err := strconv.ParseFloat(position, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("must be a finite number or percentage")
+	}
+	return max(previous, min(1, value/divisor)), nil
+}
+
 func ParseGradient(cssGradient string) (Gradient, error) {
 	cssGradient = strings.TrimSpace(cssGradient)
 

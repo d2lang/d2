@@ -61,7 +61,7 @@ func TestConnectionCrossings(t *testing.T) {
 		{"invisible upper edge", []Connection{horizontal, invisible}, 0, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			gaps := ConnectionCrossings(tt.edges, nil)
+			gaps := ConnectionCrossings(tt.edges, nil, false, nil)
 			for i := range tt.edges {
 				var want []geo.Point
 				if i == tt.under {
@@ -84,5 +84,56 @@ func TestConnectionCrossings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCrossingGapsLeaveVisibleStrokeBetweenTracks(t *testing.T) {
+	line := func(x1, y1, x2, y2 float64) Connection {
+		c := *BaseConnection()
+		c.Stroke = "#123456"
+		c.Route = []*geo.Point{{X: x1, Y: y1}, {X: x2, Y: y2}}
+		return c
+	}
+	lower := line(0, 0, 160, 0)
+	track := func(x float64) Connection { return line(x, -80, x, 80) }
+	for _, tc := range []struct {
+		name        string
+		connections []Connection
+		want        map[float64]float64
+	}{
+		{"eleven units apart", []Connection{lower, track(60), track(71)}, map[float64]float64{60: 4.5, 71: 4.5}},
+		{"too close to separate", []Connection{lower, track(60), track(61)}, nil},
+		{"coincident independent tracks", []Connection{lower, track(60), track(60), track(71)}, map[float64]float64{60: 4.5, 71: 4.5}},
+		{"widely separated", []Connection{lower, track(60), track(95)}, map[float64]float64{60: 6, 95: 6}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ConnectionCrossings(tc.connections, nil, false, nil)[0]
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for _, gap := range got {
+				want, ok := tc.want[math.Round(gap.Center.X)]
+				if !ok || gap.Radius != want {
+					t.Errorf("gap at %v = %v, want %v", gap.Center, gap.Radius, want)
+				}
+			}
+		})
+	}
+}
+
+func TestCrossingGapDoesNotCutFoldedRouteTwice(t *testing.T) {
+	lower := *BaseConnection()
+	lower.Stroke = "black"
+	lower.BorderRadius = 0
+	lower.Route = geo.Points{{X: 0, Y: 0}, {X: 100, Y: 0}, {X: 100, Y: 5}, {X: 0, Y: 5}}
+	upper := lower
+	upper.Route = geo.Points{{X: 50, Y: -50}, {X: 50, Y: 2}, {X: 85, Y: 2}}
+
+	gaps := ConnectionCrossings([]Connection{lower, upper}, nil, false, nil)[0]
+	if len(gaps) != 1 || math.Hypot(gaps[0].Center.X-50, gaps[0].Center.Y) > 1e-6 {
+		t.Fatalf("expected one crossing on the first leg, got %v", gaps)
+	}
+	if r := gaps[0].Radius; r < 2 || r > 4 {
+		t.Fatalf("gap radius %v must leave the 2-unit stroke centered at y=5 intact", r)
 	}
 }
