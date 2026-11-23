@@ -198,6 +198,38 @@ func GetELKGraph(args []js.Value) (interface{}, error) {
 }
 
 func Compile(args []js.Value) (interface{}, error) {
+	input, err := parseCompileRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	result, err := input.compile()
+	if err != nil {
+		return nil, err
+	}
+	result.FS[result.InputPath] = d2format.Format(result.Graph.AST)
+	return *result, nil
+}
+
+func RenderSVG(args []js.Value) (interface{}, error) {
+	input, err := parseCompileRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	if input.Opts.ASCII != nil && *input.Opts.ASCII {
+		return nil, &WASMError{Message: "renderSVG does not support ASCII output", Code: 400}
+	}
+	result, err := input.compile()
+	if err != nil {
+		return nil, err
+	}
+	out, err := render(RenderRequest{Diagram: &result.Diagram, Opts: &result.RenderOptions})
+	if err != nil {
+		return nil, err
+	}
+	return string(out), nil
+}
+
+func parseCompileRequest(args []js.Value) (*CompileRequest, error) {
 	if len(args) < 1 {
 		return nil, &WASMError{Message: "missing JSON argument", Code: 400}
 	}
@@ -205,7 +237,13 @@ func Compile(args []js.Value) (interface{}, error) {
 	if err := json.Unmarshal([]byte(args[0].String()), &input); err != nil {
 		return nil, &WASMError{Message: "invalid JSON input", Code: 400}
 	}
+	if input.Opts == nil {
+		input.Opts = &CompileOptions{}
+	}
+	return &input, nil
+}
 
+func (input *CompileRequest) compile() (*CompileResponse, error) {
 	if input.FS == nil {
 		return nil, &WASMError{Message: "missing 'fs' field in input JSON", Code: 400}
 	}
@@ -330,9 +368,7 @@ func Compile(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: err.Error(), Code: 500}
 	}
 
-	input.FS[inputPath] = d2format.Format(g.AST)
-
-	return CompileResponse{
+	return &CompileResponse{
 		FS:        input.FS,
 		InputPath: inputPath,
 		Diagram:   *diagram,
@@ -367,6 +403,10 @@ func Render(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: "invalid JSON input", Code: 400}
 	}
 
+	return render(input)
+}
+
+func render(input RenderRequest) ([]byte, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
 	}

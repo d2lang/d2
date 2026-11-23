@@ -17,6 +17,7 @@ TARBALL=$(node -e '
 
 mkdir "$TEST_DIR/consumer"
 cp test/integration/*.test.* "$TEST_DIR/consumer/"
+cp ../../e2etests-cli/RockSalt-Regular.ttf "$TEST_DIR/consumer/"
 cd "$TEST_DIR/consumer"
 printf '%s\n' '{"private":true}' > package.json
 npm install --ignore-scripts --no-audit --no-fund --package-lock=false \

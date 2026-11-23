@@ -58,23 +58,16 @@ import { D2 } from '@d2lang/d2';
 
 const d2 = new D2();
 
-const result = await d2.compile('x -> y');
-const svg = await d2.render(result.diagram, result.renderOptions);
-await d2.dispose();
+try {
+  const svg = await d2.renderSVG('x -> y');
+  console.log(svg);
+} finally {
+  await d2.dispose();
+}
 ```
 
-Configuring render options (see [CompileOptions](#compileoptions) for all available options):
-
-```javascript
-import { D2 } from '@d2lang/d2';
-
-const d2 = new D2();
-
-const result = await d2.compile('x -> y', {
-    sketch: true,
-});
-const svg = await d2.render(result.diagram, result.renderOptions);
-```
+Reuse the same instance for multiple diagrams before calling `dispose()`. Pass
+options as the second argument, for example `d2.renderSVG('x -> y', { sketch: true })`.
 
 ### Imports
 
@@ -90,14 +83,12 @@ const fs = {
   "import.d2": "x: {shape: circle}",
 }
 
-const result = await d2.compile({
-    fs,
-    inputPath: "project.d2",
-    options: {
-        sketch: true
-    }
+const svg = await d2.renderSVG({
+  fs,
+  inputPath: "project.d2",
+  options: { sketch: true },
 });
-const svg = await d2.render(result.diagram, result.renderOptions);
+await d2.dispose();
 ```
 
 ## API Reference
@@ -124,12 +115,27 @@ const d2 = new D2({ workerURL: '/d2-worker.js' });
 
 The worker's Content Security Policy must also allow WebAssembly compilation.
 
+### `renderSVG(input: string | CompileRequest, options?: CompileOptions): Promise<string>`
+
+Compiles D2 source and returns an SVG string in one worker call. It accepts the
+same input and options as `compile`, including file imports and custom fonts.
+For ASCII output, use `compile` and `render`. Passing `ascii: true` to
+`renderSVG` rejects the promise.
+
 ### `compile(input: string | CompileRequest, options?: CompileOptions): Promise<CompileResponse>`
 
 Compiles D2 markup into an intermediate representation. Pass options directly as the
 second argument, for example `d2.compile('x -> y', { layout: 'tala' })`. For an object
 input, `input.options` is optional and takes precedence over the second argument when
 both specify the same option.
+
+Use the two-step API to inspect the graph or render a diagram again with different
+options.
+
+```javascript
+const { diagram, renderOptions } = await d2.compile('x -> y');
+const svg = await d2.render(diagram, renderOptions);
+```
 
 ### `render(diagram: Diagram, options?: RenderOptions): Promise<string>`
 
