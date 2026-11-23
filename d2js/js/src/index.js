@@ -16,7 +16,7 @@ export class D2 {
     this.pendingRequests.clear();
   }
 
-  setupMessageHandler(isNodeWorker) {
+  setupMessageHandler(isNodeWorker = isNode) {
     return new Promise((resolve, reject) => {
       let isReady = false;
 
