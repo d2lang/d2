@@ -294,3 +294,74 @@ layers: {sensor: @module.layers.panel}`, opts)
 	}
 
 }
+
+func TestTweenColorVariables(t *testing.T) {
+	const src = `vars: {
+  d2-config: {animate-duration: 160ms; animate-interval: 1s}
+  palette: {signal: BlUe}
+  accent: ${palette.signal}
+}
+badge: "${accent}" {style.fill: ${accent}}
+banner.style.fill: "linear-gradient(to right, ${palette.signal} 25%, white 100%)"
+steps: {
+  alert: {vars: {palette.signal: "#F00"}}
+  reset: {vars: {palette.signal: "#0000FF"}}
+  steady: {vars: {palette.signal: blue}}
+}`
+	m, err := compileTween(t, src, d2ir.CompileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(board *d2ir.Map, want string) {
+		t.Helper()
+		for _, path := range [][]string{{"vars", "palette", "signal"}, {"badge"}, {"badge", "style", "fill"}} {
+			if got := tweenText(t, board, path...); got != want {
+				t.Fatalf("%v = %q, want %q", path, got, want)
+			}
+		}
+		if got := tweenText(t, board, "banner", "style", "fill"); got != "linear-gradient(to right, "+want+" 25%, white 100%)" {
+			t.Fatalf("unexpected gradient %q", got)
+		}
+	}
+	check(m, "BlUe")
+	alert := tweenField(m, "steps", "alert").Map()
+	if len(alert.TweenFrames) != 4 {
+		t.Fatalf("got %d samples", len(alert.TweenFrames))
+	}
+	for i, want := range []string{"BlUe", "#4000bf", "#800080", "#bf0040"} {
+		check(alert.TweenFrames[i], want)
+	}
+	check(alert, "#F00")
+	reset := tweenField(m, "steps", "reset").Map()
+	check(reset.TweenFrames[0], "#F00")
+	check(reset.TweenFrames[2], "#800080")
+	check(reset, "#0000FF")
+	steady := tweenField(m, "steps", "steady").Map()
+	if len(steady.TweenFrames) != 0 {
+		t.Fatal("equivalent colors produced motion")
+	}
+	check(steady, "blue")
+}
+
+func TestTweenUnsupportedColorVariables(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"blue", "transparent"}, {"currentColor", "red"}, {"B1", "white"},
+		{"#00ff", "red"}, {"black", "#ff0000ff"}, {"rgb(0, 0, 255)", "red"},
+		{"blue", "hsl(0, 100%, 50%)"}, {"linear-gradient(red, blue)", "blue"},
+		{"blue", "12"}, {"almostblue", "red"},
+	} {
+		t.Run(pair[0]+" to "+pair[1], func(t *testing.T) {
+			src := `vars: {d2-config: {animate-duration: 80ms; animate-interval: 1s}; paint: "` + pair[0] + `"}
+meter: ${paint}
+steps: {change: {vars: {paint: "` + pair[1] + `"}}}`
+			m, err := compileTween(t, src, d2ir.CompileOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			step := tweenField(m, "steps", "change").Map()
+			if len(step.TweenFrames) != 0 || tweenText(t, step, "meter") != pair[1] {
+				t.Fatal("expected a discrete change to the authored endpoint")
+			}
+		})
+	}
+}

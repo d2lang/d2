@@ -162,7 +162,9 @@ The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over 
 Zero selects ordinary SVG export or the default GIF interval of 1000ms.
 .Ns .
 .It Fl -animate-duration Ar 0
-Set how long changed numeric or percentage variables take to reach their values in a step.
+Set how long numeric, percentage, and solid color variables take to reach their values in a step.
+Direct changes between solid colors for fill, stroke, and font-color also interpolate.
+For example, blue to red passes through purple halfway.
 The flag takes milliseconds. The file also accepts durations, for example
 .Li "vars: {d2-config: {animate-interval: 800ms; animate-duration: 300ms}}" .
 All matching variables change together for 300ms, then hold their values for the remaining 500ms.

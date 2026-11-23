@@ -131,3 +131,40 @@ steps: {empty: {vars: {charge: 0%}}}`
 		t.Fatal("expected the static root board")
 	}
 }
+
+func TestAnimateDurationSolidFill(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 120ms}}
+swatch: "" {width: 100; height: 40; style: {fill: blue; stroke-width: 0}}
+steps: {alert: {swatch.style.fill: red}}`
+	dir := t.TempDir()
+	svg, err := imageCLI(t, dir, source, "--pad=0", "--stdout-format=svg", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(svg, []byte(`fill="#800080"`)) {
+		t.Fatal("the SVG swatch did not pass through purple")
+	}
+
+	out, err := imageCLI(t, dir, source, "--pad=0", "--stdout-format=gif", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	animation, err := gif.DecodeAll(bytes.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// At 160ms the root has held for 120ms and the 80ms color change is halfway.
+	elapsed := 0
+	for i, delay := range animation.Delay {
+		if elapsed <= 16 && 16 < elapsed+delay {
+			frame := animation.Image[i]
+			r, g, b, _ := frame.At(animation.Config.Width/2, animation.Config.Height/2).RGBA()
+			if r>>8 != 128 || g != 0 || b>>8 != 128 {
+				t.Fatalf("GIF swatch at 160ms = #%02x%02x%02x, want #800080", r>>8, g>>8, b>>8)
+			}
+			return
+		}
+		elapsed += delay
+	}
+	t.Fatal("GIF ended before the color transition reached its midpoint")
+}

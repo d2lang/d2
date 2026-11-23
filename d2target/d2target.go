@@ -47,7 +47,7 @@ var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
 	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
-	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds to interpolate changed step variables.
+	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds to interpolate step values.
 	Scale              *float64        `json:"scale,omitempty"`
 	ForceAppendix      *bool           `json:"forceAppendix,omitempty"`
 	Sketch             *bool           `json:"sketch"`

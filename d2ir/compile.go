@@ -86,7 +86,7 @@ type compiler struct {
 type CompileOptions struct {
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
-	// AnimateTweens controls sampling of changed step variables. Nil follows
+	// AnimateTweens controls sampling of step transitions. Nil follows
 	// the root animate-interval. False compiles only the authored endpoints.
 	AnimateTweens *bool
 	// Context stops parsing and compilation when canceled. A nil Context is

@@ -1,13 +1,17 @@
 package d2ir
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/mazznoer/csscolorparser"
+
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/color"
 )
 
 type tweenBinding struct {
@@ -15,16 +19,67 @@ type tweenBinding struct {
 	markdownOuter map[string]string
 }
 
+type stepChanges struct {
+	variables []tweenVariable
+	colors    []directColorChange
+}
+
 type tweenVariable struct {
 	path            []d2ast.String
 	from, to        float64
 	precision       int
 	unit, startText string
+	color           *tweenColor
+}
+
+type tweenColor struct {
+	from, to   color.RGB
+	start, end string
+}
+
+func newTweenColor(start, end string) (tweenColor, bool) {
+	if start == end {
+		return tweenColor{}, false
+	}
+	from, okFrom := tweenRGB(start)
+	to, okTo := tweenRGB(end)
+	if !okFrom || !okTo || from == to {
+		return tweenColor{}, false
+	}
+	return tweenColor{from: from, to: to, start: start, end: end}, true
+}
+
+func tweenRGB(value string) (color.RGB, bool) {
+	// A D2 solid paint accepts named colors and three- or six-digit hex.
+	// CSS functions, theme references, and non-opaque colors stay discrete.
+	if color.IsGradient(value) || !color.ValidColor(value) {
+		return color.RGB{}, false
+	}
+	c, err := csscolorparser.Parse(value)
+	if err != nil || c.A != 1 {
+		return color.RGB{}, false
+	}
+	r, g, b, _ := c.RGBA255()
+	return color.RGB{Red: r, Green: g, Blue: b}, true
+}
+
+func (c tweenColor) at(fraction float64) string {
+	switch fraction {
+	case 0:
+		return c.start
+	case 1:
+		return c.end
+	}
+	channel := func(from, to uint8) uint8 {
+		return uint8(math.Round(float64(from) + (float64(to)-float64(from))*fraction))
+	}
+	return fmt.Sprintf("#%02x%02x%02x", channel(c.from.Red, c.to.Red),
+		channel(c.from.Green, c.to.Green), channel(c.from.Blue, c.to.Blue))
 }
 
 // Substitution normally consumes a string's expression. Retain expressions in
 // step scopes so imports and the authored endpoints can resolve normally before
-// determining whether this step has any numeric changes to sample.
+// determining which step values need interpolation.
 func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) (markdownOuterStart int) {
 	primary := node.Primary()
 	if primary.binding != nil {
@@ -162,9 +217,11 @@ func (c *compiler) compileStepTweens(board *Map, duration int) {
 			}
 			if group == "steps" {
 				vars := child.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
-				var changes []tweenVariable
-				c.findTweenChanges(previous, vars, nil, &changes)
-				if len(changes) > 0 {
+				changes := stepChanges{colors: c.directColorChanges(previous, child)}
+				if vars != nil {
+					c.findTweenChanges(tweenVarScopes(previous), vars, nil, &changes.variables)
+				}
+				if len(changes.variables) > 0 || len(changes.colors) > 0 {
 					c.sampleStep(child, changes, duration)
 				}
 				previous = child
@@ -174,7 +231,16 @@ func (c *compiler) compileStepTweens(board *Map, duration int) {
 	}
 }
 
-func (c *compiler) findTweenChanges(previous, vars *Map, prefix []d2ast.String, changes *[]tweenVariable) {
+func tweenVarScopes(board *Map) (scopes []*Map) {
+	for m := board; m != nil; m = ParentMap(m) {
+		if vars := m.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map(); vars != nil {
+			scopes = append(scopes, vars)
+		}
+	}
+	return scopes
+}
+
+func (c *compiler) findTweenChanges(previous []*Map, vars *Map, prefix []d2ast.String, changes *[]tweenVariable) {
 	if vars == nil || c.stopped() {
 		return
 	}
@@ -187,35 +253,46 @@ func (c *compiler) findTweenChanges(previous, vars *Map, prefix []d2ast.String, 
 			c.findTweenChanges(previous, field.Map(), path, changes)
 			continue
 		}
-		to, endUnit, endPrecision, ok := tweenNumber(field)
-		if !ok {
+		if field.Primary() == nil || field.Composite != nil {
 			continue
 		}
 		var start *Field
-		for m := previous; m != nil; m = ParentMap(m) {
-			decls := m.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
-			if decls != nil {
-				start = decls.getFieldIndexed(path...)
-				if start != nil {
-					break
-				}
+		for _, scope := range previous {
+			start = scope.getFieldIndexed(path...)
+			if start != nil {
+				break
 			}
 		}
-		from, unit, startPrecision, ok := tweenNumber(start)
-		if ok && unit == endUnit && from != to && !start.suspended {
-			*changes = append(*changes, tweenVariable{
-				path: append([]d2ast.String(nil), path...), from: from, to: to, unit: unit,
-				precision: max(startPrecision, endPrecision), startText: start.Primary().Value.ScalarString(),
-			})
+		if start == nil || start.suspended || start.Primary() == nil || start.Composite != nil {
+			continue
+		}
+		change, ok := tweenScalarChange(start.Primary().Value.ScalarString(), field.Primary().Value.ScalarString())
+		if ok {
+			change.path = slices.Clone(path)
+			*changes = append(*changes, change)
 		}
 	}
 }
 
-func tweenNumber(field *Field) (number float64, unit string, precision int, valid bool) {
-	if field == nil || field.Primary() == nil || field.Composite != nil {
-		return
+func tweenScalarChange(start, end string) (tweenVariable, bool) {
+	if start == end {
+		return tweenVariable{}, false
 	}
-	raw := field.Primary().Value.ScalarString()
+	if to, unit, precision, ok := tweenNumber(end); ok {
+		from, fromUnit, fromPrecision, ok := tweenNumber(start)
+		if ok && unit == fromUnit && from != to {
+			return tweenVariable{
+				startText: start, from: from, to: to, unit: unit,
+				precision: max(precision, fromPrecision),
+			}, true
+		}
+	} else if colors, ok := newTweenColor(start, end); ok {
+		return tweenVariable{color: &colors}, true
+	}
+	return tweenVariable{}, false
+}
+
+func tweenNumber(raw string) (number float64, unit string, precision int, valid bool) {
 	if strings.HasSuffix(raw, "%") {
 		unit = "%"
 		raw = strings.TrimSuffix(raw, "%")
@@ -243,7 +320,7 @@ func tweenNumber(field *Field) (number float64, unit string, precision int, vali
 	return number, unit, precision, true
 }
 
-func (c *compiler) sampleStep(board *Map, changes []tweenVariable, duration int) {
+func (c *compiler) sampleStep(board *Map, changes stepChanges, duration int) {
 	// The parent step's samples never include its child boards.
 	view := *board
 	view.Fields = nil
@@ -252,12 +329,7 @@ func (c *compiler) sampleStep(board *Map, changes []tweenVariable, duration int)
 			view.Fields = append(view.Fields, f)
 		}
 	}
-	var outerVars []*Map
-	for m := ParentMap(board); m != nil; m = ParentMap(m) {
-		if vars := m.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map(); vars != nil {
-			outerVars = append(outerVars, vars)
-		}
-	}
+	outerVars := tweenVarScopes(ParentMap(board))
 	n := min(d2target.MaxTweenFrames, (duration+39)/40)
 	for i := 0; i < n; i++ {
 		frame := c.sampleTween(&view, changes, outerVars, float64(i)/float64(n))
@@ -272,7 +344,7 @@ func (c *compiler) sampleStep(board *Map, changes []tweenVariable, duration int)
 // Each sampled board obeys the same expansion limit as an authored board.
 // An additional shared budget limits the sum across the entire animation to
 // one full-length tween's worth of that work, even for many short tweens.
-func (c *compiler) sampleTween(template *Map, changes []tweenVariable, outerVars []*Map, fraction float64) *Map {
+func (c *compiler) sampleTween(template *Map, changes stepChanges, outerVars []*Map, fraction float64) *Map {
 	base := c.variableExpansion
 	if c.tweenExpansion == nil {
 		limit := int64(math.MaxInt64)
@@ -309,14 +381,17 @@ func (c *compiler) sampleTween(template *Map, changes []tweenVariable, outerVars
 		return nil
 	}
 	vars := frame.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
-	for _, v := range changes {
+	for _, v := range changes.variables {
 		value := v.startText
-		if fraction > 0 {
+		if v.color != nil {
+			value = v.color.at(fraction)
+		} else if fraction > 0 {
 			number := (1-fraction)*v.from + fraction*v.to
 			value = strconv.FormatFloat(number, 'f', v.precision, 64) + v.unit
 		}
 		vars.getFieldIndexed(v.path...).Primary_.Value = d2ast.FlatUnquotedString(value)
 	}
+	applyDirectColors(frame, changes.colors, fraction)
 	c.compileSubstitutions(frame, outerVars)
 	if c.stopped() || !c.err.Empty() {
 		return nil

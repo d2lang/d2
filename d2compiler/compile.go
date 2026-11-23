@@ -33,7 +33,7 @@ type CompileOptions struct {
 	UTF16Pos bool
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
-	// AnimateTweens controls sampling of changed step variables. Nil follows
+	// AnimateTweens controls sampling of step transitions. Nil follows
 	// the root animate-interval. False compiles only the authored endpoints.
 	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
