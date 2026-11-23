@@ -20,6 +20,12 @@ export class D2 {
 
   render(diagram: Diagram, options?: RenderOptions): Promise<string>;
 
+  /** Encodes D2 source for the Playground's script query parameter. */
+  encode(source: string): Promise<string>;
+
+  /** Restores D2 source from the value of the Playground's script query parameter. */
+  decode(encoded: string): Promise<string>;
+
   /** Terminates the backing worker and rejects any pending operations. */
   dispose(): Promise<void>;
 }

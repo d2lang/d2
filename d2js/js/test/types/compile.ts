@@ -30,6 +30,8 @@ const dynamic: Promise<CompileResponse> = d2.compile(input, options);
 const svg: Promise<string> = d2.renderSVG(source);
 const importedSVG: Promise<string> = d2.renderSVG(input, options);
 const formattedSource: Promise<string> = d2.format(source);
+const encoded: Promise<string> = d2.encode(source);
+const decoded: Promise<string> = encoded.then((value) => d2.decode(value));
 // @ts-expect-error The formatter accepts source text.
 d2.format(request);
 
