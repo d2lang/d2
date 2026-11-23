@@ -165,6 +165,30 @@ var DarkMauveNeutral = Neutral{
 	N7: "#1E1E2E",
 }
 
+// PaintVisibleIn returns a per-render predicate for ink visible in every active
+// palette. A responsive SVG shares its crossing masks between light and dark.
+func PaintVisibleIn(themes ...Theme) func(string) bool {
+	cache := make(map[string]bool)
+	return func(raw string) bool {
+		if visible, ok := cache[raw]; ok {
+			return visible
+		}
+		visible := true
+		if color.IsThemeColor(raw) {
+			for _, theme := range themes {
+				if !color.PaintVisibleThroughout(ResolveThemeColor(theme, raw)) {
+					visible = false
+					break
+				}
+			}
+		} else {
+			visible = color.PaintVisibleThroughout(raw)
+		}
+		cache[raw] = visible
+		return visible
+	}
+}
+
 func ResolveThemeColor(theme Theme, code string) string {
 	if !color.IsThemeColor(code) {
 		return code

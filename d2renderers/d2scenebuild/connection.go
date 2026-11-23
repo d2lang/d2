@@ -25,7 +25,7 @@ type connectionPathSegment struct {
 	command d2scene.PathCommand
 }
 
-func (b *builder) buildConnection(connection d2target.Connection) (*d2scene.Node, error) {
+func (b *builder) buildConnection(connection d2target.Connection, crossingMask *d2scene.Mask) (*d2scene.Node, error) {
 	strokePaint, err := b.paint(connection.Stroke, fmt.Sprintf("connection %q stroke", connection.ID))
 	if err != nil {
 		return nil, err
@@ -39,7 +39,7 @@ func (b *builder) buildConnection(connection d2target.Connection) (*d2scene.Node
 	if err != nil {
 		return nil, err
 	}
-	srcAdjustment, dstAdjustment := arrowheadAdjustments(connection, b.idToShape)
+	srcAdjustment, dstAdjustment := connection.ArrowheadAdjustments(b.idToShape)
 	path, segments, start, end, err := connectionPath(connection, srcAdjustment, dstAdjustment)
 	if err != nil {
 		return nil, fmt.Errorf("scene: connection %q: %w", connection.ID, err)
@@ -99,8 +99,8 @@ func (b *builder) buildConnection(connection d2target.Connection) (*d2scene.Node
 		if err != nil {
 			return nil, fmt.Errorf("scene: connection %q animation split: %w", connection.ID, err)
 		}
-		reverseNode := animatedConnectionPathNode(connection.ID+":path:reverse", reversePath, reverseTrack)
-		forwardNode := animatedConnectionPathNode(connection.ID+":path:forward", forwardPath, forwardTrack)
+		reverseNode := animatedConnectionPathNode(connection.ID+":path:reverse", reversePath, reverseTrack, crossingMask)
+		forwardNode := animatedConnectionPathNode(connection.ID+":path:forward", forwardPath, forwardTrack, crossingMask)
 		// SVG paints each path's markers after that path's stroke. Interleave
 		// the explicit source arrow with the split paths so a two-arrow
 		// connection retains path1/marker-start/path2/marker-end z-order.
@@ -113,7 +113,7 @@ func (b *builder) buildConnection(connection d2target.Connection) (*d2scene.Node
 			geometryChildren = append(geometryChildren, dstArrowNode)
 		}
 	} else {
-		pathNode := animatedConnectionPathNode(connection.ID+":path", path, forwardTrack)
+		pathNode := animatedConnectionPathNode(connection.ID+":path", path, forwardTrack, crossingMask)
 		geometryChildren = append(geometryChildren, pathNode)
 		if srcArrowNode != nil {
 			geometryChildren = append(geometryChildren, srcArrowNode)
@@ -139,9 +139,10 @@ func (b *builder) buildConnection(connection d2target.Connection) (*d2scene.Node
 	return group, nil
 }
 
-func animatedConnectionPathNode(id string, path d2scene.Path, track *d2scene.Track) *d2scene.Node {
+func animatedConnectionPathNode(id string, path d2scene.Path, track *d2scene.Track, crossingMask *d2scene.Mask) *d2scene.Node {
 	node := d2scene.NewNode(path)
 	node.ID = id
+	node.Mask = crossingMask
 	if track != nil {
 		node.Animations = []d2scene.Track{*track}
 	}
@@ -325,106 +326,37 @@ func connectionSegmentEndpoint(command d2scene.PathCommand) (d2scene.Point, erro
 	}
 }
 
-func arrowheadAdjustment(start, end *geo.Point, arrowhead d2target.Arrowhead, edgeStrokeWidth, shapeStrokeWidth int) *geo.Point {
-	distance := (float64(edgeStrokeWidth) + float64(shapeStrokeWidth)) / 2
-	if arrowhead != d2target.NoArrowhead {
-		distance += float64(edgeStrokeWidth)
-	}
-	vector := geo.NewVector(end.X-start.X, end.Y-start.Y)
-	if vector.Length() == 0 {
-		return geo.NewPoint(0, 0)
-	}
-	return vector.Unit().Multiply(-distance).ToPoint()
-}
-
-func arrowheadAdjustments(connection d2target.Connection, shapes map[string]d2target.Shape) (src, dst *geo.Point) {
-	srcShape := shapes[connection.Src]
-	dstShape := shapes[connection.Dst]
-	src = arrowheadAdjustment(connection.Route[1], connection.Route[0], connection.SrcArrow, connection.StrokeWidth, srcShape.StrokeWidth)
-	last := len(connection.Route) - 1
-	dst = arrowheadAdjustment(connection.Route[last-1], connection.Route[last], connection.DstArrow, connection.StrokeWidth, dstShape.StrokeWidth)
-	return src, dst
-}
-
+// Retain the original command kind for the bidirectional animation split.
 func connectionPath(connection d2target.Connection, srcAdjustment, dstAdjustment *geo.Point) (d2scene.Path, []connectionPathSegment, d2scene.Point, d2scene.Point, error) {
-	route := connection.Route
-	start := d2scene.Point{X: route[0].X + srcAdjustment.X, Y: route[0].Y + srcAdjustment.Y}
-	end := d2scene.Point{X: route[len(route)-1].X + dstAdjustment.X, Y: route[len(route)-1].Y + dstAdjustment.Y}
-	path := d2scene.Path{Commands: []d2scene.PathCommand{d2scene.MoveTo(start.X, start.Y)}}
-	segments := make([]connectionPathSegment, 0, len(route))
-	appendSegment := func(kind connectionPathProvenance, segmentStart d2scene.Point, command d2scene.PathCommand) {
-		path.Commands = append(path.Commands, command)
-		segments = append(segments, connectionPathSegment{kind: kind, start: segmentStart, command: command})
-	}
-	if connection.IsCurve {
-		current := start
-		for i := 1; i < len(route); i += 3 {
-			endpoint := route[i+2]
-			if i+2 == len(route)-1 {
-				endpoint = geo.NewPoint(endpoint.X+dstAdjustment.X, endpoint.Y+dstAdjustment.Y)
-			}
-			command := d2scene.CubicTo(
-				route[i].X, route[i].Y,
-				route[i+1].X, route[i+1].Y,
-				endpoint.X, endpoint.Y,
-			)
-			appendSegment(connectionPathCubic, current, command)
-			current = command.P3
-		}
-		return path, segments, start, end, nil
-	}
-
-	current := start
-	for i := 1; i < len(route)-1; i++ {
-		previousSource := route[i-1]
-		corner := route[i]
-		next := route[i+1]
-		previousVector := previousSource.VectorTo(corner)
-		currentVector := corner.VectorTo(next)
-		if previousVector.Length() == 0 || currentVector.Length() == 0 {
-			appendSegment(connectionPathLine, current, d2scene.LineTo(corner.X, corner.Y))
-			current = d2scene.Point{X: corner.X, Y: corner.Y}
+	var path d2scene.Path
+	var start, current d2scene.Point
+	segments := make([]connectionPathSegment, 0, len(connection.Route))
+	for command := range connection.PathCommands(srcAdjustment, dstAdjustment) {
+		end := d2scene.Point{X: command.End.X, Y: command.End.Y}
+		var kind connectionPathProvenance
+		var op d2scene.PathCommand
+		switch command.Kind {
+		case 'M':
+			start, current = end, end
+			path.Commands = append(path.Commands, d2scene.MoveTo(end.X, end.Y))
 			continue
-		}
-		distance := geo.EuclideanDistance(corner.X, corner.Y, next.X, next.Y)
-		units := math.Min(connection.BorderRadius, distance/2)
-		previousTranslation := previousVector.Unit().Multiply(units).ToPoint()
-		currentTranslation := currentVector.Unit().Multiply(units).ToPoint()
-		lineEnd := d2scene.Point{X: corner.X - previousTranslation.X, Y: corner.Y - previousTranslation.Y}
-		appendSegment(connectionPathLine, current, d2scene.LineTo(lineEnd.X, lineEnd.Y))
-		current = lineEnd
-
-		if units < connection.BorderRadius && i < len(route)-2 {
-			nextTarget := route[i+2]
-			nextVector := next.VectorTo(nextTarget)
-			if nextVector.Length() == 0 {
-				continue
+		case 'L':
+			kind = connectionPathLine
+			op = d2scene.LineTo(end.X, end.Y)
+		case 'C', 'S':
+			kind = connectionPathCubic
+			if command.Kind == 'S' {
+				kind = connectionPathSmoothCubic
 			}
-			i++
-			nextTranslation := nextVector.Unit().Multiply(units).ToPoint()
-			curveEnd := d2scene.Point{X: next.X + nextTranslation.X, Y: next.Y + nextTranslation.Y}
-			command := d2scene.CubicTo(
-				corner.X+previousTranslation.X, corner.Y+previousTranslation.Y,
-				next.X-nextTranslation.X, next.Y-nextTranslation.Y,
-				curveEnd.X, curveEnd.Y,
-			)
-			appendSegment(connectionPathCubic, current, command)
-			current = curveEnd
-		} else {
-			curveEnd := d2scene.Point{X: corner.X + currentTranslation.X, Y: corner.Y + currentTranslation.Y}
-			// SVG's first smooth-cubic control is the current point because the
-			// preceding command is a line.
-			command := d2scene.CubicTo(
-				current.X, current.Y,
-				corner.X, corner.Y,
-				curveEnd.X, curveEnd.Y,
-			)
-			appendSegment(connectionPathSmoothCubic, current, command)
-			current = curveEnd
+			op = d2scene.CubicTo(command.Control1.X, command.Control1.Y, command.Control2.X, command.Control2.Y, end.X, end.Y)
+		default:
+			return d2scene.Path{}, nil, start, current, fmt.Errorf("unexpected connection path command %q", command.Kind)
 		}
+		segments = append(segments, connectionPathSegment{kind: kind, start: current, command: op})
+		path.Commands = append(path.Commands, op)
+		current = end
 	}
-	appendSegment(connectionPathLine, current, d2scene.LineTo(end.X, end.Y))
-	return path, segments, start, end, nil
+	return path, segments, start, current, nil
 }
 
 func (b *builder) arrowhead(connection d2target.Connection, arrowhead d2target.Arrowhead, target bool, endpoint d2scene.Point, tangent geo.Vector, strokePaint d2scene.Paint) (*d2scene.Node, error) {

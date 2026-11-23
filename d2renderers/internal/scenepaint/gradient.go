@@ -31,13 +31,10 @@ func Gradient(raw string) (d2scene.Paint, error) {
 		if err != nil {
 			return nil, fmt.Errorf("stop %d color %q: %w", i, stop.Color, err)
 		}
-		offset, err := gradientStopOffset(stop.Position, i, len(gradient.ColorStops))
+		offset, err := stop.Offset(i, len(gradient.ColorStops), previous)
 		if err != nil {
 			return nil, fmt.Errorf("stop %d position %q: %w", i, stop.Position, err)
 		}
-		// SVG clamps stop offsets into [0,1] and prevents later stops from
-		// moving behind an earlier one.
-		offset = math.Max(previous, math.Max(0, math.Min(1, offset)))
 		previous = offset
 		r, g, blue, a := parsed.RGBA255()
 		stops[i] = d2scene.GradientStop{Offset: offset, Color: color.NRGBA{R: r, G: g, B: blue, A: a}}
@@ -62,26 +59,6 @@ func Gradient(raw string) (d2scene.Paint, error) {
 	default:
 		return nil, fmt.Errorf("unsupported gradient type %q", gradient.Type)
 	}
-}
-
-func gradientStopOffset(position string, index, total int) (float64, error) {
-	if position == "" {
-		if total == 1 {
-			return 0, nil
-		}
-		return float64(index) / float64(total-1), nil
-	}
-	position = strings.TrimSpace(position)
-	divisor := 1.0
-	if strings.HasSuffix(position, "%") {
-		position = strings.TrimSpace(strings.TrimSuffix(position, "%"))
-		divisor = 100
-	}
-	value, err := strconv.ParseFloat(position, 64)
-	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0, fmt.Errorf("must be a finite number or percentage")
-	}
-	return value / divisor, nil
 }
 
 func linearGradientVector(direction string) (x1, y1, x2, y2 float64, err error) {

@@ -502,7 +502,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, legendConn, markers, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, markers, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -880,113 +880,51 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 	}, " ")
 }
 
-// compute the (dx, dy) adjustment to apply to get the arrowhead-adjusted end point
-func arrowheadAdjustment(start, end *geo.Point, arrowhead d2target.Arrowhead, edgeStrokeWidth, shapeStrokeWidth int) *geo.Point {
-	distance := (float64(edgeStrokeWidth) + float64(shapeStrokeWidth)) / 2.0
-	if arrowhead != d2target.NoArrowhead {
-		distance += float64(edgeStrokeWidth)
+func crossingMaskID(boardHash string, edge int) string {
+	return fmt.Sprintf("crossings-%s-%d", boardHash, edge)
+}
+
+// These masks affect only individual connection strokes. The existing mask
+// for labels remains on the paths inside, preserving its partial opacities.
+func writeCrossingMasks(buf *bytes.Buffer, boardHash string, crossings [][]d2target.ConnectionGap, left, top, width, height int) {
+	bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", width), svg.IntAttr("height", height)}
+	for i, gaps := range crossings {
+		if len(gaps) == 0 {
+			continue
+		}
+		attrs := []svg.Attribute{svg.Attr("id", crossingMaskID(boardHash, i)), svg.Attr("maskUnits", "userSpaceOnUse")}
+		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
+		buf.WriteString(svg.EmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
+		for _, g := range gaps {
+			buf.WriteString(svg.EmptyElement("circle", svg.FloatAttr("cx", g.Center.X), svg.FloatAttr("cy", g.Center.Y), svg.FloatAttr("r", g.Radius), svg.Attr("fill", "black")))
+		}
+		buf.WriteString(svg.CloseElement("mask"))
 	}
-
-	v := geo.NewVector(end.X-start.X, end.Y-start.Y)
-	return v.Unit().Multiply(-distance).ToPoint()
 }
 
-func getArrowheadAdjustments(connection d2target.Connection, idToShape map[string]d2target.Shape) (srcAdj, dstAdj *geo.Point) {
-	route := connection.Route
-	srcShape := idToShape[connection.Src]
-	dstShape := idToShape[connection.Dst]
-
-	sourceAdjustment := arrowheadAdjustment(route[1], route[0], connection.SrcArrow, connection.StrokeWidth, srcShape.StrokeWidth)
-
-	targetAdjustment := arrowheadAdjustment(route[len(route)-2], route[len(route)-1], connection.DstArrow, connection.StrokeWidth, dstShape.StrokeWidth)
-	return sourceAdjustment, targetAdjustment
-}
-
-// returns the path's d attribute for the given connection
+// pathData serializes the same centerline used to find connection crossings.
 func pathData(connection d2target.Connection, srcAdj, dstAdj *geo.Point) string {
-	var path []string
-	route := connection.Route
-
-	path = append(path, fmt.Sprintf("M %s %s",
-		svg.FormatFloat(route[0].X+srcAdj.X),
-		svg.FormatFloat(route[0].Y+srcAdj.Y),
-	))
-
-	if connection.IsCurve {
-		i := 1
-		for ; i < len(route)-3; i += 3 {
-			path = append(path, fmt.Sprintf("C %s %s %s %s %s %s",
-				svg.FormatFloat(route[i].X), svg.FormatFloat(route[i].Y),
-				svg.FormatFloat(route[i+1].X), svg.FormatFloat(route[i+1].Y),
-				svg.FormatFloat(route[i+2].X), svg.FormatFloat(route[i+2].Y),
-			))
-		}
-		// final curve target adjustment
-		path = append(path, fmt.Sprintf("C %s %s %s %s %s %s",
-			svg.FormatFloat(route[i].X), svg.FormatFloat(route[i].Y),
-			svg.FormatFloat(route[i+1].X), svg.FormatFloat(route[i+1].Y),
-			svg.FormatFloat(route[i+2].X+dstAdj.X),
-			svg.FormatFloat(route[i+2].Y+dstAdj.Y),
-		))
-	} else {
-		for i := 1; i < len(route)-1; i++ {
-			prevSource := route[i-1]
-			prevTarget := route[i]
-			currTarget := route[i+1]
-			prevVector := prevSource.VectorTo(prevTarget)
-			currVector := prevTarget.VectorTo(currTarget)
-
-			dist := geo.EuclideanDistance(prevTarget.X, prevTarget.Y, currTarget.X, currTarget.Y)
-
-			connectionBorderRadius := connection.BorderRadius
-			units := math.Min(connectionBorderRadius, dist/2)
-
-			prevTranslations := prevVector.Unit().Multiply(units).ToPoint()
-			currTranslations := currVector.Unit().Multiply(units).ToPoint()
-
-			path = append(path, fmt.Sprintf("L %s %s",
-				svg.FormatFloat(prevTarget.X-prevTranslations.X),
-				svg.FormatFloat(prevTarget.Y-prevTranslations.Y),
-			))
-
-			// If the segment length is too small, instead of drawing 2 arcs, just skip this segment and bezier curve to the next one
-			if units < connectionBorderRadius && i < len(route)-2 {
-				nextTarget := route[i+2]
-				nextVector := geo.NewVector(nextTarget.X-currTarget.X, nextTarget.Y-currTarget.Y)
-				i++
-				nextTranslations := nextVector.Unit().Multiply(units).ToPoint()
-
-				// These 2 bezier control points aren't just at the corner -- they are reflected at the corner, which causes the curve to be ~tangent to the corner,
-				// which matches how the two arcs look
-				path = append(path, fmt.Sprintf("C %s %s %s %s %s %s",
-					// Control point
-					svg.FormatFloat(prevTarget.X+prevTranslations.X),
-					svg.FormatFloat(prevTarget.Y+prevTranslations.Y),
-					// Control point
-					svg.FormatFloat(currTarget.X-nextTranslations.X),
-					svg.FormatFloat(currTarget.Y-nextTranslations.Y),
-					// Where curve ends
-					svg.FormatFloat(currTarget.X+nextTranslations.X),
-					svg.FormatFloat(currTarget.Y+nextTranslations.Y),
-				))
-			} else {
-				path = append(path, fmt.Sprintf("S %s %s %s %s",
-					svg.FormatFloat(prevTarget.X),
-					svg.FormatFloat(prevTarget.Y),
-					svg.FormatFloat(prevTarget.X+currTranslations.X),
-					svg.FormatFloat(prevTarget.Y+currTranslations.Y),
-				))
-			}
-		}
-
-		lastPoint := route[len(route)-1]
-		path = append(path, fmt.Sprintf("L %s %s",
-			svg.FormatFloat(lastPoint.X+dstAdj.X),
-			svg.FormatFloat(lastPoint.Y+dstAdj.Y),
-		))
+	var path strings.Builder
+	writePoint := func(p geo.Point) {
+		path.WriteByte(' ')
+		path.WriteString(svg.FormatFloat(p.X))
+		path.WriteByte(' ')
+		path.WriteString(svg.FormatFloat(p.Y))
 	}
-
-	return strings.Join(path, " ")
+	for cmd := range connection.PathCommands(srcAdj, dstAdj) {
+		if path.Len() > 0 {
+			path.WriteByte(' ')
+		}
+		path.WriteByte(cmd.Kind)
+		if cmd.Kind == 'C' {
+			writePoint(cmd.Control1)
+		}
+		if cmd.Kind == 'C' || cmd.Kind == 'S' {
+			writePoint(cmd.Control2)
+		}
+		writePoint(cmd.End)
+	}
+	return path.String()
 }
 
 func makeLabelMask(labelTL *geo.Point, width, height int, opacity float64) string {
@@ -1075,7 +1013,7 @@ func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, label
 	)
 }
 
-func drawConnection(writer *objectWriter, diagramHash string, connection d2target.Connection, markers map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, markers map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
 	classes := []string{base64.URLEncoding.EncodeToString([]byte(svg.EscapeText(connection.ID)))}
 	classes = append(classes, connection.Classes...)
 	opacityStyle := ""
@@ -1163,9 +1101,12 @@ func drawConnection(writer *objectWriter, diagramHash string, connection d2targe
 		}
 	}
 
-	srcAdj, dstAdj := getArrowheadAdjustments(connection, idToShape)
+	srcAdj, dstAdj := connection.ArrowheadAdjustments(idToShape)
 	path := pathData(connection, srcAdj, dstAdj)
 	mask := svg.Attr("mask", svg.LocalIRI(svg.LiteralID(diagramHash)))
+	if crossingMask != "" {
+		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(crossingMask)))))
+	}
 
 	if sketch {
 		out, err := d2sketch.ConnectionWithAttributes(connection, path, []svg.Attribute{mask})
@@ -1224,6 +1165,10 @@ func drawConnection(writer *objectWriter, diagramHash string, connection d2targe
 			pathEl.AddAttributes(append(pathAttributes, mask)...)
 			writer.element(pathEl)
 		}
+	}
+
+	if crossingMask != "" {
+		fmt.Fprint(writer, svg.CloseElement("g"))
 	}
 
 	if connection.Label != "" {
@@ -2993,9 +2938,21 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		idToShape[s.ID] = s
 		allObjects = append(allObjects, s)
 	}
-	for _, c := range diagram.Connections {
-		allObjects = append(allObjects, c)
+	for i := range diagram.Connections {
+		allObjects = append(allObjects, indexedConnection{&diagram.Connections[i], i})
 	}
+	lightTheme := d2themescatalog.Find(themeID)
+	lightTheme.ApplyOverrides(opts.ThemeOverrides)
+	inlineTheme := &lightTheme
+	strokeVisible := d2themes.PaintVisibleIn(lightTheme)
+	if darkThemeID != nil {
+		darkTheme := d2themescatalog.Find(*darkThemeID)
+		darkTheme.ApplyOverrides(opts.DarkThemeOverrides)
+		strokeVisible = d2themes.PaintVisibleIn(lightTheme, darkTheme)
+		// Let the responsive stylesheet select the user's palette.
+		inlineTheme = nil
+	}
+	crossings := d2target.ConnectionCrossings(diagram.Connections, idToShape, sketch, strokeVisible)
 
 	sortObjects(allObjects)
 
@@ -3003,16 +2960,14 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 
 	var labelMasks []string
 	markers := map[string]struct{}{}
-	var inlineTheme *d2themes.Theme
-	// We only want to inline when no dark theme is specified, otherwise the inline style will override the CSS
-	if darkThemeID == nil {
-		inlineTheme = go2.Pointer(d2themescatalog.Find(themeID))
-		inlineTheme.ApplyOverrides(opts.ThemeOverrides)
-	}
 	markdown := newMarkdownRenderer(diagram.FontFamily, diagram.MonoFontFamily, inlineTheme)
 	for _, obj := range allObjects {
-		if c, is := obj.(d2target.Connection); is {
-			labelMask, err := drawConnection(writer, isolatedDiagramHash, c, markers, idToShape, sketch, inlineTheme, markdown)
+		if c, is := obj.(indexedConnection); is {
+			maskID := ""
+			if len(crossings[c.index]) != 0 {
+				maskID = crossingMaskID(isolatedDiagramHash, c.index)
+			}
+			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, markers, idToShape, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
 			}
@@ -3127,6 +3082,8 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		strings.Join(labelMasks, "\n"),
 		`</mask>`,
 	}, "\n"))
+
+	writeCrossingMasks(buf, isolatedDiagramHash, crossings, left, top, w, h)
 
 	// Validate the theme before expanding the background, preserving error order.
 	var themeStylesheet string
@@ -3538,6 +3495,11 @@ func blendMode(lc string) string {
 	panic("invalid luminance category")
 }
 
+type indexedConnection struct {
+	*d2target.Connection
+	index int
+}
+
 type DiagramObject interface {
 	GetID() string
 	GetZIndex() int
@@ -3566,8 +3528,7 @@ func sortObjects(allObjects []DiagramObject) {
 		}
 
 		// then, shapes come before connections
-		_, jIsConnection := allObjects[j].(d2target.Connection)
-		return iIsShape && jIsConnection
+		return iIsShape && !jIsShape
 	})
 }
 
