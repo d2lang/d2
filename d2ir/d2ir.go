@@ -146,7 +146,7 @@ func (r *EdgeReference) DueToLazyGlob() bool   { return r.DueToLazyGlob_ }
 
 type Scalar struct {
 	// binding retains a step expression for interpolation after its endpoint resolves.
-	binding d2ast.Scalar
+	binding *tweenBinding
 	parent  Node
 	Value   d2ast.Scalar `json:"value"`
 }

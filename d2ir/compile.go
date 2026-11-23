@@ -480,8 +480,9 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 	if c.stopped() {
 		return false
 	}
+	markdownOuterStart := -1
 	if c.retainTweenBindings {
-		c.saveTweenBinding(node, varsStack)
+		markdownOuterStart = c.saveTweenBinding(node, varsStack)
 	}
 	var subbed bool
 	var resolvedField *Field
@@ -663,31 +664,49 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 		}
 		variables := make(map[string]string)
 		seen := make(map[Node]struct{})
-		for _, vars := range varsStack {
-			c.collectVariables(vars, variables, seen, node.LastRef().AST())
+		var outer map[string]string
+		for i, vars := range varsStack {
+			dest := variables
+			if markdownOuterStart >= 0 && i >= markdownOuterStart {
+				if outer == nil {
+					outer = make(map[string]string)
+				}
+				dest = outer
+			}
+			c.collectVariables(vars, dest, seen, node.LastRef().AST())
+		}
+		if outer != nil {
+			// A sampled fragment may leave its module. Remember the lexical
+			// values during the ordinary import pass, collecting each scope once.
+			node.Primary().binding.markdownOuter = outer
+			for name, value := range outer {
+				variables[name] = value
+			}
 		}
 		if c.stopped() {
 			return
 		}
-		preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, s.Value, variables, c.variableExpansion.remaining())
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				c.contextErr = err
-				c.halted = true
-				return
-			}
-			c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
-			c.halted = true
-			return
-		}
-		if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
-			return
-		}
-
-		// Update the block string value
-		s.Value = preprocessedValue
+		s.Value = c.replaceMarkdownVariables(node, s.Value, variables)
 	}
 	return removedField
+}
+
+func (c *compiler) replaceMarkdownVariables(node Node, value string, variables map[string]string) string {
+	preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, value, variables, c.variableExpansion.remaining())
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			c.contextErr = err
+			c.halted = true
+			return value
+		}
+		c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
+		c.halted = true
+		return value
+	}
+	if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
+		return value
+	}
+	return preprocessedValue
 }
 
 func interpolationBytes(values []d2ast.InterpolationBox) int64 {

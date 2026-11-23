@@ -10,6 +10,11 @@ import (
 	"github.com/d2lang/d2/d2target"
 )
 
+type tweenBinding struct {
+	source        d2ast.Scalar
+	markdownOuter map[string]string
+}
+
 type tweenVariable struct {
 	path            []d2ast.String
 	from, to        float64
@@ -20,10 +25,10 @@ type tweenVariable struct {
 // Substitution normally consumes a string's expression. Retain expressions in
 // step scopes so imports and the authored endpoints can resolve normally before
 // determining whether this step has any numeric changes to sample.
-func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) {
+func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) (markdownOuterStart int) {
 	primary := node.Primary()
 	if primary.binding != nil {
-		return
+		return -1
 	}
 	var boxes []d2ast.InterpolationBox
 	switch value := primary.Value.(type) {
@@ -33,10 +38,10 @@ func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) {
 		boxes = value.Value
 	case *d2ast.BlockString:
 		if !strings.Contains(value.Value, "${") {
-			return
+			return -1
 		}
 	default:
-		return
+		return -1
 	}
 	if boxes != nil {
 		hasBinding := false
@@ -47,30 +52,54 @@ func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) {
 			}
 		}
 		if !hasBinding {
-			return
+			return -1
 		}
 	}
-	for _, vars := range varsStack {
+	for step, vars := range varsStack {
 		if NodeBoardKind(ParentMap(vars)) != BoardStep {
 			continue
+		}
+		boxes = slices.Clone(boxes)
+		if len(c.importStack) > 1 {
+			// A selected board can leave its module's outer scope. Bind those
+			// references here while leaving its own step variables editable.
+			for i, box := range boxes {
+				if box.Substitution == nil {
+					continue
+				}
+				for j, scope := range varsStack {
+					value := c.resolveSubstitution(scope, node, box.Substitution, j == 0)
+					if value != nil {
+						if j > step && value.Primary() != nil {
+							text := value.Primary().Value.ScalarString()
+							boxes[i] = d2ast.InterpolationBox{String: &text}
+						}
+						break
+					}
+				}
+			}
 		}
 		// Substitution replaces boxes or coalesces the string. Its original
 		// text and substitution paths remain immutable and can be shared.
 		switch value := primary.Value.(type) {
 		case *d2ast.UnquotedString:
 			binding := *value
-			binding.Value = slices.Clone(boxes)
-			primary.binding = &binding
+			binding.Value = boxes
+			primary.binding = &tweenBinding{source: &binding}
 		case *d2ast.DoubleQuotedString:
 			binding := *value
-			binding.Value = slices.Clone(boxes)
-			primary.binding = &binding
+			binding.Value = boxes
+			primary.binding = &tweenBinding{source: &binding}
 		case *d2ast.BlockString:
 			binding := *value
-			primary.binding = &binding
+			primary.binding = &tweenBinding{source: &binding}
+			if len(c.importStack) > 1 && step+1 < len(varsStack) {
+				return step + 1
+			}
 		}
-		return
+		return -1
 	}
+	return -1
 }
 
 // A whole-map substitution or a spread can provide configuration during
@@ -264,10 +293,14 @@ func (c *compiler) sampleTween(template *Map, changes []tweenVariable, outerVars
 	frame.variableExpansion = c.variableExpansion
 	walkComposite(frame, func(n Node) bool {
 		if p := n.Primary(); p != nil && p.binding != nil {
-			if !c.reserveVariableExpansion(template.LastRef().AST(), variableExpansionScalarValueUnits(p.binding)) {
+			if !c.reserveVariableExpansion(template.LastRef().AST(), variableExpansionScalarValueUnits(p.binding.source)) {
 				return true
 			}
-			p.Value = cloneASTScalar(p.binding)
+			p.Value = cloneASTScalar(p.binding.source)
+			if len(p.binding.markdownOuter) > 0 {
+				block := p.Value.(*d2ast.BlockString)
+				block.Value = c.replaceMarkdownVariables(n, block.Value, p.binding.markdownOuter)
+			}
 			p.binding = nil
 		}
 		return false

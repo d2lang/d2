@@ -1,6 +1,7 @@
 package d2ir_test
 
 import (
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -258,7 +259,12 @@ func TestTweenSelectedImportKeepsLexicalBindings(t *testing.T) {
 layers: {panel: {
   vars: {p: 0}
   meter: "Reading ${p} ${unit}"
-  steps: {load: {vars: {p: 4}}}
+  steps: {load: {
+    vars: {p: 4; reading: ${p}}
+    note: |md
+      Reading ${reading} ${unit}
+    |
+  }}
 }}`)},
 	}}
 	m, err := compileTween(t, `vars: {d2-config: {animate-interval: 1s; animate-duration: 80ms}}
@@ -267,7 +273,24 @@ layers: {sensor: @module.layers.panel}`, opts)
 		t.Fatal(err)
 	}
 	step := tweenField(m, "layers", "sensor", "steps", "load").Map()
-	if len(step.TweenFrames) != 2 || tweenText(t, step.TweenFrames[1], "meter") != "Reading 2 watts" {
-		t.Fatal("interpolation lost the imported module's lexical bindings")
+	if len(step.TweenFrames) != 2 || tweenText(t, step.TweenFrames[1], "meter") != "Reading 2 watts" ||
+		!strings.Contains(tweenText(t, step.TweenFrames[1], "note"), "Reading 2 watts") {
+		t.Fatalf("interpolated imported label %q and Markdown %q", tweenText(t, step.TweenFrames[1], "meter"), tweenText(t, step.TweenFrames[1], "note"))
 	}
+
+	// Automatic mode with no timing must fit the same expansion budget as an
+	// explicitly static export, including the Markdown in a selected import.
+	const staticSource = "layers: {sensor: @module.layers.panel}"
+	opts.AnimateTweens = go2.Pointer(false)
+	minimum := sort.Search(1<<16, func(n int) bool {
+		opts.MaxVariableExpansion = int64(n + 1)
+		_, err := compileTween(t, staticSource, opts)
+		return err == nil
+	})
+	opts.AnimateTweens = nil
+	opts.MaxVariableExpansion = int64(minimum + 1)
+	if _, err := compileTween(t, staticSource, opts); err != nil {
+		t.Fatalf("automatic mode exceeded the static import budget: %v", err)
+	}
+
 }
