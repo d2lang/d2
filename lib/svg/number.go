@@ -18,7 +18,7 @@ func ScaledDimensions(width, height int, scale *float64) (string, error) {
 	if !(*scale > 0 && w >= 0 && w < limit && h >= 0 && h < limit) {
 		return "", fmt.Errorf("SVG scale %g produces invalid dimensions", *scale)
 	}
-	return fmt.Sprintf(` width="%d" height="%d"`, int(w), int(h)), nil
+	return RenderAttributes(IntAttr("width", int(w)), IntAttr("height", int(h))), nil
 }
 
 // FormatFloat serializes an SVG coordinate with the same six decimal places

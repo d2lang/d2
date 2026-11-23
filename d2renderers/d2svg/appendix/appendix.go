@@ -52,8 +52,8 @@ const (
 )
 
 var viewboxRegex = regexp.MustCompile(`viewBox=\"([0-9\- ]+)\"`)
-var widthRegex = regexp.MustCompile(`width=\"([.0-9]+)\"`)
-var heightRegex = regexp.MustCompile(`height=\"([.0-9]+)\"`)
+var widthRegex = regexp.MustCompile(` width="[.0-9]+"`)
+var heightRegex = regexp.MustCompile(` height="[.0-9]+"`)
 var svgRegex = regexp.MustCompile(`<svg(.*?)>`)
 
 func FindViewboxSlice(svg []byte) []string {
@@ -147,14 +147,16 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) string
 	outerEnd := svgRegex.FindStringIndex(svg)[1]
 	outer, inner := svg[:outerEnd], svg[outerEnd:]
 	outer = strings.Replace(outer, viewboxMatches[0][0], newOuterViewbox, 1)
-	outer = widthRegex.ReplaceAllString(outer, fmt.Sprintf(`width="%.0f"`, math.Ceil(scale*float64(viewboxWidth))))
-	outer = heightRegex.ReplaceAllString(outer, fmt.Sprintf(`height="%.0f"`, math.Ceil(scale*float64(viewboxHeight))))
+	outer = widthRegex.ReplaceAllString(outer, svglib.RenderAttributes(svglib.FloatAttr("width", math.Ceil(scale*float64(viewboxWidth)))))
+	outer = heightRegex.ReplaceAllString(outer, svglib.RenderAttributes(svglib.FloatAttr("height", math.Ceil(scale*float64(viewboxHeight)))))
 	inner = strings.Replace(inner, viewboxMatch[0], newViewbox, 1)
+	newWidth := svglib.RenderAttributes(svglib.IntAttr("width", viewboxWidth))
+	newHeight := svglib.RenderAttributes(svglib.IntAttr("height", viewboxHeight))
 	for _, match := range widthRegex.FindAllString(inner, 2) {
-		inner = strings.Replace(inner, match, fmt.Sprintf(`width="%d"`, viewboxWidth), 1)
+		inner = strings.Replace(inner, match, newWidth, 1)
 	}
 	for _, match := range heightRegex.FindAllString(inner, 2) {
-		inner = strings.Replace(inner, match, fmt.Sprintf(`height="%d"`, viewboxHeight), 1)
+		inner = strings.Replace(inner, match, newHeight, 1)
 	}
 	svg = outer + inner
 
