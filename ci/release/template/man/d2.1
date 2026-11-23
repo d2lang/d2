@@ -216,6 +216,9 @@ Bundle all assets and layers into the output svg
 .It Fl -allow-private-network Ar false
 Allow remote image assets to access private, loopback, and link-local networks. Only enable this for trusted diagrams
 .Ns .
+.It Fl -allow-local-files Ar true
+Allow the diagram to read local files: imports, and images bundled into or rendered in the output. Disable it to render untrusted diagrams
+.Ns .
 .It Fl -force-appendix Ar false
 Add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG.
 PNG exports include an appendix by default.
@@ -303,6 +306,8 @@ See --isometric flag.
 See -b[undle] flag.
 .It Ev Sy D2_ALLOW_PRIVATE_NETWORK
 See --allow-private-network flag.
+.It Ev Sy D2_ALLOW_LOCAL_FILES
+See --allow-local-files flag.
 .It Ev Sy D2_FORCE_APPENDIX
 See --force-appendix flag.
 .It Ev Sy D2_FONT_REGULAR
