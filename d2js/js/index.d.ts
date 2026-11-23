@@ -1,4 +1,11 @@
+export interface D2Options {
+  /** Browser module worker script URL. Defaults to the embedded worker. */
+  workerURL?: string | { readonly href: string };
+}
+
 export class D2 {
+  constructor(options?: D2Options);
+
   /** Options in input.options take precedence over the second argument. */
   compile(
     input: string | CompileRequest,

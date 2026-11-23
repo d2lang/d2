@@ -10,6 +10,11 @@ declare const d2: D2;
 declare const input: string | CompileRequest;
 
 const source = "x -> y";
+new D2();
+new D2({ workerURL: "/d2-worker.js" });
+new D2({ workerURL: new URL("/d2-worker.js", "https://example.com") });
+// @ts-expect-error The worker URL must identify a script.
+new D2({ workerURL: 123 });
 const request: CompileRequest = { fs: { index: source } };
 const options: CompileOptions = {
   layout: "tala",
