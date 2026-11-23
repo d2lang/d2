@@ -7,10 +7,7 @@ export class D2 {
   constructor(options?: D2Options);
 
   /** Compiles and renders SVG in one worker call. Rejects if the effective options set ascii to true. */
-  renderSVG(
-    input: string | CompileRequest,
-    options?: CompileOptions
-  ): Promise<string>;
+  renderSVG(input: string | CompileRequest, options?: CompileOptions): Promise<string>;
 
   /** Options in input.options take precedence over the second argument. */
   compile(
