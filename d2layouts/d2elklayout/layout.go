@@ -854,6 +854,7 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 	}
 	deconflictSelfLoopLabels(g)
 	if len(groups) > 0 {
+		ranklabel.AvoidNodeLabels(g)
 		ranklabel.ClearOverlaps(g)
 	}
 

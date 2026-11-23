@@ -422,6 +422,7 @@ func routeEdgesWithResourceGuards(
 	nearbyNodes []*layoutgraph.Node,
 	ovgGuard *ovgBuildGuard,
 	searchWorkLimit uint64,
+	avoidFixedLabels bool,
 ) (*OVG, error) {
 	ovg, err := buildOVGFromGraphWithGuard(g, nearbyNodes, ovgGuard)
 	if err != nil {
@@ -491,6 +492,7 @@ func routeEdgesWithResourceGuards(
 		if err != nil {
 			return ovg, err
 		}
+		router.avoidFixedNodeLabels = avoidFixedLabels
 		routers = append(routers, router)
 	}
 	responses, err := generateRouteFlavorResponses(ctx, routers, true)

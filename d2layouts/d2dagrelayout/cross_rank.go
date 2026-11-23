@@ -269,6 +269,23 @@ func (s *crossRankShifter) processQueue() {
 		}
 
 		shift := m.needsMove == epoch
+		// A ranked compound can span this cut while an incident edge forces
+		// its trailing face forward. Grow just that face: moving the entire
+		// container would leave children on the near side outside their parent.
+		if shift && len(ix.sc.in.RankGroups) != 0 && c.IsContainer() {
+			before, size := c.TopLeft.Y, &c.Height
+			if isHorizontal {
+				before, size = c.TopLeft.X, &c.Width
+			}
+			if before < start && start <= before+*size {
+				if m.grown != epoch {
+					*size += distance
+					m.grown = epoch
+					s.movedOrder = append(s.movedOrder, curr)
+				}
+				shift = false
+			}
+		}
 		if isHorizontal {
 			if !shift {
 				if !s.isMargin {

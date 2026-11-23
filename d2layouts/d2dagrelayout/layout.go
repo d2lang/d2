@@ -322,7 +322,7 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		// .5 and .8 of segments 1 to n-3, and at .2 of the last.
 		n := len(points) - 1
 		var path []*geo.Point
-		if edge.Src != edge.Dst && edge.Src.Rank != nil && edge.Src.Rank.Value != "" && edge.Dst.Rank != nil && edge.Src.Rank.Value == edge.Dst.Rank.Value {
+		if sameRankPeers(edge) {
 			// Dagro reserved a polyline track for this edge and its label.
 			path = points
 			edge.IsCurve = false
@@ -349,6 +349,9 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		}
 
 		edge.Route = path
+		if sameRankPeers(edge) {
+			dockRankedTableColumns(g, edge)
+		}
 		// compile needs to assign edge label positions
 		if edge.Label.Value != "" {
 			edge.LabelPosition = positions.ptr(label.InsideMiddleCenter.String())
@@ -371,6 +374,10 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 	}
 
 	return nil
+}
+
+func sameRankPeers(edge *d2graph.Edge) bool {
+	return edge.Src != edge.Dst && edge.Src.Rank != nil && edge.Src.Rank.Value != "" && edge.Dst.Rank != nil && edge.Src.Rank.Value == edge.Dst.Rank.Value
 }
 
 func deduplicateRoutePoints(points []*geo.Point) []*geo.Point {

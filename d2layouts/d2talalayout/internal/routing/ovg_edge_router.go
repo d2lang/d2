@@ -80,9 +80,10 @@ type ovgEdgeRouter struct {
 	scratch           *routeSearchScratch
 	// Usually, edge routing occurs before label placement. When the router is used
 	// independently, labels are already placed and the edges should move out of the way.
-	considerNodeLabels bool
-	labelBoxes         *routeLabelBoxes
-	work               *routeSearchWorkGuard
+	considerNodeLabels   bool
+	avoidFixedNodeLabels bool
+	labelBoxes           *routeLabelBoxes
+	work                 *routeSearchWorkGuard
 }
 
 func checkEdgeRoutingCanceled(ctx context.Context) error {
@@ -604,22 +605,18 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 	occupiedEdges := make([]*layoutgraph.Edge, 0, 32)
 	overlappingEdges := make([]*layoutgraph.Edge, 0, 32)
 
-	// When node labels are obstacles, every labelled node other than the
-	// edge's endpoints contributes one label box. The boxes and their
-	// per-edge intersections are cached on the router (see routeLabelBoxes).
+	// Cache label geometry across routes. A fixed outside label also blocks
+	// approaches to its own shape from the labelled side.
 	nodeLabelBoxCount := 0
-	if router.considerNodeLabels {
+	if router.considerNodeLabels || router.avoidFixedNodeLabels {
 		if router.labelBoxes == nil {
-			router.labelBoxes = newRouteLabelBoxes(originalGraph.Nodes, g.Edges)
+			router.labelBoxes = newRouteLabelBoxes(originalGraph.Nodes, g.Edges, router.avoidFixedNodeLabels)
 		}
-		for _, n := range originalGraph.Nodes {
-			if err := router.work.step(); err != nil {
-				return nil, 0, err
-			}
-			if n == gSource || n == gTarget {
-				continue
-			}
-			if n.Label != nil && n.Label.Text != "" {
+		if err := router.work.stepN(len(originalGraph.Nodes)); err != nil {
+			return nil, 0, err
+		}
+		for _, n := range router.labelBoxes.nodes {
+			if n != gSource && n != gTarget || router.avoidFixedNodeLabels && n.Label.Position.IsOutside() {
 				nodeLabelBoxCount++
 			}
 		}
@@ -1199,14 +1196,17 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 				}
 			}
 
-			// Check intersection with node label boxes: one step per box and one
-			// turn cost per intersected box, added one at a time as before.
+			// Reserve fixed labels during ranked routing. Additional-edge routing
+			// retains its softer preference for the labels already on the graph.
 			if nodeLabelBoxCount > 0 {
 				if err := router.work.stepN(nodeLabelBoxCount); err != nil {
 					return nil, 0, err
 				}
 				for _, hit := range router.labelBoxes.hitsFor(e) {
-					if n := router.labelBoxes.nodes[hit]; n != gSource && n != gTarget {
+					n := router.labelBoxes.nodes[hit]
+					if router.avoidFixedNodeLabels && (n != gSource && n != gTarget || n.Label.Position.IsOutside()) {
+						nextDistance += basicallyInfinity
+					} else if router.considerNodeLabels && n != gSource && n != gTarget {
 						nextDistance += router.turnCost
 					}
 				}

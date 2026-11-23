@@ -130,8 +130,17 @@ func PlaceSameRanks(ctx context.Context, g *layoutgraph.Graph) error {
 		flow = geo.Bottom
 	}
 	horizontal := flow.IsHorizontal()
+	localFlow := func(parent *layoutgraph.Node) geo.Orientation {
+		for p := parent; p != nil; p = p.Container {
+			if d := g.Direction(p); d != geo.NONE {
+				return d
+			}
+		}
+		return flow
+	}
 	gaps := make(map[*layoutgraph.Node]float64)
 	flatLabels := make(map[[2]*layoutgraph.Node]float64)
+	flatPaths := make(flatRankPaths)
 	for _, edge := range g.Edges {
 		if err := guard.Step(); err != nil {
 			return err
@@ -148,15 +157,24 @@ func PlaceSameRanks(ctx context.Context, g *layoutgraph.Graph) error {
 			return err
 		}
 		if from == to {
-			if constrained[from.ID] && edge.Label != nil {
-				p := edge.From.NearestSharedAncestor(edge.To)
-				a, b := edge.From, edge.To
-				if a.ID > b.ID {
-					a, b = b, a
-				}
-				pair := [2]*layoutgraph.Node{a, b}
-				// Parallel and reverse edges share this inter-sibling interval.
-				// Reserve room for each label and its edge channel.
+			if !constrained[from.ID] || edge.IsInvisible {
+				continue
+			}
+			p := edge.From.NearestSharedAncestor(edge.To)
+			a, b := edge.From, edge.To
+			for a.Container != p {
+				a = a.Container
+			}
+			for b.Container != p {
+				b = b.Container
+			}
+			flatPaths.link(a, b, from.ID)
+			flatPaths.link(b, a, from.ID)
+			if edge.Label != nil {
+				// Reverse transitions get separate facing ports. Their labels can
+				// share the same transverse interval; same-direction parallel
+				// edges still reserve room for their full bundle.
+				pair := [2]*layoutgraph.Node{edge.From, edge.To}
 				flatLabels[pair] += axisValue(!horizontal, edge.Label.Width, edge.Label.Height) + crossingSpacing
 				gaps[p] = max(gaps[p], flatLabels[pair])
 			}
@@ -165,13 +183,7 @@ func PlaceSameRanks(ctx context.Context, g *layoutgraph.Graph) error {
 		// Nested containers may specify their own flow. Perpendicular edges
 		// belong to the transverse placement; opposite flows reverse the
 		// span inequality without changing the authored edge or its route.
-		local := flow
-		for p := edge.From.NearestSharedAncestor(edge.To); p != nil; p = p.Container {
-			if d := g.Direction(p); d != geo.NONE {
-				local = d
-				break
-			}
-		}
+		local := localFlow(edge.From.NearestSharedAncestor(edge.To))
 		if local.IsHorizontal() != horizontal {
 			continue
 		}
@@ -185,6 +197,7 @@ func PlaceSameRanks(ctx context.Context, g *layoutgraph.Graph) error {
 	if err != nil {
 		return err
 	}
+	placedLevels := make(map[*layoutgraph.Node]int)
 	for _, component := range components {
 		if !slices.ContainsFunc(component.Nodes, func(n *layoutgraph.Node) bool { return constrained[n.ID] }) {
 			continue
@@ -199,7 +212,7 @@ func PlaceSameRanks(ctx context.Context, g *layoutgraph.Graph) error {
 		if err != nil {
 			return err
 		}
-		if err := placeRankCenters(g, component, blocks, ranks, horizontal); err != nil {
+		if err := placeRankCenters(g, component, blocks, ranks, horizontal, placedLevels); err != nil {
 			return err
 		}
 	}
@@ -213,8 +226,15 @@ func PlaceSameRanks(ctx context.Context, g *layoutgraph.Graph) error {
 		if p != nil && !expanded[p] {
 			continue
 		}
-		if err := separateRankSiblings(g.Containers[p], horizontal, max(siblingSpacing, gaps[p]), guard); err != nil {
+		children := g.Containers[p]
+		gap := max(siblingSpacing, gaps[p])
+		if err := separateRankSiblings(children, horizontal, gap, flatPaths, guard); err != nil {
 			return err
+		}
+		if localFlow(p).IsHorizontal() == horizontal {
+			if err := alignRankChains(children, placedLevels, horizontal, gap, guard); err != nil {
+				return err
+			}
 		}
 		if p != nil {
 			p.WrapChildren()
@@ -256,7 +276,7 @@ func rankCenter(n *layoutgraph.Node, horizontal bool) float64 {
 	return n.TopLeft.Y + n.Height/2
 }
 
-func placeRankCenters(g, component *layoutgraph.Graph, blocks map[layoutgraph.EntityID][]*layoutgraph.Node, ranks rankResult, horizontal bool) error {
+func placeRankCenters(g, component *layoutgraph.Graph, blocks map[layoutgraph.EntityID][]*layoutgraph.Node, ranks rankResult, horizontal bool, placedLevels map[*layoutgraph.Node]int) error {
 	levels := mapDAGToGraphLevels(component, ranks.nodeToLevel)
 	reverse := g.Direction(nil) == geo.Top || g.Direction(nil) == geo.Left
 	physicalLevel := func(proxy *layoutgraph.Node) int {
@@ -316,6 +336,7 @@ func placeRankCenters(g, component *layoutgraph.Graph, blocks map[layoutgraph.En
 	for _, proxy := range component.Nodes {
 		level := physicalLevel(proxy)
 		for _, n := range blocks[proxy.ID] {
+			placedLevels[n] = level
 			// Only siblings with the matching routing orientation can use this
 			// hierarchy's local OVG lanes. Interior block geometry is still rigid.
 			if n.Hierarchy != nil {
@@ -343,7 +364,7 @@ func placeRankCenters(g, component *layoutgraph.Graph, blocks map[layoutgraph.En
 	return nil
 }
 
-func separateRankSiblings(children []*layoutgraph.Node, horizontal bool, gap float64, guard *limits.WorkGuard) error {
+func separateRankSiblings(children []*layoutgraph.Node, horizontal bool, gap float64, flatPaths flatRankPaths, guard *limits.WorkGuard) error {
 	ordered := slices.Clone(children)
 	// The seed's transverse order preserves distinct branches of a workflow.
 	// When the seed stacked peers down a single lane, declaration order breaks ties.
@@ -356,12 +377,17 @@ func separateRankSiblings(children []*layoutgraph.Node, horizontal bool, gap flo
 		}
 		return cmp.Compare(math.Round(rankCenter(a, !horizontal)), math.Round(rankCenter(b, !horizontal)))
 	})
+	seedCenters := make([]float64, len(ordered))
+	for i, n := range ordered {
+		seedCenters[i] = rankCenter(n, !horizontal)
+	}
+	flatPaths.order(ordered)
 	type interval struct{ low, high, far float64 }
 	placed := make([]interval, 0, len(ordered))
 	type fixedInterval struct{ low, high, start, end float64 }
 	var fixed []fixedInterval
 	fixedSorted := false
-	for _, n := range ordered {
+	for i, n := range ordered {
 		tl, br := n.BoundingBox(layoutgraph.Nodes{n})
 		start := axisValue(!horizontal, tl.X, tl.Y)
 		end := axisValue(!horizontal, br.X, br.Y)
@@ -374,7 +400,7 @@ func separateRankSiblings(children []*layoutgraph.Node, horizontal bool, gap flo
 			slices.SortFunc(fixed, func(a, b fixedInterval) int { return cmp.Compare(a.start, b.start) })
 			fixedSorted = true
 		}
-		pos := start
+		pos := start + (seedCenters[i] - rankCenter(n, !horizontal))
 		for _, b := range placed {
 			if err := guard.Step(); err != nil {
 				return err

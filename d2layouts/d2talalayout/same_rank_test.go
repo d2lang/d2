@@ -93,6 +93,9 @@ func TestLayoutSameRank(t *testing.T) {
 					}
 				}
 				for _, e := range g.Edges {
+					if (example == "compound" || example == "siblings") && len(e.Route) != 2 {
+						t.Errorf("straight path through three rank peers: %s -> %s has %d route points", e.Src.ID, e.Dst.ID, len(e.Route))
+					}
 					if len(e.Route) < 2 {
 						t.Errorf("missing %s -> %s route", e.Src.ID, e.Dst.ID)
 					}
@@ -289,5 +292,58 @@ func TestSameRankOpposingContainerEdges(t *testing.T) {
 		if len(e.Route) < 2 {
 			t.Fatalf("no route for %s -> %s", e.Src.ID, e.Dst.ID)
 		}
+	}
+}
+
+func TestSameRankPlaybackTransitions(t *testing.T) {
+	for _, direction := range []string{"down", "right", "up", "left"} {
+		t.Run(direction, func(t *testing.T) {
+			g := d2graph.NewGraph()
+			g.Root.Direction.Value = direction
+			g.Root.Shape.Value = d2target.ShapeHierarchy
+			node := func(id string, w, h float64) *d2graph.Object {
+				n := appendD2Object(g.Root, id)
+				n.Width, n.Height = w, h
+				return n
+			}
+			ready, playing := node("ready", 89, 66), node("playing", 123, 123)
+			paused, finished := node("paused", 120, 120), node("finished", 104, 66)
+			playing.Rank = &d2graph.Scalar{Value: "playback"}
+			paused.Rank = &d2graph.Scalar{Value: "playback"}
+			transition := func(from, to *d2graph.Object, name string, width int) *d2graph.Edge {
+				e := &d2graph.Edge{Src: from, Dst: to, DstArrow: true}
+				e.Label.Value = name
+				e.LabelDimensions = d2target.TextDimensions{Width: width, Height: 21}
+				g.Edges = append(g.Edges, e)
+				return e
+			}
+			play := transition(ready, playing, "play", 31)
+			pause := transition(playing, paused, "pause", 42)
+			resume := transition(paused, playing, "resume", 49)
+			finish := transition(playing, finished, "finish", 35)
+			if err := Layout(t.Context(), g, &Options{Seeds: []int64{1}}); err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range []*d2graph.Edge{play, pause, resume, finish} {
+				if len(e.Route) != 2 {
+					t.Fatalf("%s transition should be straight, got %v", e.Label.Value, e.Route)
+				}
+			}
+			if rerouteLabelBox(pause).Overlaps(*rerouteLabelBox(resume)) {
+				t.Error("pause and resume labels overlap")
+			}
+			vertical := direction == "down" || direction == "up"
+			if (vertical && pause.Route[0].Y == resume.Route[0].Y) || (!vertical && pause.Route[0].X == resume.Route[0].X) {
+				t.Error("opposing transitions share a track")
+			}
+			// These two separate tracks can fit both labels in the same interval.
+			gap := math.Abs(playing.Center().X-paused.Center().X) - (playing.Width+paused.Width)/2
+			if !vertical {
+				gap = math.Abs(playing.Center().Y-paused.Center().Y) - (playing.Height+paused.Height)/2
+			}
+			if gap > 110 {
+				t.Errorf("reserved %g between peers for separate pause and resume tracks", gap)
+			}
+		})
 	}
 }

@@ -41,7 +41,7 @@ func routeEdgesWithSearchWorkLimit(ctx context.Context, g *layoutgraph.Graph, ne
 	if err != nil {
 		return nil, err
 	}
-	return routeEdgesWithResourceGuards(ctx, g, nearbyNodes, guard, searchWorkLimit)
+	return routeEdgesWithResourceGuards(ctx, g, nearbyNodes, guard, searchWorkLimit, false)
 }
 
 func routeEdgesWithLimits(ctx context.Context, g *layoutgraph.Graph, edges []*layoutgraph.Edge, limits ovgBuildLimits) error {

@@ -181,7 +181,7 @@ func TestEdgeRoutingNestedWorkBudgetIsSharedAcrossSubgraphs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := routeEdgesWithResourceGuards(routingCtx, newComponent(1), nil, ovgGuard, maxRouteSearchWorkUnits); err != nil {
+	if _, err := routeEdgesWithResourceGuards(routingCtx, newComponent(1), nil, ovgGuard, maxRouteSearchWorkUnits, false); err != nil {
 		t.Fatalf("route first subgraph: %v", err)
 	}
 	if stageGuard.used == 0 {
@@ -191,7 +191,7 @@ func TestEdgeRoutingNestedWorkBudgetIsSharedAcrossSubgraphs(t *testing.T) {
 	// shared unit to prove those helpers cannot reset the whole-stage envelope.
 	stageGuard.limit = stageGuard.used + 1
 
-	_, err = routeEdgesWithResourceGuards(routingCtx, newComponent(100), nil, ovgGuard, maxRouteSearchWorkUnits)
+	_, err = routeEdgesWithResourceGuards(routingCtx, newComponent(100), nil, ovgGuard, maxRouteSearchWorkUnits, false)
 	if !errors.Is(err, errRouteStageWorkLimit) {
 		t.Fatalf("route second subgraph error = %v, want aggregate stage work limit", err)
 	}

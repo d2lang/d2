@@ -78,8 +78,9 @@ func dagroInput(g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolved
 		v, w := ix.node(resolvedSrc[i], n), ix.node(resolvedDst[i], n)
 		width := edge.LabelDimensions.Width
 		height := edge.LabelDimensions.Height
-		// We want to leave some gap between multiple edges
-		if bothWays[i] > 1 {
+		// Flat tracks already reserve separate space for each label; the
+		// ordinary parallel-edge trick would make a label that fits look too wide.
+		if bothWays[i] > 1 && !sameRankPeers(edge) {
 			switch g.Root.Direction.Value {
 			case "down", "up", "":
 				width += EDGE_LABEL_GAP

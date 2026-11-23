@@ -10,9 +10,8 @@ import (
 // routeLabelBoxes holds the node-label obstacles of one router's searches.
 // Route flavors search concurrently against a shared graph that no flavor
 // mutates, so a node's label box is the same in every search of a router.
-// Each search avoids the boxes of every labelled node except the edge's
-// endpoints; the per-edge intersection lists below are computed once for all
-// labelled nodes and filtered per search.
+// Independent rerouting considers placed node labels. A ranked placement can
+// already avoid the caller's fixed outside labels and container headings.
 type routeLabelBoxes struct {
 	nodes  []*layoutgraph.Node
 	boxes  []geo.Box
@@ -42,13 +41,16 @@ type routeLabelBoxBounds struct {
 	valid bool
 }
 
-func newRouteLabelBoxes(nodes []*layoutgraph.Node, edges []*OVGEdge) *routeLabelBoxes {
+func newRouteLabelBoxes(nodes []*layoutgraph.Node, edges []*OVGEdge, fixedOnly bool) *routeLabelBoxes {
 	index := &routeLabelBoxes{edges: edges, spans: make([]routeLabelHitSpan, len(edges))}
 	for i := range index.spans {
 		index.spans[i].count = -1
 	}
 	for _, n := range nodes {
 		if n.Label == nil || n.Label.Text == "" {
+			continue
+		}
+		if fixedOnly && (!n.Label.PositionFixed() || !(n.IsContainer() || n.Label.Position.IsOutside())) {
 			continue
 		}
 		box := geo.Box{

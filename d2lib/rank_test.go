@@ -118,6 +118,85 @@ gateway -> receipt
 	}
 }
 
+func TestELKRankedIncomingEdgeClearsContainerTitle(t *testing.T) {
+	const source = `direction: down
+feed: Feed
+batch: Region {
+  label.near: top-center
+  worker: Worker
+}
+feed -> batch.worker -> peer
+batch.worker.rank: handoff
+peer.rank: handoff`
+	d, g, err := Compile(d2log.WithDefault(t.Context()), source, rankCompileOptions("elk"), nil)
+	require.NoError(t, err)
+	batch := g.Root.Children["batch"]
+	title := geo.NewBox(batch.GetLabelTopLeft(), float64(batch.LabelDimensions.Width), float64(batch.LabelDimensions.Height))
+	route := d.Connections[0].Route
+	for i := 1; i < len(route); i++ {
+		a, b := route[i-1], route[i]
+		require.True(t, a.X == b.X || a.Y == b.Y)
+		require.False(t, title.Intersects(geo.Segment{Start: a, End: b}, -1), "incoming edge crosses Region")
+	}
+	checkAttachment(t, g.Root.Children["feed"], route[0])
+	checkAttachment(t, batch.Children["worker"], route[len(route)-1])
+}
+
+func TestELKRankPreservesStraightUpstreamEdge(t *testing.T) {
+	const payment = `
+merchant: {
+  checkout: {width: 80; height: 60}
+  commerce: {width: 180; height: 120}
+  checkout -> commerce
+}
+merchant.commerce -> channel -> payments
+merchant.commerce.rank: payment
+channel.rank: payment
+payments.rank: payment
+`
+	for _, direction := range []string{"down", "up", "right", "left"} {
+		t.Run(direction, func(t *testing.T) {
+			d, _, err := Compile(d2log.WithDefault(t.Context()), "direction: "+direction+"\n"+payment, rankCompileOptions("elk"), nil)
+			require.NoError(t, err)
+			require.Len(t, d.Connections, 3)
+			upstream := d.Connections[0]
+			require.Equal(t, "merchant.checkout", upstream.Src)
+			require.Equal(t, "merchant.commerce", upstream.Dst)
+			require.GreaterOrEqual(t, len(upstream.Route), 2)
+			first := upstream.Route[0]
+			for _, point := range upstream.Route[1:] {
+				if direction == "down" || direction == "up" {
+					require.InDelta(t, first.X, point.X, 0.001)
+				} else {
+					require.InDelta(t, first.Y, point.Y, 0.001)
+				}
+			}
+		})
+	}
+}
+
+func TestTALARankedRouteClearsFixedOutsideLabel(t *testing.T) {
+	const source = `direction: down
+shape: hierarchy
+feed -> dot -> sink
+dot: An external label {shape: circle; width: 32; height: 32; label.near: outside-right-center}
+dot.rank: peers
+sink.rank: peers`
+	d, g, err := Compile(d2log.WithDefault(t.Context()), source, rankCompileOptions("tala"), nil)
+	require.NoError(t, err)
+	dot := g.Root.Children["dot"]
+	box := geo.NewBox(dot.GetLabelTopLeft(), float64(dot.LabelDimensions.Width), float64(dot.LabelDimensions.Height))
+	require.Len(t, d.Connections, 2)
+	edge := d.Connections[1]
+	require.Equal(t, "dot", edge.Src)
+	require.Equal(t, "sink", edge.Dst)
+	require.GreaterOrEqual(t, len(edge.Route), 2)
+	checkAttachment(t, dot, edge.Route[0])
+	for i, p := range edge.Route[1:] {
+		require.False(t, box.Intersects(geo.Segment{Start: edge.Route[i], End: p}, -1), "route passes through the fixed caption")
+	}
+}
+
 func checkAttachment(t *testing.T, node *d2graph.Object, point *geo.Point) {
 	t.Helper()
 	dx := math.Abs(point.X - node.Center().X)

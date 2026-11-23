@@ -474,3 +474,32 @@ func TestCrossRankAxisOrderMatchesScan(t *testing.T) {
 		}
 	}
 }
+
+// Padding cuts can cross an unrelated compound in a constrained layout. An
+// edge on its far face can need extra space even with the only child entirely
+// before the cut.
+func TestRankedPaddingPreservesCompound(t *testing.T) {
+	g := d2graph.NewGraph()
+	add := func(parent *d2graph.Object, id string, x, y, w, h float64) *d2graph.Object {
+		o := &d2graph.Object{Graph: g, Parent: parent, ID: id, Box: geo.NewBox(geo.NewPoint(x, y), w, h)}
+		if parent.Children == nil {
+			parent.Children = make(map[string]*d2graph.Object)
+		}
+		parent.Children[id] = o
+		parent.ChildrenArray = append(parent.ChildrenArray, o)
+		g.Objects = append(g.Objects, o)
+		return o
+	}
+	trigger := add(g.Root, "trigger", 200, 75, 30, 30)
+	frame := add(g.Root, "frame", 0, 0, 100, 100)
+	child := add(frame, "child", 25, 10, 40, 40)
+	g.Edges = []*d2graph.Edge{{Src: trigger, Dst: frame, Route: []*geo.Point{geo.NewPoint(200, 90), geo.NewPoint(100, 98)}}}
+	ix := newObjectIndex(g)
+	ix.closeOver()
+	ix.sc.in.RankGroups = [][]string{{"trigger", "child"}}
+	shifter := newCrossRankShifter(g, ix, false, true, nil)
+	shifter.shift(ix.at[0], 75, 30, false)
+	if frame.TopLeft.Y != 0 || child.TopLeft.Y != 10 || frame.Height != 130 {
+		t.Fatalf("padding moved the near face past its child: frame %+v, child %+v", frame.Box, child.Box)
+	}
+}

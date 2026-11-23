@@ -379,3 +379,41 @@ func legacyLongestEdgeChainTail(g *d2graph.Graph, container *d2graph.Object) *d2
 	}
 	return tails[len(tails)/2]
 }
+
+func TestRankedSQLColumnEndpoints(t *testing.T) {
+	for _, dir := range []string{"down", "up", "right", "left"} {
+		t.Run(dir, func(t *testing.T) {
+			src := "direction: " + dir + "\norders: { shape: sql_table; id: int; customer_id: int; amount: int; rank: tables }\ncustomers: { shape: sql_table; id: int; name: text; rank: tables }\norders.customer_id -> customers.id"
+			g, _, err := d2compiler.Compile("schema.d2", strings.NewReader(src), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := g.ApplyTheme(d2themescatalog.NeutralDefault.ID); err != nil {
+				t.Fatal(err)
+			}
+			ruler, err := textmeasure.NewRuler()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := DefaultLayout(context.Background(), g); err != nil {
+				t.Fatal(err)
+			}
+			e := g.Edges[0]
+			check := func(node *d2graph.Object, row int, port, toward *geo.Point) {
+				t.Helper()
+				h := node.Height / float64(1+len(node.SQLTable.Columns))
+				y := node.TopLeft.Y + (float64(row)+1.5)*h
+				if math.Abs(port.Y-y) > .001 || port.Y != toward.Y ||
+					!(port.X == node.TopLeft.X && toward.X < port.X || port.X == node.TopLeft.X+node.Width && toward.X > port.X) {
+					t.Errorf("%s row %d expects horizontal approach at y=%g, got %v to %v", node.ID, row, y, toward, port)
+				}
+			}
+			check(e.Src, 1, e.Route[0], e.Route[1])
+			last := len(e.Route) - 1
+			check(e.Dst, 0, e.Route[last], e.Route[last-1])
+		})
+	}
+}

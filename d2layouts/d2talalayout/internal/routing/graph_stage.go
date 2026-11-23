@@ -174,7 +174,7 @@ func RouteGraphWithWorkLimit(ctx context.Context, graph *layoutgraph.Graph, opti
 				return err
 			}
 			subgraph.ComputeCellSize()
-			ovg, routeErr := routeEdgesWithResourceGuards(routingCtx, subgraph, nodesInBoundingBox, ovgGuard, maxRouteSearchWorkUnits)
+			ovg, routeErr := routeEdgesWithResourceGuards(routingCtx, subgraph, nodesInBoundingBox, ovgGuard, maxRouteSearchWorkUnits, len(graph.SameRankGroups) > 0)
 			if routeErr != nil {
 				return routeErr
 			}

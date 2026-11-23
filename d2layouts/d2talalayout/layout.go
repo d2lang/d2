@@ -11,6 +11,9 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/engine"
+	"github.com/d2lang/d2/d2layouts/internal/ranklabel"
+	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 )
 
 const (
@@ -299,7 +302,33 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 			return err
 		}
 	}
-	return applySeedResult(workCtx, graph, best)
+	if err := applySeedResult(workCtx, graph, best); err != nil {
+		return err
+	}
+	if len(best.graph.SameRankGroups) > 0 {
+		// Prefer TALA's shape attachment. When the last leg crosses its
+		// own outside caption, end it at the caption as in other D2 layouts.
+		for _, e := range graph.Edges {
+			last := len(e.Route) - 1
+			if last < 1 || e.IsCurve || e.Src == e.Dst || e.SrcTableColumnIndex != nil || e.DstTableColumnIndex != nil {
+				continue
+			}
+			if crossesOutsideCaption(e.Src, e.Route[0], e.Route[1]) || crossesOutsideCaption(e.Dst, e.Route[last], e.Route[last-1]) {
+				first, end := e.TraceOrthogonalToShape(e.Route, 0, last)
+				e.Route = e.Route[first : end+1]
+			}
+		}
+		ranklabel.AvoidNodeLabels(graph)
+	}
+	return nil
+}
+
+func crossesOutsideCaption(obj *d2graph.Object, tip, next *geo.Point) bool {
+	if !obj.HasLabel() || obj.LabelPosition == nil || !label.FromString(*obj.LabelPosition).IsOutside() {
+		return false
+	}
+	box := geo.NewBox(obj.GetLabelTopLeft(), float64(obj.LabelDimensions.Width), float64(obj.LabelDimensions.Height))
+	return box.Contains(tip) || box.Intersects(geo.Segment{Start: tip, End: next}, 0)
 }
 
 // Optional strategies may reject a geometry or exhaust their own search. They
