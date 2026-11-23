@@ -188,6 +188,7 @@ type elkOpts struct {
 	Direction             Direction `json:"elk.direction"`
 	HierarchyHandling     string    `json:"elk.hierarchyHandling,omitempty"`
 	InlineEdgeLabels      bool      `json:"elk.edgeLabels.inline,omitempty"`
+	RouteSelfLoops        bool      `json:"elkgo.routeSelfLoops,omitempty"`
 	ConsiderModelOrder    string    `json:"elk.layered.considerModelOrder.strategy,omitempty"`
 	CycleBreakingStrategy string    `json:"elk.layered.cycleBreaking.strategy,omitempty"`
 
@@ -317,6 +318,8 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 	// kept in the scratch, as is the graph.
 	values := &scratch.optionValues
 	scratch.rootOpts = rootLayoutOptions(opts, &values.rootEdgeNode, &values.rootEdgeEdge)
+	// Request the native providers' loop geometry on the D2 layout path.
+	scratch.rootOpts.RouteSelfLoops = opts.usesAlgorithm("stress") || opts.usesAlgorithm("force") || opts.usesAlgorithm("mrtree")
 	elkGraph := &scratch.graph
 	*elkGraph = ELKGraph{
 		ID:            "",
@@ -633,7 +636,11 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 	// shares a route's elements, so capacity is not observable).
 	routePoints := 0
 	for ei := range g.Edges {
-		for _, s := range scratch.edgeAt[ei].elk.Sections {
+		sections := scratch.edgeAt[ei].elk.Sections
+		if len(sections) == 0 && scratch.rootOpts.RouteSelfLoops && g.Edges[ei].Src == g.Edges[ei].Dst {
+			return fmt.Errorf("ELK algorithm %q returned no route for self-loop %s", opts.Algorithm, g.Edges[ei].AbsID())
+		}
+		for _, s := range sections {
 			routePoints += 2 + len(s.BendPoints)
 		}
 	}
