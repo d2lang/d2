@@ -145,8 +145,10 @@ func (r *FieldReference) DueToLazyGlob() bool  { return r.DueToLazyGlob_ }
 func (r *EdgeReference) DueToLazyGlob() bool   { return r.DueToLazyGlob_ }
 
 type Scalar struct {
-	parent Node
-	Value  d2ast.Scalar `json:"value"`
+	// binding retains a step expression for interpolation after its endpoint resolves.
+	binding *tweenBinding
+	parent  Node
+	Value   d2ast.Scalar `json:"value"`
 }
 
 func (s *Scalar) Copy(newParent Node) Node {
@@ -169,6 +171,11 @@ func (s *Scalar) Equal(n2 Node) bool {
 }
 
 type Map struct {
+	// TweenFrames are fully resolved, read-only samples of this board's incoming
+	// transition. They are shared across IR copies, outside the authored board tree.
+	TweenFrames     []*Map `json:"-"`
+	TweenDurationMS int    `json:"-"`
+
 	parent    Node
 	importAST d2ast.Node
 	// variableExpansion is shared across automatic copies created during one

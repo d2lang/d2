@@ -110,7 +110,11 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "if given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). Can only be used with SVG or GIF exports. For GIF exports, defaults to 1000ms if not specified. Also configurable through vars.d2-config.animate-interval.")
+	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG or GIF. A positive interval packages multiple boards into one SVG. GIF exports default to 1000ms. Also configurable through vars.d2-config.animate-interval.")
+	if err != nil {
+		return err
+	}
+	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate step changes to numeric properties, solid colors, compatible gradients, and variables (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
 	if err != nil {
 		return err
 	}
@@ -313,6 +317,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
 		}
 	}
+	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
+		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
+	}
 	if err := validateAnimateInterval(*animateIntervalFlag, outputFormat); err != nil {
 		return err
 	}
@@ -334,6 +341,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	})
 	if !ms.Opts.Flags.Changed("animate-interval") && ms.Env.Getenv("D2_ANIMATE_INTERVAL") == "" {
 		animateIntervalFlag = nil
+	}
+	if !ms.Opts.Flags.Changed("animate-duration") && ms.Env.Getenv("D2_ANIMATE_DURATION") == "" {
+		animateDurationFlag = nil
 	}
 	if !ms.Opts.Flags.Changed("force-appendix") && ms.Env.Getenv("D2_FORCE_APPENDIX") == "" {
 		forceAppendixFlag = nil
@@ -408,6 +418,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			layout:          layoutFlag,
 			renderOpts:      renderOpts,
 			animateInterval: animateIntervalFlag,
+			animateDuration: animateDurationFlag,
 			host:            *hostFlag,
 			port:            *portFlag,
 			inputPath:       inputPath,
@@ -448,7 +459,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx, cancel := timelib.WithTimeout(ctx, time.Minute*2)
 	defer cancel()
 
-	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, false)
+	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, false)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
@@ -471,7 +482,7 @@ func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
 	return nil
 }
 
-func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
+func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
 	// Use ELK layout for ascii outputs when layout is dagre or unspecified
 	if ext == TXT {
 		if layout == nil || *layout == "dagre" {
@@ -498,15 +509,26 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}
 
 	opts := &d2lib.CompileOptions{
-		Ruler:          ruler,
-		FontFamily:     fontFamily,
-		MonoFontFamily: monoFontFamily,
-		InputPath:      inputPath,
-		LayoutResolver: LayoutResolver(ctx, ms),
-		Layout:         layout,
-		RouterResolver: RouterResolver(ctx, ms),
-		FS:             fs,
-		LayoutReuse:    true,
+		Ruler:           ruler,
+		FontFamily:      fontFamily,
+		MonoFontFamily:  monoFontFamily,
+		InputPath:       inputPath,
+		LayoutResolver:  LayoutResolver(ctx, ms),
+		Layout:          layout,
+		RouterResolver:  RouterResolver(ctx, ms),
+		FS:              fs,
+		LayoutReuse:     true,
+		AnimateDuration: animateDurationFlag,
+	}
+
+	// With no SVG interval override, compilation reads the interval from d2-config.
+	switch {
+	case noChildren || !ext.supportsAnimation():
+		opts.AnimateTweens = go2.Pointer(false)
+	case ext == GIF || ext == isometricGIF:
+		opts.AnimateTweens = go2.Pointer(true)
+	case animateIntervalFlag != nil:
+		opts.AnimateTweens = go2.Pointer(*animateIntervalFlag > 0)
 	}
 
 	if os.Getenv("D2_LSP_MODE") == "1" {
@@ -733,29 +755,66 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		return preview, true, nil
 	default:
 		compileDur := time.Since(start)
-		if animateInterval <= 0 {
-			// Rename all the "root.layers.x" to the paths that the boards get output to
-			linkToOutput, err := resolveLinks("root", outputPath, rootDiagram)
+		if animateInterval > 0 {
+			timeline, err := d2animate.Timeline(diagram, int(animateInterval))
 			if err != nil {
 				return nil, false, err
 			}
-			err = relink("root", rootDiagram, linkToOutput)
+			if len(timeline) == 0 {
+				if !noChildren {
+					return nil, true, nil
+				}
+				// An explicitly selected, empty board is still a single image.
+				timeline = append(timeline, d2animate.Frame{Diagram: diagram, DurationMS: int(animateInterval)})
+			}
+			svgs := make([][]byte, 0, len(timeline))
+			durations := make([]int, 0, len(timeline))
+			for _, frame := range timeline {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
+				svg, _, err := _renderWithPNGEncoder(ctx, ms, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, frame.Diagram, ext, asciiMode, wantPreview, nil)
+				if err != nil {
+					return nil, false, err
+				}
+				svgs = append(svgs, svg)
+				durations = append(durations, frame.DurationMS)
+			}
+			out, err := d2animate.WrapTimed(diagram, svgs, renderOpts, durations)
 			if err != nil {
 				return nil, false, err
 			}
+			if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+				return nil, false, err
+			}
+			written, err := runStatusFinalizer(ctx, func() (bool, error) {
+				return writeWithStatus(ms, outputPath, out)
+			})
+			if err != nil {
+				return nil, written, err
+			}
+			ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(outputPath), time.Since(start))
+			return out, written, nil
+		}
+		// Rename all the "root.layers.x" links to their exported paths.
+		linkToOutput, err := resolveLinks("root", outputPath, rootDiagram)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := relink("root", rootDiagram, linkToOutput); err != nil {
+			return nil, false, err
 		}
 
 		var boards [][]byte
 		var outputWritten bool
-		var err error
-		if animateInterval <= 0 && !noChildren {
+		if !noChildren {
 			if err := validateBoardOutputPaths(outputPath, diagram); err != nil {
 				return nil, false, err
 			}
 		}
 		outputPaths := newBoardOutputPaths(outputPath)
 		var outputWorkspace *boardOutputWorkspace
-		if animateInterval <= 0 && outputPath != "-" && (len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0) {
+		if outputPath != "-" && (len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0) {
 			outputWorkspace, err = newBoardOutputWorkspace(outputPath)
 			if err != nil {
 				return nil, false, err
@@ -783,25 +842,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		var out []byte
 		if len(boards) > 0 {
 			out = boards[0]
-			if animateInterval > 0 {
-				out, err = d2animate.Wrap(diagram, boards, renderOpts, int(animateInterval))
-				if err != nil {
-					return nil, false, err
-				}
-				err = os.MkdirAll(filepath.Dir(outputPath), 0755)
-				if err != nil {
-					return nil, false, err
-				}
-				var finalWritten bool
-				finalWritten, err = runStatusFinalizer(ctx, func() (bool, error) {
-					return writeWithStatus(ms, outputPath, out)
-				})
-				outputWritten = outputWritten || finalWritten
-				if err != nil {
-					return nil, outputWritten, err
-				}
-				ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(outputPath), time.Since(start))
-			}
 		}
 		return out, true, nil
 	}

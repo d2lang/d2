@@ -47,6 +47,7 @@ var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
 	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
+	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds to interpolate step values.
 	Scale              *float64        `json:"scale,omitempty"`
 	ForceAppendix      *bool           `json:"forceAppendix,omitempty"`
 	Sketch             *bool           `json:"sketch"`
@@ -101,6 +102,12 @@ type ThemeOverrides struct {
 	AB5 *string `json:"ab5"`
 }
 
+// Limits shared by D2 source compilation and callers supplying sampled targets.
+const (
+	MaxTweenDurationMS = 600_000
+	MaxTweenFrames     = 120
+)
+
 type Diagram struct {
 	Name   string  `json:"name"`
 	Config *Config `json:"config,omitempty"`
@@ -124,12 +131,23 @@ type Diagram struct {
 	Layers    []*Diagram `json:"layers,omitempty"`
 	Scenarios []*Diagram `json:"scenarios,omitempty"`
 	Steps     []*Diagram `json:"steps,omitempty"`
+
+	// TweenFrames are equally spaced samples of this board's incoming transition,
+	// starting at time zero. The board itself is the endpoint at TweenDurationMS.
+	TweenFrames     []*Diagram `json:"tweenFrames,omitempty"`
+	TweenDurationMS int        `json:"tweenDurationMS,omitempty"`
 }
 
 type Legend struct {
 	Label       string       `json:"label,omitempty"`
 	Shapes      []Shape      `json:"shapes,omitempty"`
 	Connections []Connection `json:"connections,omitempty"`
+}
+
+// renderChildren includes sampled frames for hashing, font subsetting and
+// bounding boxes. Navigation only exposes the authored boards.
+func (d *Diagram) renderChildren() [4][]*Diagram {
+	return [4][]*Diagram{d.Layers, d.Scenarios, d.Steps, d.TweenFrames}
 }
 
 func (d *Diagram) GetBoard(boardPath []string) *Diagram {
@@ -214,28 +232,19 @@ func (diagram Diagram) Bytes() ([]byte, error) {
 		base = append(base, b...)
 	}
 
-	for _, d := range diagram.Layers {
-		slices, err := d.Bytes()
-		if err != nil {
-			return nil, err
-		}
-		base = append(base, slices...)
+	if diagram.TweenDurationMS != 0 {
+		base = append(base, "tween-ms:"...)
+		base = strconv.AppendInt(base, int64(diagram.TweenDurationMS), 10)
 	}
-	for _, d := range diagram.Scenarios {
-		slices, err := d.Bytes()
-		if err != nil {
-			return nil, err
+	for _, group := range diagram.renderChildren() {
+		for _, child := range group {
+			frameBytes, err := child.Bytes()
+			if err != nil {
+				return nil, err
+			}
+			base = append(base, frameBytes...)
 		}
-		base = append(base, slices...)
 	}
-	for _, d := range diagram.Steps {
-		slices, err := d.Bytes()
-		if err != nil {
-			return nil, err
-		}
-		base = append(base, slices...)
-	}
-
 	return base, nil
 }
 
@@ -410,19 +419,11 @@ func stableHashURL(raw json.RawMessage) ([]byte, error) {
 }
 
 func (diagram Diagram) HasShape(condition func(Shape) bool) bool {
-	for _, d := range diagram.Layers {
-		if d.HasShape(condition) {
-			return true
-		}
-	}
-	for _, d := range diagram.Scenarios {
-		if d.HasShape(condition) {
-			return true
-		}
-	}
-	for _, d := range diagram.Steps {
-		if d.HasShape(condition) {
-			return true
+	for _, group := range diagram.renderChildren() {
+		for _, child := range group {
+			if child.HasShape(condition) {
+				return true
+			}
 		}
 	}
 	for _, s := range diagram.Shapes {
@@ -449,26 +450,14 @@ func (diagram Diagram) HashID(salt *string) (string, error) {
 
 func (diagram Diagram) NestedBoundingBox() (topLeft, bottomRight Point) {
 	tl, br := diagram.BoundingBox()
-	for _, d := range diagram.Layers {
-		tl2, br2 := d.NestedBoundingBox()
-		tl.X = go2.Min(tl.X, tl2.X)
-		tl.Y = go2.Min(tl.Y, tl2.Y)
-		br.X = go2.Max(br.X, br2.X)
-		br.Y = go2.Max(br.Y, br2.Y)
-	}
-	for _, d := range diagram.Scenarios {
-		tl2, br2 := d.NestedBoundingBox()
-		tl.X = go2.Min(tl.X, tl2.X)
-		tl.Y = go2.Min(tl.Y, tl2.Y)
-		br.X = go2.Max(br.X, br2.X)
-		br.Y = go2.Max(br.Y, br2.Y)
-	}
-	for _, d := range diagram.Steps {
-		tl2, br2 := d.NestedBoundingBox()
-		tl.X = go2.Min(tl.X, tl2.X)
-		tl.Y = go2.Min(tl.Y, tl2.Y)
-		br.X = go2.Max(br.X, br2.X)
-		br.Y = go2.Max(br.Y, br2.Y)
+	for _, group := range diagram.renderChildren() {
+		for _, child := range group {
+			tl2, br2 := child.NestedBoundingBox()
+			tl.X = go2.Min(tl.X, tl2.X)
+			tl.Y = go2.Min(tl.Y, tl2.Y)
+			br.X = go2.Max(br.X, br2.X)
+			br.Y = go2.Max(br.Y, br2.Y)
+		}
 	}
 	return tl, br
 }
@@ -708,14 +697,10 @@ func (diagram Diagram) GetNestedCorpus() string {
 
 func (diagram Diagram) appendNestedCorpus(corpus *strings.Builder) {
 	diagram.appendCorpus(corpus)
-	for _, d := range diagram.Layers {
-		d.appendNestedCorpus(corpus)
-	}
-	for _, d := range diagram.Scenarios {
-		d.appendNestedCorpus(corpus)
-	}
-	for _, d := range diagram.Steps {
-		d.appendNestedCorpus(corpus)
+	for _, group := range diagram.renderChildren() {
+		for _, child := range group {
+			child.appendNestedCorpus(corpus)
+		}
 	}
 }
 

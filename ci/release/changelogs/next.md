@@ -1,5 +1,7 @@
 #### Features 🚀
 
+- Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
+
 - Set `scale` and `force-appendix` in `vars.d2-config`. Scaled SVGs and raster exports now retain their requested display size when tooltips or links add an appendix.
 - Configure Dagre's node and edge spacing in `vars.d2-config.data` with `dagre-nodesep` and `dagre-edgesep`.
 

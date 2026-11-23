@@ -50,6 +50,33 @@ func TestNativeTimelineBoardOrderPaletteAndDelay(t *testing.T) {
 	}
 }
 
+func TestTimedTimelineKeepsEndpointWhenRounding(t *testing.T) {
+	start, endpoint := captureDiagram(), captureDiagram()
+	start.Connections[0].Animated, endpoint.Connections[0].Animated = false, false
+	start.Root.Fill, endpoint.Root.Fill = "#ff0000", "#0000ff"
+	// Neither 9ms half occupies a complete GIF tick by itself. The full
+	// 18ms step rounds to two ticks, both showing the endpoint.
+	encoded, err := RenderTimedTimeline(context.Background(), []*d2target.Diagram{start, endpoint},
+		&Options{Format: GIF, Width: 160, Height: 100}, []BoardTiming{
+			{Duration: 9 * time.Millisecond, TweenSample: true},
+			{Elapsed: 9 * time.Millisecond, Duration: 9 * time.Millisecond},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	animation, err := gif.DecodeAll(bytes.NewReader(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(animation.Delay, []int{2}) {
+		t.Fatalf("GIF delays %v, want one 2cs endpoint frame", animation.Delay)
+	}
+	r, _, b, _ := animation.Image[0].At(0, 0).RGBA()
+	if b <= r {
+		t.Fatalf("GIF ended on the intermediate red board: red=%d blue=%d", r, b)
+	}
+}
+
 func TestNativeTimelineAuthoredAnimation(t *testing.T) {
 	board := captureDiagram()
 	encoded, err := RenderTimeline(context.Background(), []*d2target.Diagram{board}, &Options{Format: GIF, Width: 320, Height: 200}, 500*time.Millisecond)

@@ -31,6 +31,11 @@ type CompileOptions struct {
 	// context.Background().
 	Context  context.Context
 	UTF16Pos bool
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of step transitions. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
 	// automatic copies they induce. Zero uses d2ir.DefaultMaxVariableExpansion.
 	MaxVariableExpansion int64
@@ -67,6 +72,8 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 	ir, _, err := d2ir.Compile(ast, &d2ir.CompileOptions{
 		Context:              opts.Context,
 		UTF16Pos:             opts.UTF16Pos,
+		AnimateTweens:        opts.AnimateTweens,
+		AnimateDuration:      opts.AnimateDuration,
 		MaxVariableExpansion: opts.MaxVariableExpansion,
 		MaxGlobExpansion:     opts.MaxGlobExpansion,
 		MaxEdgeExpansion:     opts.MaxEdgeExpansion,
@@ -97,6 +104,12 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 	config, err := compileConfig(ir)
 	if err != nil {
 		return nil, nil, err
+	}
+	if opts.AnimateDuration != nil {
+		if config == nil {
+			config = &d2target.Config{}
+		}
+		config.AnimateDuration = opts.AnimateDuration
 	}
 	if opts.Context != nil {
 		if err := opts.Context.Err(); err != nil {
@@ -357,6 +370,20 @@ func (c *compiler) compileBoardsField(g *d2graph.Graph, ir *d2ir.Map, fieldName 
 			g.Scenarios = append(g.Scenarios, g2)
 		case "steps":
 			g.Steps = append(g.Steps, g2)
+			g2.TweenDurationMS = m.TweenDurationMS
+			for _, sample := range m.TweenFrames {
+				if c.stopped() {
+					return
+				}
+				frame := d2graph.NewGraph()
+				frame.Parent, frame.Name = g2, g2.Name
+				frame.AST, frame.BaseAST = g2.AST, g2.BaseAST
+				c.compileBoard(frame, sample)
+				if f.Primary() != nil {
+					c.compileLabel(&frame.Root.Attributes, f)
+				}
+				g2.TweenFrames = append(g2.TweenFrames, frame)
+			}
 		}
 	}
 }
@@ -1787,23 +1814,13 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 			continue
 		}
 	}
-	for _, b := range g.Layers {
-		if c.stopped() {
-			return
+	for _, group := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
+		for _, b := range group {
+			if c.stopped() {
+				return
+			}
+			c.validateBoardLinks(b)
 		}
-		c.validateBoardLinks(b)
-	}
-	for _, b := range g.Scenarios {
-		if c.stopped() {
-			return
-		}
-		c.validateBoardLinks(b)
-	}
-	for _, b := range g.Steps {
-		if c.stopped() {
-			return
-		}
-		c.validateBoardLinks(b)
 	}
 }
 
@@ -1859,6 +1876,11 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 
 	config := &d2target.Config{}
 
+	f = configMap.GetField(d2ast.FlatUnquotedString("animate-duration"))
+	if f != nil {
+		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())
+		config.AnimateDuration = &val
+	}
 	f = configMap.GetField(d2ast.FlatUnquotedString("animate-interval"))
 	if f != nil {
 		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())

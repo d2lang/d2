@@ -36,6 +36,16 @@ func encodeGIF(output *limitedBuffer, images []*image.Paletted, delays []int) er
 // AnimatePalettedImagesWithLimit, whose per-frame local color tables preserve
 // transparent-frame metadata and deterministic byte compatibility.
 func AnimateCenteredOpaquePalettedImagesWithLimit(ctx context.Context, images []*image.Paletted, width, height, intervalMs int, maxBytes int64) ([]byte, error) {
+	delays, err := gifFrameDelays(len(images), intervalMs)
+	if err != nil {
+		return nil, err
+	}
+	return AnimateTimedCenteredOpaquePalettedImages(ctx, images, width, height, delays, maxBytes)
+}
+
+// AnimateTimedCenteredOpaquePalettedImages accepts a delay in GIF centiseconds
+// for each image, preserving the same background, centering and output limits.
+func AnimateTimedCenteredOpaquePalettedImages(ctx context.Context, images []*image.Paletted, width, height int, delays []int, maxBytes int64) ([]byte, error) {
 	ctx = nonNilContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -49,11 +59,13 @@ func AnimateCenteredOpaquePalettedImagesWithLimit(ctx context.Context, images []
 	if err := validateOpaqueGIFColor("background", BG_COLOR); err != nil {
 		return nil, err
 	}
-	delays, err := gifFrameDelays(len(images), intervalMs)
-	if err != nil {
-		return nil, err
+	if len(images) == 0 || len(delays) != len(images) {
+		return nil, fmt.Errorf("GIF encoding requires one delay per image")
 	}
 	for index, frame := range images {
+		if delays[index] < 0 || delays[index] > 65535 {
+			return nil, fmt.Errorf("GIF frame %d delay exceeds GIF centisecond range", index)
+		}
 		if err := validatePalettedImage(ctx, frame); err != nil {
 			return nil, fmt.Errorf("GIF frame %d: %w", index, err)
 		}

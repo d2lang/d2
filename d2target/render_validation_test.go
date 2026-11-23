@@ -61,3 +61,20 @@ func TestValidateRenderTargetRejectsReusedBoard(t *testing.T) {
 		t.Fatalf("ValidateRenderTarget() error = %v, want reused-board error", err)
 	}
 }
+
+func TestValidateRenderTargetTweenFrames(t *testing.T) {
+	invalid := []*Diagram{
+		{TweenDurationMS: 20},
+		{TweenDurationMS: -1},
+		{TweenDurationMS: 600001, TweenFrames: []*Diagram{{}}},
+		{TweenDurationMS: 1, TweenFrames: []*Diagram{{}, {}}},
+		{TweenDurationMS: 1, TweenFrames: []*Diagram{nil}},
+		{TweenDurationMS: 1, TweenFrames: []*Diagram{{Layers: []*Diagram{{}}}}},
+		{TweenDurationMS: 1, TweenFrames: []*Diagram{{Shapes: []Shape{{Width: -1}}}}},
+	}
+	for i, diagram := range invalid {
+		if err := ValidateRenderTarget(diagram); err == nil {
+			t.Errorf("accepted invalid tween target %d", i)
+		}
+	}
+}

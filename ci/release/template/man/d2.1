@@ -161,6 +161,20 @@ The source value accepts integer milliseconds or a duration such as 1.5s.
 The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over the file.
 Zero selects ordinary SVG export or the default GIF interval of 1000ms.
 .Ns .
+.It Fl -animate-duration Ar 0
+Set how long numeric properties and colors take to reach their values in a step.
+Changes can be authored directly or through variables.
+Direct numeric changes include opacity, stroke-width, stroke-dash, border-radius, font-size, width, and height.
+Compatible gradients have the same kind, direction, and number of stops.
+Each stop interpolates its color and position.
+The flag takes milliseconds. The file also accepts durations, for example
+.Li "vars: {d2-config: {animate-interval: 800ms; animate-duration: 300ms}}" .
+All interpolated values change together for 300ms, then hold their values for the remaining 500ms.
+A longer transition extends the step to its duration.
+The duration defaults to zero, which disables interpolation, and accepts values up to ten minutes.
+The flag takes precedence over D2_ANIMATE_DURATION, which takes precedence over the file.
+Static exports show the authored values.
+.Ns .
 .It Fl -browser Ar true
 Browser executable that watch opens. Setting to 0 opens no browser
 .Ns .
@@ -328,6 +342,8 @@ See --font-mono-italic flag.
 See --font-mono-semibold flag.
 .It Ev Sy D2_ANIMATE_INTERVAL
 See --animate-interval flag.
+.It Ev Sy D2_ANIMATE_DURATION
+See --animate-duration flag.
 .It Ev Sy D2_TIMEOUT
 See --timeout flag.
 .It Ev Sy D2_CHECK

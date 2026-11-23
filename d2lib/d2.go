@@ -23,6 +23,11 @@ import (
 
 type CompileOptions struct {
 	UTF16Pos bool
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of step transitions. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
 	// automatic copies they induce. Zero uses the secure compiler default.
 	MaxVariableExpansion int64
@@ -95,6 +100,8 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 	g, config, err := d2compiler.Compile(compileOpts.InputPath, strings.NewReader(input), &d2compiler.CompileOptions{
 		Context:              ctx,
 		UTF16Pos:             compileOpts.UTF16Pos,
+		AnimateTweens:        compileOpts.AnimateTweens,
+		AnimateDuration:      compileOpts.AnimateDuration,
 		MaxVariableExpansion: compileOpts.MaxVariableExpansion,
 		MaxGlobExpansion:     compileOpts.MaxGlobExpansion,
 		MaxEdgeExpansion:     compileOpts.MaxEdgeExpansion,
@@ -143,7 +150,7 @@ func applyGraphData(g *d2graph.Graph, data map[string]interface{}) {
 		return
 	}
 	g.Data = cloneGraphData(data)
-	for _, boards := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps} {
+	for _, boards := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
 		for _, board := range boards {
 			applyGraphData(board, data)
 		}
@@ -182,6 +189,19 @@ func compile(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions,
 }
 
 func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts, reuse *layoutGeometry, captureForCaller bool) (*d2target.Diagram, *layoutGeometry, error) {
+	var frames []*d2target.Diagram
+	for _, sample := range g.TweenFrames {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		frame, geometry, err := compileBoard(ctx, sample, compileOpts, renderOpts, reuse, true)
+		if err != nil {
+			return nil, nil, err
+		}
+		frames = append(frames, frame)
+		reuse = geometry
+	}
+
 	err := g.ApplyTheme(*renderOpts.ThemeID)
 	if err != nil {
 		return nil, nil, err
@@ -234,6 +254,9 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 	if err != nil {
 		return nil, nil, err
 	}
+
+	d.TweenFrames = frames
+	d.TweenDurationMS = g.TweenDurationMS
 
 	for _, l := range g.Layers {
 		// Layers are independent boards rather than overlays of their parent, so

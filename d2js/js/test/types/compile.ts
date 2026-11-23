@@ -19,6 +19,7 @@ const request: CompileRequest = { fs: { index: source } };
 const options: CompileOptions = {
   layout: "tala",
   sketch: false,
+  animateDuration: 200,
   isometric: true,
 };
 

@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -382,6 +383,62 @@ func TestRenderGIFMultiBoardRetainsIndependentQuantizedFrames(t *testing.T) {
 		if got := color.NRGBAModel.Convert(animation.Image[index].At(5, 5)).(color.NRGBA); got != want {
 			t.Fatalf("multi-board frame %d color = %#v, want %#v", index, got, want)
 		}
+	}
+}
+
+func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		interval, duration, samples int
+		delays                      []int
+	}{
+		{"duration exceeds interval", 30, 101, 3, []int{3, 3, 3, 2, 3}},
+		{"one millisecond hold", 102, 101, 3, []int{2, 3, 3, 3, 3, 3, 4, 1}},
+		{"sub-centisecond transition", 4, 5, 1, []int{1, 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, step := simpleRasterDiagram(), simpleRasterDiagram()
+			root.Steps = []*d2target.Diagram{step}
+			step.TweenDurationMS = tc.duration
+			step.Shapes[0].Fill = "#0000ff"
+			for i := 0; i < tc.samples; i++ {
+				sample := simpleRasterDiagram()
+				sample.Shapes[0].Fill = "#ff0000"
+				step.TweenFrames = append(step.TweenFrames, sample)
+			}
+			data, _, err := renderGIF(context.Background(), "-", false, root, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, tc.interval, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			animation, err := gif.DecodeAll(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(animation.Delay, tc.delays) {
+				t.Fatalf("GIF delays %v, want %v", animation.Delay, tc.delays)
+			}
+			endpoint := animation.Image[len(animation.Image)-1].At(5, 5)
+			if got := color.NRGBAModel.Convert(endpoint).(color.NRGBA); got != (color.NRGBA{B: 255, A: 255}) {
+				t.Fatalf("last frame has color %v, want authored blue endpoint", got)
+			}
+		})
+	}
+}
+
+func TestRenderGIFSingleStepShorterThanTwoTicks(t *testing.T) {
+	step := simpleRasterDiagram()
+	step.TweenDurationMS = 18
+	step.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
+	data, _, err := renderGIF(context.Background(), "-", false, step, d2svg.RenderOpts{}, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	animation, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(animation.Delay, []int{2}) {
+		t.Fatalf("selected step GIF delays %v, want its 18ms duration rounded to 2cs", animation.Delay)
 	}
 }
 

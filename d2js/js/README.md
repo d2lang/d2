@@ -186,6 +186,7 @@ resources are released. Calling `dispose()` more than once is safe.
 All [RenderOptions](#renderoptions) properties in addition to:
 
 - `layout`: Layout engine to use (`'dagre' | 'elk' | 'tala'`) [default: `'dagre'`]
+- `animateDuration`: Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps (0–600000, default 0). Overrides `vars.d2-config.animate-duration`. Set this when calling `compile()` or `renderSVG()`. A shorter transition uses the rest of the board interval to hold its final value. A longer transition extends the step.
 - `fontRegular` A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used.
 - `fontItalic` A byte array containing .ttf file to use for the italic font. If none provided, Source Sans Pro Italic is used.
 - `fontBold` A byte array containing .ttf file to use for the bold font. If none provided, Source Sans Pro Bold is used.
@@ -202,7 +203,7 @@ All [RenderOptions](#renderoptions) properties in addition to:
 - `scale`: Overrides the diagram’s `vars.d2-config.scale`. A positive multiplier sets the SVG dimensions. For example, `0.5` halves its natural size. Use `-1` to fit the screen (default).
 - `forceAppendix`: Adds a numbered SVG appendix for tooltips and links (default `false`). An explicit option overrides `vars.d2-config.force-appendix`, including `false`.
 - `target`: Target board/s to render. If target ends with '*', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. `target: 'layers.x.*'` to render layer 'x' with all of its children. Pass '*' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board SVG requires a positive animation interval.
-- `animateInterval`: Milliseconds to display each board in an animated SVG. Defaults to the diagram’s `vars.d2-config.animate-interval` setting. An explicit option overrides the source setting, including `0` to disable animation.
+- `animateInterval`: Minimum milliseconds to display each board in an animated SVG. Defaults to the diagram’s `vars.d2-config.animate-interval` setting. An explicit option overrides the source setting, including `0` to disable animation.
 - `salt`: Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output.
 - `noXMLTag`: Omit XML tag `(<?xml ...?>)` from output SVG files. Useful when generating SVGs for direct HTML embedding.
 

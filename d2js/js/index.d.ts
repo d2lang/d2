@@ -74,7 +74,7 @@ export interface RenderOptions {
   forceAppendix?: boolean;
   /** Board to render (default: root). Use '*' for all boards or 'layers.x.*' for a board and its children. Multi-board SVG requires a positive animation interval. */
   target?: string;
-  /** Milliseconds to display each board in an animated SVG. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
+  /** Minimum milliseconds to display each board in an animated SVG. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
   animateInterval?: number;
   /** Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output. */
   salt?: string;
@@ -87,6 +87,8 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
+  /** Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
+  animateDuration?: number;
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";
   /** A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used. */
@@ -119,7 +121,7 @@ export interface CompileResponse {
 }
 
 export interface Diagram {
-  config?: RenderOptions;
+  config?: RenderOptions & Pick<CompileOptions, "animateDuration">;
   name: string;
   /**
    * See docs on the same field in d2graph to understand what it means.
@@ -134,6 +136,9 @@ export interface Diagram {
   layers?: (Diagram | undefined)[];
   scenarios?: (Diagram | undefined)[];
   steps?: (Diagram | undefined)[];
+  /** Intermediate samples of this step’s incoming variable tween. */
+  tweenFrames?: Diagram[];
+  tweenDurationMS?: number;
 }
 
 export interface Legend {

@@ -1,0 +1,26 @@
+# d2 solid-color.d2 solid-color.svg
+vars: {
+  d2-config: {animate-interval: 2200ms; animate-duration: 1600ms; pad: 20}
+  accent: blue
+}
+
+grid-columns: 2
+grid-gap: 16
+
+classes: {
+  swatch: {
+    width: 168
+    height: 72
+    style: {stroke-width: 0; border-radius: 10; font-color: white; font-size: 18; bold: true}
+  }
+}
+
+direct: "Direct fill" {class: swatch; style.fill: blue}
+shared: "Color variable\n${accent}" {class: swatch; style.fill: ${accent}}
+
+steps: {
+  warm: {
+    direct.style.fill: red
+    vars: {accent: red}
+  }
+}

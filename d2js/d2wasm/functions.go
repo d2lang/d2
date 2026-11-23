@@ -214,7 +214,8 @@ func Compile(args []js.Value) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	result, err := input.compile()
+	// Two-phase callers can request an animated target later in render().
+	result, err := input.compile(go2.Pointer(input.Opts.ASCII == nil || !*input.Opts.ASCII))
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +231,13 @@ func RenderSVG(args []js.Value) (interface{}, error) {
 	if input.Opts.ASCII != nil && *input.Opts.ASCII {
 		return nil, &WASMError{Message: "renderSVG does not support ASCII output", Code: 400}
 	}
-	result, err := input.compile()
+	var animateTweens *bool
+	if input.Opts.Target == nil || (*input.Opts.Target != "*" && !strings.HasSuffix(*input.Opts.Target, ".*")) {
+		animateTweens = go2.Pointer(false)
+	} else if input.Opts.AnimateInterval != nil {
+		animateTweens = go2.Pointer(*input.Opts.AnimateInterval > 0)
+	}
+	result, err := input.compile(animateTweens)
 	if err != nil {
 		return nil, err
 	}
@@ -252,17 +259,22 @@ func parseCompileRequest(args []js.Value) (*CompileRequest, error) {
 	if input.Opts == nil {
 		input.Opts = &CompileOptions{}
 	}
+	if duration := input.Opts.AnimateDuration; duration != nil && (*duration < 0 || *duration > d2target.MaxTweenDurationMS) {
+		return nil, &WASMError{Message: fmt.Sprintf("animateDuration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS), Code: 400}
+	}
 	return &input, nil
 }
 
-func (input *CompileRequest) compile() (*CompileResponse, error) {
+func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, error) {
 	if input.FS == nil {
 		return nil, &WASMError{Message: "missing 'fs' field in input JSON", Code: 400}
 	}
 
 	compileOpts := &d2lib.CompileOptions{
-		UTF16Pos:    true,
-		LayoutReuse: true,
+		UTF16Pos:        true,
+		LayoutReuse:     true,
+		AnimateTweens:   animateTweens,
+		AnimateDuration: input.Opts.AnimateDuration,
 	}
 
 	inputPath := DEFAULT_INPUT_PATH
@@ -479,6 +491,8 @@ func render(input RenderRequest) ([]byte, error) {
 		diagram.Layers = nil
 		diagram.Scenarios = nil
 		diagram.Steps = nil
+		diagram.TweenFrames = nil
+		diagram.TweenDurationMS = 0
 	}
 
 	renderOpts := &d2svg.RenderOpts{Scale: scale}
@@ -572,27 +586,32 @@ func render(input RenderRequest) ([]byte, error) {
 		return out, nil
 	}
 
-	var boards [][]byte
-	if noChildren {
-		var board []byte
-		board, err = renderSingleBoard(renderOpts, forceAppendix, ruler, diagram)
-		boards = [][]byte{board}
-	} else {
-		boards, err = renderBoards(renderOpts, forceAppendix, ruler, diagram)
+	if animateInterval == 0 {
+		return renderSingleBoard(renderOpts, forceAppendix, ruler, diagram)
 	}
+	frames, err := d2animate.Timeline(diagram, animateInterval)
 	if err != nil {
-		return nil, &WASMError{Message: fmt.Sprintf("render failed: %s", err.Error()), Code: 500}
+		return nil, &WASMError{Message: fmt.Sprintf("invalid timeline: %s", err), Code: 400}
 	}
-
-	var out []byte
-	if len(boards) > 0 {
-		out = boards[0]
-		if animateInterval > 0 {
-			out, err = d2animate.Wrap(diagram, boards, *renderOpts, animateInterval)
-			if err != nil {
-				return nil, &WASMError{Message: fmt.Sprintf("animation failed: %s", err.Error()), Code: 500}
-			}
+	if len(frames) == 0 {
+		if !noChildren {
+			return []byte(nil), nil
 		}
+		// An explicitly selected empty board still has its own background.
+		frames = []d2animate.Frame{{Diagram: diagram, DurationMS: animateInterval}}
+	}
+	boards := make([][]byte, len(frames))
+	durations := make([]int, len(frames))
+	for i, frame := range frames {
+		boards[i], err = renderSingleBoard(renderOpts, forceAppendix, ruler, frame.Diagram)
+		if err != nil {
+			return nil, err
+		}
+		durations[i] = frame.DurationMS
+	}
+	out, err := d2animate.WrapTimed(diagram, boards, *renderOpts, durations)
+	if err != nil {
+		return nil, &WASMError{Message: fmt.Sprintf("animation failed: %s", err), Code: 500}
 	}
 	return out, nil
 }
@@ -606,40 +625,6 @@ func renderSingleBoard(opts *d2svg.RenderOpts, forceAppendix bool, ruler *textme
 		return appendix.AppendWithError(diagram, opts, ruler, out)
 	}
 	return out, nil
-}
-
-func renderBoards(opts *d2svg.RenderOpts, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram) ([][]byte, error) {
-	var boards [][]byte
-	for _, dl := range diagram.Layers {
-		childrenBoards, err := renderBoards(opts, forceAppendix, ruler, dl)
-		if err != nil {
-			return nil, err
-		}
-		boards = append(boards, childrenBoards...)
-	}
-	for _, dl := range diagram.Scenarios {
-		childrenBoards, err := renderBoards(opts, forceAppendix, ruler, dl)
-		if err != nil {
-			return nil, err
-		}
-		boards = append(boards, childrenBoards...)
-	}
-	for _, dl := range diagram.Steps {
-		childrenBoards, err := renderBoards(opts, forceAppendix, ruler, dl)
-		if err != nil {
-			return nil, err
-		}
-		boards = append(boards, childrenBoards...)
-	}
-
-	if !diagram.IsFolderOnly {
-		out, err := renderSingleBoard(opts, forceAppendix, ruler, diagram)
-		if err != nil {
-			return boards, err
-		}
-		boards = append([][]byte{out}, boards...)
-	}
-	return boards, nil
 }
 
 func GetBoardAtPosition(args []js.Value) (interface{}, error) {

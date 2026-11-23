@@ -17,6 +17,7 @@ import (
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -33,17 +34,19 @@ type globContext struct {
 }
 
 type compiler struct {
-	err                *d2parser.ParseError
-	ctx                context.Context
-	contextErr         error
-	expansionErr       error
-	globExpansionErr   error
-	halted             bool
-	variableExpansion  *variableExpansionBudget
-	globExpansion      *globExpansionBudget
-	edgeExpansion      *edgeExpansionBudget
-	edgeExpansionWork  *edgeExpansionWorkBudget
-	edgeExpansionPairs map[edgeExpansionPair]struct{}
+	err                 *d2parser.ParseError
+	ctx                 context.Context
+	contextErr          error
+	expansionErr        error
+	globExpansionErr    error
+	halted              bool
+	variableExpansion   *variableExpansionBudget
+	tweenExpansion      *variableExpansionBudget
+	retainTweenBindings bool
+	globExpansion       *globExpansionBudget
+	edgeExpansion       *edgeExpansionBudget
+	edgeExpansionWork   *edgeExpansionWorkBudget
+	edgeExpansionPairs  map[edgeExpansionPair]struct{}
 
 	fs      fs.FS
 	imports []string
@@ -81,6 +84,11 @@ type compiler struct {
 }
 
 type CompileOptions struct {
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of step transitions. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// Context stops parsing and compilation when canceled. A nil Context is
 	// treated as context.Background().
 	Context  context.Context
@@ -114,6 +122,9 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if opts == nil {
 		opts = &CompileOptions{}
 	}
+	if opts.AnimateDuration != nil && (*opts.AnimateDuration < 0 || *opts.AnimateDuration > d2target.MaxTweenDurationMS) {
+		return nil, nil, errors.New("animate-duration must be between 0 and 600000 milliseconds")
+	}
 	ctx := opts.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -138,13 +149,14 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	c := &compiler{
-		err:               &d2parser.ParseError{},
-		ctx:               ctx,
-		fs:                opts.FS,
-		variableExpansion: variableExpansion,
-		globExpansion:     globExpansion,
-		edgeExpansion:     edgeExpansion,
-		edgeExpansionWork: edgeExpansionWork,
+		err:                 &d2parser.ParseError{},
+		ctx:                 ctx,
+		retainTweenBindings: (opts.AnimateTweens == nil || *opts.AnimateTweens) && (opts.AnimateDuration == nil || *opts.AnimateDuration > 0),
+		fs:                  opts.FS,
+		variableExpansion:   variableExpansion,
+		globExpansion:       globExpansion,
+		edgeExpansion:       edgeExpansion,
+		edgeExpansionWork:   edgeExpansionWork,
 
 		seenImports:             make(map[string]struct{}),
 		parsedImports:           make(map[string]*d2ast.Map),
@@ -170,7 +182,13 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if err := c.compileLimitError(); err != nil {
 		return nil, nil, err
 	}
+	// Imports are attached now. For an ordinary diagram, two indexed lookups
+	// keep endpoint substitution on its usual path without saving expressions.
+	c.retainTweenBindings = c.retainTweenBindings &&
+		(opts.AnimateDuration != nil || mayResolveTiming(m, "animate-duration")) &&
+		(opts.AnimateTweens != nil || mayResolveTiming(m, "animate-interval"))
 	c.compileSubstitutions(m, nil)
+	c.retainTweenBindings = false
 	if c.contextErr != nil {
 		return nil, nil, c.contextErr
 	}
@@ -191,6 +209,9 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	m.removeSuspendedFields()
+	if c.err.Empty() && !c.stopped() {
+		c.compileTweens(m, opts)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -400,6 +421,18 @@ func (c *compiler) validateConfigs(configs *Field) {
 		}
 
 		switch f.Name.ScalarString() {
+		case "animate-duration":
+			board := ParentMap(ParentMap(configs))
+			if !board.Root() {
+				global := RootMap(board).getFieldIndexed(d2ast.FlatUnquotedString("vars"), configs.Name, f.Name)
+				if global == nil || global.LastRef().AST() != f.LastRef().AST() {
+					c.errorf(f.LastRef().AST(), `"animate-duration" can only be set in the diagram's root vars.d2-config`)
+					continue
+				}
+			}
+			if duration, ok := ParseAnimateInterval(val); !ok || duration > d2target.MaxTweenDurationMS || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected "animate-duration" between 0ms and 10m in whole milliseconds, got %q`, val)
+			}
 		case "animate-interval":
 			if _, ok := ParseAnimateInterval(val); !ok || f.Composite != nil {
 				c.errorf(f.LastRef().AST(), `expected a non-negative whole number of milliseconds or a duration in whole milliseconds for "animate-interval", got %q`, val)
@@ -446,6 +479,10 @@ func (c *compiler) validateConfigs(configs *Field) {
 func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedField bool) {
 	if c.stopped() {
 		return false
+	}
+	markdownOuterStart := -1
+	if c.retainTweenBindings {
+		markdownOuterStart = c.saveTweenBinding(node, varsStack)
 	}
 	var subbed bool
 	var resolvedField *Field
@@ -627,31 +664,49 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 		}
 		variables := make(map[string]string)
 		seen := make(map[Node]struct{})
-		for _, vars := range varsStack {
-			c.collectVariables(vars, variables, seen, node.LastRef().AST())
+		var outer map[string]string
+		for i, vars := range varsStack {
+			dest := variables
+			if markdownOuterStart >= 0 && i >= markdownOuterStart {
+				if outer == nil {
+					outer = make(map[string]string)
+				}
+				dest = outer
+			}
+			c.collectVariables(vars, dest, seen, node.LastRef().AST())
+		}
+		if outer != nil {
+			// A sampled fragment may leave its module. Remember the lexical
+			// values during the ordinary import pass, collecting each scope once.
+			node.Primary().binding.markdownOuter = outer
+			for name, value := range outer {
+				variables[name] = value
+			}
 		}
 		if c.stopped() {
 			return
 		}
-		preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, s.Value, variables, c.variableExpansion.remaining())
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				c.contextErr = err
-				c.halted = true
-				return
-			}
-			c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
-			c.halted = true
-			return
-		}
-		if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
-			return
-		}
-
-		// Update the block string value
-		s.Value = preprocessedValue
+		s.Value = c.replaceMarkdownVariables(node, s.Value, variables)
 	}
 	return removedField
+}
+
+func (c *compiler) replaceMarkdownVariables(node Node, value string, variables map[string]string) string {
+	preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, value, variables, c.variableExpansion.remaining())
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			c.contextErr = err
+			c.halted = true
+			return value
+		}
+		c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
+		c.halted = true
+		return value
+	}
+	if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
+		return value
+	}
+	return preprocessedValue
 }
 
 func interpolationBytes(values []d2ast.InterpolationBox) int64 {
