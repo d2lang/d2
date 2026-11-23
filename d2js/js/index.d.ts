@@ -87,7 +87,7 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
-  /** Milliseconds to interpolate numeric, percentage, and solid color variables and explicit style colors in steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
+  /** Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
   animateDuration?: number;
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";

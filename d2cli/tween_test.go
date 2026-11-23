@@ -149,22 +149,79 @@ steps: {alert: {swatch.style.fill: red}}`
 	if err != nil {
 		t.Fatal(err)
 	}
-	animation, err := gif.DecodeAll(bytes.NewReader(out))
+	// At 160ms the root has held for 120ms and the 80ms color change is halfway.
+	frame := animationFrameAt(t, out, 16)
+	r, g, b, _ := frame.At(frame.Bounds().Dx()/2, frame.Bounds().Dy()/2).RGBA()
+	if r>>8 != 128 || g != 0 || b>>8 != 128 {
+		t.Fatalf("GIF swatch at 160ms = #%02x%02x%02x, want #800080", r>>8, g>>8, b>>8)
+	}
+}
+
+func TestAnimateDurationDirectOpacityAndGradient(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 120ms}}
+bar: "" {
+  width: 100
+  height: 40
+  style: {
+    opacity: 0
+    border-radius: 0
+    stroke-width: 0
+    fill: "linear-gradient(to right, blue 30%, white 30%)"
+  }
+}
+steps: {load: {bar.style: {
+  opacity: 1
+  border-radius: 12
+  fill: "linear-gradient(to right, red 70%, white 70%)"
+}}}`
+	dir := t.TempDir()
+	svg, err := imageCLI(t, dir, source, "--pad=0", "--stdout-format=svg", "-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// At 160ms the root has held for 120ms and the 80ms color change is halfway.
+	for _, part := range []string{`opacity:0.5`, `rx="6"`, `stop-color="#800080"`} {
+		if !bytes.Contains(svg, []byte(part)) {
+			t.Errorf("direct transition SVG is missing midpoint %q", part)
+		}
+	}
+	out, err := imageCLI(t, dir, source, "--pad=0", "--stdout-format=gif", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := animationFrameAt(t, out, 16)
+	w, y := frame.Bounds().Dx(), frame.Bounds().Dy()/2
+	// Immediately either side of the halfway stop, the bar contains purple
+	// at 50% opacity over white, then white. A jump to either endpoint
+	// or an intermediate gradient with softened stops gives different pixels.
+	for _, sample := range []struct {
+		x       int
+		r, g, b uint32
+	}{
+		{w * 45 / 100, 191, 127, 191},
+		{w * 55 / 100, 255, 255, 255},
+	} {
+		r, g, b, _ := frame.At(sample.x, y).RGBA()
+		close := func(got, want uint32) bool { return got+2 >= want && got <= want+2 }
+		if !close(r>>8, sample.r) || !close(g>>8, sample.g) || !close(b>>8, sample.b) {
+			t.Errorf("midpoint pixel at x=%d is #%02x%02x%02x, want approximately #%02x%02x%02x",
+				sample.x, r>>8, g>>8, b>>8, sample.r, sample.g, sample.b)
+		}
+	}
+}
+
+func animationFrameAt(t *testing.T, data []byte, centiseconds int) *image.Paletted {
+	t.Helper()
+	animation, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
 	elapsed := 0
 	for i, delay := range animation.Delay {
-		if elapsed <= 16 && 16 < elapsed+delay {
-			frame := animation.Image[i]
-			r, g, b, _ := frame.At(animation.Config.Width/2, animation.Config.Height/2).RGBA()
-			if r>>8 != 128 || g != 0 || b>>8 != 128 {
-				t.Fatalf("GIF swatch at 160ms = #%02x%02x%02x, want #800080", r>>8, g>>8, b>>8)
-			}
-			return
+		if centiseconds < elapsed+delay {
+			return animation.Image[i]
 		}
 		elapsed += delay
 	}
-	t.Fatal("GIF ended before the color transition reached its midpoint")
+	t.Fatalf("GIF ended after %d centiseconds, before sample at %d", elapsed, centiseconds)
+	return nil
 }

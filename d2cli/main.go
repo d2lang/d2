@@ -114,7 +114,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to interpolate numeric, percentage, and solid color variables and explicit style colors in animated steps (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
+	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate step changes to numeric properties, solid colors, compatible gradients, and variables (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
 	if err != nil {
 		return err
 	}
