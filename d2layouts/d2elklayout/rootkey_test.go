@@ -27,6 +27,8 @@ func TestRootOptionsKeyFollowsOptions(t *testing.T) {
 	}()
 	inputs := []string{
 		"a -> b",
+		"a -> b -> c\na.rank: phase\nc.rank: phase",
+		"a -> b -> c\nb.rank: phase\nc.rank: phase",
 		"direction: right\na -> b -> c",
 		"direction: up\na -> a: a long self-loop label to widen the spacing\na -> b",
 		"direction: left\nx: {y -> z}\nx.y -> w",

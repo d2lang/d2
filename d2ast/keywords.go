@@ -17,6 +17,7 @@ var SimpleReservedKeywords = map[string]struct{}{
 	"width":                {},
 	"height":               {},
 	"direction":            {},
+	"rank":                 {},
 	"elk-layer-constraint": {},
 	"top":                  {},
 	"left":                 {},

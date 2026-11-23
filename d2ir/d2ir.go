@@ -5,6 +5,7 @@ package d2ir
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -1564,30 +1565,28 @@ func (m *Map) DeleteField(ida ...string) *Field {
 			continue
 		}
 		if len(rest) == 0 {
-			m.deleteEdgesForFieldReferences(f)
-			m.removeField(i)
-
-			// If a field was deleted from a keyword-holder keyword and that holder is empty,
-			// then that holder becomes meaningless and should be deleted too
-			parent := ParentField(f)
-			for keywordHolder := range d2ast.ReservedKeywordHolders {
-				if parent != nil && parent.Name.ScalarString() == keywordHolder && parent.Name.IsUnquoted() && len(parent.Map().Fields) == 0 {
-					keywordHolderParentMap := ParentMap(parent)
-					for i, f := range keywordHolderParentMap.Fields {
-						if f.Name.ScalarString() == keywordHolder && f.Name.IsUnquoted() {
-							keywordHolderParentMap.removeField(i)
-							break
-						}
-					}
-				}
-			}
-			return f
+			return m.deleteFieldAt(i)
 		}
 		if f.Map() != nil {
 			return f.Map().DeleteField(rest...)
 		}
 	}
 	return nil
+}
+
+func (m *Map) deleteFieldAt(i int) *Field {
+	f := m.Fields[i]
+	m.deleteEdgesForFieldReferences(f)
+	m.removeField(i)
+
+	// Remove a keyword holder (such as style) after deleting its last field.
+	if parent := ParentField(f); len(m.Fields) == 0 && parent != nil && parent.Name != nil && parent.Name.IsUnquoted() {
+		if _, holder := d2ast.ReservedKeywordHolders[parent.Name.ScalarString()]; holder {
+			grandparent := ParentMap(parent)
+			grandparent.removeField(slices.Index(grandparent.Fields, parent))
+		}
+	}
+	return f
 }
 
 func (m *Map) GetEdges(eid *EdgeID, refctx *RefContext, c *compiler) []*Edge {

@@ -143,6 +143,7 @@ func (b *layoutSignatureBuilder) writeAttributes(attrs *d2graph.Attributes) {
 	b.writeString(attrs.Language)
 	b.writeOptionalScalar(attrs.WidthAttr)
 	b.writeOptionalScalar(attrs.HeightAttr)
+	b.writeOptionalScalar(attrs.Rank)
 	b.writeOptionalScalar(attrs.Top)
 	b.writeOptionalScalar(attrs.Left)
 	b.writeOptionalScalar(attrs.GridRows)

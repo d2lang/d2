@@ -110,7 +110,7 @@ var defaultPipelineStages = [...]pipelineStage{
 	{name: "TraceEdgesToShapeBorder", run: (*pipeline).traceEdgesToShapeBorder},
 	{name: "ReorderDuplicates", run: (*pipeline).reorderDuplicates},
 	// Second binpack doesn't try to avoid edges.
-	{name: "BinPack", run: (*pipeline).binPack},
+	{name: "BinPack", run: (*pipeline).packRouted},
 	{name: "PlaceLabels", run: (*pipeline).placeLabels},
 	{name: "NudgeEdgeChannels", run: (*pipeline).nudgeEdgeChannels},
 	{name: "ShortcutEdgeRoutes", run: (*pipeline).shortcutEdgeRoutes},
@@ -214,6 +214,15 @@ func (p *pipeline) binPack(ctx context.Context) error {
 	return packing.Pack(ctx, p.graph, nil)
 }
 
+func (p *pipeline) packRouted(ctx context.Context) error {
+	// Packing components independently can separate members of a shared
+	// rank. Their transverse extents were packed before routing.
+	if len(p.graph.SameRankGroups) != 0 {
+		return nil
+	}
+	return p.binPack(ctx)
+}
+
 func (p *pipeline) swapNodesStage(ctx context.Context) error {
 	return placement.Swap(ctx, p.graph)
 }
@@ -230,7 +239,7 @@ func (p *pipeline) cleanupGroupsStage(ctx context.Context) error {
 func (p *pipeline) rescaleStage(ctx context.Context) error {
 	p.graph.ComputeCellSize()
 	placement.Pad(p.graph)
-	return nil
+	return hierarchy.PlaceSameRanks(ctx, p.graph)
 }
 
 func (p *pipeline) edgeRoutingStage(ctx context.Context) error {
@@ -314,6 +323,9 @@ func (p *pipeline) runGraphRouting(ctx context.Context, workLimit *uint64) (err 
 // straightEdgesFallback replaces expensive orthogonal routes with suitable
 // straight routes after the normal routing attempts have completed.
 func (p *pipeline) straightEdgesFallback(ctx context.Context) error {
+	if len(p.graph.SameRankGroups) != 0 {
+		return nil
+	}
 	return routing.StraightEdgesFallback(ctx, p.graph)
 }
 
@@ -334,6 +346,10 @@ func (p *pipeline) fixClusterEdgeBranching(ctx context.Context) error {
 }
 
 func (p *pipeline) dejitterStage(ctx context.Context) error {
+	// De-jittering moves individual shapes after the first route search.
+	if len(p.graph.SameRankGroups) != 0 {
+		return nil
+	}
 	var err error
 	p.forceReroute, err = placement.Dejitter(ctx, p.graph)
 	if err != nil {

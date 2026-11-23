@@ -12,6 +12,7 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/internal/layoutguard"
+	"github.com/d2lang/d2/d2layouts/internal/ranklabel"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/internal/geomath"
 	"github.com/d2lang/d2/lib/geo"
@@ -321,7 +322,11 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		// .5 and .8 of segments 1 to n-3, and at .2 of the last.
 		n := len(points) - 1
 		var path []*geo.Point
-		if n > 1 {
+		if edge.Src != edge.Dst && edge.Src.Rank != nil && edge.Src.Rank.Value != "" && edge.Dst.Rank != nil && edge.Src.Rank.Value == edge.Dst.Rank.Value {
+			// Dagro reserved a polyline track for this edge and its label.
+			path = points
+			edge.IsCurve = false
+		} else if n > 1 {
 			along := curveValues.take(curvePoints(n))
 			path = curveRefs.take(len(along) + 2)[:0]
 			path = append(path, points[0])
@@ -361,6 +366,10 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 	}
 
 	putScratch(sc)
+	if len(in.RankGroups) > 0 {
+		ranklabel.ClearOverlaps(g)
+	}
+
 	return nil
 }
 

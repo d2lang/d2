@@ -693,6 +693,11 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 					attrs.Tooltip.MapKey.SetScalar(mk.Value.ScalarBox())
 					return nil
 				}
+			case "rank":
+				if inlined(attrs.Rank) {
+					attrs.Rank.MapKey.SetScalar(mk.Value.ScalarBox())
+					return nil
+				}
 			case "width":
 				if inlined(attrs.WidthAttr) {
 					attrs.WidthAttr.MapKey.SetScalar(mk.Value.ScalarBox())
@@ -1386,6 +1391,7 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 			}
 
 			if id == "near" ||
+				id == "rank" ||
 				id == "tooltip" ||
 				id == "icon" ||
 				id == "width" ||
@@ -1418,8 +1424,11 @@ func deleteMapField(m *d2ast.Map, field string) (deleted bool) {
 	for i := 0; i < len(m.Nodes); i++ {
 		n := m.Nodes[i]
 		if n.MapKey != nil && n.MapKey.Key != nil {
-			if n.MapKey.Key.Path[0].Unbox().ScalarString() == field {
-				deleteFromMap(m, n.MapKey)
+			if name := n.MapKey.Key.Path[0].Unbox(); name.IsUnquoted() && strings.EqualFold(name.ScalarString(), field) {
+				if deleteFromMap(m, n.MapKey) {
+					deleted = true
+					i--
+				}
 			} else if n.MapKey.Key.Path[0].Unbox().ScalarString() == "style" ||
 				n.MapKey.Key.Path[0].Unbox().ScalarString() == "label" ||
 				n.MapKey.Key.Path[0].Unbox().ScalarString() == "icon" ||
@@ -1487,8 +1496,11 @@ func deleteObjField(g *d2graph.Graph, ast *d2ast.Map, obj *d2graph.Object, field
 			continue
 		}
 		if ref.MapKey.Value.Map != nil {
-			deleteMapField(ref.MapKey.Value.Map, field)
+			if deleteMapField(ref.MapKey.Value.Map, field) {
+				deleted = true
+			}
 		} else if (len(ref.Key.Path) >= 2 &&
+			ref.Key.Path[len(ref.Key.Path)-1].Unbox().IsUnquoted() &&
 			ref.Key.Path[len(ref.Key.Path)-1].Unbox().ScalarString() == field &&
 			ref.Key.Path[len(ref.Key.Path)-2].Unbox().ScalarString() == obj.ID) ||
 			(len(ref.Key.Path) >= 3 &&

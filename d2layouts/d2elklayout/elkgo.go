@@ -45,7 +45,7 @@ import (
 //     decoded field unchanged: a node keeps its value and a point of a new
 //     section stays 0. Sections and container are replaced only when the
 //     response has them; a container whose ID JSON changed names no object
-//     (see readBack). Ports and labels are not copied back: nothing reads
+//     (see readBack). Ports and unranked labels are not copied back: nothing reads
 //     their layout.
 //
 // The request gives no edge sections: Layout builds every edge zeroed, so
@@ -104,7 +104,7 @@ func (r *elkGoRequest) layOut(ctx context.Context, elkGraph *ELKGraph, typed *el
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	r.readBack(typed)
+	r.readBack(typed, elkGraph.LayoutOptions != nil && elkGraph.LayoutOptions.RankGroups != "")
 	return nil
 }
 
@@ -442,6 +442,7 @@ type optionCache struct {
 // rootOptionsKey identifies the content of a request's root option struct
 // (see optionCache.byRoot).
 type rootOptionsKey struct {
+	rankGroups string
 	generation uint64
 	selfLoop   int
 	direction  Direction
@@ -481,13 +482,13 @@ func (key *optionsKey) own() {
 
 // stringFields returns pointers to every string field of o, its
 // ConfigurableOpts' included.
-func (o *elkOpts) stringFields() [21]*string {
+func (o *elkOpts) stringFields() [22]*string {
 	c := &o.ConfigurableOpts
 	return [...]*string{&o.FixedAlignment, (*string)(&o.Direction), &o.HierarchyHandling, &o.ConsiderModelOrder,
 		&o.CycleBreakingStrategy, &o.SelfLoopDistribution, &o.LayerConstraint, &o.NodeSizeConstraints,
 		&o.ContentAlignment, &o.NodeSizeMinimum, (*string)(&o.PortSide), &o.PortConstraints,
 		&c.EdgeRouting, &c.WrappingStrategy, &c.ForceModel, &c.MrTreeSearchOrder,
-		&c.MrTreeWeighting, &c.RadialWedgeCriteria, &c.RadialCompactor, &c.Algorithm, &c.Padding}
+		&c.MrTreeWeighting, &c.RadialWedgeCriteria, &c.RadialCompactor, &c.Algorithm, &c.Padding, &o.RankGroups}
 }
 
 // textBytes is the length of o's strings together.
@@ -564,7 +565,7 @@ func sameOptionValue(a, b any) bool {
 // as json.Unmarshal of the JSON response would. The original then looked
 // each container up by the ID the response gave: a container whose ID JSON
 // changed (not valid UTF-8) is no object's, and its ref is 0 (no object).
-func (r *elkGoRequest) readBack(typed *elk.Request) {
+func (r *elkGoRequest) readBack(typed *elk.Request, ranked bool) {
 	for ref := 1; ref < len(r.nodeList); ref++ {
 		n := r.nodeList[ref]
 		x, y, width, height := typed.NodeLayout(elk.NodeRef(ref))
@@ -575,6 +576,13 @@ func (r *elkGoRequest) readBack(typed *elk.Request) {
 	}
 	for ref, e := range r.edgeList {
 		edge := elk.EdgeRef(ref)
+		if ranked {
+			for i, l := range e.Labels {
+				x, y, _, _ := typed.EdgeLabelBounds(edge, i)
+				setFromJSONNumber(&l.X, &x)
+				setFromJSONNumber(&l.Y, &y)
+			}
+		}
 		if count := typed.Sections(edge); count > 0 {
 			sections := r.sections.make(count)
 			for i := range sections {
@@ -843,6 +851,7 @@ func appendOptionPairs(pairs []elkOptionPair, o *elkOpts) (_ []elkOptionPair, ma
 		b.member++
 	}
 	b.integer("elk.spacing.nodeSelfLoop", c.SelfLoopSpacing, false)
+	b.str("d2.rankGroups", o.RankGroups, true)
 	return b.pairs, b.mask, b.ok
 }
 

@@ -59,6 +59,13 @@ func dagroInput(g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolved
 			in.Nodes = append(in.Nodes, empty)
 		}
 	}
+	for _, group := range g.SameRankGroups() {
+		ids := make([]string, 0, len(group))
+		for _, obj := range group {
+			ids = append(ids, in.Nodes[ix.node(obj, n)].ID)
+		}
+		in.RankGroups = append(in.RankGroups, ids)
+	}
 	ix.sc.cycleState = zeroed(ix.sc.cycleState, len(in.Nodes))
 	if hasParentCycleState(in.Nodes, ix.sc.cycleState) {
 		_, err := in.Graph()

@@ -878,6 +878,18 @@ a.(b -> c)
 	}
 }
 
+func TestEditRank(t *testing.T) {
+	const input = `x: {"rank": keep; rank: before}`
+	g, _, err := d2compiler.Compile("rank.d2", strings.NewReader(input), nil)
+	assert.Success(t, err)
+	g, err = d2oracle.Set(g, nil, "x.rank", nil, go2.Pointer("after"))
+	assert.Success(t, err)
+	assert.String(t, "x: {\"rank\": keep; rank: after}\n", d2format.Format(g.AST))
+	g, err = d2oracle.Delete(g, nil, "x.rank")
+	assert.Success(t, err)
+	assert.String(t, "x: {\"rank\": keep}\n", d2format.Format(g.AST))
+}
+
 func TestSet(t *testing.T) {
 	t.Parallel()
 

@@ -411,7 +411,7 @@ func emptiedMap[K comparable, V any](m map[K]V, size int) (map[K]V, int) {
 const (
 	elkObjectBytes     = 160
 	elkNodeBytes       = 128
-	elkOptsBytes       = 440
+	elkOptsBytes       = 456
 	elkLabelBytes      = 56
 	elkEdgeBytes       = 128
 	elkPortBytes       = 56
@@ -419,7 +419,7 @@ const (
 	elkVisitBytes      = 24
 	edgeSectionBytes   = 56
 	elkPointBytes      = 16
-	preparedSetBytes   = 448
+	preparedSetBytes   = 464
 	optionPairBytes    = 32
 	linearObjectBytes  = 40
 	linearSegmentBytes = 48

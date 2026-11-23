@@ -94,6 +94,49 @@ func SaveOrder(g *d2graph.Graph) (restoreOrder func()) {
 }
 
 func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, coreLayout d2graph.LayoutGraph, edgeRouter d2graph.RouteEdges) error {
+	// Check board-wide memberships before extracting independent layouts.
+	if err := validateRankGroups(g); err != nil {
+		return err
+	}
+	return layoutNested(ctx, g, graphInfo, coreLayout, edgeRouter)
+}
+
+func validateRankGroups(g *d2graph.Graph) error {
+	for _, members := range g.SameRankGroups() {
+		var scope *d2graph.Object
+		for i, obj := range members {
+			if obj.IsContainer() && !obj.IsGridDiagram() && !obj.IsSequenceDiagram() {
+				return fmt.Errorf("rank %q: %s is a container; assign rank to its leaf shapes", obj.Rank.Value, obj.AbsID())
+			}
+			if obj.IsConstantNear() {
+				return fmt.Errorf("rank %q: %s has a fixed near position", obj.Rank.Value, obj.AbsID())
+			}
+			// The entire grid or sequence is a single box to its parent's
+			// solver. An ordinary container in a grid cell has its own solve.
+			owner := g.Root
+			for child, parent := obj, obj.Parent; parent != nil; child, parent = parent, parent.Parent {
+				if parent.IsSequenceDiagram() || (parent.IsGridDiagram() && child == obj) {
+					return fmt.Errorf("rank %q: the %s layout controls the position of %s", obj.Rank.Value, NestedGraphInfo(parent).DiagramType, obj.AbsID())
+				}
+				if parent.IsGridDiagram() {
+					owner = child
+					break
+				}
+				if parent != g.Root && parent.IsConstantNear() {
+					owner = parent
+					break
+				}
+			}
+			if i > 0 && owner != scope {
+				return fmt.Errorf("rank %q: %s and %s belong to independent layouts", obj.Rank.Value, members[0].AbsID(), obj.AbsID())
+			}
+			scope = owner
+		}
+	}
+	return nil
+}
+
+func layoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, coreLayout d2graph.LayoutGraph, edgeRouter d2graph.RouteEdges) error {
 	g.Root.Box = &geo.Box{}
 
 	// Before we can layout these nodes, we need to handle all nested diagrams first.
@@ -152,7 +195,7 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 
 			// Then we layout curr as a nested graph and re-inject it
 			id := curr.AbsID()
-			err := LayoutNested(ctx, nestedGraph, GraphInfo{}, coreLayout, edgeRouter)
+			err := layoutNested(ctx, nestedGraph, GraphInfo{}, coreLayout, edgeRouter)
 			if err != nil {
 				return err
 			}
@@ -255,7 +298,7 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 				curr.NearKey = nil
 			}
 
-			err := LayoutNested(ctx, nestedGraph, nestedInfo, coreLayout, edgeRouter)
+			err := layoutNested(ctx, nestedGraph, nestedInfo, coreLayout, edgeRouter)
 			if err != nil {
 				if extraction, ok := batchedExtractions[curr]; ok {
 					extractionBatch.rollbackAfter(extraction.index)

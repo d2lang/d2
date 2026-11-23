@@ -29,6 +29,9 @@ type Graph struct {
 	Edges           []*Edge
 	CellSize        float64
 
+	// SameRankGroups identifies equal flow-axis centers in this layout invocation.
+	SameRankGroups [][]EntityID
+
 	// ovg
 	crossingCost      float64
 	turnCost          float64

@@ -693,6 +693,22 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 		c.errorf(f.LastRef().AST(), `%#v can only be used on connections`, f.Name.ScalarString())
 		return
 
+	} else if isReserved && keyword == "rank" {
+		if obj.Parent == nil {
+			c.errorf(f.LastRef().AST(), "rank can only be set on shapes")
+			return
+		}
+		switch obj.Parent.Shape.Value {
+		case d2target.ShapeClass, d2target.ShapeSQLTable:
+			c.errorf(f.LastRef().AST(), "rank can only be set on a whole %s shape", obj.Parent.Shape.Value)
+			return
+		}
+		if f.Primary() == nil || f.Composite != nil || strings.TrimSpace(f.Primary().Value.ScalarString()) == "" {
+			c.errorf(f.LastRef().AST(), "rank expects a non-empty group name")
+			return
+		}
+		obj.Rank = &d2graph.Scalar{Value: f.Primary().Value.ScalarString(), MapKey: f.LastPrimaryKey()}
+		return
 	} else if isReserved && keyword == "elk-layer-constraint" {
 		if obj.Parent == nil {
 			c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
@@ -888,8 +904,9 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 }
 
 func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
-	if strings.EqualFold(f.Name.ScalarString(), "elk-layer-constraint") {
-		c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
+	switch keyword := strings.ToLower(f.Name.ScalarString()); keyword {
+	case "rank", "elk-layer-constraint":
+		c.errorf(f.LastRef().AST(), "%s can only be set on shapes", keyword)
 		return
 	}
 	if f.Primary() == nil {
@@ -1584,9 +1601,12 @@ func (c *compiler) validateKey(obj *d2graph.Object, f *d2ir.Field) {
 		return
 	}
 
-	obj, ok := obj.HasChild([]string{f.Name.ScalarString()})
-	if ok && f.Map() != nil {
-		c.validateKeys(obj, f.Map())
+	if m := f.Map(); m != nil {
+		// Look up the literal shape even if it has the name of a keyword.
+		id := strings.ToLower(d2format.FormatKeyPath([]d2ast.String{f.Name}))
+		if child := obj.Children[id]; child != nil {
+			c.validateKeys(child, m)
+		}
 	}
 }
 

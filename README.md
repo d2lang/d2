@@ -205,6 +205,26 @@ D2 also handles specialized layouts such as sequence diagrams and grids. Go appl
 can use the [layout packages](./d2layouts) directly or provide layout and routing functions
 through [d2lib](./d2lib).
 
+Dagre, ELK Layered, and TALA support named ranks. Give shapes the same `rank`
+name to align their centers on the flow axis.
+For example, these two CI reports share a row even though one branch runs an extra job.
+
+```d2
+direction: down
+push -> lint -> lint_report
+push -> build -> test -> test_report
+
+lint_report.rank: reports
+test_report.rank: reports
+```
+
+With `direction: left` or `right`, the reports share a column. A connection
+between two members stays visible. Groups can include leaves in different
+ordinary containers and apply to the current board. A grid or sequence diagram
+can participate as one shape. Shapes inside an independently laid-out grid
+cell use that cell’s direction and can share a rank with other leaves in the
+same cell. To name a shape literally `rank`, quote its ID as `"rank"`.
+
 Sketch-mode rendering uses [rough-go](https://github.com/d2lang/rough-go), a native Go
 compatibility port of the Rough.js 4.6.6 rendering surface used by D2.
 

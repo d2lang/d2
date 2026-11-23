@@ -20,7 +20,7 @@ func CompoundCandidate(ctx context.Context, graph *layoutgraph.Graph) (*layoutgr
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(graph.Nodes) > 128 || len(graph.Edges) > 256 || len(graph.Containers[nil]) < 3 || len(graph.Containers[nil]) > 64 {
+	if len(graph.SameRankGroups) != 0 || len(graph.Nodes) > 128 || len(graph.Edges) > 256 || len(graph.Containers[nil]) < 3 || len(graph.Containers[nil]) > 64 {
 		return graph, nil
 	}
 	detailed := false

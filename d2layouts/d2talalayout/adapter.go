@@ -499,6 +499,15 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		}
 	}
 
+	if !loadExistingLayout {
+		for _, group := range g.SameRankGroups() {
+			ids := make([]layoutgraph.EntityID, len(group))
+			for i, obj := range group {
+				ids[i] = objectIDs[obj]
+			}
+			talaGraph.SameRankGroups = append(talaGraph.SameRankGroups, ids)
+		}
+	}
 	return bindings, nil
 }
 

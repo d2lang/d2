@@ -83,6 +83,33 @@ func NewGraph() *Graph {
 	return d
 }
 
+// SameRankGroups returns groups of two or more shapes sharing a rank name in
+// this graph. Both groups and members follow first appearance in Objects.
+func (g *Graph) SameRankGroups() [][]*Object {
+	byName := make(map[string]int)
+	var groups [][]*Object
+	for _, obj := range g.Objects {
+		if obj == nil || obj.Rank == nil || obj.Rank.Value == "" {
+			continue
+		}
+		name := obj.Rank.Value
+		i, ok := byName[name]
+		if !ok {
+			i = len(groups)
+			byName[name] = i
+			groups = append(groups, nil)
+		}
+		groups[i] = append(groups[i], obj)
+	}
+	multi := groups[:0]
+	for _, members := range groups {
+		if len(members) > 1 {
+			multi = append(multi, members)
+		}
+	}
+	return multi
+}
+
 func (g *Graph) RootBoard() *Graph {
 	for g.Parent != nil {
 		g = g.Parent
@@ -217,6 +244,7 @@ type Attributes struct {
 	Shape Scalar `json:"shape"`
 
 	Direction  Scalar   `json:"direction"`
+	Rank       *Scalar  `json:"rank,omitempty"`
 	Constraint []string `json:"constraint"`
 
 	GridRows      *Scalar `json:"gridRows,omitempty"`

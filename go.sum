@@ -16,10 +16,10 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/creack/pty v1.1.18 h1:n56/Zwd5o6whRC5PMGretI4IdRLlmBXYNjScPaBgsbY=
 github.com/creack/pty v1.1.18/go.mod h1:MOBLtS5ELjhRRrroQr9kyvTxUAFNvYEK993ew/Vr4O4=
-github.com/d2lang/dagro v0.3.1 h1:MYufY38Nb7QEu6001idLgQ+9HeuEQ+mfMZAuJbZJpOA=
-github.com/d2lang/dagro v0.3.1/go.mod h1:MPJvYGJla9b0ly0AZYUycLu/CP3z0dq8spR5Nl12OMM=
-github.com/d2lang/elk-go v0.3.1 h1:F/XmC+/psatVMwMKOHjGp6s4ZEG5FRJ4gAHeb+u1OPA=
-github.com/d2lang/elk-go v0.3.1/go.mod h1:tvu+zORoU3aAbBetbyvmwsF8Tjdvj/+fG9owqahZ+BQ=
+github.com/d2lang/dagro v0.3.2-0.20261123135830-30e2e09e8d99 h1:Wv+OX3gR3rH0yVlkluXBVkZIE7lN5FqBUkBPmlDlVu8=
+github.com/d2lang/dagro v0.3.2-0.20261123135830-30e2e09e8d99/go.mod h1:MPJvYGJla9b0ly0AZYUycLu/CP3z0dq8spR5Nl12OMM=
+github.com/d2lang/elk-go v0.3.2-0.20261123154353-325b26ff6251 h1:cuH8N5ebShvdYtLFASkNtK0nyIMWfsKzIrDpiH13bVI=
+github.com/d2lang/elk-go v0.3.2-0.20261123154353-325b26ff6251/go.mod h1:tvu+zORoU3aAbBetbyvmwsF8Tjdvj/+fG9owqahZ+BQ=
 github.com/d2lang/mathjax-go v0.1.1-0.20261002175158-94d80186bfd7 h1:XcUw18xS4RuQO7VjxYsabddvUbzKNeUyUWxTR8iE52o=
 github.com/d2lang/mathjax-go v0.1.1-0.20261002175158-94d80186bfd7/go.mod h1:ltfD9ACCPWhnU2KVOCKaUyBa3vUDGZoc1njExXypym4=
 github.com/d2lang/rough-go v0.2.0 h1:fnzL4gUub7JcZ6OzQ9I0HfQ4pSmQoX79rwg3br7XK2o=

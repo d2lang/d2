@@ -804,6 +804,7 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 	var bestLabelPercentage float64
 	var bestLabelFakeNode *layoutgraph.Node
 	bestScore := math.Inf(1)
+	bestCollisions := math.MaxInt
 
 	checkPosition := func(labelPosition label.Position) error {
 		if err := guard.step(); err != nil {
@@ -898,7 +899,15 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 			sharedSegmentOverlap,
 		)
 
-		if score < bestScore {
+		// A dense authored rank can put many unrelated edges in one channel.
+		// Place the label clear of shapes and text before minimizing conflicts
+		// with these edge segments.
+		collisions := 0
+		if len(g.SameRankGroups) != 0 {
+			collisions = nonAncestorCount + ancestorCount + labelOverlaps
+		}
+		if collisions < bestCollisions || (collisions == bestCollisions && score < bestScore) {
+			bestCollisions = collisions
 			bestLabelPosition = labelPosition
 			bestLabelFakeNode = fakeLabelNode
 			bestLabelPercentage = edge.LabelPercentage

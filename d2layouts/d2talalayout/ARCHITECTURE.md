@@ -185,6 +185,23 @@ pivots use Bland's finite rule from
 [New Finite Pivoting Rules for the Simplex Method](https://doi.org/10.1287/moor.2.2.103).
 These are algorithmic references; the Go implementation is original to TALA.
 
+### Authored same-rank groups
+
+Each layout seed restores the original nodes and edges before applying named
+ranks. The hierarchy ranker contracts the members of each group into one
+vertex before breaking cycles and solving the usual network-simplex problem.
+An authored edge within a group contributes no minimum span. Its original
+edge, ports and label still enter the orthogonal router.
+
+The constrained placement uses board coordinates so leaves in different
+containers can share a centerline. Only their enclosing chains need to resize.
+Other containers move as rigid units. Internal boundary vertices carry rank
+ordering for edges attached directly to an enclosing box. The seed supplies
+the initial transverse order, siblings separate along that axis, and each
+enclosing shape fits around its contents before the routing visibility graph
+is built. Candidate selection keeps these same coordinates through routing
+and labeling.
+
 ## Compatibility
 
 The supported Go boundary is `Options`, `DefaultOptions`, `DefaultLayout`,

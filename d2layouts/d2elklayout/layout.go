@@ -6,6 +6,7 @@ package d2elklayout
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"slices"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/internal/layoutguard"
+	"github.com/d2lang/d2/d2layouts/internal/ranklabel"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
@@ -202,6 +204,7 @@ type elkOpts struct {
 	PortConstraints string   `json:"elk.portConstraints,omitempty"`
 
 	ConfigurableOpts
+	RankGroups string `json:"d2.rankGroups,omitempty"`
 }
 
 // edgeEdgeSpacingInto stores the edge-edge spacing to send in value and
@@ -317,6 +320,31 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 	// kept in the scratch, as is the graph.
 	values := &scratch.optionValues
 	scratch.rootOpts = rootLayoutOptions(opts, &values.rootEdgeNode, &values.rootEdgeEdge)
+	// ELK includes outside labels and icons in the layout box. Symmetric
+	// margins on the flow axis keep the visible ranked shapes centered when
+	// those margins are stripped on return, including inside compounds.
+	var rankBoxes map[*d2graph.Object]bool
+	groups := g.SameRankGroups()
+	if len(groups) > 0 {
+		if !opts.usesAlgorithm("layered") {
+			return fmt.Errorf("rank groups require ELK Layered, got %q", opts.Algorithm)
+		}
+		rankBoxes = make(map[*d2graph.Object]bool)
+		ids := make([][]string, len(groups))
+		for i, group := range groups {
+			for _, obj := range group {
+				ids[i] = append(ids[i], obj.AbsID())
+				for p := obj; p != nil && p != g.Root && !rankBoxes[p]; p = p.Parent {
+					rankBoxes[p] = true
+				}
+			}
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		scratch.rootOpts.RankGroups = string(encoded)
+	}
 	elkGraph := &scratch.graph
 	*elkGraph = ELKGraph{
 		ID:            "",
@@ -347,6 +375,7 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		selfLoop:   elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing,
 		direction:  elkGraph.LayoutOptions.Direction,
 		edgeEdge:   values.rootEdgeEdge,
+		rankGroups: scratch.rootOpts.RankGroups,
 	}
 
 	// set label and icon positions for ELK
@@ -361,7 +390,7 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 	// from one copy of the container options of this call.
 	shared := &scratch.request.shared
 	containerBase := containerLayoutOptions(opts, &values.containerEdgeNode, &values.containerEdgeEdge)
-	verticalSelfLoops := g.Root.Direction.Value == "down" || g.Root.Direction.Value == "" || g.Root.Direction.Value == "up"
+	vertical := elkGraph.LayoutOptions.Direction == Down || elkGraph.LayoutOptions.Direction == Up
 
 	// Per object: its ELK node, the margin taken off after layout and its
 	// absolute ID (computed once; nothing changes IDs or parents here), in
@@ -402,6 +431,15 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		}
 
 		margin, _ := obj.SpacingOpt(label.PADDING, label.PADDING, false)
+		if rankBoxes[obj] {
+			if vertical {
+				margin.Top = math.Max(margin.Top, margin.Bottom)
+				margin.Bottom = margin.Top
+			} else {
+				margin.Left = math.Max(margin.Left, margin.Right)
+				margin.Right = margin.Left
+			}
+		}
 		width := margin.Left + obj.Width + margin.Right
 		height := margin.Top + obj.Height + margin.Bottom
 		state.margin = margin
@@ -435,7 +473,7 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 			o := scratch.opts.new()
 			*o = containerBase
 			if o.ConfigurableOpts.SelfLoopSpacing == DefaultOpts.SelfLoopSpacing {
-				o.ConfigurableOpts.SelfLoopSpacing = go2.Max(o.ConfigurableOpts.SelfLoopSpacing, scratch.selfLoop(g, obj).of(verticalSelfLoops)/2+5)
+				o.ConfigurableOpts.SelfLoopSpacing = go2.Max(o.ConfigurableOpts.SelfLoopSpacing, scratch.selfLoop(g, obj).of(vertical)/2+5)
 			}
 
 			switch elkGraph.LayoutOptions.Direction {
@@ -650,6 +688,13 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 			parentY = container.TopLeft.Y
 		}
 
+		if len(groups) > 0 {
+			for _, l := range e.Labels {
+				l.X += parentX
+				l.Y += parentY
+			}
+		}
+
 		var points []*geo.Point
 		if n := routeLength(e); n > 0 {
 			points = routeBlock[:0:n]
@@ -732,16 +777,17 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		}
 	}
 
-	var mrTreeRoutes map[*d2graph.Edge]bool
-	if opts.usesAlgorithm("mrtree") {
-		mrTreeRoutes = make(map[*d2graph.Edge]bool)
+	var keepRoutes map[*d2graph.Edge]bool
+	mrTree := opts.usesAlgorithm("mrtree")
+	if mrTree {
+		keepRoutes = make(map[*d2graph.Edge]bool)
 	}
 	for ei, edge := range g.Edges {
 		points := edge.Route
-		if mrTreeRoutes != nil && scratch.edgeAt[ei].elk.Container == "" {
+		if mrTree && scratch.edgeAt[ei].elk.Container == "" {
 			// Child graphs can still use layered routing. Preserve the tree's
 			// own detours when simplifying the other routes later.
-			mrTreeRoutes[edge] = true
+			keepRoutes[edge] = true
 			if edge.Src.Parent == edge.Dst.Parent {
 				points = trimMrTreeBends(edge)
 			}
@@ -770,11 +816,21 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 			}
 		}
 
-		startIndex, endIndex = edge.TraceToShape(points, startIndex, endIndex)
+		if len(groups) > 0 {
+			startIndex, endIndex = edge.TraceOrthogonalToShape(points, startIndex, endIndex)
+		} else {
+			startIndex, endIndex = edge.TraceToShape(points, startIndex, endIndex)
+		}
 		points = points[startIndex : endIndex+1]
 
 		if edge.Label.Value != "" {
-			edge.LabelPosition = store.stringPointer(label.InsideMiddleCenter.String())
+			if len(groups) > 0 && len(scratch.edgeAt[ei].elk.Labels) > 0 {
+				pos, pct := rankLabelPosition(points, scratch.edgeAt[ei].elk.Labels[0])
+				edge.LabelPosition = store.stringPointer(pos.String())
+				edge.LabelPercentage = &pct
+			} else {
+				edge.LabelPosition = store.stringPointer(label.InsideMiddleCenter.String())
+			}
 		}
 
 		edge.Route = points
@@ -790,12 +846,16 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		}
 	}
 
-	if opts.EdgeRouting != "POLYLINE" {
+	// Ranked routes already account for compound boxes, parallel tracks and labels.
+	if opts.EdgeRouting != "POLYLINE" && len(groups) == 0 {
 		// The bend index finds duplicate objects and edges by their states.
 		scratch.bendGrids.states, scratch.bendGrids.edgeAt = objects, scratch.edgeAt
-		deleteBendsWith(g, opts.LayeredOptions, mrTreeRoutes, nil, &scratch.bendGrids)
+		deleteBendsWith(g, opts.LayeredOptions, keepRoutes, nil, &scratch.bendGrids)
 	}
 	deconflictSelfLoopLabels(g)
+	if len(groups) > 0 {
+		ranklabel.ClearOverlaps(g)
+	}
 
 	return nil
 }

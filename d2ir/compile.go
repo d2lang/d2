@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -1729,7 +1730,10 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		// For vars, if we delete the field, it may just resolve to an outer scope var of the same name
 		// Instead we keep it around, so that resolveSubstitutions can find it
 		if !IsVar(ParentMap(f)) {
-			ParentMap(f).DeleteField(f.Name.ScalarString())
+			m := ParentMap(f)
+			if i := slices.Index(m.Fields, f); i >= 0 {
+				m.deleteFieldAt(i)
+			}
 			return
 		}
 	}
@@ -2389,12 +2393,12 @@ func (m *Map) removeSuspendedFields() {
 		if m.Fields[i].Name == nil {
 			continue
 		}
-		_, isReserved := d2ast.ReservedKeywords[m.Fields[i].Name.ScalarString()]
-		if isReserved {
+		_, isReserved := d2ast.ReservedKeywords[strings.ToLower(m.Fields[i].Name.ScalarString())]
+		if isReserved && m.Fields[i].Name.IsUnquoted() {
 			continue
 		}
 		if m.Fields[i].suspended {
-			m.DeleteField(m.Fields[i].Name.ScalarString())
+			m.deleteFieldAt(i)
 		}
 	}
 
