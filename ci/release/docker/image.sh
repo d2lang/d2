@@ -39,6 +39,9 @@ case "$command" in
       IMAGE="$PRIMARY_DOCKER_IMAGE@$digest"
       printf 'digest=%s\n' "$digest" >>"$GITHUB_OUTPUT"
     else
+      docker run --rm --platform "$PLATFORM" --entrypoint /usr/bin/test "$IMAGE" \
+        /usr/local/bin/d2 -ef "/usr/local/lib/d2/d2-$VERSION/bin/d2" \
+        || die "installed CLI and release binary must share one inode"
       # Measure compressed layers using the same cached build as the loaded smoke image.
       archive="$WORK_DIR/image.oci.tar"
       docker buildx build --platform "$PLATFORM" --provenance=false \
