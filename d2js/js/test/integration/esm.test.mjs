@@ -15,6 +15,18 @@ test("installed ESM package compiles and renders", async () => {
   }
 });
 
+test("Playground links round-trip D2 source through the installed package", async (t) => {
+  const d2 = new D2();
+  t.after(() => d2.dispose());
+  const source = "client -> café: 🚀\n";
+  const url = new URL("https://play.d2lang.com/");
+  url.searchParams.set("script", await d2.encode(source));
+  const shared = new URL(url.href);
+  assert.equal(await d2.decode(shared.searchParams.get("script")), source);
+  // A previously shared Playground link must remain readable.
+  assert.equal(await d2.decode("qlDQtVOo5AIEAAD__w=="), "x -> y\n");
+});
+
 test("format returns canonical source without resolving imports", async (t) => {
   const d2 = new D2();
   t.after(() => d2.dispose());
