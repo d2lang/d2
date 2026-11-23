@@ -183,14 +183,15 @@ func (s elkGraphStats) maxSelfLoopLabel(parent *d2graph.Object, isWidth bool) in
 }
 
 type elkOpts struct {
-	FixedAlignment        string    `json:"elk.layered.nodePlacement.bk.fixedAlignment,omitempty"`
-	Thoroughness          int       `json:"elk.layered.thoroughness,omitempty"`
-	Direction             Direction `json:"elk.direction"`
-	HierarchyHandling     string    `json:"elk.hierarchyHandling,omitempty"`
-	InlineEdgeLabels      bool      `json:"elk.edgeLabels.inline,omitempty"`
-	RouteSelfLoops        bool      `json:"elkgo.routeSelfLoops,omitempty"`
-	ConsiderModelOrder    string    `json:"elk.layered.considerModelOrder.strategy,omitempty"`
-	CycleBreakingStrategy string    `json:"elk.layered.cycleBreaking.strategy,omitempty"`
+	FixedAlignment           string    `json:"elk.layered.nodePlacement.bk.fixedAlignment,omitempty"`
+	Thoroughness             int       `json:"elk.layered.thoroughness,omitempty"`
+	Direction                Direction `json:"elk.direction"`
+	HierarchyHandling        string    `json:"elk.hierarchyHandling,omitempty"`
+	InlineEdgeLabels         bool      `json:"elk.edgeLabels.inline,omitempty"`
+	RouteSelfLoops           bool      `json:"elkgo.routeSelfLoops,omitempty"`
+	RouteCrossContainerEdges bool      `json:"elkgo.routeCrossContainerEdges,omitempty"`
+	ConsiderModelOrder       string    `json:"elk.layered.considerModelOrder.strategy,omitempty"`
+	CycleBreakingStrategy    string    `json:"elk.layered.cycleBreaking.strategy,omitempty"`
 
 	SelfLoopDistribution string `json:"elk.layered.edgeRouting.selfLoopDistribution,omitempty"`
 	LayerConstraint      string `json:"elk.layered.layering.layerConstraint,omitempty"`
@@ -318,8 +319,9 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 	// kept in the scratch, as is the graph.
 	values := &scratch.optionValues
 	scratch.rootOpts = rootLayoutOptions(opts, &values.rootEdgeNode, &values.rootEdgeEdge)
-	// Request the native providers' loop geometry on the D2 layout path.
+	// Request native routing on the D2 layout path.
 	scratch.rootOpts.RouteSelfLoops = opts.usesAlgorithm("stress") || opts.usesAlgorithm("force") || opts.usesAlgorithm("mrtree")
+	scratch.rootOpts.RouteCrossContainerEdges = scratch.rootOpts.RouteSelfLoops || opts.usesAlgorithm("radial")
 	elkGraph := &scratch.graph
 	*elkGraph = ELKGraph{
 		ID:            "",
@@ -637,8 +639,12 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 	routePoints := 0
 	for ei := range g.Edges {
 		sections := scratch.edgeAt[ei].elk.Sections
-		if len(sections) == 0 && scratch.rootOpts.RouteSelfLoops && g.Edges[ei].Src == g.Edges[ei].Dst {
-			return fmt.Errorf("ELK algorithm %q returned no route for self-loop %s", opts.Algorithm, g.Edges[ei].AbsID())
+		if len(sections) == 0 {
+			edge := g.Edges[ei]
+			if edge.Src == edge.Dst {
+				return fmt.Errorf("ELK algorithm %q returned no route for self-loop %s", opts.Algorithm, edge.AbsID())
+			}
+			return fmt.Errorf("ELK algorithm %q returned no route for edge %s", opts.Algorithm, edge.AbsID())
 		}
 		for _, s := range sections {
 			routePoints += 2 + len(s.BendPoints)
@@ -739,19 +745,24 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		}
 	}
 
-	var mrTreeRoutes map[*d2graph.Edge]bool
-	if opts.usesAlgorithm("mrtree") {
-		mrTreeRoutes = make(map[*d2graph.Edge]bool)
-	}
+	var keepRoutes map[*d2graph.Edge]bool
+	mrTree := opts.usesAlgorithm("mrtree")
 	for ei, edge := range g.Edges {
 		points := edge.Route
-		if mrTreeRoutes != nil && scratch.edgeAt[ei].elk.Container == "" {
-			// Child graphs can still use layered routing. Preserve the tree's
-			// own detours when simplifying the other routes later.
-			mrTreeRoutes[edge] = true
-			if edge.Src.Parent == edge.Dst.Parent {
-				points = trimMrTreeBends(edge)
+		rootRoute := scratch.edgeAt[ei].elk.Container == ""
+		// Non-layered routing is enabled at the root. Its compound routes
+		// can also be stored on a top-level endpoint when it contains the
+		// other endpoint. Child graphs can still have ordinary layered routes.
+		compound := scratch.rootOpts.RouteCrossContainerEdges && edge.Src.Parent != edge.Dst.Parent &&
+			(rootRoute || edge.Src.Parent == g.Root || edge.Dst.Parent == g.Root)
+		if compound || (mrTree && rootRoute) {
+			if keepRoutes == nil {
+				keepRoutes = make(map[*d2graph.Edge]bool)
 			}
+			keepRoutes[edge] = true
+		}
+		if mrTree && rootRoute && edge.Src.Parent == edge.Dst.Parent {
+			points = trimMrTreeBends(edge)
 		}
 
 		startIndex, endIndex := 0, len(points)-1
@@ -800,7 +811,7 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 	if opts.EdgeRouting != "POLYLINE" {
 		// The bend index finds duplicate objects and edges by their states.
 		scratch.bendGrids.states, scratch.bendGrids.edgeAt = objects, scratch.edgeAt
-		deleteBendsWith(g, opts.LayeredOptions, mrTreeRoutes, nil, &scratch.bendGrids)
+		deleteBendsWith(g, opts.LayeredOptions, keepRoutes, nil, &scratch.bendGrids)
 	}
 	deconflictSelfLoopLabels(g)
 	clearSelfLoopLabelBends(g)
