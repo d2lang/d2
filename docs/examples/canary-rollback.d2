@@ -1,0 +1,72 @@
+# d2 --pad=24 --animate-interval=1400 canary-rollback.d2 canary-rollback.svg
+direction: right
+style.fill: "#f7f9fc"
+
+vars: {stable: 90%; canary: 10%; errors: 0.3%}
+
+title: "Checkout API · canary rollout" {
+  shape: text
+  near: top-center
+  style: {font-size: 28; bold: true; font-color: "#182c42"}
+}
+
+gateway: "Production gateway\ncheckout.example.com" {
+  width: 218
+  height: 84
+  style: {fill: "#243a53"; stroke: "#243a53"; font-color: "#ffffff"; font-size: 18; border-radius: 12}
+}
+
+classes: {
+  release: {
+    width: 278
+    height: 72
+    style: {font-size: 19; bold: true; border-radius: 8; stroke-width: 2}
+  }
+}
+stable: "Stable · v2.14\n${stable} of requests" {
+  class: release
+  style: {
+    stroke: "#4e829e"
+    font-color: "#193d54"
+    fill: "linear-gradient(to right, #abd4e8 ${stable}, #ecf4f8 ${stable})"
+  }
+}
+canary: "Canary · v2.15\n${canary} of requests" {
+  class: release
+  style: {
+    stroke: "#a97e4d"
+    font-color: "#573d23"
+    fill: "linear-gradient(to right, #f5c583 ${canary}, #f9f2e9 ${canary})"
+  }
+}
+gateway -> stable: {style.stroke: "#4e829e"}
+gateway -> canary: {style.stroke: "#a97e4d"}
+
+gate: "Pilot healthy · promoting the canary\nCanary 5xx (1 min): ${errors}    /    Rollback threshold: 2.0%" {
+  near: bottom-center
+  width: 606
+  height: 74
+  style: {font-size: 18; border-radius: 8; fill: "#e5f2e9"; stroke: "#87b69b"; font-color: "#22523b"}
+}
+
+steps: {
+  promote: {
+    vars: {stable: 50% {tween: 1600ms}; canary: 50% {tween: 1600ms}}
+    gate: "Shifting traffic · targeting a 50/50 split\nCanary 5xx (1 min): ${errors}    /    Rollback threshold: 2.0%"
+  }
+  analyze: {
+    vars: {errors: 3.4% {tween: 1200ms}}
+    gate: "Evaluating the next analysis window\nCanary 5xx (1 min): ${errors}    /    Rollback threshold: 2.0%"
+    gate.style: {fill: "#f8f0df"; stroke: "#cba969"; font-color: "#725625"}
+  }
+  rollback: {
+    vars: {stable: 100% {tween: 2s}; canary: 0% {tween: 2s}}
+    gate: "Threshold breached · rolling back v2.15\nCanary 5xx (1 min): ${errors}    /    Rollback threshold: 2.0%"
+    gate.style: {fill: "#faeae7"; stroke: "#c99489"; font-color: "#813f35"}
+  }
+  restored: {
+    gate: "Rollback complete · all traffic on v2.14\nCanary paused after ${errors} 5xx exceeded the 2.0% threshold."
+    (gateway -> canary)[0].style.opacity: 0.25
+    gate.style: {fill: "#eaf0f5"; stroke: "#9eafbe"; font-color: "#354c60"}
+  }
+}
