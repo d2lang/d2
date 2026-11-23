@@ -79,22 +79,24 @@ export class D2 {
   }
 
   async init(workerURL) {
-    this.worker = await createWorker(workerURL);
-
-    const wasmExecContent = isNode ? await loadFile("./wasm_exec.js") : null;
-    const wasm = await loadFile("./d2.wasm");
-
-    const messageHandler = this.setupMessageHandler();
-
-    this.worker.postMessage({
-      type: "init",
-      data: {
-        wasm,
-        wasmExecContent: isNode ? wasmExecContent.toString() : null,
-      },
-    });
-
-    return messageHandler;
+    const { worker, releaseURL } = await createWorker(workerURL);
+    this.worker = worker;
+    try {
+      const wasmExecContent = isNode ? await loadFile("./wasm_exec.js") : null;
+      const wasm = await loadFile("./d2.wasm");
+      const ready = this.setupMessageHandler();
+      worker.postMessage({
+        type: "init",
+        data: {
+          wasm,
+          wasmExecContent: isNode ? wasmExecContent.toString() : null,
+        },
+      });
+      return await ready;
+    } finally {
+      // The browser may still be loading the module when new Worker() returns.
+      releaseURL?.();
+    }
   }
 
   async sendMessage(type, data) {

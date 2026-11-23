@@ -36,5 +36,5 @@ export async function createWorker() {
   const { Worker } = modules.worker;
   const { join } = modules.path;
   const workerPath = join(moduleDir, "worker.js");
-  return new Worker(workerPath);
+  return { worker: new Worker(workerPath) };
 }
