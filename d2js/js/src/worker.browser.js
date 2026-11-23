@@ -1,4 +1,5 @@
 import { BrotliDecode } from "../vendor/decode.min.js";
+import { stringifyCompileRequest } from "./compile-request.js";
 import { initWasm } from "./init-wasm.js";
 
 let currentPort;
@@ -28,9 +29,12 @@ export function setupMessageHandler(isNode, port, initWasm) {
         }
         break;
 
+      case "format":
       case "compile":
+      case "renderSVG":
         try {
-          const result = await d2.compile(JSON.stringify(data));
+          const input = type === "format" ? data : stringifyCompileRequest(data);
+          const result = await d2[type](input);
           const response = JSON.parse(result);
           if (response.error) throw new Error(response.error.message);
           currentPort.postMessage({ id, type: "result", data: response.data });

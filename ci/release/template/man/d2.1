@@ -119,7 +119,12 @@ and animated multi-board SVG; use separate themed SVGs or a GIF slideshow.
 Center the SVG in the containing viewbox, such as your browser screen
 .Ns .
 .It Fl -scale Ar -1
-Scale the output. E.g., 0.5 to halve the default size. Default -1 means that SVG's will fit to screen and all others will use their default render size. Setting to 1 turns off SVG fitting to screen
+Scale the output. For example, 0.5 halves the default size.
+The default of -1 fits SVGs to the screen and uses the default render size for other exports.
+Use 1 for an SVG with explicit dimensions.
+Set the scale in the diagram with
+.Li "vars: {d2-config: {scale: 0.5}}" .
+An explicit flag or SCALE environment variable overrides the diagram.
 .Ns .
 .It Fl -font-regular
 Path to .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used
@@ -149,13 +154,22 @@ Path to .ttf file to use for the monospace semibold font. If none provided, Sour
 Pixels padded around the rendered diagram
 .Ns .
 .It Fl -animate-interval Ar 0
-Sets the time in milliseconds to hold each authored board in an animated SVG or GIF.
-GIF exports default to 1000ms per board.
-To interpolate a numeric or percentage variable when entering a step, set a destination value and duration in that step, for example
-.Li "vars: {charge: 0% {tween: 4s}}" .
-The transition starts at the inherited value and runs before the destination board's hold.
-Samples use the precision of the endpoints, so use decimal places for fractional values.
-Static exports show the destination value
+Set the time each board is displayed in an animated SVG or GIF. The flag takes milliseconds.
+Set the same interval in D2 source with
+.Li "vars: {d2-config: {animate-interval: 800ms}}" .
+The source value accepts integer milliseconds or a duration such as 1.5s.
+The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over the file.
+Zero selects ordinary SVG export or the default GIF interval of 1000ms.
+.Ns .
+.It Fl -animate-duration Ar 0
+Set how long changed numeric or percentage variables take to reach their values in a step.
+The flag takes milliseconds. The file also accepts durations, for example
+.Li "vars: {d2-config: {animate-interval: 800ms; animate-duration: 300ms}}" .
+All matching variables change together for 300ms, then hold their values for the remaining 500ms.
+A longer transition extends the step to its duration.
+The duration defaults to zero, which disables interpolation, and accepts values up to ten minutes.
+The flag takes precedence over D2_ANIMATE_DURATION, which takes precedence over the file.
+Static exports show the authored values.
 .Ns .
 .It Fl -browser Ar true
 Browser executable that watch opens. Setting to 0 opens no browser
@@ -164,6 +178,13 @@ Browser executable that watch opens. Setting to 0 opens no browser
 Set the diagram layout engine to the passed string. For a list of available options, run
 .Ar layout
 .Ns .
+.It Fl -dagre-nodesep Ar pixels
+Set the spacing between nodes in a Dagre rank.
+.It Fl -dagre-edgesep Ar pixels
+Set the spacing between edges in a Dagre layout.
+Both Dagre settings accept nonnegative whole pixels.
+Values in the diagram take precedence over the corresponding flags, for example
+.Li "vars: {d2-config: {data: {dagre-nodesep: 200; dagre-edgesep: 30}}}" .
 .It Fl -elk-algorithm Ar algorithm
 Select the ELK layout algorithm. The default is layered.
 Other choices for connected diagrams are force, stress, mrtree and radial.
@@ -206,7 +227,11 @@ Bundle all assets and layers into the output svg
 Allow remote image assets to access private, loopback, and link-local networks. Only enable this for trusted diagrams
 .Ns .
 .It Fl -force-appendix Ar false
-Add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG. PNG exports include an appendix by default
+Add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG.
+PNG exports include an appendix by default.
+Set the SVG preference in the diagram with
+.Li "vars: {d2-config: {force-appendix: true}}" .
+An explicit flag or D2_FORCE_APPENDIX environment variable overrides the diagram.
 .Ns .
 .It Fl -target
 Target board to render. Pass an empty string to target root board. If target ends with '*', it will be rendered
@@ -308,6 +333,8 @@ See --font-mono-italic flag.
 See --font-mono-semibold flag.
 .It Ev Sy D2_ANIMATE_INTERVAL
 See --animate-interval flag.
+.It Ev Sy D2_ANIMATE_DURATION
+See --animate-duration flag.
 .It Ev Sy D2_TIMEOUT
 See --timeout flag.
 .It Ev Sy D2_CHECK

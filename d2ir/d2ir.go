@@ -145,8 +145,10 @@ func (r *FieldReference) DueToLazyGlob() bool  { return r.DueToLazyGlob_ }
 func (r *EdgeReference) DueToLazyGlob() bool   { return r.DueToLazyGlob_ }
 
 type Scalar struct {
-	parent Node
-	Value  d2ast.Scalar `json:"value"`
+	// binding retains a step expression for interpolation after its endpoint resolves.
+	binding d2ast.Scalar
+	parent  Node
+	Value   d2ast.Scalar `json:"value"`
 }
 
 func (s *Scalar) Copy(newParent Node) Node {

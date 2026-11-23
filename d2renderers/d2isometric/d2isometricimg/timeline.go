@@ -14,6 +14,7 @@ import (
 
 	"github.com/d2lang/d2/d2renderers/d2isometric"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/xgif"
 )
 
 const MaxTimelineBoards = 128
@@ -38,8 +39,9 @@ func RenderTimeline(ctx context.Context, boards []*d2target.Diagram, opts *Optio
 // samples share that clock so their centisecond delays and intrinsic animations
 // stay in phase. An ordinary board starts at zero.
 type BoardTiming struct {
-	Duration time.Duration
-	Elapsed  time.Duration
+	Duration    time.Duration
+	Elapsed     time.Duration
+	TweenSample bool
 }
 
 // RenderTimedTimeline renders one duration per board, supporting variable
@@ -120,8 +122,13 @@ func RenderTimedTimeline(ctx context.Context, boards []*d2target.Diagram, opts *
 	for boardIndex, board := range boards {
 		interval := timings[boardIndex].Duration
 		elapsed := timings[boardIndex].Elapsed
-		// Quantize boundaries on the tween clock to avoid cumulative drift.
-		delay := max(1, int((elapsed+interval).Round(10*time.Millisecond)/(10*time.Millisecond)-elapsed.Round(10*time.Millisecond)/(10*time.Millisecond)))
+		delay := max(1, int(interval.Round(10*time.Millisecond)/(10*time.Millisecond)))
+		if timings[boardIndex].TweenSample || elapsed > 0 {
+			delay = xgif.StepDelay(elapsed, interval, timings[boardIndex].TweenSample)
+			if delay == 0 {
+				continue
+			}
+		}
 		s, err := openCapture(ctx, board, o)
 		if err != nil {
 			return nil, err

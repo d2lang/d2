@@ -10,10 +10,16 @@ declare const d2: D2;
 declare const input: string | CompileRequest;
 
 const source = "x -> y";
+new D2();
+new D2({ workerURL: "/d2-worker.js" });
+new D2({ workerURL: new URL("/d2-worker.js", "https://example.com") });
+// @ts-expect-error The worker URL must identify a script.
+new D2({ workerURL: 123 });
 const request: CompileRequest = { fs: { index: source } };
 const options: CompileOptions = {
   layout: "tala",
   sketch: false,
+  animateDuration: 200,
   isometric: true,
 };
 
@@ -22,6 +28,11 @@ const configured: Promise<CompileResponse> = d2.compile(source, options);
 const imported: Promise<CompileResponse> = d2.compile(request);
 const overridden: Promise<CompileResponse> = d2.compile(request, options);
 const dynamic: Promise<CompileResponse> = d2.compile(input, options);
+const svg: Promise<string> = d2.renderSVG(source);
+const importedSVG: Promise<string> = d2.renderSVG(input, options);
+const formattedSource: Promise<string> = d2.format(source);
+// @ts-expect-error The formatter accepts source text.
+d2.format(request);
 
 for (const layout of ["dagre", "elk", "tala"] as const) {
   d2.compile(source, { layout });

@@ -1,5 +1,12 @@
-# d2 --animate-interval=800 --pad=20 variable-tween.d2 battery.svg
-vars: {charge: 65%}
+# d2 variable-tween.d2 battery.svg
+vars: {
+  d2-config: {
+    animate-interval: 800ms
+    animate-duration: 4s
+    pad: 20
+  }
+  charge: 65%
+}
 
 battery: "Battery · ${charge}" {
   width: 300
@@ -14,6 +21,6 @@ battery: "Battery · ${charge}" {
 
 steps: {
   drain: {
-    vars: {charge: 0% {tween: 4s}}
+    vars: {charge: 0%}
   }
 }

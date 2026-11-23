@@ -59,11 +59,12 @@ type RenderOptions struct {
 
 type CompileOptions struct {
 	RenderOptions
-	Layout       *string `json:"layout"`
-	FontRegular  *[]byte `json:"FontRegular"`
-	FontItalic   *[]byte `json:"FontItalic"`
-	FontBold     *[]byte `json:"FontBold"`
-	FontSemibold *[]byte `json:"FontSemibold"`
+	AnimateDuration *int64  `json:"animateDuration"`
+	Layout          *string `json:"layout"`
+	FontRegular     *[]byte `json:"FontRegular"`
+	FontItalic      *[]byte `json:"FontItalic"`
+	FontBold        *[]byte `json:"FontBold"`
+	FontSemibold    *[]byte `json:"FontSemibold"`
 }
 
 type CompileResponse struct {

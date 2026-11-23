@@ -1,4 +1,17 @@
+export interface D2Options {
+  /** Browser module worker script URL. Defaults to the embedded worker. */
+  workerURL?: string | { readonly href: string };
+}
+
 export class D2 {
+  constructor(options?: D2Options);
+
+  /** Formats one D2 source file without resolving imports or running layout. */
+  format(source: string): Promise<string>;
+
+  /** Compiles and renders SVG in one worker call. Rejects if the effective options set ascii to true. */
+  renderSVG(input: string | CompileRequest, options?: CompileOptions): Promise<string>;
+
   /** Options in input.options take precedence over the second argument. */
   compile(
     input: string | CompileRequest,
@@ -49,13 +62,13 @@ export interface RenderOptions {
   center?: boolean;
   /** Pixels padded around the rendered diagram [default: 100] */
   pad?: number;
-  /** Scale the output. E.g., 0.5 to halve the default size. The default will render SVG's that will fit to screen. Setting to 1 turns off SVG fitting to screen. */
+  /** Overrides vars.d2-config.scale. A positive multiplier sets the SVG dimensions. Use -1 to fit the screen (default). */
   scale?: number;
-  /** Adds an appendix for tooltips and links [default: false] */
+  /** Adds a numbered SVG appendix for tooltips and links. Overrides vars.d2-config.force-appendix, including false. */
   forceAppendix?: boolean;
-  /** Target board/s to render. If target ends with '', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. target: 'layers.x.*' to render layer 'x' with all of its children. Pass '' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board outputs are currently only supported for animated SVGs and so animateInterval must be set to a value greater than 0 when targeting multiple boards. */
+  /** Board to render (default: root). Use '*' for all boards or 'layers.x.*' for a board and its children. Multi-board SVG requires a positive animation interval. */
   target?: string;
-  /** Milliseconds to hold each authored board in an animated SVG, in addition to any incoming variable tween. */
+  /** Minimum milliseconds to display each board in an animated SVG. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
   animateInterval?: number;
   /** Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output. */
   salt?: string;
@@ -68,6 +81,8 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
+  /** Milliseconds to interpolate changed numeric and percentage variables in steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
+  animateDuration?: number;
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";
   /** A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used. */
@@ -100,7 +115,7 @@ export interface CompileResponse {
 }
 
 export interface Diagram {
-  config?: RenderOptions;
+  config?: RenderOptions & Pick<CompileOptions, "animateDuration">;
   name: string;
   /**
    * See docs on the same field in d2graph to understand what it means.

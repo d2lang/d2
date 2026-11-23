@@ -11,21 +11,21 @@ import (
 )
 
 func TestCompileVariableTween(t *testing.T) {
-	const input = `vars: {charge: 100%}
+	const input = `vars: {charge: 100%; d2-config: {animate-duration: 160ms}}
 battery: "Battery · ${charge}" {
   width: 240
   height: 60
   style.fill: "linear-gradient(to right, green ${charge}, transparent ${charge})"
 }
 steps: {
-  drain: {vars: {charge: 0% {tween: 160ms}}}
+  drain: {vars: {charge: 0%}}
   done: {battery.style.stroke: green}
 }`
 
 	for _, animate := range []bool{false, true} {
 		calls := 0
 		opts := dagreCompileOptions(&calls)
-		opts.AnimateTweens = animate
+		opts.AnimateTweens = &animate
 		opts.LayoutReuse = true
 		diagram, graph, err := Compile(d2log.WithDefault(context.Background()), input, opts, nil)
 		if err != nil {

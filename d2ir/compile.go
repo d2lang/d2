@@ -5,16 +5,19 @@ import (
 	"errors"
 	"html"
 	"io/fs"
+	"math"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/d2lang/util-go/go2"
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -31,19 +34,19 @@ type globContext struct {
 }
 
 type compiler struct {
-	err                *d2parser.ParseError
-	ctx                context.Context
-	contextErr         error
-	expansionErr       error
-	globExpansionErr   error
-	halted             bool
-	variableExpansion  *variableExpansionBudget
-	tweenExpansion     *variableExpansionBudget
-	resolvingImport    bool
-	globExpansion      *globExpansionBudget
-	edgeExpansion      *edgeExpansionBudget
-	edgeExpansionWork  *edgeExpansionWorkBudget
-	edgeExpansionPairs map[edgeExpansionPair]struct{}
+	err                 *d2parser.ParseError
+	ctx                 context.Context
+	contextErr          error
+	expansionErr        error
+	globExpansionErr    error
+	halted              bool
+	variableExpansion   *variableExpansionBudget
+	tweenExpansion      *variableExpansionBudget
+	retainTweenBindings bool
+	globExpansion       *globExpansionBudget
+	edgeExpansion       *edgeExpansionBudget
+	edgeExpansionWork   *edgeExpansionWorkBudget
+	edgeExpansionPairs  map[edgeExpansionPair]struct{}
 
 	fs      fs.FS
 	imports []string
@@ -81,8 +84,11 @@ type compiler struct {
 }
 
 type CompileOptions struct {
-	// AnimateTweens generates incoming samples for steps with tweened variables.
-	AnimateTweens bool
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of changed step variables. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// Context stops parsing and compilation when canceled. A nil Context is
 	// treated as context.Background().
 	Context  context.Context
@@ -116,6 +122,9 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if opts == nil {
 		opts = &CompileOptions{}
 	}
+	if opts.AnimateDuration != nil && (*opts.AnimateDuration < 0 || *opts.AnimateDuration > d2target.MaxTweenDurationMS) {
+		return nil, nil, errors.New("animate-duration must be between 0 and 600000 milliseconds")
+	}
 	ctx := opts.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -140,13 +149,14 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	c := &compiler{
-		err:               &d2parser.ParseError{},
-		ctx:               ctx,
-		fs:                opts.FS,
-		variableExpansion: variableExpansion,
-		globExpansion:     globExpansion,
-		edgeExpansion:     edgeExpansion,
-		edgeExpansionWork: edgeExpansionWork,
+		err:                 &d2parser.ParseError{},
+		ctx:                 ctx,
+		retainTweenBindings: (opts.AnimateTweens == nil || *opts.AnimateTweens) && (opts.AnimateDuration == nil || *opts.AnimateDuration > 0),
+		fs:                  opts.FS,
+		variableExpansion:   variableExpansion,
+		globExpansion:       globExpansion,
+		edgeExpansion:       edgeExpansion,
+		edgeExpansionWork:   edgeExpansionWork,
 
 		seenImports:             make(map[string]struct{}),
 		parsedImports:           make(map[string]*d2ast.Map),
@@ -172,18 +182,13 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if err := c.compileLimitError(); err != nil {
 		return nil, nil, err
 	}
-	// Capture the unresolved step templates before variable substitution consumes their
-	// bindings. Ordinary compilation validates the same declarations without sampling.
-	tweens := c.prepareTweens(m, nil, opts.AnimateTweens)
+	// Imports are attached now. For an ordinary diagram, two indexed lookups
+	// keep endpoint substitution on its usual path without saving expressions.
+	c.retainTweenBindings = c.retainTweenBindings &&
+		(opts.AnimateDuration != nil || mayResolveTiming(m, "animate-duration")) &&
+		(opts.AnimateTweens != nil || mayResolveTiming(m, "animate-interval"))
 	c.compileSubstitutions(m, nil)
-	if c.err.Empty() {
-		for _, tween := range tweens {
-			if c.stopped() {
-				break
-			}
-			c.finishTween(tween)
-		}
-	}
+	c.retainTweenBindings = false
 	if c.contextErr != nil {
 		return nil, nil, c.contextErr
 	}
@@ -204,6 +209,9 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	m.removeSuspendedFields()
+	if c.err.Empty() && !c.stopped() {
+		c.compileTweens(m, opts)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -286,11 +294,6 @@ func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
 
 func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[Node]struct{}, source d2ast.Node) {
 	if c.stopped() {
-		return
-	}
-	// Imported boards must retain their bindings until the final importer supplies
-	// the starting value and each sample can substitute its own variable state.
-	if c.resolvingImport && NodeBoardKind(m) != "" && m.hasTweenAnnotations() {
 		return
 	}
 	if !c.visitSubstitutionNode(m, source, seen) {
@@ -378,6 +381,24 @@ func (c *compiler) visitSubstitutionNode(node Node, source d2ast.Node, seen map[
 	return true
 }
 
+// ParseAnimateInterval returns the source interval in milliseconds. A bare
+// integer uses milliseconds, matching the CLI flag.
+func ParseAnimateInterval(value string) (int64, bool) {
+	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
+		value += "ms"
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration < 0 || duration%time.Millisecond != 0 {
+		return 0, false
+	}
+	// ParseDuration truncates below a nanosecond. Only an actual zero
+	// should turn an animation off.
+	if duration == 0 && strings.ContainsAny(value, "123456789") {
+		return 0, false
+	}
+	return duration.Milliseconds(), true
+}
+
 func (c *compiler) validateConfigs(configs *Field) {
 	if configs == nil || configs.Map() == nil {
 		return
@@ -400,9 +421,30 @@ func (c *compiler) validateConfigs(configs *Field) {
 		}
 
 		switch f.Name.ScalarString() {
-		case "sketch", "isometric", "center":
+		case "animate-duration":
+			board := ParentMap(ParentMap(configs))
+			if !board.Root() {
+				global := RootMap(board).getFieldIndexed(d2ast.FlatUnquotedString("vars"), configs.Name, f.Name)
+				if global == nil || global.LastRef().AST() != f.LastRef().AST() {
+					c.errorf(f.LastRef().AST(), `"animate-duration" can only be set in the diagram's root vars.d2-config`)
+					continue
+				}
+			}
+			if duration, ok := ParseAnimateInterval(val); !ok || duration > d2target.MaxTweenDurationMS || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected "animate-duration" between 0ms and 10m in whole milliseconds, got %q`, val)
+			}
+		case "animate-interval":
+			if _, ok := ParseAnimateInterval(val); !ok || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected a non-negative whole number of milliseconds or a duration in whole milliseconds for "animate-interval", got %q`, val)
+			}
+		case "scale":
+			scale, err := strconv.ParseFloat(val, 64)
+			if err != nil || math.IsNaN(scale) || math.IsInf(scale, 0) || (scale <= 0 && scale != -1) || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected a finite positive scale or -1 for automatic sizing, got %q`, val)
+			}
+		case "sketch", "isometric", "center", "force-appendix":
 			_, err := strconv.ParseBool(val)
-			if err != nil {
+			if err != nil || (f.Name.ScalarString() == "force-appendix" && f.Composite != nil) {
 				c.errorf(f.LastRef().AST(), `expected a boolean for "%s", got "%s"`, f.Name.ScalarString(), val)
 				continue
 			}
@@ -437,6 +479,9 @@ func (c *compiler) validateConfigs(configs *Field) {
 func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedField bool) {
 	if c.stopped() {
 		return false
+	}
+	if c.retainTweenBindings {
+		c.saveTweenBinding(node, varsStack)
 	}
 	var subbed bool
 	var resolvedField *Field
@@ -925,12 +970,7 @@ func (c *compiler) overlay(base *Map, f *Field) {
 	if !c.reserveVariableCopy(f.LastRef().AST(), base) {
 		return
 	}
-	inheritedStep := NodeBoardKind(base) == BoardStep
 	base = base.CopyBase(f)
-	if inheritedStep {
-		// Inherit each variable's endpoint, never its incoming motion.
-		base.takeTweenAnnotations()
-	}
 	// Certain fields should never carry forward.
 	// If you give your scenario a label, you don't want all steps in a scenario to be labeled the same.
 	base.DeleteField("label")

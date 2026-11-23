@@ -5,6 +5,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/d2lang/util-go/go2"
+
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2ir"
 	"github.com/d2lang/d2/d2parser"
@@ -39,19 +41,19 @@ func tweenText(t *testing.T, m *d2ir.Map, path ...string) string {
 
 func TestVariableTween(t *testing.T) {
 	source := `
-vars: {charge: 65%; load: 0.00}
+vars: {d2-config: {animate-duration: 4s}; charge: 65%; load: 0.00}
 bar: ${charge} {
   style.fill: "linear-gradient(to right, seagreen ${charge}, transparent ${charge})"
 }
 counter: "load ${load}"
 steps: {
-  drain: {vars: {charge: 0% {tween: 4s}; load: 1 {tween: 2s}}}
+  drain: {vars: {charge: 0%; load: 1}}
   done: {status: done}
-  refill: {vars: {charge: 100% {tween: 4s}}}
+  refill: {vars: {charge: 100%}}
 }
 `
 	for _, enabled := range []bool{false, true} {
-		m, err := compileTween(t, source, d2ir.CompileOptions{AnimateTweens: enabled})
+		m, err := compileTween(t, source, d2ir.CompileOptions{AnimateTweens: &enabled})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,7 +77,7 @@ steps: {
 		first, quarter := step.TweenFrames[0], step.TweenFrames[25]
 		if tweenText(t, first, "bar") != "65%" || tweenText(t, quarter, "bar") != "49%" ||
 			tweenText(t, quarter, "bar", "style", "fill") != "linear-gradient(to right, seagreen 49%, transparent 49%)" ||
-			tweenText(t, quarter, "counter") != "load 0.50" || tweenText(t, step.TweenFrames[50], "counter") != "load 1" {
+			tweenText(t, quarter, "counter") != "load 0.25" || tweenText(t, step.TweenFrames[50], "counter") != "load 0.50" {
 			t.Fatalf("interpolated %q, %q, %q", tweenText(t, quarter, "bar"), tweenText(t, quarter, "bar", "style", "fill"), tweenText(t, quarter, "counter"))
 		}
 		refill := tweenField(m, "steps", "refill").Map()
@@ -87,17 +89,17 @@ steps: {
 
 func TestTweenImportsAndScopes(t *testing.T) {
 	opts := d2ir.CompileOptions{
-		AnimateTweens: true,
+		AnimateTweens: go2.Pointer(true),
 		FS: fstest.MapFS{"widget.d2": {Data: []byte(`bar: "imported ${level} ${units}"
 local: {
   vars: {level: 77}
   child: ${level}
 }
 classes: {display: {style.opacity: ${level}}}
-steps: {drain: {vars: {level: 0.00 {tween: 80ms}}; steps: {next: {done}}}}
+steps: {drain: {vars: {level: 0.00}; steps: {next: {done}}}}
 `)}},
 	}
-	m, err := compileTween(t, `vars: {units: watts}
+	m, err := compileTween(t, `vars: {units: watts; d2-config: {animate-duration: 80ms}}
 layers: {
   panel: {vars: {level: 1}; ...@widget}
 }`, opts)
@@ -114,28 +116,24 @@ layers: {
 	}
 }
 
-func TestTweenValidation(t *testing.T) {
-	cases := []struct{ source, want string }{
-		{`vars: {foo: 1 {tween: 4s}}`, "must be declared in a step"},
-		{`steps: {one: {vars: {foo: 0 {tween: 1s}}}}`, "inherited start"},
-		{`vars: {foo: 1}; steps: {one: {vars: {foo: 0% {tween: 1s}}}}`, "both numbers or both percentages"},
-		{`vars: {foo: 1}; steps: {one: {vars: {foo: text {tween: 1s}}}}`, "both numbers or both percentages"},
-		{`vars: {foo: 1}; steps: {one: {vars: {foo: 0 {tween: 0s}}}}`, "whole number of milliseconds"},
-		{`vars: {foo: 1}; steps: {one: {vars: {foo: 0 {tween: 7.5ms}}}}`, "whole number of milliseconds"},
-		{`vars: {foo: 1}; steps: {one: {vars: {foo: 0 {tween: 11m}}}}`, "whole number of milliseconds"},
-	}
-	for _, tc := range cases {
-		_, err := compileTween(t, tc.source, d2ir.CompileOptions{})
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("expected %q for %q, got %v", tc.want, tc.source, err)
-		}
-	}
-	_, err := compileTween(t, `vars: {group: {tween: 1}; scalar: normal {"tween": another}}
-a: ${group.tween}
-b: ${scalar.tween}
-`, d2ir.CompileOptions{AnimateTweens: true})
+func TestTweenEligibleVariables(t *testing.T) {
+	m, err := compileTween(t, `vars: {
+  d2-config: {animate-interval: 1s; animate-duration: 80ms}
+  a: 1
+  b: old
+  c: 1
+  group: {tween: 0; count: 12}
+}
+meter: "${group.tween} ${b}"
+steps: {change: {vars: {a: 1%; b: new; c: null; d: 5; group.tween: 4}}}
+`, d2ir.CompileOptions{})
 	if err != nil {
-		t.Fatalf("tween as ordinary map key or quoted child: %v", err)
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "change").Map()
+	if len(step.TweenFrames) != 2 || tweenText(t, step.TweenFrames[1], "meter") != "2 new" ||
+		tweenText(t, step.TweenFrames[0], "vars", "a") != "1%" || tweenText(t, step.TweenFrames[0], "vars", "d") != "5" {
+		t.Fatal("only compatible, existing scalar variables should interpolate")
 	}
 }
 
@@ -143,7 +141,7 @@ func TestTweenSampleBudget(t *testing.T) {
 	// A four-second tween of several shapes consumes more than one board's
 	// substitution budget in aggregate. Each individual sample fits easily.
 	var src strings.Builder
-	src.WriteString("vars: {charge: 65%}\n")
+	src.WriteString("vars: {d2-config: {animate-duration: 4s}; charge: 65%}\n")
 	for _, id := range []string{"battery", "sensor", "radio", "backup"} {
 		src.WriteString(id + `: "Battery level ${charge}" {
   width: 260
@@ -157,8 +155,8 @@ func TestTweenSampleBudget(t *testing.T) {
 }
 `)
 	}
-	src.WriteString("steps: {drain: {vars: {charge: 0% {tween: 4s}}}}")
-	m, err := compileTween(t, src.String(), d2ir.CompileOptions{AnimateTweens: true})
+	src.WriteString("steps: {drain: {vars: {charge: 0%}}}")
+	m, err := compileTween(t, src.String(), d2ir.CompileOptions{AnimateTweens: go2.Pointer(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,21 +164,110 @@ func TestTweenSampleBudget(t *testing.T) {
 	if !mid.Root() || tweenText(t, mid, "backup") != "Battery level 32%" {
 		t.Fatal("expected an independent sampled board with a rounded numeric label")
 	}
-	_, err = compileTween(t, src.String(), d2ir.CompileOptions{AnimateTweens: true, MaxVariableExpansion: 100})
+	_, err = compileTween(t, src.String(), d2ir.CompileOptions{AnimateTweens: go2.Pointer(true), MaxVariableExpansion: 100})
 	if err == nil || !strings.Contains(err.Error(), "expansion exceeds limit") {
 		t.Fatalf("expected caller expansion limit, got %v", err)
 	}
 }
 
 func TestTweenDecimalPrecisionBound(t *testing.T) {
-	m, err := compileTween(t, `vars: {p: 0e-2147483647%}
+	m, err := compileTween(t, `vars: {d2-config: {animate-duration: 80ms}; p: 0e-2147483647%}
 meter: ${p}
-steps: {up: {vars: {p: 1% {tween: 80ms}}}}`, d2ir.CompileOptions{AnimateTweens: true})
+steps: {up: {vars: {p: 1%}}}`, d2ir.CompileOptions{AnimateTweens: go2.Pointer(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	step := tweenField(m, "steps", "up").Map()
 	if got := tweenText(t, step.TweenFrames[1], "meter"); len(got) > 327 || !strings.HasPrefix(got, "0.5") || !strings.HasSuffix(got, "%") {
 		t.Fatalf("unexpected midpoint %q", got)
+	}
+}
+
+func TestTweenDurationPrecedenceAndScope(t *testing.T) {
+	const src = `vars: {
+		ms: 160ms
+		d2-config: {animate-duration: ${ms}; animate-interval: 2s}
+		p: 0
+		caption: "Progress ${p}"
+	}
+	meter: ${caption}
+	steps: {load: {vars: {p: 100}}; hold: {color: green}}
+	layers: {independent: {vars: {p: 40}; lone}}
+	`
+	for _, tc := range []struct {
+		name     string
+		opts     d2ir.CompileOptions
+		duration int
+	}{
+		{"source", d2ir.CompileOptions{}, 160},
+		{"override", d2ir.CompileOptions{AnimateDuration: go2.Pointer(int64(80))}, 80},
+		{"override-zero", d2ir.CompileOptions{AnimateDuration: go2.Pointer(int64(0))}, 0},
+		{"explicit-static", d2ir.CompileOptions{AnimateTweens: go2.Pointer(false)}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := compileTween(t, src, tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			step := tweenField(m, "steps", "load").Map()
+			if step.TweenDurationMS != tc.duration || len(step.TweenFrames) != tc.duration/40 {
+				t.Fatalf("got %d frames, %d ms", len(step.TweenFrames), step.TweenDurationMS)
+			}
+			if tc.duration > 0 && tweenText(t, step.TweenFrames[len(step.TweenFrames)/2], "meter") != "Progress 50" {
+				t.Fatal("alias did not follow numeric variable")
+			}
+			if tweenText(t, step, "meter") != "Progress 100" ||
+				len(tweenField(m, "steps", "hold").Map().TweenFrames) != 0 ||
+				len(tweenField(m, "layers", "independent").Map().TweenFrames) != 0 {
+				t.Fatal("incorrect endpoint, unchanged step, or independent layer")
+			}
+		})
+	}
+	for _, value := range []string{"-1", "-1s", "1.5ms", "10us", "soon", "600001", "10m1ms", "[4s]", "4s {extra: yes}"} {
+		_, err := compileTween(t, "vars: {d2-config: {animate-duration: "+value+"}}", d2ir.CompileOptions{})
+		if err == nil || !strings.Contains(err.Error(), "animate-duration") {
+			t.Errorf("invalid duration %q: %v", value, err)
+		}
+	}
+	_, err := compileTween(t, src+"steps.load.vars: {d2-config: {animate-duration: 3s}}", d2ir.CompileOptions{})
+	if err == nil || !strings.Contains(err.Error(), "root vars.d2-config") {
+		t.Fatalf("step duration accepted: %v", err)
+	}
+}
+
+func TestTweenImportedConfig(t *testing.T) {
+	opts := d2ir.CompileOptions{FS: fstest.MapFS{
+		"config.d2": {Data: []byte(`vars: {ms: 80ms; d2-config: {animate-interval: 1s; animate-duration: ${ms}}}`)},
+	}}
+	m, err := compileTween(t, `...@config
+vars: {p: 2}
+meter: ${p}
+steps: {load: {vars: {p: 4}}}`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "load").Map()
+	if len(step.TweenFrames) != 2 || tweenText(t, step.TweenFrames[1], "meter") != "3" {
+		t.Fatal("timing did not use resolved imported config")
+	}
+}
+
+func TestTweenSelectedImportKeepsLexicalBindings(t *testing.T) {
+	opts := d2ir.CompileOptions{FS: fstest.MapFS{
+		"module.d2": {Data: []byte(`vars: {unit: watts}
+layers: {panel: {
+  vars: {p: 0}
+  meter: "Reading ${p} ${unit}"
+  steps: {load: {vars: {p: 4}}}
+}}`)},
+	}}
+	m, err := compileTween(t, `vars: {d2-config: {animate-interval: 1s; animate-duration: 80ms}}
+layers: {sensor: @module.layers.panel}`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "layers", "sensor", "steps", "load").Map()
+	if len(step.TweenFrames) != 2 || tweenText(t, step.TweenFrames[1], "meter") != "Reading 2 watts" {
+		t.Fatal("interpolation lost the imported module's lexical bindings")
 	}
 }

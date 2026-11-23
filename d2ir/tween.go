@@ -2,145 +2,184 @@ package d2ir
 
 import (
 	"math"
+	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2target"
 )
 
 type tweenVariable struct {
-	variable, annotation *Field
-	durationMS           int
-	from, to             float64
-	precision            int
-	unit                 string
-	startText, endText   string
+	path            []d2ast.String
+	from, to        float64
+	precision       int
+	unit, startText string
 }
 
-type stepTween struct {
-	board, previous, template *Map
-	variables                 []tweenVariable
-}
-
-func variableTweenAnnotation(v *Field) *Field {
-	if v.Name == nil || v.Primary() == nil || v.Map() == nil {
-		return nil
+// Substitution normally consumes a string's expression. Retain expressions in
+// step scopes so imports and the authored endpoints can resolve normally before
+// determining whether this step has any numeric changes to sample.
+func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) {
+	primary := node.Primary()
+	if primary.binding != nil {
+		return
 	}
-	marker := v.Map().getFieldIndexed(d2ast.FlatUnquotedString("tween"))
-	if marker == nil || !marker.Name.IsUnquoted() {
-		return nil
+	var boxes []d2ast.InterpolationBox
+	switch value := primary.Value.(type) {
+	case *d2ast.UnquotedString:
+		boxes = value.Value
+	case *d2ast.DoubleQuotedString:
+		boxes = value.Value
+	case *d2ast.BlockString:
+		if !strings.Contains(value.Value, "${") {
+			return
+		}
+	default:
+		return
 	}
-	return marker
-}
-
-func (m *Map) hasTweenAnnotations() bool {
-	if vars := m.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map(); vars != nil {
-		for _, v := range vars.Fields {
-			if variableTweenAnnotation(v) != nil {
-				return true
+	if boxes != nil {
+		hasBinding := false
+		for _, box := range boxes {
+			if box.Substitution != nil && !box.Substitution.Spread {
+				hasBinding = true
+				break
 			}
 		}
+		if !hasBinding {
+			return
+		}
 	}
-	return false
-}
-
-// The annotation belongs to a scalar variable, so unwrapping it before
-// substitutions preserves scalar references such as label: ${charge}.
-func (m *Map) takeTweenAnnotations() []tweenVariable {
-	var vars []tweenVariable
-	declarations := m.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
-	if declarations == nil {
-		return nil
-	}
-	for _, v := range declarations.Fields {
-		marker := variableTweenAnnotation(v)
-		if marker == nil {
+	for _, vars := range varsStack {
+		if NodeBoardKind(ParentMap(vars)) != BoardStep {
 			continue
 		}
-		vars = append(vars, tweenVariable{variable: v, annotation: marker})
-		v.Map().DeleteField(marker.Name.ScalarString())
-		if len(v.Map().Fields) == 0 && len(v.Map().Edges) == 0 {
-			v.setComposite(nil)
+		// Substitution replaces boxes or coalesces the string. Its original
+		// text and substitution paths remain immutable and can be shared.
+		switch value := primary.Value.(type) {
+		case *d2ast.UnquotedString:
+			binding := *value
+			binding.Value = slices.Clone(boxes)
+			primary.binding = &binding
+		case *d2ast.DoubleQuotedString:
+			binding := *value
+			binding.Value = slices.Clone(boxes)
+			primary.binding = &binding
+		case *d2ast.BlockString:
+			binding := *value
+			primary.binding = &binding
 		}
+		return
 	}
-	return vars
 }
 
-func (c *compiler) prepareTweens(board, previous *Map, sample bool) []stepTween {
-	if board == nil || c.stopped() {
-		return nil
-	}
-	var result []stepTween
-	variables := board.takeTweenAnnotations()
-	if len(variables) > 0 {
-		tween := stepTween{board: board, previous: previous, variables: variables}
-		for i := range variables {
-			v := &variables[i]
-			marker := v.annotation
-			if NodeBoardKind(board) != BoardStep {
-				c.errorf(marker.LastRef().AST(), "a variable tween must be declared in a step")
-				continue
-			}
-			if v.variable.Composite != nil {
-				c.errorf(marker.LastRef().AST(), "a tweened variable must be a scalar")
-				continue
-			}
-			var duration time.Duration
-			if marker.Primary() != nil && marker.Composite == nil {
-				duration, _ = time.ParseDuration(marker.Primary().Value.ScalarString())
-			}
-			if duration < time.Millisecond || duration > d2target.MaxTweenDurationMS*time.Millisecond || duration%time.Millisecond != 0 {
-				c.errorf(marker.LastRef().AST(), "tween duration must be a whole number of milliseconds between 1ms and 10m")
-				continue
-			}
-			v.durationMS = int(duration.Milliseconds())
+// A whole-map substitution or a spread can provide configuration during
+// endpoint resolution even when the individual field is not present yet.
+func mayResolveTiming(root *Map, key string) bool {
+	m := root
+	for _, name := range []string{"vars", "d2-config", key} {
+		f := m.getFieldIndexed(d2ast.FlatUnquotedString(name))
+		if f == nil {
+			return hasUnresolvedMapSpread(m)
 		}
-		if sample && c.err.Empty() {
-			// Exclude children without changing the endpoint or charging/copying
-			// a nested storyboard for every sample of its parent.
-			view := *board
-			view.Fields = nil
-			for _, f := range board.Fields {
-				if f.Name != nil && findBoardKeyword(f.Name) != -1 {
-					continue
-				}
-				view.Fields = append(view.Fields, f)
-			}
-			if !c.reserveVariableCopy(board.LastRef().AST(), &view) {
-				return nil
-			}
-			tween.template = view.Copy(board.parent).(*Map)
+		if f.Map() == nil {
+			return f.Primary() != nil
 		}
-		result = append(result, tween)
+		m = f.Map()
 	}
+	return true
+}
+
+func (c *compiler) compileTweens(root *Map, opts *CompileOptions) {
+	if opts.AnimateTweens != nil && !*opts.AnimateTweens {
+		return
+	}
+	config := root.getFieldIndexed(d2ast.FlatUnquotedString("vars"), d2ast.FlatUnquotedString("d2-config")).Map()
+	getTiming := func(key string) int64 {
+		if config != nil {
+			if f := config.getFieldIndexed(d2ast.FlatUnquotedString(key)); f != nil && f.Primary() != nil {
+				val, _ := ParseAnimateInterval(f.Primary().Value.ScalarString())
+				return val
+			}
+		}
+		return 0
+	}
+	if opts.AnimateTweens == nil && getTiming("animate-interval") == 0 {
+		return
+	}
+	duration := getTiming("animate-duration")
+	if opts.AnimateDuration != nil {
+		duration = *opts.AnimateDuration
+	}
+	if duration > 0 {
+		c.compileStepTweens(root, int(duration))
+	}
+}
+
+func (c *compiler) compileStepTweens(board *Map, duration int) {
 	for _, group := range []string{"layers", "scenarios", "steps"} {
-		groupMap := board.getFieldIndexed(d2ast.FlatUnquotedString(group)).Map()
-		if groupMap == nil {
+		children := board.getFieldIndexed(d2ast.FlatUnquotedString(group)).Map()
+		if children == nil {
 			continue
 		}
-		base := board
-		for _, child := range groupMap.Fields {
-			if c.stopped() {
-				return result
+		previous := board
+		for _, field := range children.Fields {
+			if c.stopped() || !c.err.Empty() {
+				return
 			}
-			result = append(result, c.prepareTweens(child.Map(), base, sample)...)
+			child := field.Map()
+			if child == nil {
+				continue
+			}
 			if group == "steps" {
-				base = child.Map()
+				vars := child.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
+				var changes []tweenVariable
+				c.findTweenChanges(previous, vars, nil, &changes)
+				if len(changes) > 0 {
+					c.sampleStep(child, changes, duration)
+				}
+				previous = child
 			}
+			c.compileStepTweens(child, duration)
 		}
 	}
-	return result
 }
 
-func lookupTweenStart(board *Map, name d2ast.String) *Field {
-	for m := board; m != nil; m = ParentMap(m) {
-		if f := m.getFieldIndexed(d2ast.FlatUnquotedString("vars"), name); f != nil {
-			return f
+func (c *compiler) findTweenChanges(previous, vars *Map, prefix []d2ast.String, changes *[]tweenVariable) {
+	if vars == nil || c.stopped() {
+		return
+	}
+	for _, field := range vars.Fields {
+		if field.suspended || field.Name == nil || (len(prefix) == 0 && field.Name.ScalarString() == "d2-config") {
+			continue
+		}
+		path := append(prefix, field.Name)
+		if field.Map() != nil {
+			c.findTweenChanges(previous, field.Map(), path, changes)
+			continue
+		}
+		to, endUnit, endPrecision, ok := tweenNumber(field)
+		if !ok {
+			continue
+		}
+		var start *Field
+		for m := previous; m != nil; m = ParentMap(m) {
+			decls := m.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
+			if decls != nil {
+				start = decls.getFieldIndexed(path...)
+				if start != nil {
+					break
+				}
+			}
+		}
+		from, unit, startPrecision, ok := tweenNumber(start)
+		if ok && unit == endUnit && from != to && !start.suspended {
+			*changes = append(*changes, tweenVariable{
+				path: append([]d2ast.String(nil), path...), from: from, to: to, unit: unit,
+				precision: max(startPrecision, endPrecision), startText: start.Primary().Value.ScalarString(),
+			})
 		}
 	}
-	return nil
 }
 
 func tweenNumber(field *Field) (number float64, unit string, precision int, valid bool) {
@@ -175,50 +214,36 @@ func tweenNumber(field *Field) (number float64, unit string, precision int, vali
 	return number, unit, precision, true
 }
 
-func (c *compiler) finishTween(t stepTween) {
-	durationMS := 0
-	for i := range t.variables {
-		v := &t.variables[i]
-		start := lookupTweenStart(t.previous, v.variable.Name)
-		from, unit, firstPrecision, okFrom := tweenNumber(start)
-		to, endUnit, lastPrecision, okTo := tweenNumber(v.variable)
-		if !okFrom || !okTo || unit != endUnit {
-			c.errorf(v.annotation.LastRef().AST(), "tween for %q requires an inherited start and destination that are both numbers or both percentages", v.variable.Name.ScalarString())
-			return
+func (c *compiler) sampleStep(board *Map, changes []tweenVariable, duration int) {
+	// The parent step's samples never include its child boards.
+	view := *board
+	view.Fields = nil
+	for _, f := range board.Fields {
+		if f.Name == nil || findBoardKeyword(f.Name) == -1 {
+			view.Fields = append(view.Fields, f)
 		}
-		v.from, v.to, v.unit = from, to, unit
-		v.precision = max(firstPrecision, lastPrecision)
-		v.startText = start.Primary().Value.ScalarString()
-		v.endText = v.variable.Primary().Value.ScalarString()
-		durationMS = max(durationMS, v.durationMS)
 	}
-	if t.template == nil {
-		return
-	}
-
-	// A board's own vars are added by compileSubstitutions. Include any outer
-	// scope that can be seen by the corresponding authored board.
 	var outerVars []*Map
-	for m := ParentMap(t.board); m != nil; m = ParentMap(m) {
+	for m := ParentMap(board); m != nil; m = ParentMap(m) {
 		if vars := m.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map(); vars != nil {
 			outerVars = append(outerVars, vars)
 		}
 	}
-	n := min(d2target.MaxTweenFrames, (durationMS+39)/40)
+	n := min(d2target.MaxTweenFrames, (duration+39)/40)
 	for i := 0; i < n; i++ {
-		frame := c.sampleTween(t, outerVars, float64(i*durationMS)/float64(n))
+		frame := c.sampleTween(&view, changes, outerVars, float64(i)/float64(n))
 		if frame == nil {
 			return
 		}
-		t.board.TweenFrames = append(t.board.TweenFrames, frame)
+		board.TweenFrames = append(board.TweenFrames, frame)
 	}
-	t.board.TweenDurationMS = durationMS
+	board.TweenDurationMS = duration
 }
 
 // Each sampled board obeys the same expansion limit as an authored board.
 // An additional shared budget limits the sum across the entire animation to
 // one full-length tween's worth of that work, even for many short tweens.
-func (c *compiler) sampleTween(t stepTween, outerVars []*Map, elapsedMS float64) *Map {
+func (c *compiler) sampleTween(template *Map, changes []tweenVariable, outerVars []*Map, fraction float64) *Map {
 	base := c.variableExpansion
 	if c.tweenExpansion == nil {
 		limit := int64(math.MaxInt64)
@@ -232,22 +257,32 @@ func (c *compiler) sampleTween(t stepTween, outerVars []*Map, elapsedMS float64)
 		c.tweenExpansion.used += c.variableExpansion.used
 		c.variableExpansion = base
 	}()
-	if !c.reserveVariableCopy(t.board.LastRef().AST(), t.template) {
+	if !c.reserveVariableCopy(template.LastRef().AST(), template) {
 		return nil
 	}
-	frame := t.template.Copy(nil).(*Map)
+	frame := template.Copy(nil).(*Map)
 	frame.variableExpansion = c.variableExpansion
-	for _, v := range t.variables {
-		field := frame.getFieldIndexed(d2ast.FlatUnquotedString("vars"), v.variable.Name)
-		value := v.endText
-		if elapsedMS == 0 {
-			value = v.startText
-		} else if elapsedMS < float64(v.durationMS) {
-			fraction := elapsedMS / float64(v.durationMS)
+	walkComposite(frame, func(n Node) bool {
+		if p := n.Primary(); p != nil && p.binding != nil {
+			if !c.reserveVariableExpansion(template.LastRef().AST(), variableExpansionScalarValueUnits(p.binding)) {
+				return true
+			}
+			p.Value = cloneASTScalar(p.binding)
+			p.binding = nil
+		}
+		return false
+	})
+	if c.stopped() {
+		return nil
+	}
+	vars := frame.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
+	for _, v := range changes {
+		value := v.startText
+		if fraction > 0 {
 			number := (1-fraction)*v.from + fraction*v.to
 			value = strconv.FormatFloat(number, 'f', v.precision, 64) + v.unit
 		}
-		field.Primary_.Value = d2ast.FlatUnquotedString(value)
+		vars.getFieldIndexed(v.path...).Primary_.Value = d2ast.FlatUnquotedString(value)
 	}
 	c.compileSubstitutions(frame, outerVars)
 	if c.stopped() || !c.err.Empty() {

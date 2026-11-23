@@ -29,7 +29,7 @@ test("the packed entry points resolve and share one Node runtime", async () => {
   }
 });
 
-test("the exported browser worker starts with the packaged WASM", async (t) => {
+test("the exported browser worker renders SVG and formats source with the packaged WASM", async (t) => {
   // Adapt Node's message port to the browser worker API.
   const worker = new Worker(
     `const { parentPort, workerData } = require("node:worker_threads");
@@ -44,4 +44,19 @@ test("the exported browser worker starts with the packaged WASM", async (t) => {
   const ready = once(worker, "message");
   worker.postMessage({ type: "init", data: { wasm } });
   assert.deepEqual(await ready, [{ type: "ready" }]);
+
+  const rendered = once(worker, "message");
+  worker.postMessage({
+    id: 1,
+    type: "renderSVG",
+    data: { fs: { index: "x -> y" }, options: {} },
+  });
+  const [response] = await rendered;
+  assert.equal(response.id, 1);
+  assert.equal(response.type, "result");
+  assert.match(response.data, /<svg\b/);
+
+  const formatted = once(worker, "message");
+  worker.postMessage({ id: 2, type: "format", data: "x-> y" });
+  assert.deepEqual(await formatted, [{ id: 2, type: "result", data: "x -> y\n" }]);
 });

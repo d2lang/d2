@@ -1,6 +1,11 @@
 #### Features 🚀
 
-- Animate a number or percentage between steps with `vars: {charge: 0% {tween: 4s}}`. The new step interpolates from its inherited value. Labels, gradient stops, and other uses of the variable update together in animated SVG and GIF exports.
+- Set `animate-duration` in `vars.d2-config` to interpolate changed numeric and percentage variables across steps. Labels and gradient stops follow the same value in animated SVGs and GIFs.
+
+- Set `scale` and `force-appendix` in `vars.d2-config`. Scaled SVGs and raster exports now retain their requested display size when tooltips or links add an appendix.
+- Configure Dagre's node and edge spacing in `vars.d2-config.data` with `dagre-nodesep` and `dagre-edgesep`.
+
+- Set the time each board is displayed in an animated SVG or GIF directly in the diagram with `vars: {d2-config: {animate-interval: 800ms}}`. Override it at export time with `--animate-interval`.
 
 - elk: choose the layout algorithm in `vars.d2-config.data`. Configure the force model and repulsion, target edge length for stress, tree traversal and sibling order, and radial spacing, branch angles and compaction in D2 or on the CLI. Layered layout also supports edge merging and routing, spacing within layers, pipeline wrapping, declaration order and feedback edges. Set `elk-layer-constraint` on a shape to place it in the first or last layer.
 

@@ -11,6 +11,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/internal/svgframe"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/svg"
 	"github.com/d2lang/d2/lib/version"
 )
 
@@ -46,6 +47,9 @@ func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash stri
 }
 
 func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, intervalMS int) ([]byte, error) {
+	if intervalMS <= 0 || len(svgs) > math.MaxInt/intervalMS {
+		return nil, fmt.Errorf("SVG animation duration must be positive and fit in milliseconds")
+	}
 	durations := make([]int, len(svgs))
 	for i := range durations {
 		durations[i] = intervalMS
@@ -91,12 +95,9 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		return nil, fmt.Errorf("animation viewport dimensions exceed the supported range")
 	}
 
-	var dimensions string
-	if renderOpts.Scale != nil {
-		dimensions = fmt.Sprintf(` width="%d" height="%d"`,
-			int(math.Ceil((*renderOpts.Scale)*float64(width))),
-			int(math.Ceil((*renderOpts.Scale)*float64(height))),
-		)
+	dimensions, err := svg.ScaledDimensions(width, height, renderOpts.Scale)
+	if err != nil {
+		return nil, err
 	}
 
 	fitToScreenWrapperOpening := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" d2Version="%s" preserveAspectRatio="xMinYMin meet" viewBox="0 0 %d %d"%s>`,

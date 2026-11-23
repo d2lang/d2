@@ -1,12 +1,21 @@
 package d2animate
 
 import (
+	"math"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 )
+
+func TestWrapRejectsTimelineOverflow(t *testing.T) {
+	boards := [][]byte{[]byte("<g/>"), []byte("<g/>")}
+	if _, err := Wrap(d2target.NewDiagram(), boards, d2svg.RenderOpts{}, math.MaxInt); err == nil {
+		t.Fatal("expected the two-board animation duration to overflow")
+	}
+}
 
 func TestWrapDefaultsMissingPadding(t *testing.T) {
 	diagram := d2target.NewDiagram()
@@ -29,28 +38,50 @@ func TestWrapRejectsMalformedTargetBeforeTraversal(t *testing.T) {
 }
 
 func TestTimelineSampleBoundaries(t *testing.T) {
-	root := d2target.NewDiagram()
-	step := d2target.NewDiagram()
-	root.Steps = []*d2target.Diagram{step}
-	step.TweenFrames = []*d2target.Diagram{d2target.NewDiagram(), d2target.NewDiagram(), d2target.NewDiagram()}
-	step.TweenDurationMS = 101
-	frames, err := Timeline(root, 400)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(frames) != 5 {
-		t.Fatalf("timeline length %d", len(frames))
-	}
-	wantMS := []int{400, 33, 34, 34, 400}
-	for i, frame := range frames {
-		if frame.DurationMS != wantMS[i] {
-			t.Fatalf("frame %d duration %d", i, frame.DurationMS)
-		}
-		if i >= 1 && i <= 3 && frame.Diagram != step.TweenFrames[i-1] {
-			t.Fatalf("frame %d is out of order", i)
-		}
-	}
-	if frames[4].Diagram != step {
-		t.Fatal("last frame should hold authored endpoint")
+	for _, tc := range []struct {
+		name                        string
+		interval, duration, samples int
+		stepDelays                  []int
+	}{
+		{"shorter than interval", 400, 101, 3, []int{33, 34, 34, 299}},
+		{"same as interval", 101, 101, 3, []int{33, 34, 17, 17}},
+		{"longer than interval", 30, 101, 3, []int{33, 34, 17, 17}},
+		{"one millisecond", 1, 1, 1, []int{1}},
+		{"without transition", 35, 0, 0, []int{35}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, step := d2target.NewDiagram(), d2target.NewDiagram()
+			root.Steps = []*d2target.Diagram{step}
+			for i := 0; i < tc.samples; i++ {
+				step.TweenFrames = append(step.TweenFrames, d2target.NewDiagram())
+			}
+			step.TweenDurationMS = tc.duration
+			frames, err := Timeline(root, tc.interval)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if frames[0].Diagram != root || frames[0].DurationMS != tc.interval || frames[0].ElapsedMS != 0 {
+				t.Fatalf("unexpected initial board: %+v", frames[0])
+			}
+			var delays []int
+			elapsed := 0
+			for i, frame := range frames[1:] {
+				if frame.ElapsedMS != elapsed {
+					t.Fatalf("frame %d starts at %dms, want %dms", i, frame.ElapsedMS, elapsed)
+				}
+				if i < len(frames)-2 && (!frame.TweenSample || frame.Diagram != step.TweenFrames[i]) {
+					t.Fatalf("expected step sample %d", i)
+				}
+				delays = append(delays, frame.DurationMS)
+				elapsed += frame.DurationMS
+			}
+			if !slices.Equal(delays, tc.stepDelays) {
+				t.Fatalf("step delays %v, want %v", delays, tc.stepDelays)
+			}
+			last := frames[len(frames)-1]
+			if last.Diagram != step || last.TweenSample || last.DurationMS < 1 {
+				t.Fatal("final frame must display the exact authored endpoint")
+			}
+		})
 	}
 }

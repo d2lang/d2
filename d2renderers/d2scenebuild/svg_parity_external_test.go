@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"os"
 	"regexp"
 	"slices"
@@ -28,7 +29,7 @@ import (
 // renderer now composes the native isometric renderer, which uses this builder.
 var svgDimensionPattern = regexp.MustCompile(`(?:width|height)="([.0-9]+)"`)
 
-func TestAppendixMatchesSVGViewBoxAndScaleQuirk(t *testing.T) {
+func TestAppendixMatchesSVGViewBoxAndScale(t *testing.T) {
 	t.Parallel()
 	diagram := svgParityAppendixDiagram()
 	diagram.Root.Stroke = "B1"
@@ -70,8 +71,8 @@ func TestAppendixMatchesSVGViewBoxAndScaleQuirk(t *testing.T) {
 	if document.LogicalWidth != wantLogicalWidth || document.LogicalHeight != wantLogicalHeight {
 		t.Fatalf("scene logical dimensions = %vx%v, svg = %vx%v", document.LogicalWidth, document.LogicalHeight, wantLogicalWidth, wantLogicalHeight)
 	}
-	if document.LogicalWidth == scale*document.ViewBox.Width || document.LogicalHeight == scale*document.ViewBox.Height {
-		t.Fatal("appendix unexpectedly retained the pre-appendix outer SVG scale")
+	if document.LogicalWidth != math.Ceil(scale*document.ViewBox.Width) || document.LogicalHeight != math.Ceil(scale*document.ViewBox.Height) {
+		t.Fatal("expected scale to apply to the expanded appendix viewport")
 	}
 
 	outer, ok := document.Root.Children[0].Primitive.(d2scene.Rect)

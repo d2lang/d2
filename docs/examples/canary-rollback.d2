@@ -1,8 +1,17 @@
-# d2 --pad=24 --animate-interval=1400 canary-rollback.d2 canary-rollback.svg
+# d2 canary-rollback.d2 canary-rollback.svg
 direction: right
 style.fill: "#f7f9fc"
 
-vars: {stable: 90%; canary: 10%; errors: 0.3%}
+vars: {
+  d2-config: {
+    animate-interval: 1600ms
+    animate-duration: 1s
+    pad: 24
+  }
+  stable: 90%
+  canary: 10%
+  errors: 0.3%
+}
 
 title: "Checkout API · canary rollout" {
   shape: text
@@ -51,16 +60,16 @@ gate: "Pilot healthy · promoting the canary\nCanary 5xx (1 min): ${errors}    /
 
 steps: {
   promote: {
-    vars: {stable: 50% {tween: 1600ms}; canary: 50% {tween: 1600ms}}
+    vars: {stable: 50%; canary: 50%}
     gate: "Shifting traffic · targeting a 50/50 split\nCanary 5xx (1 min): ${errors}    /    Rollback threshold: 2.0%"
   }
   analyze: {
-    vars: {errors: 3.4% {tween: 1200ms}}
+    vars: {errors: 3.4%}
     gate: "Evaluating the next analysis window\nCanary 5xx (1 min): ${errors}    /    Rollback threshold: 2.0%"
     gate.style: {fill: "#f8f0df"; stroke: "#cba969"; font-color: "#725625"}
   }
   rollback: {
-    vars: {stable: 100% {tween: 2s}; canary: 0% {tween: 2s}}
+    vars: {stable: 100%; canary: 0%}
     gate: "Threshold breached · rolling back v2.15\nCanary 5xx (1 min): ${errors}    /    Rollback threshold: 2.0%"
     gate.style: {fill: "#faeae7"; stroke: "#c99489"; font-color: "#813f35"}
   }

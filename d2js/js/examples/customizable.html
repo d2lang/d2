@@ -417,8 +417,7 @@ server -> user: "response"</textarea
       const d2 = new D2();
       const loadFont = async (file) => {
         if (file != undefined) {
-          const font = await file.arrayBuffer();
-          return Array.from(new Uint8Array(font));
+          return new Uint8Array(await file.arrayBuffer());
         }
       };
       window.compile = async () => {

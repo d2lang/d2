@@ -46,6 +46,10 @@ const (
 var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
+	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
+	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds to interpolate changed step variables.
+	Scale              *float64        `json:"scale,omitempty"`
+	ForceAppendix      *bool           `json:"forceAppendix,omitempty"`
 	Sketch             *bool           `json:"sketch"`
 	Isometric          *bool           `json:"isometric,omitempty"`
 	ThemeID            *int64          `json:"themeID"`
@@ -58,6 +62,23 @@ type Config struct {
 	// Data is a data structure for holding user-defined data
 	// useful for layout engines that allow users to configure within source code
 	Data map[string]interface{} `json:"data,omitempty"`
+}
+
+// ResolveAnimateInterval returns the explicit render setting, falling back to
+// the source configuration. A nil result leaves the output format's default intact.
+func (c *Config) ResolveAnimateInterval(override *int64) *int64 {
+	if override != nil || c == nil {
+		return override
+	}
+	return c.AnimateInterval
+}
+
+// ResolveForceAppendix preserves an explicit false when the source enables footnotes.
+func (c *Config) ResolveForceAppendix(override *bool) *bool {
+	if override != nil || c == nil {
+		return override
+	}
+	return c.ForceAppendix
 }
 
 type ThemeOverrides struct {

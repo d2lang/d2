@@ -45,11 +45,23 @@ func Timeline(root *d2target.Diagram, intervalMS int) ([]Frame, error) {
 // AppendBoardFrames expands one validated, drawable board. Raster exporters
 // impose their own traversal limits before expanding its samples.
 func AppendBoardFrames(frames []Frame, board *d2target.Diagram, intervalMS int) []Frame {
+	if len(board.TweenFrames) == 0 {
+		return append(frames, Frame{Diagram: board, DurationMS: intervalMS})
+	}
+	duration := board.TweenDurationMS
+	slot := max(intervalMS, duration)
 	start := 0
 	for i, sample := range board.TweenFrames {
-		end := int(int64(i+1) * int64(board.TweenDurationMS) / int64(len(board.TweenFrames)))
-		frames = append(frames, Frame{Diagram: sample, DurationMS: end - start, ElapsedMS: start, TweenSample: true})
+		end := int(int64(i+1) * int64(duration) / int64(len(board.TweenFrames)))
+		if i == len(board.TweenFrames)-1 && slot == duration {
+			// Without a hold, split the last sampling period between its
+			// interpolated value and the exact endpoint before the next board.
+			end = start + (end-start)/2
+		}
+		if end > start {
+			frames = append(frames, Frame{Diagram: sample, DurationMS: end - start, ElapsedMS: start, TweenSample: true})
+		}
 		start = end
 	}
-	return append(frames, Frame{Diagram: board, DurationMS: intervalMS})
+	return append(frames, Frame{Diagram: board, DurationMS: slot - start, ElapsedMS: start})
 }

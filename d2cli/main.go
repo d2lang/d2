@@ -80,7 +80,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	forceAppendixFlag, err := ms.Opts.Bool("D2_FORCE_APPENDIX", "force-appendix", "", false, "add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG. PNG exports include an appendix by default")
+	forceAppendixFlag, err := ms.Opts.Bool("D2_FORCE_APPENDIX", "force-appendix", "", false, "add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG. PNG exports include an appendix by default. Also configurable through vars.d2-config.force-appendix.")
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,11 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "if given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). Can only be used with SVG or GIF exports. For GIF exports, defaults to 1000ms if not specified.")
+	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG or GIF. A positive interval packages multiple boards into one SVG. GIF exports default to 1000ms. Also configurable through vars.d2-config.animate-interval.")
+	if err != nil {
+		return err
+	}
+	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to interpolate changed numeric and percentage variables in animated steps (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
 	if err != nil {
 		return err
 	}
@@ -137,7 +141,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	scaleFlag, err := ms.Opts.Float64("SCALE", "scale", "", -1, "scale the output. E.g., 0.5 to halve the default size. Default -1 means that SVG's will fit to screen and all others will use their default render size. Setting to 1 turns off SVG fitting to screen.")
+	scaleFlag, err := ms.Opts.Float64("SCALE", "scale", "", -1, "scale the output. E.g., 0.5 to halve the default size. Default -1 means that SVG's will fit to screen and all others will use their default render size. Setting to 1 turns off SVG fitting to screen. Also configurable through vars.d2-config.scale.")
 	if err != nil {
 		return err
 	}
@@ -283,9 +287,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		if *forceAppendixFlag {
 			return xmain.UsageErrorf("--isometric cannot be combined with --force-appendix")
 		}
-		if *animateIntervalFlag < 0 || *animateIntervalFlag > 600000 || *animateIntervalFlag > 0 && outputFormat != GIF {
-			return xmain.UsageErrorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
-		}
 		if _, err := isometricImageQualityOptions(outputFormat, *scaleFlag); err != nil {
 			return xmain.UsageErrorf("%v", err)
 		}
@@ -304,11 +305,14 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
 		}
 	}
+	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
+		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
+	}
+	if err := validateAnimateInterval(*animateIntervalFlag, outputFormat); err != nil {
+		return err
+	}
 	if outputPath != "-" {
 		outputPath = ms.AbsPath(outputPath)
-		if *animateIntervalFlag > 0 && !outputFormat.supportsAnimation() {
-			return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG or GIF.\nYou provided: %s", filepath.Ext(outputPath))
-		}
 	}
 
 	match := d2themescatalog.Find(*themeFlag)
@@ -323,6 +327,18 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ms.Opts.Flags.Visit(func(f *pflag.Flag) {
 		flagSet[f.Name] = struct{}{}
 	})
+	if !ms.Opts.Flags.Changed("animate-interval") && ms.Env.Getenv("D2_ANIMATE_INTERVAL") == "" {
+		animateIntervalFlag = nil
+	}
+	if !ms.Opts.Flags.Changed("animate-duration") && ms.Env.Getenv("D2_ANIMATE_DURATION") == "" {
+		animateDurationFlag = nil
+	}
+	if !ms.Opts.Flags.Changed("force-appendix") && ms.Env.Getenv("D2_FORCE_APPENDIX") == "" {
+		forceAppendixFlag = nil
+	}
+	if !ms.Opts.Flags.Changed("scale") && ms.Env.Getenv("SCALE") == "" {
+		scaleFlag = nil
+	}
 	if ms.Env.Getenv("D2_LAYOUT") == "" {
 		if _, ok := flagSet["layout"]; !ok {
 			layoutFlag = nil
@@ -359,10 +375,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		}
 		ms.Log.Debug.Printf("using dark theme %s (ID: %d)", match.Name, *darkThemeFlag)
 	}
-	var scale *float64
-	if scaleFlag != nil && *scaleFlag > 0. {
-		scale = scaleFlag
-	}
 
 	if !outputFormat.supportsDarkTheme() {
 		if darkThemeFlag != nil {
@@ -377,7 +389,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		Center:      centerFlag,
 		ThemeID:     themeFlag,
 		DarkThemeID: darkThemeFlag,
-		Scale:       scale,
+		Scale:       scaleFlag,
 		NoXMLTag:    noXMLTagFlag,
 		Salt:        saltFlag,
 		OmitVersion: omitVersionFlag,
@@ -390,17 +402,17 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		if *targetFlag != "*" {
 			return xmain.UsageErrorf("-w[atch] cannot be combined with --target")
 		}
-		animateInterval := *animateIntervalFlag
 		w, err := newWatcher(ctx, ms, watcherOpts{
 			layout:          layoutFlag,
 			renderOpts:      renderOpts,
-			animateInterval: animateInterval,
+			animateInterval: animateIntervalFlag,
+			animateDuration: animateDurationFlag,
 			host:            *hostFlag,
 			port:            *portFlag,
 			inputPath:       inputPath,
 			outputPath:      outputPath,
 			bundle:          *bundleFlag,
-			forceAppendix:   *forceAppendixFlag,
+			forceAppendix:   forceAppendixFlag,
 			fontFamily:      fontFamily,
 			monoFontFamily:  monoFontFamily,
 			outputFormat:    outputFormat,
@@ -435,11 +447,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx, cancel := timelib.WithTimeout(ctx, time.Minute*2)
 	defer cancel()
 
-	animateInterval := *animateIntervalFlag
-
 	// The CLI is a trusted local application and intentionally preserves its
 	// historical ability to import arbitrary host files.
-	_, written, err := compile(ctx, ms, localfile.Unrestricted(), layoutFlag, renderOpts, fontFamily, monoFontFamily, animateInterval, inputPath, outputPath, boardPath, noChildren, *bundleFlag, *forceAppendixFlag, outputFormat, *asciiModeFlag, false)
+	_, written, err := compile(ctx, ms, localfile.Unrestricted(), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, false)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
@@ -449,7 +459,20 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	return nil
 }
 
-func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOpts d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateInterval int64, inputPath, outputPath string, boardPath []string, noChildren, bundle, forceAppendix bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
+func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
+	if int64(int(animateInterval)) != animateInterval {
+		return xmain.UsageErrorf("animate-interval exceeds the supported range on this platform")
+	}
+	if ext.isIsometric() && (animateInterval < 0 || animateInterval > 600000 || animateInterval > 0 && ext != isometricGIF) {
+		return xmain.UsageErrorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
+	}
+	if animateInterval > 0 && !ext.supportsAnimation() {
+		return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG or GIF.\nYou provided: %s", ext)
+	}
+	return nil
+}
+
+func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
 	// Use ELK layout for ascii outputs when layout is dagre or unspecified
 	if ext == TXT {
 		if layout == nil || *layout == "dagre" {
@@ -476,16 +499,26 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}
 
 	opts := &d2lib.CompileOptions{
-		Ruler:          ruler,
-		FontFamily:     fontFamily,
-		MonoFontFamily: monoFontFamily,
-		InputPath:      inputPath,
-		LayoutResolver: LayoutResolver(ctx, ms),
-		Layout:         layout,
-		RouterResolver: RouterResolver(ctx, ms),
-		FS:             fs,
-		LayoutReuse:    true,
-		AnimateTweens:  animateInterval > 0 || ext == GIF || ext == isometricGIF,
+		Ruler:           ruler,
+		FontFamily:      fontFamily,
+		MonoFontFamily:  monoFontFamily,
+		InputPath:       inputPath,
+		LayoutResolver:  LayoutResolver(ctx, ms),
+		Layout:          layout,
+		RouterResolver:  RouterResolver(ctx, ms),
+		FS:              fs,
+		LayoutReuse:     true,
+		AnimateDuration: animateDurationFlag,
+	}
+
+	// With no SVG interval override, compilation reads the interval from d2-config.
+	switch {
+	case noChildren || !ext.supportsAnimation():
+		opts.AnimateTweens = go2.Pointer(false)
+	case ext == GIF || ext == isometricGIF:
+		opts.AnimateTweens = go2.Pointer(true)
+	case animateIntervalFlag != nil:
+		opts.AnimateTweens = go2.Pointer(*animateIntervalFlag > 0)
 	}
 
 	if os.Getenv("D2_LSP_MODE") == "1" {
@@ -512,11 +545,11 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}, time.Second*5)
 	defer cancel()
 
-	rootDiagram, g, err := d2lib.Compile(ctx, string(input), opts, &renderOpts)
+	rootDiagram, g, err := d2lib.Compile(ctx, string(input), opts, renderOptions)
 	if err != nil {
 		return nil, false, err
 	}
-	if renderOpts.Isometric != nil && *renderOpts.Isometric && !ext.isIsometric() {
+	if renderOptions.Isometric != nil && *renderOptions.Isometric && !ext.isIsometric() {
 		stdoutFormat, _ := ms.Opts.Flags.GetString("stdout-format")
 		if outputPath != "-" && stdoutFormat == "" && ext == SVG && filepath.Ext(outputPath) != ".svg" {
 			return nil, false, fmt.Errorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
@@ -526,26 +559,36 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 			return nil, false, err
 		}
 	}
+	var animateInterval int64
+	if interval := rootDiagram.Config.ResolveAnimateInterval(animateIntervalFlag); interval != nil {
+		animateInterval = *interval
+		if err := validateAnimateInterval(animateInterval, ext); err != nil {
+			return nil, false, err
+		}
+	}
 	if ext == GIF && animateInterval == 0 {
 		animateInterval = 1000
 		ms.Log.Debug.Printf("GIF export: animate-interval not specified, defaulting to 1000ms")
 	}
+	appendixOption := rootDiagram.Config.ResolveForceAppendix(forceAppendixFlag)
+	forceAppendix := appendixOption != nil && *appendixOption
 	if ext.isIsometric() && forceAppendix {
 		return nil, false, fmt.Errorf("--isometric cannot be combined with --force-appendix")
 	}
-	if ext.isIsometric() {
-		// Source config is resolved after the initial flag checks. Validate its
-		// raw scale too, before ordinary SVG's unset-scale normalization can
-		// hide a zero, negative, or non-finite native-renderer input.
-		if scale, err := ms.Opts.Flags.GetFloat64("scale"); err == nil {
-			if _, err := isometricImageQualityOptions(ext, scale); err != nil {
-				return nil, false, err
-			}
+	if ext.isIsometric() && renderOptions.Scale != nil {
+		if _, err := isometricImageQualityOptions(ext, *renderOptions.Scale); err != nil {
+			return nil, false, err
 		}
 	}
-	if ext.isIsometric() && renderOpts.Sketch != nil && *renderOpts.Sketch {
+	// The CLI's automatic scale sentinel must survive source option resolution.
+	// Ordinary exports historically treat nonpositive values and NaN as auto.
+	if renderOptions.Scale != nil && !(*renderOptions.Scale > 0) {
+		renderOptions.Scale = nil
+	}
+	if ext.isIsometric() && renderOptions.Sketch != nil && *renderOptions.Sketch {
 		return nil, false, fmt.Errorf("sketch cannot be combined with isometric output")
 	}
+	renderOpts := *renderOptions
 	cancel()
 
 	diagram := rootDiagram.GetBoard(boardPath)
@@ -1068,7 +1111,10 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.Rend
 		assetResolver.CloseIdleConnections()
 	}
 	if forceAppendix {
-		svg = appendix.Append(diagram, renderOpts, ruler, svg)
+		svg, err = appendix.AppendWithError(diagram, renderOpts, ruler, svg)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 
 	out := svg
@@ -1215,7 +1261,10 @@ func appendRasterPreview(diagram *d2target.Diagram, opts d2svg.RenderOpts, ruler
 		return nil, nil
 	}
 	renderOpts := rasterRenderOptions(opts)
-	preview := appendix.Append(diagram, &renderOpts, ruler, sourceSVG)
+	preview, err := appendix.AppendWithError(diagram, &renderOpts, ruler, sourceSVG)
+	if err != nil {
+		return nil, err
+	}
 	if int64(len(preview)) > rasterPreviewMaxOutputBytes {
 		return nil, fmt.Errorf("raster watch preview output bytes %d exceed limit %d", len(preview), rasterPreviewMaxOutputBytes)
 	}

@@ -51,8 +51,8 @@ const (
 )
 
 var viewboxRegex = regexp.MustCompile(`viewBox=\"([0-9\- ]+)\"`)
-var widthRegex = regexp.MustCompile(`width=\"([.0-9]+)\"`)
-var heightRegex = regexp.MustCompile(`height=\"([.0-9]+)\"`)
+var widthRegex = regexp.MustCompile(` width="[.0-9]+"`)
+var heightRegex = regexp.MustCompile(` height="[.0-9]+"`)
 var svgRegex = regexp.MustCompile(`<svg(.*?)>`)
 
 func FindViewboxSlice(svg []byte) []string {
@@ -62,7 +62,15 @@ func FindViewboxSlice(svg []byte) []string {
 	return strings.Split(viewboxRaw, " ")
 }
 
+// Append adds footnotes to the SVG, returning nil if rendering fails.
 func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) []byte {
+	out, _ := AppendWithError(diagram, renderOpts, ruler, in)
+	return out
+}
+
+// AppendWithError adds footnotes and reports errors such as an appendix
+// exceeding the scaled SVG dimension range.
+func AppendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) ([]byte, error) {
 	svg := string(in)
 	tl, br := diagram.BoundingBox()
 	isFrame := strings.HasPrefix(svg, "<g ")
@@ -71,7 +79,7 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		var ok bool
 		frame, ok = svgframe.Read(in)
 		if !ok {
-			return in
+			return in, nil
 		}
 		// Keep the separator below rendered content, including a tall legend.
 		br.Y = max(br.Y, frame.ViewBox.Max.Y-PAD_TOP)
@@ -80,7 +88,7 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	appendix, w, h := generateAppendix(diagram, ruler, tl, br)
 
 	if h == 0 {
-		return in
+		return in, nil
 	}
 
 	separatorEl := d2themes.NewThemableElement("line", nil)
@@ -99,7 +107,7 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		var ok bool
 		svg, ok = appendToFrame(svg, appendix, frame.ViewBox, tl, br, w, h)
 		if !ok {
-			return in
+			return in, nil
 		}
 	} else {
 		var salt *string
@@ -109,14 +117,21 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		var err error
 		diagramHash, err = diagram.HashID(salt)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		svg = appendToStandaloneSVG(svg, appendix, w, h)
+		scale := 1.0
+		if renderOpts != nil && renderOpts.Scale != nil {
+			scale = *renderOpts.Scale
+		}
+		svg, err = appendToStandaloneSVG(svg, appendix, w, h, scale)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return []byte(numberIcons(diagram, diagramHash, svg))
+	return []byte(numberIcons(diagram, diagramHash, svg)), nil
 }
 
-func appendToStandaloneSVG(svg, appendix string, w, h int) string {
+func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) (string, error) {
 	// match 1st two viewboxes, 1st is outer fit-to-screen viewbox="0 0 innerWidth innerHeight"
 	viewboxMatches := viewboxRegex.FindAllStringSubmatch(svg, 2)
 	viewboxMatch := viewboxMatches[1]
@@ -137,25 +152,29 @@ func appendToStandaloneSVG(svg, appendix string, w, h int) string {
 	newOuterViewbox := fmt.Sprintf(`viewBox="0 0 %d %d"`, viewboxWidth, viewboxHeight)
 	newViewbox := fmt.Sprintf(`viewBox="%s %s %s %s"`, viewboxSlice[0], viewboxSlice[1], strconv.Itoa(viewboxWidth), strconv.Itoa(viewboxHeight))
 
-	dimensionsToUpdate := 2
-	outerSVG := svgRegex.FindString(svg)
-	// if outer svg has dimensions set we also need to update it
-	if widthRegex.FindString(outerSVG) != "" {
-		dimensionsToUpdate++
+	// The outer SVG carries display dimensions. The inner SVG and its
+	// background use unscaled diagram coordinates.
+	outerEnd := svgRegex.FindStringIndex(svg)[1]
+	outer, inner := svg[:outerEnd], svg[outerEnd:]
+	outer = strings.Replace(outer, viewboxMatches[0][0], newOuterViewbox, 1)
+	if widthRegex.MatchString(outer) {
+		dimensions, err := svglib.ScaledDimensions(viewboxWidth, viewboxHeight, &scale)
+		if err != nil {
+			return "", err
+		}
+		outer = heightRegex.ReplaceAllString(outer, "")
+		outer = widthRegex.ReplaceAllString(outer, dimensions)
 	}
-
-	// update 1st 3 matches of width and height 1st is outer svg (if dimensions are set), 2nd inner svg, 3rd is background color rect
-	widthMatches := widthRegex.FindAllStringSubmatch(svg, dimensionsToUpdate)
-	heightMatches := heightRegex.FindAllStringSubmatch(svg, dimensionsToUpdate)
-	newWidth := fmt.Sprintf(`width="%s"`, strconv.Itoa(viewboxWidth))
-	newHeight := fmt.Sprintf(`height="%s"`, strconv.Itoa(viewboxHeight))
-
-	svg = strings.Replace(svg, viewboxMatches[0][0], newOuterViewbox, 1)
-	svg = strings.Replace(svg, viewboxMatch[0], newViewbox, 1)
-	for i := 0; i < dimensionsToUpdate; i++ {
-		svg = strings.Replace(svg, widthMatches[i][0], newWidth, 1)
-		svg = strings.Replace(svg, heightMatches[i][0], newHeight, 1)
+	inner = strings.Replace(inner, viewboxMatch[0], newViewbox, 1)
+	newWidth := svglib.RenderAttributes(svglib.IntAttr("width", viewboxWidth))
+	newHeight := svglib.RenderAttributes(svglib.IntAttr("height", viewboxHeight))
+	for _, match := range widthRegex.FindAllString(inner, 2) {
+		inner = strings.Replace(inner, match, newWidth, 1)
 	}
+	for _, match := range heightRegex.FindAllString(inner, 2) {
+		inner = strings.Replace(inner, match, newHeight, 1)
+	}
+	svg = outer + inner
 
 	if !strings.Contains(svg, `font-family: "font-regular"`) {
 		appendix += fmt.Sprintf(`<style type="text/css"><![CDATA[
@@ -181,7 +200,7 @@ func appendToStandaloneSVG(svg, appendix string, w, h int) string {
 	}
 
 	closingIndex := strings.LastIndex(svg, "</svg></svg>")
-	return svg[:closingIndex] + appendix + svg[closingIndex:]
+	return svg[:closingIndex] + appendix + svg[closingIndex:], nil
 }
 
 func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {

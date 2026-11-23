@@ -31,8 +31,11 @@ type CompileOptions struct {
 	// context.Background().
 	Context  context.Context
 	UTF16Pos bool
-	// AnimateTweens includes intermediate variable tween samples on step graphs.
-	AnimateTweens bool
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of changed step variables. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
 	// automatic copies they induce. Zero uses d2ir.DefaultMaxVariableExpansion.
 	MaxVariableExpansion int64
@@ -70,6 +73,7 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 		Context:              opts.Context,
 		UTF16Pos:             opts.UTF16Pos,
 		AnimateTweens:        opts.AnimateTweens,
+		AnimateDuration:      opts.AnimateDuration,
 		MaxVariableExpansion: opts.MaxVariableExpansion,
 		MaxGlobExpansion:     opts.MaxGlobExpansion,
 		MaxEdgeExpansion:     opts.MaxEdgeExpansion,
@@ -100,6 +104,12 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 	config, err := compileConfig(ir)
 	if err != nil {
 		return nil, nil, err
+	}
+	if opts.AnimateDuration != nil {
+		if config == nil {
+			config = &d2target.Config{}
+		}
+		config.AnimateDuration = opts.AnimateDuration
 	}
 	if opts.Context != nil {
 		if err := opts.Context.Err(); err != nil {
@@ -1866,10 +1876,33 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 
 	config := &d2target.Config{}
 
+	f = configMap.GetField(d2ast.FlatUnquotedString("animate-duration"))
+	if f != nil {
+		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())
+		config.AnimateDuration = &val
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("animate-interval"))
+	if f != nil {
+		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())
+		config.AnimateInterval = &val
+	}
+
 	f = configMap.GetField(d2ast.FlatUnquotedString("sketch"))
 	if f != nil {
 		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
 		config.Sketch = &val
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("scale"))
+	if f != nil {
+		val, _ := strconv.ParseFloat(f.Primary().Value.ScalarString(), 64)
+		if val != -1 {
+			config.Scale = &val
+		}
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("force-appendix"))
+	if f != nil {
+		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
+		config.ForceAppendix = &val
 	}
 	f = configMap.GetField(d2ast.FlatUnquotedString("isometric"))
 	if f != nil {

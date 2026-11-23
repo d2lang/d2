@@ -23,9 +23,11 @@ import (
 
 type CompileOptions struct {
 	UTF16Pos bool
-	// AnimateTweens compiles intermediate samples for animated exports. By default
-	// a step compiles to its authored end state.
-	AnimateTweens bool
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of changed step variables. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
 	// automatic copies they induce. Zero uses the secure compiler default.
 	MaxVariableExpansion int64
@@ -99,6 +101,7 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 		Context:              ctx,
 		UTF16Pos:             compileOpts.UTF16Pos,
 		AnimateTweens:        compileOpts.AnimateTweens,
+		AnimateDuration:      compileOpts.AnimateDuration,
 		MaxVariableExpansion: compileOpts.MaxVariableExpansion,
 		MaxGlobExpansion:     compileOpts.MaxGlobExpansion,
 		MaxEdgeExpansion:     compileOpts.MaxEdgeExpansion,
@@ -331,6 +334,9 @@ func applyConfigs(config *d2target.Config, compileOpts *CompileOptions, renderOp
 	}
 	if renderOpts.Pad == nil {
 		renderOpts.Pad = config.Pad
+	}
+	if renderOpts.Scale == nil {
+		renderOpts.Scale = config.Scale
 	}
 	if renderOpts.Center == nil {
 		renderOpts.Center = config.Center

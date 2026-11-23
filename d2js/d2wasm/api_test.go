@@ -4,12 +4,17 @@ package d2wasm
 
 import (
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall/js"
 	"testing"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/util-go/go2"
 )
 
 func TestRenderRejectsMalformedDiagramBeforeBoardTraversal(t *testing.T) {
@@ -50,6 +55,112 @@ func TestRenderAnimationDefaultsMissingPadding(t *testing.T) {
 	}
 }
 
+func TestSourceAnimateInterval(t *testing.T) {
+	const source = "vars: {d2-config: {animate-interval: 800ms}}\nroot\nsteps: {next: {second}}"
+	for _, tc := range []struct {
+		name string
+		opts *CompileOptions
+		want int64
+	}{
+		{"source", nil, 800},
+		{"override", &CompileOptions{RenderOptions: RenderOptions{AnimateInterval: go2.Pointer(int64(250))}}, 250},
+		{"disable", &CompileOptions{RenderOptions: RenderOptions{AnimateInterval: go2.Pointer(int64(0))}}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compiled, err := Compile(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": source}, Opts: tc.opts}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := compiled.(CompileResponse)
+			if interval := result.RenderOptions.AnimateInterval; interval == nil || *interval != tc.want {
+				t.Fatalf("compile returned interval %v, want %d", interval, tc.want)
+			}
+
+			opts := result.RenderOptions
+			if tc.opts == nil {
+				// Render can also read the source setting from the diagram alone.
+				opts.AnimateInterval = nil
+			}
+			if tc.want > 0 {
+				opts.Target = go2.Pointer("*")
+			}
+			out, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: &opts}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			svg := string(out.([]byte))
+			if tc.want == 0 {
+				if strings.Contains(svg, "d2Transition-") {
+					t.Fatal("expected static SVG with an explicit zero interval")
+				}
+			} else if !strings.Contains(svg, fmt.Sprintf(" %dms infinite", 2*tc.want)) || !strings.Contains(svg, ">second</text>") {
+				t.Fatalf("expected two animated boards displayed for %dms each", tc.want)
+			}
+		})
+	}
+}
+
+func TestSourceScaleAndAppendix(t *testing.T) {
+	const source = "vars: {d2-config: {scale: 0.5; force-appendix: true}}\nservice.tooltip: Receives requests"
+	for _, tc := range []struct {
+		name     string
+		opts     *CompileOptions
+		scale    float64
+		appendix bool
+	}{
+		{"source", nil, 0.5, true},
+		{"explicit options", &CompileOptions{RenderOptions: RenderOptions{Scale: go2.Pointer(2.0), ForceAppendix: go2.Pointer(false)}}, 2, false},
+		{"responsive SVG", &CompileOptions{RenderOptions: RenderOptions{Scale: go2.Pointer(-1.0)}}, -1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := CompileRequest{FS: map[string]string{"index": source}, Opts: tc.opts}
+			compiled, err := Compile(wasmJSONArgument(t, request))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := compiled.(CompileResponse)
+			opts := &result.RenderOptions
+			if opts.Scale == nil || *opts.Scale != tc.scale || opts.ForceAppendix == nil || *opts.ForceAppendix != tc.appendix {
+				t.Fatalf("unexpected compiled render options: %+v", opts)
+			}
+			if tc.opts == nil {
+				opts = nil // Use just the source config in the serialized diagram.
+			}
+			rendered, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: opts}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			direct, err := RenderSVG(wasmJSONArgument(t, request))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, svg := range []string{string(rendered.([]byte)), direct.(string)} {
+				if strings.Contains(svg, `class="appendix"`) != tc.appendix {
+					t.Fatalf("expected appendix = %v", tc.appendix)
+				}
+				var root struct {
+					Width   string `xml:"width,attr"`
+					ViewBox string `xml:"viewBox,attr"`
+				}
+				if err := xml.Unmarshal([]byte(svg), &root); err != nil {
+					t.Fatal(err)
+				}
+				var expectedWidth string
+				if tc.scale > 0 {
+					var width, height int
+					if _, err := fmt.Sscanf(root.ViewBox, "0 0 %d %d", &width, &height); err != nil {
+						t.Fatal(err)
+					}
+					expectedWidth = strconv.Itoa(int(math.Ceil(float64(width) * tc.scale)))
+				}
+				if root.Width != expectedWidth {
+					t.Fatalf("SVG width = %q, want %q for viewBox %q at scale %g", root.Width, expectedWidth, root.ViewBox, tc.scale)
+				}
+			}
+		})
+	}
+}
+
 func TestRenderAnimatedAppendix(t *testing.T) {
 	animateInterval := int64(1_000)
 	forceAppendix := true
@@ -76,12 +187,12 @@ func TestRenderAnimatedAppendix(t *testing.T) {
 	}
 }
 
-func TestRenderVariableTweenAfterCompile(t *testing.T) {
+func TestRenderAnimateDurationAfterCompile(t *testing.T) {
 	source := `vars: {charge: 100%}
 bar: "${charge}" {style.fill: "linear-gradient(to right, green ${charge}, transparent ${charge})"}
-steps: {drain: {vars: {charge: 0% {tween: 160ms}}}}`
+steps: {drain: {vars: {charge: 0%}}}`
 	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{
-		FS: map[string]string{"index": source}, Opts: &CompileOptions{},
+		FS: map[string]string{"index": source}, Opts: &CompileOptions{AnimateDuration: go2.Pointer(int64(160))},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +212,7 @@ steps: {drain: {vars: {charge: 0% {tween: 160ms}}}}`
 	}
 	target = "steps.drain"
 	out, err = Render(wasmJSONArgument(t, RenderRequest{
-		Diagram: &diagram, Opts: &RenderOptions{Target: &target},
+		Diagram: &diagram, Opts: &RenderOptions{Target: &target, AnimateInterval: &interval},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +220,37 @@ steps: {drain: {vars: {charge: 0% {tween: 160ms}}}}`
 	svg = string(out.([]byte))
 	if !strings.Contains(svg, ">0%</text>") || strings.Contains(svg, ">50%</text>") {
 		t.Fatal("static render should show the authored destination")
+	}
+}
+
+func TestRenderSVGAnimateDuration(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 100ms}; charge: 100%}
+bar: "${charge}"
+steps: {empty: {vars: {charge: 0%}}}`
+	for _, tc := range []struct {
+		name     string
+		duration *int64
+		timing   string
+		midpoint bool
+	}{
+		{"source", nil, "200ms steps(1,end) infinite", true},
+		{"longer override", go2.Pointer(int64(160)), "260ms steps(1,end) infinite", true},
+		{"zero override", go2.Pointer(int64(0)), "200ms infinite", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := RenderSVG(wasmJSONArgument(t, CompileRequest{
+				FS: map[string]string{"index": source}, Opts: &CompileOptions{
+					RenderOptions: RenderOptions{Target: go2.Pointer("*")}, AnimateDuration: tc.duration,
+				},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			svg := out.(string)
+			if !strings.Contains(svg, tc.timing) || strings.Contains(svg, ">50%</text>") != tc.midpoint {
+				t.Errorf("expected timing %q, midpoint = %v", tc.timing, tc.midpoint)
+			}
+		})
 	}
 }
 
