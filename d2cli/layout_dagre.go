@@ -17,6 +17,9 @@ See https://d2lang.com/tour/dagre for more.
 
 Dagro implements the Dagre 3.1.1 layout surface used by D2: https://github.com/d2lang/dagro.
 
+Set dagre-nodesep and dagre-edgesep in vars.d2-config.data to specify spacing in pixels.
+Diagram data takes precedence over the corresponding command-line flags.
+
 Flags correspond to ones found at https://github.com/dagrejs/dagre/wiki.
 `
 

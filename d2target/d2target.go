@@ -47,6 +47,8 @@ var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
 	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
+	Scale              *float64        `json:"scale,omitempty"`
+	ForceAppendix      *bool           `json:"forceAppendix,omitempty"`
 	Sketch             *bool           `json:"sketch"`
 	Isometric          *bool           `json:"isometric,omitempty"`
 	ThemeID            *int64          `json:"themeID"`
@@ -68,6 +70,14 @@ func (c *Config) ResolveAnimateInterval(override *int64) *int64 {
 		return override
 	}
 	return c.AnimateInterval
+}
+
+// ResolveForceAppendix preserves an explicit false when the source enables footnotes.
+func (c *Config) ResolveForceAppendix(override *bool) *bool {
+	if override != nil || c == nil {
+		return override
+	}
+	return c.ForceAppendix
 }
 
 type ThemeOverrides struct {

@@ -9,6 +9,14 @@ import (
 	"testing"
 )
 
+func TestScaledDimensionsRejectsOverflow(t *testing.T) {
+	for _, scale := range []float64{math.MaxFloat64, -float64(math.MinInt)} {
+		if _, err := ScaledDimensions(1, 100, &scale); err == nil {
+			t.Errorf("expected an error for scale %g", scale)
+		}
+	}
+}
+
 func TestFormatFloat(t *testing.T) {
 	for _, tc := range []struct {
 		value float64

@@ -9,7 +9,7 @@ function init(reconnectDelay) {
 
   const devMode = document.body.dataset.d2DevMode === "true";
   const ws = new WebSocket(`ws://${window.location.host}/watch`);
-  let isInit = true;
+  let previousScale;
   let ratio;
   ws.onopen = () => {
     reconnectDelay = 1000;
@@ -30,28 +30,22 @@ function init(reconnectDelay) {
       const svgEl = d2SVG.querySelector(".d2-svg");
       // just use inner SVG in watch mode
       svgEl.parentElement.replaceWith(svgEl);
-      let width = parseInt(svgEl.getAttribute("width"), 10);
-      let height = parseInt(svgEl.getAttribute("height"), 10);
-      if (isInit) {
-        if (msg.scale) {
-          ratio = msg.scale;
-        } else {
-          if (width > height) {
-            if (width > window.innerWidth) {
-              ratio = window.innerWidth / width;
-            }
-          } else if (height > window.innerHeight) {
-            ratio = window.innerHeight / height;
-          }
-        }
-        // Scale svg fit to zoom
-        isInit = false;
+      const width = Number(svgEl.getAttribute("width"));
+      const height = Number(svgEl.getAttribute("height"));
+      const scale = msg.scale ?? null;
+      if (scale !== previousScale) {
+        previousScale = scale;
+        // Automatic sizing fits inside the body's 8px margin on each side.
+        ratio =
+          scale ??
+          Math.min(
+            1,
+            Math.max(1, window.innerWidth - 16) / width,
+            Math.max(1, window.innerHeight - 16) / height
+          );
       }
-      if (ratio) {
-        // body padding is 8px
-        svgEl.setAttribute("width", width * ratio - 16);
-        svgEl.setAttribute("height", height * ratio - 16);
-      }
+      svgEl.setAttribute("width", Math.ceil(width * ratio));
+      svgEl.setAttribute("height", Math.ceil(height * ratio));
 
       d2ErrDiv.style.display = "none";
     }

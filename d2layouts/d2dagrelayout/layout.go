@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/d2lang/util-go/xdefer"
@@ -37,6 +38,29 @@ var DefaultOpts = ConfigurableOpts{
 	EdgeSep: 20,
 }
 
+func diagramSpacing(data map[string]any, key string, fallback int) (int, error) {
+	raw, ok := data[key]
+	if !ok {
+		return fallback, nil
+	}
+	var text string
+	switch v := raw.(type) {
+	case string:
+		text = v
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		text = fmt.Sprint(v)
+	case float64:
+		text = strconv.FormatFloat(v, 'f', -1, 64)
+	case float32:
+		text = strconv.FormatFloat(float64(v), 'f', -1, 32)
+	}
+	pixels, err := strconv.Atoi(text)
+	if err != nil || pixels < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", key)
+	}
+	return pixels, nil
+}
+
 type dagreOpts struct {
 	// for a top to bottom graph: ranksep is y spacing, nodesep is x spacing, edgesep is x spacing
 	ranksep int
@@ -62,11 +86,14 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		return err
 	}
 
-	rootAttrs := dagreOpts{
-		ConfigurableOpts: ConfigurableOpts{
-			EdgeSep: opts.EdgeSep,
-			NodeSep: opts.NodeSep,
-		},
+	var rootAttrs dagreOpts
+	rootAttrs.NodeSep, err = diagramSpacing(g.Data, "dagre-nodesep", opts.NodeSep)
+	if err != nil {
+		return err
+	}
+	rootAttrs.EdgeSep, err = diagramSpacing(g.Data, "dagre-edgesep", opts.EdgeSep)
+	if err != nil {
+		return err
 	}
 	isHorizontal := false
 	switch g.Root.Direction.Value {

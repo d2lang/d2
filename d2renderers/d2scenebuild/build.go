@@ -805,11 +805,6 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	if b.options.Scale != nil {
 		logicalScale = *b.options.Scale
 	}
-	if appendixLayout != nil {
-		// SVG exports with appendix items use the expanded viewbox dimensions
-		// for their outer width and height, without applying the requested scale.
-		logicalScale = 1
-	}
 	scaledWidth := logicalScale * float64(width)
 	scaledHeight := logicalScale * float64(height)
 	if !finite(scaledWidth) || !finite(scaledHeight) || scaledWidth <= 0 || scaledHeight <= 0 {

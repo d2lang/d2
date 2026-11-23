@@ -15,6 +15,22 @@ import (
 	"github.com/d2lang/util-go/go2"
 )
 
+func TestDagreSpacingData(t *testing.T) {
+	for _, raw := range []any{0, "0", int64(0), float64(0)} {
+		got, err := diagramSpacing(map[string]any{"dagre-edgesep": raw}, "dagre-edgesep", 20)
+		if err != nil || got != 0 {
+			t.Errorf("diagramSpacing(%#v) = %d, %v; want zero", raw, got, err)
+		}
+	}
+	for _, raw := range []any{"-1", 1.5, "many", nil, "18446744073709551616", []any{"40"}} {
+		g := d2graph.NewGraph()
+		g.Data = map[string]any{"dagre-nodesep": raw}
+		if err := DefaultLayout(context.Background(), g); err == nil || !strings.Contains(err.Error(), "dagre-nodesep") {
+			t.Errorf("DefaultLayout with %#v: got %v, want a dagre-nodesep error", raw, err)
+		}
+	}
+}
+
 func TestLayoutRejectsDenseGraphBeforeDagre(t *testing.T) {
 	t.Parallel()
 	g := d2graph.NewGraph()
