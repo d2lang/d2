@@ -117,6 +117,10 @@ export class D2 {
     });
   }
 
+  async format(source) {
+    return this.sendMessage("format", source);
+  }
+
   async compile(input, options = {}) {
     return this.sendMessage("compile", compileRequest(input, options));
   }

@@ -115,6 +115,16 @@ const d2 = new D2({ workerURL: '/d2-worker.js' });
 
 The worker's Content Security Policy must also allow WebAssembly compilation.
 
+### `format(source: string): Promise<string>`
+
+Formats a single D2 source string with the same formatter as `d2 fmt`. It leaves
+imports in place, so an editor can format the current file even when its imports
+are unavailable. Syntax errors reject the promise.
+
+```javascript
+const formatted = await d2.format('client->server'); // "client -> server\n"
+```
+
 ### `renderSVG(input: string | CompileRequest, options?: CompileOptions): Promise<string>`
 
 Compiles D2 source and returns an SVG string in one worker call. It accepts the

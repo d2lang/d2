@@ -15,6 +15,16 @@ test("installed ESM package compiles and renders", async () => {
   }
 });
 
+test("format returns canonical source without resolving imports", async (t) => {
+  const d2 = new D2();
+  t.after(() => d2.dispose());
+  const formatted = "# café\nservice: @missing\nuser -> service\n";
+  assert.equal(await d2.format("# café\n  service:@missing\nuser   ->service"), formatted);
+  assert.equal(await d2.format(formatted), formatted);
+  await assert.rejects(d2.format("broken: {"), /maps must be terminated/);
+  assert.equal(await d2.format(""), "");
+});
+
 test("renderSVG preserves imports, source configuration, and option precedence", async (t) => {
   const d2 = new D2();
   t.after(() => d2.dispose());

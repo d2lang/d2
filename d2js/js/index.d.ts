@@ -6,6 +6,9 @@ export interface D2Options {
 export class D2 {
   constructor(options?: D2Options);
 
+  /** Formats one D2 source file without resolving imports or running layout. */
+  format(source: string): Promise<string>;
+
   /** Compiles and renders SVG in one worker call. Rejects if the effective options set ascii to true. */
   renderSVG(input: string | CompileRequest, options?: CompileOptions): Promise<string>;
 
