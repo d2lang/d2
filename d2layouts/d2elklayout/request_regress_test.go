@@ -123,6 +123,8 @@ func origELKRequest(g *d2graph.Graph, opts *ConfigurableOpts) ([]byte, error) {
 	vertical := g.Root.Direction.Value == "down" || g.Root.Direction.Value == "" || g.Root.Direction.Value == "up"
 
 	elkGraph := &ELKGraph{ID: "", LayoutOptions: origNewRootLayoutOptions(opts)}
+	// The native loop extension is the intentional addition to the original request.
+	elkGraph.LayoutOptions.RouteSelfLoops = opts.usesAlgorithm("stress") || opts.usesAlgorithm("force") || opts.usesAlgorithm("mrtree")
 	if elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing == DefaultOpts.SelfLoopSpacing {
 		elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing = go2.Max(elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing, maxSelfLoopLabel(g.Root, vertical)/2+5)
 	}
