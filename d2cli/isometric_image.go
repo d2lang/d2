@@ -125,9 +125,6 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 	if len(boards) == 0 {
 		return nil, false, fmt.Errorf("isometric export has no drawable boards")
 	}
-	if intervalMS < 0 || intervalMS > 600000 || intervalMS > 0 && ext != isometricGIF {
-		return nil, false, fmt.Errorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
-	}
 	hasSubboards := len(diagram.Layers)+len(diagram.Scenarios)+len(diagram.Steps) > 0
 	if ext == isometricGIF && (hasSubboards || len(boards) > 1 || intervalMS > 0) {
 		if intervalMS == 0 {

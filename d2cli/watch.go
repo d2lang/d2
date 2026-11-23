@@ -47,7 +47,7 @@ var staticFS embed.FS
 type watcherOpts struct {
 	layout          *string
 	renderOpts      d2svg.RenderOpts
-	animateInterval int64
+	animateInterval *int64
 	host            string
 	port            string
 	inputPath       string

@@ -60,9 +60,9 @@ export interface RenderOptions {
   scale?: number;
   /** Adds an appendix for tooltips and links [default: false] */
   forceAppendix?: boolean;
-  /** Target board/s to render. If target ends with '', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. target: 'layers.x.*' to render layer 'x' with all of its children. Pass '' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board outputs are currently only supported for animated SVGs and so animateInterval must be set to a value greater than 0 when targeting multiple boards. */
+  /** Board to render (default: root). Use '*' for all boards or 'layers.x.*' for a board and its children. Multi-board SVG requires a positive animation interval. */
   target?: string;
-  /** If given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). */
+  /** Milliseconds to display each board in an animated SVG. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
   animateInterval?: number;
   /** Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output. */
   salt?: string;

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -331,6 +332,9 @@ func Compile(args []js.Value) (interface{}, error) {
 	}
 
 	input.FS[inputPath] = d2format.Format(g.AST)
+	if input.Opts == nil {
+		input.Opts = &CompileOptions{}
+	}
 
 	return CompileResponse{
 		FS:        input.FS,
@@ -349,7 +353,7 @@ func Compile(args []js.Value) (interface{}, error) {
 			Scale:              renderOpts.Scale,
 			ForceAppendix:      input.Opts.ForceAppendix,
 			Target:             input.Opts.Target,
-			AnimateInterval:    input.Opts.AnimateInterval,
+			AnimateInterval:    diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval),
 			Salt:               input.Opts.Salt,
 			NoXMLTag:           input.Opts.NoXMLTag,
 			ASCII:              input.Opts.ASCII,
@@ -374,9 +378,15 @@ func Render(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid diagram: %s", err.Error()), Code: 400}
 	}
 
+	if input.Opts == nil {
+		input.Opts = &RenderOptions{}
+	}
 	animateInterval := 0
-	if input.Opts != nil && input.Opts.AnimateInterval != nil && *input.Opts.AnimateInterval > 0 {
-		animateInterval = int(*input.Opts.AnimateInterval)
+	if interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval); interval != nil && *interval > 0 {
+		if *interval > math.MaxInt {
+			return nil, &WASMError{Message: "animation interval exceeds the supported range", Code: 400}
+		}
+		animateInterval = int(*interval)
 	}
 	forceAppendix := input.Opts != nil && input.Opts.ForceAppendix != nil && *input.Opts.ForceAppendix
 
