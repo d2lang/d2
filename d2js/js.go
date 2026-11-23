@@ -18,6 +18,7 @@ func main() {
 	api.Register("getRefRanges", d2wasm.GetRefRanges)
 	// Deprecated: retained for raw WASM callers for one compatibility release.
 	api.Register("getELKGraph", d2wasm.GetELKGraph)
+	api.Register("format", d2wasm.Format)
 	api.Register("compile", d2wasm.Compile)
 	api.Register("render", d2wasm.Render)
 	api.Register("renderSVG", d2wasm.RenderSVG)

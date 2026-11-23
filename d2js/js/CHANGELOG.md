@@ -5,6 +5,7 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Add `d2.format(source)` to format a D2 file without compiling or rendering it.
 - Add `d2.renderSVG(source, options)` to compile D2 source or a multi-file project directly to SVG.
 - Fix passing custom TrueType font bytes as a `Uint8Array` in compile options.
 - Support calling `new D2()` from a dedicated browser worker and loading a self-hosted worker script with `new D2({ workerURL })`.

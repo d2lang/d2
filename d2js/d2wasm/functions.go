@@ -197,6 +197,17 @@ func GetELKGraph(args []js.Value) (interface{}, error) {
 	return elk, nil
 }
 
+func Format(args []js.Value) (interface{}, error) {
+	if len(args) == 0 || args[0].Type() != js.TypeString {
+		return nil, &WASMError{Message: "format expects a D2 source string", Code: 400}
+	}
+	m, err := d2parser.Parse(DEFAULT_INPUT_PATH, strings.NewReader(args[0].String()), &d2parser.ParseOptions{UTF16Pos: true})
+	if err != nil {
+		return nil, &WASMError{Message: err.Error(), Code: 400}
+	}
+	return d2format.Format(m), nil
+}
+
 func Compile(args []js.Value) (interface{}, error) {
 	input, err := parseCompileRequest(args)
 	if err != nil {
