@@ -106,7 +106,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "if given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). Can only be used with SVG or GIF exports. For GIF exports, defaults to 1000ms if not specified.")
+	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "if given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). Can only be used with SVG or GIF exports. For GIF exports, defaults to 1000ms if not specified. Also configurable through vars.d2-config.animate-interval.")
 	if err != nil {
 		return err
 	}
@@ -283,9 +283,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		if *forceAppendixFlag {
 			return xmain.UsageErrorf("--isometric cannot be combined with --force-appendix")
 		}
-		if *animateIntervalFlag < 0 || *animateIntervalFlag > 600000 || *animateIntervalFlag > 0 && outputFormat != GIF {
-			return xmain.UsageErrorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
-		}
 		if _, err := isometricImageQualityOptions(outputFormat, *scaleFlag); err != nil {
 			return xmain.UsageErrorf("%v", err)
 		}
@@ -304,11 +301,11 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
 		}
 	}
+	if err := validateAnimateInterval(*animateIntervalFlag, outputFormat); err != nil {
+		return err
+	}
 	if outputPath != "-" {
 		outputPath = ms.AbsPath(outputPath)
-		if *animateIntervalFlag > 0 && !outputFormat.supportsAnimation() {
-			return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG or GIF.\nYou provided: %s", filepath.Ext(outputPath))
-		}
 	}
 
 	match := d2themescatalog.Find(*themeFlag)
@@ -323,6 +320,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ms.Opts.Flags.Visit(func(f *pflag.Flag) {
 		flagSet[f.Name] = struct{}{}
 	})
+	if !ms.Opts.Flags.Changed("animate-interval") && ms.Env.Getenv("D2_ANIMATE_INTERVAL") == "" {
+		animateIntervalFlag = nil
+	}
 	if ms.Env.Getenv("D2_LAYOUT") == "" {
 		if _, ok := flagSet["layout"]; !ok {
 			layoutFlag = nil
@@ -390,11 +390,10 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		if *targetFlag != "*" {
 			return xmain.UsageErrorf("-w[atch] cannot be combined with --target")
 		}
-		animateInterval := *animateIntervalFlag
 		w, err := newWatcher(ctx, ms, watcherOpts{
 			layout:          layoutFlag,
 			renderOpts:      renderOpts,
-			animateInterval: animateInterval,
+			animateInterval: animateIntervalFlag,
 			host:            *hostFlag,
 			port:            *portFlag,
 			inputPath:       inputPath,
@@ -435,11 +434,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx, cancel := timelib.WithTimeout(ctx, time.Minute*2)
 	defer cancel()
 
-	animateInterval := *animateIntervalFlag
-
 	// The CLI is a trusted local application and intentionally preserves its
 	// historical ability to import arbitrary host files.
-	_, written, err := compile(ctx, ms, localfile.Unrestricted(), layoutFlag, renderOpts, fontFamily, monoFontFamily, animateInterval, inputPath, outputPath, boardPath, noChildren, *bundleFlag, *forceAppendixFlag, outputFormat, *asciiModeFlag, false)
+	_, written, err := compile(ctx, ms, localfile.Unrestricted(), layoutFlag, renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, *forceAppendixFlag, outputFormat, *asciiModeFlag, false)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
@@ -449,7 +446,20 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	return nil
 }
 
-func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOpts d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateInterval int64, inputPath, outputPath string, boardPath []string, noChildren, bundle, forceAppendix bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
+func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
+	if int64(int(animateInterval)) != animateInterval {
+		return xmain.UsageErrorf("animate-interval exceeds the supported range on this platform")
+	}
+	if ext.isIsometric() && (animateInterval < 0 || animateInterval > 600000 || animateInterval > 0 && ext != isometricGIF) {
+		return xmain.UsageErrorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
+	}
+	if animateInterval > 0 && !ext.supportsAnimation() {
+		return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG or GIF.\nYou provided: %s", ext)
+	}
+	return nil
+}
+
+func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOpts d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle, forceAppendix bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
 	// Use ELK layout for ascii outputs when layout is dagre or unspecified
 	if ext == TXT {
 		if layout == nil || *layout == "dagre" {
@@ -522,6 +532,13 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		}
 		ext, err = isometricExportExtension(ext)
 		if err != nil {
+			return nil, false, err
+		}
+	}
+	var animateInterval int64
+	if interval := rootDiagram.Config.ResolveAnimateInterval(animateIntervalFlag); interval != nil {
+		animateInterval = *interval
+		if err := validateAnimateInterval(animateInterval, ext); err != nil {
 			return nil, false, err
 		}
 	}

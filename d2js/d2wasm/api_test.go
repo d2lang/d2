@@ -4,12 +4,14 @@ package d2wasm
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"syscall/js"
 	"testing"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/util-go/go2"
 )
 
 func TestRenderRejectsMalformedDiagramBeforeBoardTraversal(t *testing.T) {
@@ -45,6 +47,51 @@ func TestRenderAnimationDefaultsMissingPadding(t *testing.T) {
 	}
 	if response.Data == nil {
 		t.Fatal("Render() returned no animated SVG")
+	}
+}
+
+func TestSourceAnimateInterval(t *testing.T) {
+	const source = "vars: {d2-config: {animate-interval: 800ms}}\nroot\nsteps: {next: {second}}"
+	for _, tc := range []struct {
+		name string
+		opts *CompileOptions
+		want int64
+	}{
+		{"source", nil, 800},
+		{"override", &CompileOptions{RenderOptions: RenderOptions{AnimateInterval: go2.Pointer(int64(250))}}, 250},
+		{"disable", &CompileOptions{RenderOptions: RenderOptions{AnimateInterval: go2.Pointer(int64(0))}}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compiled, err := Compile(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": source}, Opts: tc.opts}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := compiled.(CompileResponse)
+			if interval := result.RenderOptions.AnimateInterval; interval == nil || *interval != tc.want {
+				t.Fatalf("compile returned interval %v, want %d", interval, tc.want)
+			}
+
+			opts := result.RenderOptions
+			if tc.opts == nil {
+				// Render can also read the source setting from the diagram alone.
+				opts.AnimateInterval = nil
+			}
+			if tc.want > 0 {
+				opts.Target = go2.Pointer("*")
+			}
+			out, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: &opts}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			svg := string(out.([]byte))
+			if tc.want == 0 {
+				if strings.Contains(svg, "d2Transition-") {
+					t.Fatal("expected static SVG with an explicit zero interval")
+				}
+			} else if !strings.Contains(svg, fmt.Sprintf(" %dms infinite", 2*tc.want)) || !strings.Contains(svg, ">second</text>") {
+				t.Fatalf("expected two animated boards displayed for %dms each", tc.want)
+			}
+		})
 	}
 }
 

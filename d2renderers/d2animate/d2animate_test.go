@@ -1,12 +1,20 @@
 package d2animate
 
 import (
+	"math"
 	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 )
+
+func TestWrapRejectsTimelineOverflow(t *testing.T) {
+	boards := [][]byte{[]byte("<g/>"), []byte("<g/>")}
+	if _, err := Wrap(d2target.NewDiagram(), boards, d2svg.RenderOpts{}, math.MaxInt); err == nil {
+		t.Fatal("expected the two-board animation duration to overflow")
+	}
+}
 
 func TestWrapDefaultsMissingPadding(t *testing.T) {
 	diagram := d2target.NewDiagram()

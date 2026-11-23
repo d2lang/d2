@@ -1859,6 +1859,12 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 
 	config := &d2target.Config{}
 
+	f = configMap.GetField(d2ast.FlatUnquotedString("animate-interval"))
+	if f != nil {
+		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())
+		config.AnimateInterval = &val
+	}
+
 	f = configMap.GetField(d2ast.FlatUnquotedString("sketch"))
 	if f != nil {
 		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())

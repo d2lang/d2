@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/d2lang/util-go/go2"
 
@@ -358,6 +359,24 @@ func (c *compiler) visitSubstitutionNode(node Node, source d2ast.Node, seen map[
 	return true
 }
 
+// ParseAnimateInterval returns the source interval in milliseconds. A bare
+// integer uses milliseconds, matching the CLI flag.
+func ParseAnimateInterval(value string) (int64, bool) {
+	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
+		value += "ms"
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration < 0 || duration%time.Millisecond != 0 {
+		return 0, false
+	}
+	// ParseDuration truncates below a nanosecond. Only an actual zero
+	// should turn an animation off.
+	if duration == 0 && strings.ContainsAny(value, "123456789") {
+		return 0, false
+	}
+	return duration.Milliseconds(), true
+}
+
 func (c *compiler) validateConfigs(configs *Field) {
 	if configs == nil || configs.Map() == nil {
 		return
@@ -380,6 +399,10 @@ func (c *compiler) validateConfigs(configs *Field) {
 		}
 
 		switch f.Name.ScalarString() {
+		case "animate-interval":
+			if _, ok := ParseAnimateInterval(val); !ok || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected a non-negative whole number of milliseconds or a duration in whole milliseconds for "animate-interval", got %q`, val)
+			}
 		case "sketch", "isometric", "center":
 			_, err := strconv.ParseBool(val)
 			if err != nil {

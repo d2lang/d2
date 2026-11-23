@@ -49,6 +49,9 @@ func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderO
 	if err := d2target.ValidateRenderTarget(rootDiagram); err != nil {
 		return nil, err
 	}
+	if intervalMS <= 0 || len(svgs) > math.MaxInt/intervalMS {
+		return nil, fmt.Errorf("SVG animation duration must be positive and fit in milliseconds")
+	}
 	buf := &bytes.Buffer{}
 
 	pad := d2svg.DEFAULT_PADDING
