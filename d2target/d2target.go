@@ -46,7 +46,6 @@ const (
 var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
-	AnimateSequence    string          `json:"animateSequence,omitempty"` // Sequence message playback mode.
 	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
 	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds to interpolate step values.
 	Scale              *float64        `json:"scale,omitempty"`
@@ -74,16 +73,13 @@ func (c *Config) ResolveAnimateInterval(override *int64) *int64 {
 	return c.AnimateInterval
 }
 
-// ValidSequenceMode reports whether an explicit playback setting is supported.
-func ValidSequenceMode(mode string) bool {
-	return mode == "trace" || mode == "reveal" || mode == "off"
-}
-
 // HasSequencePlayback reports whether this board or one of its authored
 // children has messages to play when no explicit SVG interval was supplied.
 func (d *Diagram) HasSequencePlayback() bool {
-	if len(d.SequenceTimelines) > 0 {
-		return true
+	if d.Config != nil && d.Config.AnimateDuration != nil && *d.Config.AnimateDuration > 0 {
+		if len(d.SequenceTimelines) > 0 || len(d.TweenFrames) > 0 && d.SequenceContinuation {
+			return true
+		}
 	}
 	for _, group := range [][]*Diagram{d.Layers, d.Scenarios, d.Steps} {
 		for _, child := range group {
@@ -159,6 +155,8 @@ type Diagram struct {
 
 	// A board can contain multiple independent sequence diagrams.
 	SequenceTimelines []SequenceTimeline `json:"sequenceTimelines,omitempty"`
+	// Derived steps and scenarios enter on the previous stage; independent boards open from scratch.
+	SequenceContinuation bool `json:"sequenceContinuation,omitempty"`
 
 	// TweenFrames are equally spaced samples of this board's incoming transition,
 	// starting at time zero. The board itself is the endpoint at TweenDurationMS.
@@ -260,6 +258,9 @@ func (diagram Diagram) Bytes() ([]byte, error) {
 		base = append(base, b...)
 	}
 
+	if diagram.SequenceContinuation {
+		base = append(base, "sequence-continuation"...)
+	}
 	if len(diagram.SequenceTimelines) > 0 {
 		b, err := json.Marshal(diagram.SequenceTimelines)
 		if err != nil {

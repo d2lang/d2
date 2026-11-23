@@ -6,12 +6,18 @@ import "github.com/d2lang/d2/lib/geo"
 // Sampled frames are rendered individually; their board hierarchy and sequence
 // schedule remain on the original diagram.
 func (d Diagram) SequenceFrame() Diagram {
-	topLeft, bottomRight := d.BoundingBox()
-	d.frameBounds = &[2]Point{topLeft, bottomRight}
+	d = d.WithFrameBounds(d.BoundingBox())
 	d.Shapes, d.Connections = nil, nil
 	d.Layers, d.Scenarios, d.Steps = nil, nil, nil
 	d.TweenFrames, d.TweenDurationMS = nil, 0
 	d.SequenceTimelines = nil
+	d.SequenceContinuation = false
+	return d
+}
+
+// WithFrameBounds returns a shallow render-only copy with a fixed viewport.
+func (d Diagram) WithFrameBounds(topLeft, bottomRight Point) Diagram {
+	d.frameBounds = &[2]Point{topLeft, bottomRight}
 	return d
 }
 

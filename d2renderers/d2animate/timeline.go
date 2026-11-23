@@ -64,23 +64,23 @@ type Playback struct {
 // AppendBoard appends the incoming value transition and the message sequence
 // for one validated board. Raster exporters can supply their own traversal.
 func (p *Playback) AppendBoard(frames []Frame, board *d2target.Diagram, intervalMS int) ([]Frame, error) {
-	if len(board.SequenceTimelines) == 0 || board.Config == nil || board.Config.AnimateSequence == "" || board.Config.AnimateSequence == "off" {
+	if len(board.SequenceTimelines) == 0 || board.Config == nil || board.Config.AnimateDuration == nil {
 		return AppendBoardFrames(frames, board, intervalMS), nil
 	}
-	duration := min(intervalMS, 600)
-	if configured := board.Config.AnimateDuration; configured != nil {
-		if *configured < 0 || *configured > d2target.MaxTweenDurationMS {
-			return nil, fmt.Errorf("sequence animation duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
-		}
-		duration = int(*configured)
+	duration := *board.Config.AnimateDuration
+	if duration < 0 || duration > d2target.MaxTweenDurationMS {
+		return nil, fmt.Errorf("sequence animation duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
 	}
 	var incoming []Frame
 	if len(board.TweenFrames) > 0 {
 		incoming = AppendBoardFrames(nil, board, intervalMS)
 	}
-	sequence, err := sequenceFrames(board, board.Config.AnimateSequence, intervalMS, duration, &p.sequence, incoming)
+	sequence, err := sequenceFrames(board, intervalMS, int(duration), &p.sequence, incoming)
 	if err != nil {
 		return nil, err
+	}
+	if len(sequence) == 0 {
+		return AppendBoardFrames(frames, board, intervalMS), nil
 	}
 	return append(frames, sequence...), nil
 }

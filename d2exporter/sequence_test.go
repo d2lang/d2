@@ -4,12 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/d2lang/d2/d2exporter"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/textmeasure"
 	"github.com/d2lang/util-go/go2"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSequenceTimelines(t *testing.T) {

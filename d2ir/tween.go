@@ -146,29 +146,60 @@ func (c *compiler) compileTweens(root *Map, opts *CompileOptions) {
 		}
 		return 0
 	}
-	if opts.AnimateTweens == nil && getTiming("animate-interval") == 0 {
-		// Sequence playback supplies an implicit interval for animated SVGs.
-		// An authored zero takes precedence, including when the mode is enabled.
-		mode := opts.AnimateSequence
-		if config != nil {
-			if config.getFieldIndexed(d2ast.FlatUnquotedString("animate-interval")) != nil {
-				return
-			}
-			if f := config.getFieldIndexed(d2ast.FlatUnquotedString("animate-sequence")); mode == "" && f != nil && f.Primary() != nil {
-				mode = f.Primary().Value.ScalarString()
-			}
-		}
-		if mode != "trace" && mode != "reveal" {
-			return
-		}
-	}
 	duration := getTiming("animate-duration")
 	if opts.AnimateDuration != nil {
 		duration = *opts.AnimateDuration
 	}
-	if duration > 0 {
-		c.compileStepTweens(root, int(duration))
+	if duration <= 0 {
+		return
 	}
+	if opts.AnimateTweens == nil && getTiming("animate-interval") == 0 {
+		// An explicit zero requests static SVGs. Without an interval, only a
+		// sequence enables an animated SVG and needs incoming value samples.
+		if config != nil && config.getFieldIndexed(d2ast.FlatUnquotedString("animate-interval")) != nil {
+			return
+		}
+		if !c.containsSequenceShape(root, root.lookupField(d2ast.FlatUnquotedString("classes")).Map()) {
+			return
+		}
+	}
+	c.compileStepTweens(root, int(duration))
+}
+
+// Check effective shapes on object and board maps after substitution. An unused
+// class or a sequence-shaped value in vars does not start an animation.
+func (c *compiler) containsSequenceShape(m, classes *Map) bool {
+	if c.stopped() {
+		return false
+	}
+	if f := effectiveProperty(m, classes, d2ast.FlatUnquotedString("shape")); f != nil && f.Primary() != nil &&
+		strings.EqualFold(f.Primary().Value.ScalarString(), d2target.ShapeSequenceDiagram) {
+		return true
+	}
+	for _, f := range m.Fields {
+		child := f.Map()
+		if child == nil || f.Name == nil {
+			continue
+		}
+		if f.Name.IsUnquoted() {
+			name := strings.ToLower(f.Name.ScalarString())
+			if _, boardGroup := d2ast.BoardKeywords[name]; boardGroup {
+				for _, board := range child.Fields {
+					if bm := board.Map(); bm != nil && c.containsSequenceShape(bm, bm.lookupField(d2ast.FlatUnquotedString("classes")).Map()) {
+						return true
+					}
+				}
+				continue
+			}
+			if _, reserved := d2ast.ReservedKeywords[name]; reserved {
+				continue
+			}
+		}
+		if c.containsSequenceShape(child, classes) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *compiler) compileStepTweens(board *Map, duration int) {

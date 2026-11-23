@@ -440,7 +440,7 @@ func assertSingleWASMWarning(t *testing.T, warnings []string, want string) {
 func TestSequencePlaybackWASM(t *testing.T) {
 	const src = "shape: sequence_diagram\na -> b.s: hello"
 	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{
-		FS: map[string]string{"index": src}, Opts: &CompileOptions{AnimateSequence: "trace"},
+		FS: map[string]string{"index": src}, Opts: &CompileOptions{AnimateDuration: go2.Pointer(int64(100))},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -454,11 +454,40 @@ func TestSequencePlaybackWASM(t *testing.T) {
 	if n := strings.Count(svg, "@keyframes d2Transition-"); n < 3 || !strings.Contains(svg, "2000ms") {
 		t.Fatalf("expected a two-second traced sequence, got %d frames", n)
 	}
-	out, err = RenderSVG(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": "vars: {d2-config.animate-sequence: reveal}\n" + src}}))
+	out, err = RenderSVG(wasmJSONArgument(t, CompileRequest{
+		FS:   map[string]string{"index": "vars: {d2-config.animate-duration: 100ms}\n" + src},
+		Opts: &CompileOptions{AnimateDuration: go2.Pointer(int64(0))},
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(out.(string), "@keyframes d2Transition-") != 2 {
-		t.Fatal("expected an empty stage followed by one complete message")
+	if strings.Contains(out.(string), "@keyframes d2Transition-") || !strings.Contains(out.(string), ">hello</text>") {
+		t.Fatal("zero duration should render the complete static sequence")
+	}
+}
+
+func TestSequenceStepRoundTripWASM(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 100ms}}
+shape: sequence_diagram
+client -> api: Request
+steps: {answer: {api -> client: Reply}}`
+	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": source}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "steps.answer"
+	diagram := compiled.(CompileResponse).Diagram
+	out, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &diagram, Opts: &RenderOptions{Target: &target}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames := strings.Split(string(out.([]byte)), `<g style="animation: d2Transition-`)[1:]
+	if len(frames) < 2 || strings.Contains(frames[0], ">Reply</text>") || !strings.Contains(frames[len(frames)-1], ">Reply</text>") {
+		t.Fatal("the selected step should trace its reply")
+	}
+	for _, frame := range frames {
+		if !strings.Contains(frame, ">Request</text>") {
+			t.Fatal("an inherited request disappeared after compile/render JSON round-trip")
+		}
 	}
 }

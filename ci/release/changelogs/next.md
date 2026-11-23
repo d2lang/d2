@@ -1,6 +1,6 @@
 #### Features 🚀
 
-- Play sequence messages in authored order in SVG and GIF. Set `vars.d2-config.animate-sequence` to `trace` to draw arrows or `reveal` to show complete rows. Explicit activation spans follow the messages.
+- A positive `animate-duration` now traces sequence messages in animated SVG and GIF exports. Steps trace added or edited messages in authored order and keep unchanged messages visible. Explicit activation spans follow the messages.
 
 - Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
 

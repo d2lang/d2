@@ -41,24 +41,3 @@ func TestAnimateIntervalConfig(t *testing.T) {
 		})
 	}
 }
-
-func TestAnimateSequenceConfig(t *testing.T) {
-	for _, mode := range []string{"trace", "reveal", "off"} {
-		src := "vars: {mode: " + mode + "; d2-config.animate-sequence: ${mode}}"
-		_, config, err := d2compiler.Compile("seq.d2", strings.NewReader(src), nil)
-		if err != nil || config == nil || config.AnimateSequence != mode {
-			t.Fatalf("mode %s: config = %+v, error = %v", mode, config, err)
-		}
-	}
-	for _, src := range []string{
-		"vars: {d2-config.animate-sequence: true}",
-		"vars: {d2-config.animate-sequence: trace {extra: true}}",
-		"vars: {d2-config.animate-sequence: [reveal]}",
-		"steps: {s: {vars: {d2-config.animate-sequence: trace}}}",
-	} {
-		_, _, err := d2compiler.Compile("seq.d2", strings.NewReader(src), nil)
-		if err == nil || !strings.Contains(err.Error(), "animate-sequence") {
-			t.Errorf("%s: got %v", src, err)
-		}
-	}
-}

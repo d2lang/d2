@@ -59,7 +59,6 @@ type RenderOptions struct {
 
 type CompileOptions struct {
 	RenderOptions
-	AnimateSequence string  `json:"animateSequence"`
 	AnimateDuration *int64  `json:"animateDuration"`
 	Layout          *string `json:"layout"`
 	FontRegular     *[]byte `json:"FontRegular"`

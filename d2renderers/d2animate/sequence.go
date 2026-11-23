@@ -3,6 +3,7 @@ package d2animate
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
@@ -30,6 +31,9 @@ type messagePosition struct {
 type spanPosition struct {
 	d2target.SequenceSpan
 	timeline int
+	// Retained messages may have already opened this activation.
+	retainedY float64
+	retained  bool
 }
 
 type sequencePlan struct {
@@ -51,18 +55,56 @@ func newSequencePlan(board *d2target.Diagram, length int) sequencePlan {
 		edge := &board.Connections[i]
 		edges[edge.ID] = edge
 	}
-	// Sweep intervals once, including overlapping activations on different actors.
+	// Translate authored message indices to playback rows. Retained messages
+	// stay on the canvas and consume no time in their sequence's schedule.
 	openUntil := make([]int, length)
 	for i, timeline := range board.SequenceTimelines {
 		var rows []*d2target.Connection
+		rowIndex := make([]int, len(timeline.Messages))
+		// Only exact span IDs (or their qualified ancestors) can be opened by
+		// an endpoint. An unrelated message between two calls doesn't open a span.
+		retainedY := make(map[string]float64)
+		for _, span := range timeline.Spans {
+			retainedY[span.ShapeID] = math.Inf(-1)
+		}
+		recordEndpoint := func(id string, y float64) {
+			for {
+				if floor, ok := retainedY[id]; ok {
+					retainedY[id] = max(floor, y)
+				}
+				dot := strings.LastIndexByte(id, '.')
+				if dot < 0 {
+					break
+				}
+				id = id[:dot]
+			}
+		}
 		for j, message := range timeline.Messages {
-			plan.messages[message.ConnectionID] = messagePosition{j, message.Reverse}
-			rows = append(rows, edges[message.ConnectionID])
+			edge := edges[message.ConnectionID]
+			if message.Unchanged {
+				rowIndex[j] = -1
+				if len(retainedY) > 0 {
+					recordEndpoint(edge.Src, edge.Route[0].Y)
+					recordEndpoint(edge.Dst, edge.Route[len(edge.Route)-1].Y)
+				}
+				continue
+			}
+			rowIndex[j] = len(rows)
+			plan.messages[message.ConnectionID] = messagePosition{len(rows), message.Reverse}
+			rows = append(rows, edge)
 		}
 		plan.rows = append(plan.rows, rows)
 		for _, span := range timeline.Spans {
-			plan.spans[span.ShapeID] = spanPosition{span, i}
-			openUntil[span.Start.Message] = max(openUntil[span.Start.Message], span.End.Message)
+			span.Start.Message = rowIndex[span.Start.Message]
+			span.End.Message = rowIndex[span.End.Message]
+			if span.End.Message < 0 {
+				// The final endpoint has already been shown; draw the full bar.
+				continue
+			}
+			floor := retainedY[span.ShapeID]
+			plan.spans[span.ShapeID] = spanPosition{span, i, floor, !math.IsInf(floor, -1)}
+			start := max(0, span.Start.Message)
+			openUntil[start] = max(openUntil[start], span.End.Message)
 		}
 	}
 	end := 0
@@ -86,22 +128,14 @@ func sequenceBoardCost(board *d2target.Diagram) int {
 	return objects
 }
 
-// SequenceFrames schedules a single drawable board. Its initial state holds for
-// intervalMS. Messages then start every max(intervalMS, durationMS), whether
-// their arrows are traced or revealed. Independent sequences run concurrently.
-func SequenceFrames(board *d2target.Diagram, mode string, intervalMS, durationMS int) ([]Frame, error) {
-	return sequenceFrames(board, mode, intervalMS, durationMS, new(sequenceBudget), nil)
-}
-
-func sequenceFrames(board *d2target.Diagram, mode string, intervalMS, durationMS int, budget *sequenceBudget, incoming []Frame) ([]Frame, error) {
+// sequenceFrames samples the new and edited messages in authored order.
+// Independent sequence containers run concurrently on the same board clock.
+func sequenceFrames(board *d2target.Diagram, intervalMS, durationMS int, budget *sequenceBudget, incoming []Frame) ([]Frame, error) {
 	if board == nil {
 		return nil, fmt.Errorf("sequence playback requires a diagram")
 	}
-	if len(board.SequenceTimelines) == 0 {
+	if len(board.SequenceTimelines) == 0 || durationMS == 0 {
 		return nil, nil
-	}
-	if mode != "trace" && mode != "reveal" {
-		return nil, fmt.Errorf("unknown sequence playback mode %q", mode)
 	}
 	if intervalMS <= 0 || durationMS < 0 || durationMS > d2target.MaxTweenDurationMS {
 		return nil, fmt.Errorf("invalid sequence playback interval %dms or duration %dms", intervalMS, durationMS)
@@ -116,55 +150,95 @@ func sequenceFrames(board *d2target.Diagram, mode string, intervalMS, durationMS
 	}
 	length := 0
 	for _, timeline := range board.SequenceTimelines {
-		length = max(length, len(timeline.Messages))
+		changed := 0
+		for _, message := range timeline.Messages {
+			if !message.Unchanged {
+				changed++
+			}
+		}
+		length = max(length, changed)
+	}
+	if length == 0 {
+		return nil, nil
 	}
 	slot := max(intervalMS, durationMS)
 	finalHold := 0
-	if durationMS == slot {
-		// Keep the completed final message visible before playback loops.
+	if durationMS == slot && !board.SequenceContinuation {
+		// Allow the completed standalone sequence to be read before it loops.
 		finalHold = intervalMS
 	}
-	// Incoming value samples play on the empty stage. They replace its initial
-	// hold and keep their original timing, even if the value tween is longer.
-	intro := intervalMS
+	incomingEnd := 0
 	if len(incoming) > 0 {
 		last := incoming[len(incoming)-1]
-		intro = last.ElapsedMS + last.DurationMS
+		incomingEnd = last.ElapsedMS + last.DurationMS
+	}
+	// Root sequences introduce their participants before the first send.
+	// A step has already shown the preceding board, so its first edit starts
+	// together with any incoming color, size, or opacity changes.
+	intro := 0
+	if !board.SequenceContinuation {
+		intro = max(intervalMS, incomingEnd)
 	}
 	if intro > math.MaxInt-finalHold || slot > (math.MaxInt-intro-finalHold)/length {
 		return nil, fmt.Errorf("sequence playback duration overflows milliseconds")
+	}
+	total := intro + slot*length + finalHold
+	if incomingEnd > total {
+		finalHold += incomingEnd - total
 	}
 	if length >= maxSequenceFrames {
 		return nil, fmt.Errorf("sequence playback exceeds %d frames", maxSequenceFrames)
 	}
 	plan := newSequencePlan(board, length)
-	flight := durationMS
-	if mode == "reveal" {
-		flight = 0
-	}
 	// Each scheduled sample records when the following frame becomes visible.
 	// Preflight both the number of samples and their retained board size.
 	type sample struct {
 		row, elapsed, duration int
 		progress, gap          float64
 		moving                 bool
+		base                   *d2target.Diagram
 	}
 	var samples []sample
+	// Merge the value and arrow sample boundaries before copying geometry.
+	// A change on either clock must reach the renderer.
+	costs := map[*d2target.Diagram]int{board: sequenceBoardCost(board)}
 	reserved := *budget
-	for _, frame := range incoming {
-		cost := sequenceBoardCost(frame.Diagram)
-		if reserved.frames >= maxSequenceFrames || cost > maxSequenceFrameObjects-reserved.objects {
-			return nil, fmt.Errorf("sequence playback exceeds its frame budget during the incoming value transition")
+	in := 0
+	schedule := func(s sample) error {
+		end := s.elapsed + s.duration
+		for start := s.elapsed; start < end; {
+			next := s
+			next.base = board
+			until := end
+			if in < len(incoming) {
+				f := incoming[in]
+				next.base = f.Diagram
+				until = min(end, f.ElapsedMS+f.DurationMS)
+				next.moving = next.moving || f.TweenSample
+				if until == f.ElapsedMS+f.DurationMS {
+					in++
+				}
+			}
+			next.elapsed, next.duration = start, until-start
+			cost, ok := costs[next.base]
+			if !ok {
+				cost = sequenceBoardCost(next.base)
+				costs[next.base] = cost
+			}
+			if reserved.frames >= maxSequenceFrames || cost > maxSequenceFrameObjects-reserved.objects {
+				return fmt.Errorf("sequence playback exceeds its frame budget")
+			}
+			reserved.frames++
+			reserved.objects += cost
+			samples = append(samples, next)
+			start = until
 		}
-		reserved.frames++
-		reserved.objects += cost
+		return nil
 	}
-	if len(incoming) == 0 {
-		samples = append(samples, sample{row: -1, duration: intro})
+	if err := schedule(sample{row: -1, duration: intro}); err != nil {
+		return nil, err
 	}
 	elapsed := intro
-	objects := sequenceBoardCost(board)
-	remaining := min(maxSequenceFrames-reserved.frames, (maxSequenceFrameObjects-reserved.objects)/objects)
 	add := func(row, duration int, tracing, grow bool) error {
 		if duration == 0 {
 			return nil
@@ -173,9 +247,6 @@ func sequenceFrames(board *d2target.Diagram, mode string, intervalMS, durationMS
 		if tracing || grow {
 			// Same 25 fps sampling and per-transition cap as step interpolation.
 			n = min(d2target.MaxTweenFrames, 1+(duration-1)/40)
-		}
-		if n > remaining-len(samples) {
-			return fmt.Errorf("sequence playback exceeds its frame budget (%d frames available for this board)", remaining)
 		}
 		for i := range n {
 			// Distribute remainders without multiplying a long interval by i.
@@ -188,16 +259,30 @@ func sequenceFrames(board *d2target.Diagram, mode string, intervalMS, durationMS
 			} else if grow {
 				s.gap = fraction
 			}
-			samples = append(samples, s)
+			if tracing && i == n-1 && row == length-1 && board.SequenceContinuation && durationMS == slot {
+				// Use the last sampling period for both the in-flight arrow and
+				// its exact endpoint, as for an ordinary value transition.
+				mid := s
+				mid.duration /= 2
+				if err := schedule(mid); err != nil {
+					return err
+				}
+				s.elapsed += mid.duration
+				s.duration -= mid.duration
+				s.progress, s.moving = 1, false
+			}
+			if err := schedule(s); err != nil {
+				return err
+			}
 		}
 		elapsed += duration
 		return nil
 	}
 	for row := range length {
-		if err := add(row, flight, true, false); err != nil {
+		if err := add(row, durationMS, true, false); err != nil {
 			return nil, err
 		}
-		hold := slot - flight
+		hold := slot - durationMS
 		if row == length-1 {
 			hold += finalHold
 		}
@@ -205,19 +290,12 @@ func sequenceFrames(board *d2target.Diagram, mode string, intervalMS, durationMS
 			return nil, err
 		}
 	}
-	reserved.frames += len(samples)
-	reserved.objects += len(samples) * objects
 	*budget = reserved
-	frames := make([]Frame, 0, len(incoming)+len(samples))
-	for _, f := range incoming {
-		f.Diagram = plan.frame(f.Diagram, -1, 0, 0)
-		f.Continues = true
-		frames = append(frames, f)
-	}
+	frames := make([]Frame, 0, len(samples))
 	for i, s := range samples {
-		d := board
+		d := s.base
 		if s.row != length-1 || s.progress != 1 {
-			d = plan.frame(board, s.row, s.progress, s.gap)
+			d = plan.frame(d, s.row, s.progress, s.gap)
 		}
 		frames = append(frames, Frame{Diagram: d, DurationMS: s.duration, ElapsedMS: s.elapsed, TweenSample: s.moving, Continues: i+1 < len(samples)})
 	}
@@ -235,11 +313,14 @@ func (p *sequencePlan) frame(board *d2target.Diagram, row int, progress, gap flo
 		d.Shapes = make([]d2target.Shape, 0, len(board.Shapes))
 		for _, shape := range board.Shapes {
 			if span, ok := p.spans[shape.ID]; ok {
-				if !momentReached(span.Start, row, progress) {
+				if !span.retained && !momentReached(span.Start, row, progress) {
 					continue
 				}
 				if !momentReached(span.End, row, progress) {
-					y := p.cursorY(span.timeline, row, progress, gap)
+					y := max(float64(shape.Pos.Y), span.retainedY)
+					if row >= 0 && momentReached(span.Start, row, progress) {
+						y = max(y, p.cursorY(span.timeline, row, progress, gap))
+					}
 					shape.Height = min(shape.Height, max(1, int(math.Round(y))-shape.Pos.Y))
 				}
 			}

@@ -3,7 +3,6 @@ package d2ir
 import (
 	"context"
 	"errors"
-	"fmt"
 	"html"
 	"io/fs"
 	"math"
@@ -87,8 +86,6 @@ type compiler struct {
 type CompileOptions struct {
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
-	// AnimateSequence overrides the source sequence playback mode when nonempty.
-	AnimateSequence string
 	// AnimateTweens controls sampling of step transitions. Nil follows
 	// the root animate-interval. False compiles only the authored endpoints.
 	AnimateTweens *bool
@@ -124,9 +121,6 @@ func (c *compiler) errorf(n d2ast.Node, f string, v ...interface{}) {
 func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if opts == nil {
 		opts = &CompileOptions{}
-	}
-	if opts.AnimateSequence != "" && !d2target.ValidSequenceMode(opts.AnimateSequence) {
-		return nil, nil, fmt.Errorf("invalid animate-sequence mode %q (want trace, reveal, or off)", opts.AnimateSequence)
 	}
 	if opts.AnimateDuration != nil && (*opts.AnimateDuration < 0 || *opts.AnimateDuration > d2target.MaxTweenDurationMS) {
 		return nil, nil, errors.New("animate-duration must be between 0 and 600000 milliseconds")
@@ -188,11 +182,10 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if err := c.compileLimitError(); err != nil {
 		return nil, nil, err
 	}
-	// Imports are attached now. For an ordinary diagram, indexed lookups
-	// keep endpoint substitution on its usual path without saving expressions.
+	// Imports are attached now. A sequence can use an implicit interval, so
+	// retain step expressions when a duration may resolve after substitution.
 	c.retainTweenBindings = c.retainTweenBindings &&
-		(opts.AnimateDuration != nil || mayResolveTiming(m, "animate-duration")) &&
-		(opts.AnimateTweens != nil || mayResolveTiming(m, "animate-interval") || opts.AnimateSequence != "" || mayResolveTiming(m, "animate-sequence"))
+		(opts.AnimateDuration != nil || mayResolveTiming(m, "animate-duration"))
 	c.compileSubstitutions(m, nil)
 	c.retainTweenBindings = false
 	if c.contextErr != nil {
@@ -427,20 +420,14 @@ func (c *compiler) validateConfigs(configs *Field) {
 		}
 
 		switch f.Name.ScalarString() {
-		case "animate-duration", "animate-sequence":
+		case "animate-duration":
 			board := ParentMap(ParentMap(configs))
 			if !board.Root() {
 				global := RootMap(board).getFieldIndexed(d2ast.FlatUnquotedString("vars"), configs.Name, f.Name)
 				if global == nil || global.LastRef().AST() != f.LastRef().AST() {
-					c.errorf(f.LastRef().AST(), `"%s" can only be set in the diagram's root vars.d2-config`, f.Name.ScalarString())
+					c.errorf(f.LastRef().AST(), `"animate-duration" can only be set in the diagram's root vars.d2-config`)
 					continue
 				}
-			}
-			if f.Name.ScalarString() == "animate-sequence" {
-				if !d2target.ValidSequenceMode(val) || f.Composite != nil {
-					c.errorf(f.LastRef().AST(), `expected "trace", "reveal", or "off" for "animate-sequence", got %q`, val)
-				}
-				continue
 			}
 			if duration, ok := ParseAnimateInterval(val); !ok || duration > d2target.MaxTweenDurationMS || f.Composite != nil {
 				c.errorf(f.LastRef().AST(), `expected "animate-duration" between 0ms and 10m in whole milliseconds, got %q`, val)

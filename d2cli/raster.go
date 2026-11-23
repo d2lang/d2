@@ -591,8 +591,10 @@ func renderGIFWithSession(
 	}
 	type gifSegment struct {
 		d2animate.Frame
-		count int
+		count    int
+		viewport *image.Rectangle
 	}
+	viewports := sequenceGIFViewports(diagram)
 	var timeline []gifSegment
 	totalFrames := 0
 	var playback d2animate.Playback
@@ -618,7 +620,12 @@ func renderGIFWithSession(
 				return summary, fmt.Errorf("GIF animation exceeds the %d-frame limit", gifMaxFrames)
 			}
 			summary.delays = xgif.AppendFrameDelays(summary.delays, delay, count)
-			timeline = append(timeline, gifSegment{segment, count})
+			viewport := viewports[board]
+			if viewport != nil {
+				tl, br := segment.Diagram.BoundingBox()
+				*viewport = viewport.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
+			}
+			timeline = append(timeline, gifSegment{segment, count, viewport})
 			totalFrames += count
 		}
 	}
@@ -650,6 +657,10 @@ func renderGIFWithSession(
 		}
 		if needsPreview {
 			summary.previewSVG = sourceSVG
+		}
+		if v := segment.viewport; v != nil && !v.Empty() {
+			framed := board.WithFrameBounds(d2target.Point{X: v.Min.X, Y: v.Min.Y}, d2target.Point{X: v.Max.X, Y: v.Max.Y})
+			board = &framed
 		}
 		frameOptions := gifFrameOptions(0, totalFrames)
 		document, err := buildSceneWithResourcesAndLinks(ctx, board, boardOpts, assetOptions, fontOptions, linkBudget, sceneAdmissionLimitsForFrame(frameOptions))
@@ -713,6 +724,40 @@ func renderGIFWithSession(
 		}
 	}
 	return summary, nil
+}
+
+// Related sequence boards share a canvas so GIF centering does not move the
+// participants when an edited sequence grows. Independent boards retain their
+// own viewports. Call after validating the tree.
+func sequenceGIFViewports(root *d2target.Diagram) map[*d2target.Diagram]*image.Rectangle {
+	viewports := make(map[*d2target.Diagram]*image.Rectangle)
+	link := func(base, board *d2target.Diagram) {
+		if !board.SequenceContinuation {
+			return
+		}
+		if viewports[base] == nil {
+			viewports[base] = new(image.Rectangle)
+		}
+		viewports[board] = viewports[base]
+	}
+	var walk func(*d2target.Diagram)
+	walk = func(board *d2target.Diagram) {
+		for _, layer := range board.Layers {
+			walk(layer)
+		}
+		for _, scenario := range board.Scenarios {
+			link(board, scenario)
+			walk(scenario)
+		}
+		base := board
+		for _, step := range board.Steps {
+			link(base, step)
+			walk(step)
+			base = step
+		}
+	}
+	walk(root)
+	return viewports
 }
 
 func gifDocumentFrameBounds(document *d2scene.Document) (image.Rectangle, error) {

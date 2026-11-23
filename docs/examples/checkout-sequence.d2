@@ -1,7 +1,5 @@
 vars: {
   d2-config: {
-    animate-sequence: trace
-    animate-interval: 1s
     animate-duration: 650ms
     layout-engine: tala
     pad: 24
@@ -34,5 +32,10 @@ inventory: Inventory {class: participant}
 
 checkout.session -> orders.confirm: Place order {class: call}
 orders.confirm -> inventory.reserve: Reserve stock {class: call}
-inventory.reserve -> orders.confirm: Stock reserved {class: reply}
-orders.confirm -> checkout.session: Order confirmed {class: reply}
+
+steps: {
+  confirmation: {
+    inventory.reserve -> orders.confirm: Stock reserved {class: reply}
+    orders.confirm -> checkout.session: Order confirmed {class: reply}
+  }
+}

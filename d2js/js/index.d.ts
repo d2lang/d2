@@ -87,10 +87,8 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
-  /** Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
+  /** Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps, and to trace new or edited sequence messages (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
   animateDuration?: number;
-  /** Play sequence messages in authored order. Overrides vars.d2-config.animate-sequence at compile time. */
-  animateSequence?: "trace" | "reveal" | "off";
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";
   /** A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used. */
@@ -123,7 +121,7 @@ export interface CompileResponse {
 }
 
 export interface Diagram {
-  config?: RenderOptions & Pick<CompileOptions, "animateDuration" | "animateSequence">;
+  config?: RenderOptions & Pick<CompileOptions, "animateDuration">;
   name: string;
   /**
    * See docs on the same field in d2graph to understand what it means.
@@ -140,13 +138,15 @@ export interface Diagram {
   steps?: (Diagram | undefined)[];
   /** Message and activation order for each independently laid-out sequence diagram. */
   sequenceTimelines?: SequenceTimeline[];
+  /** This board continues a previously laid-out sequence. */
+  sequenceContinuation?: boolean;
   /** Intermediate samples of this step’s incoming variable tween. */
   tweenFrames?: Diagram[];
   tweenDurationMS?: number;
 }
 
 export interface SequenceTimeline {
-  messages: { connectionID: string; reverse?: boolean }[];
+  messages: { connectionID: string; reverse?: boolean; unchanged?: boolean }[];
   spans?: { shapeID: string; start: SequenceMoment; end: SequenceMoment }[];
 }
 

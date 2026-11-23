@@ -10,6 +10,8 @@ type SequenceTimeline struct {
 }
 
 type SequenceMessage struct {
+	// Unchanged messages are already on stage when a derived board begins.
+	Unchanged    bool   `json:"unchanged,omitempty"`
 	ConnectionID string `json:"connectionID"`
 	// Reverse follows the route from the last point to the first for a <- edge.
 	Reverse bool `json:"reverse,omitempty"`

@@ -33,8 +33,6 @@ type CompileOptions struct {
 	UTF16Pos bool
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
-	// AnimateSequence overrides the source sequence playback mode when nonempty.
-	AnimateSequence string
 	// AnimateTweens controls sampling of step transitions. Nil follows
 	// the root animate-interval. False compiles only the authored endpoints.
 	AnimateTweens *bool
@@ -76,7 +74,6 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 		UTF16Pos:             opts.UTF16Pos,
 		AnimateTweens:        opts.AnimateTweens,
 		AnimateDuration:      opts.AnimateDuration,
-		AnimateSequence:      opts.AnimateSequence,
 		MaxVariableExpansion: opts.MaxVariableExpansion,
 		MaxGlobExpansion:     opts.MaxGlobExpansion,
 		MaxEdgeExpansion:     opts.MaxEdgeExpansion,
@@ -108,16 +105,11 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 	if err != nil {
 		return nil, nil, err
 	}
-	if opts.AnimateDuration != nil || opts.AnimateSequence != "" {
+	if opts.AnimateDuration != nil {
 		if config == nil {
 			config = &d2target.Config{}
 		}
-		if opts.AnimateDuration != nil {
-			config.AnimateDuration = opts.AnimateDuration
-		}
-		if opts.AnimateSequence != "" {
-			config.AnimateSequence = opts.AnimateSequence
-		}
+		config.AnimateDuration = opts.AnimateDuration
 	}
 	if opts.Context != nil {
 		if err := opts.Context.Err(); err != nil {
@@ -1884,10 +1876,6 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 
 	config := &d2target.Config{}
 
-	f = configMap.GetField(d2ast.FlatUnquotedString("animate-sequence"))
-	if f != nil {
-		config.AnimateSequence = f.Primary().Value.ScalarString()
-	}
 	f = configMap.GetField(d2ast.FlatUnquotedString("animate-duration"))
 	if f != nil {
 		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())

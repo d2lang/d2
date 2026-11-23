@@ -49,7 +49,6 @@ type watcherOpts struct {
 	renderOpts      d2svg.RenderOpts
 	animateInterval *int64
 	animateDuration *int64
-	animateSequence string
 	host            string
 	port            string
 	inputPath       string
@@ -456,7 +455,7 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 			boardPath = strings.Split(w.boardPath, string(os.PathSeparator))
 		}
 		renderOpts := w.renderOpts
-		svg, _, err := compile(ctx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.animateSequence, w.inputPath, w.outputPath, boardPath, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, true)
+		svg, _, err := compile(ctx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.inputPath, w.outputPath, boardPath, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, true)
 		w.boardpathMu.Unlock()
 		errs := ""
 		if err != nil {

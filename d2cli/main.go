@@ -114,8 +114,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateSequenceFlag := ms.Opts.String("D2_ANIMATE_SEQUENCE", "animate-sequence", "", "", "play sequence messages in authored order: trace, reveal, or off. Also configurable through vars.d2-config.animate-sequence.")
-	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to interpolate step values or trace a sequence message. Zero makes changes instant. Also configurable through vars.d2-config.animate-duration.")
+	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to interpolate step values and trace new or edited sequence messages (0 disables interpolation and tracing). Also configurable through vars.d2-config.animate-duration.")
 	if err != nil {
 		return err
 	}
@@ -318,9 +317,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
 		}
 	}
-	if (*animateSequenceFlag != "" || ms.Opts.Flags.Changed("animate-sequence")) && !d2target.ValidSequenceMode(*animateSequenceFlag) {
-		return xmain.UsageErrorf("--animate-sequence must be trace, reveal, or off")
-	}
 	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
 		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
 	}
@@ -423,7 +419,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			renderOpts:      renderOpts,
 			animateInterval: animateIntervalFlag,
 			animateDuration: animateDurationFlag,
-			animateSequence: *animateSequenceFlag,
 			host:            *hostFlag,
 			port:            *portFlag,
 			inputPath:       inputPath,
@@ -464,7 +459,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx, cancel := timelib.WithTimeout(ctx, time.Minute*2)
 	defer cancel()
 
-	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, *animateSequenceFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, false)
+	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, false)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
@@ -487,7 +482,7 @@ func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
 	return nil
 }
 
-func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, animateSequence, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
+func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
 	// Use ELK layout for ascii outputs when layout is dagre or unspecified
 	if ext == TXT {
 		if layout == nil || *layout == "dagre" {
@@ -524,7 +519,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		FS:              fs,
 		LayoutReuse:     true,
 		AnimateDuration: animateDurationFlag,
-		AnimateSequence: animateSequence,
 	}
 
 	// With no SVG interval override, compilation reads the interval from d2-config.

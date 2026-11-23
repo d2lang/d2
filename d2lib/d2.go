@@ -23,8 +23,6 @@ import (
 
 type CompileOptions struct {
 	UTF16Pos bool
-	// AnimateSequence overrides vars.d2-config.animate-sequence when nonempty.
-	AnimateSequence string
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
 	// AnimateTweens controls sampling of step transitions. Nil follows
@@ -104,7 +102,6 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 		UTF16Pos:             compileOpts.UTF16Pos,
 		AnimateTweens:        compileOpts.AnimateTweens,
 		AnimateDuration:      compileOpts.AnimateDuration,
-		AnimateSequence:      compileOpts.AnimateSequence,
 		MaxVariableExpansion: compileOpts.MaxVariableExpansion,
 		MaxGlobExpansion:     compileOpts.MaxGlobExpansion,
 		MaxEdgeExpansion:     compileOpts.MaxEdgeExpansion,
@@ -132,7 +129,7 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 	}
 
 	var playback *d2target.Config
-	if config != nil && config.AnimateSequence != "" && config.AnimateSequence != "off" {
+	if config != nil && config.AnimateDuration != nil && *config.AnimateDuration > 0 {
 		playback = config
 	}
 	d, _, err := compileBoard(ctx, g, compileOpts, renderOpts, nil, false, playback)
@@ -259,7 +256,9 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 
 	if playback != nil {
 		d.SequenceTimelines = d2exporter.SequenceTimelines(g)
-		if len(d.SequenceTimelines) > 0 {
+		// A value-only edit to participants can animate before the first message exists.
+		d.SequenceContinuation = len(d.SequenceTimelines) == 0 && len(frames) > 0 && hasSequenceShape(g)
+		if len(d.SequenceTimelines) > 0 || d.SequenceContinuation {
 			// A directly selected child board can also play on its own.
 			d.Config = playback
 		}
@@ -281,15 +280,19 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 		if err != nil {
 			return nil, nil, err
 		}
+		inheritSequenceMessages(d, ld, l)
 		d.Scenarios = append(d.Scenarios, ld)
 	}
 	previous := geometry
+	previousBoard := d
 	for i, l := range g.Steps {
 		ld, stepGeometry, err := compileBoard(ctx, l, compileOpts, renderOpts, previous, i+1 < len(g.Steps), playback)
 		if err != nil {
 			return nil, nil, err
 		}
+		inheritSequenceMessages(previousBoard, ld, l)
 		d.Steps = append(d.Steps, ld)
+		previousBoard = ld
 		previous = stepGeometry
 	}
 	return d, geometry, nil
