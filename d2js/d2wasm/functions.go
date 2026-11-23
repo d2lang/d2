@@ -603,7 +603,7 @@ func renderSingleBoard(opts *d2svg.RenderOpts, forceAppendix bool, ruler *textme
 		return nil, &WASMError{Message: fmt.Sprintf("render failed: %s", err.Error()), Code: 500}
 	}
 	if forceAppendix {
-		out = appendix.Append(diagram, opts, ruler, out)
+		return appendix.AppendWithError(diagram, opts, ruler, out)
 	}
 	return out, nil
 }

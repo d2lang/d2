@@ -4,7 +4,6 @@ package appendix
 import (
 	"fmt"
 	"image"
-	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -63,7 +62,15 @@ func FindViewboxSlice(svg []byte) []string {
 	return strings.Split(viewboxRaw, " ")
 }
 
+// Append adds footnotes to the SVG, returning nil if rendering fails.
 func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) []byte {
+	out, _ := AppendWithError(diagram, renderOpts, ruler, in)
+	return out
+}
+
+// AppendWithError adds footnotes and reports errors such as an appendix
+// exceeding the scaled SVG dimension range.
+func AppendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) ([]byte, error) {
 	svg := string(in)
 	tl, br := diagram.BoundingBox()
 	isFrame := strings.HasPrefix(svg, "<g ")
@@ -72,7 +79,7 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		var ok bool
 		frame, ok = svgframe.Read(in)
 		if !ok {
-			return in
+			return in, nil
 		}
 		// Keep the separator below rendered content, including a tall legend.
 		br.Y = max(br.Y, frame.ViewBox.Max.Y-PAD_TOP)
@@ -81,7 +88,7 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	appendix, w, h := generateAppendix(diagram, ruler, tl, br)
 
 	if h == 0 {
-		return in
+		return in, nil
 	}
 
 	separatorEl := d2themes.NewThemableElement("line", nil)
@@ -100,7 +107,7 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		var ok bool
 		svg, ok = appendToFrame(svg, appendix, frame.ViewBox, tl, br, w, h)
 		if !ok {
-			return in
+			return in, nil
 		}
 	} else {
 		var salt *string
@@ -110,18 +117,21 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		var err error
 		diagramHash, err = diagram.HashID(salt)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		scale := 1.0
 		if renderOpts != nil && renderOpts.Scale != nil {
 			scale = *renderOpts.Scale
 		}
-		svg = appendToStandaloneSVG(svg, appendix, w, h, scale)
+		svg, err = appendToStandaloneSVG(svg, appendix, w, h, scale)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return []byte(numberIcons(diagram, diagramHash, svg))
+	return []byte(numberIcons(diagram, diagramHash, svg)), nil
 }
 
-func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) string {
+func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) (string, error) {
 	// match 1st two viewboxes, 1st is outer fit-to-screen viewbox="0 0 innerWidth innerHeight"
 	viewboxMatches := viewboxRegex.FindAllStringSubmatch(svg, 2)
 	viewboxMatch := viewboxMatches[1]
@@ -147,8 +157,14 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) string
 	outerEnd := svgRegex.FindStringIndex(svg)[1]
 	outer, inner := svg[:outerEnd], svg[outerEnd:]
 	outer = strings.Replace(outer, viewboxMatches[0][0], newOuterViewbox, 1)
-	outer = widthRegex.ReplaceAllString(outer, svglib.RenderAttributes(svglib.FloatAttr("width", math.Ceil(scale*float64(viewboxWidth)))))
-	outer = heightRegex.ReplaceAllString(outer, svglib.RenderAttributes(svglib.FloatAttr("height", math.Ceil(scale*float64(viewboxHeight)))))
+	if widthRegex.MatchString(outer) {
+		dimensions, err := svglib.ScaledDimensions(viewboxWidth, viewboxHeight, &scale)
+		if err != nil {
+			return "", err
+		}
+		outer = heightRegex.ReplaceAllString(outer, "")
+		outer = widthRegex.ReplaceAllString(outer, dimensions)
+	}
 	inner = strings.Replace(inner, viewboxMatch[0], newViewbox, 1)
 	newWidth := svglib.RenderAttributes(svglib.IntAttr("width", viewboxWidth))
 	newHeight := svglib.RenderAttributes(svglib.IntAttr("height", viewboxHeight))
@@ -184,7 +200,7 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) string
 	}
 
 	closingIndex := strings.LastIndex(svg, "</svg></svg>")
-	return svg[:closingIndex] + appendix + svg[closingIndex:]
+	return svg[:closingIndex] + appendix + svg[closingIndex:], nil
 }
 
 func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {

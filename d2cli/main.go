@@ -1071,7 +1071,10 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.Rend
 		assetResolver.CloseIdleConnections()
 	}
 	if forceAppendix {
-		svg = appendix.Append(diagram, renderOpts, ruler, svg)
+		svg, err = appendix.AppendWithError(diagram, renderOpts, ruler, svg)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 
 	out := svg
@@ -1218,7 +1221,10 @@ func appendRasterPreview(diagram *d2target.Diagram, opts d2svg.RenderOpts, ruler
 		return nil, nil
 	}
 	renderOpts := rasterRenderOptions(opts)
-	preview := appendix.Append(diagram, &renderOpts, ruler, sourceSVG)
+	preview, err := appendix.AppendWithError(diagram, &renderOpts, ruler, sourceSVG)
+	if err != nil {
+		return nil, err
+	}
 	if int64(len(preview)) > rasterPreviewMaxOutputBytes {
 		return nil, fmt.Errorf("raster watch preview output bytes %d exceed limit %d", len(preview), rasterPreviewMaxOutputBytes)
 	}

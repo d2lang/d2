@@ -92,3 +92,16 @@ func TestIsometricSourceAppendix(t *testing.T) {
 		t.Fatalf("explicitly disabling the source appendix: %v", err)
 	}
 }
+
+func TestSourceAppendixScaleOverflow(t *testing.T) {
+	// A bare 60px box at this scale fits in an SVG dimension. Its footnotes
+	// push it past the platform's integer limit.
+	source := fmt.Sprintf("vars: {d2-config: {pad: 0; scale: %g; force-appendix: true}}\na: {width: 60; height: 60; tooltip: A long explanation in the appendix}", float64(math.MaxInt)/128)
+	if _, err := imageCLI(t, t.TempDir(), source, "--force-appendix=false", "--stdout-format=svg", "-"); err != nil {
+		t.Fatalf("expected the diagram to fit without its appendix: %v", err)
+	}
+	out, err := imageCLI(t, t.TempDir(), source, "--stdout-format=svg", "-")
+	if len(out) != 0 || err == nil || !strings.Contains(err.Error(), "invalid dimensions") {
+		t.Fatalf("got %d bytes, %v; want an SVG dimension error", len(out), err)
+	}
+}
