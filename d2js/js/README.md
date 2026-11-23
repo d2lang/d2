@@ -69,6 +69,30 @@ try {
 Reuse the same instance for multiple diagrams before calling `dispose()`. Pass
 options as the second argument, for example `d2.renderSVG('x -> y', { sketch: true })`.
 
+### Open in Playground
+
+Use `d2.encode(source)` to put a diagram into a shareable Playground URL.
+It compresses the UTF-8 source with raw DEFLATE and encodes the result as padded,
+URL-safe Base64.
+
+```javascript
+import { D2 } from '@d2lang/d2';
+
+const d2 = new D2();
+try {
+  const url = new URL('https://play.d2lang.com/');
+  url.searchParams.set('script', await d2.encode('client -> server'));
+  console.log(url.href);
+} finally {
+  await d2.dispose();
+}
+```
+
+To read a link, get its `script` value with `url.searchParams.get('script')`.
+When present, pass that value to `await d2.decode(encoded)` to recover the original source.
+You can set other parameters on the same URL, such as `sketch=1` or `theme=300`.
+From the command line, `d2 play diagram.d2` opens a file directly in the Playground.
+
 ### Imports
 
 In order to support [imports](https://d2lang.com/tour/imports), a mapping of D2 file paths to their content can be passed to the compiler.

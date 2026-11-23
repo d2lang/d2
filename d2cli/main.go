@@ -80,6 +80,10 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
+	allowLocalFilesFlag, err := ms.Opts.Bool("D2_ALLOW_LOCAL_FILES", "allow-local-files", "", true, "allow the diagram to read local files: imports, and images bundled into or rendered in the output. Disable it to render untrusted diagrams")
+	if err != nil {
+		return err
+	}
 	forceAppendixFlag, err := ms.Opts.Bool("D2_FORCE_APPENDIX", "force-appendix", "", false, "add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG. PNG exports include an appendix by default. Also configurable through vars.d2-config.force-appendix.")
 	if err != nil {
 		return err
@@ -190,6 +194,14 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return nil
 	}
 	ctx = netpolicy.WithPolicy(ctx, netpolicy.Policy{AllowPrivateNetworks: *allowPrivateNetworkFlag})
+	// The CLI is a trusted local application and, by default, preserves its
+	// historical ability to read arbitrary host files. --allow-local-files=false
+	// denies every local-file access, for untrusted diagrams.
+	localFiles := localfile.Unrestricted()
+	if !*allowLocalFilesFlag {
+		localFiles = localfile.Policy{}
+	}
+	ctx = withLocalFiles(ctx, localFiles)
 	isometricFlag, err = resolveIsometricFlag(ms)
 	if err != nil {
 		return xmain.UsageErrorf("%v", err)
@@ -447,9 +459,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx, cancel := timelib.WithTimeout(ctx, time.Minute*2)
 	defer cancel()
 
-	// The CLI is a trusted local application and intentionally preserves its
-	// historical ability to import arbitrary host files.
-	_, written, err := compile(ctx, ms, localfile.Unrestricted(), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, false)
+	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, false)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)

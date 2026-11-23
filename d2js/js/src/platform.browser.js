@@ -11,12 +11,20 @@ export async function loadFile(path) {
 }
 
 export async function createWorker(workerURL) {
-  if (workerURL === undefined) {
-    const blob = new Blob([wasmExecJs, workerScript], {
-      type: "text/javascript;charset=utf-8",
-    });
-    workerURL = URL.createObjectURL(blob);
+  if (workerURL !== undefined) {
+    const url = typeof workerURL === "string" ? workerURL : workerURL.href;
+    return { worker: new Worker(url, { type: "module" }) };
   }
-  const url = typeof workerURL === "string" ? workerURL : workerURL.href;
-  return new Worker(url, { type: "module" });
+
+  const blob = new Blob([wasmExecJs, workerScript], {
+    type: "text/javascript;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const releaseURL = () => URL.revokeObjectURL(url);
+  try {
+    return { worker: new Worker(url, { type: "module" }), releaseURL };
+  } catch (error) {
+    releaseURL();
+    throw error;
+  }
 }

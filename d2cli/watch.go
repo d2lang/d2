@@ -445,10 +445,10 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 			recompiledPrefix = "re"
 		}
 
-		// Watch mode is a trusted local CLI workflow, so it may follow imports
-		// anywhere on the host filesystem. Keep that opt-in explicit while using
-		// localfile.Policy to reject directories and other special files.
-		fs := trackedFS{localFiles: localfile.Unrestricted()}
+		// Watch mode is a trusted local CLI workflow, so unless
+		// --allow-local-files=false, it may follow imports anywhere on the host
+		// filesystem. localfile.Policy rejects directories and other special files.
+		fs := trackedFS{localFiles: localFilesFromContext(ctx)}
 		w.boardpathMu.Lock()
 		var boardPath []string
 		if w.boardPath != "" {

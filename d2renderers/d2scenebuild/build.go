@@ -663,13 +663,13 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		root.Children = append(root.Children, overlay)
 	}
 
-	connectionMask, err := b.buildConnectionMask(d2scene.Box{
-		X: float64(left), Y: float64(top), Width: float64(width), Height: float64(height),
-	})
+	viewBox := d2scene.Box{X: float64(left), Y: float64(top), Width: float64(width), Height: float64(height)}
+	connectionMask, err := b.buildConnectionMask(viewBox)
 	if err != nil {
 		return nil, err
 	}
 	b.connectionMask = connectionMask
+	crossings := d2target.ConnectionCrossings(b.diagram.Connections, b.idToShape, b.options.Sketch, d2themes.PaintVisibleIn(b.theme))
 
 	objects := make([]diagramObject, 0, len(b.diagram.Shapes)+len(b.diagram.Connections))
 	for i, targetShape := range b.diagram.Shapes {
@@ -705,7 +705,8 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		if object.shape != nil {
 			node, err = b.buildShape(*object.shape)
 		} else {
-			node, err = b.buildConnection(*object.connection)
+			gaps := crossings[object.order-len(b.diagram.Shapes)]
+			node, err = b.buildConnection(*object.connection, crossingMask(viewBox, gaps))
 		}
 		if err != nil {
 			return nil, err

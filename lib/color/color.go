@@ -19,6 +19,41 @@ func IsThemeColor(colorString string) bool {
 	return themeColorRegex.MatchString(colorString)
 }
 
+// PaintVisibleThroughout reports whether a stroke can be visible along its
+// entire length. A fade through an isolated transparent stop still qualifies.
+// Gradients that hold zero alpha over an interval use plain crossings because
+// a route-wide mask could otherwise erase a line beneath invisible paint.
+func PaintVisibleThroughout(raw string) bool {
+	if raw == "" || strings.EqualFold(raw, None) {
+		return false
+	}
+	if !IsGradient(raw) {
+		c, err := csscolorparser.Parse(raw)
+		return err != nil || c.A > 0
+	}
+	gradient, err := ParseGradient(raw)
+	if err != nil {
+		return true
+	}
+	previous, previousClear := 0.0, true
+	for i, stop := range gradient.ColorStops {
+		c, err := csscolorparser.Parse(stop.Color)
+		if err != nil {
+			return true
+		}
+		offset, err := stop.Offset(i, len(gradient.ColorStops), previous)
+		if err != nil {
+			return true
+		}
+		clear := c.A == 0
+		if clear && ((previousClear && offset > previous) || (i == len(gradient.ColorStops)-1 && offset < 1)) {
+			return false
+		}
+		previous, previousClear = offset, clear
+	}
+	return true
+}
+
 func Darken(colorString string) (string, error) {
 	if IsThemeColor(colorString) {
 		switch {
