@@ -796,6 +796,7 @@ func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, s
 		deleteBendsWith(g, opts.LayeredOptions, mrTreeRoutes, nil, &scratch.bendGrids)
 	}
 	deconflictSelfLoopLabels(g)
+	clearSelfLoopLabelBends(g)
 
 	return nil
 }

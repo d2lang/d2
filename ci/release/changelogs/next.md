@@ -100,6 +100,7 @@
   - Cap decompressed URL-encoded D2 input at 16 MiB. [#2902](https://github.com/d2lang/d2/pull/2902)
   - Bound image references, locators, fetched and decoded bytes, cached data, and
     final output during SVG image bundling. [#2911](https://github.com/d2lang/d2/pull/2911)
+- ELK moves a self-loop label beside the edge when it would cover a bend and there is room.
 - elk: fix Mr. Tree arrows doubling back through their target shapes and shortcut edges cutting through intervening nodes. [#2981](https://github.com/d2lang/d2/pull/2981)
 - rendering:
   - Keep nested isometric platforms visible when the diagram has a root border or fill pattern.
