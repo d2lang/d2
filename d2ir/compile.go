@@ -369,6 +369,11 @@ func ParseAnimateInterval(value string) (int64, bool) {
 	if err != nil || duration < 0 || duration%time.Millisecond != 0 {
 		return 0, false
 	}
+	// ParseDuration truncates below a nanosecond. Only an actual zero
+	// should turn an animation off.
+	if duration == 0 && strings.ContainsAny(value, "123456789") {
+		return 0, false
+	}
 	return duration.Milliseconds(), true
 }
 
