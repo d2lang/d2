@@ -100,6 +100,26 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}, nil
 }
 
+// A crossing only cuts the back connection's stroke. Labels, markers and the
+// foreground connection keep their own paint and opacity.
+func crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap) *d2scene.Mask {
+	if len(gaps) == 0 {
+		return nil
+	}
+	root := d2scene.NewNode(nil)
+	root.Children = append(root.Children, d2scene.NewNode(d2scene.Rect{
+		Box: viewBox, Fill: d2scene.SolidPaint{Color: color.NRGBA{R: 255, G: 255, B: 255, A: 255}},
+	}))
+	for _, gap := range gaps {
+		root.Children = append(root.Children, d2scene.NewNode(d2scene.Ellipse{
+			Center:  d2scene.Point{X: gap.Center.X, Y: gap.Center.Y},
+			RadiusX: gap.Radius, RadiusY: gap.Radius,
+			Fill: d2scene.SolidPaint{Color: color.NRGBA{A: 255}},
+		}))
+	}
+	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}
+}
+
 func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth, labelHeight int, shapeBox *geo.Box, strokeWidth int) (d2scene.Box, bool) {
 	effectiveStrokeWidth := float64(strokeWidth)
 	var box d2scene.Box
