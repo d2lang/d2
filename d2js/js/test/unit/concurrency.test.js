@@ -74,13 +74,13 @@ for (const [name, isNode] of [
       const { d2, worker } = createD2(isNode);
 
       const first = d2.compile("first");
-      const second = d2.version();
+      const second = d2.renderSVG("second");
       await waitForRequests(worker, 2);
 
       const [firstRequest, secondRequest] = worker.messages;
       expect(firstRequest.id).not.toBe(secondRequest.id);
       expect(firstRequest.type).toBe("compile");
-      expect(secondRequest.type).toBe("version");
+      expect(secondRequest.type).toBe("renderSVG");
 
       worker.emitMessage({
         id: secondRequest.id,

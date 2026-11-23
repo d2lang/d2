@@ -1,5 +1,11 @@
 import { createWorker, isNode, loadFile } from "./platform.js";
 
+function compileRequest(input, options) {
+  return typeof input === "string"
+    ? { fs: { index: input }, options }
+    : { ...input, options: { ...options, ...input.options } };
+}
+
 export class D2 {
   constructor(options = {}) {
     this.nextRequestId = 0;
@@ -112,11 +118,11 @@ export class D2 {
   }
 
   async compile(input, options = {}) {
-    const request =
-      typeof input === "string"
-        ? { fs: { index: input }, options }
-        : { ...input, options: { ...options, ...input.options } };
-    return this.sendMessage("compile", request);
+    return this.sendMessage("compile", compileRequest(input, options));
+  }
+
+  async renderSVG(input, options = {}) {
+    return this.sendMessage("renderSVG", compileRequest(input, options));
   }
 
   async render(diagram, options = {}) {
