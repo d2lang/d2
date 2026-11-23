@@ -349,8 +349,8 @@
       "underline": false,
       "labelWidth": 33,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_MIDDLE_CENTER",
-      "labelPercentage": 0,
+      "labelPosition": "UNLOCKED_BOTTOM",
+      "labelPercentage": 0.5,
       "link": "",
       "route": [
         {
