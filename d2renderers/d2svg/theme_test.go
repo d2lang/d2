@@ -2,9 +2,10 @@ package d2svg
 
 import (
 	"bytes"
-	"github.com/d2lang/d2/d2target"
 	"strings"
 	"testing"
+
+	"github.com/d2lang/d2/d2target"
 )
 
 func TestPruneThemeCSS(t *testing.T) {
@@ -109,7 +110,7 @@ func TestCustomStylesheetKeepsGeneratedResources(t *testing.T) {
 		t.Fatal("custom styles lost the generated label mask or code stylesheet")
 	}
 	var styles bytes.Buffer
-	if err := WriteAnimationStyles(&styles, hash, "<rect/>", diagram, &RenderOpts{}); err != nil {
+	if err := WriteAnimationStyles(&styles, hash, "<rect/>", diagram, RenderOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(styles.String(), ".fill-B1{") {

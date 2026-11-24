@@ -112,7 +112,7 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	}
 	svgsStr := source.String()
 
-	if err := d2svg.WriteAnimationStyles(buf, diagramHash, svgsStr, rootDiagram, &renderOpts); err != nil {
+	if err := d2svg.WriteAnimationStyles(buf, diagramHash, svgsStr, rootDiagram, renderOpts); err != nil {
 		return nil, err
 	}
 

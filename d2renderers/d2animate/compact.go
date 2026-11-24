@@ -447,7 +447,7 @@ func (g *graphics) write(b *strings.Builder, n *paintNode) {
 }
 
 func shareFrameGraphics(frames [][]byte, hash string) (defs []byte, reduced [][]byte) {
-	if len(frames) < 2 || d2svg.BaseStylesheet != defaultBaseStylesheet {
+	if len(frames) < 2 || !d2svg.UsesDefaultStylesheet() {
 		return nil, frames
 	}
 	// Use the same diagram namespace in a shorter radix for frequently used IDs.

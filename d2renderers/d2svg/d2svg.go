@@ -66,6 +66,7 @@ var LinkIcon string
 //go:embed style.css
 var defaultBaseStylesheet string
 
+// BaseStylesheet supplies the shared CSS for rendered SVG diagrams.
 var BaseStylesheet = defaultBaseStylesheet
 
 // UsesDefaultStylesheet reports whether generated markup can be optimized
@@ -3347,7 +3348,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 
 // WriteAnimationStyles embeds the font faces and theme rules used by a complete
 // animation. Source includes the shared definitions and all rendered frames.
-func WriteAnimationStyles(buf *bytes.Buffer, diagramHash, source string, diagram *d2target.Diagram, opts *RenderOpts) error {
+func WriteAnimationStyles(buf *bytes.Buffer, diagramHash, source string, diagram *d2target.Diagram, opts RenderOpts) error {
 	stylesheet, err := ThemeCSS(diagramHash, opts.ThemeID, opts.DarkThemeID, opts.ThemeOverrides, opts.DarkThemeOverrides)
 	if err != nil {
 		return err
