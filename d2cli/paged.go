@@ -150,7 +150,7 @@ func (r *pagedRenderer) render(diagram *d2target.Diagram, wantsPreview bool) (*p
 	if err != nil {
 		return nil, err
 	}
-	document, err := buildSceneWithResourcesAndLinks(r.ctx, &board, renderOpts, r.assets, r.fonts, r.linkBudget, sceneAdmissionLimitsForFrame(frameOptions))
+	document, err := buildSceneWithResourcesAndLinks(r.ctx, &board, renderOpts, r.assets, r.fonts, r.linkBudget, sceneOptionsForFrame(frameOptions))
 	if err != nil {
 		return nil, fmt.Errorf("paged board %d scene: %w", r.renderedBoards, err)
 	}

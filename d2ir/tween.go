@@ -306,7 +306,7 @@ func (c *compiler) sampleStep(board *Map, changes stepChanges, duration int) {
 		}
 	}
 	outerVars := tweenVarScopes(ParentMap(board))
-	n := min(d2target.MaxTweenFrames, (duration+39)/40)
+	n := d2target.TweenFrameCount(duration)
 	for i := 0; i < n; i++ {
 		frame := c.sampleTween(&view, changes, outerVars, float64(i)/float64(n))
 		if frame == nil {

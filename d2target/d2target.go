@@ -108,6 +108,11 @@ const (
 	MaxTweenFrames     = 120
 )
 
+// TweenFrameCount samples at 25 fps up to the per-transition frame limit.
+func TweenFrameCount(durationMS int) int {
+	return min(MaxTweenFrames, (durationMS+39)/40)
+}
+
 type Diagram struct {
 	Name   string  `json:"name"`
 	Config *Config `json:"config,omitempty"`
@@ -136,6 +141,8 @@ type Diagram struct {
 	// starting at time zero. The board itself is the endpoint at TweenDurationMS.
 	TweenFrames     []*Diagram `json:"tweenFrames,omitempty"`
 	TweenDurationMS int        `json:"tweenDurationMS,omitempty"`
+	// GridMotion keeps a common coordinate system for raster playback as cells reflow.
+	GridMotion bool `json:"gridMotion,omitempty"`
 }
 
 type Legend struct {

@@ -5,6 +5,7 @@ package d2scenebuild
 import (
 	"context"
 	"fmt"
+	"image"
 	"math"
 	"sort"
 	"strings"
@@ -96,6 +97,8 @@ type SketchBudget struct {
 // dimensions, while the raster device scale is supplied to d2raster
 // separately.
 type Options struct {
+	// MinimumBounds is the unpadded world-space viewport shared by animation frames.
+	MinimumBounds  *image.Rectangle
 	Pad            *int64
 	Scale          *float64
 	Center         *bool
@@ -563,6 +566,10 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	pad := int64(DefaultPadding)
 	if b.options.Pad != nil {
 		pad = *b.options.Pad
+	}
+	if bounds := b.options.MinimumBounds; bounds != nil {
+		tl.X, tl.Y = min(tl.X, bounds.Min.X), min(tl.Y, bounds.Min.Y)
+		br.X, br.Y = max(br.X, bounds.Max.X), max(br.Y, bounds.Max.Y)
 	}
 	left, top, width, height, err := dimensions(tl, br, pad)
 	if err != nil {

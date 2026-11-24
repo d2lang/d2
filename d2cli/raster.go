@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -253,7 +254,7 @@ func buildSceneWithAssets(ctx context.Context, diagram *d2target.Diagram, opts d
 	}
 	return buildSceneWithResourcesAndLinks(ctx, diagram, opts, assetOptions, fontOptions, d2scenebuild.LinkBudget{
 		MaxRegions: rasterMaxLinkRegions, MaxStringBytes: rasterMaxLinkStringBytes,
-	}, sceneAdmissionLimits{
+	}, sceneFrameOptions{
 		maxNodes: rasterMaxNodes, maxPathCommands: rasterMaxPathCommands,
 	})
 }
@@ -294,16 +295,17 @@ func newFontFallbackOptions(totalBoards int) (*d2scenebuild.FontFallbackOptions,
 	}, nil
 }
 
-type sceneAdmissionLimits struct {
+type sceneFrameOptions struct {
+	minimumBounds   *image.Rectangle
 	maxNodes        int
 	maxPathCommands int
 }
 
-func sceneAdmissionLimitsForFrame(options d2raster.FrameOptions) sceneAdmissionLimits {
-	return sceneAdmissionLimits{maxNodes: options.MaxNodes, maxPathCommands: options.MaxPathCommands}
+func sceneOptionsForFrame(options d2raster.FrameOptions) sceneFrameOptions {
+	return sceneFrameOptions{maxNodes: options.MaxNodes, maxPathCommands: options.MaxPathCommands}
 }
 
-func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diagram, opts d2svg.RenderOpts, assetOptions *d2scenebuild.AssetOptions, fontOptions *d2scenebuild.FontFallbackOptions, linkBudget d2scenebuild.LinkBudget, limits sceneAdmissionLimits) (*d2scene.Document, error) {
+func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diagram, opts d2svg.RenderOpts, assetOptions *d2scenebuild.AssetOptions, fontOptions *d2scenebuild.FontFallbackOptions, linkBudget d2scenebuild.LinkBudget, frameOpts sceneFrameOptions) (*d2scene.Document, error) {
 	if diagram == nil {
 		return nil, fmt.Errorf("raster export: nil diagram")
 	}
@@ -317,12 +319,13 @@ func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diag
 	sketch := opts.Sketch != nil && *opts.Sketch
 	document, err := d2scenebuild.Build(ctx, &board, d2scenebuild.Options{
 		Pad:             opts.Pad,
+		MinimumBounds:   frameOpts.minimumBounds,
 		Scale:           opts.Scale,
 		Center:          opts.Center,
 		ThemeID:         opts.ThemeID,
 		ThemeOverrides:  opts.ThemeOverrides,
-		MaxNodes:        limits.maxNodes,
-		MaxPathCommands: limits.maxPathCommands,
+		MaxNodes:        frameOpts.maxNodes,
+		MaxPathCommands: frameOpts.maxPathCommands,
 		Sketch:          sketch,
 		SketchBudget: d2scenebuild.SketchBudget{
 			MaxOperationSets: rasterMaxNodes,
@@ -632,6 +635,18 @@ func renderGIFWithSession(
 		return summary, err
 	}
 	summary.totalFrames = totalFrames
+	// An independently fitted GIF frame is centered by the encoder. Give all
+	// grid samples the same world-space viewport so that adding a column does
+	// not appear to move its stationary neighbors.
+	var gridBounds *image.Rectangle
+	if slices.ContainsFunc(boards, func(b *d2target.Diagram) bool { return b.GridMotion }) {
+		var bounds image.Rectangle
+		for _, segment := range timeline {
+			tl, br := segment.Diagram.BoundingBox()
+			bounds = bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
+		}
+		gridBounds = &bounds
+	}
 	renderedFrameCount := 0
 	for boardIndex, segment := range timeline {
 		board := segment.Diagram
@@ -648,7 +663,9 @@ func renderGIFWithSession(
 			summary.previewSVG = sourceSVG
 		}
 		frameOptions := gifFrameOptions(0, totalFrames)
-		document, err := buildSceneWithResourcesAndLinks(ctx, board, boardOpts, assetOptions, fontOptions, linkBudget, sceneAdmissionLimitsForFrame(frameOptions))
+		sceneOpts := sceneOptionsForFrame(frameOptions)
+		sceneOpts.minimumBounds = gridBounds
+		document, err := buildSceneWithResourcesAndLinks(ctx, board, boardOpts, assetOptions, fontOptions, linkBudget, sceneOpts)
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d scene: %w", boardIndex, err)
 		}
