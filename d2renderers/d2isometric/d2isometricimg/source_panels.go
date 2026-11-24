@@ -131,7 +131,7 @@ func (b *meshBuilder) rootDecorations(s *d2isometric.Scene, assets *d2scenebuild
 	if s.Legend != nil {
 		panelCount++
 	}
-	if s.Root.StrokeWidth > 0 || s.Root.FillPattern != "" || s.Root.DoubleBorder {
+	if s.Root.RenderedStrokeWidth() > 0 || s.Root.FillPattern != "" || s.Root.DoubleBorder {
 		panelCount++
 	}
 	if s.Legend != nil {
@@ -209,7 +209,7 @@ func (b *meshBuilder) rootDecorations(s *d2isometric.Scene, assets *d2scenebuild
 	}
 	// The ordinary background already uses Root.Fill. A framed/patterned root
 	// is drawn as one source-defined ground surface enclosing all its content.
-	if root.StrokeWidth > 0 || root.FillPattern != "" || root.DoubleBorder {
+	if root.RenderedStrokeWidth() > 0 || root.FillPattern != "" || root.DoubleBorder {
 		bounds := nativeMeshBounds(b.triangles)
 		bounds.X -= .25
 		bounds.Y -= .25

@@ -13,6 +13,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"math"
@@ -480,6 +481,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	legendConn.DstArrow = c.DstArrow
 	legendConn.StrokeDash = c.StrokeDash
 	legendConn.StrokeWidth = c.StrokeWidth
+	legendConn.StrokeWidthOffset = c.StrokeWidthOffset
 	legendConn.Stroke = c.Stroke
 	legendConn.Fill = c.Fill
 	legendConn.BorderRadius = c.BorderRadius
@@ -523,8 +525,8 @@ func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Co
 		arrowhead = connection.SrcArrow
 	}
 
-	return fmt.Sprintf("mk-%s-%s", diagramHash, hash(fmt.Sprintf("%s,%t,%d,%s",
-		arrowhead, isTarget, connection.StrokeWidth, connection.Stroke,
+	return fmt.Sprintf("mk-%s-%s", diagramHash, hash(fmt.Sprintf("%s,%t,%s,%s",
+		arrowhead, isTarget, strconv.FormatFloat(connection.RenderedStrokeWidth(), 'f', -1, 64), connection.Stroke,
 	)))
 }
 
@@ -533,7 +535,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 	if !isTarget {
 		arrowhead = connection.SrcArrow
 	}
-	strokeWidth := float64(connection.StrokeWidth)
+	strokeWidth := connection.RenderedStrokeWidth()
 	width, height := arrowhead.Dimensions(strokeWidth)
 
 	markerWidth := width
@@ -570,7 +572,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
 		polygonEl.Fill = connection.Stroke
 		polygonEl.ClassName = "connection"
-		polygonEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		if isTarget {
 			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
@@ -593,7 +595,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		polygonEl.Fill = d2target.BG_COLOR
 		polygonEl.Stroke = connection.Stroke
 		polygonEl.ClassName = "connection"
-		polygonEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		inset := strokeWidth / 2
 		if isTarget {
@@ -615,7 +617,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
 		polygonEl.Fill = connection.Stroke
 		polygonEl.ClassName = "connection"
-		polygonEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		if isTarget {
 			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s",
@@ -636,7 +638,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		polylineEl.Fill = color.None
 		polylineEl.ClassName = "connection"
 		polylineEl.Stroke = connection.Stroke
-		polylineEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		polylineEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		if isTarget {
 			polylineEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s",
@@ -656,7 +658,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
 		polygonEl.ClassName = "connection"
 		polygonEl.Fill = connection.Stroke
-		polygonEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		if isTarget {
 			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
@@ -679,7 +681,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		polygonEl.ClassName = "connection"
 		polygonEl.Fill = d2target.BG_COLOR
 		polygonEl.Stroke = connection.Stroke
-		polygonEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		if isTarget {
 			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
@@ -705,7 +707,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		circleEl.R = radius - strokeWidth/2
 		circleEl.Fill = connection.Stroke
 		circleEl.ClassName = "connection"
-		circleEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		circleEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		if isTarget {
 			circleEl.Cx = radius + strokeWidth/2
@@ -722,7 +724,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		circleEl.R = radius - strokeWidth
 		circleEl.Fill = d2target.BG_COLOR
 		circleEl.Stroke = connection.Stroke
-		circleEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		circleEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		if isTarget {
 			circleEl.Cx = radius + strokeWidth/2
@@ -775,14 +777,14 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		gEl.Fill = d2target.BG_COLOR
 		gEl.Stroke = connection.Stroke
 		gEl.ClassName = "connection"
-		gEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		gEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 		gEl.SetInnerSVG(svg.Join(svg.TrustedFragment(crossEl.Render()), svg.TrustedFragment(childPathEl.Render())))
 		path = gEl.Render()
 	case d2target.FilledBoxArrowhead:
 		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
 		polygonEl.ClassName = "connection"
 		polygonEl.Fill = connection.Stroke
-		polygonEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 		if isTarget {
 			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
@@ -806,7 +808,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		polygonEl.ClassName = "connection"
 		polygonEl.Fill = d2target.BG_COLOR
 		polygonEl.Stroke = connection.Stroke
-		polygonEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 		polygonEl.Style = fmt.Sprintf("%sstroke-linejoin:miter;", polygonEl.Style)
 
 		inset := strokeWidth / 2
@@ -827,7 +829,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		}
 		path = polygonEl.Render()
 	case d2target.CfOne, d2target.CfMany, d2target.CfOneRequired, d2target.CfManyRequired:
-		offset := 3.0 + float64(connection.StrokeWidth)*1.8
+		offset := 3.0 + strokeWidth*1.8
 
 		var modifierEl *d2themes.ThemableElement
 		if arrowhead == d2target.CfOneRequired || arrowhead == d2target.CfManyRequired {
@@ -839,7 +841,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 			modifierEl.Fill = d2target.BG_COLOR
 			modifierEl.Stroke = connection.Stroke
 			modifierEl.ClassName = "connection"
-			modifierEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+			modifierEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 		} else {
 			modifierEl = d2themes.NewThemableElement("circle", inlineTheme)
 			modifierEl.Cx = offset/2.0 + 2.0
@@ -848,7 +850,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 			modifierEl.Fill = d2target.BG_COLOR
 			modifierEl.Stroke = connection.Stroke
 			modifierEl.ClassName = "connection"
-			modifierEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+			modifierEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 		}
 
 		childPathEl := d2themes.NewThemableElement("path", inlineTheme)
@@ -877,7 +879,7 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		gEl.Fill = d2target.BG_COLOR
 		gEl.Stroke = connection.Stroke
 		gEl.ClassName = "connection"
-		gEl.AddAttributes(svg.IntAttr("stroke-width", connection.StrokeWidth))
+		gEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 		gEl.SetInnerSVG(svg.Join(svg.TrustedFragment(modifierEl.Render()), svg.TrustedFragment(childPathEl.Render())))
 		path = gEl.Render()
 	default:
@@ -972,7 +974,7 @@ func makeLabelMaskWithTransform(labelTL *geo.Point, width, height int, opacity f
 
 // border label mask is minimal, intending to only cover the portion of the border that passes through the label
 // otherwise, when the inside background and outside background colors don't match, there's a bigger discrepancy
-func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, labelWidth, labelHeight int, shapeBox *geo.Box, strokeWidth int, opacity float64, shapePos *geo.Point) string {
+func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, labelWidth, labelHeight int, shapeBox *geo.Box, strokeWidth, opacity float64, shapePos *geo.Point) string {
 	fill := "black"
 	if opacity != 1 {
 		fill = fmt.Sprintf("rgba(0,0,0,%.2f)", opacity)
@@ -980,7 +982,7 @@ func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, label
 
 	// In sketch mode, multiply stroke width by 3 for mask calculations to account for
 	// the hand-drawn style that can be wider and more irregular
-	effectiveStrokeWidth := float64(strokeWidth)
+	effectiveStrokeWidth := strokeWidth
 	if shapePos != nil {
 		effectiveStrokeWidth *= 3
 	}
@@ -2080,9 +2082,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		}
 		if labelPosition.IsBorder() {
 			if sketch {
-				labelMask = makeBorderLabelMask(labelPosition, labelTL, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.StrokeWidth, 1.0, tl)
+				labelMask = makeBorderLabelMask(labelPosition, labelTL, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.RenderedStrokeWidth(), 1.0, tl)
 			} else {
-				labelMask = makeBorderLabelMask(labelPosition, labelTL, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.StrokeWidth, 1.0, nil)
+				labelMask = makeBorderLabelMask(labelPosition, labelTL, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.RenderedStrokeWidth(), 1.0, nil)
 			}
 		}
 
@@ -2185,9 +2187,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 				rectEl.Height = float64(targetShape.Height)
 				rectEl.Stroke = targetShape.Stroke
 				rectEl.ClassName = "shape"
-				rectEl.Style = fmt.Sprintf(`fill:%s;stroke-width:%d;`,
+				rectEl.Style = fmt.Sprintf(`fill:%s;stroke-width:%s;`,
 					style.Get(chroma.Background).Background.String(),
-					targetShape.StrokeWidth,
+					svg.FormatFloat(targetShape.RenderedStrokeWidth()),
 				)
 				writer.element(rectEl)
 				// Padding = 0.5em
@@ -3166,7 +3168,8 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	}
 
 	// This shift is for background el to envelop the diagram
-	strokePadding := int(math.Ceil(float64(diagram.Root.StrokeWidth) / 2.))
+	strokeWidth := diagram.Root.RenderedStrokeWidth()
+	strokePadding := int(math.Ceil(strokeWidth / 2.))
 	left, top, w, h, ok := expandDimensions(left, top, w, h, strokePadding)
 	if !ok {
 		return nil, invalidPaddingError(int64(pad))
@@ -3182,10 +3185,10 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	backgroundEl.FillPattern = diagram.Root.FillPattern
 	backgroundEl.Rx = float64(diagram.Root.BorderRadius)
 	if diagram.Root.StrokeDash != 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(diagram.Root.StrokeWidth), diagram.Root.StrokeDash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(strokeWidth, diagram.Root.StrokeDash)
 		backgroundEl.StrokeDashArray = fmt.Sprintf("%s, %s", svg.FormatFloat(dashSize), svg.FormatFloat(gapSize))
 	}
-	backgroundEl.AddAttributes(svg.IntAttr("stroke-width", diagram.Root.StrokeWidth))
+	backgroundEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 
 	// This shift is for viewbox to envelop the background el
 	left, top, w, h, ok = expandDimensions(left, top, w, h, strokePadding)

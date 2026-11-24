@@ -487,16 +487,18 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 	y2 := int(math.MinInt32)
 
 	for _, targetShape := range diagram.Shapes {
-		x1 = go2.Min(x1, targetShape.Pos.X-int(math.Ceil(float64(targetShape.StrokeWidth)/2.)))
-		y1 = go2.Min(y1, targetShape.Pos.Y-int(math.Ceil(float64(targetShape.StrokeWidth)/2.)))
-		x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+int(math.Ceil(float64(targetShape.StrokeWidth)/2.)))
-		y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+int(math.Ceil(float64(targetShape.StrokeWidth)/2.)))
+		stroke := StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
+		halfStroke := stroke/2 + stroke%2
+		x1 = go2.Min(x1, targetShape.Pos.X-halfStroke)
+		y1 = go2.Min(y1, targetShape.Pos.Y-halfStroke)
+		x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+halfStroke)
+		y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+halfStroke)
 
 		if targetShape.Type == ShapeC4Person {
 			headRadius := int(float64(targetShape.Width) * 0.22)
 			headCenterY := int(float64(targetShape.Height) * 0.18)
 			headTop := targetShape.Pos.Y + headCenterY - headRadius
-			y1 = go2.Min(y1, headTop-targetShape.StrokeWidth)
+			y1 = go2.Min(y1, headTop-stroke)
 		}
 
 		if targetShape.Tooltip != "" || targetShape.Link != "" {
@@ -507,13 +509,13 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 				x2 = go2.Max(x2, tooltipMaxX)
 				y2 = go2.Max(y2, tooltipMaxY)
 			} else {
-				y1 = go2.Min(y1, targetShape.Pos.Y-targetShape.StrokeWidth-16)
-				x2 = go2.Max(x2, targetShape.Pos.X+targetShape.StrokeWidth+targetShape.Width+16)
+				y1 = go2.Min(y1, targetShape.Pos.Y-stroke-16)
+				x2 = go2.Max(x2, targetShape.Pos.X+stroke+targetShape.Width+16)
 			}
 		}
 		if targetShape.Shadow {
-			y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+int(math.Ceil(float64(targetShape.StrokeWidth)/2.))+SHADOW_SIZE_Y)
-			x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+int(math.Ceil(float64(targetShape.StrokeWidth)/2.))+SHADOW_SIZE_X)
+			y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+halfStroke+SHADOW_SIZE_Y)
+			x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+halfStroke+SHADOW_SIZE_X)
 		}
 
 		if targetShape.ThreeDee {
@@ -521,12 +523,12 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 			if targetShape.Type == ShapeHexagon {
 				offsetY /= 2
 			}
-			y1 = go2.Min(y1, targetShape.Pos.Y-offsetY-targetShape.StrokeWidth)
-			x2 = go2.Max(x2, targetShape.Pos.X+THREE_DEE_OFFSET+targetShape.Width+targetShape.StrokeWidth)
+			y1 = go2.Min(y1, targetShape.Pos.Y-offsetY-stroke)
+			x2 = go2.Max(x2, targetShape.Pos.X+THREE_DEE_OFFSET+targetShape.Width+stroke)
 		}
 		if targetShape.Multiple {
-			y1 = go2.Min(y1, targetShape.Pos.Y-MULTIPLE_OFFSET-targetShape.StrokeWidth)
-			x2 = go2.Max(x2, targetShape.Pos.X+MULTIPLE_OFFSET+targetShape.Width+targetShape.StrokeWidth)
+			y1 = go2.Min(y1, targetShape.Pos.Y-MULTIPLE_OFFSET-stroke)
+			x2 = go2.Max(x2, targetShape.Pos.X+MULTIPLE_OFFSET+targetShape.Width+stroke)
 		}
 
 		if targetShape.Icon != nil && label.FromString(targetShape.IconPosition).IsOutside() {
@@ -578,11 +580,13 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 	}
 
 	for _, connection := range diagram.Connections {
+		stroke := StrokeWidthExtent(connection.StrokeWidth, connection.StrokeWidthOffset)
+		halfStroke := stroke/2 + stroke%2
 		for _, point := range connection.Route {
-			x1 = go2.Min(x1, int(math.Floor(point.X))-int(math.Ceil(float64(connection.StrokeWidth)/2.)))
-			y1 = go2.Min(y1, int(math.Floor(point.Y))-int(math.Ceil(float64(connection.StrokeWidth)/2.)))
-			x2 = go2.Max(x2, int(math.Ceil(point.X))+int(math.Ceil(float64(connection.StrokeWidth)/2.)))
-			y2 = go2.Max(y2, int(math.Ceil(point.Y))+int(math.Ceil(float64(connection.StrokeWidth)/2.)))
+			x1 = go2.Min(x1, int(math.Floor(point.X))-halfStroke)
+			y1 = go2.Min(y1, int(math.Floor(point.Y))-halfStroke)
+			x2 = go2.Max(x2, int(math.Ceil(point.X))+halfStroke)
+			y2 = go2.Max(y2, int(math.Ceil(point.Y))+halfStroke)
 		}
 
 		if connection.Label != "" {
@@ -824,6 +828,8 @@ type Shape struct {
 	Opacity     float64 `json:"opacity"`
 	StrokeDash  float64 `json:"strokeDash"`
 	StrokeWidth int     `json:"strokeWidth"`
+	// Tween frames retain the subpixel difference from the integer layout width.
+	StrokeWidthOffset float64 `json:"strokeWidthOffset,omitempty"`
 
 	BorderRadius int `json:"borderRadius"`
 
@@ -868,6 +874,10 @@ type Shape struct {
 	NeutralAccentColor   string `json:"neutralAccentColor,omitempty"`
 }
 
+func (s Shape) RenderedStrokeWidth() float64 {
+	return float64(s.StrokeWidth) + s.StrokeWidthOffset
+}
+
 // CanShadeSketchFill reports whether the shape has a single solid sketch surface.
 func (s *Shape) CanShadeSketchFill() bool {
 	if s.ThreeDee || s.Multiple || (s.FillPattern != "" && s.FillPattern != "none") {
@@ -901,9 +911,9 @@ func (s Shape) GetFontColor() string {
 func (s Shape) CSSStyle() string {
 	out := ""
 
-	out += fmt.Sprintf(`stroke-width:%d;`, s.StrokeWidth)
+	out += "stroke-width:" + svg.FormatFloat(s.RenderedStrokeWidth()) + ";"
 	if s.StrokeDash != 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(s.StrokeWidth), s.StrokeDash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(s.RenderedStrokeWidth(), s.StrokeDash)
 		out += fmt.Sprintf(`stroke-dasharray:%f,%f;`, dashSize, gapSize)
 	}
 
@@ -1009,12 +1019,14 @@ type Connection struct {
 	DstArrow Arrowhead `json:"dstArrow"`
 	DstLabel *Text     `json:"dstLabel,omitempty"`
 
-	Opacity      float64 `json:"opacity"`
-	StrokeDash   float64 `json:"strokeDash"`
-	StrokeWidth  int     `json:"strokeWidth"`
-	Stroke       string  `json:"stroke"`
-	Fill         string  `json:"fill,omitempty"`
-	BorderRadius float64 `json:"borderRadius,omitempty"`
+	Opacity     float64 `json:"opacity"`
+	StrokeDash  float64 `json:"strokeDash"`
+	StrokeWidth int     `json:"strokeWidth"`
+	// Tween frames retain the subpixel difference from the integer layout width.
+	StrokeWidthOffset float64 `json:"strokeWidthOffset,omitempty"`
+	Stroke            string  `json:"stroke"`
+	Fill              string  `json:"fill,omitempty"`
+	BorderRadius      float64 `json:"borderRadius,omitempty"`
 
 	Text
 	LabelPosition   string  `json:"labelPosition"`
@@ -1053,7 +1065,7 @@ func (c *Connection) GetIconPosition() *geo.Point {
 
 	point, _ := label.FromString(c.IconPosition).GetPointOnRoute(
 		c.Route,
-		float64(c.StrokeWidth),
+		c.RenderedStrokeWidth(),
 		-1,
 		float64(DEFAULT_ICON_SIZE),
 		float64(DEFAULT_ICON_SIZE),
@@ -1077,6 +1089,10 @@ func BaseConnection() *Connection {
 	}
 }
 
+func (c Connection) RenderedStrokeWidth() float64 {
+	return float64(c.StrokeWidth) + c.StrokeWidthOffset
+}
+
 func (c Connection) GetFontColor() string {
 	if c.Color != color.Empty {
 		return c.Color
@@ -1087,13 +1103,13 @@ func (c Connection) GetFontColor() string {
 func (c Connection) CSSStyle() string {
 	out := ""
 
-	out += fmt.Sprintf(`stroke-width:%d;`, c.StrokeWidth)
+	out += "stroke-width:" + svg.FormatFloat(c.RenderedStrokeWidth()) + ";"
 	strokeDash := c.StrokeDash
 	if strokeDash == 0 && c.Animated {
 		strokeDash = 5
 	}
 	if strokeDash != 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(c.StrokeWidth), strokeDash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(c.RenderedStrokeWidth(), strokeDash)
 		out += fmt.Sprintf(`stroke-dasharray:%f,%f;`, dashSize, gapSize)
 
 		if c.Animated {
@@ -1111,7 +1127,7 @@ func (c Connection) CSSStyle() string {
 func (c *Connection) GetLabelTopLeft() *geo.Point {
 	point, _ := label.FromString(c.LabelPosition).GetPointOnRoute(
 		c.Route,
-		float64(c.StrokeWidth),
+		c.RenderedStrokeWidth(),
 		c.LabelPercentage,
 		float64(c.LabelWidth),
 		float64(c.LabelHeight),
@@ -1157,7 +1173,7 @@ func (connection *Connection) GetArrowheadLabelPosition(isDst bool) *geo.Point {
 		}
 	}
 
-	strokeWidth := float64(connection.StrokeWidth)
+	strokeWidth := connection.RenderedStrokeWidth()
 
 	labelTL, _ := label.UnlockedTop.GetPointOnRoute(connection.Route, strokeWidth, position, width, height)
 

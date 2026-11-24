@@ -268,6 +268,17 @@ func (v tweenNumericValue) at(fraction float64) string {
 	return strconv.FormatFloat(number, 'f', v.precision, 64) + v.unit
 }
 
+func setTweenValue(s *Scalar, value tweenValue, fraction float64) {
+	s.Value = d2ast.FlatUnquotedString(value.at(fraction))
+	s.TweenOffset = 0
+	if number, ok := value.(tweenNumericValue); ok && number.precision == 0 && number.unit == "" {
+		// Keep the variable text integral for labels and styles that require
+		// integers. Use the same ties-to-even rounding as FormatFloat above.
+		exact := (1-fraction)*number.from + fraction*number.to
+		s.TweenOffset = exact - math.RoundToEven(exact)
+	}
+}
+
 func tweenNumber(raw string) (number float64, unit string, precision int, valid bool) {
 	if strings.HasSuffix(raw, "%") {
 		unit = "%"
@@ -358,7 +369,7 @@ func (c *compiler) sampleTween(template *Map, changes stepChanges, outerVars []*
 	}
 	vars := frame.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
 	for _, v := range changes.variables {
-		vars.getFieldIndexed(v.path...).Primary_.Value = d2ast.FlatUnquotedString(v.value.at(fraction))
+		setTweenValue(vars.getFieldIndexed(v.path...).Primary_, v.value, fraction)
 	}
 	applyDirectChanges(frame, changes.direct, fraction)
 	c.compileSubstitutions(frame, outerVars)

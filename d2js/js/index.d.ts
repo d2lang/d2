@@ -164,6 +164,8 @@ export interface ShapeBase {
   opacity: number /* float64 */;
   strokeDash: number /* float64 */;
   strokeWidth: number /* int */;
+  /** Add to strokeWidth for the visible width of a sampled frame. */
+  strokeWidthOffset?: number;
   borderRadius: number /* int */;
   fill: string;
   fillPattern?: string;
@@ -263,6 +265,8 @@ export interface Connection extends Text {
   opacity: number /* float64 */;
   strokeDash: number /* float64 */;
   strokeWidth: number /* int */;
+  /** Add to strokeWidth for the visible width of a sampled frame. */
+  strokeWidthOffset?: number;
   stroke: string;
   fill?: string;
   borderRadius?: number /* float64 */;
@@ -386,6 +390,8 @@ export interface EdgeReference {
 
 export interface Scalar {
   value: string;
+  /** Fractional part retained when a sampled numeric value is rounded. */
+  tweenOffset?: number;
 }
 
 export interface Style {

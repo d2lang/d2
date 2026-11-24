@@ -278,12 +278,12 @@ func (b *meshBuilder) nativeFaceLayer(s d2target.Shape, layer nativeFaceLayer) (
 // same source box and two-pixel label padding as D2's border-label mask.
 func (b *meshBuilder) nativeFaceBorderAperture(tex *image.RGBA, area labelSurface, s d2target.Shape) {
 	position := label.FromString(s.LabelPosition)
-	if s.Label == "" || !position.IsBorder() || s.StrokeWidth <= 0 {
+	if s.Label == "" || !position.IsBorder() || s.RenderedStrokeWidth() <= 0 {
 		return
 	}
 	box := geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height))
 	p := position.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
-	stroke := float64(s.StrokeWidth)
+	stroke := s.RenderedStrokeWidth()
 	x, y, w, h := 0., 0., 0., 0.
 	switch position {
 	case label.BorderTopLeft, label.BorderTopCenter, label.BorderTopRight:

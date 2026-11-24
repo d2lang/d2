@@ -148,3 +148,37 @@ func TestConnectionsCanShareGradientDefinitions(t *testing.T) {
 	}
 	assertUniqueResolvableLocalIRIs(t, out)
 }
+
+func TestFractionalStrokesUseDistinctArrowheads(t *testing.T) {
+	d := d2target.NewDiagram()
+	for i, offset := range []float64{0.25, 0.5} {
+		c := *d2target.BaseConnection()
+		c.ID = strconv.Itoa(i)
+		c.StrokeWidth, c.StrokeWidthOffset = 2, offset
+		c.DstArrow = d2target.TriangleArrowhead
+		y := float64(i * 25)
+		c.Route = []*geo.Point{{Y: y}, {X: 100, Y: y}}
+		d.Connections = append(d.Connections, c)
+	}
+	out, err := d2svg.Render(d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range d.Connections {
+		width := c.RenderedStrokeWidth()
+		shaft := doc.Find(fmt.Sprintf(`path[style="stroke-width:%v;"][marker-end]`, width))
+		ref := localIRIRegexp.FindStringSubmatch(shaft.AttrOr("marker-end", ""))
+		if len(ref) != 2 {
+			t.Fatalf("missing marker for %v px stroke", width)
+		}
+		marker := doc.Find("#" + ref[1])
+		wantWidth, wantHeight := c.DstArrow.Dimensions(width)
+		if gotWidth, gotHeight := marker.AttrOr("markerWidth", ""), marker.AttrOr("markerHeight", ""); gotWidth != fmt.Sprint(wantWidth) || gotHeight != fmt.Sprint(wantHeight) {
+			t.Errorf("%v px stroke marker is %s x %s, want %v x %v", width, gotWidth, gotHeight, wantWidth, wantHeight)
+		}
+	}
+}

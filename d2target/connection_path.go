@@ -17,10 +17,10 @@ type ConnectionPathCommand struct {
 
 // ArrowheadAdjustments inset the centerline's endpoints for the strokes and markers.
 func (c Connection) ArrowheadAdjustments(shapes map[string]Shape) (src, dst *geo.Point) {
-	inset := func(start, end *geo.Point, arrow Arrowhead, shapeWidth int) *geo.Point {
-		distance := (float64(c.StrokeWidth) + float64(shapeWidth)) / 2
+	inset := func(start, end *geo.Point, arrow Arrowhead, shapeWidth float64) *geo.Point {
+		distance := (c.RenderedStrokeWidth() + shapeWidth) / 2
 		if arrow != NoArrowhead {
-			distance += float64(c.StrokeWidth)
+			distance += c.RenderedStrokeWidth()
 		}
 		v := start.VectorTo(end)
 		if v.Length() == 0 {
@@ -29,8 +29,8 @@ func (c Connection) ArrowheadAdjustments(shapes map[string]Shape) (src, dst *geo
 		return v.Unit().Multiply(-distance).ToPoint()
 	}
 	last := len(c.Route) - 1
-	return inset(c.Route[1], c.Route[0], c.SrcArrow, shapes[c.Src].StrokeWidth),
-		inset(c.Route[last-1], c.Route[last], c.DstArrow, shapes[c.Dst].StrokeWidth)
+	return inset(c.Route[1], c.Route[0], c.SrcArrow, shapes[c.Src].RenderedStrokeWidth()),
+		inset(c.Route[last-1], c.Route[last], c.DstArrow, shapes[c.Dst].RenderedStrokeWidth())
 }
 
 // PathCommands walks the final routed path, including arrowhead insets and
@@ -99,7 +99,7 @@ func (c Connection) PathCommands(srcAdj, dstAdj *geo.Point) iter.Seq[ConnectionP
 // connection needs a paintable cross section for its stroke and markers.
 func (c Connection) GradientBounds() *geo.Box {
 	tl, br := geo.Route(c.Route).GetBoundingBox()
-	stroke := float64(c.StrokeWidth)
+	stroke := c.RenderedStrokeWidth()
 	_, srcHeight := c.SrcArrow.Dimensions(stroke)
 	_, dstHeight := c.DstArrow.Dimensions(stroke)
 	minSize := max(1, stroke, srcHeight, dstHeight)

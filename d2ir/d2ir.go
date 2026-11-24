@@ -149,6 +149,9 @@ type Scalar struct {
 	binding *tweenBinding
 	parent  Node
 	Value   d2ast.Scalar `json:"value"`
+	// TweenOffset retains the fractional part lost when formatting an integer
+	// sample. Consumers such as stroke-width can paint it at subpixel precision.
+	TweenOffset float64 `json:"-"`
 }
 
 func (s *Scalar) Copy(newParent Node) Node {

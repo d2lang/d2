@@ -3,7 +3,22 @@ package d2lib
 import (
 	"reflect"
 	"testing"
+
+	"github.com/d2lang/d2/d2target"
 )
+
+func TestGridPopStrokeScaleAtIntegerWidth(t *testing.T) {
+	const scale = 0.6
+	shape := d2target.Shape{StrokeWidth: 4}
+	item := gridMotionItem{pivot: &shape}
+	for _, width := range []float64{3.9, 4, 4.1} {
+		shape.StrokeWidthOffset = width - 4
+		frame := item.bubble(shape, scale, 1, 0)
+		if got, want := frame.RenderedStrokeWidth(), width*scale; got != want {
+			t.Errorf("scaled stroke width %v = %v, want %v", width, got, want)
+		}
+	}
+}
 
 func TestGridPopsSettleWithinLongStep(t *testing.T) {
 	board, graph := compileGridMotionTest(t, `grid-columns: 1

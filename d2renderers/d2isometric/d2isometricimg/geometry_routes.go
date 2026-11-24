@@ -134,23 +134,23 @@ func (b *meshBuilder) tube(points []Vec, radius float64, mat *Material) {
 
 // nativeArrowClearance excludes this connection's own core/casing from hollow
 // arrow interiors or pointed tapers. Packet paths retain the original port.
-func nativeArrowClearance(kind d2target.Arrowhead, strokeWidth int) float64 {
+func nativeArrowClearance(kind d2target.Arrowhead, strokeWidth float64) float64 {
 	switch kind {
 	case d2target.ArrowArrowhead:
-		w, _ := kind.Dimensions(float64(strokeWidth))
+		w, _ := kind.Dimensions(strokeWidth)
 		return w * .0075 // Concave rear-center vertex is one quarter of the width.
 	case d2target.TriangleArrowhead:
-		w, _ := kind.Dimensions(float64(strokeWidth))
+		w, _ := kind.Dimensions(strokeWidth)
 		return w * .01 // The broad rear base receives the wire.
 	case d2target.FilledDiamondArrowhead, d2target.FilledCircleArrowhead, d2target.FilledBoxArrowhead:
-		w, _ := kind.Dimensions(float64(strokeWidth))
+		w, _ := kind.Dimensions(strokeWidth)
 		return w * .005 // Join at the broad center, before the taper or curved rim.
 	case d2target.UnfilledTriangleArrowhead, d2target.DiamondArrowhead, d2target.CircleArrowhead, d2target.BoxArrowhead, d2target.CrossArrowhead:
-		w, _ := kind.Dimensions(float64(strokeWidth))
+		w, _ := kind.Dimensions(strokeWidth)
 		return w * .01
 	case d2target.CfOne, d2target.CfMany, d2target.CfOneRequired, d2target.CfManyRequired:
-		w, _ := kind.Dimensions(float64(strokeWidth))
-		return (w + 3 + float64(strokeWidth)*1.8) * .01
+		w, _ := kind.Dimensions(strokeWidth)
+		return (w + 3 + strokeWidth*1.8) * .01
 	default:
 		return 0
 	}
@@ -165,14 +165,14 @@ func (b *meshBuilder) arrow(kind string, at, direction Vec, mat *Material, width
 	if mat != nil {
 		opacity = float64(mat.Color.A) / 255
 	}
-	b.arrowWithOpacity(kind, at, direction, mat, width, opacity)
+	b.arrowWithOpacity(kind, at, direction, mat, float64(width), opacity)
 }
 
-func (b *meshBuilder) arrowWithOpacity(kind string, at, direction Vec, mat *Material, width int, opacity float64) {
+func (b *meshBuilder) arrowWithOpacity(kind string, at, direction Vec, mat *Material, width, opacity float64) {
 	if kind == "" || kind == "none" || mat == nil {
 		return
 	}
-	stroke := float64(max(0, width))
+	stroke := max(0, width)
 	scale := b.scale
 	if scale <= 0 {
 		scale = .01
@@ -409,15 +409,15 @@ func (b *meshBuilder) drawEdges(edges []d2isometric.Edge, placer *routeCaptionPl
 		}
 		wireStart, wireEnd := start, end
 		if length > 1e-9 {
-			wireStart += nativeArrowClearance(edge.SourceArrow, edge.StrokeWidth) / length
-			wireEnd -= nativeArrowClearance(edge.TargetArrow, edge.StrokeWidth) / length
+			wireStart += nativeArrowClearance(edge.SourceArrow, edge.RenderedStrokeWidth()) / length
+			wireEnd -= nativeArrowClearance(edge.TargetArrow, edge.RenderedStrokeWidth()) / length
 		}
 		wirePoints := displayPoints
 		if wireStart > 0 || wireEnd < 1 {
 			wirePoints = nativeRouteSection(points, lengths, wireStart, wireEnd)
 		}
 		wireFirst := len(b.triangles)
-		if edge.StrokeWidth > 0 && len(wirePoints) > 1 {
+		if edge.RenderedStrokeWidth() > 0 && len(wirePoints) > 1 {
 			radius := nativeRouteRadius(edge)
 			if edge.StrokeDash <= 0 {
 				b.routeCasing(wirePoints, radius, wireOpacity)
@@ -446,9 +446,9 @@ func (b *meshBuilder) drawEdges(edges []d2isometric.Edge, placer *routeCaptionPl
 		}
 		sourceDir := nsub(displayPoints[0], displayPoints[1])
 		targetDir := nsub(displayPoints[len(displayPoints)-1], displayPoints[len(displayPoints)-2])
-		b.arrowWithOpacity(string(edge.SourceArrow), displayPoints[0], sourceDir, mat, edge.StrokeWidth, edge.Opacity)
-		b.arrowWithOpacity(string(edge.TargetArrow), displayPoints[len(displayPoints)-1], targetDir, mat, edge.StrokeWidth, edge.Opacity)
-		if edge.Metadata.Original.Animated && edge.StrokeWidth > 0 && wireOpacity > 0 {
+		b.arrowWithOpacity(string(edge.SourceArrow), displayPoints[0], sourceDir, mat, edge.RenderedStrokeWidth(), edge.Opacity)
+		b.arrowWithOpacity(string(edge.TargetArrow), displayPoints[len(displayPoints)-1], targetDir, mat, edge.RenderedStrokeWidth(), edge.Opacity)
+		if edge.Metadata.Original.Animated && edge.RenderedStrokeWidth() > 0 && wireOpacity > 0 {
 			packet := nativeMaterial("#e9f8ff", .2, .15, wireOpacity)
 			packet.Emissive = nativePaint(tint, "#657e9e")
 			forward, reverse := edge.TargetArrow != "" && edge.TargetArrow != "none", edge.SourceArrow != "" && edge.SourceArrow != "none"

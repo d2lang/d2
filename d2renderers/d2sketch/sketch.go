@@ -65,7 +65,7 @@ func defineFillPattern(buf *bytes.Buffer, source, diagramHash string, luminanceC
 
 func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 	g := newGenerator()
-	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -106,14 +106,14 @@ func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 
 func DoubleRect(shape d2target.Shape, diagramHash string) (string, error) {
 	g := newGenerator()
-	pathsBigRect, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+	pathsBigRect, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
 	pathsSmallRect, err := computeRoughPathData(g, g.Rectangle(0, 0,
 		float64(shape.Width-d2target.INNER_BORDER_OFFSET*2),
 		float64(shape.Height-d2target.INNER_BORDER_OFFSET*2),
-		baseOptions(float64(shape.StrokeWidth))))
+		baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -175,7 +175,7 @@ func Oval(shape d2target.Shape, diagramHash string) (string, error) {
 	g := newGenerator()
 	paths, err := computeRoughPathData(g, g.Ellipse(
 		float64(shape.Width/2), float64(shape.Height/2),
-		float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+		float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -221,7 +221,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 	g := newGenerator()
 	pathsBigCircle, err := computeRoughPathData(g, g.Ellipse(
 		float64(shape.Width/2), float64(shape.Height/2),
-		float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+		float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -229,7 +229,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 		float64(shape.Width/2), float64(shape.Height/2),
 		float64(shape.Width-d2target.INNER_BORDER_OFFSET*2),
 		float64(shape.Height-d2target.INNER_BORDER_OFFSET*2),
-		baseOptions(float64(shape.StrokeWidth))))
+		baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -294,7 +294,7 @@ func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, er
 	output, paint, stroke := pencilSVGPaint(shape, diagramHash, shape.Pos.X, shape.Pos.Y)
 	for _, path := range paths {
 		g := newGenerator()
-		sketchPaths, err := computeRoughPathData(g, g.Path(path, baseOptions(float64(shape.StrokeWidth))))
+		sketchPaths, err := computeRoughPathData(g, g.Path(path, baseOptions(shape.RenderedStrokeWidth())))
 		if err != nil {
 			return "", err
 		}
@@ -437,7 +437,7 @@ func ConnectionWithAttributes(connection d2target.Connection, path string, attri
 func Table(shape d2target.Shape) (string, error) {
 	output := ""
 	g := newGenerator()
-	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -570,7 +570,7 @@ func Table(shape d2target.Shape) (string, error) {
 func Class(shape d2target.Shape) (string, error) {
 	output := ""
 	g := newGenerator()
-	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -770,15 +770,15 @@ func extractPathData(roughPaths []roughPath) ([]string, error) {
 	return paths, nil
 }
 
-func arrowOptions(stroke string, strokeWidth int, seed float64) *rough.Options {
+func arrowOptions(stroke string, strokeWidth, seed float64) *rough.Options {
 	return &rough.Options{
-		StrokeWidth: rough.Float64(float64(strokeWidth)),
+		StrokeWidth: rough.Float64(strokeWidth),
 		Stroke:      rough.String(stroke),
 		Seed:        rough.Float64(seed),
 	}
 }
 
-func solidArrowOptions(stroke, fill string, strokeWidth int, fillWeight, seed float64) *rough.Options {
+func solidArrowOptions(stroke, fill string, strokeWidth, fillWeight, seed float64) *rough.Options {
 	o := arrowOptions(stroke, strokeWidth, seed)
 	o.Fill = rough.String(fill)
 	o.FillStyle = rough.String("solid")
@@ -788,7 +788,7 @@ func solidArrowOptions(stroke, fill string, strokeWidth int, fillWeight, seed fl
 	return o
 }
 
-func arrowheadDrawable(g *rough.Generator, arrowhead d2target.Arrowhead, stroke string, strokeWidth int) (arrow rough.Drawable, extra *rough.Drawable, ok bool) {
+func arrowheadDrawable(g *rough.Generator, arrowhead d2target.Arrowhead, stroke string, strokeWidth float64) (arrow rough.Drawable, extra *rough.Drawable, ok bool) {
 	// Note: selected each seed that looks the good for consistent renders
 	switch arrowhead {
 	case d2target.ArrowArrowhead:
@@ -861,7 +861,7 @@ func ArrowheadsWithPaint(connection d2target.Connection, srcAdj, dstAdj *geo.Poi
 			continue
 		}
 		g := newGenerator()
-		arrow, extra, ok := arrowheadDrawable(g, end.arrow, end.stroke, connection.StrokeWidth)
+		arrow, extra, ok := arrowheadDrawable(g, end.arrow, end.stroke, connection.RenderedStrokeWidth())
 		if !ok {
 			return "", nil
 		}

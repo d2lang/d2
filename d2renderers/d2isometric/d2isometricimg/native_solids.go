@@ -79,7 +79,7 @@ func (b *meshBuilder) solidPaint(n d2isometric.Node, kind, fill string) nativeSo
 		wallSource.Type = d2target.ShapeRectangle
 		wallSource.Text = d2target.Text{}
 		wallSource.LabelPosition = ""
-		wallSource.Stroke, wallSource.StrokeWidth, wallSource.StrokeDash = "transparent", 0, 0
+		wallSource.Stroke, wallSource.StrokeWidth, wallSource.StrokeWidthOffset, wallSource.StrokeDash = "transparent", 0, 0, 0
 		wallSource.DoubleBorder, wallSource.BorderRadius = false, 0
 		wallTex, _ := b.nativeFace(wallSource)
 		wall = nativeMaterial("white", .68, 0, n.Opacity)

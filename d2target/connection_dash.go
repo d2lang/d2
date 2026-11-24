@@ -29,7 +29,7 @@ func newCrossingDashPattern(c Connection, sketch bool) crossingDashPattern {
 		// Allow for endpoint jitter and the bow in very long hand-drawn lines.
 		slack = 2 + .01*math.Hypot(c.Route[1].X-c.Route[0].X, c.Route[1].Y-c.Route[0].Y)
 	}
-	width := float64(c.StrokeWidth)
+	width := c.RenderedStrokeWidth()
 	on, off := svg.GetStrokeDashAttributes(width, c.StrokeDash)
 	return crossingDashPattern{on: on, period: on + off, cap: width / 2, slack: slack}
 }

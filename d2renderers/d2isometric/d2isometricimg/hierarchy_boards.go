@@ -112,7 +112,7 @@ func (b *meshBuilder) hierarchyNode(node d2isometric.Node, tint string) {
 func hierarchySpacer(node d2isometric.Node) bool {
 	return strings.TrimSpace(node.Label) == "" && node.Icon == "" &&
 		nativePaint(node.Fill, "#edf1f7").A == 0 &&
-		(node.StrokeWidth == 0 || nativePaint(node.Stroke, "#849ebc").A == 0)
+		(node.RenderedStrokeWidth() == 0 || nativePaint(node.Stroke, "#849ebc").A == 0)
 }
 
 // Blank white/transparent grid wrappers carry layout, not a physical boundary.
@@ -124,7 +124,7 @@ func hierarchyLayoutWrapper(owner *d2isometric.Node) bool {
 	}
 	fill, stroke := nativePaint(owner.Fill, "white"), nativePaint(owner.Stroke, "#849ebc")
 	quietFill := fill.A == 0 || fill.R >= 245 && fill.G >= 245 && fill.B >= 245
-	quietStroke := owner.StrokeWidth == 0 || stroke.A == 0 || stroke == fill
+	quietStroke := owner.RenderedStrokeWidth() == 0 || stroke.A == 0 || stroke == fill
 	return quietFill && quietStroke
 }
 

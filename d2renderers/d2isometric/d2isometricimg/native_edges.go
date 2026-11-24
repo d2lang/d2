@@ -235,7 +235,7 @@ func classicInkSegments(ctx context.Context, n d2isometric.Node, triangles []Tri
 		return classicInkLess(keys[i].c, keys[j].c)
 	})
 	fullRim := nativeClassicRim(n)
-	lightCreases := fullRim && !n.StrokeExplicit && !n.Metadata.ExplicitDefaultStrokeWidth && n.StrokeWidth == d2target.DEFAULT_SHAPE_STROKE_WIDTH
+	lightCreases := fullRim && !n.StrokeExplicit && !n.Metadata.ExplicitDefaultStrokeWidth && n.RenderedStrokeWidth() == d2target.DEFAULT_SHAPE_STROKE_WIDTH
 	radius := 0.
 	if len(inkRadius) > 0 && inkRadius[0] > 0 && captionFinite(inkRadius[0]) {
 		radius = inkRadius[0]
@@ -475,7 +475,7 @@ func (b *meshBuilder) classicInkEdges(n d2isometric.Node, triangles []Triangle) 
 	// A translucent source object is one compositing group. Its existing
 	// compensated cap texture retains that coverage; a second physical ink
 	// layer would apply the object's opacity twice at the border.
-	if n.StrokeWidth <= 0 || n.Opacity < 1 || strings.EqualFold(n.Stroke, "none") {
+	if n.RenderedStrokeWidth() <= 0 || n.Opacity < 1 || strings.EqualFold(n.Stroke, "none") {
 		return
 	}
 	paint := nativePaint(n.Stroke, "#263c4e")
@@ -490,7 +490,7 @@ func (b *meshBuilder) classicInkEdges(n d2isometric.Node, triangles []Triangle) 
 			scale = n.Size.X / float64(n.Metadata.Original.Width)
 		}
 	}
-	radius := float64(n.StrokeWidth) * scale / 2
+	radius := n.RenderedStrokeWidth() * scale / 2
 	segments, err := classicInkSegments(b.ctx, n, triangles, radius)
 	if err != nil {
 		b.err = err
@@ -500,7 +500,7 @@ func (b *meshBuilder) classicInkEdges(n d2isometric.Node, triangles []Triangle) 
 	material.Unlit, material.svgContour = true, true
 	dash, gap := 0., 0.
 	if n.StrokeDash > 0 {
-		dash, gap = svg.GetStrokeDashAttributes(float64(n.StrokeWidth), n.StrokeDash)
+		dash, gap = svg.GetStrokeDashAttributes(n.RenderedStrokeWidth(), n.StrokeDash)
 		dash, gap = dash*scale, gap*scale
 		if !captionFinite(dash, gap) || dash <= 0 || gap <= 0 {
 			dash, gap = radius*4, radius*4

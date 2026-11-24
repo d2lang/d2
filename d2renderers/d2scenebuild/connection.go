@@ -35,7 +35,7 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 		// Preserve Connection.CSSStyle's implicit animated dash pattern.
 		strokeDash = 5
 	}
-	stroke, err := b.stroke(connection.Stroke, connection.StrokeWidth, strokeDash, d2scene.CapRound, d2scene.JoinRound, fmt.Sprintf("connection %q stroke", connection.ID))
+	stroke, err := b.stroke(connection.Stroke, connection.RenderedStrokeWidth(), strokeDash, d2scene.CapRound, d2scene.JoinRound, fmt.Sprintf("connection %q stroke", connection.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -206,10 +206,10 @@ func validateAnimatedConnection(object string, connection d2target.Connection) e
 	if strokeDash == 0 {
 		strokeDash = 5
 	}
-	if err := validateDash(object, strokeDash, connection.StrokeWidth); err != nil {
+	if err := validateDash(object, strokeDash, connection.RenderedStrokeWidth()); err != nil {
 		return err
 	}
-	if connection.StrokeWidth == 0 {
+	if connection.RenderedStrokeWidth() == 0 {
 		return nil
 	}
 	if _, _, err := animatedConnectionTiming(connection); err != nil {
@@ -223,7 +223,7 @@ func animatedConnectionTiming(connection d2target.Connection) (float64, time.Dur
 	if strokeDash == 0 {
 		strokeDash = 5
 	}
-	dashSize, gapSize := svg.GetStrokeDashAttributes(float64(connection.StrokeWidth), strokeDash)
+	dashSize, gapSize := svg.GetStrokeDashAttributes(connection.RenderedStrokeWidth(), strokeDash)
 	period := dashSize + gapSize
 	if !finite(period) || period < 0 {
 		return 0, 0, fmt.Errorf("must produce a finite non-negative dash period")
@@ -418,7 +418,7 @@ func (b *builder) arrowhead(connection d2target.Connection, arrowhead d2target.A
 	if b.options.Sketch {
 		return b.sketchArrowhead(connection, arrowhead, target, endpoint, tangent)
 	}
-	strokeWidth := float64(connection.StrokeWidth)
+	strokeWidth := connection.RenderedStrokeWidth()
 	width, height := arrowhead.Dimensions(strokeWidth)
 	refX := 1.5 * strokeWidth
 	if target {

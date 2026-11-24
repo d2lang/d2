@@ -169,7 +169,7 @@ func nativeUprightContact(n d2isometric.Node, start, inward Vec) (Vec, bool) {
 	if n.Metadata.Original.Width > 0 {
 		scale = w / float64(n.Metadata.Original.Width)
 	}
-	margin := min(.05, max(1e-7, float64(n.StrokeWidth)*scale/2))
+	margin := min(.05, max(1e-7, n.RenderedStrokeWidth()*scale/2))
 	if math.Abs(x) > w/2+margin || math.Abs(z) > d/2+margin {
 		return start, false
 	}
@@ -238,7 +238,7 @@ func nativeQueueContact(n d2isometric.Node, start, inward Vec) (Vec, bool) {
 	if n.Metadata.Original.Width > 0 {
 		scale = w / float64(n.Metadata.Original.Width)
 	}
-	margin := min(.05, max(1e-7, float64(n.StrokeWidth)*scale/2))
+	margin := min(.05, max(1e-7, n.RenderedStrokeWidth()*scale/2))
 	if math.Abs(x) > w/2+margin || math.Abs(z) > d/2+margin {
 		return start, false
 	}

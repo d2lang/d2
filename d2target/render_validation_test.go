@@ -8,6 +8,29 @@ import (
 	"testing"
 )
 
+func TestAnimatedStrokeBounds(t *testing.T) {
+	d := NewDiagram()
+	s := BaseShape()
+	s.ID, s.Pos, s.Width, s.Height = "box", Point{10, 20}, 30, 40
+	s.StrokeWidth, s.StrokeWidthOffset = 2, .25
+	d.Shapes = []Shape{*s}
+	if err := ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+	if tl, br := d.BoundingBox(); tl != (Point{8, 18}) || br != (Point{42, 62}) {
+		t.Fatalf("bounds of 2.25 px stroke = %v ... %v", tl, br)
+	}
+	for _, tc := range []struct {
+		width  int
+		offset float64
+	}{{0, -.25}, {2, math.NaN()}, {2, math.Inf(1)}, {2, 1}, {math.MaxInt, .25}} {
+		d.Shapes[0].StrokeWidth, d.Shapes[0].StrokeWidthOffset = tc.width, tc.offset
+		if err := ValidateRenderTarget(d); err == nil || !strings.Contains(err.Error(), "strokeWidthOffset") {
+			t.Errorf("width %d with offset %g: got %v", tc.width, tc.offset, err)
+		}
+	}
+}
+
 func TestValidateRenderTargetBoundsBoardTree(t *testing.T) {
 	t.Parallel()
 

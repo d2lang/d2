@@ -128,7 +128,7 @@ func placeHierarchyHeader(surface labelSurface, board d2isometric.Board, owner d
 			if cap <= surface.center.Y+.001 {
 				continue
 			}
-			margin := float64(node.StrokeWidth) * pixelScale / 2
+			margin := node.RenderedStrokeWidth() * pixelScale / 2
 			copy := *node
 			copy.Position = candidate.Position
 			appendBox(copy, candidate.Size.X/2+margin, candidate.Size.Z/2+margin, cap-depth, cap)
@@ -172,7 +172,7 @@ func placeHierarchyHeader(surface labelSurface, board d2isometric.Board, owner d
 		// A source title can use the existing bottom margin right up to a
 		// clear border. Try this one tighter strip before leaving the plate;
 		// retain the full text allocation and keep at least 2px of edge space.
-		pad := max(2*pixelScale, (float64(owner.StrokeWidth)/2+1)*pixelScale)
+		pad := max(2*pixelScale, (owner.RenderedStrokeWidth()/2+1)*pixelScale)
 		if pad < padZ {
 			bottom := surface
 			bottom.center.Z = front + board.Size.Z - pad - bottom.depth/2

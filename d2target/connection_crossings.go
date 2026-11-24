@@ -64,7 +64,7 @@ func ConnectionCrossings(connections []Connection, shapes map[string]Shape, sket
 	var extentX, extentY, spanX, spanY float64
 	var minX, maxX, minY, maxY float64
 	for i, c := range connections {
-		if c.Opacity == 0 || c.StrokeWidth == 0 || !strokeVisible(c.Stroke) {
+		if c.Opacity == 0 || c.RenderedStrokeWidth() == 0 || !strokeVisible(c.Stroke) {
 			continue
 		}
 		route := &routes[i]
@@ -84,8 +84,8 @@ func ConnectionCrossings(connections []Connection, shapes map[string]Shape, sket
 				return gaps
 			}
 		}
-		route.srcMarker, _ = c.SrcArrow.Dimensions(float64(c.StrokeWidth))
-		route.dstMarker, _ = c.DstArrow.Dimensions(float64(c.StrokeWidth))
+		route.srcMarker, _ = c.SrcArrow.Dimensions(c.RenderedStrokeWidth())
+		route.dstMarker, _ = c.DstArrow.Dimensions(c.RenderedStrokeWidth())
 		var distance float64
 		first, last := route.points[0], route.points[len(route.points)-1]
 		netX, netY := last.X-first.X, last.Y-first.Y
@@ -141,7 +141,7 @@ func ConnectionCrossings(connections []Connection, shapes map[string]Shape, sket
 			if p == nil {
 				continue
 			}
-			radius := 2 + 2*float64(max(connections[lower].StrokeWidth, connections[upper].StrokeWidth))
+			radius := 2 + 2*max(connections[lower].RenderedStrokeWidth(), connections[upper].RenderedStrokeWidth())
 			if ra.touchesEndpoint(*p, radius) || rb.touchesEndpoint(*p, radius) {
 				continue
 			}
@@ -157,8 +157,8 @@ func ConnectionCrossings(connections []Connection, shapes map[string]Shape, sket
 					clear(gaps)
 					return gaps
 				}
-				radius = route.clearOfOtherLegs(underSegment.start, *p, radius, float64(connections[lower].StrokeWidth))
-				if radius <= float64(connections[lower].StrokeWidth)/2 {
+				radius = route.clearOfOtherLegs(underSegment.start, *p, radius, connections[lower].RenderedStrokeWidth())
+				if radius <= connections[lower].RenderedStrokeWidth()/2 {
 					continue
 				}
 			}
@@ -169,7 +169,7 @@ func ConnectionCrossings(connections []Connection, shapes map[string]Shape, sket
 					continue
 				}
 			}
-			if dash := routes[upper].dash; dash.unknownPhase || dash.period != 0 && dash.emptyAtCrossing(overSegment, underSegment, *p, routes, float64(connections[lower].StrokeWidth), radius) {
+			if dash := routes[upper].dash; dash.unknownPhase || dash.period != 0 && dash.emptyAtCrossing(overSegment, underSegment, *p, routes, connections[lower].RenderedStrokeWidth(), radius) {
 				continue
 			}
 			locations[lower] = append(locations[lower], locatedGap{index: len(gaps[lower]), distance: underSegment.distanceTo(*p, routes), maxRadius: radius, minRadius: minRadius})
@@ -179,7 +179,7 @@ func ConnectionCrossings(connections []Connection, shapes map[string]Shape, sket
 	}
 	for edge, onRoute := range locations {
 		if len(onRoute) > 1 {
-			gaps[edge] = spaceCrossingGaps(gaps[edge], onRoute, float64(connections[edge].StrokeWidth))
+			gaps[edge] = spaceCrossingGaps(gaps[edge], onRoute, connections[edge].RenderedStrokeWidth())
 		}
 	}
 	return gaps
