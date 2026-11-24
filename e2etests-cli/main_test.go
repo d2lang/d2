@@ -1955,12 +1955,10 @@ func validatePDF(tb testing.TB, content []byte, wantPages int) {
 	}
 }
 
-// getNumBoards gets the number of boards in an SVG file through a non-robust pattern search
-// If the renderer changes, this must change
+// Each playback frame has its own opacity animation. Shared definitions can
+// also carry the diagram's theme class.
 func getNumBoards(svg string) int {
-	re := regexp.MustCompile(`class="d2-\d+`)
-	matches := re.FindAllString(svg, -1)
-	return len(matches)
+	return strings.Count(svg, `<g style="animation: d2Transition-`)
 }
 
 var errRE = regexp.MustCompile(`err:`)
