@@ -3,6 +3,8 @@ package layoutgraph
 import (
 	"fmt"
 	"math"
+	"slices"
+	"strconv"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labelgeom"
 
@@ -24,6 +26,9 @@ type Edge struct {
 	// when the slot it names holds this very edge, and never affects layout.
 	preflightSlot int32
 
+	// ReversedForLayout records normalization of an authored source-only arrow.
+	// D2 still renders endpoint labels along the original path traversal.
+	ReversedForLayout    bool
 	SourceArrowhead      Arrowhead
 	TargetArrowhead      Arrowhead
 	SourceArrowheadLabel *Label
@@ -362,6 +367,30 @@ func (edge *Edge) LabelTopLeft(labelPosition label.Position, width, height float
 	return point
 }
 
+// ArrowheadLabelTopLeft receives TALA's normalized endpoint and route. D2
+// places the text on the authored side of the line and measures the offset
+// along that traversal, including across bends when the terminal leg is short.
+func (e *Edge) ArrowheadLabelTopLeft(route geo.Route, isTarget bool, value *Label) *geo.Point {
+	source, target := e.SourceArrowhead, e.TargetArrowhead
+	if e.ReversedForLayout {
+		isTarget = !isTarget
+		source, target = target, source
+		if len(route) == 2 {
+			route = geo.Route{route[1], route[0]}
+		} else {
+			route = slices.Clone(route)
+			slices.Reverse(route)
+		}
+	}
+	var strokeWidth *int
+	if e.Style.StrokeWidth != nil {
+		if n, err := strconv.Atoi(e.Style.StrokeWidth.Value); err == nil {
+			strokeWidth = &n
+		}
+	}
+	return labelgeom.ArrowheadTopLeft(route, isTarget, string(source), string(target), value.Width, value.Height, strokeWidth)
+}
+
 func (e *Edge) bounds() (*geo.Point, *geo.Point) {
 	tl, br := e.boundingBoxValues()
 	return &tl, &br
@@ -387,28 +416,14 @@ func (e *Edge) boundingBoxValues() (geo.Point, geo.Point) {
 	}
 	if len(e.Points) > 0 {
 		if label := e.SourceArrowheadLabel; label != nil {
-			labelTL := labelgeom.ArrowheadTopLeft(
-				e.Points,
-				false,
-				string(e.SourceArrowhead),
-				string(e.TargetArrowhead),
-				label.Width,
-				label.Height,
-			)
+			labelTL := e.ArrowheadLabelTopLeft(e.Points, false, label)
 			tl.X = math.Min(tl.X, labelTL.X)
 			tl.Y = math.Min(tl.Y, labelTL.Y)
 			br.X = math.Max(br.X, labelTL.X+label.Width)
 			br.Y = math.Max(br.Y, labelTL.Y+label.Height)
 		}
 		if label := e.TargetArrowheadLabel; label != nil {
-			labelTL := labelgeom.ArrowheadTopLeft(
-				e.Points,
-				true,
-				string(e.SourceArrowhead),
-				string(e.TargetArrowhead),
-				label.Width,
-				label.Height,
-			)
+			labelTL := e.ArrowheadLabelTopLeft(e.Points, true, label)
 			tl.X = math.Min(tl.X, labelTL.X)
 			tl.Y = math.Min(tl.Y, labelTL.Y)
 			br.X = math.Max(br.X, labelTL.X+label.Width)

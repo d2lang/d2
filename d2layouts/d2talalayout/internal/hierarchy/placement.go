@@ -108,6 +108,7 @@ func (below *placementNode) connect(above *placementNode) {
 type Placement struct {
 	Random         *rand.Rand
 	CompactSpacing bool
+	ClearLoopRanks bool
 }
 
 func Place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, random *rand.Rand) error {
@@ -256,6 +257,11 @@ func (p Placement) placeNodesInHierarchy(ctx context.Context, g *layoutgraph.Gra
 	direction := g.Nodes[0].ContainerDirection()
 	if direction == geo.Left || direction == geo.Top {
 		mirrorRankBlocks(g, direction)
+	}
+	if p.ClearLoopRanks {
+		if err := clearLoopRanks(g, byLevel, direction, guard); err != nil {
+			return err
+		}
 	}
 	complete = true
 	return nil

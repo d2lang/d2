@@ -1,6 +1,7 @@
 package loops
 
 import (
+	"context"
 	"math"
 	"slices"
 
@@ -10,6 +11,41 @@ import (
 )
 
 const sharedPortLoopGap = 30.0
+
+// EnableSeparateCorners marks loop hosts in this trial's private graph so
+// placement and routing can use the same alternative corner assignment.
+func EnableSeparateCorners(ctx context.Context, g *layoutgraph.Graph) error {
+	for _, edge := range g.Edges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if edge.IsLoop() {
+			edge.From.SeparateLoopCorners = true
+		}
+	}
+	return nil
+}
+
+// Equivalent loops can occupy the four corner pairs in rotation. Further
+// loops nest around the previous route at that corner. Read the current edges
+// since grouping can temporarily redirect an edge during placement.
+func separateCorners(edges []*layoutgraph.Edge) bool {
+	var first *layoutgraph.Edge
+	count := 0
+	for _, e := range edges {
+		if !e.IsLoop() {
+			continue
+		}
+		if first == nil {
+			first = e
+		}
+		count++
+		if first.SourceArrowhead != e.SourceArrowhead || first.TargetArrowhead != e.TargetArrowhead {
+			return false
+		}
+	}
+	return count >= 2
+}
 
 // ComputeOffsets refreshes loop extents for every graph node.
 func ComputeOffsets(g *layoutgraph.Graph) {
@@ -107,6 +143,7 @@ func Route(n *layoutgraph.Node) []*layoutgraph.Edge {
 func routeLoops(n *layoutgraph.Node) []*layoutgraph.Edge {
 	availablePorts := makeLoopPorts(n)
 
+	split := n.SeparateLoopCorners && separateCorners(n.Edges)
 	var routedEdges []*layoutgraph.Edge
 	for _, e := range edgesInOrder(n.Edges) {
 		if !e.IsLoop() {
@@ -115,6 +152,11 @@ func routeLoops(n *layoutgraph.Node) []*layoutgraph.Edge {
 
 		routedEdges = append(routedEdges, e)
 		portsPair := findLoopPortsForEdge(e, availablePorts)
+		if split {
+			// Start on opposite corners to separate both incoming and outgoing ports.
+			order := [...]int{0, 3, 1, 2}
+			portsPair = availablePorts[order[(len(routedEdges)-1)%len(order)]]
+		}
 		e.Points = routeLoop(portsPair)
 		if e.Label != nil {
 			e.Label.Position = label.OutsideTopCenter

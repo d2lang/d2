@@ -236,7 +236,7 @@ func validateLayoutResultMetadata(
 		if input == nil {
 			return fmt.Errorf("result contains unexpected edge ID %d", edge.ID)
 		}
-		if input.SourceArrowhead != edge.SourceArrowhead || input.TargetArrowhead != edge.TargetArrowhead {
+		if input.ReversedForLayout != edge.ReversedForLayout || input.SourceArrowhead != edge.SourceArrowhead || input.TargetArrowhead != edge.TargetArrowhead {
 			return fmt.Errorf("edge %d arrowhead metadata changed", edge.ID)
 		}
 		if !sameImmutableLabel(input.SourceArrowheadLabel, edge.SourceArrowheadLabel) {

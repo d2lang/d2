@@ -91,8 +91,9 @@ type SerializedEdge struct {
 	ToTableColumnIndex   *int               `json:"toTableColumnIndex,omitempty"`
 	Style                SerializedStyle    `json:"style,omitempty"`
 
-	SourceArrowhead string `json:"sourceArrowhead"`
-	TargetArrowhead string `json:"targetArrowhead"`
+	ReversedForLayout bool   `json:"reversedForLayout,omitempty"`
+	SourceArrowhead   string `json:"sourceArrowhead"`
+	TargetArrowhead   string `json:"targetArrowhead"`
 
 	SourceArrowheadLabel *SerializedLabel `json:"sourceArrowheadLabel,omitempty"`
 	TargetArrowheadLabel *SerializedLabel `json:"targetArrowheadLabel,omitempty"`

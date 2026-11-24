@@ -15,6 +15,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/loops"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/packing"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placement"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/proximity"
@@ -28,6 +29,7 @@ const maxGraphSize = limits.MaxGraphSize
 type LayoutOptions struct {
 	Seed                    int64
 	CompactHierarchySpacing bool
+	LoopClearance           bool
 	skipDirectedSplitJoins  bool
 }
 
@@ -531,6 +533,12 @@ func runLayout(ctx context.Context, graph *layoutgraph.Graph, options LayoutOpti
 	}
 	defer cancelWork()
 	pipeline := newPipeline(graph, options.Seed, instrumentation.storeSnapshots)
+	if options.LoopClearance {
+		if err := loops.EnableSeparateCorners(workCtx, graph); err != nil {
+			return nil, err
+		}
+		pipeline.hierarchyPlacement.ClearLoopRanks = true
+	}
 	pipeline.hierarchyPlacement.CompactSpacing = options.CompactHierarchySpacing
 	pipeline.hierarchyDiscovery.SkipDirectedSplitJoins = options.skipDirectedSplitJoins
 	if instrumentation.measureStageDurations {
