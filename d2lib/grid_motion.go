@@ -33,10 +33,10 @@ type gridMotionItem struct {
 }
 
 type gridNode struct {
-	shape                    *d2target.Shape
-	parent                   *gridNode
-	children                 []*gridNode
-	inGrid, gridCell, isGrid bool
+	shape                                  *d2target.Shape
+	parent                                 *gridNode
+	children                               []*gridNode
+	inGrid, gridCell, isGrid, containsGrid bool
 }
 
 func gridNodes(board *d2target.Diagram, graph *d2graph.Graph) map[string]*gridNode {
@@ -64,12 +64,17 @@ func gridNodes(board *d2target.Diagram, graph *d2graph.Graph) map[string]*gridNo
 			}
 			node.parent = parent
 			node.isGrid = child.IsGridDiagram()
-			node.gridCell = obj.IsGridDiagram()
+			// Constant-near objects are laid out separately from the root grid.
+			detached := obj == graph.Root && child.IsConstantNear()
+			node.gridCell = obj.IsGridDiagram() && !detached
 			if parent != nil {
 				parent.children = append(parent.children, node)
 			}
-			node.inGrid = inGrid || child.IsGridDiagram()
+			node.inGrid = node.isGrid || (inGrid && !detached)
 			walk(child, node, id+".", node.inGrid)
+			if parent != nil && (node.isGrid || node.containsGrid) {
+				parent.containsGrid = true
+			}
 		}
 	}
 	walk(graph.Root, nil, "", graph.Root.IsGridDiagram())
@@ -104,10 +109,13 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 			m.hasEnter = true
 		} else {
 			item.from = a.shape
-			if a.shape.Pos == b.shape.Pos && a.shape.Width == b.shape.Width && a.shape.Height == b.shape.Height {
+			if !sameSlot(a.shape, b.shape) {
+				m.moves = true
+			} else if len(to.TweenFrames) == 0 {
+				// A paint sample can reflow an intermediate label and displace
+				// a stationary neighbor. Pin it only when paint frames exist.
 				continue
 			}
-			m.moves = true
 		}
 		m.items[id] = item
 	}
@@ -119,10 +127,11 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 			m.hasExit = true
 		}
 	}
-	if len(m.items) == 0 {
+	if !m.moves && !m.hasEnter && !m.hasExit {
 		return nil
 	}
 	m.bands = planGridBands(old, next)
+	m.addGridSurroundings(old, next)
 	m.planGridFolds(old, next)
 	m.handoffs = detectGridHandoffs(old, next)
 	// During a pure reorder, retain the original stacking order while cells
@@ -150,8 +159,40 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 	for id := range m.items {
 		moving[id] = true
 	}
-	m.edges = newGridMotionEdges(from, to, moving)
+	m.edges = newGridMotionEdges(from, to, fromGraph, toGraph, moving)
 	return m
+}
+
+// A reflow can resize containers enclosing a grid and displace their neighbors.
+func (m *gridMotion) addGridSurroundings(old, next map[string]*gridNode) {
+	// External shapes follow the grid clock, including the earlier slide
+	// during a band insertion when all the changing cells share that timing.
+	layoutBand := gridBandNone
+	for id, item := range m.items {
+		if item.from != nil && item.to != nil && sameSlot(item.from, item.to) {
+			continue
+		}
+		band := m.bands[id]
+		if band == gridBandNone || (layoutBand != gridBandNone && layoutBand != band) {
+			layoutBand = gridBandNone
+			break
+		}
+		layoutBand = band
+	}
+	for id, b := range next {
+		a := old[id]
+		if a == nil || b.inGrid || a.inGrid || sameSlot(a.shape, b.shape) {
+			continue
+		}
+		if !a.containsGrid && !b.containsGrid && (a.shape.Width != b.shape.Width || a.shape.Height != b.shape.Height) {
+			continue
+		}
+		m.items[id] = &gridMotionItem{from: a.shape, to: b.shape}
+		m.moves = true
+		if layoutBand != gridBandNone {
+			m.bands[id] = layoutBand
+		}
+	}
 }
 
 func gridShapeNodes(board *d2target.Diagram) map[string]*gridNode {
@@ -332,6 +373,9 @@ func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel floa
 	}
 	s.Width, s.Height = scaled(s.Width), scaled(s.Height)
 	s.FontSize, s.LabelWidth, s.LabelHeight = scaled(s.FontSize), scaled(s.LabelWidth), scaled(s.LabelHeight)
+	if s.Language == "latex" && scale != 1 {
+		s.MotionScale = scale
+	}
 	s.StrokeWidth, s.BorderRadius, s.IconBorderRadius = scaled(s.StrokeWidth), scaled(s.BorderRadius), scaled(s.IconBorderRadius)
 	if len(s.Columns) > 0 && scale != 1 {
 		s.Columns = slices.Clone(s.Columns)

@@ -13,7 +13,8 @@ const (
 	// Bound raw render targets before they reach recursive hashing and
 	// multi-board rendering. Validation itself remains iterative.
 	maxRenderTargetBoardDepth = 1_024
-	maxRenderTargetBoardCount = 4_096
+	// MaxRenderTargetBoards includes authored boards and their tween samples.
+	MaxRenderTargetBoards = 16_384
 )
 
 // ValidateRenderTarget checks the invariants required by renderers which
@@ -73,8 +74,8 @@ func ValidateRenderTarget(root *Diagram) error {
 					return fmt.Errorf("render target board %s reuses board %s", childPath, firstPath)
 				}
 				boardCount++
-				if boardCount > maxRenderTargetBoardCount {
-					return fmt.Errorf("render target board tree exceeds %d total boards", maxRenderTargetBoardCount)
+				if boardCount > MaxRenderTargetBoards {
+					return fmt.Errorf("render target board tree exceeds %d total boards", MaxRenderTargetBoards)
 				}
 				seen[child] = childPath
 				stack = append(stack, boardEntry{diagram: child, path: childPath, depth: childDepth})
@@ -303,6 +304,9 @@ func validateMotionClip(c *MotionClip, path string) error {
 }
 
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
+	if !finiteRenderNumber(targetShape.MotionScale) || targetShape.MotionScale < 0 || targetShape.MotionScale > 1 {
+		return invalidRenderField(path, "motionScale", targetShape.MotionScale, "must be between zero and one")
+	}
 	if err := validateMotionClip(targetShape.MotionClip, path); err != nil {
 		return err
 	}

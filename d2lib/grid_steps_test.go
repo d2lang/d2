@@ -166,3 +166,68 @@ func TestGridSampleTimes(t *testing.T) {
 		}
 	}
 }
+
+func TestGridStepsShareDocumentBudget(t *testing.T) {
+	// This small budget exercises the same fallback as a long export without
+	// building thousands of frames. A separate paint-only layer already owns
+	// three frames. The two grid transitions share the remaining seven.
+	const input = `grid-rows: 1
+a; b
+layers: {colors: {x; steps: {paint: {x.style.fill: red}}}}
+steps: {add: {c}; remove: {c: null}}`
+	board, g := compileGridMotionTest(t, input)
+	paint := board.Layers[0].Steps[0]
+	paint.TweenFrames = []*d2target.Diagram{d2target.NewDiagram(), d2target.NewDiagram(), d2target.NewDiagram()}
+	paint.TweenDurationMS = 240
+	// This grid transition's existing paint frames must be replaced, not
+	// counted in addition to the new ones.
+	add := board.Steps[0]
+	for range 6 {
+		frame := *add
+		frame.TweenFrames = nil
+		add.TweenFrames = append(add.TweenFrames, &frame)
+	}
+	add.TweenDurationMS = 240
+	const limit = 15 // Five authored boards, three paint frames, seven grid frames.
+	if err := sampleGridSteps(context.Background(), board, g, 240, limit); err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for i, step := range board.Steps {
+		if n := len(step.TweenFrames); n < 2 || n > 5 {
+			t.Fatalf("unbalanced grid samples: %d", n)
+		}
+		// The add includes a 240 ms paint tween. A pure removal returns
+		// control to the authored endpoint as soon as the 160 ms pop ends.
+		wantEnd := []int{240, 160}[i]
+		if end := step.TweenFrameEndsMS[len(step.TweenFrames)-1]; end != wantEnd || step.TweenDurationMS != 240 || !step.GridMotion {
+			t.Fatalf("%s: last sample ends at %d ms, duration %d ms, grid motion %t", step.Name, end, step.TweenDurationMS, step.GridMotion)
+		}
+		total += len(step.TweenFrames)
+	}
+	if total != 7 || len(paint.TweenFrames) != 3 {
+		t.Fatalf("got %d grid and %d paint frames", total, len(paint.TweenFrames))
+	}
+	if err := d2target.ValidateRenderTarget(board); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGridSampleBudgetIncludesGeometry(t *testing.T) {
+	plans := []gridStepPlan{
+		{bounds: []int{0, 10, 20, 30, 40}, cost: 3},
+		{bounds: []int{0, 10, 20, 30, 40}, cost: 6},
+	}
+	if err := fitGridSamples(plans, 100, 18); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range plans {
+		if !slices.Equal(p.bounds, []int{0, 20, 40}) {
+			t.Fatalf("got sample boundaries %v", p.bounds)
+		}
+	}
+	// Even the two starting samples need nine geometry elements.
+	if err := fitGridSamples(plans, 100, 8); err == nil {
+		t.Fatal("accepted a schedule whose first samples exceed the geometry limit")
+	}
+}

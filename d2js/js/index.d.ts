@@ -154,6 +154,7 @@ export type Shape = (Class | SQLTable | Text) & ShapeBase;
 export interface ShapeBase {
   motionClip?: MotionClip;
   motionLabelTopLeft?: Point;
+  motionScale?: number;
   id: string;
   type: string;
   classes?: string[];

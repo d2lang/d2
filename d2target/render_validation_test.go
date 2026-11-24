@@ -32,7 +32,7 @@ func TestValidateRenderTargetBoundsBoardTree(t *testing.T) {
 
 	t.Run("maximum board count", func(t *testing.T) {
 		root := NewDiagram()
-		root.Layers = make([]*Diagram, maxRenderTargetBoardCount-1)
+		root.Layers = make([]*Diagram, MaxRenderTargetBoards-1)
 		for i := range root.Layers {
 			root.Layers[i] = NewDiagram()
 		}

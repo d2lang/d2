@@ -152,3 +152,106 @@ steps: {promote: {
 		}
 	}
 }
+
+func TestGridReflowInsideOrdinaryContainer(t *testing.T) {
+	board, graph := compileGridMotionTest(t, `
+direction: right
+service: Platform {
+  pool: Workers {
+    grid-columns: 3
+    primary: Primary {width: 100; height: 50}
+    west: West {width: 100; height: 50}
+    east: East {width: 100; height: 50}
+  }
+}
+monitor: Monitor
+service -> monitor
+steps: {drain: {service.pool.west: null; service.pool.east: null}}
+`)
+	next := board.Steps[0]
+	for _, tc := range []struct {
+		a, b   *d2target.Diagram
+		ag, bg *d2graph.Graph
+	}{{board, next, graph, graph.Steps[0]}, {next, board, graph.Steps[0], graph}} {
+		m := newGridMotion(tc.a, tc.b, tc.ag, tc.bg)
+		for ms := 0; ms <= 500; ms += 10 {
+			frame := m.sample(tc.b, ms, 500)
+			service, pool, monitor := shapeByID(t, frame, "service"), shapeByID(t, frame, "service.pool"), shapeByID(t, frame, "monitor")
+			if pool.Pos.X < service.Pos.X || pool.Pos.X+pool.Width > service.Pos.X+service.Width || monitor.Pos.X < service.Pos.X+service.Width {
+				t.Fatalf("at %dms service %v does not contain pool or overlaps monitor (pool right %d, monitor x %d)", ms, service.Pos, pool.Pos.X+pool.Width, monitor.Pos.X)
+			}
+			if ms == 0 || ms == 500 {
+				want := tc.a
+				if ms == 500 {
+					want = tc.b
+				}
+				for _, s := range []d2target.Shape{service, pool, monitor} {
+					end := shapeByID(t, want, s.ID)
+					if !sameSlot(&s, &end) {
+						t.Fatalf("at %dms %s jumped to %+v", ms, s.ID, s.Pos)
+					}
+				}
+			}
+			if len(frame.Connections) != 1 || frame.Connections[0].Route[0].X >= frame.Connections[0].Route[len(frame.Connections[0].Route)-1].X {
+				t.Fatalf("at %dms service -> monitor lost its forward route", ms)
+			}
+		}
+	}
+}
+
+func TestGridSurroundingsFollowBand(t *testing.T) {
+	board, graph := compileGridMotionTest(t, `
+direction: right
+ci: {
+ matrix: {
+  grid-rows: 2; grid-columns: 2
+  a; b; c; d
+ }
+}
+report
+ci -> report
+steps: {expand: {ci.matrix: {
+ grid-columns: 3
+ b: null; c: null; d: null
+ x; b; c; y; d
+}}}
+`)
+	next := board.Steps[0]
+	m := newGridMotion(board, next, graph, graph.Steps[0])
+	for _, id := range []string{"ci.matrix", "ci", "report"} {
+		if m.bands[id] != gridBandOpen {
+			t.Fatalf("%s does not share the CI matrix's expansion timing", id)
+		}
+	}
+}
+
+func TestGridStationaryNeighborDuringCounterTween(t *testing.T) {
+	board, _ := compileGridMotionTest(t, `
+vars: {n: -9; d2-config: {animate-interval: 1s; animate-duration: 800ms}}
+grid-rows: 1
+grid-columns: 3
+grid-gap: 10
+count: "${n}" {style.font: mono}
+worker: Writer
+steps: {start: {vars: {n: 10}; next: Follower}}
+`)
+	next := board.Steps[0]
+	worker := shapeByID(t, board, "worker")
+	end := shapeByID(t, next, "worker")
+	if !sameSlot(&worker, &end) {
+		t.Fatalf("expected a stationary worker at both endpoints")
+	}
+	midLabel := false
+	for i, frame := range next.TweenFrames {
+		got := shapeByID(t, frame, "worker")
+		if !sameSlot(&worker, &got) {
+			t.Fatalf("frame %d moved worker from %v to %v", i, worker.Pos, got.Pos)
+		}
+		if len(shapeByID(t, frame, "count").Label) == 1 {
+			midLabel = true
+		}
+	}
+	if !midLabel {
+		t.Fatal("missing intermediate single-digit counter text")
+	}
+}

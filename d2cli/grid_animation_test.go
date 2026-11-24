@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/gif"
+	"regexp"
 	"slices"
 	"testing"
 
@@ -19,6 +20,17 @@ grid-columns: 2
 horizontal-gap: 12
 anchor: "" {width: 60; height: 48; style: {fill: red; stroke-width: 0}}
 steps: {expand: {warm: "" {width: 60; height: 48; style: {fill: blue; stroke-width: 0}}}}`
+	for _, tc := range []struct{ name, diagram string }{
+		{"plain", source},
+		{"legend", "vars: {d2-legend: {cache: Edge cache}}\n" + source},
+		{"incoming-appendix", source + "\nsteps.expand.warm.tooltip: A newly warmed replica begins accepting traffic"},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkGridGIFStationaryCell(t, tc.diagram) })
+	}
+}
+
+func checkGridGIFStationaryCell(t *testing.T, source string) {
+	t.Helper()
 	out, err := imageCLI(t, t.TempDir(), source, "--pad=4", "--stdout-format=gif", "-")
 	if err != nil {
 		t.Fatal(err)
@@ -65,6 +77,29 @@ steps: {expand: {warm: "" {width: 60; height: 48; style: {fill: blue; stroke-wid
 	}
 	if !hasIntermediate {
 		t.Fatal("did not render a growing blue cell")
+	}
+}
+
+func TestGridPopFadesTooltipAndScalesLatexInSVG(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: 220ms; animate-interval: 300ms}}
+grid-columns: 2
+anchor: A
+steps: {add: {
+  formula: |latex
+    f(x) = x^2 + 2x + 1
+  | {tooltip: Serving traffic; tooltip.near: top-center}
+}}`
+	out, err := imageCLI(t, t.TempDir(), source, "--stdout-format=svg", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// MathJax uses its own nested transforms. Only the outer label group
+	// places the formula in the cell and carries its sampled pop scale.
+	if !regexp.MustCompile(`transform="translate\([-0-9.]+ [-0-9.]+\) scale\(0\.[0-9]+\)"`).Match(out) {
+		t.Fatal("missing sampled LaTeX scale at cell label origin")
+	}
+	if !regexp.MustCompile(`<g opacity="0\.[0-9]+"><g class="positioned-tooltip"`).Match(out) {
+		t.Fatal("missing partially visible positioned tooltip")
 	}
 }
 

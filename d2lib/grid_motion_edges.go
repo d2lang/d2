@@ -4,6 +4,8 @@ import (
 	"math"
 	"slices"
 
+	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/d2sequence"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/shape"
@@ -24,13 +26,25 @@ type gridEdgeLayout struct {
 
 type gridEdgePair struct {
 	before, after gridEdgeLayout
+	dstAnchor     string
 }
 
-func newGridMotionEdges(from, to *d2target.Diagram, moving map[string]bool) *gridMotionEdges {
+func newGridMotionEdges(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph, moving map[string]bool) *gridMotionEdges {
 	m := &gridMotionEdges{pairs: make(map[string]*gridEdgePair)}
+	graphs := [2]*d2graph.Graph{fromGraph, toGraph}
 	for i, board := range []*d2target.Diagram{from, to} {
 		if len(board.Connections) == 0 {
 			continue
+		}
+		// Lifelines have a synthetic destination with no rendered shape. Anchor
+		// both route ports to their own actor, including during a subtree pop.
+		lifelines := make(map[string]bool)
+		if graph := graphs[i]; graph != nil {
+			for _, edge := range graph.Edges {
+				if d2sequence.IsLifelineEnd(edge.Dst) {
+					lifelines[edge.AbsID()] = true
+				}
+			}
 		}
 		shapes := gridEdgeShapeMap(board.Shapes)
 		for j := range board.Connections {
@@ -40,7 +54,10 @@ func newGridMotionEdges(from, to *d2target.Diagram, moving map[string]bool) *gri
 			}
 			pair := m.pairs[e.ID]
 			if pair == nil {
-				pair = &gridEdgePair{}
+				pair = &gridEdgePair{dstAnchor: e.Dst}
+				if lifelines[e.ID] {
+					pair.dstAnchor = e.Src
+				}
 				m.pairs[e.ID] = pair
 			}
 			// A custom layout can return an incomplete route. Let normal
@@ -48,7 +65,7 @@ func newGridMotionEdges(from, to *d2target.Diagram, moving map[string]bool) *gri
 			if len(e.Route) < 2 || e.IsCurve && (len(e.Route)-1)%3 != 0 || slices.Contains(e.Route, nil) {
 				continue
 			}
-			layout := gridEdgeLayout{e, shapes[e.Src], shapes[e.Dst]}
+			layout := gridEdgeLayout{e, shapes[e.Src], shapes[pair.dstAnchor]}
 			if i == 0 {
 				pair.before = layout
 			} else {
@@ -76,9 +93,9 @@ func (m *gridMotionEdges) sample(base []d2target.Connection, shapes []d2target.S
 	if len(m.pairs) == 0 {
 		return base
 	}
-	alpha := func(e *d2target.Connection, fallback float64) float64 {
+	alpha := func(e *d2target.Connection, dstAnchor string, fallback float64) float64 {
 		a, src := visibility[e.Src]
-		b, dst := visibility[e.Dst]
+		b, dst := visibility[dstAnchor]
 		switch {
 		case src && dst:
 			return min(a, b)
@@ -102,17 +119,17 @@ func (m *gridMotionEdges) sample(base []d2target.Connection, shapes []d2target.S
 			continue
 		}
 		if pair.before.edge == nil {
-			e.Opacity *= alpha(&e, enter)
+			e.Opacity *= alpha(&e, pair.dstAnchor, enter)
 		}
-		if pair.route(&e, current, travel) && gridEdgeRevealed(&e, current) {
+		if pair.sample(&e, current, travel) {
 			result = append(result, e)
 		}
 	}
 	if exit > 0 || len(visibility) != 0 {
 		for _, pair := range m.removed {
 			e := *pair.before.edge
-			e.Opacity *= alpha(&e, exit)
-			if pair.route(&e, current, travel) && gridEdgeRevealed(&e, current) {
+			e.Opacity *= alpha(&e, pair.dstAnchor, exit)
+			if pair.sample(&e, current, travel) {
 				result = append(result, e)
 			}
 		}
@@ -122,8 +139,7 @@ func (m *gridMotionEdges) sample(base []d2target.Connection, shapes []d2target.S
 
 // A link between details shares their growing viewport. For an external link,
 // expose the route only as its attachment comes into view.
-func gridEdgeRevealed(e *d2target.Connection, shapes map[string]*d2target.Shape) bool {
-	src, dst := shapes[e.Src].MotionClip, shapes[e.Dst].MotionClip
+func gridEdgeRevealed(e *d2target.Connection, src, dst *d2target.MotionClip) bool {
 	if src == nil && dst == nil {
 		return true
 	}
@@ -179,11 +195,12 @@ func gridEdgeBorder(s *d2target.Shape, dx, dy float64) *geo.Point {
 	return shape.TraceToShapeBorder(outline, border, geo.NewPoint(c.X+dx*2*ratio, c.Y+dy*2*ratio))
 }
 
-func (pair *gridEdgePair) route(e *d2target.Connection, shapes map[string]*d2target.Shape, t float64) bool {
-	src, dst := shapes[e.Src], shapes[e.Dst]
-	if src == nil || dst == nil || e.Opacity <= 0 {
-		return false
-	}
+func (pair *gridEdgePair) sample(e *d2target.Connection, shapes map[string]*d2target.Shape, t float64) bool {
+	src, dst := shapes[e.Src], shapes[pair.dstAnchor]
+	return src != nil && dst != nil && e.Opacity > 0 && pair.route(e, src, dst, t) && gridEdgeRevealed(e, src.MotionClip, dst.MotionClip)
+}
+
+func (pair *gridEdgePair) route(e *d2target.Connection, src, dst *d2target.Shape, t float64) bool {
 	old, next := pair.before, pair.after
 	if old.edge == nil || t == 1 {
 		old = next
@@ -202,7 +219,7 @@ func (pair *gridEdgePair) route(e *d2target.Connection, shapes map[string]*d2tar
 			return true
 		}
 	}
-	if old.edge == next.edge && gridEdgeSameBounds(src, old.src) && gridEdgeSameBounds(dst, old.dst) {
+	if old.edge == next.edge && sameSlot(src, old.src) && sameSlot(dst, old.dst) {
 		e.IsCurve, e.Route = old.edge.IsCurve, old.edge.Route
 		return true
 	}
@@ -248,10 +265,6 @@ func (pair *gridEdgePair) route(e *d2target.Connection, shapes map[string]*d2tar
 	}
 	e.Route = points
 	return len(points) >= 2
-}
-
-func gridEdgeSameBounds(a, b *d2target.Shape) bool {
-	return a.Pos == b.Pos && a.Width == b.Width && a.Height == b.Height
 }
 
 func (l gridEdgeLayout) portShifts(src, dst *d2target.Shape) (geo.Point, geo.Point) {

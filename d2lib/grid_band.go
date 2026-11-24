@@ -157,7 +157,7 @@ func hasGridBand(compact, expanded []*gridNode, compactBoard map[string]*gridNod
 }
 
 func gridBandBoundsChanged(a, b *gridNode) bool {
-	return a.shape.Pos != b.shape.Pos || a.shape.Width != b.shape.Width || a.shape.Height != b.shape.Height
+	return !sameSlot(a.shape, b.shape)
 }
 
 func gridBandGroups(nodes map[string]*gridNode) map[string][]*gridNode {
@@ -218,7 +218,11 @@ func planGridBands(old, next map[string]*gridNode) map[string]gridBand {
 		}
 		for _, n := range nodes {
 			if n.parent == nil {
-				visit(n, rules[""], rules[""] != gridBandNone && other[n.shape.ID] == nil)
+				band := gridBandNone
+				if n.gridCell {
+					band = rules[""]
+				}
+				visit(n, band, band != gridBandNone && other[n.shape.ID] == nil)
 			}
 		}
 	}

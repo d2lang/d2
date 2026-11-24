@@ -190,7 +190,7 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 		if connection.Language == "latex" {
 			latex, err := b.buildLatexLabelNode(
 				fmt.Sprintf("connection %q", connection.ID), connection.ID+":label:0",
-				connection.Label, connection.Color, topLeft,
+				connection.Label, connection.Color, topLeft, 1,
 			)
 			if err != nil {
 				return nil, err

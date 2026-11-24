@@ -132,7 +132,7 @@ func (b *builder) latexCurrentColor(raw, description string) (color.NRGBA, error
 	}
 }
 
-func (b *builder) buildLatexLabelNode(object, nodeID, formula, rawColor string, topLeft *geo.Point) (*d2scene.Node, error) {
+func (b *builder) buildLatexLabelNode(object, nodeID, formula, rawColor string, topLeft *geo.Point, scale float64) (*d2scene.Node, error) {
 	if topLeft == nil || !finite(topLeft.X) || !finite(topLeft.Y) {
 		return nil, invalidField(object, "labelPosition", nil, "must resolve to a finite LaTeX label origin")
 	}
@@ -140,11 +140,14 @@ func (b *builder) buildLatexLabelNode(object, nodeID, formula, rawColor string, 
 	if err != nil {
 		return nil, err
 	}
+	if scale == 0 {
+		scale = 1
+	}
 	node := d2scene.NewNode(d2scene.Image{
 		Asset: asset.id,
 		Box: d2scene.Box{
 			X: topLeft.X, Y: topLeft.Y,
-			Width: asset.width, Height: asset.height,
+			Width: asset.width * scale, Height: asset.height * scale,
 		},
 		Aspect: defaultImageAspect,
 	})

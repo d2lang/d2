@@ -113,7 +113,7 @@
     ordinary errors instead of panics or fatal recursion. [#2912](https://github.com/d2lang/d2/pull/2912)
   - Validate raw geometry, routes, arrows, fonts, and arithmetic before recursive
     rendering. [#2912](https://github.com/d2lang/d2/pull/2912)
-  - Limit raw graphs to 1,024 levels and 4,096 boards. [#2912](https://github.com/d2lang/d2/pull/2912)
+  - Limit render targets to 1,024 levels and 16,384 boards, including animation samples. Longer grid animations share the available samples across transitions. [#2912](https://github.com/d2lang/d2/pull/2912) [#3021](https://github.com/d2lang/d2/pull/3021)
   - Limit LaTeX labels to 4 KiB and 128 nested groups. [#2922](https://github.com/d2lang/d2/pull/2922)
   - Render LaTeX labels with the shape's font color instead of its stroke color. [#2943](https://github.com/d2lang/d2/pull/2943)
   - Limit grids to 10,000 rows or columns and 1,000,000 total cells, returning

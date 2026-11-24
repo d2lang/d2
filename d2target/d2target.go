@@ -805,7 +805,8 @@ type Shape struct {
 
 	Classes []string `json:"classes,omitempty"`
 
-	// Only intermediate grid frames carry a viewport or an interpolated caption anchor.
+	// Only intermediate grid frames carry a viewport, caption anchor or LaTeX scale.
+	MotionScale        float64     `json:"motionScale,omitempty"`
 	MotionClip         *MotionClip `json:"motionClip,omitempty"`
 	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
 

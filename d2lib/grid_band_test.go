@@ -30,6 +30,7 @@ func TestGridBandRecognition(t *testing.T) {
 			cell := func(id string) string { return fmt.Sprintf("%s: cell {width: 80; height: 50}\n", id) }
 			var src strings.Builder
 			src.WriteString("grid-rows: 2; grid-columns: 2\n")
+			src.WriteString("title: Release matrix {shape: text; near: top-center}\n")
 			for _, id := range strings.Fields("a b c d") {
 				src.WriteString(cell(id))
 			}
@@ -46,6 +47,9 @@ func TestGridBandRecognition(t *testing.T) {
 				want          gridBand
 			}{{old, next, gridBandOpen}, {next, old, gridBandClose}} {
 				plans := planGridBands(test.before, test.after)
+				if plans["title"] != gridBandNone {
+					t.Fatalf("detached title joined the grid band: %v", plans)
+				}
 				if !tc.shouldOpen {
 					if plans != nil {
 						t.Fatalf("unexpected band: %v", plans)

@@ -524,8 +524,8 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	if len(palettedFrames) != summary.totalFrames {
 		return nil, nil, fmt.Errorf("GIF encoded frame count %d differs from render schedule %d", len(palettedFrames), summary.totalFrames)
 	}
-	encoded, err = xgif.AnimateTimedCenteredOpaquePalettedImages(
-		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, summary.delays, gifMaxEncodedBytes,
+	encoded, err = xgif.AnimateTimedOpaquePalettedImages(
+		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, summary.offsets, summary.delays, gifMaxEncodedBytes,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -549,6 +549,7 @@ type gifRenderSummary struct {
 	previewSVG          []byte
 	totalFrames         int
 	delays              []int
+	offsets             []image.Point
 	maxWidth, maxHeight int
 }
 
@@ -696,6 +697,14 @@ func renderGIFWithSession(
 		}
 		gridBounds = &bounds
 	}
+	// Legends, appendix entries and root borders can expand individual scenes
+	// beyond the shared object bounds. Preserve their final world-space origins
+	// when padding frames for the encoder.
+	var canvas image.Rectangle
+	scale := 1.0
+	if opts.Scale != nil {
+		scale = *opts.Scale
+	}
 	renderedFrameCount := 0
 	for boardIndex, segment := range timeline {
 		board := segment.Diagram
@@ -722,8 +731,20 @@ func renderGIFWithSession(
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
-		summary.maxWidth = max(summary.maxWidth, plannedBounds.Dx())
-		summary.maxHeight = max(summary.maxHeight, plannedBounds.Dy())
+		if gridBounds != nil {
+			offset := image.Pt(
+				int(math.Round((document.ViewBox.X-float64(gridBounds.Min.X))*scale)),
+				int(math.Round((document.ViewBox.Y-float64(gridBounds.Min.Y))*scale)),
+			)
+			canvas = canvas.Union(plannedBounds.Add(offset))
+			for range segment.count {
+				summary.offsets = append(summary.offsets, offset)
+			}
+			summary.maxWidth, summary.maxHeight = canvas.Dx(), canvas.Dy()
+		} else {
+			summary.maxWidth = max(summary.maxWidth, plannedBounds.Dx())
+			summary.maxHeight = max(summary.maxHeight, plannedBounds.Dy())
+		}
 		if err := validateGIFNormalizedFootprint(summary.maxWidth, summary.maxHeight, totalFrames); err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
@@ -764,6 +785,9 @@ func renderGIFWithSession(
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
+	}
+	for i := range summary.offsets {
+		summary.offsets[i] = summary.offsets[i].Sub(canvas.Min)
 	}
 	if renderedFrameCount != totalFrames {
 		return summary, fmt.Errorf("GIF rendered frame count %d differs from schedule %d", renderedFrameCount, totalFrames)

@@ -46,6 +46,12 @@ func AnimateCenteredOpaquePalettedImagesWithLimit(ctx context.Context, images []
 // AnimateTimedCenteredOpaquePalettedImages accepts a delay in GIF centiseconds
 // for each image, preserving the same background, centering and output limits.
 func AnimateTimedCenteredOpaquePalettedImages(ctx context.Context, images []*image.Paletted, width, height int, delays []int, maxBytes int64) ([]byte, error) {
+	return AnimateTimedOpaquePalettedImages(ctx, images, width, height, nil, delays, maxBytes)
+}
+
+// AnimateTimedOpaquePalettedImages places each frame at its canvas offset,
+// padding uncovered pixels a row at a time. A nil offsets slice centers frames.
+func AnimateTimedOpaquePalettedImages(ctx context.Context, images []*image.Paletted, width, height int, offsets []image.Point, delays []int, maxBytes int64) ([]byte, error) {
 	ctx = nonNilContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -62,6 +68,9 @@ func AnimateTimedCenteredOpaquePalettedImages(ctx context.Context, images []*ima
 	if len(images) == 0 || len(delays) != len(images) {
 		return nil, fmt.Errorf("GIF encoding requires one delay per image")
 	}
+	if offsets != nil && len(offsets) != len(images) {
+		return nil, fmt.Errorf("GIF encoding requires one offset per image")
+	}
 	for index, frame := range images {
 		if delays[index] < 0 || delays[index] > 65535 {
 			return nil, fmt.Errorf("GIF frame %d delay exceeds GIF centisecond range", index)
@@ -75,6 +84,12 @@ func AnimateTimedCenteredOpaquePalettedImages(ctx context.Context, images []*ima
 		bounds := frame.Bounds()
 		if bounds.Dx() > width || bounds.Dy() > height {
 			return nil, fmt.Errorf("GIF frame %d dimensions %dx%d exceed %dx%d canvas", index, bounds.Dx(), bounds.Dy(), width, height)
+		}
+		if offsets != nil {
+			p := offsets[index]
+			if p.X < 0 || p.Y < 0 || p.X > width-bounds.Dx() || p.Y > height-bounds.Dy() {
+				return nil, fmt.Errorf("GIF frame %d at offset %v falls outside the %dx%d canvas", index, p, width, height)
+			}
 		}
 	}
 
@@ -92,7 +107,11 @@ func AnimateTimedCenteredOpaquePalettedImages(ctx context.Context, images []*ima
 			logicalFrame.Palette, _ = encoder.copyPaletteWithBackground(frame.Palette)
 			encoder.appendFrame(&logicalFrame, delays[index])
 		} else {
-			encoder.appendCenteredFrame(frame, width, height, delays[index])
+			offset := image.Pt((width-frame.Bounds().Dx())/2, (height-frame.Bounds().Dy())/2)
+			if offsets != nil {
+				offset = offsets[index]
+			}
+			encoder.appendPaddedFrame(frame, width, height, offset, delays[index])
 		}
 		if encoder.err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
@@ -359,7 +378,7 @@ func (g *gifAssembler) closeFrame() {
 	g.framesWrote++
 }
 
-func (g *gifAssembler) appendCenteredFrame(frame *image.Paletted, width, height, delay int) {
+func (g *gifAssembler) appendPaddedFrame(frame *image.Paletted, width, height int, offset image.Point, delay int) {
 	palette, backgroundIndex := g.copyPaletteWithBackground(frame.Palette)
 	logicalFrame := image.Paletted{Rect: image.Rect(0, 0, width, height), Stride: width, Palette: palette}
 	if g.framesWrote == 0 {
@@ -376,8 +395,7 @@ func (g *gifAssembler) appendCenteredFrame(frame *image.Paletted, width, height,
 	}
 	fillBytes(g.canvasRow, byte(backgroundIndex))
 	bounds := frame.Bounds()
-	top := (height - bounds.Dy()) / 2
-	left := (width - bounds.Dx()) / 2
+	top, left := offset.Y, offset.X
 	writeRow := func(rowIndex int) bool {
 		if rowIndex&255 == 0 && g.output.ctx != nil {
 			if err := g.output.ctx.Err(); err != nil {
