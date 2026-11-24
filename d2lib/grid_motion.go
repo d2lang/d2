@@ -3,6 +3,7 @@ package d2lib
 import (
 	"math"
 	"slices"
+	"sort"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
@@ -13,15 +14,13 @@ import (
 type gridMotion struct {
 	items                    map[string]*gridMotionItem
 	removed                  []d2target.Shape
+	paintOrder               map[string]int
 	hasEnter, hasExit, moves bool
 	edges                    *gridMotionEdges
 }
 
 type gridMotionItem struct {
-	from, to   *d2target.Shape
-	arcX, arcY float64
-	track      *gridShuffleTrack
-	carrier    *gridMotionItem
+	from, to *d2target.Shape
 	// A whole entering or leaving subtree scales around its outermost new
 	// cell, following the nearest surviving parent as the grid rearranges.
 	pivot  *d2target.Shape
@@ -29,24 +28,9 @@ type gridMotionItem struct {
 }
 
 type gridNode struct {
-	shape        *d2target.Shape
-	parent       *gridNode
-	inGrid, cell bool
-}
-
-type gridSlot struct {
-	parent string
-	x, y   int
-}
-
-func (n *gridNode) slot() gridSlot {
-	s := gridSlot{x: n.shape.Pos.X, y: n.shape.Pos.Y}
-	if n.parent != nil {
-		s.parent = n.parent.shape.ID
-		s.x -= n.parent.shape.Pos.X
-		s.y -= n.parent.shape.Pos.Y
-	}
-	return s
+	shape  *d2target.Shape
+	parent *gridNode
+	inGrid bool
 }
 
 func gridNodes(board *d2target.Diagram, graph *d2graph.Graph) map[string]*gridNode {
@@ -72,7 +56,7 @@ func gridNodes(board *d2target.Diagram, graph *d2graph.Graph) map[string]*gridNo
 			if node == nil {
 				continue
 			}
-			node.parent, node.cell = parent, obj.IsGridDiagram()
+			node.parent = parent
 			node.inGrid = inGrid || child.IsGridDiagram()
 			walk(child, node, id+".", node.inGrid)
 		}
@@ -98,13 +82,6 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 		next = gridShapeNodes(to)
 	}
 	m := &gridMotion{items: make(map[string]*gridMotionItem)}
-	occupied := make(map[gridSlot]*gridNode)
-	for i := range from.Shapes {
-		n := old[from.Shapes[i].ID]
-		if n.cell {
-			occupied[n.slot()] = n
-		}
-	}
 	for i := range to.Shapes {
 		id := to.Shapes[i].ID
 		a, b := old[id], next[id]
@@ -120,13 +97,6 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 				continue
 			}
 			m.moves = true
-			// A takeover of a still-present sibling's slot gets an arc.
-			// Opposing movements take opposite sides; ordinary reflow is straight.
-			if a.cell && b.cell {
-				if other := occupied[b.slot()]; other != nil && other != a && next[other.shape.ID] != nil {
-					item.arcX, item.arcY = gridShuffleArc(a, b)
-				}
-			}
 		}
 		m.items[id] = item
 	}
@@ -141,25 +111,18 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 	if len(m.items) == 0 {
 		return nil
 	}
-	planGridShuffles(old, next, m.items)
-	// A descendant follows its parent's detour as well as its own local
-	// reflow. Absolute endpoint positions already include linear parent motion.
-	carriers := make(map[*gridNode]*gridMotionItem)
-	var carrier func(*gridNode) *gridMotionItem
-	carrier = func(n *gridNode) *gridMotionItem {
-		if n == nil {
-			return nil
+	// During a pure reorder, retain the original stacking order while cells
+	// cross. The renderer still applies explicit z-indices and container depth.
+	if m.moves && !m.hasEnter && !m.hasExit && len(from.Shapes) == len(to.Shapes) &&
+		!slices.EqualFunc(from.Shapes, to.Shapes, func(a, b d2target.Shape) bool { return a.ID == b.ID }) {
+		m.paintOrder = make(map[string]int, len(from.Shapes))
+		for i, s := range from.Shapes {
+			if next[s.ID] == nil { // An unrelated edit also changed membership.
+				m.paintOrder = nil
+				break
+			}
+			m.paintOrder[s.ID] = i
 		}
-		if item, ok := carriers[n]; ok {
-			return item
-		}
-		item := carrier(n.parent)
-		if own := m.items[n.shape.ID]; own != nil && own.from != nil && own.to != nil {
-			own.carrier = item
-			item = own
-		}
-		carriers[n] = item
-		return item
 	}
 	for id, item := range m.items {
 		switch {
@@ -167,8 +130,6 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 			item.bubbleOrigin(next[id], old, m.items)
 		case item.to == nil:
 			item.bubbleOrigin(old[id], next, m.items)
-		default:
-			carrier(next[id])
 		}
 	}
 	moving := make(map[string]bool, len(m.items))
@@ -198,45 +159,55 @@ func (item *gridMotionItem) bubbleOrigin(n *gridNode, other map[string]*gridNode
 	}
 }
 
-func gridShuffleArc(from, to *gridNode) (float64, float64) {
-	a, b := from.slot(), to.slot()
-	dx, dy := float64(b.x-a.x), float64(b.y-a.y)
-	distance := math.Hypot(dx, dy)
-	if distance == 0 {
-		return 0, 0
+// popWindows gives membership changes their own short gestures within the step.
+// A shuffle can take the full configured duration while a cell stays settled.
+func (m *gridMotion) popWindows(durationMS int) (enterStart, enterEnd, exitEnd int) {
+	if m.hasExit {
+		exitEnd = min(160, durationMS)
+		if m.hasEnter {
+			exitEnd = min(exitEnd, (durationMS+1)/2)
+		}
 	}
-	nx, ny := -dy/distance, dx/distance
-	size := math.Abs(nx)*float64(from.shape.Width) + math.Abs(ny)*float64(from.shape.Height)
-	height := math.Min(size*.58, distance*.85)
-	return nx * height, ny * height
+	if m.hasEnter {
+		switch {
+		case m.moves:
+			// Let the old occupants move out of the incoming cells.
+			enterStart = durationMS / 2
+		case m.hasExit:
+			// A direct replacement overlaps only the tail of the exit.
+			enterStart = 3 * exitEnd / 4
+		}
+		enterEnd = min(durationMS, enterStart+220)
+	}
+	return enterStart, enterEnd, exitEnd
 }
 
-func (m *gridMotion) sample(base *d2target.Diagram, fraction float64) *d2target.Diagram {
+func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *d2target.Diagram {
 	result := *base
 	result.Layers, result.Scenarios, result.Steps, result.TweenFrames = nil, nil, nil, nil
 	result.TweenDurationMS = 0
+	result.TweenFrameEndsMS = nil
 	result.Shapes = make([]d2target.Shape, 0, len(base.Shapes)+len(m.removed))
-	start, end := 0., 1.
-	if m.hasExit {
-		start = .16
-	}
+	fraction := float64(elapsedMS) / float64(durationMS)
+	travel := gridEase(fraction)
+	elapsed := float64(elapsedMS)
+	enterStart, enterEnd, exitEnd := m.popWindows(durationMS)
+	// A connection alone can enter or leave during a shuffle. In that case
+	// its fade follows the step clock alongside the moving endpoints.
+	enter, exit := fraction, 1-fraction
 	if m.hasEnter {
-		end = .82
+		enter = gridPhase(elapsed, float64(enterStart), float64(enterEnd))
 	}
-	travel := gridEase(gridPhase(fraction, start, end))
-	// Let a departing cell clear its slot before a replacement opens. If
-	// there are only additions or only removals, use the whole duration.
-	enterStart, exitEnd := 0., 1.
-	if m.moves || m.hasExit {
-		enterStart = .40
+	if m.hasExit {
+		exit = 1 - gridPhase(elapsed, 0, float64(exitEnd))
 	}
-	if m.moves || m.hasEnter {
-		exitEnd = .52
-	}
-	enter := gridPhase(fraction, enterStart, 1)
-	exit := 1 - gridPhase(fraction, 0, exitEnd)
-	enterOpacity := gridEase(min(1, enter/.50))
-	exitOpacity := gridEase(min(1, exit/.50))
+	// Grow quickly and settle without overshooting. The short scale range
+	// keeps text readable and gives small cells enough pixels to render.
+	unopened := 1 - enter
+	enterScale := 1 - .32*unopened*unopened*unopened
+	enterOpacity := gridEase(enter)
+	exitOpacity := gridEase(exit)
+	exitScale := .70 + .30*exitOpacity
 	for _, shape := range base.Shapes {
 		item := m.items[shape.ID]
 		switch {
@@ -245,7 +216,7 @@ func (m *gridMotion) sample(base *d2target.Diagram, fraction float64) *d2target.
 			if enter == 0 {
 				continue
 			}
-			shape = item.bubble(shape, enter, enterOpacity, travel)
+			shape = item.bubble(shape, enterScale, enterOpacity, travel)
 		case item.to != nil:
 			shape.Pos = item.position(travel)
 			shape.Width = gridLerpInt(item.from.Width, item.to.Width, travel)
@@ -259,37 +230,26 @@ func (m *gridMotion) sample(base *d2target.Diagram, fraction float64) *d2target.
 	}
 	if exit > 0 {
 		for _, s := range m.removed {
-			result.Shapes = append(result.Shapes, m.items[s.ID].bubble(s, exit, exitOpacity, travel))
+			result.Shapes = append(result.Shapes, m.items[s.ID].bubble(s, exitScale, exitOpacity, travel))
 		}
+	}
+	if m.paintOrder != nil && fraction < 1 {
+		sort.SliceStable(result.Shapes, func(i, j int) bool {
+			return m.paintOrder[result.Shapes[i].ID] < m.paintOrder[result.Shapes[j].ID]
+		})
 	}
 	result.Connections = m.edges.sample(base.Connections, result.Shapes, travel, enterOpacity, exitOpacity)
 	return &result
 }
 
+// Interpolate in diagram coordinates. A nested item's two positions already
+// include its parent's motion, so the same straight path works at any depth.
 func (item *gridMotionItem) position(t float64) d2target.Point {
 	a, b := item.from.Pos, item.to.Pos
-	x, y := 0., 0.
-	for it := item; it != nil; it = it.carrier {
-		if it.track != nil {
-			v := it.track.at(t)
-			x += v.x
-			y += v.y
-		} else {
-			bend := 4 * t * (1 - t)
-			x += bend * it.arcX
-			y += bend * it.arcY
-		}
-	}
-	return d2target.Point{
-		X: int(math.Round(float64(a.X) + (float64(b.X)-float64(a.X))*t + x)),
-		Y: int(math.Round(float64(a.Y) + (float64(b.Y)-float64(a.Y))*t + y)),
-	}
+	return d2target.Point{X: gridLerpInt(a.X, b.X, t), Y: gridLerpInt(a.Y, b.Y, t)}
 }
 
-func (item *gridMotionItem) bubble(s d2target.Shape, t, opacity, travel float64) d2target.Shape {
-	// Ease-out-back produces a single small overshoot and lands exactly at 1.
-	u := t - 1
-	scale := 1 + 2.45*u*u*u + 1.45*u*u
+func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel float64) d2target.Shape {
 	p := item.pivot
 	cx, cy := float64(p.Pos.X)+float64(p.Width)/2, float64(p.Pos.Y)+float64(p.Height)/2
 	x := cx + (float64(s.Pos.X)-cx)*scale

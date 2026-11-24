@@ -64,6 +64,10 @@ func TestValidateRenderTargetRejectsReusedBoard(t *testing.T) {
 
 func TestValidateRenderTargetTweenFrames(t *testing.T) {
 	invalid := []*Diagram{
+		{TweenDurationMS: 20, TweenFrames: []*Diagram{{}}, TweenFrameEndsMS: []int{0}},
+		{TweenDurationMS: 20, TweenFrames: []*Diagram{{}, {}}, TweenFrameEndsMS: []int{0}},
+		{TweenDurationMS: 20, TweenFrames: []*Diagram{{}, {}}, TweenFrameEndsMS: []int{3, 3}},
+		{TweenDurationMS: 20, TweenFrames: []*Diagram{{}, {}}, TweenFrameEndsMS: []int{2, 21}},
 		{TweenDurationMS: 20},
 		{TweenDurationMS: -1},
 		{TweenDurationMS: 600001, TweenFrames: []*Diagram{{}}},

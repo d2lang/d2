@@ -492,6 +492,8 @@ func render(input RenderRequest) ([]byte, error) {
 		diagram.Scenarios = nil
 		diagram.Steps = nil
 		diagram.TweenFrames = nil
+		diagram.TweenFrameEndsMS = nil
+		diagram.GridMotion = false
 		diagram.TweenDurationMS = 0
 	}
 

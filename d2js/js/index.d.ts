@@ -136,8 +136,11 @@ export interface Diagram {
   layers?: (Diagram | undefined)[];
   scenarios?: (Diagram | undefined)[];
   steps?: (Diagram | undefined)[];
-  /** Intermediate samples of this step’s incoming variable tween. */
+  /** Samples of the incoming step transition. */
   tweenFrames?: Diagram[];
+  /** Exclusive millisecond end offsets for nonuniform samples. Omitted for uniform timing. */
+  tweenFrameEndsMS?: number[];
+  gridMotion?: boolean;
   tweenDurationMS?: number;
 }
 

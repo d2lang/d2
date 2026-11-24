@@ -46,23 +46,23 @@ steps: {shuffle: {
 	for i := range base.Shapes {
 		base.Shapes[i].Fill = "orange"
 	}
-	mid := m.sample(&base, .5)
+	mid := m.sample(&base, 500, 1000)
 	a, b := shapeByID(t, mid, "a"), shapeByID(t, mid, "b")
-	if a.Pos.X != b.Pos.X || math.Abs(float64(a.Pos.Y-b.Pos.Y)) < float64(a.Height) {
-		t.Fatalf("swapping cells overlap or travel at different speeds: %v vs %v", a.Pos, b.Pos)
+	if a.Pos != b.Pos || a.Pos.Y != shapeByID(t, board, "a").Pos.Y {
+		t.Fatalf("swapping cells should cross on their original row: %v vs %v", a.Pos, b.Pos)
 	}
 	if a.Fill != "orange" || shapeByID(t, mid, "stay").Pos != shapeByID(t, board, "stay").Pos {
 		t.Fatal("sample lost its existing style or moved a stationary cell")
 	}
 	for _, tc := range []struct {
-		t   float64
+		t   int
 		end *d2target.Diagram
-	}{{0, board}, {1, next}} {
-		f := m.sample(&base, tc.t)
+	}{{0, board}, {1000, next}} {
+		f := m.sample(&base, tc.t, 1000)
 		for _, s := range f.Shapes {
 			want := shapeByID(t, tc.end, s.ID)
 			if s.Pos != want.Pos || s.Width != want.Width || s.Height != want.Height {
-				t.Fatalf("t=%g %s geometry mismatch", tc.t, s.ID)
+				t.Fatalf("t=%dms %s geometry mismatch", tc.t, s.ID)
 			}
 		}
 	}
@@ -91,9 +91,9 @@ steps: {
 	for _, tc := range []struct {
 		motion *gridMotion
 		base   *d2target.Diagram
-		time   float64
-	}{{add, next, .44}, {remove, last, .48}} {
-		mid := tc.motion.sample(tc.base, tc.time)
+		time   int
+	}{{add, next, 144}, {remove, last, 60}} {
+		mid := tc.motion.sample(tc.base, tc.time, 240)
 		group, child := shapeByID(t, mid, "service.cold"), shapeByID(t, mid, "service.cold.stores")
 		endGroup, endChild := shapeByID(t, next, "service.cold"), shapeByID(t, next, "service.cold.stores")
 		if !(group.Opacity > 0 && group.Opacity < 1 && group.Width < endGroup.Width && child.Opacity == group.Opacity) {
@@ -105,7 +105,7 @@ steps: {
 			t.Fatal("child used its own pivot")
 		}
 	}
-	if len(add.sample(next, 0).Shapes) != len(board.Shapes) || len(remove.sample(last, 1).Shapes) != len(last.Shapes) {
+	if len(add.sample(next, 0, 240).Shapes) != len(board.Shapes) || len(remove.sample(last, 240, 240).Shapes) != len(last.Shapes) {
 		t.Fatal("invisible bubbles leaked into endpoints")
 	}
 }
@@ -133,26 +133,22 @@ steps: {promote: {
 `)
 	next := board.Steps[0]
 	m := newGridMotion(board, next, graph, graph.Steps[0])
-	var worst float64
-	var time int
-	var pair string
-	for i := 0; i <= 200; i++ {
-		s := m.sample(next, float64(i)/200)
-		for j, a := range s.Shapes {
-			for _, b := range s.Shapes[:j] {
-				w := max(0, min(a.Pos.X+a.Width, b.Pos.X+b.Width)-max(a.Pos.X, b.Pos.X))
-				h := max(0, min(a.Pos.Y+a.Height, b.Pos.Y+b.Height)-max(a.Pos.Y, b.Pos.Y))
-				f := float64(w*h) / float64(min(a.Width*a.Height, b.Width*b.Height))
-				if f > worst {
-					worst = f
-					time = i
-					pair = a.ID + " & " + b.ID
-				}
+	// The promoted cell and each displaced neighbor should travel along the
+	// direct segment to the destination, including the job that wraps rows.
+	for _, ms := range []int{150, 350, 550, 750, 950} {
+		fraction := float64(ms) / 1000
+		frame := m.sample(next, ms, 1000)
+		for i, shape := range frame.Shapes {
+			if shape.ID != board.Shapes[i].ID {
+				t.Fatalf("at %.2f, paint order changed during the crossing", fraction)
+			}
+			src := shapeByID(t, board, shape.ID).Pos
+			dst := shapeByID(t, next, shape.ID).Pos
+			travel := gridEase(fraction)
+			want := d2target.Point{X: gridLerpInt(src.X, dst.X, travel), Y: gridLerpInt(src.Y, dst.Y, travel)}
+			if shape.Pos != want {
+				t.Fatalf("at %.2f, %s is at %v; want %v on the direct path", fraction, shape.ID, shape.Pos, want)
 			}
 		}
 	}
-	if worst > .08 {
-		t.Fatalf("maximum overlap %.1f%% for %s at %d/200", 100*worst, pair, time)
-	}
-	t.Logf("maximum overlap %.1f%% for %s at %d/200", 100*worst, pair, time)
 }

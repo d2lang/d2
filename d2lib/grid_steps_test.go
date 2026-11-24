@@ -2,6 +2,7 @@ package d2lib
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/d2lang/d2/d2target"
@@ -35,14 +36,22 @@ layers: {separate: {grid-columns: 1; a; b; steps: {expand: {c}}}}
 	opts := dagreCompileOptions(&calls)
 	d := compile(opts)
 	first, second := d.Steps[0], d.Steps[1]
-	if len(first.TweenFrames) != 6 || len(second.TweenFrames) != 6 || first.TweenDurationMS != 240 || !first.GridMotion || !second.GridMotion {
+	if len(first.TweenFrames) < 6 || len(second.TweenFrames) < 6 || first.TweenDurationMS != 240 || !first.GridMotion || !second.GridMotion {
 		t.Fatalf("grid changes did not share the configured clock")
 	}
-	mid := first.TweenFrames[3]
+	midIndex := slices.Index(first.TweenFrameEndsMS, 120)
+	if midIndex < 0 {
+		t.Fatal("lost the original paint tween midpoint at 120ms")
+	}
+	mid := first.TweenFrames[midIndex+1]
 	if got := shapeByID(t, mid, "a").Fill; got != "#800080" {
 		t.Fatalf("midpoint fill = %q", got)
 	}
-	if p := shapeByID(t, mid, "c").Opacity; p <= 0 || p >= 1 {
+	lateIndex := slices.Index(first.TweenFrameEndsMS, 160)
+	if lateIndex < 0 {
+		t.Fatal("lost the original paint sample at 160ms")
+	}
+	if p := shapeByID(t, first.TweenFrames[lateIndex+1], "c").Opacity; p <= 0 || p >= 1 {
 		t.Fatalf("incoming opacity = %v", p)
 	}
 	if got := shapeByID(t, second.TweenFrames[0], "c").Pos; got != shapeByID(t, first, "c").Pos {
@@ -82,7 +91,7 @@ steps: {
 	if d.IsFolderOnly || d.Steps[1].IsFolderOnly {
 		t.Fatal("empty grid endpoint skipped in animated export")
 	}
-	if len(d.Steps[0].TweenFrames) != 5 || len(d.Steps[1].TweenFrames) != 5 {
+	if len(d.Steps[0].TweenFrames) < 8 || len(d.Steps[1].TweenFrames) < 8 {
 		t.Fatal("missing animation to/from empty")
 	}
 	for _, step := range d.Steps {
@@ -98,5 +107,32 @@ steps: {
 	}
 	if len(d.Steps[1].Shapes) != 0 {
 		t.Fatal("final grid should be empty")
+	}
+}
+
+func TestGridSampleTimes(t *testing.T) {
+	for _, duration := range []int{1, 2, 13, 161, 1050, 4830, d2target.MaxTweenDurationMS} {
+		for _, paint := range []int{0, d2target.TweenFrameCount(duration)} {
+			for _, m := range []gridMotion{{moves: true}, {hasEnter: true}, {hasExit: true}, {hasEnter: true, hasExit: true}, {moves: true, hasEnter: true, hasExit: true}} {
+				bounds := m.sampleBoundaries(duration, paint)
+				times := bounds[:len(bounds)-1]
+				if len(times) == 0 || times[0] != 0 || len(times) > d2target.MaxTweenFrames {
+					t.Fatalf("invalid sample schedule for duration %d: %v", duration, times)
+				}
+				enterStart, enterEnd, exitEnd := m.popWindows(duration)
+				if !m.moves && paint == 0 && bounds[len(bounds)-1] != max(enterEnd, exitEnd) {
+					t.Fatal("pure membership change should hand off to the endpoint at the end of its gesture")
+				}
+				for i, start := range times {
+					end := bounds[i+1]
+					if end <= start || end > duration {
+						t.Fatalf("invalid sample boundary %d to %d of %d", start, end, duration)
+					}
+					if (start < exitEnd || (start >= enterStart && start < enterEnd)) && end-start > 17 {
+						t.Fatalf("membership change paused for %dms at %d of %d", end-start, start, duration)
+					}
+				}
+			}
+		}
 	}
 }

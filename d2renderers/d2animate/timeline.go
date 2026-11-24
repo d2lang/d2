@@ -53,7 +53,10 @@ func AppendBoardFrames(frames []Frame, board *d2target.Diagram, intervalMS int) 
 	start := 0
 	for i, sample := range board.TweenFrames {
 		end := int(int64(i+1) * int64(duration) / int64(len(board.TweenFrames)))
-		if i == len(board.TweenFrames)-1 && slot == duration {
+		if len(board.TweenFrameEndsMS) != 0 {
+			end = board.TweenFrameEndsMS[i]
+		}
+		if i == len(board.TweenFrames)-1 && end == slot {
 			// Without a hold, split the last sampling period between its
 			// interpolated value and the exact endpoint before the next board.
 			end = start + (end-start)/2

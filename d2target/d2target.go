@@ -137,10 +137,14 @@ type Diagram struct {
 	Scenarios []*Diagram `json:"scenarios,omitempty"`
 	Steps     []*Diagram `json:"steps,omitempty"`
 
-	// TweenFrames are equally spaced samples of this board's incoming transition,
-	// starting at time zero. The board itself is the endpoint at TweenDurationMS.
+	// TweenFrames are samples of this board's incoming transition,
+	// starting at time zero. The board itself supplies the exact endpoint.
 	TweenFrames     []*Diagram `json:"tweenFrames,omitempty"`
 	TweenDurationMS int        `json:"tweenDurationMS,omitempty"`
+	// TweenFrameEndsMS holds exclusive sample ends for nonuniform playback.
+	// The authored endpoint takes over when the final sample ends.
+	// Omit it for uniformly spaced samples.
+	TweenFrameEndsMS []int `json:"tweenFrameEndsMS,omitempty"`
 	// GridMotion keeps a common coordinate system for raster playback as cells reflow.
 	GridMotion bool `json:"gridMotion,omitempty"`
 }
@@ -242,6 +246,10 @@ func (diagram Diagram) Bytes() ([]byte, error) {
 	if diagram.TweenDurationMS != 0 {
 		base = append(base, "tween-ms:"...)
 		base = strconv.AppendInt(base, int64(diagram.TweenDurationMS), 10)
+		for _, ms := range diagram.TweenFrameEndsMS {
+			base = append(base, ',')
+			base = strconv.AppendInt(base, int64(ms), 10)
+		}
 	}
 	for _, group := range diagram.renderChildren() {
 		for _, child := range group {
