@@ -1011,7 +1011,7 @@ func TestGIFPixelAdmissionsAcceptBoundariesAndRejectOverflow(t *testing.T) {
 
 func TestCollectGIFBoardsBoundsFolderOnlyNodes(t *testing.T) {
 	root := &d2target.Diagram{IsFolderOnly: true}
-	root.Layers = make([]*d2target.Diagram, gifMaxBoardNodes)
+	root.Layers = make([]*d2target.Diagram, d2target.MaxRenderTargetBoards)
 	for index := range root.Layers {
 		root.Layers[index] = &d2target.Diagram{IsFolderOnly: true}
 	}

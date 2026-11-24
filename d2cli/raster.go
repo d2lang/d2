@@ -63,7 +63,6 @@ const (
 	// schedule, retained pixels, transient quantizer work, and encoded output
 	// independently of the one-frame renderer ceilings.
 	gifMaxFrames            = 1_800
-	gifMaxBoardNodes        = 4_096
 	gifMaxFramePixels int64 = 2 * 1024 * 1024
 	// Median-cut quantization has substantial non-cancellable scratch storage.
 	// Render and quantize one full-color frame at a time, while retaining only
@@ -1020,8 +1019,8 @@ func collectGIFBoards(ctx context.Context, root *d2target.Diagram, maxBoards int
 			return fmt.Errorf("GIF board tree exceeds depth %d", rasterMaxDepth)
 		}
 		visited++
-		if visited > gifMaxBoardNodes {
-			return fmt.Errorf("GIF board tree exceeds %d total nodes", gifMaxBoardNodes)
+		if visited > d2target.MaxRenderTargetBoards {
+			return fmt.Errorf("GIF board tree exceeds %d total nodes", d2target.MaxRenderTargetBoards)
 		}
 		if _, ok := active[diagram]; ok {
 			return fmt.Errorf("GIF board tree contains a cycle")
