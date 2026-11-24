@@ -14,10 +14,36 @@ concurrency:
 
 jobs:
   ci:
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Authenticate new installer checksum manifests
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          catalog=ci/release/checksums
+          if ! git diff --quiet --no-renames --diff-filter=a "$BASE" HEAD -- "$catalog"; then
+            echo "Existing installer checksum manifests must remain unchanged." >&2
+            exit 1
+          fi
+          git diff --name-only -z --no-renames --diff-filter=A "$BASE" HEAD -- "$catalog" > "$RUNNER_TEMP/added-manifests"
+          while IFS= read -r -d '' file; do
+            if [[ ! $file =~ ^ci/release/checksums/(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?)\.txt$ || ! -f $file || -L $file ]]; then
+              printf 'Invalid installer checksum manifest: %q\n' "$file" >&2
+              exit 1
+            fi
+            python3 ci/release/promote-checksums.py --version "${BASH_REMATCH[1]}" --check
+          done < "$RUNNER_TEMP/added-manifests"
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: ./go.mod

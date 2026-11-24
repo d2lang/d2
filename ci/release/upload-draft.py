@@ -28,7 +28,7 @@ def digest(path):
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def local_assets(version, archives, msi, sbom):
+def local_assets(version, archives, msi, sbom, provenance):
     names = {f"d2-{version}-{target}.tar.gz" for target in TARGETS}
     if archives.is_symlink() or not archives.is_dir():
         raise ValueError("archive directory must be a real directory")
@@ -49,8 +49,10 @@ def local_assets(version, archives, msi, sbom):
             raise ValueError(f"archive checksum mismatch: {name}")
     if msi.name != f"d2-{version}-windows-amd64.msi" or sbom.name != "d2.spdx.json":
         raise ValueError("unexpected MSI or SBOM filename")
+    if provenance.name != f"d2-{version}-provenance.sigstore.json":
+        raise ValueError("unexpected provenance bundle filename")
     user_msi = msi.with_name(f"d2-{version}-windows-amd64-user.msi")
-    paths = [archives / name for name in sorted(names)] + [manifest, msi, user_msi, sbom]
+    paths = [archives / name for name in sorted(names)] + [manifest, msi, user_msi, sbom, provenance]
     return [(path, digest(path), path.stat().st_size) for path in paths]
 
 
@@ -167,12 +169,12 @@ def upload(repository, version, commit, assets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("repository", "version", "commit", "archives", "msi", "sbom"):
+    for name in ("repository", "version", "commit", "archives", "msi", "sbom", "provenance"):
         parser.add_argument(f"--{name}", required=True)
     args = parser.parse_args()
     if not VERSION.fullmatch(args.version) or not re.fullmatch(r"[0-9a-f]{40}", args.commit) or not re.fullmatch(r"[\w.-]+/[\w.-]+", args.repository):
         parser.error("invalid repository, version, or commit")
-    assets = local_assets(args.version, Path(args.archives), Path(args.msi), Path(args.sbom))
+    assets = local_assets(args.version, Path(args.archives), Path(args.msi), Path(args.sbom), Path(args.provenance))
     upload(args.repository, args.version, args.commit, assets)
 
 

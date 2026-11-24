@@ -70,15 +70,27 @@ You can install a specific version of `d2` with `--version`. Run the script with
 
 If you're still concerned, remember you can run with `--dry-run` to avoid writing anything.
 
-For standalone installations, the script obtains the selected archive's SHA-256 digest
-from the GitHub Releases API and, when GitHub provides one, verifies both cached and newly
-downloaded archives before extracting them. Historical releases for which GitHub reports
-no digest remain installable with a warning. Releases produced by the current release
-workflow also include `SHA256SUMS` and GitHub artifact attestations. You can verify build
-provenance separately with:
+The standalone installer includes the SHA-256 of each supported archive starting with
+v0.8.2. During release review, D2 checks the signed checksum manifest against the release
+workflow, tag, and source commit. Your installer checks the downloaded or cached archive
+against that reviewed digest before extracting it or removing an existing installation.
+This uses your system's SHA-256 tool and requires no additional download.
+
+Pass `--verify-provenance` to check the signed build provenance on your machine as well.
+The installer also performs this check automatically when installing a new release that
+postdates its embedded digests. It verifies the repository, workflow, tag, and exact archive
+name and digest. This check uses GitHub CLI (`gh`) 2.102.0 or newer from your PATH or a
+temporary, checksum-pinned download. Neither path requires a GitHub account or token.
+
+An explicitly requested historical release through v0.7.1 uses GitHub's SHA-256 digest
+when available and prints a warning. Strict verification rejects these unsigned releases.
+
+You can also verify a downloaded archive yourself. For example:
 
 ```sh
-gh attestation verify d2-v0.0.0-linux-amd64.tar.gz --repo d2lang/d2
+gh attestation verify d2-v0.9.0-linux-amd64.tar.gz --repo d2lang/d2 \
+  --signer-workflow d2lang/d2/.github/workflows/release-archives.yml \
+  --source-ref refs/tags/v0.9.0
 ```
 
 ## macOS (Homebrew)

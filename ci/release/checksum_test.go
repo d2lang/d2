@@ -80,7 +80,7 @@ fetch_gh() {
 }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 log() { :; }
-fetch_release_asset d2lang/d2 v0.7.0 d2-v0.7.0-linux-amd64.tar.gz https://example.invalid/archive "$destination"
+fetch_release_asset d2lang/d2 v0.7.0 d2-v0.7.0-linux-amd64.tar.gz https://example.invalid/archive "$destination" "$fixture_dir/staged.tar.gz"
 `
 	cmd := exec.Command("sh", "-c", command, "sh", "./checksum.sh", metadataPath, payload, destination)
 	cmd.Dir = "."
@@ -91,7 +91,7 @@ fetch_release_asset d2lang/d2 v0.7.0 d2-v0.7.0-linux-amd64.tar.gz https://exampl
 	if !strings.Contains(string(output), "continuing without checksum verification") {
 		t.Fatalf("fetch_release_asset did not warn:\n%s", output)
 	}
-	got, err := os.ReadFile(destination)
+	got, err := os.ReadFile(filepath.Join(directory, "staged.tar.gz"))
 	if err != nil {
 		t.Fatal(err)
 	}

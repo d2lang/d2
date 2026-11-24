@@ -5,10 +5,17 @@ cd -- "$(dirname "$0")/../sub/lib"
 . ./log.sh
 . ./flag.sh
 . ./release.sh
+# The generated installer embeds these reviewed manifests.
+release_checksums() {
+  cat "$(dirname "$0")"/checksums/*.txt
+}
 cd - >/dev/null
 
 if [ -z "${D2_RELEASE_CHECKSUM-}" ]; then
   . "$(dirname "$0")/checksum.sh"
+fi
+if ! command -v installer_gh >/dev/null 2>&1; then
+  . "$(dirname "$0")/verifier.sh"
 fi
 
 help() {
@@ -19,7 +26,7 @@ help() {
 
   cat <<EOF
 usage: $arg0 [-d|--dry-run] [--version vX.X.X] [--method detect] [--prefix path]
-  [--force] [--uninstall] [-x|--trace]
+  [--verify-provenance] [--force] [--uninstall] [-x|--trace]
 
 install.sh automates the installation of D2 onto your system. It currently only supports
 the installation of standalone releases from GitHub and via Homebrew on macOS. See the
@@ -38,6 +45,11 @@ Flags:
   Pass to have install.sh install the given version instead of the latest version.
   warn: The version may not be obeyed with package manager installations. Use
         --method=standalone to enforce the version.
+
+--verify-provenance
+  Select a standalone install and independently verify the signed build provenance on
+  this machine, even when the archive's verified SHA-256 is embedded in this installer.
+  Requires a release with signed provenance (v0.8.2 or later).
 
 --method [detect | standalone | homebrew ]
   Pass to control the method by which to install. Right now we only support standalone
@@ -67,8 +79,8 @@ Flags:
   https://github.com/terrastruct/TALA/releases
 
 --force:
-  Force installation over the existing version even if they match. It will attempt a
-  uninstall first before installing the new version. The installed release tree
+  Force installation over the existing version even if they match. The installer verifies
+  the replacement archive before uninstalling the existing version. The installed release tree
   will be deleted from \$PREFIX/lib/d2/d2-<VERSION> but the release archive in
   ~/.cache/d2/release will remain.
 
@@ -108,6 +120,10 @@ main() {
       version)
         flag_nonemptyarg && shift "$FLAGSHIFT"
         VERSION=$FLAGARG
+        ;;
+      verify-provenance)
+        flag_noarg && shift "$FLAGSHIFT"
+        VERIFY_PROVENANCE=1
         ;;
       tala)
         shift "$FLAGSHIFT"
@@ -159,6 +175,13 @@ For older releases, install the legacy plugin separately: https://github.com/ter
   mkdir -p "$CACHE_DIR"
   METHOD=${METHOD:-detect}
   INSTALL_DIR=$PREFIX/lib/d2
+
+  if [ -n "${VERIFY_PROVENANCE-}" ]; then
+    case "$METHOD" in
+      detect) METHOD=standalone ;;
+      homebrew) flag_errusage "--verify-provenance requires a standalone installation" ;;
+    esac
+  fi
 
   case $METHOD in
     detect)
@@ -268,35 +291,92 @@ install_post_warn() {
 
 install_d2_standalone() {
   VERSION=${VERSION:-latest}
+  requested_version=$VERSION
   header "installing d2-$VERSION"
 
   ensure_version
 
+  # These published tags predate archive attestations. Missing evidence for any
+  # other tag is an error, including when GitHub resolves "latest" to an old tag.
+  legacy_release=
+  case "$VERSION" in
+    v0.0.1[23]|v0.1.[0-6]|v0.2.[0-6]|v0.3.0|v0.4.[0-2]|v0.5.[01]|v0.6.[0-9]|v0.7.[01])
+      if [ "$requested_version" = latest ] || [ "$REPO" != d2lang/d2 ] || [ -n "${VERIFY_PROVENANCE-}" ]; then
+        echoerr "refusing to install $REPO $VERSION without signed build provenance"
+        return 1
+      fi
+      legacy_release=1
+      ;;
+  esac
+
+  INSTALLED_VERSION=
   if command -v d2 >/dev/null; then
     INSTALLED_VERSION="$(d2 --version)"
     if [ ! "${FORCE-}" -a "$VERSION" = "$INSTALLED_VERSION" ]; then
       log "skipping installation as d2 $VERSION is already installed."
       return 0
     fi
-    log "uninstalling d2 $INSTALLED_VERSION to install $VERSION"
-    if ! uninstall_d2_standalone; then
-      warn "failed to uninstall d2 $INSTALLED_VERSION"
-    fi
   fi
 
   ARCHIVE="d2-$VERSION-$OS-$ARCH.tar.gz"
   log "installing standalone release $ARCHIVE from github"
 
-  ensure_version
   asset_url="https://github.com/$REPO/releases/download/$VERSION/$ARCHIVE"
+  # Verify and extract the same private copy, even when another install updates the cache.
+  stage=$(mktempd)
+  staged_archive=$stage/$ARCHIVE
+  pinned_digest=$(release_checksums | awk -v name="$ARCHIVE" '$2 == name { print $1 }')
   fetch_release_asset \
-    "$REPO" "$VERSION" "$ARCHIVE" "$asset_url" "$CACHE_DIR/$ARCHIVE"
+    "$REPO" "$VERSION" "$ARCHIVE" "$asset_url" "$CACHE_DIR/$ARCHIVE" "$staged_archive" "$pinned_digest"
+  if [ -n "$legacy_release" ]; then
+    warn "$VERSION predates signed D2 archive provenance"
+  elif [ -z "$pinned_digest" ] || [ -n "${VERIFY_PROVENANCE-}" ]; then
+    if [ -n "${DRY_RUN-}" ]; then
+      log "would verify signed build provenance for $ARCHIVE before installation"
+    else
+      verify_archive_provenance "$stage" "$staged_archive"
+    fi
+  fi
 
+  if [ -n "$INSTALLED_VERSION" ]; then
+    log "uninstalling d2 $INSTALLED_VERSION to install $VERSION"
+    if ! uninstall_d2_standalone; then
+      warn "failed to uninstall d2 $INSTALLED_VERSION"
+    fi
+  fi
   ensure_prefix_sh_c
   "$sh_c" mkdir -p "'$INSTALL_DIR'"
-  "$sh_c" tar -C "$INSTALL_DIR" -xzf "$CACHE_DIR/$ARCHIVE"
+  "$sh_c" tar -C "'$INSTALL_DIR'" -xzf "'$staged_archive'"
   "$sh_c" sh -c "'cd \"$INSTALL_DIR/d2-$VERSION\" && make install PREFIX=\"$PREFIX\"'"
 }
+
+verify_archive_provenance() (
+  stage=$1
+  archive_path=$2
+  # The first two attested releases predate the downloadable release sidecar.
+  case "$VERSION" in
+    v0.8.2) bundle_url=https://github.com/d2lang/d2/attestations/42650843/download ;;
+    v0.9.0) bundle_url=https://github.com/d2lang/d2/attestations/45830930/download ;;
+    *) bundle_url="https://github.com/$REPO/releases/download/$VERSION/d2-$VERSION-provenance.sigstore.json" ;;
+  esac
+  log "verifying signed D2 build provenance for $ARCHIVE"
+  curl -qfsSL --proto '=https' --proto-redir '=https' -o "$stage/provenance.json" "$bundle_url"
+  verifier=$(installer_gh "$stage")
+
+  # A single signed statement covers all platforms. Bind the digest to the
+  # selected filename and pin D2's permanent repository ID for offline verification.
+  GH_HOST=github.com "$verifier" attestation verify "$archive_path" \
+    --bundle "$stage/provenance.json" --repo d2lang/d2 \
+    --signer-workflow d2lang/d2/.github/workflows/release-archives.yml \
+    --source-ref "refs/tags/$VERSION" --predicate-type https://slsa.dev/provenance/v1 \
+    --format json --jq '.[].verificationResult | select(.signature.certificate.sourceRepositoryIdentifier == "533087958") | .statement.subject[] | [.digest.sha256, .name] | @tsv' \
+    >"$stage/subjects"
+  archive_digest=$(sha256_file "$archive_path")
+  if ! grep -Fxq "$(printf '%s\t%s' "$archive_digest" "$ARCHIVE")" "$stage/subjects"; then
+    echoerr "signed D2 provenance does not match the file name and SHA-256 of $ARCHIVE"
+    return 1
+  fi
+)
 
 install_d2_brew() {
   header "installing d2 with homebrew"
@@ -368,6 +448,10 @@ ensure_version() {
   case "$VERSION" in
     v*) ;;
     *) VERSION="v$VERSION" ;;
+  esac
+  # The release tag is used in paths, shell commands, and the expected signing identity.
+  case "$VERSION" in
+    *[!A-Za-z0-9.-]*) echoerr "invalid release version"; return 1 ;;
   esac
 }
 
