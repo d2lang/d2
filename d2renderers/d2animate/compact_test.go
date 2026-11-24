@@ -15,17 +15,18 @@ func TestShareFrameGraphics(t *testing.T) {
 	const hash = "d2-100"
 	path := "M0 0" + strings.Repeat(" L1 1", 80)
 	gradient := "grad-" + strings.Repeat("a", 40)
+	derived := "grad-" + strings.Repeat("b", 40)
 	label := "<text>#" + gradient + "</text>"
 	mask := `<mask id="d2-100" maskUnits="userSpaceOnUse"><rect fill="white" width="500" height="400"/></mask>`
-	resources := `<defs><linearGradient id="` + gradient + `"><stop offset="0" stop-color="red"/></linearGradient></defs>` + mask
+	resources := `<defs><linearGradient id="` + gradient + `"><stop offset="0" stop-color="red"/></linearGradient></defs><defs><linearGradient id="` + derived + `" xlink:href = "#` + gradient + `"/></defs>` + mask
 	var frames [][]byte
 	for i := 0; i < 8; i++ {
-		stroke := fmt.Sprintf(`<path d="%s" fill="url('#%s')" mask="url(#d2-100)" stroke-width="%d"/>`, path, gradient, i)
+		stroke := fmt.Sprintf(`<path d="%s" fill="url('#%s')" mask="url(#d2-100)" stroke-width="%d"/>`, path, derived, i)
 		root := `<g class="d2-100 " viewBox="0 0 500 400">`
-		frames = append(frames, []byte(root+resources+`<use xlink:href = "#`+gradient+`"/><g class="authored">`+label+stroke+label+`</g></g>`))
+		frames = append(frames, []byte(root+resources+`<g class="authored">`+label+stroke+label+`</g></g>`))
 	}
 	defs, reduced := shareFrameGraphics(frames, hash)
-	if len(defs) == 0 || bytes.Count(bytes.Join(reduced, nil), []byte("<linearGradient ")) != 1 || bytes.Count(bytes.Join(reduced, nil), []byte("<mask ")) != 1 || bytes.Count(defs, []byte(path)) != 1 || bytes.Contains(defs, []byte("<text")) {
+	if len(defs) == 0 || bytes.Count(bytes.Join(reduced, nil), []byte("<linearGradient ")) != 2 || bytes.Count(bytes.Join(reduced, nil), []byte("<mask ")) != 1 || bytes.Count(defs, []byte(path)) != 1 || bytes.Contains(defs, []byte("<text")) {
 		t.Fatalf("expected shared paint and path geometry, got %s", defs)
 	}
 	doc := bytes.NewBufferString(`<svg xmlns:xlink="http://www.w3.org/1999/xlink">`)
@@ -34,7 +35,7 @@ func TestShareFrameGraphics(t *testing.T) {
 		if bytes.Count(fr, []byte(label)) != 2 || !bytes.Contains(fr, []byte(`<g class="authored">`+label+`<use `)) || !bytes.Contains(fr, []byte(fmt.Sprintf(`stroke-width="%d"/>%s`, i, label))) {
 			t.Fatalf("frame %d changed its labels, order or per-frame stroke", i)
 		}
-		if bytes.Contains(fr, []byte(`href = "#`+gradient)) || bytes.Contains(fr, []byte("url(#d2-100)")) || bytes.Contains(fr, []byte("url('#"+gradient+"')")) {
+		if bytes.Contains(fr, []byte(`href = "#`+gradient)) || bytes.Contains(fr, []byte("url(#d2-100)")) || bytes.Contains(fr, []byte("url('#"+derived+"')")) {
 			t.Errorf("original paint reference in frame %d", i)
 		}
 		doc.Write(fr)
@@ -147,16 +148,24 @@ func TestConnectionMarkerScopes(t *testing.T) {
 	marker := func(id int, extra string) string {
 		return fmt.Sprintf(`<marker id="mk-d2-%d"><path d="M0 0L10 5 0 10Z" fill="red"%s/></marker><path marker-end="url(#mk-d2-%d)" d="M0 0L100 100"/>`, id, extra, id)
 	}
-	build := func(connection int, width int) []byte {
-		return []byte(fmt.Sprintf(`<g class="%s" width="%d"><g class="edge">%s</g><g class="edge my-tag">%s</g><g fill="blue"><g class="edge">%s</g></g><g class="edge">%s</g></g>`,
-			hash, width, marker(connection, ""), marker(connection+1, ""), marker(connection+2, ""), marker(connection+3, ` id="pencil-d2-named"`)))
+	const edge = "KHggLSZndDsgeSlbMF0=" // (x -&gt; y)[0]
+	group := func(class, child string) string {
+		return `<g class="` + class + `">` + child + `</g>`
+	}
+	build := func(connection, width int) []byte {
+		return []byte(fmt.Sprintf(`<g class="%s" width="%d">`, hash, width) +
+			group(edge, marker(connection, "")) +
+			group(edge+" my-tag", marker(connection+1, "")) +
+			`<g fill="blue">` + group(edge, marker(connection+2, "")) + `</g>` +
+			group(edge, marker(connection+3, ` id="pencil-d2-named"`)) +
+			group("custom", marker(connection+4, "")) + `</g>`)
 	}
 	frames := [][]byte{build(10, 100), build(20, 100), build(30, 200)}
 	_, reduced := shareFrameGraphics(frames, hash)
 	all := bytes.Join(reduced, nil)
 	// Only the first two plain markers share both ancestors; distinct tagged
 	// parents, inherited paint, child IDs or viewport dimensions stay scoped.
-	if got := bytes.Count(all, []byte("<marker ")); got != 11 {
-		t.Fatalf("got %d markers, want 11", got)
+	if got := bytes.Count(all, []byte("<marker ")); got != 14 {
+		t.Fatalf("got %d markers, want 14", got)
 	}
 }

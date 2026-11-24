@@ -2,6 +2,7 @@ package d2animate
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/xml"
 	"io"
 	"strconv"
@@ -187,11 +188,22 @@ func nativeGraphicsClass(class string) bool {
 	return true
 }
 
+// drawConnection names its group with the base64-encoded, XML-escaped
+// connection ID, whose final component is "(source arrow target)[index]".
+func nativeConnectionClass(class string) bool {
+	id, err := base64.URLEncoding.DecodeString(class)
+	if err != nil || !bytes.ContainsRune(id, '(') || !bytes.HasSuffix(id, []byte("]")) {
+		return false
+	}
+	i := bytes.LastIndex(id, []byte(")["))
+	return i >= 0 && i+2 < len(id)-1 && len(bytes.Trim(id[i+2:len(id)-1], "0123456789")) == 0
+}
+
 type frameParser struct {
-	frame, object string // The two ancestors of a native connection marker.
-	d             *xml.Decoder
-	src           string
-	res           *paintResources
+	frame, object, class string // A possible native connection group and its frame.
+	d                    *xml.Decoder
+	src                  string
+	res                  *paintResources
 }
 
 func (p *frameParser) node(el xml.StartElement, start, depth int, collect, protected bool) (*paintNode, bool) {
@@ -221,8 +233,8 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 	}
 	if depth == 1 {
 		p.object = ""
-		if el.Name.Local == "g" && len(el.Attr) == 1 && attrValue(el, "class") != "" && !protected {
-			p.object = open
+		if el.Name.Local == "g" && len(el.Attr) == 1 && !protected {
+			p.object, p.class = open, attrValue(el, "class")
 		}
 	}
 	n := &paintNode{open: p.src[start:openEnd]}
@@ -241,7 +253,7 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 	mask := depth == 1 && el.Name.Local == "mask" && strings.HasPrefix(id, "d2-")
 	var gradient, gradientID string
 	marker := collect && el.Name.Local == "marker" && strings.HasPrefix(id, "mk-d2-")
-	simpleMarker := marker && depth == 2 && p.object != "" && !protected
+	simpleMarker := marker && depth == 2 && p.object != "" && nativeConnectionClass(p.class)
 	childScope := collect && group
 	childCount := 0
 	for {
@@ -264,7 +276,7 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 			}
 			// Only share markers across IDs when every child is a plain drawable,
 			// without its own ID, nested content, or an inherited paint server.
-			simpleMarker = simpleMarker && c != nil && c.geometry && !strings.Contains(attrValue(x, "fill"), "(")
+			simpleMarker = simpleMarker && c != nil && c.geometry && c.close == "" && !strings.Contains(attrValue(x, "fill"), "(")
 			n.geometry = n.geometry && group && c != nil && c.geometry && c.close == ""
 			if group && c != nil {
 				n.children = append(n.children, c)
