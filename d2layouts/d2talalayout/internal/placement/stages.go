@@ -23,6 +23,22 @@ func Prescale(graph *layoutgraph.Graph) {
 	}
 }
 
+// ReservePortLengths applies measured demand on the unconstrained side of
+// ordinary rectangles. The normal prescale pass preserves their font size.
+func ReservePortLengths(graph *layoutgraph.Graph, lengths map[layoutgraph.EntityID]float64) {
+	for _, n := range graph.Nodes {
+		length, ok := lengths[n.ID]
+		if !ok {
+			continue
+		}
+		if n.DesiredHeight != nil && n.DesiredWidth == nil {
+			n.Width = math.Max(n.Width, length)
+		} else if n.DesiredWidth != nil && n.DesiredHeight == nil {
+			n.Height = math.Max(n.Height, length)
+		}
+	}
+}
+
 func scaleBasedOnEdges(node *layoutgraph.Node) {
 	if node.FixedTopLeft != nil || node.DesiredWidth != nil || node.DesiredHeight != nil || node.IsTable() || node.IsClass() || len(node.Edges) == 0 {
 		return

@@ -51,7 +51,7 @@ func TestBinPackScoreGuardedMatchesLegacyPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			frame, err := newPackingFrame(test.root, guard)
+			frame, err := newPackingFrame(test.root, nodes, guard)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -60,9 +60,20 @@ func TestBinPackScoreGuardedMatchesLegacyPolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := legacyBinPackScoreForParity(nodes, test.root)
-			if got != want {
+			if got != (packingScore{footprint: want}) {
 				t.Fatalf("guarded score = %v, want legacy %v", got, want)
 			}
 		})
+	}
+}
+
+func TestPackingScoreOrdersCollisionAndFrameCosts(t *testing.T) {
+	// Compactness grows quadratically with coordinates and cannot serve as a
+	// safe multiplier for a collision or for overflow on a feasible frame.
+	withCollision := packingScore{captionCollisions: 1, footprint: 10}
+	clear := packingScore{excessArea: 1e19, footprint: 1e20}
+	withinFrame := packingScore{footprint: 1e25}
+	if clear.compare(withCollision) >= 0 || withinFrame.compare(clear) >= 0 {
+		t.Fatalf("packing scores did not prioritize readability and frame fit")
 	}
 }

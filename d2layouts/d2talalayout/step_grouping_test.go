@@ -66,3 +66,32 @@ func TestStepGroupingPreservesAuthoredTransitions(t *testing.T) {
 		})
 	}
 }
+
+func TestFusedStepsKeepExplicitPositions(t *testing.T) {
+	// The outer container survives while the two steps temporarily share a vessel.
+	for _, direction := range []string{"right", "left", "up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			d := compileRoutingDiagram(t, t.Context(), fmt.Sprintf(`direction: %s
+Workflow: {
+  A: {shape: step; width: 120; height: 65; label.near: outside-top-center}
+  B: {shape: step; width: 120; height: 65; label.near: outside-bottom-right; icon: https://example.com/icon.svg; icon.near: outside-right-center}
+  A -> B
+}`, direction), 1, &d2svg.RenderOpts{})
+			if len(d.Connections) != 0 || len(d.Shapes) != 3 {
+				t.Fatalf("expected a container and two fused steps, got %d shapes and %d edges", len(d.Shapes), len(d.Connections))
+			}
+			for _, s := range d.Shapes {
+				switch s.ID {
+				case "Workflow.A":
+					if s.LabelPosition != "OUTSIDE_TOP_CENTER" {
+						t.Errorf("step A label position = %s", s.LabelPosition)
+					}
+				case "Workflow.B":
+					if s.LabelPosition != "OUTSIDE_BOTTOM_RIGHT" || s.IconPosition != "OUTSIDE_RIGHT_MIDDLE" {
+						t.Errorf("step B label = %s, icon = %s", s.LabelPosition, s.IconPosition)
+					}
+				}
+			}
+		})
+	}
+}

@@ -142,9 +142,9 @@ func placeNodes(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Nod
 	if err := proximity.AssignHerds(ctx, childrenGraph, root, prevEdgeAbductions); err != nil {
 		return err
 	}
-	// Retain independent coordinates for ranked components while the
-	// orthogonal placer lays out their neighbors.
-	restoreNears, err := layoutgraph.Nodes(childrenGraph.Nodes).DetachHierarchyNears(ctx)
+	// Each local search uses a single coordinate system. Cross-container and
+	// cross-hierarchy hints are evaluated when the components are combined.
+	restoreNears, err := layoutgraph.Nodes(childrenGraph.Nodes).DetachPlacementNears(ctx)
 	if err != nil {
 		return err
 	}

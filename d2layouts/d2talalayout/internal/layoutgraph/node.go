@@ -2247,18 +2247,21 @@ func (n Node) CanContain() bool {
 		n.shapeType != textType
 }
 
-// Make enough room for label to be center positioned
-// Even though labels are placed at the last step, the most common is for long labels to be outside centered top or bottom.
-// So we pre-emptively make enough room for it.
+// NeedsCenteredLabelWidth reports whether container fitting must reserve room
+// for a wide caption to be centered later. The measured node bounds already
+// include an exterior caption whose position is fixed.
+func (n *Node) NeedsCenteredLabelWidth() bool {
+	return n.Label != nil && n.Label.Width > n.Width &&
+		!(n.Label.PositionFixed() && n.Label.Position.IsOutside())
+}
+
 func (n *Node) expandForLabels(tl, br *geo.Point) {
 	children := n.Graph.Containers[n]
 
 	for _, child := range children {
-		if child.Label != nil && (child.TopLeft.X == tl.X || child.TopLeft.X+child.Width == br.X) {
-			if child.Label.Width > child.Width {
-				tl.X = math.Min(tl.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
-				br.X = math.Max(br.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
-			}
+		if child.NeedsCenteredLabelWidth() && (child.TopLeft.X == tl.X || child.TopLeft.X+child.Width == br.X) {
+			tl.X = math.Min(tl.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
+			br.X = math.Max(br.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
 		}
 	}
 }

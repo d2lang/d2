@@ -524,11 +524,11 @@ func componentNearCandidates(master, moving, packed *layoutgraph.Graph, graphTL 
 				return err
 			}
 			outer := near
-			for outer.Container != nil && outer.Container.Graph == packed {
+			for parent := outer.OwningContainer(); parent != nil && parent.Graph == packed; parent = outer.OwningContainer() {
 				if err := guard.Step(); err != nil {
 					return err
 				}
-				outer = outer.Container
+				outer = parent
 			}
 			if root != node || outer != near {
 				if err := addSides(root, outer, dx, dy); err != nil {

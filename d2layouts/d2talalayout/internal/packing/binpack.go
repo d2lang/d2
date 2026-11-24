@@ -159,15 +159,14 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 				cross = true
 				break
 			}
-			// Reachability follows only sibling near hints. A note next to a
-			// rank in a different container must retain the position chosen
-			// when those two rigid components were combined.
+			// Reachability follows sibling hints. Preserve the position chosen by
+			// the combiner for an attachment in another container.
 			if len(rn.Nears) > 0 {
 				if err := guard.Add(int64(len(rn.Nears))); err != nil {
 					return err
 				}
 				for near := range rn.Nears {
-					if near != nil && near.Container != rn.Container && near.Hierarchy != nil {
+					if near != nil && near.OwningContainer() != rn.OwningContainer() {
 						cross = true
 						break
 					}
@@ -254,7 +253,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 		return err
 	}
 
-	frame, err := newPackingFrame(root, guard)
+	frame, err := newPackingFrame(root, g.Containers[root], guard)
 	if err != nil {
 		return err
 	}
@@ -618,7 +617,11 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 			}
 			packedWithCurr = append(packedWithCurr, node)
 		}
-		bestScore := math.Inf(1)
+		candidateFrame, err := frame.forCandidates(packedRootChildren, currPacking, root, guard)
+		if err != nil {
+			return err
+		}
+		bestScore := worstPackingScore
 
 		for _, n := range currPacking {
 			if err := guard.Step(); err != nil {
@@ -639,7 +642,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 		// evaluate commits currPacking's translation to p and runs the checks
 		// that follow it; for a valid position it reports the packing's score
 		// there. The transaction is rolled back either way.
-		evaluate := func(p *geo.Point) (score float64, valid bool, err error) {
+		evaluate := func(p *geo.Point) (score packingScore, valid bool, err error) {
 			txn.Clear()
 			txn.AddOp(func() error {
 				offsetX := p.X - currTL.X
@@ -655,12 +658,12 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 			if err := txn.Commit(ctx); err != nil {
 				if layoutgraph.IsCandidateRejection(err) {
 					// TODO handle candidate overlap with the root before committing.
-					return 0, false, nil
+					return packingScore{}, false, nil
 				}
 				if canceledErr := checkCanceled(); canceledErr != nil {
-					return 0, false, canceledErr
+					return packingScore{}, false, canceledErr
 				}
-				return 0, false, err
+				return packingScore{}, false, err
 			}
 			// Not allowed to expand out of containers
 			if root != nil {
@@ -668,7 +671,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 				for _, n := range packedWithCurr {
 					if err := guard.Step(); err != nil {
 						txn.Rollback()
-						return 0, false, err
+						return packingScore{}, false, err
 					}
 					if n.Container == root {
 						packedInContainer = append(packedInContainer, n)
@@ -677,13 +680,13 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 				tl, br, err := packBoundingBox(packedInContainer, guard)
 				if err != nil {
 					txn.Rollback()
-					return 0, false, err
+					return packingScore{}, false, err
 				}
 				w, h := br.X-tl.X, br.Y-tl.Y
 				innerBox := root.InnerBox()
 				if w > innerBox.Width || h > innerBox.Height {
 					txn.Rollback()
-					return 0, false, nil
+					return packingScore{}, false, nil
 				}
 			}
 			if !edgesPlaced {
@@ -693,17 +696,17 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 					tl, br, err := packNodeBoundingBox(n, nil, guard)
 					if err != nil {
 						txn.Rollback()
-						return 0, false, err
+						return packingScore{}, false, err
 					}
 					topLeftInside, err := binPackPointInHierarchy(hierarchyBoxes, &tl, guard)
 					if err != nil {
 						txn.Rollback()
-						return 0, false, err
+						return packingScore{}, false, err
 					}
 					bottomRightInside, err := binPackPointInHierarchy(hierarchyBoxes, &br, guard)
 					if err != nil {
 						txn.Rollback()
-						return 0, false, err
+						return packingScore{}, false, err
 					}
 					if topLeftInside || bottomRightInside {
 						is = true
@@ -712,7 +715,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 				}
 				if is {
 					txn.Rollback()
-					return 0, false, nil
+					return packingScore{}, false, nil
 				}
 			}
 			blocked, err := blocksRoutesWithDeltasGuarded(
@@ -720,16 +723,16 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 			)
 			if err != nil {
 				txn.Rollback()
-				return 0, false, err
+				return packingScore{}, false, err
 			}
 			if blocked {
 				txn.Rollback()
-				return 0, false, nil
+				return packingScore{}, false, nil
 			}
-			score, err = frame.score(packedWithCurr, guard)
+			score, err = candidateFrame.score(packedWithCurr, guard)
 			txn.Rollback()
 			if err != nil {
-				return 0, false, err
+				return packingScore{}, false, err
 			}
 			return score, true, nil
 		}
@@ -737,7 +740,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 		// The chosen position is the valid candidate with the lowest score,
 		// the first in candidate order among equal scores.
 		var bestCandidate *geo.Point
-		ordered, err := ordering.prepare(txn, g, candidates, currPacking, currTL, packedWithCurr, frame, guard)
+		ordered, err := ordering.prepare(txn, g, candidates, currPacking, currTL, packedWithCurr, candidateFrame, guard)
 		if err != nil {
 			return err
 		}
@@ -770,7 +773,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 			}
 		}
 		if !ordered {
-			bestScore = math.Inf(1)
+			bestScore = worstPackingScore
 			bestCandidate = nil
 			for _, p := range candidates {
 				if err := returnIfCanceled(); err != nil {
@@ -780,7 +783,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 				if err != nil {
 					return err
 				}
-				if valid && score < bestScore {
+				if valid && score.usable() && score.compare(bestScore) < 0 {
 					bestScore = score
 					bestCandidate = p
 				}
@@ -936,16 +939,16 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 		return err
 	}
 
-	var afterBinPackScore float64
+	var afterBinPackScore packingScore
 	if failed {
-		afterBinPackScore = math.Inf(1)
+		afterBinPackScore = worstPackingScore
 	} else {
 		afterBinPackScore, err = frame.score(layoutgraph.Nodes(g.Containers[root]), guard)
 		if err != nil {
 			return err
 		}
 	}
-	if !failed && edgesPlaced && root != nil && afterBinPackScore <= originalScore {
+	if !failed && edgesPlaced && root != nil && afterBinPackScore.compare(originalScore) <= 0 {
 		// A wire can cross this container (or the space it expands into) with
 		// both endpoints elsewhere. Its geometry stays fixed during this pack.
 		failed, err = packedLeavesBlockFixedRoutes(g, originalPosOrder, originalPos, originalRoute, guard)
@@ -953,7 +956,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 			return err
 		}
 	}
-	if failed || originalScore < afterBinPackScore {
+	if failed || originalScore.compare(afterBinPackScore) < 0 {
 		for _, node := range originalPosOrder {
 			if err := guard.Step(); err != nil {
 				return err

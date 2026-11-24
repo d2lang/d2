@@ -83,14 +83,21 @@ var containerLabelPositionOrder = []label.Position{
 // before placement begins.
 func Initialize(graph *layoutgraph.Graph) {
 	for _, node := range graph.Nodes {
-		setDefaultLabelPlacement(node)
-		if node.Icon != nil && node.Icon.Position != label.Unset {
-			node.Icon.FixPosition()
+		initializeNodePositions(node)
+		// Step runs are already collapsed. Their members return to the graph
+		// before the final label pass, and must keep the same authored positions.
+		if seq := graph.Sequences[node]; seq != nil {
+			for _, member := range seq.Nodes {
+				initializeNodePositions(member)
+			}
 		}
 	}
 }
 
-func setDefaultLabelPlacement(node *layoutgraph.Node) {
+func initializeNodePositions(node *layoutgraph.Node) {
+	if node.Icon != nil && node.Icon.Position != label.Unset {
+		node.Icon.FixPosition()
+	}
 	if node.Label == nil {
 		return
 	}

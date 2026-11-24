@@ -1,8 +1,6 @@
 package packing
 
 import (
-	"cmp"
-	"math"
 	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
@@ -19,7 +17,7 @@ var candidateOrderingDisabled bool
 // the score of the packing with the subgraph there.
 type packTrial struct {
 	index int
-	score float64
+	score packingScore
 }
 
 // candidateOrdering is BinPack's score-ordered candidate validation, with
@@ -102,7 +100,7 @@ func (o *candidateOrdering) prepare(
 		if err != nil {
 			return false, err
 		}
-		if !(score < math.Inf(1)) {
+		if !score.usable() {
 			continue
 		}
 		o.trials = append(o.trials, packTrial{index: index, score: score})
@@ -114,7 +112,7 @@ func (o *candidateOrdering) prepare(
 		o.order = append(o.order, int32(k))
 	}
 	slices.SortStableFunc(o.order, func(a, b int32) int {
-		return cmp.Compare(o.trials[a].score, o.trials[b].score)
+		return o.trials[a].score.compare(o.trials[b].score)
 	})
 	return true, nil
 }

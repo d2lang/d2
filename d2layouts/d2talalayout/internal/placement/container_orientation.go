@@ -12,6 +12,20 @@ import (
 
 type containerOrientationDisabled struct{}
 
+// SourceOrientationTrial is private to one seed. Ordinary placement records
+// eligible horizontal turns; only a comparison against the completed winner
+// is allowed to apply them.
+type SourceOrientationTrial struct {
+	Apply    bool
+	Eligible bool
+}
+
+func WithSourceOrientationTrial(ctx context.Context, trial *SourceOrientationTrial) context.Context {
+	return context.WithValue(ctx, sourceOrientationKey{}, trial)
+}
+
+type sourceOrientationKey struct{}
+
 // A container footprint can change the later placement of its siblings. Until
 // those later operations validate self-loop envelopes, leave loop-bearing
 // layouts on their existing placement path. This scan happens once per attempt.
@@ -33,7 +47,7 @@ func orientationContext(ctx context.Context, g *layoutgraph.Graph) (context.Cont
 
 // orientSourceInterior aligns the internal flow of a small source container
 // with its surrounding flow, before the parent is fitted around the result.
-// The optional move is local: it does not add another complete layout attempt.
+// Vertical turns are local. A horizontal turn is proposed to the selected-seed trial.
 func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, obstacles []geo.Box) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -42,7 +56,12 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 		return nil
 	}
 	direction := g.Direction(root.OwningContainer())
-	if !direction.IsVertical() || len(root.Edges) < 3 {
+	horizontal := direction.IsHorizontal()
+	var trial *SourceOrientationTrial
+	if horizontal {
+		trial, _ = ctx.Value(sourceOrientationKey{}).(*SourceOrientationTrial)
+	}
+	if (!direction.IsVertical() && trial == nil) || len(root.Edges) < 3 {
 		return nil
 	}
 	guard, err := limits.NewWorkGuard(ctx, "ContainerOrientation", limits.MaxEngineWorkUnits)
@@ -89,15 +108,31 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 		return err
 	}
 	// A quarter-turn needs a clear transverse flow to improve. Disconnected
-	// contents, balanced cycles and already vertical compositions are left alone.
-	if flow.across <= flow.along+1e-9 || math.Abs(flow.x) <= 1e-9 {
+	// contents, balanced cycles and already aligned compositions are left alone.
+	across, along := flow.across, flow.along
+	transverse, forward := flow.x, flow.y
+	if horizontal {
+		across, along = flow.along, flow.across
+		transverse, forward = flow.y, flow.x
+	}
+	if across <= along+1e-9 || math.Abs(transverse) <= 1e-9 {
 		return nil
 	}
+	if horizontal {
+		if !trial.Apply {
+			trial.Eligible = true
+			return guard.Finish()
+		}
+	}
 	turn := 1.0
-	if (flow.x < 0) != (direction == geo.Top) {
+	negative := direction == geo.Top || direction == geo.Left
+	if (transverse < 0) != negative {
 		turn = -1
 	}
 
+	if horizontal {
+		turn = -turn
+	}
 	beforeWidth, beforeHeight := orientationFootprintSize(g, root)
 	txn, err := g.NewRequestTransaction(ctx, layoutgraph.TransactionOptions{IgnoreContainerEscape: true})
 	if err != nil {
@@ -150,10 +185,14 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 			return err
 		}
 		sign := 1.0
-		if direction == geo.Top {
+		if negative {
 			sign = -1
 		}
-		if sign*after.y <= sign*flow.y+1e-9 {
+		afterForward := after.y
+		if horizontal {
+			afterForward = after.x
+		}
+		if sign*afterForward <= sign*forward+1e-9 {
 			return layoutgraph.ErrNonImprovingCandidate
 		}
 		return guard.Finish()
@@ -165,6 +204,9 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 			return nil
 		}
 		return err
+	}
+	if horizontal {
+		trial.Eligible = true
 	}
 	return nil
 }
