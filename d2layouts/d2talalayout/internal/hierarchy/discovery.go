@@ -38,8 +38,21 @@ func countHierarchyStructuralEdges(node *layoutgraph.Node) int {
 	return count
 }
 
-// AssignNodeHierarchy identifies hierarchical structures within the subgraphs of this graph
-func Assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, hierarchicalNodes map[*layoutgraph.Node]struct{}) (err error) {
+// Discovery controls the optional promotion of split-and-rejoin workflows
+// when their enclosing scope specifies a direction.
+type Discovery struct {
+	SkipDirectedSplitJoins bool
+	UsedDirectedSplitJoin  bool
+}
+
+// Assign identifies hierarchical structures within the subgraphs of this graph.
+func Assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, hierarchicalNodes map[*layoutgraph.Node]struct{}) error {
+	return new(Discovery).Assign(ctx, g, root, hierarchicalNodes)
+}
+
+// Assign records whether this run used an automatic, direction-scoped split and rejoin.
+func (d *Discovery) Assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, hierarchicalNodes map[*layoutgraph.Node]struct{}) (err error) {
+	d.UsedDirectedSplitJoin = false
 	if err := layoutgraph.Validate(ctx, "AssignNodeHierarchy", g); err != nil {
 		return err
 	}
@@ -90,7 +103,7 @@ func Assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, h
 		}
 		node.Hierarchy = nil
 	}
-	if err := assign(ctx, g, root, hierarchicalNodes); err != nil {
+	if err := d.assign(ctx, g, root, hierarchicalNodes); err != nil {
 		return err
 	}
 	if err := guard.Finish(); err != nil {
@@ -112,7 +125,7 @@ func RemoveIsolatedMemberships(g *layoutgraph.Graph) {
 	}
 }
 
-func assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, hierarchicalNodes map[*layoutgraph.Node]struct{}) error {
+func (d *Discovery) assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, hierarchicalNodes map[*layoutgraph.Node]struct{}) error {
 
 	force := g.ForcesHierarchy(root)
 
@@ -139,7 +152,7 @@ func assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, h
 	for _, child := range g.Containers[root] {
 		// if this container can't be in a hierarchy, it may have one inside it
 		if _, isHierarchical := hierarchicalNodes[child]; !isHierarchical && child.IsContainer() {
-			if err := assign(ctx, g, child, hierarchicalNodes); err != nil {
+			if err := d.assign(ctx, g, child, hierarchicalNodes); err != nil {
 				return err
 			}
 		}
@@ -151,7 +164,7 @@ func assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, h
 		return err
 	}
 	for _, subgraph := range subgraphs {
-		hierarchy, err := build(ctx, subgraph, force, hierarchicalNodes, edgeAbductions)
+		hierarchy, err := d.build(ctx, subgraph, force, hierarchicalNodes, edgeAbductions)
 		if err != nil {
 			return err
 		}
@@ -177,7 +190,7 @@ func assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, h
 // Automatic discovery requires a source and sink, at least one non-table
 // node, and a layout that meets the hierarchy heuristics. Forced placement
 // skips these automatic-discovery checks.
-func build(ctx context.Context, g *layoutgraph.Graph, force bool, hierarchicalNodes map[*layoutgraph.Node]struct{}, edgeAbductions []*layoutgraph.EdgeAbduction) (*layoutgraph.Hierarchy, error) {
+func (d *Discovery) build(ctx context.Context, g *layoutgraph.Graph, force bool, hierarchicalNodes map[*layoutgraph.Node]struct{}, edgeAbductions []*layoutgraph.EdgeAbduction) (*layoutgraph.Hierarchy, error) {
 	if len(g.Nodes) <= 1 {
 		return nil, nil
 	}
@@ -213,7 +226,7 @@ func build(ctx context.Context, g *layoutgraph.Graph, force bool, hierarchicalNo
 	}
 	hierarchy.ReplaceLevels(mapDAGToGraphLevels(g, ranks.nodeToLevel))
 	hierarchy.LevelCount = ranks.levelCount
-	if force || isValid(hierarchy, g, edgeAbductions, sourceCount, sinkCount) {
+	if force || d.isValid(hierarchy, g, edgeAbductions, sourceCount, sinkCount) {
 		return hierarchy, nil
 	}
 
@@ -223,7 +236,7 @@ func build(ctx context.Context, g *layoutgraph.Graph, force bool, hierarchicalNo
 // isValid prefers compact hierarchies with a dominant edge direction. Fully
 // directed branched workflows retain their reading order even when they are
 // too tall for the usual compactness heuristic.
-func isValid(h *layoutgraph.Hierarchy, g *layoutgraph.Graph, edgeAbductions []*layoutgraph.EdgeAbduction, sourceCount, sinkCount int) bool {
+func (d *Discovery) isValid(h *layoutgraph.Hierarchy, g *layoutgraph.Graph, edgeAbductions []*layoutgraph.EdgeAbduction, sourceCount, sinkCount int) bool {
 	if h.LevelCount < minHierarchyLevels {
 		return false
 	}
@@ -287,7 +300,11 @@ func isValid(h *layoutgraph.Hierarchy, g *layoutgraph.Graph, edgeAbductions []*l
 	// the author specifies a direction in this scope, preserve the flow of
 	// its directed branches. Keep ordinary, unconstrained diamonds flexible.
 	_, explicitDirection := g.Directions[g.Nodes[0].Container]
-	return explicitDirection && branchedWorkflow && minimumWorkflowExtentFits(h, g)
+	if d.SkipDirectedSplitJoins || !explicitDirection || !branchedWorkflow || !minimumWorkflowExtentFits(h, g) {
+		return false
+	}
+	d.UsedDirectedSplitJoin = true
+	return true
 }
 
 // minimumWorkflowExtentFits screens current rank dimensions with the minimum

@@ -46,7 +46,7 @@ func TestBuildFlowRules(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(g)
 			}
-			h, err := build(t.Context(), g, tt.force, Candidates(g), nil)
+			h, err := new(Discovery).build(t.Context(), g, tt.force, Candidates(g), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,7 +61,7 @@ func TestBuildFlowRulesCancellation(t *testing.T) {
 	g := flowRuleGraph(3, [][2]int{{0, 2}, {1, 2}})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	h, err := build(ctx, g, false, Candidates(g), nil)
+	h, err := new(Discovery).build(ctx, g, false, Candidates(g), nil)
 	if h != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled build = %v, %v", h, err)
 	}
@@ -118,7 +118,7 @@ func TestAutomaticWorkflowBounds(t *testing.T) {
 			}
 			h.ReplaceLevels(levels)
 			h.LevelCount = tt.nodes - 1
-			if got := isValid(h, g, nil, 1, 1); got != tt.want {
+			if got := new(Discovery).isValid(h, g, nil, 1, 1); got != tt.want {
 				t.Fatalf("workflow accepted = %v, want %v", got, tt.want)
 			}
 		})
@@ -144,7 +144,7 @@ func TestAutomaticWorkflowBoundsPreserveOrdinaryHierarchy(t *testing.T) {
 	}
 	h.ReplaceLevels(nodeLevels)
 	h.LevelCount = levels
-	if !isValid(h, g, nil, 1, columns) {
+	if !new(Discovery).isValid(h, g, nil, 1, columns) {
 		t.Fatal("ordinary compact hierarchy above workflow size limit was rejected")
 	}
 }
@@ -178,7 +178,7 @@ func TestBuildAutomaticWorkflowMinimumExtent(t *testing.T) {
 			for _, n := range g.Nodes {
 				n.Width, n.Height = tt.width, tt.height
 			}
-			h, err := build(t.Context(), g, tt.force, Candidates(g), nil)
+			h, err := new(Discovery).build(t.Context(), g, tt.force, Candidates(g), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -236,7 +236,7 @@ func TestAutomaticSplitJoinWithDirection(t *testing.T) {
 				g.AddNodeToContainer(tc.owner, node)
 			}
 			g.Directions[tc.directionScope] = geo.Left
-			h, err := build(t.Context(), g, false, Candidates(g), nil)
+			h, err := new(Discovery).build(t.Context(), g, false, Candidates(g), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
