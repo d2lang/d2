@@ -5,6 +5,7 @@
 package font
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -79,7 +80,22 @@ func calcChecksum(buf []byte) uint32 {
 	return sum
 }
 
+// SubsetWOFF produces a self-contained font for an SVG. The compact subset
+// drops redundant SFNT entries, retains every selected glyph and its metrics,
+// and uses the same WOFF container as the full-font fallback.
+func SubsetWOFF(face []byte, chars string) ([]byte, error) {
+	subset := cutFont(bytes.Clone(face), chars, true)
+	if len(subset) == 0 {
+		return nil, fmt.Errorf("font has no supported character map")
+	}
+	return sfnt2Woff(subset, true)
+}
+
 func Sfnt2Woff(fontBuf []byte) ([]byte, error) {
+	return sfnt2Woff(fontBuf, false)
+}
+
+func sfnt2Woff(fontBuf []byte, compact bool) ([]byte, error) {
 	numTables := binary.BigEndian.Uint16(fontBuf[4:])
 
 	woffHeader := make([]byte, SIZE_OF_WOFF_HEADER)
@@ -174,7 +190,7 @@ func Sfnt2Woff(fontBuf []byte) ([]byte, error) {
 		if compression == nil {
 			compression = acquireWoffCompression()
 		}
-		compressed := compression.compressTable(sfntData)
+		compressed := compression.compressTableMode(sfntData, compact)
 
 		compLength := math.Min(float64(len(compressed)), float64(len(sfntData)))
 		length := longAlign(uint32(compLength))

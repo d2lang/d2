@@ -2527,7 +2527,9 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 		}
 	}
 	corpora = restrictFontCorpora(corpora, corpus)
-	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)
+	start := buf.Len()
+	buf.WriteString(`<style type="text/css"><![CDATA[`)
+	contentStart := buf.Len()
 
 	appendFontOnTrigger(
 		buf,
@@ -2861,6 +2863,10 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 }`, diagramHash),
 	)
 
+	if buf.Len() == contentStart {
+		buf.Truncate(start)
+		return
+	}
 	fmt.Fprint(buf, `]]></style>`)
 }
 

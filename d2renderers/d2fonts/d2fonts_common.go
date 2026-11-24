@@ -9,7 +9,6 @@ import (
 
 	"github.com/d2lang/d2/internal/bundledfont"
 	"github.com/d2lang/d2/lib/font"
-	fontlib "github.com/d2lang/d2/lib/font"
 	"github.com/d2lang/d2/lib/syncmap"
 )
 
@@ -54,11 +53,7 @@ func (f Font) GetEncodedSubset(corpus string) string {
 			return encoded
 		}
 	}
-	fontBuf := make([]byte, len(face))
-	copy(fontBuf, face)
-	fontBuf = font.UTF8CutFont(fontBuf, uniqueChars)
-
-	fontBuf, err := fontlib.Sfnt2Woff(fontBuf)
+	fontBuf, err := font.SubsetWOFF(face, uniqueChars)
 	if err != nil {
 		// If subset fails, return full encoding
 		return FontEncodings.Get(f)
@@ -150,15 +145,15 @@ var D2_FONT_TO_FAMILY = map[string]FontFamily{
 	"mono":    SourceCodePro,
 }
 
-func AddFontStyle(font Font, style FontStyle, ttf []byte) error {
-	FontFaces.Set(font, ttf)
+func AddFontStyle(f Font, style FontStyle, ttf []byte) error {
+	FontFaces.Set(f, ttf)
 
-	woff, err := fontlib.Sfnt2Woff(ttf)
+	woff, err := font.Sfnt2Woff(ttf)
 	if err != nil {
 		return fmt.Errorf("failed to encode ttf to woff: %v", err)
 	}
 	encodedWoff := fmt.Sprintf("data:application/font-woff;base64,%v", base64.StdEncoding.EncodeToString(woff))
-	FontEncodings.Set(font, encodedWoff)
+	FontEncodings.Set(f, encodedWoff)
 
 	return nil
 }
