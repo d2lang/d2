@@ -5,7 +5,7 @@
 	}
 }
 @media (prefers-reduced-motion: reduce) {
-	.animated-connection {
+	.d2-2064240037 .animated-connection {
 		animation: none !important;
 	}
 }
