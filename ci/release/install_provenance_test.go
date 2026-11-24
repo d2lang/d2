@@ -117,7 +117,16 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 				}
 			}
 			write(filepath.Join(bin, "d2"), "#!/bin/sh\necho \"$OLD_VERSION\"\n", 0o755)
-			write(filepath.Join(bin, "make"), "#!/bin/sh\necho \"$1\" >> \"$EVENTS\"\n", 0o755)
+			write(filepath.Join(bin, "make"), `#!/bin/sh
+set -eu
+echo "$1" >> "$EVENTS"
+if [ "$1" = install ]; then
+  prefix=${2#PREFIX=}
+  mkdir -p "$prefix/bin" "$prefix/share/man/man1"
+  cp new-install "$prefix/bin/d2"
+  cp new-install "$prefix/share/man/man1/d2.1"
+fi
+`, 0o755)
 			write(filepath.Join(bin, "brew"), "#!/bin/sh\necho brew >> \"$EVENTS\"\nexit 1\n", 0o755)
 			write(filepath.Join(bin, "curl"), fakeReleaseCurl, 0o755)
 			write(filepath.Join(bin, "gh"), fakeAttestationVerifier, 0o755)
@@ -189,9 +198,12 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 				t.Fatal("installer redownloaded a cache entry that passed its checksum")
 			}
 			if installed {
-				wantOrder := "verify\nuninstall\ninstall\n"
+				wantOrder := "verify\ninstall\n"
 				if tc.outcome == "legacy" || tc.outcome == "pinned" || tc.outcome == "corrupt_cache" {
-					wantOrder = "uninstall\ninstall\n"
+					wantOrder = "install\n"
+				}
+				if strings.Contains(trace, "uninstall\n") {
+					t.Fatalf("installer ran the previous release's uninstall recipe: %q", trace)
 				}
 				if !strings.HasSuffix(trace, wantOrder) {
 					t.Fatalf("unexpected upgrade order: %q", trace)

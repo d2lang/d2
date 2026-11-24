@@ -73,8 +73,10 @@ If you're still concerned, remember you can run with `--dry-run` to avoid writin
 The standalone installer includes the SHA-256 of each supported archive starting with
 v0.8.2. During release review, D2 checks the signed checksum manifest against the release
 workflow, tag, and source commit. Your installer checks the downloaded or cached archive
-against that reviewed digest before extracting it or removing an existing installation.
-This uses your system's SHA-256 tool and requires no additional download.
+against that reviewed digest before extraction using your system's SHA-256 tool.
+Upgrades and forced reinstalls run the archive's installation recipe in a temporary
+prefix. The installer replaces the executable after the new release tree and manpage
+are in place. These steps require no additional download.
 
 Pass `--verify-provenance` to check the signed build provenance on your machine as well.
 The installer also performs this check automatically when installing a new release that

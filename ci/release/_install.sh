@@ -79,16 +79,15 @@ Flags:
   https://github.com/terrastruct/TALA/releases
 
 --force:
-  Force installation over the existing version even if they match. The installer verifies
-  the replacement archive before uninstalling the existing version. The installed release tree
-  will be deleted from \$PREFIX/lib/d2/d2-<VERSION> but the release archive in
-  ~/.cache/d2/release will remain.
+  Reinstall even if the versions match. The installer stages the verified replacement
+  before switching the executable. Downloaded archives remain in the release cache.
 
 --uninstall:
   Uninstall the installed version of d2. The --method and --prefix flags must be the same
   as for installation. i.e if you used --method standalone you must again use --method
   standalone for uninstallation. With detect, the install script will try to use the OS
-  package manager to uninstall instead.
+  package manager to uninstall instead. Use --version, --force, and --verify-provenance
+  only when installing.
 
 -x, --trace:
   Run script with set -x.
@@ -107,6 +106,7 @@ EOF
 }
 
 main() {
+  install_only_flag=
   while flag_parse "$@"; do
     case "$FLAG" in
       h|help)
@@ -120,10 +120,12 @@ main() {
       version)
         flag_nonemptyarg && shift "$FLAGSHIFT"
         VERSION=$FLAGARG
+        install_only_flag=--version
         ;;
       verify-provenance)
         flag_noarg && shift "$FLAGSHIFT"
         VERIFY_PROVENANCE=1
+        install_only_flag=--verify-provenance
         ;;
       tala)
         shift "$FLAGSHIFT"
@@ -140,6 +142,7 @@ main() {
       force)
         flag_noarg && shift "$FLAGSHIFT"
         FORCE=1
+        install_only_flag=--force
         ;;
       uninstall)
         flag_noarg && shift "$FLAGSHIFT"
@@ -161,6 +164,10 @@ main() {
     flag_errusage "no arguments are accepted"
   fi
 
+  if [ -n "${UNINSTALL-}" ] && [ -n "$install_only_flag" ]; then
+    flag_errusage "$install_only_flag cannot be used with --uninstall"
+  fi
+
   if [ -n "${TALA_REQUEST-}" ]; then
     flag_errusage "--tala is no longer supported; this installer installs only D2.
 For releases with bundled TALA, omit --tala and verify availability with d2 layout.
@@ -176,7 +183,7 @@ For older releases, install the legacy plugin separately: https://github.com/ter
   METHOD=${METHOD:-detect}
   INSTALL_DIR=$PREFIX/lib/d2
 
-  if [ -n "${VERIFY_PROVENANCE-}" ]; then
+  if [ -z "${UNINSTALL-}" ] && [ -n "${VERIFY_PROVENANCE-}" ]; then
     case "$METHOD" in
       detect) METHOD=standalone ;;
       homebrew) flag_errusage "--verify-provenance requires a standalone installation" ;;
@@ -338,16 +345,16 @@ install_d2_standalone() {
     fi
   fi
 
-  if [ -n "$INSTALLED_VERSION" ]; then
-    log "uninstalling d2 $INSTALLED_VERSION to install $VERSION"
-    if ! uninstall_d2_standalone; then
-      warn "failed to uninstall d2 $INSTALLED_VERSION"
-    fi
+  if [ -n "${DRY_RUN-}" ]; then
+    log "would stage d2-$VERSION and replace the executable under $PREFIX"
+    return
   fi
-  ensure_prefix_sh_c
-  "$sh_c" mkdir -p "'$INSTALL_DIR'"
-  "$sh_c" tar -C "'$INSTALL_DIR'" -xzf "'$staged_archive'"
-  "$sh_c" sh -c "'cd \"$INSTALL_DIR/d2-$VERSION\" && make install PREFIX=\"$PREFIX\"'"
+  tar -C "$stage" -xzf "$staged_archive"
+  mkdir "$stage/prefix"
+  # Older archive recipes require a prefix without spaces. The private prefix
+  # is a sibling of the extracted tree, including when TMPDIR contains spaces.
+  (cd "$stage/d2-$VERSION" && make install PREFIX=../prefix)
+  update_standalone_prefix install
 }
 
 verify_archive_provenance() (
@@ -407,10 +414,107 @@ uninstall_d2_standalone() {
     return 1
   fi
 
-  ensure_prefix_sh_c
-  "$sh_c" sh -c "'cd \"$INSTALL_DIR/d2-$INSTALLED_VERSION\" && make uninstall PREFIX=\"$PREFIX\"'"
-  "$sh_c" rm -rf "$INSTALL_DIR/d2-$INSTALLED_VERSION"
+  if [ -n "${DRY_RUN-}" ]; then
+    log "would uninstall d2-$INSTALLED_VERSION from $PREFIX"
+    return
+  fi
+  update_standalone_prefix uninstall
 }
+
+# Only the final changes to the selected prefix may need elevation. Pass paths
+# as arguments to the child shell, including when the shared helper uses sudo.
+update_standalone_prefix() (
+  ensure_prefix_sh_c
+  action=$1
+  export action PREFIX OS INSTALLED_VERSION
+  export stage="${stage-}" VERSION="${VERSION-}"
+  "$sh_c" 'sh -s -- "$action" "$PREFIX" "$OS" "$INSTALLED_VERSION" "$stage" "$VERSION"' <<'PUBLISH'
+set -eu
+action=$1 prefix=$2 os=$3 previous=$4 stage=$5 version=$6
+case "$prefix" in /*|[A-Za-z]:/*) ;; *) prefix=$PWD/$prefix ;; esac
+lib=$prefix/lib/d2
+lock=$lib/.install-lock
+case "$previous" in
+  *[!A-Za-z0-9.-]*)
+    if [ "$action" = uninstall ]; then echo >&2 "Invalid installed D2 version: $previous"; exit 1; fi
+    previous= ;; # A source build on PATH may have no managed release tree.
+esac
+mkdir -p "$lib"
+if ! mkdir -m 700 "$lock"; then
+  if [ -d "$lock" ]; then
+    echo >&2 "Cannot update $prefix while $lock exists"
+    echo >&2 "Wait for the other installer to finish. If it was interrupted, inspect the lock directory for a saved release tree before removing it."
+  fi
+  exit 1
+fi
+
+binary=d2
+if [ "$os" = windows ]; then binary=d2.exe; fi
+bin=$prefix/bin/$binary
+man=$prefix/share/man/man1/d2.1
+tree=$lib/d2-$version
+bin_tmp= man_tmp=
+finish() {
+  status=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  # Renaming the executable is the commit point. Before it, restore the
+  # release tree and manpage if their replacements were already published.
+  if [ -f "$lock/publishing" ] && [ -f "$bin_tmp/$binary" ]; then
+    if [ ! -d "$lock/new" ]; then rm -rf "$tree"; fi
+    if [ -e "$lock/old" ] || [ -L "$lock/old" ]; then mv "$lock/old" "$tree"; fi
+    if [ ! -e "$man_tmp/new" ]; then
+      if [ -e "$man_tmp/old" ] || [ -L "$man_tmp/old" ]; then
+        mv -f "$man_tmp/old" "$man"
+      else
+        rm -f "$man"
+      fi
+    fi
+  fi
+  for scratch in "$bin_tmp" "$man_tmp" "$lock"; do
+    if [ -n "$scratch" ]; then rm -rf "$scratch" || echo >&2 "Could not remove $scratch"; fi
+  done
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 1' HUP INT TERM
+
+if [ "$action" = uninstall ]; then
+  (
+    cd "$lib/d2-$previous"
+    # Shipped recipes support a relative prefix even if the real path contains spaces.
+    uninstall_prefix=$prefix
+    if [ "$(cd ../../.. && pwd -P)" = "$(cd "$prefix" && pwd -P)" ]; then uninstall_prefix=../../..; fi
+    make uninstall PREFIX="$uninstall_prefix"
+  )
+  rm -rf "$lib/d2-$previous"
+  exit
+fi
+
+# Each incoming file is on its destination filesystem, even if bin, man and
+# lib are separate mounts. A failed rename leaves the existing executable intact.
+mkdir -p "${bin%/*}" "${man%/*}"
+if [ -d "$bin" ] || [ -d "$man" ]; then
+  echo >&2 "Expected a file at $bin and $man"
+  exit 1
+fi
+bin_tmp=$(mktemp -d "${bin%/*}/.d2-install.XXXXXXXX")
+man_tmp=$(mktemp -d "${man%/*}/.d2-install.XXXXXXXX")
+install -m 755 "$stage/prefix/bin/$binary" "$bin_tmp/$binary"
+install -m 644 "$stage/prefix/share/man/man1/d2.1" "$man_tmp/new"
+cp -R "$stage/d2-$version" "$lock/new"
+if [ -e "$man" ] || [ -L "$man" ]; then cp -pP "$man" "$man_tmp/old"; fi
+
+touch "$lock/publishing"
+if [ -e "$tree" ] || [ -L "$tree" ]; then mv "$tree" "$lock/old"; fi
+mv "$lock/new" "$tree"
+mv -f "$man_tmp/new" "$man"
+mv -f "$bin_tmp/$binary" "$bin"
+if [ -n "$previous" ] && [ "$previous" != "$version" ]; then
+  rm -rf "$lib/d2-$previous" || echo >&2 "Installed d2-$version; could not remove $lib/d2-$previous"
+fi
+PUBLISH
+)
 
 uninstall_d2_brew() {
   sh_c brew remove d2
@@ -429,21 +533,28 @@ cache_dir() {
 ensure_version() {
   if [ "$VERSION" = latest ]; then
     log "fetching latest version of $REPO"
-    redirect_url=$(curl -fsSLI -o /dev/null -w "%{url_effective}" "https://github.com/$REPO/releases/latest")
-    if [ $? -ne 0 ]; then
-      warn "redirect method failed, falling back to API"
-      release_info_url="https://api.github.com/repos/$REPO/releases/latest"
-      release_info=$(mktempd)/release-info.json
-      DRY_RUN= fetch_gh "$release_info_url" "$release_info" 'application/json'
-      VERSION=$(cat "$release_info" | grep -m1 tag_name | sed 's/^.*: "\(.*\)",$/\1/g')
-      log "detected latest version via API: $VERSION"
+    release_url="https://github.com/$REPO/releases"
+    tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+    if redirect_url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$release_url/latest") &&
+      [ "$redirect_url" = "$release_url/tag/${redirect_url##*/}" ] &&
+      printf '%s\n' "${redirect_url##*/}" | grep -Eq "$tag_pattern"; then
+      VERSION=${redirect_url##*/}
     else
-      # Extract version from redirected URL
-      VERSION="${redirect_url##*/}"
-      log "detected latest version: $VERSION"
+      warn "could not resolve the latest release via redirect, trying the GitHub API"
+      api_url="https://api.github.com/repos/$REPO/releases/latest"
+      if ! release_info=$(DRY_RUN= curl_gh -sS -H "'Accept: application/vnd.github+json'" "$api_url"); then
+        echoerr "could not fetch the latest release from $api_url"
+        return 1
+      fi
+      VERSION=$(printf '%s\n' "$release_info" | sed -nE 's/^.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]*)".*$/\1/p')
+      if ! printf '%s\n' "$VERSION" | grep -Eq "$tag_pattern"; then
+        echoerr "the GitHub API returned no valid release tag for $REPO"
+        return 1
+      fi
     fi
+    log "detected latest version: $VERSION"
   fi
-  
+
   # Ensure VERSION has 'v' prefix
   case "$VERSION" in
     v*) ;;
