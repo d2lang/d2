@@ -3,7 +3,6 @@ package labeling
 import (
 	"github.com/d2lang/d2/lib/geo"
 
-	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labelgeom"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 )
 
@@ -29,14 +28,7 @@ func PositionArrowheadLabel(edge *layoutgraph.Edge, isTarget bool, route geo.Rou
 	if value == nil {
 		return nil
 	}
-	topLeft := labelgeom.ArrowheadTopLeft(
-		route,
-		isTarget,
-		string(edge.SourceArrowhead),
-		string(edge.TargetArrowhead),
-		value.Width,
-		value.Height,
-	)
+	topLeft := edge.ArrowheadLabelTopLeft(route, isTarget, value)
 	return &PositionedArrowheadLabel{
 		Box:      *geo.NewBox(topLeft, value.Width, value.Height),
 		Edge:     edge,

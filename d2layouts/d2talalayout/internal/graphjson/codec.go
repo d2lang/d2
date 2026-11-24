@@ -688,6 +688,7 @@ func serializeEdge(edge *layoutgraph.Edge, edgeIDs *edgeSerializationIDs, guard 
 		D2ID:                 d2ID,
 		FromNode:             layoutgraph.NodeIDForSerialization(edge.From),
 		ToNode:               layoutgraph.NodeIDForSerialization(edge.To),
+		ReversedForLayout:    edge.ReversedForLayout,
 		SourceArrowhead:      string(edge.SourceArrowhead),
 		TargetArrowhead:      string(edge.TargetArrowhead),
 		SourceArrowheadLabel: serializeLabel(edge.SourceArrowheadLabel),
@@ -869,6 +870,7 @@ func deserializeEdge(edge SerializedEdge, nodesByID map[layoutgraph.EntityID]*la
 	if edge.D2ID != nil {
 		newedge.D2ID = new(*edge.D2ID)
 	}
+	newedge.ReversedForLayout = edge.ReversedForLayout
 	newedge.SourceArrowhead = layoutgraph.Arrowhead(edge.SourceArrowhead)
 	newedge.TargetArrowhead = layoutgraph.Arrowhead(edge.TargetArrowhead)
 	var err error

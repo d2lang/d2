@@ -691,6 +691,9 @@ type Node struct {
 	// bottom ┬ │  └──┬──────────┘
 	//        ┴ └─────┘
 	LoopOffsets map[geo.Orientation]float64
+	// SeparateLoopCorners is set on the private graph of a loop-clearance trial.
+	// Offset reservation and final routing must use the same corner assignment.
+	SeparateLoopCorners bool
 
 	margin  Spacing
 	padding Spacing

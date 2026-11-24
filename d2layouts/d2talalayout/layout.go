@@ -287,6 +287,7 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 	if err != nil {
 		return err
 	}
+	refineRoutes := supportsRouteRefinements(graph)
 	if best.graph != ordinary.graph {
 		selected := best
 		best, err = refineSeedResult(workCtx, selected, func() (seedResult, error) {
@@ -306,9 +307,20 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 		if err != nil {
 			return err
 		}
+		if refineRoutes {
+			best, err = considerLoopClearance(workCtx, input, best)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if err := orderEquivalentBranchSlots(workCtx, graph, best); err != nil {
 		return err
+	}
+	if refineRoutes {
+		if err := refineSelectedRoutes(workCtx, best.graph); err != nil {
+			return err
+		}
 	}
 	return applySeedResult(workCtx, graph, best)
 }

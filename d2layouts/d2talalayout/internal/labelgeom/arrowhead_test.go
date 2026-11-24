@@ -9,7 +9,7 @@ import (
 
 func TestArrowheadTopLeftPreservesHistoricalTruncation(t *testing.T) {
 	route := geo.Route{geo.NewPoint(0, 0), geo.NewPoint(100, 0)}
-	got := ArrowheadTopLeft(route, false, "triangle", "none", 30.9, 12.9)
+	got := ArrowheadTopLeft(route, false, "triangle", "none", 30.9, 12.9, nil)
 	want := geo.NewPoint(5, -20)
 	if !got.Equals(want) {
 		t.Fatalf("top-left = %v, want %v", got, want)
@@ -74,6 +74,7 @@ func TestArrowheadTopLeftMatchesRendererGeometry(t *testing.T) {
 				test.targetArrow,
 				test.width,
 				test.height,
+				nil,
 			)
 			want := rendererArrowheadTopLeft(
 				test.route,

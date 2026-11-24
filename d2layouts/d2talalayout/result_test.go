@@ -269,6 +269,7 @@ func TestEvaluateSeedRejectsChangedImmutableGeometryMetadata(t *testing.T) {
 		{name: "edge arrowhead", mutate: func(graph *layoutgraph.Graph) {
 			graph.Edges[0].SourceArrowhead = layoutgraph.Arrowhead(d2target.TriangleArrowhead)
 		}, want: "arrowhead metadata"},
+		{name: "authored route direction", mutate: func(graph *layoutgraph.Graph) { graph.Edges[0].ReversedForLayout = !graph.Edges[0].ReversedForLayout }, want: "arrowhead metadata"},
 		{name: "source arrowhead label", mutate: func(graph *layoutgraph.Graph) { graph.Edges[0].SourceArrowheadLabel.Width++ }, want: "source arrowhead label"},
 		{name: "target arrowhead label", mutate: func(graph *layoutgraph.Graph) { graph.Edges[0].TargetArrowheadLabel.Text = "replacement" }, want: "target arrowhead label"},
 		{name: "edge minimum geometry", mutate: func(graph *layoutgraph.Graph) { graph.Edges[0].MinWidth++ }, want: "minimum geometry"},

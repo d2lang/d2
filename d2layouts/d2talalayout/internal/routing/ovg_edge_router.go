@@ -1438,6 +1438,8 @@ func (router *ovgEdgeRouter) quickRoute(ctx context.Context, gEdge *layoutgraph.
 			}
 			edge := layoutgraph.NewEdge(route.GEdge.From, route.GEdge.To)
 			edge.Points = route.createSegmentEndpoints()
+			edge.ReversedForLayout = route.GEdge.ReversedForLayout
+			edge.Style.StrokeWidth = route.GEdge.Style.StrokeWidth
 			edge.SourceArrowhead = route.GEdge.SourceArrowhead
 			edge.TargetArrowhead = route.GEdge.TargetArrowhead
 			edge.SourceArrowheadLabel = route.GEdge.SourceArrowheadLabel

@@ -12,11 +12,11 @@ type routeCrossings struct {
 }
 
 func countNonSharedCrossings(edges []*layoutgraph.Edge, guard *limits.WorkGuard) (int64, error) {
-	counts, err := countRouteCrossings(edges, guard)
+	counts, err := countRouteCrossings(edges, guard, nil)
 	return counts.scored, err
 }
 
-func countRouteCrossings(edges []*layoutgraph.Edge, guard *limits.WorkGuard) (routeCrossings, error) {
+func countRouteCrossings(edges []*layoutgraph.Edge, guard *limits.WorkGuard, issues *LoopInspection) (routeCrossings, error) {
 	var counts routeCrossings
 	for i, edge := range edges {
 		if err := guard.Step(); err != nil {
@@ -27,8 +27,13 @@ func countRouteCrossings(edges []*layoutgraph.Edge, guard *limits.WorkGuard) (ro
 			if err := guard.Step(); err != nil {
 				return routeCrossings{}, err
 			}
+			before := counts
 			if err := counts.addEdgePair(edge, other, guard); err != nil {
 				return routeCrossings{}, err
+			}
+			if issues != nil {
+				issues.add(routeItem(edge), routeItem(other), counts.scored-before.scored, false)
+				issues.add(inspectionItem{edge.ID, interiorRoute}, inspectionItem{other.ID, interiorRoute}, counts.interior-before.interior, false)
 			}
 		}
 	}

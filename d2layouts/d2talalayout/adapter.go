@@ -334,104 +334,32 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 			return bindings, fmt.Errorf("tala cannot translate an edge with a nil endpoint")
 		}
 
-		// if connection is a <- b create it as src:b dst:a
-		var talaEdge *layoutgraph.Edge
 		edgeID := edgeAbsIDs[e]
-		edgeSrc := e.Src
-		edgeDst := e.Dst
-		srcColumnIndex := e.SrcTableColumnIndex
-		dstColumnIndex := e.DstTableColumnIndex
-		if e.SrcArrow && !e.DstArrow {
+		edgeSrc, edgeDst := e.Src, e.Dst
+		srcColumnIndex, dstColumnIndex := e.SrcTableColumnIndex, e.DstTableColumnIndex
+		srcArrow, dstArrow := e.SrcArrow, e.DstArrow
+		srcAttrs, dstAttrs := e.SrcArrowhead, e.DstArrowhead
+		reversed := srcArrow && !dstArrow
+		if reversed {
 			edgeSrc, edgeDst = edgeDst, edgeSrc
-			talaEdge = talaGraph.Connect(toNode[edgeSrc], toNode[edgeDst])
-			talaEdge.SourceArrowhead = layoutgraph.Arrowhead(d2target.NoArrowhead)
-			if ah := e.DstArrowhead; ah != nil {
-				if ah.Label.Value != "" {
-					talaEdge.SourceArrowheadLabel = &layoutgraph.Label{
-						Text:   ah.Label.Value,
-						Width:  float64(ah.LabelDimensions.Width),
-						Height: float64(ah.LabelDimensions.Height),
-					}
-				}
-			}
-			if ah := e.SrcArrowhead; ah != nil {
-				var filled *bool
-				if ah.Style.Filled != nil {
-					v, _ := strconv.ParseBool(ah.Style.Filled.Value)
-					filled = new(v)
-				}
-				talaEdge.TargetArrowhead = layoutgraph.Arrowhead(d2target.ToArrowhead(ah.Shape.Value, filled))
-				if ah.Label.Value != "" {
-					talaEdge.TargetArrowheadLabel = &layoutgraph.Label{
-						Text:   ah.Label.Value,
-						Width:  float64(ah.LabelDimensions.Width),
-						Height: float64(ah.LabelDimensions.Height),
-					}
-				}
-			} else {
-				talaEdge.TargetArrowhead = layoutgraph.Arrowhead(d2target.TriangleArrowhead)
-			}
 			srcColumnIndex, dstColumnIndex = dstColumnIndex, srcColumnIndex
-
-			if loadExistingLayout {
-				for _, v := range slices.Backward(e.Route) {
-					talaEdge.Points = append(talaEdge.Points, v.Copy())
-				}
+			srcArrow, dstArrow = dstArrow, srcArrow
+			srcAttrs, dstAttrs = dstAttrs, srcAttrs
+		} else if isSupportedLifelineEdge(e) {
+			// Sequence diagram lifelines aren't connected on both ends.
+			edgeDst = edgeSrc
+			bindings.edgeDestinations[e] = edgeDst
+		}
+		talaEdge := talaGraph.Connect(toNode[edgeSrc], toNode[edgeDst])
+		talaEdge.ReversedForLayout = reversed
+		talaEdge.SourceArrowhead, talaEdge.SourceArrowheadLabel = translateArrowhead(srcArrow, srcAttrs)
+		talaEdge.TargetArrowhead, talaEdge.TargetArrowheadLabel = translateArrowhead(dstArrow, dstAttrs)
+		if loadExistingLayout {
+			for _, point := range e.Route {
+				talaEdge.Points = append(talaEdge.Points, point.Copy())
 			}
-		} else {
-			// Pretend it's a self-loop, since sequence diagram lifelines aren't connected on both ends
-			if isSupportedLifelineEdge(e) {
-				edgeDst = edgeSrc
-				bindings.edgeDestinations[e] = edgeDst
-			}
-			talaEdge = talaGraph.Connect(toNode[edgeSrc], toNode[edgeDst])
-			if ah := e.SrcArrowhead; ah != nil {
-				var filled *bool
-				if ah.Style.Filled != nil {
-					v, _ := strconv.ParseBool(ah.Style.Filled.Value)
-					filled = new(v)
-				}
-				talaEdge.SourceArrowhead = layoutgraph.Arrowhead(d2target.ToArrowhead(ah.Shape.Value, filled))
-				if ah.Label.Value != "" {
-					talaEdge.SourceArrowheadLabel = &layoutgraph.Label{
-						Text:   ah.Label.Value,
-						Width:  float64(ah.LabelDimensions.Width),
-						Height: float64(ah.LabelDimensions.Height),
-					}
-				}
-			} else {
-				if e.SrcArrow {
-					talaEdge.SourceArrowhead = layoutgraph.Arrowhead(d2target.TriangleArrowhead)
-				} else {
-					talaEdge.SourceArrowhead = layoutgraph.Arrowhead(d2target.NoArrowhead)
-				}
-			}
-			if ah := e.DstArrowhead; ah != nil {
-				var filled *bool
-				if ah.Style.Filled != nil {
-					v, _ := strconv.ParseBool(ah.Style.Filled.Value)
-					filled = new(v)
-				}
-				talaEdge.TargetArrowhead = layoutgraph.Arrowhead(d2target.ToArrowhead(ah.Shape.Value, filled))
-				if ah.Label.Value != "" {
-					talaEdge.TargetArrowheadLabel = &layoutgraph.Label{
-						Text:   ah.Label.Value,
-						Width:  float64(ah.LabelDimensions.Width),
-						Height: float64(ah.LabelDimensions.Height),
-					}
-				}
-			} else {
-				if e.DstArrow {
-					talaEdge.TargetArrowhead = layoutgraph.Arrowhead(d2target.TriangleArrowhead)
-				} else {
-					talaEdge.TargetArrowhead = layoutgraph.Arrowhead(d2target.NoArrowhead)
-				}
-			}
-
-			if loadExistingLayout {
-				for _, p := range e.Route {
-					talaEdge.Points = append(talaEdge.Points, p.Copy())
-				}
+			if reversed {
+				slices.Reverse(talaEdge.Points)
 			}
 		}
 
@@ -605,5 +533,22 @@ func RouteEdges(ctx context.Context, g *d2graph.Graph, edges []*d2graph.Edge) (e
 func recoverAsError(operation string, err *error) {
 	if recover() != nil {
 		*err = fmt.Errorf("TALA %s failed due to an internal invariant", operation)
+	}
+}
+
+// D2 can label an endpoint even when the connection has no arrow there.
+func translateArrowhead(enabled bool, attrs *d2graph.Attributes) (layoutgraph.Arrowhead, *layoutgraph.Label) {
+	arrow := d2target.NoArrowhead
+	if enabled {
+		arrow = d2target.DefaultArrowhead
+		if attrs != nil {
+			arrow = attrs.ToArrowhead()
+		}
+	}
+	if attrs == nil || attrs.Label.Value == "" {
+		return layoutgraph.Arrowhead(arrow), nil
+	}
+	return layoutgraph.Arrowhead(arrow), &layoutgraph.Label{
+		Text: attrs.Label.Value, Width: float64(attrs.LabelDimensions.Width), Height: float64(attrs.LabelDimensions.Height),
 	}
 }

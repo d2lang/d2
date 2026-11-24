@@ -41,6 +41,8 @@ func considerCompactHierarchy(ctx context.Context, input seedInput, incumbent se
 			after.RouteObstructions > before.RouteObstructions || after.NodeOverlaps > before.NodeOverlaps || after.TextOcclusions > before.TextOcclusions {
 			return incumbent, nil
 		}
+		candidate.seed = incumbent.seed
+		candidate.compactHierarchySpacing = true
 		return candidate, nil
 	})
 }

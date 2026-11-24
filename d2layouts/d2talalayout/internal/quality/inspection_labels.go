@@ -12,18 +12,19 @@ type positionedLabel struct {
 	box  geo.Box
 	node *layoutgraph.Node
 	edge *layoutgraph.Edge
+	item inspectionItem
 }
 
 // measureLabels treats all rendered label and icon boxes consistently, including
 // loop and arrowhead labels. Padding-only near misses do not trigger repair.
-func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard) error {
+func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard, issues *LoopInspection) error {
 	if err := guard.Step(); err != nil {
 		return err
 	}
 	var labels []positionedLabel
-	appendLabel := func(box geo.Box, node *layoutgraph.Node, edge *layoutgraph.Edge) {
+	appendLabel := func(box geo.Box, node *layoutgraph.Node, edge *layoutgraph.Edge, item inspectionItem) {
 		if box.Width > 0 && box.Height > 0 {
-			labels = append(labels, positionedLabel{box, node, edge})
+			labels = append(labels, positionedLabel{box, node, edge, item})
 		}
 	}
 	for _, node := range g.Nodes {
@@ -39,7 +40,7 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 					return err
 				}
 			}
-			appendLabel(geo.Box{TopLeft: node.LabelTopLeft(node.Label.Position, node.Label.Width, node.Label.Height), Width: node.Label.Width, Height: node.Label.Height}, node, nil)
+			appendLabel(geo.Box{TopLeft: node.LabelTopLeft(node.Label.Position, node.Label.Width, node.Label.Height), Width: node.Label.Width, Height: node.Label.Height}, node, nil, inspectionItem{node.ID, nodeText})
 		}
 		if node.Icon != nil && !node.IsImage() {
 			if node.Icon.Position.IsOutside() {
@@ -48,7 +49,7 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 				}
 			}
 			size := node.IconSize(node.Icon.Position)
-			appendLabel(geo.Box{TopLeft: node.LabelTopLeft(node.Icon.Position, size, size), Width: size, Height: size}, node, nil)
+			appendLabel(geo.Box{TopLeft: node.LabelTopLeft(node.Icon.Position, size, size), Width: size, Height: size}, node, nil, inspectionItem{node.ID, nodeIcon})
 		}
 	}
 	visibleEdges := make([]*layoutgraph.Edge, 0, len(g.Edges))
@@ -67,19 +68,19 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 			if err := chargeEvaluationWork(guard, len(edge.Points)); err != nil {
 				return err
 			}
-			appendLabel(labelBox(edge), nil, edge)
+			appendLabel(labelBox(edge), nil, edge, inspectionItem{edge.ID, edgeText})
 		}
 		if edge.SourceArrowheadLabel != nil {
 			if err := chargeEvaluationWork(guard, len(edge.Points)); err != nil {
 				return err
 			}
-			appendLabel(labeling.PositionArrowheadLabel(edge, false, edge.Points).Box, nil, edge)
+			appendLabel(labeling.PositionArrowheadLabel(edge, false, edge.Points).Box, nil, edge, inspectionItem{edge.ID, sourceText})
 		}
 		if edge.TargetArrowheadLabel != nil {
 			if err := chargeEvaluationWork(guard, len(edge.Points)); err != nil {
 				return err
 			}
-			appendLabel(labeling.PositionArrowheadLabel(edge, true, edge.Points).Box, nil, edge)
+			appendLabel(labeling.PositionArrowheadLabel(edge, true, edge.Points).Box, nil, edge, inspectionItem{edge.ID, targetText})
 		}
 	}
 	for i, placed := range labels {
@@ -92,13 +93,15 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 			}
 			if boxesOverlapWithPadding(placed.box, other.box, 0) {
 				score.TextOcclusions++
+				issues.add(placed.item, other.item, 1, placed.onLoop() || other.onLoop())
 			}
 		}
 		for _, node := range g.Nodes {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			if node.IsInvisible || !node.IsRectangular() {
+			rectangular := node.IsRectangular()
+			if node.IsInvisible || (!rectangular && issues == nil) {
 				continue
 			}
 			if !boxesOverlapWithPadding(placed.box, node.Box, 0) {
@@ -120,7 +123,10 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 			if ancestor && boxCovers(node.Box, placed.box) {
 				continue
 			}
-			score.TextOcclusions++
+			if rectangular {
+				score.TextOcclusions++
+			}
+			issues.add(placed.item, nodeItem(node), 1, rectangular && (placed.onLoop() || len(node.LoopOffsets) != 0))
 		}
 		for _, edge := range visibleEdges {
 			if err := guard.Step(); err != nil {
@@ -141,9 +147,14 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 			}
 			if overlap {
 				score.TextOcclusions++
+				issues.add(placed.item, routeItem(edge), 1, placed.onLoop() || edge.IsLoop())
 			}
 		}
 
 	}
 	return nil
+}
+
+func (p positionedLabel) onLoop() bool {
+	return p.edge != nil && p.edge.IsLoop() || p.node != nil && len(p.node.LoopOffsets) != 0
 }
