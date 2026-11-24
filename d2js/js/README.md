@@ -186,7 +186,7 @@ resources are released. Calling `dispose()` more than once is safe.
 All [RenderOptions](#renderoptions) properties in addition to:
 
 - `layout`: Layout engine to use (`'dagre' | 'elk' | 'tala'`) [default: `'dagre'`]
-- `animateDuration`: Milliseconds to animate numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps (0–600000, default 0). Overrides `vars.d2-config.animate-duration`. Set this when calling `compile()` or `renderSVG()`. A shorter transition uses the rest of the board interval to hold its final value. A longer transition extends the step.
+- `animateDuration`: Transition duration in milliseconds (0–600000, default 0). Numeric properties, solid colors, compatible gradients, variables, and grid layouts animate between steps. Underlines and Markdown strikethroughs draw or retract when the same text gains or loses its decoration across boards. Set this in `compile()` or `renderSVG()` to override `vars.d2-config.animate-duration`. A shorter transition uses the rest of the board interval to hold its final value. A longer transition extends the board.
 - `fontRegular` A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used.
 - `fontItalic` A byte array containing .ttf file to use for the italic font. If none provided, Source Sans Pro Italic is used.
 - `fontBold` A byte array containing .ttf file to use for the bold font. If none provided, Source Sans Pro Bold is used.
@@ -194,7 +194,7 @@ All [RenderOptions](#renderoptions) properties in addition to:
 
 ### `RenderOptions`
 
-- `sketch`: Enable sketch mode [default: false]
+- `sketch`: Enable sketch mode (default `false`). In an animated diagram, changed solid fills shade in with pencil strokes. You can enable sketch when compiling or when rendering an already compiled diagram.
 - `isometric`: Enable native isometric SVG rendering [default: false]. The compiled layout is preserved. Icons and images must be embedded as data URLs; the JavaScript renderer does not fetch external image URLs. Set this in compile options or `vars.d2-config.isometric`, then pass the returned `renderOptions` to `render`, just like sketch. This mode currently cannot be combined with sketch, ASCII, `darkThemeID`, `forceAppendix`, or `animateInterval`.
 - `themeID`: Theme ID to use [default: 0]
 - `darkThemeID`: Theme ID to use when client is in dark mode

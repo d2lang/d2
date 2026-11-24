@@ -223,6 +223,61 @@ steps: {drain: {vars: {charge: 0%}}}`
 	}
 }
 
+func TestRenderSketchAnimationAfterCompile(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: 120ms; animate-interval: 200ms}}
+replica: Replica {style.fill: white}
+layers: {
+  restore: {
+    replica: Replica {style.fill: "#2D936C"}
+    steps: {synced: {replica.style.fill: transparent}}
+  }
+  unrelated: {audit: Unrelated board}
+}`
+	for _, tc := range []struct {
+		name          string
+		compileSketch *bool
+	}{
+		{"sketch at render", nil},
+		{"sketch at compile", go2.Pointer(true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compiled, err := Compile(wasmJSONArgument(t, CompileRequest{
+				FS:   map[string]string{"index": source},
+				Opts: &CompileOptions{RenderOptions: RenderOptions{Sketch: tc.compileSketch}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			diagram := compiled.(CompileResponse).Diagram
+			for _, view := range []struct {
+				target   string
+				sketch   bool
+				patterns int
+			}{
+				// Two partial pencil samples for root -> restore and two for restore -> synced.
+				{"layers.restore.*", true, 4},
+				{"layers.restore.*", false, 0},
+				{"layers.restore.steps.synced", true, 0},
+			} {
+				out, err := Render(wasmJSONArgument(t, RenderRequest{
+					Diagram: &diagram,
+					Opts:    &RenderOptions{Target: &view.target, Sketch: &view.sketch},
+				}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				svg := string(out.([]byte))
+				if got := strings.Count(svg, `<pattern id="pencil-`); got != view.patterns {
+					t.Errorf("target %s, sketch %v: %d pencil patterns, want %d", view.target, view.sketch, got, view.patterns)
+				}
+				if strings.Contains(svg, ">Unrelated board</text>") {
+					t.Errorf("target %s includes unrelated layer", view.target)
+				}
+			}
+		})
+	}
+}
+
 func TestRenderSVGAnimateDuration(t *testing.T) {
 	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 100ms}; charge: 100%}
 bar: "${charge}"

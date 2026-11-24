@@ -52,7 +52,7 @@ export interface ThemeOverrides {
 }
 
 export interface RenderOptions {
-  /** Enable sketch mode [default: false] */
+  /** Enable sketch mode, including pencil shading for animated solid fills [default: false]. */
   sketch?: boolean;
   /** Enable native isometric SVG rendering, preserving the compiled layout [default: false]. Icons and images must use embedded data URLs. Cannot be combined with sketch, ASCII, darkThemeID, forceAppendix, or animateInterval. */
   isometric?: boolean;
@@ -87,7 +87,7 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
-  /** Milliseconds to animate numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
+  /** Transition duration in milliseconds (0–600000, default 0). Animates numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps. Underlines, Markdown strikethroughs, and sketch fill shading can also animate between boards. Overrides vars.d2-config.animate-duration at compile time. */
   animateDuration?: number;
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";
@@ -136,7 +136,7 @@ export interface Diagram {
   layers?: (Diagram | undefined)[];
   scenarios?: (Diagram | undefined)[];
   steps?: (Diagram | undefined)[];
-  /** Samples of the incoming step transition. */
+  /** Samples of this board's incoming transition. */
   tweenFrames?: Diagram[];
   /** Exclusive millisecond end offsets for nonuniform samples. Omitted for uniform timing. */
   tweenFrameEndsMS?: number[];
@@ -167,6 +167,7 @@ export interface ShapeBase {
   borderRadius: number /* int */;
   fill: string;
   fillPattern?: string;
+  sketchFillTransition?: { from: string; to: string; progress: number };
   stroke: string;
   animated: boolean;
   shadow: boolean;
@@ -242,6 +243,8 @@ export interface Text {
   italic: boolean;
   bold: boolean;
   underline: boolean;
+  underlineProgress?: number;
+  markdownStrike?: { from: string; progress: number; plainRanges?: [number, number][] };
   labelWidth: number /* int */;
   labelHeight: number /* int */;
   labelFill?: string;

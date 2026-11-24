@@ -189,7 +189,7 @@ steps: {add: {c}; remove: {c: null}}`
 	}
 	add.TweenDurationMS = 240
 	const limit = 15 // Five authored boards, three paint frames, seven grid frames.
-	if err := sampleGridSteps(context.Background(), board, g, 240, limit); err != nil {
+	if err := sampleBoardTransitions(context.Background(), board, g, 240, limit, false); err != nil {
 		t.Fatal(err)
 	}
 	total := 0
@@ -214,11 +214,11 @@ steps: {add: {c}; remove: {c: null}}`
 }
 
 func TestGridSampleBudgetIncludesGeometry(t *testing.T) {
-	plans := []gridStepPlan{
+	plans := []boardTransitionPlan{
 		{bounds: []int{0, 10, 20, 30, 40}, cost: 3},
 		{bounds: []int{0, 10, 20, 30, 40}, cost: 6},
 	}
-	if err := fitGridSamples(plans, 100, 18); err != nil {
+	if err := fitBoardSamples(plans, 100, 18); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range plans {
@@ -227,7 +227,7 @@ func TestGridSampleBudgetIncludesGeometry(t *testing.T) {
 		}
 	}
 	// Even the two starting samples need nine geometry elements.
-	if err := fitGridSamples(plans, 100, 8); err == nil {
+	if err := fitBoardSamples(plans, 100, 8); err == nil {
 		t.Fatal("accepted a schedule whose first samples exceed the geometry limit")
 	}
 }

@@ -135,7 +135,7 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 			animated = *compileOpts.AnimateTweens
 		}
 		if animated {
-			if err := sampleGridSteps(ctx, d, g, int(*config.AnimateDuration), d2target.MaxRenderTargetBoards); err != nil {
+			if err := sampleBoardTransitions(ctx, d, g, int(*config.AnimateDuration), d2target.MaxRenderTargetBoards, *renderOpts.Sketch); err != nil {
 				return nil, nil, err
 			}
 		}
