@@ -91,7 +91,8 @@ Pushing the tag starts one `Release archives` dependency graph:
    notices from the new archive, so an old published release is no longer a PR test fixture.
 4. After tests, native smoke, and MSI verification succeed, the workflow attests the archive
    provenance, SBOM, and checksum manifest. A separate write-scoped job creates or resumes a
-   draft and uploads the same archives, `SHA256SUMS`, both MSIs, and `d2.spdx.json`.
+   draft and uploads the same archives, their signed `d2-<version>-provenance.sigstore.json`
+   bundle, `SHA256SUMS`, both MSIs, and `d2.spdx.json`.
 
 The uploader rechecks the tag commit and draft identity/state before uploads and verifies
 all final asset digests. Existing assets are accepted only when their bytes match; nothing
@@ -124,11 +125,13 @@ entry so WinGet can select the requested installer.
 | `d2-<version>-windows-amd64.msi` | `machine` | `%ProgramFiles%\D2` |
 | `d2-<version>-windows-amd64-user.msi` | `user` | `%LOCALAPPDATA%\Programs\D2` |
 
-Every release produced by this workflow includes `SHA256SUMS`. To verify archive
-provenance and its checksum:
+Download the archive, its provenance bundle, and `SHA256SUMS` from the same release.
+For example, set `VERSION` to the downloaded tag and verify a Linux amd64 archive with:
 
 ```sh
-gh attestation verify d2-v0.0.0-linux-amd64.tar.gz --repo d2lang/d2
+gh attestation verify "d2-$VERSION-linux-amd64.tar.gz" --repo d2lang/d2 \
+  --bundle "d2-$VERSION-provenance.sigstore.json" \
+  --signer-workflow d2lang/d2/.github/workflows/release-archives.yml --source-ref "refs/tags/$VERSION"
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 

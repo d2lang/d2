@@ -70,15 +70,23 @@ You can install a specific version of `d2` with `--version`. Run the script with
 
 If you're still concerned, remember you can run with `--dry-run` to avoid writing anything.
 
-For standalone installations, the script obtains the selected archive's SHA-256 digest
-from the GitHub Releases API and, when GitHub provides one, verifies both cached and newly
-downloaded archives before extracting them. Historical releases for which GitHub reports
-no digest remain installable with a warning. Releases produced by the current release
-workflow also include `SHA256SUMS` and GitHub artifact attestations. You can verify build
-provenance separately with:
+For standalone installs, the script verifies the archive's SHA-256 against GitHub's release
+metadata when a digest is available. Starting with v0.8.2, it also verifies the archive's
+signed build provenance. The signature must come from D2's release workflow at the selected
+tag, and the signed filename and digest must match the archive for your platform. Verification
+runs before extraction or removal of an existing installation, including for cached downloads.
+
+The installer uses GitHub CLI (`gh`) 2.102.0 or newer from your PATH. If needed, it downloads
+a temporary copy and checks it against a SHA-256 digest pinned in the installer. You can
+install without a GitHub account or token. Explicitly requesting a published release from
+v0.7.1 or earlier uses the historical checksum behavior and prints a warning.
+
+You can also verify a downloaded archive yourself. For example:
 
 ```sh
-gh attestation verify d2-v0.0.0-linux-amd64.tar.gz --repo d2lang/d2
+gh attestation verify d2-v0.9.0-linux-amd64.tar.gz --repo d2lang/d2 \
+  --signer-workflow d2lang/d2/.github/workflows/release-archives.yml \
+  --source-ref refs/tags/v0.9.0
 ```
 
 ## macOS (Homebrew)

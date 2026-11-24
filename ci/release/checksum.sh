@@ -81,6 +81,7 @@ fetch_release_asset() {
   ASSET_NAME=$3
   ASSET_URL=$4
   DESTINATION=$5
+  STAGED_ARCHIVE=$6
 
   if [ -n "${DRY_RUN-}" ]; then
     sh_c "download $ASSET_NAME and verify its GitHub SHA-256 digest when available"
@@ -90,11 +91,9 @@ fetch_release_asset() {
   EXPECTED_SHA256=$(release_asset_sha256 "$REPOSITORY" "$RELEASE_VERSION" "$ASSET_NAME")
   if [ -z "$EXPECTED_SHA256" ]; then
     warn "GitHub does not provide a SHA-256 digest for $ASSET_NAME; continuing without checksum verification for compatibility with legacy releases"
-    fetch_gh "$ASSET_URL" "$DESTINATION" 'application/octet-stream'
-    return
-  fi
-  if [ -e "$DESTINATION" ]; then
-    if verify_sha256 "$DESTINATION" "$EXPECTED_SHA256"; then
+  elif [ -e "$DESTINATION" ]; then
+    cp "$DESTINATION" "$STAGED_ARCHIVE"
+    if verify_sha256 "$STAGED_ARCHIVE" "$EXPECTED_SHA256"; then
       log "reusing verified $DESTINATION"
       return
     fi
@@ -102,6 +101,9 @@ fetch_release_asset() {
     rm -f "$DESTINATION"
   fi
   fetch_gh "$ASSET_URL" "$DESTINATION" 'application/octet-stream'
-  verify_sha256 "$DESTINATION" "$EXPECTED_SHA256"
-  log "verified $ASSET_NAME ($EXPECTED_SHA256)"
+  cp "$DESTINATION" "$STAGED_ARCHIVE"
+  if [ -n "$EXPECTED_SHA256" ]; then
+    verify_sha256 "$STAGED_ARCHIVE" "$EXPECTED_SHA256"
+    log "verified $ASSET_NAME ($EXPECTED_SHA256)"
+  fi
 }

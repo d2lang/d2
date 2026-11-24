@@ -110,10 +110,12 @@ class DraftUploadTests(unittest.TestCase):
         self.user_msi.write_bytes(b"verified per-user installer")
         self.sbom = self.root / "d2.spdx.json"
         self.sbom.write_text('{"spdxVersion":"SPDX-2.3"}')
+        self.provenance = self.root / f"d2-{VERSION}-provenance.sigstore.json"
+        self.provenance.write_bytes(b"verified archive provenance bundle")
         self.assets = self.read_assets()
 
     def read_assets(self):
-        return uploader.local_assets(VERSION, self.archives, self.msi, self.sbom)
+        return uploader.local_assets(VERSION, self.archives, self.msi, self.sbom, self.provenance)
 
     def run_upload(self, fake):
         with patch.object(uploader, "gh", fake.gh), patch.object(uploader, "api", fake.api), patch.object(uploader.time, "sleep"), patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}):
@@ -145,9 +147,19 @@ class DraftUploadTests(unittest.TestCase):
     def test_upload_and_retry_preserve_exact_bytes(self):
         fake = FakeGitHub()
         self.run_upload(fake)
-        self.assertEqual(len(fake.writes), 10)
+        self.assertEqual(len(fake.writes), 11)
+        self.assertIn(self.provenance.name, {asset["name"] for asset in fake.release["assets"]})
         self.run_upload(fake)
-        self.assertEqual(len(fake.writes), 10)
+        self.assertEqual(len(fake.writes), 11)
+
+    def test_requires_provenance_bundle_for_requested_version(self):
+        original = self.provenance
+        self.provenance = original.rename(original.with_name("d2-v9.9.9-provenance.sigstore.json"))
+        with self.assertRaisesRegex(ValueError, "unexpected provenance bundle filename"):
+            self.read_assets()
+        self.provenance = original
+        with self.assertRaisesRegex(ValueError, "nonempty regular file"):
+            self.read_assets()
 
     def test_requires_per_user_installer(self):
         self.user_msi.unlink()
@@ -175,7 +187,7 @@ class DraftUploadTests(unittest.TestCase):
         self.run_upload(fake)
         self.assertEqual(fake.writes, writes)
         self.assertEqual(fake.release["assets"][:2], completed)
-        self.assertEqual(len(fake.release["assets"]), 10)
+        self.assertEqual(len(fake.release["assets"]), 11)
         self.assertEqual([call[3] for call in fake.writes if call[:3] == ("api", "--method", "DELETE")],
                          [f"repos/test/repo/releases/assets/{first_id}", f"repos/test/repo/releases/assets/{second_id}"])
 
