@@ -49,7 +49,7 @@ func TestPlaceNodesInHierarchy(t *testing.T) {
 
 	nodesByLevel := groupNodesByLevel(g.Nodes, g.Nodes[0].Hierarchy)
 
-	err := placeNodesInHierarchy(ctx, g, rand)
+	err := (Placement{Random: rand}).placeNodesInHierarchy(ctx, g)
 	assert.NoError(t, err)
 
 	for i := 0; i < len(nodesByLevel); i++ {

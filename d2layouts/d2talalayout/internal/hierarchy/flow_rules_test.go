@@ -46,7 +46,7 @@ func TestBuildFlowRules(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(g)
 			}
-			h, err := build(t.Context(), g, tt.force, Candidates(g), nil)
+			h, err := new(Discovery).build(t.Context(), g, tt.force, Candidates(g), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,7 +61,7 @@ func TestBuildFlowRulesCancellation(t *testing.T) {
 	g := flowRuleGraph(3, [][2]int{{0, 2}, {1, 2}})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	h, err := build(ctx, g, false, Candidates(g), nil)
+	h, err := new(Discovery).build(ctx, g, false, Candidates(g), nil)
 	if h != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled build = %v, %v", h, err)
 	}
@@ -118,7 +118,7 @@ func TestAutomaticWorkflowBounds(t *testing.T) {
 			}
 			h.ReplaceLevels(levels)
 			h.LevelCount = tt.nodes - 1
-			if got := isValid(h, g, nil, 1, 1); got != tt.want {
+			if got := new(Discovery).isValid(h, g, nil, 1, 1); got != tt.want {
 				t.Fatalf("workflow accepted = %v, want %v", got, tt.want)
 			}
 		})
@@ -144,7 +144,7 @@ func TestAutomaticWorkflowBoundsPreserveOrdinaryHierarchy(t *testing.T) {
 	}
 	h.ReplaceLevels(nodeLevels)
 	h.LevelCount = levels
-	if !isValid(h, g, nil, 1, columns) {
+	if !new(Discovery).isValid(h, g, nil, 1, columns) {
 		t.Fatal("ordinary compact hierarchy above workflow size limit was rejected")
 	}
 }
@@ -178,7 +178,7 @@ func TestBuildAutomaticWorkflowMinimumExtent(t *testing.T) {
 			for _, n := range g.Nodes {
 				n.Width, n.Height = tt.width, tt.height
 			}
-			h, err := build(t.Context(), g, tt.force, Candidates(g), nil)
+			h, err := new(Discovery).build(t.Context(), g, tt.force, Candidates(g), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -212,5 +212,37 @@ func reverseAuthoredEndpoints(g *layoutgraph.Graph) {
 		e.From, e.To = e.To, e.From
 		e.SourceArrowhead = layoutgraph.TriangleArrowhead
 		e.TargetArrowhead = layoutgraph.NoArrowhead
+	}
+}
+
+func TestAutomaticSplitJoinWithDirection(t *testing.T) {
+	edges := [][2]int{{0, 1}, {0, 2}, {0, 3}, {0, 4}, {1, 5}, {2, 5}, {3, 5}, {4, 5}}
+	group := layoutgraph.NewNode(20, 50, 50)
+	for _, tc := range []struct {
+		name                  string
+		owner, directionScope *layoutgraph.Node
+		height                float64
+		want                  bool
+	}{
+		{"root direction", nil, nil, 60, true},
+		{"inner direction", group, group, 60, true},
+		{"outer direction only", group, nil, 60, false},
+		{"rank exceeds maximum height", nil, nil, 8000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := flowRuleGraph(6, edges)
+			for _, node := range g.Nodes {
+				node.Height = tc.height
+				g.AddNodeToContainer(tc.owner, node)
+			}
+			g.Directions[tc.directionScope] = geo.Left
+			h, err := new(Discovery).build(t.Context(), g, false, Candidates(g), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := h != nil; got != tc.want {
+				t.Errorf("hierarchy selected = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

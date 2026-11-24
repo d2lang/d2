@@ -25,10 +25,11 @@ const (
 // cancellable and bounded. Its overflow check happens before addition, so the
 // limit remains deterministic even on 32-bit platforms and hostile inputs.
 type labelPlacementWorkGuard struct {
-	ctx      context.Context
-	location string
-	used     int64
-	limit    int64
+	ctx        context.Context
+	location   string
+	used       int64
+	limit      int64
+	exhaustion error // optional searches can keep the initial layout when their budget runs out
 }
 
 func newLabelPlacementWorkGuard(ctx context.Context, location string, limit int64) (*labelPlacementWorkGuard, error) {
@@ -65,6 +66,9 @@ func (guard *labelPlacementWorkGuard) add(units int64) error {
 		// had already canceled the work.
 		if err := guard.check(); err != nil {
 			return err
+		}
+		if guard.exhaustion != nil {
+			return guard.exhaustion
 		}
 		return fmt.Errorf("TALA %s work exceeds limit %d", guard.location, guard.limit)
 	}
@@ -210,26 +214,51 @@ func partialNodeOverlapCount(node *layoutgraph.Node, nodes layoutgraph.Nodes, de
 	return count, nil
 }
 
-func nodeOverlapArea(node *layoutgraph.Node, nodes layoutgraph.Nodes, delta float64, partial bool, guard *labelPlacementWorkGuard) (float64, int, error) {
-	area := 0.0
-	overlapCount := 0
+type nodeOverlapStats struct {
+	area         float64
+	count, exact int
+}
+
+// Count each obstacle once, recording the conflicting label for pair placement
+// when there is exactly one intersection.
+func edgeLabelObstacleOverlaps(box *layoutgraph.Node, obstacles layoutgraph.Nodes, guard *labelPlacementWorkGuard) (nodeOverlapStats, *layoutgraph.Node, error) {
+	var overlaps nodeOverlapStats
+	var blocker *layoutgraph.Node
+	for _, obstacle := range obstacles {
+		if err := guard.step(); err != nil {
+			return overlaps, nil, err
+		}
+		if box.LabelBoxesOverlap(obstacle, label.PADDING) {
+			overlaps.count++
+			if box.DoesOverlapExact(obstacle) {
+				overlaps.exact++
+				blocker = obstacle
+			}
+		}
+	}
+	return overlaps, blocker, nil
+}
+
+func nodeOverlapArea(node *layoutgraph.Node, nodes layoutgraph.Nodes, delta float64, partial bool, guard *labelPlacementWorkGuard) (nodeOverlapStats, error) {
+	var overlaps nodeOverlapStats
 	for _, otherNode := range nodes {
 		if err := guard.step(); err != nil {
-			return 0, 0, err
+			return nodeOverlapStats{}, err
 		}
 		if !node.LabelBoxesOverlap(otherNode, delta) || (partial && otherNode.Covers(node)) {
 			continue
 		}
 		if delta == 0 || node.DoesOverlapExact(otherNode) {
-			area += node.LabelOverlapArea(otherNode)
-			overlapCount++
+			overlaps.exact++
+			overlaps.area += node.LabelOverlapArea(otherNode)
+			overlaps.count++
 		}
 		if !otherNode.IsContainer() {
-			area += node.Area()
-			overlapCount++
+			overlaps.area += node.Area()
+			overlaps.count++
 		}
 	}
-	return area, overlapCount, nil
+	return overlaps, nil
 }
 
 func edgeOverlapCount(node *layoutgraph.Node, edges layoutgraph.Edges, delta float64, guard *labelPlacementWorkGuard) (int, error) {

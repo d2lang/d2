@@ -449,8 +449,8 @@
       "underline": false,
       "labelWidth": 269,
       "labelHeight": 62,
-      "labelPosition": "UNLOCKED_TOP",
-      "labelPercentage": 0.2750000059604645,
+      "labelPosition": "OUTSIDE_TOP_LEFT",
+      "labelPercentage": 0,
       "link": "",
       "route": [
         {

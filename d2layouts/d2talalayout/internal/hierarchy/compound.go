@@ -133,7 +133,7 @@ func PlaceCompound(ctx context.Context, g *layoutgraph.Graph, random *rand.Rand)
 	// rearranging these opaque blocks helps the completed drawing. Rank only
 	// this isolated proxy, then retain the compound proposal's original directed
 	// backbone requirement. The caller compares its finished route geometry.
-	outerHierarchy, err := build(ctx, proxy, true, Candidates(proxy), nil)
+	outerHierarchy, err := new(Discovery).build(ctx, proxy, true, Candidates(proxy), nil)
 	if err != nil {
 		return false, err
 	}

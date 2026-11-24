@@ -15,6 +15,7 @@ import (
 type Metrics struct {
 	NodeOverlaps, RouteObstructions int64
 	TextOcclusions                  int64
+	InteriorCrossings               int64 // Intersections strictly inside both straight route segments.
 	Crossings, Detour, RouteLength  float64
 }
 
@@ -76,11 +77,12 @@ func inspectWithLimit(ctx context.Context, graph *layoutgraph.Graph, workLimit i
 		score.Detour += math.Max(0, length-direct) / math.Max(scale, direct)
 
 	}
-	crossings, err := countNonSharedCrossings(visible, guard)
+	crossings, err := countRouteCrossings(visible, guard)
 	if err != nil {
 		return fail(err)
 	}
-	score.Crossings = float64(crossings)
+	score.Crossings = float64(crossings.scored)
+	score.InteriorCrossings = crossings.interior
 	if err := measureGeometry(graph, &score, guard); err != nil {
 		return fail(err)
 	}

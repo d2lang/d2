@@ -39,7 +39,7 @@ type alignmentDirection struct {
 	horizontal geo.Orientation
 }
 
-func alignHierarchy(ctx context.Context, byLevel map[int][]*placementNode) error {
+func (p Placement) alignHierarchy(ctx context.Context, byLevel map[int][]*placementNode) error {
 	guard, err := limits.NewWorkGuard(ctx, "AlignHierarchy", limits.MaxEngineWorkUnits)
 	if err != nil {
 		return err
@@ -63,7 +63,7 @@ func alignHierarchy(ctx context.Context, byLevel map[int][]*placementNode) error
 		}
 		minX[d] = math.Inf(1)
 		maxX[d] = math.Inf(-1)
-		alignmentNodes, err := createAlignmentNodes(ctx, byLevel, d.vertical, d.horizontal)
+		alignmentNodes, err := p.createAlignmentNodes(ctx, byLevel, d.vertical, d.horizontal)
 		if err != nil {
 			return err
 		}
@@ -261,7 +261,7 @@ func newAlignmentNode(pn *placementNode) *alignmentNode {
 }
 
 // Given layered nodes, creates a slice of alignment nodes sorted in the desired direction
-func createAlignmentNodes(ctx context.Context, byLevel map[int][]*placementNode, vertical, horizontal geo.Orientation) ([]*alignmentNode, error) {
+func (p Placement) createAlignmentNodes(ctx context.Context, byLevel map[int][]*placementNode, vertical, horizontal geo.Orientation) ([]*alignmentNode, error) {
 	guard, err := limits.NewWorkGuard(ctx, "CreateAlignmentNodes", limits.MaxEngineWorkUnits)
 	if err != nil {
 		return nil, err
@@ -272,7 +272,7 @@ func createAlignmentNodes(ctx context.Context, byLevel map[int][]*placementNode,
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
-		leaves, err := leafNodesContext(byLevel[l], guard)
+		leaves, err := leafNodesContext(byLevel[l], !p.CompactSpacing, guard)
 		if err != nil {
 			return nil, err
 		}
@@ -327,7 +327,7 @@ func absInt(a int) int {
 	return a
 }
 
-func leafNodesContext(nodes []*placementNode, guard *limits.WorkGuard) ([]*alignmentNode, error) {
+func leafNodesContext(nodes []*placementNode, padOutside bool, guard *limits.WorkGuard) ([]*alignmentNode, error) {
 	var leaves []*alignmentNode
 	for i := 0; i < len(nodes); i++ {
 		if err := guard.Step(); err != nil {
@@ -340,7 +340,7 @@ func leafNodesContext(nodes []*placementNode, guard *limits.WorkGuard) ([]*align
 		}
 		// Instead of picking a single 'middle' child, distribute container edges
 		// among children whose rank is closest to the other endpoint's rank.
-		descendants, err := leafNodesContext(node.children, guard) // recursively collect leaf descendants
+		descendants, err := leafNodesContext(node.children, true, guard)
 		if err != nil {
 			return nil, err
 		}
@@ -398,6 +398,9 @@ func leafNodesContext(nodes []*placementNode, guard *limits.WorkGuard) ([]*align
 	// we need to consider the container padding to properly align the nodes
 	// the first container child has the left pad and the last one has the right pad
 	// this applied recursively (as this function is recursive) because we can have containers inside containers
+	if !padOutside || len(leaves) == 0 {
+		return leaves, nil
+	}
 	leftNode, rightNode := leaves[0], leaves[len(leaves)-1]
 	leftNode.leftPad += leftNode.containerPadding().Left()
 	rightNode.rightPad += rightNode.containerPadding().Right()
