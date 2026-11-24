@@ -66,8 +66,15 @@ func BalanceSymmetry(ctx context.Context, g *layoutgraph.Graph) error {
 		for k := range adjacentsM {
 			adjacents = append(adjacents, k)
 		}
-		if placementcost.AxisScore(adjacents) != 1. {
-			continue
+		// AxisScore weights smaller neighbors and can exceed one even on a
+		// perfectly aligned row. A shared centerline also qualifies directly.
+		if placementcost.AxisScore(adjacents) != 1 {
+			if err := guard.Add(int64(len(adjacents))); err != nil {
+				return err
+			}
+			if !shareCenterAxis(adjacents) {
+				continue
+			}
 		}
 		// Fails to look symmetrical if uneven adjacents
 		maxArea := math.Inf(-1)
@@ -111,8 +118,23 @@ func BalanceSymmetry(ctx context.Context, g *layoutgraph.Graph) error {
 			}
 		}
 	}
+	if err := guard.Finish(); err != nil {
+		return err
+	}
 	complete = true
 	return nil
+}
+
+func shareCenterAxis(nodes layoutgraph.Nodes) bool {
+	first := nodes[0].Center()
+	sameX, sameY := true, true
+	for _, node := range nodes[1:] {
+		center := node.Center()
+		sameX = sameX && center.X == first.X
+		sameY = sameY && center.Y == first.Y
+	}
+	// Coincident centers do not identify a row or a column.
+	return sameX != sameY
 }
 
 // isSimple reports whether node participates only as a regular placement node,

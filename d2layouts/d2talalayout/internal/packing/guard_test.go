@@ -51,7 +51,11 @@ func TestBinPackScoreGuardedMatchesLegacyPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := binPackScoreGuarded(nodes, test.root, guard)
+			frame, err := newPackingFrame(test.root, guard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := frame.score(nodes, guard)
 			if err != nil {
 				t.Fatal(err)
 			}

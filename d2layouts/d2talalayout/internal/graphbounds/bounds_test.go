@@ -258,3 +258,23 @@ func TestFixedBoundsPreserveAggregateWorkAccounting(t *testing.T) {
 		t.Fatalf("outside-label scan stopped at %d steps, want first rejected step 3", limited.used)
 	}
 }
+
+// The label starts on the near side of the body but its far edge extends
+// beyond the opposite side. A test on the top-left alone misses the overhang.
+func TestOutsideLabelFarEdgeIncludedInBounds(t *testing.T) {
+	for _, position := range []label.Position{label.OutsideTopLeft, label.OutsideLeftTop} {
+		n := layoutgraph.NewNode(1, 80, 60)
+		n.TopLeft = geo.NewPoint(100, 100)
+		n.Label = &layoutgraph.Label{Position: position, Width: 180, Height: 150}
+		nodes := layoutgraph.Nodes{n}
+		topLeft, bottomRight, err := NodeBoundingBox(n, nodes, newParityGuard(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := n.LabelTopLeft(position, n.Label.Width, n.Label.Height)
+		if text.X < topLeft.X || text.Y < topLeft.Y || text.X+n.Label.Width > bottomRight.X || text.Y+n.Label.Height > bottomRight.Y {
+			t.Errorf("%s label at %v (%g × %g) escapes %v–%v", position.String(), text, n.Label.Width, n.Label.Height, topLeft, bottomRight)
+		}
+		assertGeometryParity(t, nodes)
+	}
+}

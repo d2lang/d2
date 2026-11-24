@@ -16,7 +16,11 @@ func mustIdentifySequences(t *testing.T, graph *layoutgraph.Graph, nodes []*layo
 	if err != nil {
 		t.Fatal(err)
 	}
-	sequences, err := identifySequences(graph, nodes, guard)
+	active, err := activeSequenceNodes(graph, guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequences, err := identifySequences(active, nodes, guard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,5 +75,22 @@ func TestIdentifySequencesSkipsRememberedInactiveSteps(t *testing.T) {
 	second.Sequence = remembered
 	if got := mustIdentifySequences(t, graph, []*layoutgraph.Node{first, second}); len(got) != 0 {
 		t.Fatalf("remembered steps rediscovered as %d sequences", len(got))
+	}
+}
+
+func TestRememberedStepsKeepNewTransition(t *testing.T) {
+	g, first, second := newStepSequenceGraph()
+	r := rand.New(rand.NewSource(2))
+	if err := AddSequences(t.Context(), g, r); err != nil {
+		t.Fatal(err)
+	}
+	Cleanup(g)
+	added := g.Connect(first, second)
+	added.KeepExplicit = true
+	if err := AddSequences(t.Context(), g, r); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Sequences) != 0 || len(g.Edges) != 1 || g.Edges[0] != added {
+		t.Fatal("remembered sequence consumed a new explicit transition")
 	}
 }

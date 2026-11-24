@@ -115,7 +115,7 @@ func nodeBounds(
 			}
 			minY = math.Floor(labelTopLeft.Y - padding)
 		}
-		if labelTopLeft.X > maxX {
+		if labelTopLeft.X+node.Label.Width > maxX {
 			extreme, err := isExtreme(allNodes, node, func(other *layoutgraph.Node) bool {
 				return other.TopLeft.X+other.Width > node.TopLeft.X+node.Width
 			}, guard)
@@ -128,7 +128,7 @@ func nodeBounds(
 			}
 			maxX = math.Ceil(labelTopLeft.X + node.Label.Width + padding)
 		}
-		if labelTopLeft.Y > maxY {
+		if labelTopLeft.Y+node.Label.Height > maxY {
 			extreme, err := isExtreme(allNodes, node, func(other *layoutgraph.Node) bool {
 				return other.TopLeft.Y+other.Height > node.TopLeft.Y+node.Height
 			}, guard)

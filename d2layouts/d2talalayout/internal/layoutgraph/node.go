@@ -135,7 +135,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 				tl.Y = math.Floor(labelTL.Y - outsidePadding)
 			}
 		}
-		if labelTL.X > br.X {
+		if labelTL.X+node.Label.Width > br.X {
 			if allNodes.Rightmost(node) {
 				br.X = math.Ceil(labelTL.X + node.Label.Width + boundaryOutsidePadding)
 			} else {
@@ -143,7 +143,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 			}
 		}
 
-		if labelTL.Y > br.Y {
+		if labelTL.Y+node.Label.Height > br.Y {
 			if allNodes.Bottommost(node) {
 				br.Y = math.Ceil(labelTL.Y + node.Label.Height + boundaryOutsidePadding)
 			} else {

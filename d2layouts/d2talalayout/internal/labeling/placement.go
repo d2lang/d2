@@ -49,6 +49,17 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 
 	var placedFakeNodes []*layoutgraph.Node
 
+	// Reserve fixed captions up front so a movable label can see them
+	// independently of the order in which their owners are visited.
+	for _, node := range g.Nodes {
+		if err := checkCanceled(); err != nil {
+			return err
+		}
+		if !node.IsInvisible && node.Label != nil && node.Label.PositionFixed() {
+			placedFakeNodes = append(placedFakeNodes, nodeCaptionObstacle(g, node))
+		}
+	}
+
 	// add all arrowhead labels to placedFakeNodes
 	for _, e := range g.Edges {
 		if err := checkCanceled(); err != nil {
@@ -157,23 +168,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 					}
 					fakeIconNode.SetShape(shape.SQUARE_TYPE)
 
-					nodeset := siblingsAndChildren
-
-					if node.Label != nil && node.Label.PositionFixed() {
-						fixedLabelNode := &layoutgraph.Node{
-							Box: geo.Box{
-								TopLeft: node.LabelTopLeft(node.Label.Position, node.Label.Width, node.Label.Height),
-								Width:   node.Label.Width,
-								Height:  node.Label.Height,
-							},
-							D2ID:  new(node.Label.Text),
-							Graph: g,
-						}
-						fixedLabelNode.SetShape(shape.SQUARE_TYPE)
-						nodeset = append(nodeset, fixedLabelNode)
-					}
-
-					nodeOverlaps, err := nodeOverlapCount(fakeIconNode, nodeset, 0, guard)
+					nodeOverlaps, err := nodeOverlapCount(fakeIconNode, siblingsAndChildren, 0, guard)
 					if err != nil {
 						return err
 					}
@@ -571,21 +566,9 @@ func placeNewEdges(ctx context.Context, g *layoutgraph.Graph, edges []*layoutgra
 			placedFakeNodes = append(placedFakeNodes, fakeIconNode)
 		}
 
-		if node.Label == nil || node.Label.PositionFixed() {
-			continue
+		if node.Label != nil && !node.IsInvisible {
+			placedFakeNodes = append(placedFakeNodes, nodeCaptionObstacle(g, node))
 		}
-
-		fakeLabelNode := &layoutgraph.Node{
-			Box: geo.Box{
-				TopLeft: node.LabelTopLeft(node.Label.Position, node.Label.Width, node.Label.Height),
-				Width:   node.Label.Width,
-				Height:  node.Label.Height,
-			},
-			D2ID:  new(node.Label.Text),
-			Graph: g,
-		}
-		fakeLabelNode.SetShape(shape.SQUARE_TYPE)
-		placedFakeNodes = append(placedFakeNodes, fakeLabelNode)
 	}
 
 	// we want to find the best edge label position, avoiding overlapping with other nodes, edges, labels and shared edge segments
@@ -1224,4 +1207,15 @@ func isClusterPathSharedChecked(e *layoutgraph.Edge, checkWork func() error) (bo
 	}
 
 	return false, nil
+}
+
+func nodeCaptionObstacle(g *layoutgraph.Graph, node *layoutgraph.Node) *layoutgraph.Node {
+	l := node.Label
+	obstacle := &layoutgraph.Node{
+		Graph: g,
+		Box:   geo.Box{TopLeft: node.LabelTopLeft(l.Position, l.Width, l.Height), Width: l.Width, Height: l.Height},
+		D2ID:  new(l.Text),
+	}
+	obstacle.SetShape(shape.SQUARE_TYPE)
+	return obstacle
 }

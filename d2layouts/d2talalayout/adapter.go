@@ -223,9 +223,13 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 			talaGraph.Directions[n] = parseDirection(obj.Direction.Value)
 		}
 
-		n.FontSize = new(obj.Text().FontSize)
-		if obj.Class != nil || obj.SQLTable != nil {
-			*n.FontSize -= d2target.HeaderFontAdd
+		// Only automatic font sizes participate in TALA's density scaling.
+		// D2 has already measured the label using any authored font size.
+		if obj.Style.FontSize == nil {
+			n.FontSize = new(obj.Text().FontSize)
+			if obj.Class != nil || obj.SQLTable != nil {
+				*n.FontSize -= d2target.HeaderFontAdd
+			}
 		}
 
 		if obj.HasLabel() {
@@ -352,6 +356,8 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		}
 		talaEdge := talaGraph.Connect(toNode[edgeSrc], toNode[edgeDst])
 		talaEdge.ReversedForLayout = reversed
+		talaEdge.KeepExplicit = e.Tooltip != nil || e.Link != nil || e.Icon != nil || len(e.Classes) > 0 ||
+			e.SrcArrowhead != nil || e.DstArrowhead != nil || e.ZIndex != 0
 		talaEdge.SourceArrowhead, talaEdge.SourceArrowheadLabel = translateArrowhead(srcArrow, srcAttrs)
 		talaEdge.TargetArrowhead, talaEdge.TargetArrowheadLabel = translateArrowhead(dstArrow, dstAttrs)
 		if loadExistingLayout {

@@ -21,23 +21,80 @@ func newWorkGuard(ctx context.Context, limit int64) (*limits.WorkGuard, error) {
 	return guard, nil
 }
 
-func binPackScoreGuarded(nodes layoutgraph.Nodes, root *layoutgraph.Node, guard *limits.WorkGuard) (float64, error) {
+// A singly sized container already reserves space on the requested axis.
+// When every child fits in a single line, using more of that space does not
+// make the drawing larger. Compute that condition once per container, before
+// testing translations of its components.
+type packingFrame struct {
+	horizontal bool
+	desired    float64
+	reserved   float64
+}
+
+func newPackingFrame(root *layoutgraph.Node, guard *limits.WorkGuard) (packingFrame, error) {
+	if root == nil || (root.DesiredWidth == nil) == (root.DesiredHeight == nil) {
+		return packingFrame{}, nil
+	}
+	frame := packingFrame{horizontal: root.DesiredWidth != nil}
+	if frame.horizontal {
+		frame.desired = *root.DesiredWidth
+	} else {
+		frame.desired = *root.DesiredHeight
+	}
+	if root.Graph == nil || !root.IsRectangular() {
+		return frame, nil
+	}
+	children := root.Graph.Containers[root]
+	if len(children) < 2 {
+		return frame, nil
+	}
+	needed := float64(len(children)-1) * layoutgraph.NodeGap
+	for _, child := range children {
+		if err := guard.Step(); err != nil {
+			return packingFrame{}, err
+		}
+		if len(child.Edges) != 0 || len(child.Nears) != 0 || child.FixedTopLeft != nil || child.IsContainer() ||
+			child.Hierarchy != nil || child.Cluster != nil || child.Sequence != nil || !child.IsRectangular() ||
+			child.IsInvisible || child.Is3D || child.IsMultiple || child.Icon != nil ||
+			(child.Label != nil && child.Label.Position.IsOutside()) {
+			return frame, nil
+		}
+		if frame.horizontal {
+			needed += child.Width
+		} else {
+			needed += child.Height
+		}
+	}
+	padding := root.Graph.ContainerPadding(root, false)
+	available := frame.desired - padding.Top() - padding.Bottom()
+	if frame.horizontal {
+		available = frame.desired - padding.Left() - padding.Right()
+	}
+	if needed <= available {
+		frame.reserved = available
+	}
+	return frame, nil
+}
+
+func (frame packingFrame) score(nodes layoutgraph.Nodes, guard *limits.WorkGuard) (float64, error) {
 	topLeft, bottomRight, err := packFixedBoundingBox(nodes, guard)
 	if err != nil {
 		return 0, err
 	}
 	width := bottomRight.X - topLeft.X
 	height := bottomRight.Y - topLeft.Y
-	desiredAxisPenalty := 0.
-	if root != nil {
-		if root.DesiredWidth != nil && root.DesiredHeight == nil && width < *root.DesiredWidth {
-			desiredAxisPenalty = *root.DesiredWidth - width
-		} else if root.DesiredWidth == nil && root.DesiredHeight != nil && height < *root.DesiredHeight {
-			desiredAxisPenalty = *root.DesiredHeight - height
-		}
+	extent := &height
+	if frame.horizontal {
+		extent = &width
+	}
+	shortfall := 0.
+	if frame.reserved > 0 {
+		*extent = math.Max(*extent, frame.reserved)
+	} else if frame.desired > 0 {
+		shortfall = math.Max(0, frame.desired-*extent)
 	}
 	score := width*height + math.Pow(width-height, 2.0)*subgraphSquareDampener +
-		math.Pow(desiredAxisPenalty, 2.0)*subgraphSquareDampener
+		math.Pow(shortfall, 2.0)*subgraphSquareDampener
 	return score, guard.Finish()
 }
 

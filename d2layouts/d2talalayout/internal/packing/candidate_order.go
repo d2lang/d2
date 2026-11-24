@@ -28,7 +28,7 @@ type packTrial struct {
 // BinPack keeps the valid candidate with the lowest score (the first in
 // candidate order among equal scores), where a candidate is valid when its
 // transaction commits and the checks after the commit pass, and its score is
-// binPackScoreGuarded after the commit. Committing every candidate is the
+// the packing frame score after the commit. Committing every candidate is the
 // expensive part. Instead, prepare drops the candidates whose commit is
 // certain to be rejected (Transaction.PlacementRejected) and scores the
 // others on the translated geometry without a transaction; the caller then
@@ -59,7 +59,7 @@ func (o *candidateOrdering) prepare(
 	currPacking layoutgraph.Nodes,
 	currTL geo.Point,
 	packedWithCurr layoutgraph.Nodes,
-	root *layoutgraph.Node,
+	frame packingFrame,
 	guard *limits.WorkGuard,
 ) (bool, error) {
 	o.trials = o.trials[:0]
@@ -95,7 +95,7 @@ func (o *candidateOrdering) prepare(
 		for _, n := range currPacking {
 			n.Translate(offsetX, offsetY)
 		}
-		score, err := binPackScoreGuarded(packedWithCurr, root, guard)
+		score, err := frame.score(packedWithCurr, guard)
 		for k, n := range currPacking {
 			*n.TopLeft = o.saved[k]
 		}

@@ -15,66 +15,6 @@ import (
 	"github.com/d2lang/d2/lib/shape"
 )
 
-func identifySequences(graph *layoutgraph.Graph, nodes []*layoutgraph.Node, guard *limits.WorkGuard) ([][]*layoutgraph.Node, error) {
-	activeNodes := make(map[*layoutgraph.Node]struct{}, len(graph.Nodes))
-	for _, node := range graph.Nodes {
-		if err := guard.Step(); err != nil {
-			return nil, err
-		}
-		activeNodes[node] = struct{}{}
-	}
-	var stepNodes []*layoutgraph.Node
-	for _, node := range nodes {
-		if err := guard.Step(); err != nil {
-			return nil, err
-		}
-		if _, active := activeNodes[node]; !active || node.IsContainer() {
-			continue
-		}
-		if node.Sequence != nil && !node.Sequence.IsActive() {
-			continue
-		}
-		if node.FixedTopLeft != nil || !node.IsSequenceStep() {
-			continue
-		}
-		stepNodes = append(stepNodes, node)
-	}
-	if len(stepNodes) <= 1 {
-		return nil, nil
-	}
-
-	var sequences [][]*layoutgraph.Node
-	steps := []*layoutgraph.Node{stepNodes[0]}
-	for i := 1; i < len(stepNodes); i++ {
-		if err := guard.Step(); err != nil {
-			return nil, err
-		}
-		previous, current := stepNodes[i-1], stepNodes[i]
-		connected := false
-		for _, edge := range previous.Edges {
-			if err := guard.Step(); err != nil {
-				return nil, err
-			}
-			if previous.Adjacent(edge) == current {
-				connected = true
-				break
-			}
-		}
-		if connected {
-			steps = append(steps, current)
-		} else {
-			if len(steps) > 1 {
-				sequences = append(sequences, steps)
-			}
-			steps = []*layoutgraph.Node{current}
-		}
-	}
-	if len(steps) > 1 {
-		sequences = append(sequences, steps)
-	}
-	return sequences, nil
-}
-
 // SequenceDefiningEdges returns the IDs of edges consumed when step nodes are
 // replaced by sequence vessels.
 func SequenceDefiningEdges(ctx context.Context, graph *layoutgraph.Graph) (map[layoutgraph.EntityID]struct{}, error) {
@@ -90,12 +30,16 @@ func SequenceDefiningEdges(ctx context.Context, graph *layoutgraph.Graph) (map[l
 		return nil, err
 	}
 	containerOrder = append(containerOrder, nil)
+	active, err := activeSequenceNodes(graph, guard)
+	if err != nil {
+		return nil, err
+	}
 	sequenceEdges := make(map[layoutgraph.EntityID]struct{})
 	for _, container := range containerOrder {
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
-		sequences, err := identifySequences(graph, graph.Containers[container], guard)
+		sequences, err := identifySequences(active, graph.Containers[container], guard)
 		if err != nil {
 			return nil, err
 		}
@@ -130,6 +74,7 @@ func isValidRememberedSequence(
 	vessel *layoutgraph.Node,
 	sequence *layoutgraph.Sequence,
 	activeNodes map[*layoutgraph.Node]struct{},
+	childIndex map[*layoutgraph.Node]int,
 	guard *limits.WorkGuard,
 ) (bool, error) {
 	if vessel == nil || sequence == nil || sequence.IsActive() || sequence.Vessel != vessel || sequence.Graph != graph || len(sequence.Nodes) < 2 {
@@ -139,22 +84,6 @@ func isValidRememberedSequence(
 		if _, active := activeNodes[sequence.Container]; !active {
 			return false, nil
 		}
-	}
-	children, hasContainer := graph.Containers[sequence.Container]
-	if !hasContainer {
-		return false, nil
-	}
-	childIndex := make(map[*layoutgraph.Node]int, len(children))
-	duplicateChild := make(map[*layoutgraph.Node]struct{})
-	for i, child := range children {
-		if err := guard.Step(); err != nil {
-			return false, err
-		}
-		if _, seen := childIndex[child]; seen {
-			duplicateChild[child] = struct{}{}
-			continue
-		}
-		childIndex[child] = i
 	}
 	seen := make(map[*layoutgraph.Node]struct{}, len(sequence.Nodes))
 	previousIndex := -1
@@ -176,7 +105,7 @@ func isValidRememberedSequence(
 			return false, nil
 		}
 		index, inContainer := childIndex[node]
-		if _, duplicate := duplicateChild[node]; !inContainer || duplicate {
+		if !inContainer || index < 0 {
 			return false, nil
 		}
 		if previousIndex >= 0 && index != previousIndex+1 {
@@ -184,6 +113,20 @@ func isValidRememberedSequence(
 		}
 		previousIndex = index
 	}
+	// Cleanup restores the members contiguously in flow order and leaves the
+	// defining edges consumed. A new internal connector must be rediscovered
+	// from its current semantics, including any label or decoration.
+	for _, node := range sequence.Nodes {
+		for _, e := range node.Edges {
+			if err := guard.Step(); err != nil {
+				return false, err
+			}
+			if _, internal := seen[e.To]; e.From == node && internal {
+				return false, nil
+			}
+		}
+	}
+
 	return true, nil
 }
 
@@ -272,12 +215,41 @@ func AddSequences(ctx context.Context, graph *layoutgraph.Graph, random *rand.Ra
 			}
 		}
 	}
+	// A container may hold many remembered runs. Index its children once
+	// for membership validation and for stable group ordering.
+	childIndices := map[*layoutgraph.Node]map[*layoutgraph.Node]int{}
+	indexChildren := func(container *layoutgraph.Node) (map[*layoutgraph.Node]int, error) {
+		if index := childIndices[container]; index != nil {
+			return index, nil
+		}
+		children := graph.Containers[container]
+		index := make(map[*layoutgraph.Node]int, len(children))
+		for i, n := range children {
+			if err := guard.Step(); err != nil {
+				return nil, err
+			}
+			if _, seen := index[n]; seen {
+				index[n] = -1
+			} else {
+				index[n] = i
+			}
+		}
+		childIndices[container] = index
+		return index, nil
+	}
 	for _, vessel := range graph.SequenceOrder() {
 		if err := guard.Step(); err != nil {
 			return err
 		}
 		sequence := graph.Sequences[vessel]
-		valid, err := isValidRememberedSequence(graph, vessel, sequence, activeNodes, guard)
+		var childIndex map[*layoutgraph.Node]int
+		if sequence != nil {
+			childIndex, err = indexChildren(sequence.Container)
+			if err != nil {
+				return err
+			}
+		}
+		valid, err := isValidRememberedSequence(graph, vessel, sequence, activeNodes, childIndex, guard)
 		if err != nil {
 			return err
 		}
@@ -298,17 +270,17 @@ func AddSequences(ctx context.Context, graph *layoutgraph.Graph, random *rand.Ra
 		if err := guard.Step(); err != nil {
 			return err
 		}
-		groups, err := identifySequences(graph, graph.Containers[container], guard)
+		groups, err := identifySequences(activeNodes, graph.Containers[container], guard)
 		if err != nil {
 			return err
 		}
 		groups = append(groups, remembered[container]...)
-		containerIndex := make(map[*layoutgraph.Node]int, len(graph.Containers[container]))
-		for i, node := range graph.Containers[container] {
-			if err := guard.Step(); err != nil {
-				return err
-			}
-			containerIndex[node] = i
+		if len(groups) == 0 {
+			continue
+		}
+		containerIndex, err := indexChildren(container)
+		if err != nil {
+			return err
 		}
 		slices.SortStableFunc(groups, func(a, b []*layoutgraph.Node) int {
 			return cmp.Compare(containerIndex[a[0]], containerIndex[b[0]])

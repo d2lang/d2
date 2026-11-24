@@ -254,7 +254,11 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 		return err
 	}
 
-	originalScore, err := binPackScoreGuarded(layoutgraph.Nodes(g.Containers[root]), root, guard)
+	frame, err := newPackingFrame(root, guard)
+	if err != nil {
+		return err
+	}
+	originalScore, err := frame.score(layoutgraph.Nodes(g.Containers[root]), guard)
 	if err != nil {
 		return err
 	}
@@ -722,7 +726,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 				txn.Rollback()
 				return 0, false, nil
 			}
-			score, err = binPackScoreGuarded(packedWithCurr, root, guard)
+			score, err = frame.score(packedWithCurr, guard)
 			txn.Rollback()
 			if err != nil {
 				return 0, false, err
@@ -733,7 +737,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 		// The chosen position is the valid candidate with the lowest score,
 		// the first in candidate order among equal scores.
 		var bestCandidate *geo.Point
-		ordered, err := ordering.prepare(txn, g, candidates, currPacking, currTL, packedWithCurr, root, guard)
+		ordered, err := ordering.prepare(txn, g, candidates, currPacking, currTL, packedWithCurr, frame, guard)
 		if err != nil {
 			return err
 		}
@@ -936,7 +940,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 	if failed {
 		afterBinPackScore = math.Inf(1)
 	} else {
-		afterBinPackScore, err = binPackScoreGuarded(layoutgraph.Nodes(g.Containers[root]), root, guard)
+		afterBinPackScore, err = frame.score(layoutgraph.Nodes(g.Containers[root]), guard)
 		if err != nil {
 			return err
 		}

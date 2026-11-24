@@ -395,7 +395,7 @@ func clusterNodeBoundingBoxPlacement(node *layoutgraph.Node, nodes layoutgraph.N
 			}
 			tl.Y = math.Floor(labelTopLeft.Y - padding)
 		}
-		if labelTopLeft.X > br.X {
+		if labelTopLeft.X+node.Label.Width > br.X {
 			boundary, err := clusterBoundaryNodePlacement(node, nodes, geo.Right, guard)
 			if err != nil {
 				return nil, nil, err
@@ -406,7 +406,7 @@ func clusterNodeBoundingBoxPlacement(node *layoutgraph.Node, nodes layoutgraph.N
 			}
 			br.X = math.Ceil(labelTopLeft.X + node.Label.Width + padding)
 		}
-		if labelTopLeft.Y > br.Y {
+		if labelTopLeft.Y+node.Label.Height > br.Y {
 			boundary, err := clusterBoundaryNodePlacement(node, nodes, geo.Bottom, guard)
 			if err != nil {
 				return nil, nil, err

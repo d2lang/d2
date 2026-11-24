@@ -28,7 +28,9 @@ type Edge struct {
 
 	// ReversedForLayout records normalization of an authored source-only arrow.
 	// D2 still renders endpoint labels along the original path traversal.
-	ReversedForLayout    bool
+	ReversedForLayout bool
+	// KeepExplicit retains decorations and interactions omitted from the geometry model.
+	KeepExplicit         bool
 	SourceArrowhead      Arrowhead
 	TargetArrowhead      Arrowhead
 	SourceArrowheadLabel *Label

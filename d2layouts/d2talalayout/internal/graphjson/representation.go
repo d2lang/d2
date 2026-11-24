@@ -92,6 +92,7 @@ type SerializedEdge struct {
 	Style                SerializedStyle    `json:"style,omitempty"`
 
 	ReversedForLayout bool   `json:"reversedForLayout,omitempty"`
+	KeepExplicit      bool   `json:"keepExplicit,omitempty"`
 	SourceArrowhead   string `json:"sourceArrowhead"`
 	TargetArrowhead   string `json:"targetArrowhead"`
 

@@ -100,7 +100,7 @@ func packNodeBoundingBox(node *layoutgraph.Node, allNodes layoutgraph.Nodes, gua
 			}
 			topLeft.Y = math.Floor(labelTopLeft.Y - padding)
 		}
-		if labelTopLeft.X > bottomRight.X {
+		if labelTopLeft.X+node.Label.Width > bottomRight.X {
 			extreme, err := packIsExtreme(allNodes, node, packSideRight, guard)
 			if err != nil {
 				return geo.Point{}, geo.Point{}, err
@@ -111,7 +111,7 @@ func packNodeBoundingBox(node *layoutgraph.Node, allNodes layoutgraph.Nodes, gua
 			}
 			bottomRight.X = math.Ceil(labelTopLeft.X + node.Label.Width + padding)
 		}
-		if labelTopLeft.Y > bottomRight.Y {
+		if labelTopLeft.Y+node.Label.Height > bottomRight.Y {
 			extreme, err := packIsExtreme(allNodes, node, packSideBottom, guard)
 			if err != nil {
 				return geo.Point{}, geo.Point{}, err

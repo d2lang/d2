@@ -43,6 +43,7 @@ func TestGraphJSONPreservesArrowheadLabelEndpoints(t *testing.T) {
 	edge := graph.Connect(from, to)
 	edge.Label = &layoutgraph.Label{Text: "edge", Position: label.UnlockedMiddle, Width: 20, Height: 10}
 	edge.ReversedForLayout = true
+	edge.KeepExplicit = true
 	edge.SourceArrowheadLabel = &layoutgraph.Label{Text: "source"}
 	edge.TargetArrowheadLabel = &layoutgraph.Label{Text: "target"}
 
@@ -68,7 +69,7 @@ func TestGraphJSONPreservesArrowheadLabelEndpoints(t *testing.T) {
 	if err := Unmarshal(t.Context(), data, &roundTrip); err != nil {
 		t.Fatal(err)
 	}
-	if !roundTrip.Edges[0].ReversedForLayout || roundTrip.Edges[0].SourceArrowheadLabel.Text != "source" || roundTrip.Edges[0].TargetArrowheadLabel.Text != "target" {
+	if !roundTrip.Edges[0].KeepExplicit || !roundTrip.Edges[0].ReversedForLayout || roundTrip.Edges[0].SourceArrowheadLabel.Text != "source" || roundTrip.Edges[0].TargetArrowheadLabel.Text != "target" {
 		t.Fatal("arrowhead labels changed endpoints during round trip")
 	}
 	if roundTrip.Edges[0].Label == nil || roundTrip.Edges[0].Label.Position != label.UnlockedMiddle {

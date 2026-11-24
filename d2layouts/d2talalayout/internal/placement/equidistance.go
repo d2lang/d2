@@ -314,11 +314,6 @@ func equidistanceNodeGuarded(ctx context.Context, n *layoutgraph.Node, g *layout
 		}
 	}
 
-	originalLength, err := scores.EdgeLengthBase(ctx)
-	if err != nil {
-		return false, err
-	}
-
 	diffX := 0.
 	diffY := 0.
 	if isHorizontal {
@@ -329,6 +324,13 @@ func equidistanceNodeGuarded(ctx context.Context, n *layoutgraph.Node, g *layout
 		diffY = y - n.TopLeft.Y
 	}
 
+	if diffX == 0 && diffY == 0 {
+		return false, ctx.Err()
+	}
+	originalLength, err := scores.EdgeLengthBase(ctx)
+	if err != nil {
+		return false, err
+	}
 	txn, err := g.NewRequestTransaction(ctx, layoutgraph.TransactionOptions{AffectContainers: true})
 	if err != nil {
 		return false, err
