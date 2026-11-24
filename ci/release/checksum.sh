@@ -82,13 +82,20 @@ fetch_release_asset() {
   ASSET_URL=$4
   DESTINATION=$5
   STAGED_ARCHIVE=$6
+  EXPECTED_SHA256=${7-}
 
   if [ -n "${DRY_RUN-}" ]; then
-    sh_c "download $ASSET_NAME and verify its GitHub SHA-256 digest when available"
+    if [ -n "$EXPECTED_SHA256" ]; then
+      log "would verify $ASSET_NAME against the SHA-256 pinned in this installer"
+    else
+      log "would check the GitHub SHA-256 digest for $ASSET_NAME when available"
+    fi
     return
   fi
 
-  EXPECTED_SHA256=$(release_asset_sha256 "$REPOSITORY" "$RELEASE_VERSION" "$ASSET_NAME")
+  if [ -z "$EXPECTED_SHA256" ]; then
+    EXPECTED_SHA256=$(release_asset_sha256 "$REPOSITORY" "$RELEASE_VERSION" "$ASSET_NAME")
+  fi
   if [ -z "$EXPECTED_SHA256" ]; then
     warn "GitHub does not provide a SHA-256 digest for $ASSET_NAME; continuing without checksum verification for compatibility with legacy releases"
   elif [ -e "$DESTINATION" ]; then

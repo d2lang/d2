@@ -15,24 +15,49 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the generated installer is a POSIX shell script")
 	}
+	// Give the fixture archive its own trusted pin in a private copy of install.sh.
+	// This exercises the production lookup, hashing, staging and extraction paths.
+	pins := map[string]string{
+		"v0.8.2": "0ea49e35f17c3ac00ffa5d0a1fa571f5c344cd38127dbaa4bf6158fcd0c7bfb0",
+		"v0.9.0": "5669ddc46b99e942cc96078f4a4e36d5e62103348f4c05179ede27802fdd87a9",
+	}
+	installer, err := os.ReadFile("../../install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const uncatalogued = "v0.0.0-installer-test.1"
 	for _, tc := range []struct {
 		name    string
 		version string
 		outcome string
 		cached  bool
 		latest  bool
+		strict  bool
+		method  string
 	}{
-		{"verified_upgrade", "v0.9.1", "verified", false, false},
-		{"verified_first_attested_release", "v0.8.2", "verified", false, false},
-		{"verified_historical_bundle", "v0.9.0", "verified", false, false},
-		{"explicit_legacy_release", "v0.7.1", "legacy", false, false},
-		{"invalid_signature_for_cached_forced_install", "v0.9.1", "invalid", true, false},
-		{"different_signed_platform", "v0.9.1", "wrong_subject", false, false},
-		{"cache_changes_after_verification", "v0.9.1", "cache_changes", true, false},
-		{"different_signed_digest", "v0.9.1", "wrong_digest", false, false},
-		{"missing_bundle", "v0.9.1", "missing", false, false},
-		{"latest_resolves_to_unattested_release", "v0.7.1", "missing", false, true},
-		{"dry_run", "v0.9.1", "dry_run", false, false},
+		{name: "verified_upgrade", version: uncatalogued, outcome: "verified"},
+		{name: "pinned_first_attested_release", version: "v0.8.2", outcome: "pinned"},
+		{name: "pinned_current_release", version: "v0.9.0", outcome: "pinned"},
+		{name: "latest_resolves_to_pinned_archive", version: "v0.9.0", outcome: "pinned", latest: true},
+		{name: "forced_pinned_install_from_cache", version: "v0.9.0", outcome: "pinned", cached: true},
+		{name: "corrupt_pinned_cache_downloads_replacement", version: "v0.9.0", outcome: "corrupt_cache", cached: true},
+		{name: "reject_substituted_pinned_download", version: "v0.9.0", outcome: "substituted"},
+		{name: "pinned_install_already_current", version: "v0.9.0", outcome: "already_installed", cached: true},
+		{name: "strict_first_attested_release", version: "v0.8.2", outcome: "verified", strict: true},
+		{name: "strict_historical_bundle", version: "v0.9.0", outcome: "verified", strict: true},
+		{name: "strict_rejects_invalid_signature_even_with_pin", version: "v0.9.0", outcome: "invalid", strict: true},
+		{name: "strict_detect_uses_standalone_with_brew_available", version: uncatalogued, outcome: "verified", strict: true, method: "detect"},
+		{name: "strict_explicit_homebrew_rejected", version: uncatalogued, outcome: "incompatible", strict: true, method: "homebrew"},
+		{name: "explicit_legacy_release", version: "v0.7.1", outcome: "legacy"},
+		{name: "strict_rejects_unattested_legacy_release", version: "v0.7.1", outcome: "unattested", strict: true},
+		{name: "invalid_signature_for_cached_forced_install", version: uncatalogued, outcome: "invalid", cached: true},
+		{name: "different_signed_platform", version: uncatalogued, outcome: "wrong_subject"},
+		{name: "cache_changes_after_verification", version: uncatalogued, outcome: "cache_changes", cached: true},
+		{name: "different_signed_digest", version: uncatalogued, outcome: "wrong_digest"},
+		{name: "missing_bundle", version: uncatalogued, outcome: "missing"},
+		{name: "latest_resolves_to_unattested_release", version: "v0.7.1", outcome: "unattested", latest: true},
+		{name: "dry_run", version: uncatalogued, outcome: "dry_run"},
+		{name: "pinned_dry_run", version: "v0.9.0", outcome: "dry_run"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -60,7 +85,11 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 			}
 			write(filepath.Join(old, "old-install"), "working", 0o644)
 			write(filepath.Join(staged, newDir, "new-install"), "verified", 0o644)
-			archive := newDir + "-linux-amd64.tar.gz"
+			platform := "linux"
+			if tc.method != "" {
+				platform = "macos"
+			}
+			archive := newDir + "-" + platform + "-amd64.tar.gz"
 			asset := filepath.Join(staged, archive)
 			if out, err := exec.Command("tar", "-czf", asset, "-C", staged, newDir).CombinedOutput(); err != nil {
 				t.Fatalf("create fixture: %v\n%s", err, out)
@@ -70,24 +99,46 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 				t.Fatal(err)
 			}
 			digest := fmt.Sprintf("%x", sha256.Sum256(payload))
+			script := "../../install.sh"
+			pin := pins[tc.version]
+			if pin != "" {
+				if strings.Count(string(installer), pin) != 1 {
+					t.Fatalf("generated installer must contain the linux-amd64 pin for %s exactly once", tc.version)
+				}
+				script = filepath.Join(temp, "install.sh")
+				write(script, strings.Replace(string(installer), pin, digest, 1), 0o755)
+			}
 			if tc.cached {
+				if tc.outcome == "corrupt_cache" {
+					payload = []byte("corrupted cache")
+				}
 				if err := os.WriteFile(filepath.Join(cache, "d2", "release", archive), payload, 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
 			write(filepath.Join(bin, "d2"), "#!/bin/sh\necho \"$OLD_VERSION\"\n", 0o755)
 			write(filepath.Join(bin, "make"), "#!/bin/sh\necho \"$1\" >> \"$EVENTS\"\n", 0o755)
+			write(filepath.Join(bin, "brew"), "#!/bin/sh\necho brew >> \"$EVENTS\"\nexit 1\n", 0o755)
 			write(filepath.Join(bin, "curl"), fakeReleaseCurl, 0o755)
 			write(filepath.Join(bin, "gh"), fakeAttestationVerifier, 0o755)
 			events := filepath.Join(temp, "events")
 			write(events, "", 0o644)
+			calls := filepath.Join(temp, "calls")
+			write(calls, "", 0o644)
 			version := tc.version
 			if tc.latest {
 				version = "latest"
 			}
-			args := []string{"../../install.sh", "--method=standalone", "--version=" + version, "--prefix=" + prefix}
-			if tc.cached {
+			method := tc.method
+			if method == "" {
+				method = "standalone"
+			}
+			args := []string{script, "--method=" + method, "--version=" + version, "--prefix=" + prefix}
+			if tc.cached && tc.outcome != "already_installed" {
 				args = append(args, "--force")
+			}
+			if tc.strict {
+				args = append(args, "--verify-provenance")
 			}
 			if tc.outcome == "dry_run" {
 				args = append(args, "--dry-run")
@@ -101,12 +152,13 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 			}
 			cmd := exec.Command("sh", args...)
 			cmd.Env = []string{
-				"PATH=" + bin + ":/usr/bin:/bin", "OS=linux", "ARCH=amd64", "TMPDIR=" + temp,
+				"PATH=" + bin + ":/usr/bin:/bin", "OS=" + platform, "ARCH=amd64", "TMPDIR=" + temp,
 				"XDG_CACHE_HOME=" + cache, "OLD_VERSION=" + oldVersion, "TAG=" + tc.version,
-				"ARCHIVE=" + archive, "ASSET=" + asset, "DIGEST=" + digest, "BUNDLE_URL=" + bundleURL, "EVENTS=" + events, "RESULT=" + tc.outcome,
+				"ARCHIVE=" + archive, "ASSET=" + asset, "DIGEST=" + digest, "BUNDLE_URL=" + bundleURL, "EVENTS=" + events, "CALLS=" + calls, "RESULT=" + tc.outcome,
 			}
 			output, err := cmd.CombinedOutput()
-			wantSuccess := tc.outcome == "verified" || tc.outcome == "cache_changes" || tc.outcome == "legacy" || tc.outcome == "dry_run"
+			installed := tc.outcome == "verified" || tc.outcome == "cache_changes" || tc.outcome == "legacy" || tc.outcome == "pinned" || tc.outcome == "corrupt_cache"
+			wantSuccess := installed || tc.outcome == "dry_run" || tc.outcome == "already_installed"
 			if (err == nil) != wantSuccess {
 				t.Fatalf("installer error = %v, want success = %t\n%s", err, wantSuccess, output)
 			}
@@ -115,13 +167,31 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 				t.Fatal(err)
 			}
 			trace := string(log)
-			if tc.cached && strings.Contains(trace, "download") {
+			if tc.outcome == "incompatible" || tc.outcome == "unattested" {
+				if trace != "" {
+					t.Fatalf("installer acted on an unsupported verification request: %q", trace)
+				}
+			}
+			if pin != "" && !tc.strict {
+				var wantCalls string
+				if tc.latest {
+					wantCalls += "latest\n"
+				}
+				if tc.outcome != "dry_run" && (!tc.cached || tc.outcome == "corrupt_cache") {
+					wantCalls += "archive\n"
+				}
+				got, err := os.ReadFile(calls)
+				if err != nil || string(got) != wantCalls {
+					t.Fatalf("pinned install network/verifier calls = %q, want %q (err = %v)", got, wantCalls, err)
+				}
+			}
+			if tc.cached && tc.outcome != "corrupt_cache" && strings.Contains(trace, "download") {
 				t.Fatal("installer redownloaded a cache entry that passed its checksum")
 			}
-			if wantSuccess && tc.outcome != "dry_run" {
+			if installed {
 				wantOrder := "verify\nuninstall\ninstall\n"
-				if tc.outcome == "legacy" {
-					wantOrder = "download\nuninstall\ninstall\n"
+				if tc.outcome == "legacy" || tc.outcome == "pinned" || tc.outcome == "corrupt_cache" {
+					wantOrder = "uninstall\ninstall\n"
 				}
 				if !strings.HasSuffix(trace, wantOrder) {
 					t.Fatalf("unexpected upgrade order: %q", trace)
@@ -131,10 +201,11 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 				}
 				return
 			}
-			if tc.outcome == "dry_run" && trace != "" {
-				t.Fatalf("dry run performed work: %q", trace)
+			if wantSuccess && trace != "" {
+				t.Fatalf("installer performed unexpected work: %q", trace)
 			}
-			if tc.outcome != "dry_run" && tc.outcome != "missing" && !strings.Contains(trace, "verify\n") {
+			requiresVerifier := tc.outcome == "invalid" || tc.outcome == "wrong_digest" || tc.outcome == "wrong_subject"
+			if requiresVerifier && !strings.Contains(trace, "verify\n") {
 				t.Fatalf("installer failed before testing the attestation: %q\n%s", trace, output)
 			}
 			if strings.Contains(trace, "install") {
@@ -163,14 +234,22 @@ while [ "$#" -gt 0 ]; do
 done
 case "$url" in
   https://github.com/d2lang/d2/releases/latest)
+    echo latest >> "$CALLS"
     echo "https://github.com/d2lang/d2/releases/tag/$TAG"
     exit ;;
   https://api.github.com/repos/d2lang/d2/releases/tags/"$TAG")
+    echo metadata >> "$CALLS"
     printf '{\n  "assets": [\n    {\n      "name": "%s",\n      "digest": "sha256:%s"\n    }\n  ]\n}\n' "$ARCHIVE" "$DIGEST" > "$out" ;;
   https://github.com/d2lang/d2/releases/download/"$TAG"/"$ARCHIVE")
+    echo archive >> "$CALLS"
     echo download >> "$EVENTS"
-    cp "$ASSET" "$out" ;;
+    if [ "$RESULT" = substituted ]; then
+      echo substituted > "$out"
+    else
+      cp "$ASSET" "$out"
+    fi ;;
   "$BUNDLE_URL")
+    echo bundle >> "$CALLS"
     [ "$RESULT" != missing ] || exit 1
     if [ -n "$out" ]; then echo bundle > "$out"; else echo bundle; fi ;;
   *) echo "unexpected curl request: $url" >&2; exit 2 ;;
@@ -178,6 +257,7 @@ esac
 `
 const fakeAttestationVerifier = `#!/bin/sh
 set -eu
+echo gh >> "$CALLS"
 case "$*" in
   --version) echo 'gh version 2.105.0 (fixture)'; exit ;;
   "attestation verify "*--help) echo '--bundle --repo --signer-workflow --source-ref --format --jq' ; exit ;;

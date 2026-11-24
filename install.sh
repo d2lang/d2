@@ -12,6 +12,7 @@ set -eu
 # - ./ci/sub/lib/flag.sh
 # - ./ci/sub/lib/release.sh
 # - ./ci/release/checksum.sh
+# - ./ci/release/checksums/*.txt
 # - ./ci/release/verifier.sh
 # - ./ci/release/_install.sh
 #
@@ -682,13 +683,20 @@ fetch_release_asset() {
   ASSET_URL=$4
   DESTINATION=$5
   STAGED_ARCHIVE=$6
+  EXPECTED_SHA256=${7-}
 
   if [ -n "${DRY_RUN-}" ]; then
-    sh_c "download $ASSET_NAME and verify its GitHub SHA-256 digest when available"
+    if [ -n "$EXPECTED_SHA256" ]; then
+      log "would verify $ASSET_NAME against the SHA-256 pinned in this installer"
+    else
+      log "would check the GitHub SHA-256 digest for $ASSET_NAME when available"
+    fi
     return
   fi
 
-  EXPECTED_SHA256=$(release_asset_sha256 "$REPOSITORY" "$RELEASE_VERSION" "$ASSET_NAME")
+  if [ -z "$EXPECTED_SHA256" ]; then
+    EXPECTED_SHA256=$(release_asset_sha256 "$REPOSITORY" "$RELEASE_VERSION" "$ASSET_NAME")
+  fi
   if [ -z "$EXPECTED_SHA256" ]; then
     warn "GitHub does not provide a SHA-256 digest for $ASSET_NAME; continuing without checksum verification for compatibility with legacy releases"
   elif [ -e "$DESTINATION" ]; then
@@ -772,6 +780,22 @@ installer_gh() (
   chmod 700 "$1/$executable" || return 1
   printf '%s\n' "$1/$executable"
 )
+release_checksums() {
+  cat <<'D2_RELEASE_CHECKSUMS'
+0ea49e35f17c3ac00ffa5d0a1fa571f5c344cd38127dbaa4bf6158fcd0c7bfb0  d2-v0.8.2-linux-amd64.tar.gz
+bf1585cebf8496690668dc135dfd469068e3ae3eb38cecdc1f7d7835cdbc1228  d2-v0.8.2-linux-arm64.tar.gz
+6c7b7a09278b131664cbc5e715dac0ee849c3f785ffc9dfaab2df6b1f91bf8ed  d2-v0.8.2-macos-amd64.tar.gz
+73ddb07c636bd5c5723e4bf8569a90b7329ea35dc32af2155650e1f572e823b2  d2-v0.8.2-macos-arm64.tar.gz
+2c223b56ce5f5984c235b88b1e0e996126ba7c8a37476ad9b47d7d6db9475f18  d2-v0.8.2-windows-amd64.tar.gz
+2aa25e88883300230b6af6c16f6ebd653b7e0660b1258ff740cace476887bb2e  d2-v0.8.2-windows-arm64.tar.gz
+5669ddc46b99e942cc96078f4a4e36d5e62103348f4c05179ede27802fdd87a9  d2-v0.9.0-linux-amd64.tar.gz
+ac2c028697199479acb321db1e3d68caee9f2ba492ed73caa3cd13f3829bf913  d2-v0.9.0-linux-arm64.tar.gz
+cad39576a480d6bb02ea142fef1726647914b0d2da51ccc9b30b660a2b1babf0  d2-v0.9.0-macos-amd64.tar.gz
+eaf6c0c143e56dd9fa97bfb6df25ea9c1ebce40245f056a0768cf1a6c15d3064  d2-v0.9.0-macos-arm64.tar.gz
+5f63b643de8f5a6dfb922d172e1b5496e4caf47497c33c4427cf1127f28c340f  d2-v0.9.0-windows-amd64.tar.gz
+dd05cab459410c287d7ca3eb9cf78145a071742ee8e1b81a0122f84f471883e1  d2-v0.9.0-windows-arm64.tar.gz
+D2_RELEASE_CHECKSUMS
+}
 #!/bin/sh
 set -eu
 
@@ -791,7 +815,7 @@ help() {
 
   cat <<EOF
 usage: $arg0 [-d|--dry-run] [--version vX.X.X] [--method detect] [--prefix path]
-  [--force] [--uninstall] [-x|--trace]
+  [--verify-provenance] [--force] [--uninstall] [-x|--trace]
 
 install.sh automates the installation of D2 onto your system. It currently only supports
 the installation of standalone releases from GitHub and via Homebrew on macOS. See the
@@ -810,6 +834,11 @@ Flags:
   Pass to have install.sh install the given version instead of the latest version.
   warn: The version may not be obeyed with package manager installations. Use
         --method=standalone to enforce the version.
+
+--verify-provenance
+  Select a standalone install and independently verify the signed build provenance on
+  this machine, even when the archive's verified SHA-256 is embedded in this installer.
+  Requires a release with signed provenance (v0.8.2 or later).
 
 --method [detect | standalone | homebrew ]
   Pass to control the method by which to install. Right now we only support standalone
@@ -881,6 +910,10 @@ main() {
         flag_nonemptyarg && shift "$FLAGSHIFT"
         VERSION=$FLAGARG
         ;;
+      verify-provenance)
+        flag_noarg && shift "$FLAGSHIFT"
+        VERIFY_PROVENANCE=1
+        ;;
       tala)
         shift "$FLAGSHIFT"
         TALA_REQUEST=1
@@ -931,6 +964,13 @@ For older releases, install the legacy plugin separately: https://github.com/ter
   mkdir -p "$CACHE_DIR"
   METHOD=${METHOD:-detect}
   INSTALL_DIR=$PREFIX/lib/d2
+
+  if [ -n "${VERIFY_PROVENANCE-}" ]; then
+    case "$METHOD" in
+      detect) METHOD=standalone ;;
+      homebrew) flag_errusage "--verify-provenance requires a standalone installation" ;;
+    esac
+  fi
 
   case $METHOD in
     detect)
@@ -1050,7 +1090,7 @@ install_d2_standalone() {
   legacy_release=
   case "$VERSION" in
     v0.0.1[23]|v0.1.[0-6]|v0.2.[0-6]|v0.3.0|v0.4.[0-2]|v0.5.[01]|v0.6.[0-9]|v0.7.[01])
-      if [ "$requested_version" = latest ] || [ "$REPO" != d2lang/d2 ]; then
+      if [ "$requested_version" = latest ] || [ "$REPO" != d2lang/d2 ] || [ -n "${VERIFY_PROVENANCE-}" ]; then
         echoerr "refusing to install $REPO $VERSION without signed build provenance"
         return 1
       fi
@@ -1074,14 +1114,17 @@ install_d2_standalone() {
   # Verify and extract the same private copy, even when another install updates the cache.
   stage=$(mktempd)
   staged_archive=$stage/$ARCHIVE
+  pinned_digest=$(release_checksums | awk -v name="$ARCHIVE" '$2 == name { print $1 }')
   fetch_release_asset \
-    "$REPO" "$VERSION" "$ARCHIVE" "$asset_url" "$CACHE_DIR/$ARCHIVE" "$staged_archive"
+    "$REPO" "$VERSION" "$ARCHIVE" "$asset_url" "$CACHE_DIR/$ARCHIVE" "$staged_archive" "$pinned_digest"
   if [ -n "$legacy_release" ]; then
     warn "$VERSION predates signed D2 archive provenance"
-  elif [ -n "${DRY_RUN-}" ]; then
-    log "would verify signed build provenance for $ARCHIVE before installation"
-  else
-    verify_archive_provenance "$stage" "$staged_archive"
+  elif [ -z "$pinned_digest" ] || [ -n "${VERIFY_PROVENANCE-}" ]; then
+    if [ -n "${DRY_RUN-}" ]; then
+      log "would verify signed build provenance for $ARCHIVE before installation"
+    else
+      verify_archive_provenance "$stage" "$staged_archive"
+    fi
   fi
 
   if [ -n "$INSTALLED_VERSION" ]; then

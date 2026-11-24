@@ -47,8 +47,8 @@ The template for the install script in the root of the d2 repository.
 
 ### gen_install.sh
 
-Generates the install.sh script in the root of the repository by prepending the libraries
-it depends on from ../sub/lib.
+Generates the root `install.sh` from the install template, its shell libraries, and the
+verified release manifests in `ci/release/checksums/`.
 
 ## release.sh
 
@@ -98,8 +98,29 @@ The uploader rechecks the tag commit and draft identity/state before uploads and
 all final asset digests. Existing assets are accepted only when their bytes match; nothing
 is overwritten. There is no workstation download/upload handoff or independent MSI poller.
 
-After the workflow succeeds, review and merge the release PR, then publish the complete
-draft manually on GitHub. `release.sh` rejects `--publish`, `--skip-build`, and `--rebuild`,
+After the workflow succeeds, review and merge the release PR. Before publishing the draft,
+promote its archive checksums in a separate PR.
+
+1. Create a branch from the updated `master`. Set `VERSION` to the exact draft tag.
+   Use an authenticated GitHub CLI (2.102.0 or later) with access to the draft.
+2. From the repository root, generate the checksum manifest and installer.
+
+   ```sh
+   python3 ci/release/promote-checksums.py --version "$VERSION"
+   ./ci/release/gen_install.sh
+   ```
+
+3. Commit `ci/release/checksums/$VERSION.txt` and `install.sh` on the new branch and open a
+   PR to `master`. The promotion tool verifies the release workflow's signed `SHA256SUMS`
+   for that tag and commit and checks all six archive digests against the release assets.
+   The required `ci` check independently verifies the proposed manifest
+   against its public attestation and checks that regenerating the installer produces the
+   committed file.
+4. After that check passes and the promotion PR merges, publish the complete draft manually
+   on GitHub. An installer fetched from `master` now has the verified SHA-256 for each
+   platform. The release tag and its prepared branch stay at the original build commit.
+
+`release.sh` rejects `--publish`, `--skip-build`, and `--rebuild`,
 and never repurposes an existing version. To recover a failed run without changing code or
 artifacts, use **Re-run failed jobs** on that run. Code or build changes require a new version,
 even if the old version is still a draft. Individual Actions artifacts are immutable, but

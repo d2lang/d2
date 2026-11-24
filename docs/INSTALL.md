@@ -70,16 +70,20 @@ You can install a specific version of `d2` with `--version`. Run the script with
 
 If you're still concerned, remember you can run with `--dry-run` to avoid writing anything.
 
-For standalone installs, the script verifies the archive's SHA-256 against GitHub's release
-metadata when a digest is available. Starting with v0.8.2, it also verifies the archive's
-signed build provenance. The signature must come from D2's release workflow at the selected
-tag, and the signed filename and digest must match the archive for your platform. Verification
-runs before extraction or removal of an existing installation, including for cached downloads.
+The standalone installer includes the SHA-256 of each supported archive starting with
+v0.8.2. During release review, D2 checks the signed checksum manifest against the release
+workflow, tag, and source commit. Your installer checks the downloaded or cached archive
+against that reviewed digest before extracting it or removing an existing installation.
+This uses your system's SHA-256 tool and requires no additional download.
 
-The installer uses GitHub CLI (`gh`) 2.102.0 or newer from your PATH. If needed, it downloads
-a temporary copy and checks it against a SHA-256 digest pinned in the installer. You can
-install without a GitHub account or token. Explicitly requesting a published release from
-v0.7.1 or earlier uses the historical checksum behavior and prints a warning.
+Pass `--verify-provenance` to check the signed build provenance on your machine as well.
+The installer also performs this check automatically when installing a new release that
+postdates its embedded digests. It verifies the repository, workflow, tag, and exact archive
+name and digest. This check uses GitHub CLI (`gh`) 2.102.0 or newer from your PATH or a
+temporary, checksum-pinned download. Neither path requires a GitHub account or token.
+
+An explicitly requested historical release through v0.7.1 uses GitHub's SHA-256 digest
+when available and prints a warning. Strict verification rejects these unsigned releases.
 
 You can also verify a downloaded archive yourself. For example:
 

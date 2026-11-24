@@ -5,6 +5,10 @@ cd -- "$(dirname "$0")/../sub/lib"
 . ./log.sh
 . ./flag.sh
 . ./release.sh
+# The generated installer embeds these reviewed manifests.
+release_checksums() {
+  cat "$(dirname "$0")"/checksums/*.txt
+}
 cd - >/dev/null
 
 if [ -z "${D2_RELEASE_CHECKSUM-}" ]; then
@@ -22,7 +26,7 @@ help() {
 
   cat <<EOF
 usage: $arg0 [-d|--dry-run] [--version vX.X.X] [--method detect] [--prefix path]
-  [--force] [--uninstall] [-x|--trace]
+  [--verify-provenance] [--force] [--uninstall] [-x|--trace]
 
 install.sh automates the installation of D2 onto your system. It currently only supports
 the installation of standalone releases from GitHub and via Homebrew on macOS. See the
@@ -41,6 +45,11 @@ Flags:
   Pass to have install.sh install the given version instead of the latest version.
   warn: The version may not be obeyed with package manager installations. Use
         --method=standalone to enforce the version.
+
+--verify-provenance
+  Select a standalone install and independently verify the signed build provenance on
+  this machine, even when the archive's verified SHA-256 is embedded in this installer.
+  Requires a release with signed provenance (v0.8.2 or later).
 
 --method [detect | standalone | homebrew ]
   Pass to control the method by which to install. Right now we only support standalone
@@ -112,6 +121,10 @@ main() {
         flag_nonemptyarg && shift "$FLAGSHIFT"
         VERSION=$FLAGARG
         ;;
+      verify-provenance)
+        flag_noarg && shift "$FLAGSHIFT"
+        VERIFY_PROVENANCE=1
+        ;;
       tala)
         shift "$FLAGSHIFT"
         TALA_REQUEST=1
@@ -162,6 +175,13 @@ For older releases, install the legacy plugin separately: https://github.com/ter
   mkdir -p "$CACHE_DIR"
   METHOD=${METHOD:-detect}
   INSTALL_DIR=$PREFIX/lib/d2
+
+  if [ -n "${VERIFY_PROVENANCE-}" ]; then
+    case "$METHOD" in
+      detect) METHOD=standalone ;;
+      homebrew) flag_errusage "--verify-provenance requires a standalone installation" ;;
+    esac
+  fi
 
   case $METHOD in
     detect)
@@ -281,7 +301,7 @@ install_d2_standalone() {
   legacy_release=
   case "$VERSION" in
     v0.0.1[23]|v0.1.[0-6]|v0.2.[0-6]|v0.3.0|v0.4.[0-2]|v0.5.[01]|v0.6.[0-9]|v0.7.[01])
-      if [ "$requested_version" = latest ] || [ "$REPO" != d2lang/d2 ]; then
+      if [ "$requested_version" = latest ] || [ "$REPO" != d2lang/d2 ] || [ -n "${VERIFY_PROVENANCE-}" ]; then
         echoerr "refusing to install $REPO $VERSION without signed build provenance"
         return 1
       fi
@@ -305,14 +325,17 @@ install_d2_standalone() {
   # Verify and extract the same private copy, even when another install updates the cache.
   stage=$(mktempd)
   staged_archive=$stage/$ARCHIVE
+  pinned_digest=$(release_checksums | awk -v name="$ARCHIVE" '$2 == name { print $1 }')
   fetch_release_asset \
-    "$REPO" "$VERSION" "$ARCHIVE" "$asset_url" "$CACHE_DIR/$ARCHIVE" "$staged_archive"
+    "$REPO" "$VERSION" "$ARCHIVE" "$asset_url" "$CACHE_DIR/$ARCHIVE" "$staged_archive" "$pinned_digest"
   if [ -n "$legacy_release" ]; then
     warn "$VERSION predates signed D2 archive provenance"
-  elif [ -n "${DRY_RUN-}" ]; then
-    log "would verify signed build provenance for $ARCHIVE before installation"
-  else
-    verify_archive_provenance "$stage" "$staged_archive"
+  elif [ -z "$pinned_digest" ] || [ -n "${VERIFY_PROVENANCE-}" ]; then
+    if [ -n "${DRY_RUN-}" ]; then
+      log "would verify signed build provenance for $ARCHIVE before installation"
+    else
+      verify_archive_provenance "$stage" "$staged_archive"
+    fi
   fi
 
   if [ -n "$INSTALLED_VERSION" ]; then

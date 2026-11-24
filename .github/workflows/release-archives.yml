@@ -28,6 +28,7 @@ jobs:
     if: github.event_name == 'push'
     permissions:
       actions: read
+      attestations: read
       contents: read
     uses: ./.github/workflows/ci.yml
 

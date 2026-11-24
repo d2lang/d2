@@ -15,7 +15,7 @@
 
 #### Improvements 🧹
 
-- The standalone installer verifies signed release provenance before extracting D2 or replacing an existing installation. [#315](https://github.com/d2lang/d2/issues/315)
+- Standalone installs check the archive against a SHA-256 verified during release review. Use `--verify-provenance` to also check the signed build provenance locally. [#315](https://github.com/d2lang/d2/issues/315)
 
 - cli: `--allow-local-files=false` (or `$D2_ALLOW_LOCAL_FILES=false`) denies every local-file access, so imports and local images fail instead of reading files on the host. Use it with the default network policy to render untrusted diagrams. [#3002](https://github.com/d2lang/d2/pull/3002)
 
