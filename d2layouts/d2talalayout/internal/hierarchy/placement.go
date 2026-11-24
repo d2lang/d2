@@ -434,7 +434,6 @@ func placeNodesByLevel(g *layoutgraph.Graph, byLevel map[int][]*placementNode, i
 		for _, node := range nodes {
 			yDiff := math.Ceil(center.Y - node.Center().Y)
 			node.Translate(0, yDiff)
-			moveBlockContents(g, node, 0, yDiff)
 		}
 	}
 }
@@ -541,13 +540,10 @@ func mirrorRankBlocks(g *layoutgraph.Graph, direction geo.Orientation) {
 	for _, block := range g.Nodes {
 		before := *block.TopLeft
 		block.Mirror(direction == geo.Left, direction == geo.Top)
-		moveBlockContents(g, block, block.TopLeft.X-before.X, block.TopLeft.Y-before.Y)
-	}
-}
-
-func moveBlockContents(g *layoutgraph.Graph, block *layoutgraph.Node, dx, dy float64) {
-	for _, child := range g.Containers[block] {
-		child.MoveWithChildren(dx, dy)
+		dx, dy := block.TopLeft.X-before.X, block.TopLeft.Y-before.Y
+		for _, child := range g.Containers[block] {
+			child.MoveWithChildren(dx, dy)
+		}
 	}
 }
 
