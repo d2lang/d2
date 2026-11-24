@@ -109,6 +109,14 @@ func swapEdgesOnSameSide(n *layoutgraph.Node, orientationToEdges map[geo.Orienta
 				return false, err
 			}
 		}
+		ordered, err := orderHierarchyFanPorts(n, o, edges, guard)
+		if err != nil {
+			return false, err
+		}
+		if ordered {
+			swapped = true
+			continue
+		}
 		for i := 0; i < len(edges)-1; i++ {
 			if err := guard.step(); err != nil {
 				return false, err

@@ -78,3 +78,27 @@ func TestInspectRejectsCancellationBeforeWork(t *testing.T) {
 		t.Fatalf("got %v, want cancellation", err)
 	}
 }
+
+func TestInteriorCrossingsDistinguishForksFromThroughCrossings(t *testing.T) {
+	a, b := geo.NewPoint(0, 0), geo.NewPoint(10, 0)
+	for _, tc := range []struct {
+		name     string
+		c, d     *geo.Point
+		interior bool
+	}{
+		{"crossing", geo.NewPoint(5, -10), geo.NewPoint(5, 10), true},
+		{"diagonal crossing", geo.NewPoint(1, -3), geo.NewPoint(9, 3), true},
+		{"fork", geo.NewPoint(0, -10), geo.NewPoint(0, 10), false},
+		{"shared end", geo.NewPoint(10, 0), geo.NewPoint(10, 10), false},
+		{"collinear overlap", geo.NewPoint(5, 0), geo.NewPoint(15, 0), false},
+		{"disjoint", geo.NewPoint(25, -10), geo.NewPoint(25, 10), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, forward := classifyCrossing(a, b, tc.c, tc.d)
+			_, reverse := classifyCrossing(tc.d, tc.c, b, a)
+			if forward != tc.interior || reverse != tc.interior {
+				t.Fatalf("segment interior intersection in forward/reversed order = %t/%t, want %t", forward, reverse, tc.interior)
+			}
+		})
+	}
+}

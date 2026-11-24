@@ -88,3 +88,77 @@ func TestLabelPlacementPreservesFixedEdgeLabelsAndReservesTheirSpace(t *testing.
 		}
 	}
 }
+
+func TestParallelLabelRepairKeepsCompletedPlacementWhenBudgetRunsOut(t *testing.T) {
+	newGraph := func() *layoutgraph.Graph {
+		graph := layoutgraph.NewGraph()
+		a := graph.AddNode(layoutgraph.NewNode(1, 160, 160))
+		b := graph.AddNode(layoutgraph.NewNode(2, 160, 160))
+		a.TopLeft = geo.NewPoint(0, 0)
+		b.TopLeft = geo.NewPoint(0, 319)
+		for i, x := range []float64{40, 80, 120} {
+			edge := graph.Connect(a, b)
+			edge.ID = layoutgraph.EntityID(10 + i)
+			edge.Points = []*geo.Point{geo.NewPoint(x, 160), geo.NewPoint(x, 319)}
+			edge.Label = &layoutgraph.Label{Text: "four lines", Width: 75, Height: 69, Position: label.Unset}
+		}
+		return graph
+	}
+	// Measure mandatory placement on the same routes so the test can interrupt
+	// the optional search without tying the budget to a particular work count.
+	graph := newGraph()
+	guard, err := newLabelPlacementWorkGuard(t.Context(), "test", maxLabelPlacementWorkUnits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := sortLabelPlacementEdges(graph.Edges, guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obstacles []*layoutgraph.Node
+	var greedy []edgeLabelLocation
+	hasCollision := false
+	for _, edge := range edges {
+		if err := guard.step(); err != nil {
+			t.Fatal(err)
+		}
+		best, err := findBestEdgeLabelPosition(edge, graph, obstacles, nil, nil, guard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obstacles = append(obstacles, best.box)
+		greedy = append(greedy, best.edgeLabelLocation)
+		hasCollision = hasCollision || best.conflicts != 0
+	}
+	if !hasCollision {
+		t.Fatal("fixture must require moving an earlier label")
+	}
+	limited := newGraph()
+	limitedGuard, err := newLabelPlacementWorkGuard(t.Context(), "test", guard.used+10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := placeMovableEdgeLabels(limited, limited.Edges, nil, nil, limitedGuard); err != nil {
+		t.Fatal(err)
+	}
+	for i, edge := range limited.Edges {
+		if got := locationOf(edge); got != greedy[i] {
+			t.Errorf("edge %d changed to %+v during abandoned repair, want %+v", i, got, greedy[i])
+		}
+	}
+	// With room for repair, the incremental router also clears each label.
+	rerouted := newGraph()
+	if err := PlaceNewEdges(t.Context(), rerouted, rerouted.Edges); err != nil {
+		t.Fatal(err)
+	}
+	obstacles = append(obstacles[:0], rerouted.Nodes...)
+	for _, edge := range rerouted.Edges {
+		box := refinementLabelBox(edge)
+		for _, obstacle := range obstacles {
+			if box.DoesOverlapExact(obstacle) {
+				t.Fatalf("rerouted edge %d label overlaps obstacle at %v", edge.ID, *obstacle.TopLeft)
+			}
+		}
+		obstacles = append(obstacles, box)
+	}
+}

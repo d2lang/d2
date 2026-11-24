@@ -13,6 +13,8 @@ func TestHierarchyScopePreservesDirectedRanks(t *testing.T) {
 		name, source string
 		rightward    bool
 	}{
+		{"automatic split and rejoin", "direction: right; Start -> A -> Finish; Start -> B -> Finish; Start -> C -> Finish; Start -> D -> Finish", true},
+		{"nested automatic split and rejoin", "group: {direction: up; Start -> A -> Finish; Start -> B -> Finish; Start -> C -> Finish; Start -> D -> Finish}", false},
 		{"nested endpoints", "group: {shape: hierarchy; direction: up; A.a -> B.b -> C.c}", false},
 		{"branch attached to a diamond", "shape: hierarchy; direction: right; a -> b -> d; a -> c -> d; b -> e; e -> f; e -> g", true},
 		{"container and child as branch sources", "direction: up; src.child; src -> a -> dst; src.child -> b -> dst", false},

@@ -70,7 +70,7 @@ func TestDAGPreparationAndBrandesKopfMidLoopCancellation(t *testing.T) {
 	)
 	requireHierarchyCanceledAt(t, err, "MakeSimpleDAG")
 
-	_, err = createAlignmentNodes(
+	_, err = (Placement{}).createAlignmentNodes(
 		&cancelHierarchyAfterErrChecks{Context: context.Background(), remaining: 1},
 		byLevel,
 		geo.Top,

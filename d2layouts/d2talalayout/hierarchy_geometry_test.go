@@ -2,6 +2,7 @@ package d2talalayout_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -116,5 +117,102 @@ func TestReversedHierarchyPreservesLabeledBlockInteriors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCompactHierarchyBranchSpacing(t *testing.T) {
+	for _, seeds := range []string{"1", "1;2;3"} {
+		for _, direction := range []string{"down", "right"} {
+			t.Run(direction+"/"+seeds, func(t *testing.T) {
+				prefix := fmt.Sprintf("vars: {d2-config: {data: {tala-seeds: [%s]}}}\nshape: hierarchy\ndirection: %s\n", seeds, direction)
+				const dims = "*.width: 96\n*.height: 52\n"
+				nodes := hierarchyGeometry(t, prefix+"root -> a -> end; root -> b -> end; root -> c -> end; root -> d -> end\n"+dims)
+				cross := func(s d2target.Shape) (int, int) {
+					if direction == "down" {
+						return s.Pos.X, s.Width
+					}
+					return s.Pos.Y, s.Height
+				}
+				var starts []int
+				var size int
+				for _, id := range []string{"a", "b", "c", "d"} {
+					start, n := cross(nodes[id])
+					size = n
+					starts = append(starts, start)
+				}
+				slices.Sort(starts)
+				for i := 1; i < len(starts); i++ {
+					if gap := starts[i] - starts[i-1] - size; gap != 60 {
+						t.Fatalf("sibling gap %d, want 60", gap)
+					}
+				}
+
+				nodes = hierarchyGeometry(t, prefix+"root -> a; root -> b; root -> c; a -> a1; a -> a2; b -> b1; b -> b2; c -> c1; c -> c2\n"+dims)
+				center := func(id string) int { start, size := cross(nodes[id]); return 2*start + size }
+				for _, id := range []string{"a", "b", "c"} {
+					if 2*center(id) != center(id+"1")+center(id+"2") {
+						t.Errorf("parent %s is off-center", id)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSingleEdgeRankClearance(t *testing.T) {
+	for _, row := range []struct {
+		edges          string
+		minGap, maxGap int
+	}{
+		{"a -> b -> c", 60, 60}, {"a -> b; a -> b; b -> c", 90, 90}, {`a -> b: "four\nlines\nof\nlabel"; b -> c`, 110, 300},
+	} {
+		t.Run(row.edges, func(t *testing.T) {
+			nodes := hierarchyGeometry(t, "shape: hierarchy\ndirection: down\n"+row.edges)
+			a, b := nodes["a"], nodes["b"]
+			gap := b.Pos.Y - a.Pos.Y - a.Height
+			if gap < row.minGap || gap > row.maxGap {
+				t.Fatalf("a→b gap %d, want [%d,%d]", gap, row.minGap, row.maxGap)
+			}
+		})
+	}
+}
+
+// Shrinking the outer row margin saves two bends in this drawing, at the cost
+// of routing the bypass n0→n4 across n2→n3. The two lanes must stay separate.
+func TestCompactHierarchyPreservesCrossingFreeRoutes(t *testing.T) {
+	const source = `shape: hierarchy
+ direction: right
+ vars: {d2-config: {data: {tala-seeds: [1;2;3]}}}
+ n0; n1; n2; n3; n4; n5; n6; n7; n8
+ n0 -> n1
+ n1 -> n2: upstream session restart
+ n2 -> n3 -> n4 -> n5
+ n5 -> n6: queue replication and synchronous delivery
+ n7 -> n8
+ n0 -> n7
+ n5 -> n8
+ n3 -> n8
+ n3 -> n7
+ n0 -> n4: ack
+ n2 -> n4
+ `
+	d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	shapes := make(map[string]d2target.Shape, len(d.Shapes))
+	for _, s := range d.Shapes {
+		shapes[s.ID] = s
+	}
+	var lanes []d2target.Connection
+	for _, e := range d.Connections {
+		if (e.Src == "n0" && e.Dst == "n4") || (e.Src == "n2" && e.Dst == "n3") {
+			lanes = append(lanes, e)
+		}
+	}
+	if len(lanes) != 2 {
+		t.Fatalf("got %d test lanes, want 2", len(lanes))
+	}
+	for _, gaps := range d2target.ConnectionCrossings(lanes, shapes, false, nil) {
+		if len(gaps) > 0 {
+			t.Fatal("the bypass crosses n2→n3")
+		}
 	}
 }

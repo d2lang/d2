@@ -26,7 +26,8 @@ const maxGraphSize = limits.MaxGraphSize
 
 // LayoutOptions configures one deterministic layout attempt.
 type LayoutOptions struct {
-	Seed int64
+	Seed                    int64
+	CompactHierarchySpacing bool
 }
 
 type pipelineStage struct {
@@ -61,17 +62,17 @@ func newRoutingSnapshot(ctx context.Context, ovg *routing.OVG, g *layoutgraph.Gr
 }
 
 type pipeline struct {
-	graph                    *layoutgraph.Graph
-	seed                     int64
-	random                   *rand.Rand
-	hierarchyPlacementRandom *rand.Rand
-	stages                   []pipelineStage
-	storeSnapshots           bool
-	snapshots                []*routingSnapshot
-	stageDurations           []time.Duration
-	forceReroute             bool
-	edgeRoutingComplete      bool
-	alignAxesNeeded          bool
+	graph               *layoutgraph.Graph
+	seed                int64
+	random              *rand.Rand
+	hierarchyPlacement  hierarchy.Placement
+	stages              []pipelineStage
+	storeSnapshots      bool
+	snapshots           []*routingSnapshot
+	stageDurations      []time.Duration
+	forceReroute        bool
+	edgeRoutingComplete bool
+	alignAxesNeeded     bool
 }
 
 // defaultPipelineStages is immutable after initialization. Tests that wrap or
@@ -139,12 +140,12 @@ func (p *pipeline) shortcutEdgeRoutes(ctx context.Context) error {
 // newPipeline initializes one deterministic layout pipeline.
 func newPipeline(graph *layoutgraph.Graph, randSeed int64, storeSnapshots bool) *pipeline {
 	return &pipeline{
-		graph:                    graph,
-		seed:                     randSeed,
-		hierarchyPlacementRandom: rand.New(rand.NewSource(randSeed)),
-		random:                   rand.New(rand.NewSource(randSeed)),
-		storeSnapshots:           storeSnapshots,
-		alignAxesNeeded:          true,
+		graph:              graph,
+		seed:               randSeed,
+		hierarchyPlacement: hierarchy.Placement{Random: rand.New(rand.NewSource(randSeed))},
+		random:             rand.New(rand.NewSource(randSeed)),
+		storeSnapshots:     storeSnapshots,
+		alignAxesNeeded:    true,
 	}
 }
 
@@ -171,7 +172,7 @@ func (p *pipeline) preprocessHierarchies(ctx context.Context) error {
 		return err
 	}
 
-	if err := hierarchy.Place(ctx, p.graph, nil, p.hierarchyPlacementRandom); err != nil {
+	if err := p.hierarchyPlacement.Place(ctx, p.graph, nil); err != nil {
 		return err
 	}
 
@@ -511,6 +512,7 @@ func runLayout(ctx context.Context, graph *layoutgraph.Graph, options LayoutOpti
 	}
 	defer cancelWork()
 	pipeline := newPipeline(graph, options.Seed, instrumentation.storeSnapshots)
+	pipeline.hierarchyPlacement.CompactSpacing = options.CompactHierarchySpacing
 	if instrumentation.measureStageDurations {
 		pipeline.enableStageTiming()
 	}

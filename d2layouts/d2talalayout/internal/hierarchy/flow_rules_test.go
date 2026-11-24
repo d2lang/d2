@@ -214,3 +214,35 @@ func reverseAuthoredEndpoints(g *layoutgraph.Graph) {
 		e.TargetArrowhead = layoutgraph.NoArrowhead
 	}
 }
+
+func TestAutomaticSplitJoinWithDirection(t *testing.T) {
+	edges := [][2]int{{0, 1}, {0, 2}, {0, 3}, {0, 4}, {1, 5}, {2, 5}, {3, 5}, {4, 5}}
+	group := layoutgraph.NewNode(20, 50, 50)
+	for _, tc := range []struct {
+		name                  string
+		owner, directionScope *layoutgraph.Node
+		height                float64
+		want                  bool
+	}{
+		{"root direction", nil, nil, 60, true},
+		{"inner direction", group, group, 60, true},
+		{"outer direction only", group, nil, 60, false},
+		{"rank exceeds maximum height", nil, nil, 8000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := flowRuleGraph(6, edges)
+			for _, node := range g.Nodes {
+				node.Height = tc.height
+				g.AddNodeToContainer(tc.owner, node)
+			}
+			g.Directions[tc.directionScope] = geo.Left
+			h, err := build(t.Context(), g, false, Candidates(g), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := h != nil; got != tc.want {
+				t.Errorf("hierarchy selected = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -60,6 +60,7 @@ func comparePenalty(left, right float64) int {
 
 // seedResult is a successfully validated and scored local layout attempt.
 type seedResult struct {
+	seed          int64
 	bindings      translation
 	graph         *layoutgraph.Graph
 	sequenceEdges map[layoutgraph.EntityID]struct{}

@@ -102,7 +102,19 @@ func (below *placementNode) connect(above *placementNode) {
 	above.belows[below] = struct{}{}
 }
 
-func Place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, randGenerator *rand.Rand) (err error) {
+// Placement configures coordinate assignment for one hierarchy attempt.
+// CompactSpacing removes the outer rank margin and shortens boundaries with
+// one unlabeled edge. Both placements preserve padding around real containers.
+type Placement struct {
+	Random         *rand.Rand
+	CompactSpacing bool
+}
+
+func Place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, random *rand.Rand) error {
+	return (Placement{Random: random}).Place(ctx, g, root)
+}
+
+func (p Placement) Place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node) (err error) {
 	if err := layoutgraph.Validate(ctx, "PlaceHierarchies", g); err != nil {
 		return err
 	}
@@ -136,7 +148,7 @@ func Place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, ra
 	}
 	defer restoreNears()
 
-	if err := place(ctx, g, root, randGenerator); err != nil {
+	if err := p.place(ctx, g, root); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -146,7 +158,7 @@ func Place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, ra
 	return nil
 }
 
-func place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, randGenerator *rand.Rand) error {
+func (p Placement) place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node) error {
 
 	hGraph := layoutgraph.NewGraph()
 	hGraph.CopyEntitiesFrom(g)
@@ -170,7 +182,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, ra
 
 	for _, child := range g.Containers[root] {
 		if child.Hierarchy == nil && child.IsContainer() {
-			if err := place(ctx, g, child, randGenerator); err != nil {
+			if err := p.place(ctx, g, child); err != nil {
 				return err
 			}
 		}
@@ -187,7 +199,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, ra
 		subgraph.ComputeCellSize()
 		layoutgraph.Nodes(g.Nodes).SetGraphReference(subgraph)
 		edgeAbductions = subgraph.RestoreEdgeAbductions(edgeAbductions)
-		if err := placeNodesInHierarchy(ctx, subgraph, randGenerator); err != nil {
+		if err := p.placeNodesInHierarchy(ctx, subgraph); err != nil {
 			return err
 		}
 	}
@@ -197,7 +209,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, ra
 	return nil
 }
 
-func placeNodesInHierarchy(ctx context.Context, g *layoutgraph.Graph, rand *rand.Rand) (err error) {
+func (p Placement) placeNodesInHierarchy(ctx context.Context, g *layoutgraph.Graph) (err error) {
 	// A hierarchy may already be attached by an earlier stage. Never let derived
 	// state override an absolute constraint on a member, including a nested
 	// container member.
@@ -229,16 +241,17 @@ func placeNodesInHierarchy(ctx context.Context, g *layoutgraph.Graph, rand *rand
 		}
 	}()
 
-	placementNodes := createPlacementNodes(g, g.Nodes, rand)
+	placementNodes := createPlacementNodes(g, g.Nodes, p.Random)
 	connectPlacementNodes(g, placementNodes)
 	byLevel := groupPlacementNodesByLevel(placementNodes)
+	orderEquivalentBranches(g, byLevel)
 	initializeRanks(byLevel)
 	breakLongConnections(placementNodes, byLevel)
 	minimizeHierarchyCrossings(byLevel)
 	if err := globalSifting(byLevel); err != nil {
 		return err
 	}
-	if err := placeAndAlignLevels(ctx, g, byLevel); err != nil {
+	if err := p.placeAndAlignLevels(ctx, g, byLevel); err != nil {
 		return err
 	}
 	direction := g.Nodes[0].ContainerDirection()
@@ -249,18 +262,18 @@ func placeNodesInHierarchy(ctx context.Context, g *layoutgraph.Graph, rand *rand
 	return nil
 }
 
-func placeAndAlignLevels(ctx context.Context, g *layoutgraph.Graph, byLevel map[int][]*placementNode) error {
+func (p Placement) placeAndAlignLevels(ctx context.Context, g *layoutgraph.Graph, byLevel map[int][]*placementNode) error {
 	isHorizontal := IsHorizontal(g.Nodes)
 	if isHorizontal {
 		transpose(g)
 		defer transpose(g)
 	}
-	placeNodesByLevel(g, byLevel, isHorizontal)
+	p.placeNodesByLevel(g, byLevel, isHorizontal)
 	for level := 0; level < len(byLevel); level++ {
 		byLevel[level] = removeTableColumnNodes(byLevel[level])
 		computeLevelRanks(byLevel[level])
 	}
-	return alignHierarchy(ctx, byLevel)
+	return p.alignHierarchy(ctx, byLevel)
 }
 
 // create placement nodes recursively and set the container whenever required
@@ -408,7 +421,7 @@ func removeTableColumnNodes(nodes []*placementNode) []*placementNode {
 	return newNodes
 }
 
-func placeNodesByLevel(g *layoutgraph.Graph, byLevel map[int][]*placementNode, isHorizontal bool) {
+func (p Placement) placeNodesByLevel(g *layoutgraph.Graph, byLevel map[int][]*placementNode, isHorizontal bool) {
 	yOffset := 0.0
 	for i := 0; i < len(byLevel); i++ {
 		var nodes []*layoutgraph.Node
@@ -425,7 +438,7 @@ func placeNodesByLevel(g *layoutgraph.Graph, byLevel map[int][]*placementNode, i
 				xOffset += siblingSpacing
 			}
 		}
-		distanceToNextLevel := minimumDistanceToNextLevel(byLevel[i], isHorizontal)
+		distanceToNextLevel := p.minimumDistanceToNextLevel(byLevel[i], isHorizontal)
 		yOffset += math.Ceil(levelHeight + distanceToNextLevel + 2*layoutgraph.MinPortClearance)
 
 		// move to center
@@ -456,19 +469,28 @@ func placeDescendants(g *layoutgraph.Graph, root *placementNode) {
 }
 
 // minimumDistanceToNextLevel reserves room for crossings and labels between adjacent ranks.
-func minimumDistanceToNextLevel(levelNodes []*placementNode, isHorizontal bool) float64 {
+func (p Placement) minimumDistanceToNextLevel(levelNodes []*placementNode, isHorizontal bool) float64 {
 	var scratch crossingScratch
 	segments := scratch.crossLevelSegments(levelNodes, false, true)
 	crossings := scratch.countCrossings(segments)
 	crossingsDistance := float64(crossings) * crossingSpacing
 
+	nextLevelEdges := 0
 	maxLabelSize := 0.
 	iterAllDescendants(levelNodes, func(node *placementNode) {
 		if node.isDummy {
 			return
 		}
 		for _, edge := range node.graphNode.Edges {
-			if edge.Label == nil || node.graphNode.Adjacent(edge).HierarchyLevel() != node.level+1 {
+			if edge.Label == nil && !p.CompactSpacing {
+				continue
+			}
+			adjacent := node.graphNode.Adjacent(edge)
+			if adjacent.Hierarchy == nil || adjacent.HierarchyLevel() != node.level+1 {
+				continue
+			}
+			nextLevelEdges++
+			if edge.Label == nil {
 				continue
 			}
 			if isHorizontal {
@@ -478,6 +500,10 @@ func minimumDistanceToNextLevel(levelNodes []*placementNode, isHorizontal bool) 
 			}
 		}
 	})
+	// Parallel edges share a crossing segment, but still need separate routing lanes.
+	if p.CompactSpacing && len(segments) == 1 && nextLevelEdges == 1 && maxLabelSize == 0 {
+		return layoutgraph.ConnectedNodeGap - 2*layoutgraph.MinPortClearance
+	}
 	// Routes can share space at crossings, but the label needs its full extent.
 	return math.Round(math.Max(math.Min(crossingsDistance, parentSpacing), maxLabelSize+crossingSpacing))
 }

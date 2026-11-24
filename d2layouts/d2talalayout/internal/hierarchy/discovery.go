@@ -277,23 +277,36 @@ func isValid(h *layoutgraph.Hierarchy, g *layoutgraph.Graph, edgeAbductions []*l
 		}
 	}
 
-	return !tooWide && (!tooTall || branchedWorkflow) && edgesFlowInOneDirection && !hasDenselyConnectedNode && !is1N1(h, edgeAbductions)
+	if tooWide || (tooTall && !branchedWorkflow) || !edgesFlowInOneDirection || hasDenselyConnectedNode {
+		return false
+	}
+	if !is1N1(h, edgeAbductions) {
+		return true
+	}
+	// A cluster can rotate a split and rejoin onto a different axis. When
+	// the author specifies a direction in this scope, preserve the flow of
+	// its directed branches. Keep ordinary, unconstrained diamonds flexible.
+	_, explicitDirection := g.Directions[g.Nodes[0].Container]
+	return explicitDirection && branchedWorkflow && minimumWorkflowExtentFits(h, g)
 }
 
 // minimumWorkflowExtentFits screens current rank dimensions with the minimum
 // placement gaps. Container resizing can change these dimensions, and later
-// padding can add space, so this does not guarantee that a layout will fit. It
-// is called only for the bounded workflow exception, never for authored or
-// ordinary hierarchies.
+// padding can add space. Only bounded automatic workflows use this screen.
 func minimumWorkflowExtentFits(h *layoutgraph.Hierarchy, g *layoutgraph.Graph) bool {
 	horizontal := IsHorizontal(g.Nodes)
 	levelSize := make([]float64, h.LevelCount)
+	levelBreadth := make([]float64, h.LevelCount)
 	for node, level := range h.Levels() {
-		size := node.Height
+		size, breadth := node.Height, node.Width
 		if horizontal {
-			size = node.Width
+			size, breadth = node.Width, node.Height
 		}
 		levelSize[level] = math.Max(levelSize[level], size)
+		levelBreadth[level] += math.Ceil(breadth) + siblingSpacing
+		if levelBreadth[level]-siblingSpacing > limits.MaxGraphSize {
+			return false
+		}
 	}
 	extent := float64(h.LevelCount-1) * (crossingSpacing + 2*layoutgraph.MinPortClearance)
 	for _, size := range levelSize {

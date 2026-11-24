@@ -25,7 +25,7 @@ func mustCreateAlignmentNodes(
 	vertical, horizontal geo.Orientation,
 ) []*alignmentNode {
 	t.Helper()
-	nodes, err := createAlignmentNodes(ctx, byLevel, vertical, horizontal)
+	nodes, err := (Placement{}).createAlignmentNodes(ctx, byLevel, vertical, horizontal)
 	require.NoError(t, err)
 	return nodes
 }
