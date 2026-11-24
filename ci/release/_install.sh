@@ -182,6 +182,8 @@ For older releases, install the legacy plugin separately: https://github.com/ter
   mkdir -p "$CACHE_DIR"
   METHOD=${METHOD:-detect}
   INSTALL_DIR=$PREFIX/lib/d2
+  standalone_binary=$PREFIX/bin/d2
+  if [ "$OS" = windows ]; then standalone_binary=$standalone_binary.exe; fi
 
   if [ -z "${UNINSTALL-}" ] && [ -n "${VERIFY_PROVENANCE-}" ]; then
     case "$METHOD" in
@@ -316,14 +318,12 @@ install_d2_standalone() {
       ;;
   esac
 
-  INSTALLED_VERSION=
-  if command -v d2 >/dev/null; then
-    INSTALLED_VERSION="$(d2 --version)"
-    if [ ! "${FORCE-}" -a "$VERSION" = "$INSTALLED_VERSION" ]; then
-      log "skipping installation as d2 $VERSION is already installed."
-      return 0
-    fi
+  if [ -z "${FORCE-}" ] && [ -x "$standalone_binary" ] && [ -f "$standalone_binary" ] &&
+    [ "$("$standalone_binary" --version)" = "$VERSION" ]; then
+    log "skipping installation as d2 $VERSION is already installed in $PREFIX."
+    return 0
   fi
+  read_standalone_install
 
   ARCHIVE="d2-$VERSION-$OS-$ARCH.tar.gz"
   log "installing standalone release $ARCHIVE from github"
@@ -354,6 +354,14 @@ install_d2_standalone() {
   # Older archive recipes require a prefix without spaces. The private prefix
   # is a sibling of the extracted tree, including when TMPDIR contains spaces.
   (cd "$stage/d2-$VERSION" && make install PREFIX=../prefix)
+  # Publication and uninstall own these two paths. A newer release recipe
+  # which installs additional files requires an installer that can manage them.
+  extra=$(cd "$stage/prefix" && find . ! -type d ! -path "./bin/${standalone_binary##*/}" ! -path './share/man/man1/d2.1' -print)
+  if [ -n "$extra" ]; then
+    echoerr "Release $VERSION installs additional files. Update install.sh to install it:"
+    printf '%s\n' "$extra" >&2
+    return 1
+  fi
   update_standalone_prefix install
 }
 
@@ -392,17 +400,34 @@ install_d2_brew() {
 }
 
 uninstall() {
-  if ! command -v d2 >/dev/null; then
+  INSTALLED_VERSION=
+  if [ "$METHOD" = standalone ]; then
+    read_standalone_install
+  elif command -v d2 >/dev/null; then
+    INSTALLED_VERSION=$(d2 --version)
+  fi
+  if [ -z "$INSTALLED_VERSION" ]; then
     warn "no version of d2 installed"
     return 0
   fi
 
-  INSTALLED_VERSION="$(d2 --version)"
   header "uninstalling d2-$INSTALLED_VERSION"
   case $METHOD in
     standalone) uninstall_d2_standalone ;;
     homebrew) uninstall_d2_brew ;;
   esac
+}
+
+read_standalone_install() {
+  INSTALLED_VERSION=
+  expected_binary=
+  if [ -f "$standalone_binary" ]; then
+    # Snapshot first so a concurrent rename cannot pair an old version with a new checksum.
+    expected_binary=$(cksum < "$standalone_binary")
+    if [ -x "$standalone_binary" ]; then
+      INSTALLED_VERSION=$("$standalone_binary" --version) || INSTALLED_VERSION=
+    fi
+  fi
 }
 
 uninstall_d2_standalone() {
@@ -426,11 +451,11 @@ uninstall_d2_standalone() {
 update_standalone_prefix() (
   ensure_prefix_sh_c
   action=$1
-  export action PREFIX OS INSTALLED_VERSION
+  export action PREFIX OS INSTALLED_VERSION expected_binary
   export stage="${stage-}" VERSION="${VERSION-}"
-  "$sh_c" 'sh -s -- "$action" "$PREFIX" "$OS" "$INSTALLED_VERSION" "$stage" "$VERSION"' <<'PUBLISH'
+  "$sh_c" 'sh -s -- "$action" "$PREFIX" "$OS" "$INSTALLED_VERSION" "$stage" "$VERSION" "$expected_binary"' <<'PUBLISH'
 set -eu
-action=$1 prefix=$2 os=$3 previous=$4 stage=$5 version=$6
+action=$1 prefix=$2 os=$3 previous=$4 stage=$5 version=$6 expected_binary=$7
 case "$prefix" in /*|[A-Za-z]:/*) ;; *) prefix=$PWD/$prefix ;; esac
 lib=$prefix/lib/d2
 lock=$lib/.install-lock
@@ -479,14 +504,19 @@ finish() {
 trap finish EXIT
 trap 'exit 1' HUP INT TERM
 
+current_binary=
+if [ -f "$bin" ]; then current_binary=$(cksum < "$bin"); fi
+if [ "$current_binary" != "$expected_binary" ]; then
+  echo >&2 "The D2 executable in $prefix changed during this operation. Rerun the installer."
+  exit 1
+fi
+
 if [ "$action" = uninstall ]; then
-  (
-    cd "$lib/d2-$previous"
-    # Shipped recipes support a relative prefix even if the real path contains spaces.
-    uninstall_prefix=$prefix
-    if [ "$(cd ../../.. && pwd -P)" = "$(cd "$prefix" && pwd -P)" ]; then uninstall_prefix=../../..; fi
-    make uninstall PREFIX="$uninstall_prefix"
-  )
+  if [ ! -d "$lib/d2-$previous" ]; then
+    echo >&2 "Missing standalone release directory $lib/d2-$previous"
+    exit 1
+  fi
+  rm -f "$man" "$bin"
   rm -rf "$lib/d2-$previous"
   exit
 fi

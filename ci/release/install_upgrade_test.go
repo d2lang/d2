@@ -20,16 +20,28 @@ func TestStandaloneUpgradePreservesWorkingInstallation(t *testing.T) {
 		name, version string
 		force         bool
 		failPublish   bool
+		extraFile     bool
 	}{
 		{name: "upgrade", version: "v0.7.1"},
 		{name: "forced_reinstall", version: oldVersion, force: true},
 		{name: "upgrade_publish_fails", version: "v0.7.1", failPublish: true},
 		{name: "forced_reinstall_publish_fails", version: oldVersion, force: true, failPublish: true},
+		{name: "extra_staged_file", version: "v0.7.1", extraFile: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			temp := t.TempDir()
-			prefix := filepath.Join(temp, "prefix")
+			prefix := filepath.Join(temp, "prefix with spaces")
+			library := filepath.Join(temp, "release volume", "lib")
+			if err := os.Mkdir(prefix, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(library, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(library, filepath.Join(prefix, "lib")); err != nil {
+				t.Fatal(err)
+			}
 			cache := filepath.Join(temp, "cache")
 			tools := filepath.Join(temp, "tools")
 			if err := os.Mkdir(tools, 0o755); err != nil {
@@ -50,7 +62,7 @@ exec /bin/mv "$@"
 				t.Fatal(err)
 			}
 
-			// Use the release Makefile and its install/uninstall recipes. The archive
+			// Use the release Makefile and its install recipe. The archive
 			// is in the cache and fakeReleaseCurl supplies its release metadata.
 			archiveEnv := func(version, revision string) []string {
 				t.Helper()
@@ -80,6 +92,10 @@ exec /bin/mv "$@"
 				body = append(body, `
 if [ -n "${FAIL_MARKER-}" ] && [ ! -f "$FAIL_MARKER" ]; then
   touch "$FAIL_MARKER"
+  if [ -n "${EXTRA_FILE-}" ]; then
+    touch "$PREFIX/bin/d2-helper"
+    exit 0
+  fi
   exit 71
 fi
 `...)
@@ -140,12 +156,18 @@ fi
 			}
 			marker := filepath.Join(temp, "failed-install")
 			failureEnv := []string{"FAIL_MARKER=" + marker}
+			if tc.extraFile {
+				failureEnv = append(failureEnv, "EXTRA_FILE=1")
+			}
 			if tc.failPublish {
 				failureEnv = []string{"PUBLISH_DEST=" + filepath.Join(prefix, "bin/d2"), "PUBLISH_MARKER=" + marker}
 			}
 			output, err := run(append(env, failureEnv...), args...)
 			if err == nil {
 				t.Fatalf("expected failed install:\n%s", output)
+			}
+			if tc.extraFile && !strings.Contains(output, "./bin/d2-helper") {
+				t.Fatalf("missing diagnostic for the additional staged file:\n%s", output)
 			}
 			if _, err := os.Stat(marker); err != nil {
 				t.Fatalf("never reached the injected install failure: %v\n%s", err, output)
