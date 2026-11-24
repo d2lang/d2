@@ -68,6 +68,8 @@
 
 #### Bugfixes ⛑️
 
+- Standalone upgrades and forced reinstalls preserve the working installation if the replacement fails. The installer rejects install-only flags with `--uninstall` and falls back to the GitHub API when the latest-release redirect fails. [#84](https://github.com/d2lang/d2/issues/84)
+
 - TALA keeps hierarchy nodes and containers separated, preserves directed dependencies when orienting cycles and undirected links, and respects nested directions, container dimensions, edge labels, and proximity hints.
 
 - Windows: resolve nested imports relative to the importing diagram, including on UNC shares. [#2642](https://github.com/d2lang/d2/issues/2642)
