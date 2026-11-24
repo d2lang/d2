@@ -15,7 +15,11 @@ type branchConnection struct {
 	hub                      *layoutgraph.Node
 	fromBranch               bool
 	sourceArrow, targetArrow layoutgraph.Arrowhead
-	curve                    bool
+	curve, reversed          bool
+}
+
+type branchEdgePresentation struct {
+	decorated, reversed bool
 }
 
 type branchSlotKey struct {
@@ -53,15 +57,16 @@ func orderEquivalentBranchSlots(ctx context.Context, source *d2graph.Graph, resu
 	if len(members) < 3 {
 		return nil
 	}
-	// Connection icons are rendered by D2 and do not appear in TALA's
-	// routing graph. Keep their routes with the original slot.
-	decorated := make(map[layoutgraph.EntityID]bool)
+	// D2 draws connection icons and restores authored path direction on export.
+	// Reversing SVG path traversal can change the shape of a rounded corner.
+	presentation := make(map[layoutgraph.EntityID]branchEdgePresentation)
 	for _, edge := range source.Edges {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if edge.Icon != nil || edge.ZIndex != 0 {
-			decorated[result.bindings.edgeIDs[edge]] = true
+		flags := branchEdgePresentation{decorated: edge.Icon != nil || edge.ZIndex != 0, reversed: edge.SrcArrow && !edge.DstArrow}
+		if flags.decorated || flags.reversed {
+			presentation[result.bindings.edgeIDs[edge]] = flags
 		}
 	}
 	groups := make(map[branchSlotKey][]branchSlot)
@@ -76,7 +81,7 @@ func orderEquivalentBranchSlots(ctx context.Context, source *d2graph.Graph, resu
 			obj.Style.DoubleBorder != nil || obj.Style.Shadow != nil {
 			continue
 		}
-		key, slot, ok := equivalentBranchSlot(n, decorated)
+		key, slot, ok := equivalentBranchSlot(n, presentation)
 		if ok {
 			key.hasLink = obj.Link != nil && obj.Link.Value != ""
 			key.hasTooltip = obj.Tooltip != nil && obj.Tooltip.Value != ""
@@ -123,7 +128,7 @@ func orderEquivalentBranchSlots(ctx context.Context, source *d2graph.Graph, resu
 	return ctx.Err()
 }
 
-func equivalentBranchSlot(n *layoutgraph.Node, decorated map[layoutgraph.EntityID]bool) (branchSlotKey, branchSlot, bool) {
+func equivalentBranchSlot(n *layoutgraph.Node, presentation map[layoutgraph.EntityID]branchEdgePresentation) (branchSlotKey, branchSlot, bool) {
 	key := branchSlotKey{}
 	slot := branchSlot{node: n, position: n.TopLeft}
 	if len(n.Edges) < 1 || len(n.Edges) > 2 || n.IsContainer() || n.IsTable() || n.IsClass() ||
@@ -145,7 +150,8 @@ func equivalentBranchSlot(n *layoutgraph.Node, decorated map[layoutgraph.EntityI
 	}
 	for _, edge := range n.Edges {
 		hub := n.Adjacent(edge)
-		if decorated[edge.ID] || hub.Hierarchy != n.Hierarchy || edge.Label != nil || edge.HasTableColumn() ||
+		flags := presentation[edge.ID]
+		if flags.decorated || hub.Hierarchy != n.Hierarchy || edge.Label != nil || edge.HasTableColumn() ||
 			edge.SourceArrowheadLabel != nil || edge.TargetArrowheadLabel != nil || edge.IsInvisible ||
 			edge.Style.StrokeWidth != nil || edge.Style.BorderRadius != nil ||
 			len(edge.Points) < 2 || hub.HierarchyLevel() == key.level {
@@ -160,7 +166,7 @@ func equivalentBranchSlot(n *layoutgraph.Node, decorated map[layoutgraph.EntityI
 		}
 		key.connections[i] = branchConnection{
 			hub: hub, fromBranch: edge.From == n, sourceArrow: edge.SourceArrowhead,
-			targetArrow: edge.TargetArrowhead, curve: edge.IsCurve,
+			targetArrow: edge.TargetArrowhead, curve: edge.IsCurve, reversed: flags.reversed,
 		}
 		slot.edges[i], slot.routes[i] = edge, edge.Points
 	}
