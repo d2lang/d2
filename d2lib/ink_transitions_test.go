@@ -134,6 +134,18 @@ steps: {
 	}
 }
 
+func TestRetractingStrikeMeasuresTheDestinationFont(t *testing.T) {
+	planner := labelInkPlanner{board: d2target.NewDiagram()}
+	old := d2target.Text{Label: "iii~~WWW~~", Language: "markdown", FontSize: 16}
+	next := d2target.Text{Label: "iiiWWW", FontSize: 16}
+	regular := planner.plan(old, next).plainRanges
+	next.FontFamily = "mono"
+	mono := planner.plan(old, next).plainRanges
+	if len(regular) != 1 || len(mono) != 1 || regular[0][0] >= .35 || mono[0][0] < .49 || mono[0][0] > .51 {
+		t.Fatalf("struck word offsets for regular %v and mono %v", regular, mono)
+	}
+}
+
 func TestInkComposesWithGridAndMarkdown(t *testing.T) {
 	const source = `vars: {d2-config: {sketch: true; animate-interval: 300ms; animate-duration: 240ms}}
 grid-columns: 2

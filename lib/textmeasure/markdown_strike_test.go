@@ -47,6 +47,9 @@ func TestStrikeAdvances(t *testing.T) {
 	if got := r.StrikeAdvances("iiiWWW", [][2]int{{1, 2}}, d2fonts.Font{}); len(got) != 0 {
 		t.Errorf("absent font produced advances %v", got)
 	}
+	if got := r.StrikeAdvances("é", [][2]int{{0, 1}}, font); len(got) != 0 {
+		t.Errorf("partial UTF-8 character produced advances %v", got)
+	}
 }
 
 func TestMarkdownStrikeChanged(t *testing.T) {
