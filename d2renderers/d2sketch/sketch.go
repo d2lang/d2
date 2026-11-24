@@ -45,22 +45,39 @@ func baseOptions(strokeWidth float64) *rough.Options {
 // fill. This gives it a subtle streaky effect that subtly looks hand-drawn but
 // not distractingly so.
 func DefineFillPatterns(buf *bytes.Buffer, diagramHash string) {
-	source := buf.String()
-	fmt.Fprint(buf, "<defs>")
-
-	defineFillPattern(buf, source, diagramHash, "bright", "rgba(0, 0, 0, 0.1)")
-	defineFillPattern(buf, source, diagramHash, "normal", "rgba(0, 0, 0, 0.16)")
-	defineFillPattern(buf, source, diagramHash, "dark", "rgba(0, 0, 0, 0.32)")
-	defineFillPattern(buf, source, diagramHash, "darker", "rgba(255, 255, 255, 0.24)")
-
-	fmt.Fprint(buf, "</defs>")
-}
-
-func defineFillPattern(buf *bytes.Buffer, source, diagramHash string, luminanceCategory, fill string) {
-	trigger := fmt.Sprintf(`url(#streaks-%s-%s)`, luminanceCategory, diagramHash)
-	if strings.Contains(source, trigger) {
-		fmt.Fprintf(buf, patternassets.StreaksSVG(), luminanceCategory, diagramHash, fill)
+	// All four inks use the same geometry. Keep the geometry in defs so a
+	// theme switch can select a different ink without storing another path.
+	type shade struct{ id, ink string }
+	var used []shade
+	for _, p := range [...]shade{
+		{"bright", "rgba(0, 0, 0, 0.1)"},
+		{"normal", "rgba(0, 0, 0, 0.16)"},
+		{"dark", "rgba(0, 0, 0, 0.32)"},
+		{"darker", "rgba(255, 255, 255, 0.24)"},
+	} {
+		p.id = "streaks-" + p.id + "-" + diagramHash
+		if bytes.Contains(buf.Bytes(), []byte("url(#"+p.id+")")) {
+			used = append(used, p)
+		}
 	}
+	if len(used) == 0 {
+		return
+	}
+	buf.WriteString("<defs>")
+	pathID := "streak-path-" + diagramHash
+	if len(used) > 1 {
+		buf.WriteString(svg.EmptyElement("path", svg.Attr("id", pathID), svg.Attr("d", patternassets.StreakPathData()), svg.Attr("fill-rule", "evenodd"), svg.Attr("clip-rule", "evenodd")))
+	}
+	for _, pattern := range used {
+		buf.WriteString(svg.OpenElement("pattern", svg.Attr("id", pattern.id), svg.Attr("patternUnits", "userSpaceOnUse"), svg.IntAttr("width", 100), svg.IntAttr("height", 100)))
+		if len(used) == 1 {
+			buf.WriteString(svg.EmptyElement("path", svg.Attr("d", patternassets.StreakPathData()), svg.Attr("fill", pattern.ink), svg.Attr("fill-rule", "evenodd"), svg.Attr("clip-rule", "evenodd")))
+		} else {
+			buf.WriteString(svg.EmptyElement("use", append(svg.HrefAttributes("#"+pathID), svg.Attr("fill", pattern.ink))...))
+		}
+		buf.WriteString("</pattern>")
+	}
+	buf.WriteString("</defs>")
 }
 
 func Rect(shape d2target.Shape, diagramHash string) (string, error) {

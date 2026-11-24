@@ -92,6 +92,7 @@ type nativeSVGWriter struct {
 	err           error
 	surfaces      map[*nativeVectorSurface]string
 	lightingStops map[string]string
+	patterns      nativeSVGPatterns
 }
 
 func (w *nativeSVGWriter) write(format string, args ...any) {

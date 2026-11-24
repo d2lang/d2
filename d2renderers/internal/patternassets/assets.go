@@ -37,13 +37,6 @@ const grainSVGSuffix = `"/>
 </pattern>
 `
 
-const streakSVGPrefix = `<pattern id="streaks-%s-%s" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
-    <path fill="%s" fill-rule="evenodd" clip-rule="evenodd" d="`
-
-const streakSVGSuffix = `" />
-</pattern>
-`
-
 var (
 	paperSVG = sync.OnceValue(func() string {
 		value, err := compression.DecompressBrotli(paperBrotli)
@@ -54,9 +47,6 @@ var (
 	})
 	grainSVG = sync.OnceValue(func() string {
 		return grainSVGPrefix + base64.StdEncoding.EncodeToString(grainPNG) + grainSVGSuffix
-	})
-	streakSVG = sync.OnceValue(func() string {
-		return streakSVGPrefix + streakPathData + streakSVGSuffix
 	})
 )
 
@@ -72,6 +62,3 @@ func GrainSVG() string { return grainSVG() }
 
 // StreakPathData returns the canonical sketch streak path data.
 func StreakPathData() string { return streakPathData }
-
-// StreaksSVG returns the SVG wrapper used by the SVG renderer.
-func StreaksSVG() string { return streakSVG() }
