@@ -3574,10 +3574,10 @@
       "id": "image",
       "type": "rectangle",
       "pos": {
-        "x": 1356,
-        "y": 2090
+        "x": 3001,
+        "y": 450
       },
-      "width": 1311,
+      "width": 1468,
       "height": 935,
       "opacity": 1,
       "strokeDash": 0,
@@ -3620,8 +3620,8 @@
         "image"
       ],
       "pos": {
-        "x": 1416,
-        "y": 2181
+        "x": 3214,
+        "y": 720
       },
       "width": 128,
       "height": 128,
@@ -3666,7 +3666,7 @@
       "underline": false,
       "labelWidth": 51,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_TOP_CENTER",
+      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -3679,8 +3679,8 @@
         "OutsideTopLeft"
       ],
       "pos": {
-        "x": 1564,
-        "y": 2181
+        "x": 3362,
+        "y": 720
       },
       "width": 128,
       "height": 128,
@@ -3738,8 +3738,8 @@
         "OutsideTopCenter"
       ],
       "pos": {
-        "x": 1719,
-        "y": 2181
+        "x": 3221,
+        "y": 541
       },
       "width": 128,
       "height": 128,
@@ -3797,8 +3797,8 @@
         "OutsideTopRight"
       ],
       "pos": {
-        "x": 1867,
-        "y": 2181
+        "x": 3066,
+        "y": 541
       },
       "width": 128,
       "height": 128,
@@ -3843,7 +3843,7 @@
       "underline": false,
       "labelWidth": 120,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -3856,8 +3856,8 @@
         "OutsideLeftTop"
       ],
       "pos": {
-        "x": 1564,
-        "y": 2340
+        "x": 3066,
+        "y": 720
       },
       "width": 128,
       "height": 128,
@@ -3915,8 +3915,8 @@
         "OutsideLeftMiddle"
       ],
       "pos": {
-        "x": 1854,
-        "y": 2340
+        "x": 3349,
+        "y": 879
       },
       "width": 128,
       "height": 128,
@@ -3974,8 +3974,8 @@
         "OutsideLeftBottom"
       ],
       "pos": {
-        "x": 1721,
-        "y": 2499
+        "x": 3075,
+        "y": 879
       },
       "width": 128,
       "height": 128,
@@ -4033,8 +4033,8 @@
         "OutsideRightTop"
       ],
       "pos": {
-        "x": 1869,
-        "y": 2499
+        "x": 3504,
+        "y": 879
       },
       "width": 128,
       "height": 128,
@@ -4079,7 +4079,7 @@
       "underline": false,
       "labelWidth": 120,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -4092,8 +4092,8 @@
         "OutsideRightMiddle"
       ],
       "pos": {
-        "x": 1861,
-        "y": 2658
+        "x": 3522,
+        "y": 720
       },
       "width": 128,
       "height": 128,
@@ -4138,7 +4138,7 @@
       "underline": false,
       "labelWidth": 141,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -4151,8 +4151,8 @@
         "OutsideRightBottom"
       ],
       "pos": {
-        "x": 2009,
-        "y": 2340
+        "x": 3511,
+        "y": 1038
       },
       "width": 128,
       "height": 128,
@@ -4210,8 +4210,8 @@
         "OutsideBottomLeft"
       ],
       "pos": {
-        "x": 2147,
-        "y": 2499
+        "x": 3352,
+        "y": 1038
       },
       "width": 128,
       "height": 128,
@@ -4269,8 +4269,8 @@
         "OutsideBottomCenter"
       ],
       "pos": {
-        "x": 2029,
-        "y": 2817
+        "x": 3086,
+        "y": 1038
       },
       "width": 128,
       "height": 128,
@@ -4328,8 +4328,8 @@
         "OutsideBottomRight"
       ],
       "pos": {
-        "x": 1864,
-        "y": 2817
+        "x": 3512,
+        "y": 1197
       },
       "width": 128,
       "height": 128,
@@ -4387,8 +4387,8 @@
         "InsideTopLeft"
       ],
       "pos": {
-        "x": 2015,
-        "y": 2181
+        "x": 3673,
+        "y": 1197
       },
       "width": 128,
       "height": 128,
@@ -4433,7 +4433,7 @@
       "underline": false,
       "labelWidth": 97,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_TOP_CENTER",
+      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -4446,8 +4446,8 @@
         "InsideTopCenter"
       ],
       "pos": {
-        "x": 1712,
-        "y": 2658
+        "x": 3821,
+        "y": 1197
       },
       "width": 128,
       "height": 128,
@@ -4492,7 +4492,7 @@
       "underline": false,
       "labelWidth": 118,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -4505,8 +4505,8 @@
         "InsideTopRight"
       ],
       "pos": {
-        "x": 1712,
-        "y": 2817
+        "x": 3969,
+        "y": 1197
       },
       "width": 128,
       "height": 128,
@@ -4564,8 +4564,8 @@
         "InsideMiddleLeft"
       ],
       "pos": {
-        "x": 2163,
-        "y": 2181
+        "x": 4117,
+        "y": 1197
       },
       "width": 128,
       "height": 128,
@@ -4623,8 +4623,8 @@
         "InsideMiddleCenter"
       ],
       "pos": {
-        "x": 2187,
-        "y": 2817
+        "x": 3714,
+        "y": 910
       },
       "width": 128,
       "height": 128,
@@ -4682,8 +4682,8 @@
         "InsideMiddleRight"
       ],
       "pos": {
-        "x": 2291,
-        "y": 2340
+        "x": 3862,
+        "y": 941
       },
       "width": 128,
       "height": 128,
@@ -4741,8 +4741,8 @@
         "InsideBottomLeft"
       ],
       "pos": {
-        "x": 2295,
-        "y": 2530
+        "x": 4010,
+        "y": 972
       },
       "width": 128,
       "height": 128,
@@ -4787,7 +4787,7 @@
       "underline": false,
       "labelWidth": 124,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -4800,8 +4800,8 @@
         "InsideBottomCenter"
       ],
       "pos": {
-        "x": 2324,
-        "y": 2181
+        "x": 4171,
+        "y": 1003
       },
       "width": 128,
       "height": 128,
@@ -4859,8 +4859,8 @@
         "InsideBottomRight"
       ],
       "pos": {
-        "x": 2343,
-        "y": 2817
+        "x": 4273,
+        "y": 1197
       },
       "width": 128,
       "height": 128,
@@ -4976,12 +4976,12 @@
       "link": "",
       "route": [
         {
-          "x": 2011,
-          "y": 1681
+          "x": 2938,
+          "y": 917
         },
         {
-          "x": 2011,
-          "y": 2090
+          "x": 3001,
+          "y": 917
         }
       ],
       "animated": false,
