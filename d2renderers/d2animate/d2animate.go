@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
@@ -16,33 +17,21 @@ import (
 
 var transitionDurationMS = 1
 
-func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash string) string {
-	percentageBefore := (math.Max(0, float64(delayMS-transitionDurationMS)) / float64(totalMS)) * 100.
-	percentageStart := (float64(delayMS) / float64(totalMS)) * 100.
-	percentageEnd := (float64(delayMS+durationMS-transitionDurationMS) / float64(totalMS)) * 100.
-	if int(math.Ceil(percentageEnd)) == 100 {
-		return fmt.Sprintf(`@keyframes d2Transition-%s-%d {
-		0%%, %f%% {
-				opacity: 0;
-		}
-		%f%%, %f%% {
-				opacity: 1;
-		}
-}`, diagramHash, identifier, percentageBefore, percentageStart, math.Ceil(percentageEnd))
-	}
+// Match the existing keyframe precision and omit only insignificant zeros.
+func percentage(v float64, precision int) string {
+	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', precision, 64), "0"), ".") + "%"
+}
 
-	percentageAfter := (float64(delayMS+durationMS) / float64(totalMS)) * 100.
-	return fmt.Sprintf(`@keyframes d2Transition-%s-%d {
-		0%%, %f%% {
-				opacity: 0;
-		}
-		%f%%, %f%% {
-				opacity: 1;
-		}
-		%f%%, 100%% {
-				opacity: 0;
-		}
-}`, diagramHash, identifier, percentageBefore, percentageStart, percentageEnd, percentageAfter)
+func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash string) string {
+	before := math.Max(0, float64(delayMS-transitionDurationMS)) / float64(totalMS) * 100
+	start := float64(delayMS) / float64(totalMS) * 100
+	end := float64(delayMS+durationMS-transitionDurationMS) / float64(totalMS) * 100
+	css := fmt.Sprintf("@keyframes d2Transition-%s-%d{0%%,%s{opacity:0}%s,", diagramHash, identifier, percentage(before, 6), percentage(start, 6))
+	if math.Ceil(end) == 100 {
+		return css + "100%{opacity:1}}"
+	}
+	after := float64(delayMS+durationMS) / float64(totalMS) * 100
+	return css + percentage(end, 6) + "{opacity:1}" + percentage(after, 6) + ",100%{opacity:0}}"
 }
 
 func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, intervalMS int) ([]byte, error) {
@@ -127,6 +116,7 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		return nil, err
 	}
 
+	graphics, svgs := shareFrameGraphics(svgs, diagramHash)
 	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)
 	startMS := 0
 	for i, duration := range durationsMS {
@@ -135,13 +125,13 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		} else {
 			// Use a discrete cut at exact boundaries. A 1 ms cross-fade or a
 			// whole-percent rounding error can hide an entire short sample.
-			fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d {", diagramHash, i)
+			fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d{", diagramHash, i)
 			if startMS > 0 {
 				fmt.Fprint(buf, "0%{opacity:0}")
 			}
-			fmt.Fprintf(buf, "%.9f%%{opacity:1}", 100*float64(startMS)/float64(totalMS))
+			fmt.Fprintf(buf, "%s{opacity:1}", percentage(100*float64(startMS)/float64(totalMS), 9))
 			if endMS := startMS + duration; endMS < totalMS {
-				fmt.Fprintf(buf, "%.9f%%,100%%{opacity:0}", 100*float64(endMS)/float64(totalMS))
+				fmt.Fprintf(buf, "%s,100%%{opacity:0}", percentage(100*float64(endMS)/float64(totalMS), 9))
 			} else {
 				fmt.Fprint(buf, "100%{opacity:1}")
 			}
@@ -152,6 +142,7 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	fmt.Fprint(buf, `]]></style>`)
 
 	buf.Write(defs)
+	buf.Write(graphics)
 
 	timing := ""
 	if !uniform || len(svgs) > 100 {
