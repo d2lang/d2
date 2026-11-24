@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"image"
 	"image/gif"
+	"slices"
 	"testing"
+
+	"github.com/d2lang/d2/d2renderers/d2animate"
+	"github.com/d2lang/d2/d2target"
 )
 
 // Adding a column changes the fitted board size. Independent centering makes
@@ -22,6 +26,16 @@ steps: {expand: {warm: "" {width: 60; height: 48; style: {fill: blue; stroke-wid
 	g, err := gif.DecodeAll(bytes.NewReader(out))
 	if err != nil {
 		t.Fatal(err)
+	}
+	total := 0
+	for i, delay := range g.Delay {
+		if delay < 2 {
+			t.Fatalf("frame %d takes %dcs, which browsers stretch to 100ms", i, delay)
+		}
+		total += delay
+	}
+	if total != 60 {
+		t.Fatalf("total delay %dcs; want exactly two 300ms boards", total)
 	}
 	var start image.Rectangle
 	hasIntermediate := false
@@ -51,5 +65,50 @@ steps: {expand: {warm: "" {width: 60; height: 48; style: {fill: blue; stroke-wid
 	}
 	if !hasIntermediate {
 		t.Fatal("did not render a growing blue cell")
+	}
+}
+
+func TestGridGIFSelectsSamplesOnBrowserClock(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// Input frame start times, including the authored endpoint.
+		starts         []int
+		totalMS        int
+		times, indices []int
+	}{
+		{"dense-and-sparse", []int{0, 13, 21, 35, 49, 95, 180}, 213, []int{0, 20, 40, 100, 180}, []int{0, 2, 3, 5, 6}},
+		{"endpoint-has-one-tick", []int{0, 17, 33, 50, 67, 83, 96}, 100, []int{0, 20, 40, 60, 80}, []int{0, 1, 2, 4, 6}},
+		{"one-browser-frame", []int{0, 11, 21}, 23, []int{0}, []int{2}},
+		{"sub-tick-board", []int{0, 3}, 7, []int{0}, []int{1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frames := make([]d2animate.Frame, len(tc.starts))
+			ids := make(map[*d2target.Diagram]int)
+			for i, start := range tc.starts {
+				end := tc.totalMS
+				if i+1 < len(tc.starts) {
+					end = tc.starts[i+1]
+				}
+				f := d2animate.Frame{Diagram: &d2target.Diagram{}, ElapsedMS: start, DurationMS: end - start, TweenSample: i+1 < len(tc.starts)}
+				frames[i] = f
+				ids[f.Diagram] = i
+			}
+			var times, indices []int
+			result := gridGIFFrames(frames)
+			for i, f := range result {
+				times = append(times, f.ElapsedMS)
+				indices = append(indices, ids[f.Diagram])
+				end := tc.totalMS
+				if i+1 < len(result) {
+					end = result[i+1].ElapsedMS
+				}
+				if f.ElapsedMS+f.DurationMS != end {
+					t.Fatal("schedule lost or duplicated time")
+				}
+			}
+			if !slices.Equal(times, tc.times) || !slices.Equal(indices, tc.indices) || result[len(result)-1].TweenSample {
+				t.Fatalf("got times %v, input indices %v", times, indices)
+			}
+		})
 	}
 }

@@ -19,6 +19,7 @@ type gridMotion struct {
 	edges                    *gridMotionEdges
 	bands                    map[string]gridBand
 	folds                    map[string]*gridFold
+	foldStart, foldEnd       float64
 	details                  map[string]gridFoldDetail
 	handoffs                 *gridHandoffs
 }
@@ -122,7 +123,7 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 		return nil
 	}
 	m.bands = planGridBands(old, next)
-	m.folds, m.details = planGridFolds(old, next)
+	m.planGridFolds(old, next)
 	m.handoffs = detectGridHandoffs(old, next)
 	// During a pure reorder, retain the original stacking order while cells
 	// cross. The renderer still applies explicit z-indices and container depth.
@@ -203,6 +204,9 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 	result.Shapes = make([]d2target.Shape, 0, len(base.Shapes)+len(m.removed))
 	fraction := float64(elapsedMS) / float64(durationMS)
 	travel := gridEase(fraction)
+	if len(m.folds) != 0 {
+		travel = gridEase(gridPhase(fraction, m.foldStart, m.foldEnd))
+	}
 	elapsed := float64(elapsedMS)
 	enterStart, enterEnd, exitEnd := m.popWindows(durationMS)
 	// A connection alone can enter or leave during a shuffle. In that case
@@ -223,7 +227,7 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 	member := func(shape d2target.Shape, item *gridMotionItem, scale, alpha float64) (d2target.Shape, bool) {
 		id := shape.ID
 		if detail, ok := m.details[id]; ok {
-			shape, alpha = detail.sample(shape, fraction)
+			shape, alpha = detail.sample(shape, fraction, travel)
 		} else {
 			position := travel
 			if band := m.bands[id]; band != gridBandNone {
@@ -256,7 +260,7 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 		case item.to != nil:
 			position := travel
 			if fold := m.folds[shape.ID]; fold != nil {
-				fold.caption(&shape, fraction)
+				fold.caption(&shape, travel)
 			} else if band := m.bands[shape.ID]; band != gridBandNone {
 				position, _, _ = band.sample(elapsedMS, durationMS)
 			}

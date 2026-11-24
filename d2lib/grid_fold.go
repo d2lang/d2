@@ -8,24 +8,24 @@ import (
 	"github.com/d2lang/d2/lib/label"
 )
 
+const gridFoldFade = .28 // Fraction of a step reserved for revealing or hiding details.
+
 // A rectangle that survives both boards can change from a summary cell to a
 // grid of details. Keep the summary in place and use its growing interior as
 // the children's viewport. Closing is exactly the same reveal played backwards.
 type gridFold struct {
 	closed, open *d2target.Shape
 	opening      bool
-	horizontal   bool
-	detailStart  int
 }
 
 type gridFoldDetail struct {
-	fold *gridFold
-	rank float64
+	fold        *gridFold
+	endpoint    *d2target.Shape
+	revealStart float64
 }
 
-func planGridFolds(old, next map[string]*gridNode) (map[string]*gridFold, map[string]gridFoldDetail) {
-	var parents map[string]*gridFold
-	var details map[string]gridFoldDetail
+func (m *gridMotion) planGridFolds(old, next map[string]*gridNode) {
+	m.foldEnd = 1
 	for id, a := range old {
 		b := next[id]
 		if b == nil || !a.gridCell || !b.gridCell || a.shape.Type != d2target.ShapeRectangle || b.shape.Type != d2target.ShapeRectangle {
@@ -40,33 +40,52 @@ func planGridFolds(old, next map[string]*gridNode) (map[string]*gridFold, map[st
 			(open.shape.Width <= closed.shape.Width && open.shape.Height <= closed.shape.Height) {
 			continue
 		}
-		f := &gridFold{closed: closed.shape, open: open.shape, opening: opening,
-			horizontal: open.shape.Width-closed.shape.Width > open.shape.Height-closed.shape.Height}
-		if parents == nil {
-			parents = make(map[string]*gridFold)
-			details = make(map[string]gridFoldDetail)
+		if m.folds == nil {
+			m.folds = make(map[string]*gridFold)
+			m.details = make(map[string]gridFoldDetail)
 		}
-		parents[id] = f
-		var visit func(*gridNode, gridFoldDetail)
-		visit = func(n *gridNode, detail gridFoldDetail) {
-			details[n.shape.ID] = detail
-			for _, child := range n.children {
-				visit(child, detail)
-			}
-		}
-		// Uncover details from the old edge towards the first row or column.
-		f.detailStart = math.MaxInt
-		for i, child := range open.children {
-			c := child.shape
-			start := c.Pos.Y - open.shape.Pos.Y
-			if f.horizontal {
-				start = c.Pos.X - open.shape.Pos.X
-			}
-			f.detailStart = min(f.detailStart, start-(c.StrokeWidth+1)/2-2)
-			visit(child, gridFoldDetail{f, float64(i) / float64(max(1, len(open.children)-1))})
+		m.folds[id] = &gridFold{closed: closed.shape, open: open.shape, opening: opening}
+		if opening {
+			m.foldEnd = 1 - gridFoldFade
+		} else {
+			m.foldStart = gridFoldFade
 		}
 	}
-	return parents, details
+
+	// The shell and its neighbors share one layout clock. When a step closes
+	// one cell and opens another, fade the old details, reflow, then reveal.
+	for id, f := range m.folds {
+		open := next[id]
+		start, end := m.foldStart, m.foldEnd
+		if !f.opening {
+			open = old[id]
+			start, end = 1-end, 1-start
+		}
+		var visit func(*gridNode, float64)
+		visit = func(n *gridNode, revealStart float64) {
+			m.details[n.shape.ID] = gridFoldDetail{fold: f, endpoint: n.shape, revealStart: revealStart}
+			for _, child := range n.children {
+				visit(child, revealStart)
+			}
+		}
+		for _, child := range open.children {
+			// Use the child's actual slot, so cards in the same row appear
+			// together and deeper rows wait until the shell can contain them.
+			s := child.shape
+			pad := (s.StrokeWidth + f.open.StrokeWidth + 2) / 2
+			required := func(closed, expanded, farEdge int) float64 {
+				if expanded <= closed {
+					return 0
+				}
+				return gridPhase(float64(farEdge+pad), float64(closed), float64(expanded))
+			}
+			fit := max(required(f.closed.Width, f.open.Width, s.Pos.X-f.open.Pos.X+s.Width),
+				required(f.closed.Height, f.open.Height, s.Pos.Y-f.open.Pos.Y+s.Height))
+			// From its midpoint onward smoothstep is at least its input.
+			// At this time the entire card fits, including its stroke.
+			visit(child, start+(end-start)*max(.5, fit))
+		}
+	}
 }
 
 func (f *gridFold) progress(fraction float64) float64 {
@@ -92,42 +111,40 @@ func (f *gridFold) caption(s *d2target.Shape, t float64) {
 		return p.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
 	}
 	start, end := point(f.closed, a), point(f.open, b)
-	t = gridEase(f.progress(t))
+	t = f.progress(t)
+	if t == 0 {
+		s.LabelPosition = f.closed.LabelPosition
+		return
+	}
+	if t == 1 {
+		s.LabelPosition = f.open.LabelPosition
+		return
+	}
 	s.MotionLabelTopLeft = &d2target.Point{X: int(math.Round(start.X + (end.X-start.X)*t)), Y: int(math.Round(start.Y + (end.Y-start.Y)*t))}
 }
 
-func (d gridFoldDetail) sample(s d2target.Shape, fraction float64) (d2target.Shape, float64) {
+func (d gridFoldDetail) sample(s d2target.Shape, fraction, travel float64) (d2target.Shape, float64) {
 	f := d.fold
-	progress := f.progress(fraction)
-	if progress >= 1 {
-		return s, 1
-	}
-	visible := gridEase(gridPhase(progress, .18+.14*d.rank, .78+.14*d.rank))
+	visible := gridEase(gridPhase(f.progress(fraction), d.revealStart, d.revealStart+gridFoldFade))
 	if visible == 0 {
 		return s, 0
 	}
-	t := gridEase(progress)
+
+	// A sampled paint frame can have its own intervening grid layout. Use its
+	// paint, but register all the content to the authored open board's slots.
+	t := f.progress(travel)
 	pos := d2target.Point{X: gridLerpInt(f.closed.Pos.X, f.open.Pos.X, t), Y: gridLerpInt(f.closed.Pos.Y, f.open.Pos.Y, t)}
-	w, h := gridLerpInt(f.closed.Width, f.open.Width, t), gridLerpInt(f.closed.Height, f.open.Height, t)
-	inset := (max(f.closed.StrokeWidth, f.open.StrokeWidth) + 1) / 2
-	left, top := inset, inset
-	if f.horizontal {
-		left = max(inset, gridLerpInt(f.closed.Width, f.detailStart, t))
-	} else {
-		top = max(inset, gridLerpInt(f.closed.Height, f.detailStart, t))
-	}
-	if w <= left+inset || h <= top+inset {
-		return s, 0
-	}
-	s.MotionClip = &d2target.MotionClip{Point: d2target.Point{X: pos.X + left, Y: pos.Y + top}, Width: w - left - inset, Height: h - top - inset}
-	s.Pos.X += pos.X - f.open.Pos.X
-	s.Pos.Y += pos.Y - f.open.Pos.Y
-	offset := gridLerpInt(-10, 0, visible)
-	if f.horizontal {
-		s.Pos.X += offset
-	} else {
-		s.Pos.Y += offset
-	}
+	s.Pos = d2target.Point{X: pos.X + (d.endpoint.Pos.X - f.open.Pos.X), Y: pos.Y + (d.endpoint.Pos.Y - f.open.Pos.Y)}
+	s.Width, s.Height = d.endpoint.Width, d.endpoint.Height
 	s.Opacity *= visible
+	if t < 1 {
+		inset := (max(f.closed.StrokeWidth, f.open.StrokeWidth) + 1) / 2
+		w := gridLerpInt(f.closed.Width, f.open.Width, t) - 2*inset
+		h := gridLerpInt(f.closed.Height, f.open.Height, t) - 2*inset
+		if w <= 0 || h <= 0 {
+			return s, 0
+		}
+		s.MotionClip = &d2target.MotionClip{Point: d2target.Point{X: pos.X + inset, Y: pos.Y + inset}, Width: w, Height: h}
+	}
 	return s, visible
 }

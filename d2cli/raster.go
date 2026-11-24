@@ -552,6 +552,48 @@ type gifRenderSummary struct {
 	maxWidth, maxHeight int
 }
 
+// Browsers commonly display a 0cs or 1cs GIF frame for 100ms. Grid motion
+// samples at up to 60fps and its paint and geometry boundaries can be closer
+// still. Pick the nearest native sample for each 20ms tick before rendering,
+// and reserve the last two centiseconds for the exact authored endpoint.
+func gridGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
+	end := frames[len(frames)-1]
+	slot := end.ElapsedMS + end.DurationMS
+	ticks := (slot + 9) / 10
+	endStart := min(end.ElapsedMS/10, ticks-2) * 10
+	if endStart < 20 {
+		end.ElapsedMS, end.DurationMS = 0, slot
+		return append(frames[:0], end)
+	}
+	tick := func(ms int) int { return (ms + 10) / 20 * 20 }
+	samples := frames[:0]
+	for _, frame := range frames[:len(frames)-1] {
+		start := tick(frame.ElapsedMS)
+		if start > endStart-20 {
+			break
+		}
+		if n := len(samples); n > 0 && tick(samples[n-1].ElapsedMS) == start {
+			previous := samples[n-1]
+			if math.Abs(float64(frame.ElapsedMS-start)) < math.Abs(float64(previous.ElapsedMS-start)) {
+				samples[n-1] = frame
+			}
+			continue
+		}
+		samples = append(samples, frame)
+	}
+	// A sparse or stationary part of the transition retains its whole hold.
+	for i := range samples {
+		start := tick(samples[i].ElapsedMS)
+		next := endStart
+		if i+1 < len(samples) {
+			next = tick(samples[i+1].ElapsedMS)
+		}
+		samples[i].ElapsedMS, samples[i].DurationMS = start, next-start
+	}
+	end.ElapsedMS, end.DurationMS = endStart, slot-endStart
+	return append(samples, end)
+}
+
 func renderGIFWithSession(
 	ctx context.Context,
 	inputPath string,
@@ -601,6 +643,9 @@ func renderGIFWithSession(
 	var boardFrames []d2animate.Frame
 	for _, board := range boards {
 		boardFrames = d2animate.AppendBoardFrames(boardFrames[:0], board, intervalMs)
+		if board.GridMotion {
+			boardFrames = gridGIFFrames(boardFrames)
+		}
 		for _, segment := range boardFrames {
 			delay := xgif.StepDelay(time.Duration(segment.ElapsedMS)*time.Millisecond, time.Duration(segment.DurationMS)*time.Millisecond, segment.TweenSample)
 			if delay == 0 {
@@ -612,6 +657,10 @@ func renderGIFWithSession(
 				if err != nil {
 					return summary, err
 				}
+			}
+			if board.GridMotion {
+				// A short endpoint hold can otherwise be split into 1cs frames.
+				count = min(count, max(1, delay/2))
 			}
 			if count > gifMaxFrames-totalFrames {
 				return summary, fmt.Errorf("GIF animation exceeds the %d-frame limit", gifMaxFrames)
