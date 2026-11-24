@@ -1,11 +1,13 @@
 package loops
 
 import (
+	"cmp"
 	"context"
 	"math"
 	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/nodeshape"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
@@ -145,12 +147,24 @@ func routeLoops(n *layoutgraph.Node) []*layoutgraph.Edge {
 
 	split := n.SeparateLoopCorners && separateCorners(n.Edges)
 	var routedEdges []*layoutgraph.Edge
-	for _, e := range edgesInOrder(n.Edges) {
+	ordered := edgesInOrder(n.Edges)
+	var rowRoutes map[*layoutgraph.Edge][]*geo.Point
+	if nodeshape.NumColumns(n.Shape) > 0 {
+		rowRoutes = tableRowRoutes(ordered, nil)
+	}
+	for _, e := range ordered {
 		if !e.IsLoop() {
 			continue
 		}
 
 		routedEdges = append(routedEdges, e)
+		if points := rowRoutes[e]; points != nil {
+			e.Points = points
+			if e.Label != nil {
+				e.Label.Position = label.OutsideTopCenter
+			}
+			continue
+		}
 		portsPair := findLoopPortsForEdge(e, availablePorts)
 		if split {
 			// Start on opposite corners to separate both incoming and outgoing ports.
@@ -168,6 +182,116 @@ func routeLoops(n *layoutgraph.Node) []*layoutgraph.Edge {
 		portsPair.targetArrowhead = e.TargetArrowhead
 	}
 	return routedEdges
+}
+
+// SelectedTableRowRoutes applies the same lane order used at layout time.
+func SelectedTableRowRoutes(n *layoutgraph.Node, selected map[*layoutgraph.Edge]struct{}) map[*layoutgraph.Edge][]*geo.Point {
+	return tableRowRoutes(edgesInOrder(n.Edges), selected)
+}
+
+func tableRowRoutes(ordered []*layoutgraph.Edge, selected map[*layoutgraph.Edge]struct{}) map[*layoutgraph.Edge][]*geo.Point {
+	type band struct{ near, far float64 }
+	var occupied []band
+	if selected != nil {
+		for _, e := range ordered {
+			if _, moving := selected[e]; moving || !e.IsLoop() {
+				continue
+			}
+			// A frozen path may have been supplied by another router. Reserve
+			// the actual depths of its external parallel runs on any face.
+			n := e.From
+			near, far := math.Inf(1), math.Inf(-1)
+			for i := 1; i < len(e.Points); i++ {
+				p, q := e.Points[i-1], e.Points[i]
+				var depth float64
+				switch {
+				case p.X == q.X:
+					depth = max(n.TopLeft.X-p.X, p.X-n.TopLeft.X-n.Width)
+				case p.Y == q.Y:
+					depth = max(n.TopLeft.Y-p.Y, p.Y-n.TopLeft.Y-n.Height)
+				}
+				if depth > 0 {
+					near = min(near, depth)
+					far = max(far, depth)
+				}
+			}
+			if near <= far {
+				occupied = append(occupied, band{near, far + tableRowLaneWidth(e)})
+			}
+		}
+		slices.SortFunc(occupied, func(a, b band) int { return cmp.Compare(a.near, b.near) })
+	}
+	var routes map[*layoutgraph.Edge][]*geo.Point
+	depth, nextFree := sharedPortLoopGap, sharedPortLoopGap
+	for _, e := range ordered {
+		if !IsTableRowLoop(e) {
+			continue
+		}
+		width := tableRowLaneWidth(e)
+		if _, moving := selected[e]; selected == nil || moving {
+			lane := max(depth, nextFree)
+			for len(occupied) > 0 && lane+width > occupied[0].near {
+				lane = max(lane, occupied[0].far)
+				occupied = occupied[1:]
+			}
+			if routes == nil {
+				routes = make(map[*layoutgraph.Edge][]*geo.Point)
+			}
+			routes[e] = tableRowRoute(e, lane)
+			nextFree = lane + width
+		}
+		depth += width
+	}
+	return routes
+}
+
+func tableRowLaneWidth(e *layoutgraph.Edge) float64 {
+	if e.Label != nil {
+		return sharedPortLoopGap + e.Label.Width
+	}
+	return sharedPortLoopGap
+}
+
+// IsTableRowLoop reports whether both endpoints are the same table and at
+// least one endpoint names a row.
+func IsTableRowLoop(e *layoutgraph.Edge) bool {
+	return e.IsLoop() && e.HasTableColumn() && nodeshape.NumColumns(e.From.Shape) > 0
+}
+
+// tableRowRoute follows a lane outside the table so a self-reference keeps
+// each named row. A row-to-itself reference returns at the opposite face.
+func tableRowRoute(e *layoutgraph.Edge, gap float64) []*geo.Point {
+	n := e.From
+	left := n.TopLeft.X - gap
+	rowPort := func(side geo.Orientation, index *int) *geo.Point {
+		p, _ := nodeshape.TableColumnPortValue(n.Shape, side, *index)
+		return &p
+	}
+	if e.FromTableColumnIndex == nil || e.ToTableColumnIndex == nil {
+		// Use a top port for the table-level end of a mixed reference.
+		index := e.FromTableColumnIndex
+		if index == nil {
+			index = e.ToTableColumnIndex
+		}
+		row := rowPort(geo.Left, index)
+		top := geo.NewPoint(n.TopLeft.X+math.Round(n.Width/4), n.TopLeft.Y)
+		points := []*geo.Point{row, geo.NewPoint(left, row.Y), geo.NewPoint(left, top.Y-gap), geo.NewPoint(top.X, top.Y-gap), top}
+		if e.FromTableColumnIndex == nil {
+			slices.Reverse(points)
+		}
+		return points
+	}
+	from, to := rowPort(geo.Left, e.FromTableColumnIndex), rowPort(geo.Left, e.ToTableColumnIndex)
+	if from.Y != to.Y {
+		return []*geo.Point{from, geo.NewPoint(left, from.Y), geo.NewPoint(left, to.Y), to}
+	}
+	to = rowPort(geo.Right, e.ToTableColumnIndex)
+	across := n.TopLeft.Y - gap
+	if from.Y > n.Center().Y {
+		across = n.TopLeft.Y + n.Height + gap
+	}
+	right := to.X + gap
+	return []*geo.Point{from, geo.NewPoint(left, from.Y), geo.NewPoint(left, across), geo.NewPoint(right, across), geo.NewPoint(right, to.Y), to}
 }
 
 // edgesInOrder sorts edges based on their arrowheads and label sizes

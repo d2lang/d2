@@ -17,10 +17,14 @@ const fanMarkerPitch = 16.0
 const fanCornerRadius = 10.0 // D2’s default connection border radius.
 
 func hierarchyMarkerBox(e *layoutgraph.Edge, n *layoutgraph.Node, tip, next *geo.Point) (*geo.Box, bool) {
+	return markerClearanceBox(e, e.ArrowheadTo(n), tip, next)
+}
+
+func markerClearanceBox(e *layoutgraph.Edge, arrow layoutgraph.Arrowhead, tip, next *geo.Point) (*geo.Box, bool) {
 	if e.Style.StrokeWidth != nil && e.Style.StrokeWidth.Value != "2" {
 		return nil, false
 	}
-	switch e.ArrowheadTo(n) {
+	switch arrow {
 	case "", layoutgraph.NoArrowhead:
 		return nil, true
 	case layoutgraph.TriangleArrowhead:

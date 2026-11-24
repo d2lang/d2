@@ -1414,11 +1414,7 @@ func (obj *Object) Connect(srcID, dstID []d2ast.String, srcArrow, dstArrow bool,
 }
 
 func addSQLTableColumnIndices(e *Edge, srcID, dstID []d2ast.String, obj, src, dst *Object) {
-	if src.Shape.Value == d2target.ShapeSQLTable {
-		if src == dst {
-			// Ignore edge to column inside table.
-			return
-		}
+	if src.Shape.Value == d2target.ShapeSQLTable && src.SQLTable != nil {
 		objAbsID := obj.AbsIDArray()
 		srcAbsID := src.AbsIDArray()
 		if len(objAbsID)+len(srcID) > len(srcAbsID) {
@@ -1432,7 +1428,7 @@ func addSQLTableColumnIndices(e *Edge, srcID, dstID []d2ast.String, obj, src, ds
 			}
 		}
 	}
-	if dst.Shape.Value == d2target.ShapeSQLTable {
+	if dst.Shape.Value == d2target.ShapeSQLTable && dst.SQLTable != nil {
 		objAbsID := obj.AbsIDArray()
 		dstAbsID := dst.AbsIDArray()
 		if len(objAbsID)+len(dstID) > len(dstAbsID) {
