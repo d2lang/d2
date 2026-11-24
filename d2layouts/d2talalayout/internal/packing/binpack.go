@@ -159,6 +159,23 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 				cross = true
 				break
 			}
+			// Reachability follows only sibling near hints. A note next to a
+			// rank in a different container must retain the position chosen
+			// when those two rigid components were combined.
+			if len(rn.Nears) > 0 {
+				if err := guard.Add(int64(len(rn.Nears))); err != nil {
+					return err
+				}
+				for near := range rn.Nears {
+					if near != nil && near.Container != rn.Container && near.Hierarchy != nil {
+						cross = true
+						break
+					}
+				}
+				if cross {
+					break
+				}
+			}
 			hasExternalEdge, err := binPackHasExternalConnection(g, rn, root, false, edgesPlaced, guard)
 			if err != nil {
 				return err

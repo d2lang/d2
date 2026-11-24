@@ -82,3 +82,39 @@ func TestHierarchyReservesFullExtentOfLargeEdgeLabel(t *testing.T) {
 		})
 	}
 }
+
+func TestReversedHierarchyPreservesLabeledBlockInteriors(t *testing.T) {
+	for _, tc := range []struct {
+		forward, reverse, label, position string
+	}{
+		{"right", "left", "A container with a descriptive long human-readable label", "center-left"},
+		{"down", "up", `"One\nTwo\nThree\nFour\nFive\nSix\nSeven"`, "top-center"},
+	} {
+		t.Run(tc.reverse, func(t *testing.T) {
+			source := "shape: hierarchy\ndirection: %s\n" +
+				fmt.Sprintf("box: %s {label.near: %s; inner: %s {label.near: %s; x}}\n", tc.label, tc.position, tc.label, tc.position) +
+				"start -> box.inner.x -> end"
+			forward := hierarchyGeometry(t, fmt.Sprintf(source, tc.forward))
+			reversed := hierarchyGeometry(t, fmt.Sprintf(source, tc.reverse))
+			start, box, end := reversed["start"], reversed["box"], reversed["end"]
+			if tc.reverse == "left" {
+				if start.Pos.X <= box.Pos.X+box.Width || box.Pos.X <= end.Pos.X+end.Width {
+					t.Fatal("expected right-to-left ranks")
+				}
+			} else if start.Pos.Y <= box.Pos.Y+box.Height || box.Pos.Y <= end.Pos.Y+end.Height {
+				t.Fatal("expected bottom-to-top ranks")
+			}
+			for _, pair := range [][2]string{{"box", "box.inner"}, {"box.inner", "box.inner.x"}} {
+				p, c := forward[pair[0]], forward[pair[1]]
+				rp, rc := reversed[pair[0]], reversed[pair[1]]
+				if tc.reverse == "left" && rc.Pos.X < rp.Pos.X+rp.LabelWidth ||
+					tc.reverse == "up" && rc.Pos.Y < rp.Pos.Y+rp.LabelHeight {
+					t.Fatalf("child %s overlaps the label in %s", pair[1], pair[0])
+				}
+				if dx, dy := c.Pos.X-p.Pos.X, c.Pos.Y-p.Pos.Y; rc.Pos.X-rp.Pos.X != dx || rc.Pos.Y-rp.Pos.Y != dy {
+					t.Fatalf("child %s offset in %s changed from (%d,%d) to (%d,%d)", pair[1], pair[0], dx, dy, rc.Pos.X-rp.Pos.X, rc.Pos.Y-rp.Pos.Y)
+				}
+			}
+		})
+	}
+}

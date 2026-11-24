@@ -172,18 +172,11 @@ func assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, h
 	return nil
 }
 
-// buildHierarchy assigns a hierarchy level to each node in this graph given that all nodes can be in a hierarchy.
-// | - Find sources (nodes with no incoming edges) and sinks (nodes without outgoing edges)
-// | - If there is at least one of each
-// | 	- Add sources to a queue
-// | 	- Assign level 0 to sources
-// | 	- Walk the queue in BFS manner and assign the level of adjacent nodes as the current node level + 1
-// | 		- Keep the greater level assignment to avoid having connected nodes on the same row/level
-// | 		- Only if the node wasn't already visited.
-// | 		- If it was already visited, keep the previous level as it was used to compute other nodes level
-//
-// SQL-table-only subgraphs use the orthogonal table placement path rather than
-// hierarchy placement, even when their edges form a directed hierarchy.
+// build ranks a connected component of eligible nodes by simplifying its
+// edges into a DAG and minimizing weighted edge spans with network simplex.
+// Automatic discovery requires a source and sink, at least one non-table
+// node, and a layout that meets the hierarchy heuristics. Forced placement
+// skips these automatic-discovery checks.
 func build(ctx context.Context, g *layoutgraph.Graph, force bool, hierarchicalNodes map[*layoutgraph.Node]struct{}, edgeAbductions []*layoutgraph.EdgeAbduction) (*layoutgraph.Hierarchy, error) {
 	if len(g.Nodes) <= 1 {
 		return nil, nil

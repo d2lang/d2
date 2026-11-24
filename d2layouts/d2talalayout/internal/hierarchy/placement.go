@@ -241,11 +241,9 @@ func placeNodesInHierarchy(ctx context.Context, g *layoutgraph.Graph, rand *rand
 	if err := placeAndAlignLevels(ctx, g, byLevel); err != nil {
 		return err
 	}
-	switch g.Nodes[0].ContainerDirection() {
-	case geo.Left:
-		mirrorX(g)
-	case geo.Top:
-		mirrorY(g)
+	direction := g.Nodes[0].ContainerDirection()
+	if direction == geo.Left || direction == geo.Top {
+		mirrorRankBlocks(g, direction)
 	}
 	complete = true
 	return nil
@@ -420,12 +418,7 @@ func placeNodesByLevel(g *layoutgraph.Graph, byLevel map[int][]*placementNode, i
 			nodes = append(nodes, pn.graphNode)
 			pn.graphNode.TopLeft = geo.NewPoint(xOffset, yOffset)
 			if !pn.isDummy {
-				var container *layoutgraph.Node
-				if pn.container != nil {
-					container = pn.container.graphNode
-				}
-				padding := g.ContainerPadding(container, true)
-				placeDescendants(g, pn, pn.graphNode.InsidePlacement(1, 1, padding))
+				placeDescendants(g, pn)
 				levelHeight = math.Max(levelHeight, pn.graphNode.Height)
 				xOffset += math.Ceil(pn.graphNode.Width) + siblingSpacing
 			} else {
@@ -441,20 +434,22 @@ func placeNodesByLevel(g *layoutgraph.Graph, byLevel map[int][]*placementNode, i
 		for _, node := range nodes {
 			yDiff := math.Ceil(center.Y - node.Center().Y)
 			node.Translate(0, yDiff)
+			moveBlockContents(g, node, 0, yDiff)
 		}
 	}
 }
 
 // recursively place all descendants of a given container
-func placeDescendants(g *layoutgraph.Graph, root *placementNode, tl geo.Point) {
+func placeDescendants(g *layoutgraph.Graph, root *placementNode) {
 	if !root.isContainer {
 		return
 	}
 	padding := g.ContainerPadding(root.graphNode, true)
+	tl := root.graphNode.InsidePlacement(1, 1, padding)
 	x := tl.X
 	for _, child := range root.children {
 		child.graphNode.TopLeft = geo.NewPoint(x, tl.Y)
-		placeDescendants(g, child, child.graphNode.InsidePlacement(1, 1, padding))
+		placeDescendants(g, child)
 		x += math.Ceil(child.graphNode.Width) + siblingSpacing
 	}
 	childrenTL, childrenBR := layoutgraph.Nodes(g.Containers[root.graphNode]).BoundingBox()
@@ -540,16 +535,20 @@ func transpose(g *layoutgraph.Graph) {
 	})
 }
 
-func mirrorX(g *layoutgraph.Graph) {
-	iterContainersBFS(g, func(n *layoutgraph.Node) {
-		n.Mirror(true, false)
-	})
+// Reversing rank order moves each block with its contents. Its labels and
+// icons still occupy the same authored sides of the block after the move.
+func mirrorRankBlocks(g *layoutgraph.Graph, direction geo.Orientation) {
+	for _, block := range g.Nodes {
+		before := *block.TopLeft
+		block.Mirror(direction == geo.Left, direction == geo.Top)
+		moveBlockContents(g, block, block.TopLeft.X-before.X, block.TopLeft.Y-before.Y)
+	}
 }
 
-func mirrorY(g *layoutgraph.Graph) {
-	iterContainersBFS(g, func(n *layoutgraph.Node) {
-		n.Mirror(false, true)
-	})
+func moveBlockContents(g *layoutgraph.Graph, block *layoutgraph.Node, dx, dy float64) {
+	for _, child := range g.Containers[block] {
+		child.MoveWithChildren(dx, dy)
+	}
 }
 
 func (pn *placementNode) DebugID() string {
