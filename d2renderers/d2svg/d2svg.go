@@ -1028,7 +1028,19 @@ func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, label
 	)
 }
 
+func openMotionViewport(writer *objectWriter, c *d2target.MotionClip) {
+	// Identical viewBox and viewport coordinates clip without translating
+	// the child. This also avoids document-wide clip IDs in animated SVGs.
+	writer.buf.WriteString(svg.OpenElement("svg",
+		svg.IntAttr("x", c.X), svg.IntAttr("y", c.Y), svg.IntAttr("width", c.Width), svg.IntAttr("height", c.Height),
+		svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", c.X, c.Y, c.Width, c.Height)), svg.Attr("overflow", "hidden")))
+}
+
 func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+	if c := connection.MotionClip; c != nil {
+		openMotionViewport(writer, c)
+		defer writer.buf.WriteString("</svg>")
+	}
 	classes := []string{base64.URLEncoding.EncodeToString([]byte(svg.EscapeText(connection.ID)))}
 	classes = append(classes, connection.Classes...)
 	opacityStyle := ""
@@ -1665,6 +1677,10 @@ func render3DHexagon(diagramHash string, targetShape d2target.Shape, inlineTheme
 
 func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash string, targetShape d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, err error) {
 	closingTag := "</g>"
+	if c := targetShape.MotionClip; c != nil {
+		openMotionViewport(writer, c)
+		defer writer.buf.WriteString("</svg>")
+	}
 	if targetShape.Link != "" {
 		fmt.Fprint(writer, svg.OpenElement("a", svg.HrefAttributes(targetShape.Link)...))
 		closingTag += "</a>"
@@ -2053,6 +2069,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 			float64(targetShape.LabelHeight),
 		)
 
+		if p := targetShape.MotionLabelTopLeft; p != nil {
+			labelTL = geo.NewPoint(float64(p.X), float64(p.Y))
+		}
 		if labelPosition.IsBorder() {
 			if sketch {
 				labelMask = makeBorderLabelMask(labelPosition, labelTL, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.StrokeWidth, 1.0, tl)

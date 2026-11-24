@@ -152,6 +152,8 @@ export interface Legend {
 export type Shape = (Class | SQLTable | Text) & ShapeBase;
 
 export interface ShapeBase {
+  motionClip?: MotionClip;
+  motionLabelTopLeft?: Point;
   id: string;
   type: string;
   classes?: string[];
@@ -197,6 +199,11 @@ export interface Point {
   y: number /* int */;
 }
 
+export interface MotionClip extends Point {
+  width: number;
+  height: number;
+}
+
 export interface Class {
   fields: ClassField[];
   methods: ClassMethod[];
@@ -240,6 +247,7 @@ export interface Text {
 }
 
 export interface Connection extends Text {
+  motionClip?: MotionClip;
   id: string;
   classes?: string[];
   src: string;

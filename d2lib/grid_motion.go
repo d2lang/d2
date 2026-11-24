@@ -17,6 +17,10 @@ type gridMotion struct {
 	paintOrder               map[string]int
 	hasEnter, hasExit, moves bool
 	edges                    *gridMotionEdges
+	bands                    map[string]gridBand
+	folds                    map[string]*gridFold
+	details                  map[string]gridFoldDetail
+	handoffs                 *gridHandoffs
 }
 
 type gridMotionItem struct {
@@ -28,9 +32,10 @@ type gridMotionItem struct {
 }
 
 type gridNode struct {
-	shape  *d2target.Shape
-	parent *gridNode
-	inGrid bool
+	shape                    *d2target.Shape
+	parent                   *gridNode
+	children                 []*gridNode
+	inGrid, gridCell, isGrid bool
 }
 
 func gridNodes(board *d2target.Diagram, graph *d2graph.Graph) map[string]*gridNode {
@@ -57,6 +62,11 @@ func gridNodes(board *d2target.Diagram, graph *d2graph.Graph) map[string]*gridNo
 				continue
 			}
 			node.parent = parent
+			node.isGrid = child.IsGridDiagram()
+			node.gridCell = obj.IsGridDiagram()
+			if parent != nil {
+				parent.children = append(parent.children, node)
+			}
 			node.inGrid = inGrid || child.IsGridDiagram()
 			walk(child, node, id+".", node.inGrid)
 		}
@@ -111,6 +121,9 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 	if len(m.items) == 0 {
 		return nil
 	}
+	m.bands = planGridBands(old, next)
+	m.folds, m.details = planGridFolds(old, next)
+	m.handoffs = detectGridHandoffs(old, next)
 	// During a pure reorder, retain the original stacking order while cells
 	// cross. The renderer still applies explicit z-indices and container depth.
 	if m.moves && !m.hasEnter && !m.hasExit && len(from.Shapes) == len(to.Shapes) &&
@@ -202,29 +215,62 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 	if m.hasExit {
 		exitScale, exitOpacity = gridPop(1 - gridPhase(elapsed, 0, float64(exitEnd)))
 	}
+	// Edges involving a membership change follow that cell's visibility.
+	var visibility map[string]float64
+	if len(m.edges.pairs) != 0 {
+		visibility = make(map[string]float64)
+	}
+	member := func(shape d2target.Shape, item *gridMotionItem, scale, alpha float64) (d2target.Shape, bool) {
+		id := shape.ID
+		if detail, ok := m.details[id]; ok {
+			shape, alpha = detail.sample(shape, fraction)
+		} else {
+			position := travel
+			if band := m.bands[id]; band != gridBandNone {
+				_, scale, alpha = band.sample(elapsedMS, durationMS)
+			}
+			if parent := item.parent; parent != nil && parent.to != nil && m.folds[parent.to.ID] == nil {
+				if band := m.bands[parent.to.ID]; band != gridBandNone {
+					position, _, _ = band.sample(elapsedMS, durationMS)
+				}
+			}
+			if alpha > 0 {
+				shape = item.bubble(shape, scale, alpha, position)
+			}
+		}
+		if visibility != nil {
+			visibility[id] = alpha
+		}
+		return shape, alpha > 0
+	}
 	for _, shape := range base.Shapes {
 		item := m.items[shape.ID]
 		switch {
 		case item == nil:
 		case item.from == nil:
-			if enterOpacity == 0 {
+			var visible bool
+			shape, visible = member(shape, item, enterScale, enterOpacity)
+			if !visible {
 				continue
 			}
-			shape = item.bubble(shape, enterScale, enterOpacity, travel)
 		case item.to != nil:
-			shape.Pos = item.position(travel)
-			shape.Width = gridLerpInt(item.from.Width, item.to.Width, travel)
-			shape.Height = gridLerpInt(item.from.Height, item.to.Height, travel)
+			position := travel
+			if fold := m.folds[shape.ID]; fold != nil {
+				fold.caption(&shape, fraction)
+			} else if band := m.bands[shape.ID]; band != gridBandNone {
+				position, _, _ = band.sample(elapsedMS, durationMS)
+			}
+			shape.Pos = item.position(position)
+			shape.Width = gridLerpInt(item.from.Width, item.to.Width, position)
+			shape.Height = gridLerpInt(item.from.Height, item.to.Height, position)
 		default:
-			// A sampled base may already contain this departing item. The
-			// ordered removal list below supplies its old board appearance.
 			continue
 		}
 		result.Shapes = append(result.Shapes, shape)
 	}
-	if exitOpacity > 0 {
-		for _, s := range m.removed {
-			result.Shapes = append(result.Shapes, m.items[s.ID].bubble(s, exitScale, exitOpacity, travel))
+	for _, s := range m.removed {
+		if shape, visible := member(s, m.items[s.ID], exitScale, exitOpacity); visible {
+			result.Shapes = append(result.Shapes, shape)
 		}
 	}
 	if m.paintOrder != nil && fraction < 1 {
@@ -232,7 +278,16 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 			return m.paintOrder[result.Shapes[i].ID] < m.paintOrder[result.Shapes[j].ID]
 		})
 	}
-	result.Connections = m.edges.sample(base.Connections, result.Shapes, travel, enterOpacity, exitOpacity)
+	result.Shapes = m.handoffs.apply(result.Shapes, elapsedMS, durationMS)
+	if m.handoffs != nil && visibility != nil {
+		t := gridEase(gridPhase(elapsed, 0, float64(min(gridHandoffMS, durationMS))))
+		for _, pair := range m.handoffs.pairs {
+			visibility[pair.from.ID] = 1 - t
+			visibility[pair.to.ID] = t
+		}
+	}
+	result.Connections = m.edges.sample(base.Connections, m.handoffs.edgeShapes(result.Shapes), travel, enterOpacity, exitOpacity, visibility)
+	result.Connections = m.handoffs.bindEdges(result.Connections, elapsedMS, durationMS)
 	return &result
 }
 

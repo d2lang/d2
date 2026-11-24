@@ -64,6 +64,9 @@ func sampleGridStep(ctx context.Context, prev, next *d2target.Diagram, prevGraph
 	bounds := motion.sampleBoundaries(duration, len(next.TweenFrames))
 	count := len(bounds) - 1
 	cost := gridFrameElements(prev) + gridFrameElements(next)
+	if motion.handoffs != nil {
+		cost += 3 * len(motion.handoffs.pairs)
+	}
 	if cost > *remaining/count {
 		return fmt.Errorf("grid animation exceeds the limit of %d sampled geometry elements", maxGridSampleElements)
 	}
@@ -111,15 +114,36 @@ func (m *gridMotion) sampleBoundaries(duration, paintCount int) []int {
 		// independent animations can continue during the remaining hold.
 		endMS = max(enterEnd, exitEnd)
 	}
-	events := []int{0, exitEnd, enterStart, enterEnd, endMS}
+	// Preserve the fast label roll and each synchronized band pop on long steps.
+	windows := [][2]int{{0, exitEnd}, {enterStart, enterEnd}}
+	if m.handoffs != nil {
+		end := min(gridHandoffMS, duration)
+		endMS = max(endMS, end)
+		windows = append(windows, [2]int{0, end})
+	}
+	var seenBands [3]bool
+	for _, band := range m.bands {
+		if !seenBands[band] {
+			start, end := band.window(duration)
+			windows = append(windows, [2]int{start, end})
+			seenBands[band] = true
+		}
+	}
+	events := []int{0, endMS}
+	for _, w := range windows {
+		events = append(events, w[0], w[1])
+	}
 	slices.Sort(events)
 	events = slices.Compact(events)
 	var times []int
 	for i, start := range events[:len(events)-1] {
 		end := events[i+1]
 		count := 1
-		if start < exitEnd || (start >= enterStart && start < enterEnd) {
-			count = (end - start + period - 1) / period
+		for _, w := range windows {
+			if start >= w[0] && start < w[1] {
+				count = (end - start + period - 1) / period
+				break
+			}
 		}
 		for j := 0; j < count; j++ {
 			times = append(times, start+j*(end-start)/count)

@@ -72,9 +72,23 @@ func gridEdgeShapeMap(shapes []d2target.Shape) map[string]*d2target.Shape {
 	return index
 }
 
-func (m *gridMotionEdges) sample(base []d2target.Connection, shapes []d2target.Shape, travel, enter, exit float64) []d2target.Connection {
+func (m *gridMotionEdges) sample(base []d2target.Connection, shapes []d2target.Shape, travel, enter, exit float64, visibility map[string]float64) []d2target.Connection {
 	if len(m.pairs) == 0 {
 		return base
+	}
+	alpha := func(e *d2target.Connection, fallback float64) float64 {
+		a, src := visibility[e.Src]
+		b, dst := visibility[e.Dst]
+		switch {
+		case src && dst:
+			return min(a, b)
+		case src:
+			return a
+		case dst:
+			return b
+		default:
+			return fallback
+		}
 	}
 	current := gridEdgeShapeMap(shapes)
 	result := make([]d2target.Connection, 0, len(base)+len(m.removed))
@@ -88,22 +102,44 @@ func (m *gridMotionEdges) sample(base []d2target.Connection, shapes []d2target.S
 			continue
 		}
 		if pair.before.edge == nil {
-			e.Opacity *= enter
+			e.Opacity *= alpha(&e, enter)
 		}
-		if pair.route(&e, current, travel) {
+		if pair.route(&e, current, travel) && gridEdgeRevealed(&e, current) {
 			result = append(result, e)
 		}
 	}
-	if exit > 0 {
+	if exit > 0 || len(visibility) != 0 {
 		for _, pair := range m.removed {
 			e := *pair.before.edge
-			e.Opacity *= exit
-			if pair.route(&e, current, travel) {
+			e.Opacity *= alpha(&e, exit)
+			if pair.route(&e, current, travel) && gridEdgeRevealed(&e, current) {
 				result = append(result, e)
 			}
 		}
 	}
 	return result
+}
+
+// A link between details shares their growing viewport. For an external link,
+// expose the route only as its attachment comes into view.
+func gridEdgeRevealed(e *d2target.Connection, shapes map[string]*d2target.Shape) bool {
+	src, dst := shapes[e.Src].MotionClip, shapes[e.Dst].MotionClip
+	if src == nil && dst == nil {
+		return true
+	}
+	if src != nil && dst != nil && *src == *dst {
+		e.MotionClip = src
+		return true
+	}
+	portAlpha := func(c *d2target.MotionClip, p *geo.Point) float64 {
+		if c == nil {
+			return 1
+		}
+		x, y := p.X-float64(c.X), p.Y-float64(c.Y)
+		return gridEase(min(1, max(0, min(x, y, float64(c.Width)-x, float64(c.Height)-y)/5)))
+	}
+	e.Opacity *= min(portAlpha(src, e.Route[0]), portAlpha(dst, e.Route[len(e.Route)-1]))
+	return e.Opacity > 0
 }
 
 // A distance of roughly one pixel accounts for integer target shape

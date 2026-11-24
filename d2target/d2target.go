@@ -792,11 +792,22 @@ func NewDiagram() *Diagram {
 	}
 }
 
+// MotionClip is the visible rectangle of an unfolding grid cell, in diagram coordinates.
+type MotionClip struct {
+	Point
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 type Shape struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
 
 	Classes []string `json:"classes,omitempty"`
+
+	// Only intermediate grid frames carry a viewport or an interpolated caption anchor.
+	MotionClip         *MotionClip `json:"motionClip,omitempty"`
+	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
 
 	Pos    Point `json:"pos"`
 	Width  int   `json:"width"`
@@ -939,6 +950,8 @@ func BaseShape() *Shape {
 
 type Connection struct {
 	ID string `json:"id"`
+
+	MotionClip *MotionClip `json:"motionClip,omitempty"`
 
 	Classes []string `json:"classes,omitempty"`
 

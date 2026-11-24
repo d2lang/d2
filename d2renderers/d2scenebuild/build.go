@@ -709,14 +709,23 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			return nil, err
 		}
 		var node *d2scene.Node
+		var clip *d2target.MotionClip
 		if object.shape != nil {
+			clip = object.shape.MotionClip
 			node, err = b.buildShape(*object.shape)
 		} else {
+			clip = object.connection.MotionClip
 			gaps := crossings[object.order-len(b.diagram.Shapes)]
 			node, err = b.buildConnection(*object.connection, crossingMask(viewBox, gaps))
 		}
 		if err != nil {
 			return nil, err
+		}
+		if c := clip; c != nil {
+			wrapper := d2scene.NewNode(nil)
+			wrapper.Clip = boxClip(d2scene.Box{X: float64(c.X), Y: float64(c.Y), Width: float64(c.Width), Height: float64(c.Height)})
+			wrapper.Children = []*d2scene.Node{node}
+			node = wrapper
 		}
 		renderedObjects[index] = node
 		if object.shape != nil {

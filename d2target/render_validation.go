@@ -295,7 +295,17 @@ func validateRenderFontFamily(family *d2fonts.FontFamily, path string) error {
 	return nil
 }
 
+func validateMotionClip(c *MotionClip, path string) error {
+	if c != nil && (c.Width <= 0 || c.Height <= 0) {
+		return invalidRenderField(path, "motionClip", c, "must have positive dimensions")
+	}
+	return nil
+}
+
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
+	if err := validateMotionClip(targetShape.MotionClip, path); err != nil {
+		return err
+	}
 	for _, field := range []struct {
 		name  string
 		value int
@@ -326,6 +336,9 @@ func validateRenderShapeNumbers(targetShape Shape, path string) error {
 }
 
 func validateRenderConnectionNumbers(connection Connection, path string) error {
+	if err := validateMotionClip(connection.MotionClip, path); err != nil {
+		return err
+	}
 	if connection.StrokeWidth < 0 {
 		return invalidRenderField(path, "strokeWidth", connection.StrokeWidth, "must be non-negative")
 	}

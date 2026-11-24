@@ -36,7 +36,7 @@ func TestGridMotionAttachedRouting(t *testing.T) {
 	b.Pos = d2target.Point{X: 100, Y: 60}
 	// The arc sends the two cells around different sides. The connection
 	// follows their vertical separation instead of collapsing at the center.
-	edges := m.sample(after.Connections, []d2target.Shape{a, b}, 0.5, 1, 1)
+	edges := m.sample(after.Connections, []d2target.Shape{a, b}, 0.5, 1, 1, nil)
 	if len(edges) != 1 || !edges[0].Route[0].Equals(geo.NewPoint(120, -20)) || !edges[0].Route[1].Equals(geo.NewPoint(120, 60)) {
 		t.Fatalf("sampled route = %+v", edges)
 	}
@@ -47,7 +47,7 @@ func TestGridMotionAttachedRouting(t *testing.T) {
 		t.Fatal("mutated authored endpoint route")
 	}
 	a.Pos = b.Pos
-	if edges := m.sample(after.Connections, []d2target.Shape{a, b}, 0.5, 1, 1); len(edges) != 0 {
+	if edges := m.sample(after.Connections, []d2target.Shape{a, b}, 0.5, 1, 1, nil); len(edges) != 0 {
 		t.Fatal("drew a shaft between overlapping cells")
 	}
 }
@@ -60,14 +60,14 @@ func TestGridMotionEdgeLifecycle(t *testing.T) {
 	before := &d2target.Diagram{Shapes: []d2target.Shape{a, b}, Connections: []d2target.Connection{old}}
 	after := &d2target.Diagram{Shapes: []d2target.Shape{a, c}, Connections: []d2target.Connection{newEdge}}
 	m := newGridMotionEdges(before, after, map[string]bool{"b": true, "c": true})
-	edges := m.sample(after.Connections, []d2target.Shape{a, b, c}, 0.5, 0.25, 0.8)
+	edges := m.sample(after.Connections, []d2target.Shape{a, b, c}, 0.5, 0.25, 0.8, nil)
 	if len(edges) != 2 || edges[0].ID != "new" || edges[0].Opacity != 0.1 || edges[1].ID != "old" || math.Abs(edges[1].Opacity-0.48) > 1e-9 {
 		t.Fatalf("expected incoming and outgoing edges to follow their nodes' opacity: %+v", edges)
 	}
-	if got := m.sample(after.Connections, before.Shapes, 0, 0, 1); len(got) != 1 || got[0].ID != "old" {
+	if got := m.sample(after.Connections, before.Shapes, 0, 0, 1, nil); len(got) != 1 || got[0].ID != "old" {
 		t.Fatalf("unexpected edges at start: %+v", got)
 	}
-	if got := m.sample(after.Connections, after.Shapes, 1, 1, 0); len(got) != 1 || got[0].ID != "new" {
+	if got := m.sample(after.Connections, after.Shapes, 1, 1, 0, nil); len(got) != 1 || got[0].ID != "new" {
 		t.Fatalf("unexpected edges at end: %+v", got)
 	}
 }
@@ -85,7 +85,7 @@ func TestGridMotionRouteTopology(t *testing.T) {
 	m := newGridMotionEdges(before, after, map[string]bool{"b": true})
 	// A non-centered port on a moving shape keeps its offset.
 	b.Pos.Y = 58
-	edges := m.sample(after.Connections, []d2target.Shape{a, b}, 0.5, 1, 1)
+	edges := m.sample(after.Connections, []d2target.Shape{a, b}, 0.5, 1, 1, nil)
 	if len(edges) != 1 || edges[0].IsCurve || edges[0].Stroke != "#00ff00" || !edges[0].Route[len(edges[0].Route)-1].Equals(geo.NewPoint(200, 68)) {
 		t.Fatalf("intermediate routed link = %+v", edges)
 	}
