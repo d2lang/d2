@@ -324,6 +324,74 @@ func (position Position) IsOnEdge() bool {
 	}
 }
 
+// Transposed reflects a node label position across the x = y diagonal.
+func (position Position) Transposed() Position {
+	switch position {
+	case OutsideTopLeft:
+		return OutsideLeftTop
+	case OutsideLeftTop:
+		return OutsideTopLeft
+	case OutsideTopCenter:
+		return OutsideLeftMiddle
+	case OutsideLeftMiddle:
+		return OutsideTopCenter
+	case OutsideTopRight:
+		return OutsideLeftBottom
+	case OutsideLeftBottom:
+		return OutsideTopRight
+	case OutsideBottomLeft:
+		return OutsideRightTop
+	case OutsideRightTop:
+		return OutsideBottomLeft
+	case OutsideBottomCenter:
+		return OutsideRightMiddle
+	case OutsideRightMiddle:
+		return OutsideBottomCenter
+	case OutsideBottomRight:
+		return OutsideRightBottom
+	case OutsideRightBottom:
+		return OutsideBottomRight
+	case BorderTopLeft:
+		return BorderLeftTop
+	case BorderLeftTop:
+		return BorderTopLeft
+	case BorderTopCenter:
+		return BorderLeftMiddle
+	case BorderLeftMiddle:
+		return BorderTopCenter
+	case BorderTopRight:
+		return BorderLeftBottom
+	case BorderLeftBottom:
+		return BorderTopRight
+	case BorderBottomLeft:
+		return BorderRightTop
+	case BorderRightTop:
+		return BorderBottomLeft
+	case BorderBottomCenter:
+		return BorderRightMiddle
+	case BorderRightMiddle:
+		return BorderBottomCenter
+	case BorderBottomRight:
+		return BorderRightBottom
+	case BorderRightBottom:
+		return BorderBottomRight
+	case InsideTopCenter:
+		return InsideMiddleLeft
+	case InsideMiddleLeft:
+		return InsideTopCenter
+	case InsideTopRight:
+		return InsideBottomLeft
+	case InsideBottomLeft:
+		return InsideTopRight
+	case InsideMiddleRight:
+		return InsideBottomCenter
+	case InsideBottomCenter:
+		return InsideMiddleRight
+	default:
+		return position
+	}
+}
+
 func (position Position) Mirrored() Position {
 	switch position {
 	case OutsideTopLeft:

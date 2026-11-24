@@ -162,8 +162,11 @@ func sifting(node *placementNode, siblings []*placementNode, byLevel map[int][]*
 }
 
 func improved(crossings, bestCrossings int64, length, bestLength float64, improveIfEqualCrossings bool) bool {
-	if !improveIfEqualCrossings {
-		return crossings < bestCrossings || (crossings == bestCrossings && geo.PrecisionCompare(length, bestLength, geo.PRECISION) == -1)
+	if crossings != bestCrossings {
+		return crossings < bestCrossings
 	}
-	return crossings <= bestCrossings || (crossings == bestCrossings && geo.PrecisionCompare(length, bestLength, geo.PRECISION) < 1)
+	if improveIfEqualCrossings {
+		return length <= bestLength
+	}
+	return geo.PrecisionCompare(length, bestLength, geo.PRECISION) < 0
 }

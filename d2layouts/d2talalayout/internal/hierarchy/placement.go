@@ -128,6 +128,14 @@ func Place(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, ra
 		}
 	}()
 
+	// The hierarchy stage places each ranked component independently. Keep
+	// cross-component proximity hints for packing the completed components.
+	restoreNears, err := layoutgraph.Nodes(g.Nodes).DetachHierarchyNears(ctx)
+	if err != nil {
+		return err
+	}
+	defer restoreNears()
+
 	if err := place(ctx, g, root, randGenerator); err != nil {
 		return err
 	}
@@ -230,29 +238,29 @@ func placeNodesInHierarchy(ctx context.Context, g *layoutgraph.Graph, rand *rand
 	if err := globalSifting(byLevel); err != nil {
 		return err
 	}
+	if err := placeAndAlignLevels(ctx, g, byLevel); err != nil {
+		return err
+	}
+	direction := g.Nodes[0].ContainerDirection()
+	if direction == geo.Left || direction == geo.Top {
+		mirrorRankBlocks(g, direction)
+	}
+	complete = true
+	return nil
+}
+
+func placeAndAlignLevels(ctx context.Context, g *layoutgraph.Graph, byLevel map[int][]*placementNode) error {
 	isHorizontal := IsHorizontal(g.Nodes)
 	if isHorizontal {
 		transpose(g)
+		defer transpose(g)
 	}
 	placeNodesByLevel(g, byLevel, isHorizontal)
 	for level := 0; level < len(byLevel); level++ {
 		byLevel[level] = removeTableColumnNodes(byLevel[level])
 		computeLevelRanks(byLevel[level])
 	}
-	if err := alignHierarchy(ctx, g, byLevel); err != nil {
-		return err
-	}
-	if isHorizontal {
-		transpose(g)
-	}
-	switch g.Nodes[0].ContainerDirection() {
-	case geo.Left:
-		mirrorX(g)
-	case geo.Top:
-		mirrorY(g)
-	}
-	complete = true
-	return nil
+	return alignHierarchy(ctx, byLevel)
 }
 
 // create placement nodes recursively and set the container whenever required
@@ -410,12 +418,7 @@ func placeNodesByLevel(g *layoutgraph.Graph, byLevel map[int][]*placementNode, i
 			nodes = append(nodes, pn.graphNode)
 			pn.graphNode.TopLeft = geo.NewPoint(xOffset, yOffset)
 			if !pn.isDummy {
-				var container *layoutgraph.Node
-				if pn.container != nil {
-					container = pn.container.graphNode
-				}
-				padding := g.ContainerPadding(container, true)
-				placeDescendants(g, pn, pn.graphNode.InsidePlacement(1, 1, padding))
+				placeDescendants(g, pn)
 				levelHeight = math.Max(levelHeight, pn.graphNode.Height)
 				xOffset += math.Ceil(pn.graphNode.Width) + siblingSpacing
 			} else {
@@ -436,23 +439,23 @@ func placeNodesByLevel(g *layoutgraph.Graph, byLevel map[int][]*placementNode, i
 }
 
 // recursively place all descendants of a given container
-func placeDescendants(g *layoutgraph.Graph, root *placementNode, tl geo.Point) {
+func placeDescendants(g *layoutgraph.Graph, root *placementNode) {
 	if !root.isContainer {
 		return
 	}
 	padding := g.ContainerPadding(root.graphNode, true)
+	tl := root.graphNode.InsidePlacement(1, 1, padding)
 	x := tl.X
 	for _, child := range root.children {
 		child.graphNode.TopLeft = geo.NewPoint(x, tl.Y)
-		placeDescendants(g, child, child.graphNode.InsidePlacement(1, 1, padding))
+		placeDescendants(g, child)
 		x += math.Ceil(child.graphNode.Width) + siblingSpacing
 	}
 	childrenTL, childrenBR := layoutgraph.Nodes(g.Containers[root.graphNode]).BoundingBox()
 	root.graphNode.FitToBoundingBox(childrenTL, childrenBR, padding)
 }
 
-// minimumDistanceToNextLevel computes the distance between two levels, accounting for crossings between them.
-// and the label sizes
+// minimumDistanceToNextLevel reserves room for crossings and labels between adjacent ranks.
 func minimumDistanceToNextLevel(levelNodes []*placementNode, isHorizontal bool) float64 {
 	var scratch crossingScratch
 	segments := scratch.crossLevelSegments(levelNodes, false, true)
@@ -460,35 +463,23 @@ func minimumDistanceToNextLevel(levelNodes []*placementNode, isHorizontal bool) 
 	crossingsDistance := float64(crossings) * crossingSpacing
 
 	maxLabelSize := 0.
-	for _, node := range levelNodes {
+	iterAllDescendants(levelNodes, func(node *placementNode) {
 		if node.isDummy {
-			continue
+			return
 		}
-		for _, e := range node.graphNode.Edges {
-			adj := node.graphNode.Adjacent(e)
-			from := node.graphNode
-			to := adj
-			if to.HierarchyLevel() < from.HierarchyLevel() {
-				from, to = to, from
-			}
-			if to.HierarchyLevel()-from.HierarchyLevel() != 1 {
+		for _, edge := range node.graphNode.Edges {
+			if edge.Label == nil || node.graphNode.Adjacent(edge).HierarchyLevel() != node.level+1 {
 				continue
 			}
-			if e.Label != nil {
-				if isHorizontal {
-					maxLabelSize = math.Max(e.Label.Width, maxLabelSize)
-				} else {
-					maxLabelSize = math.Max(e.Label.Height, maxLabelSize)
-				}
+			if isHorizontal {
+				maxLabelSize = math.Max(maxLabelSize, edge.Label.Width)
+			} else {
+				maxLabelSize = math.Max(maxLabelSize, edge.Label.Height)
 			}
 		}
-	}
-	distance := math.Max(float64(crossingsDistance), maxLabelSize+crossingSpacing)
-	// ensure there'll be some space if there are no crossings
-	distance = math.Max(crossingSpacing, distance)
-	// crossings distance is a kind of overshot (as routes might be shared), so clipping here to avoid large gaps between levels
-	distance = math.Min(distance, parentSpacing)
-	return math.Round(distance)
+	})
+	// Routes can share space at crossings, but the label needs its full extent.
+	return math.Round(math.Max(math.Min(crossingsDistance, parentSpacing), maxLabelSize+crossingSpacing))
 }
 
 func isSource(n *layoutgraph.Node) bool {
@@ -531,19 +522,29 @@ func iterContainersBFS(g *layoutgraph.Graph, apply func(n *layoutgraph.Node)) {
 func transpose(g *layoutgraph.Graph) {
 	iterContainersBFS(g, func(n *layoutgraph.Node) {
 		n.Transpose()
+		// Container fitting runs in the transposed coordinate system too.
+		n.DesiredWidth, n.DesiredHeight = n.DesiredHeight, n.DesiredWidth
+		if n.Label != nil {
+			n.Label.Width, n.Label.Height = n.Label.Height, n.Label.Width
+			n.Label.Position = n.Label.Position.Transposed()
+		}
+		if n.Icon != nil {
+			n.Icon.Position = n.Icon.Position.Transposed()
+		}
 	})
 }
 
-func mirrorX(g *layoutgraph.Graph) {
-	iterContainersBFS(g, func(n *layoutgraph.Node) {
-		n.Mirror(true, false)
-	})
-}
-
-func mirrorY(g *layoutgraph.Graph) {
-	iterContainersBFS(g, func(n *layoutgraph.Node) {
-		n.Mirror(false, true)
-	})
+// Reversing rank order moves each block with its contents. Its labels and
+// icons still occupy the same authored sides of the block after the move.
+func mirrorRankBlocks(g *layoutgraph.Graph, direction geo.Orientation) {
+	for _, block := range g.Nodes {
+		before := *block.TopLeft
+		block.Mirror(direction == geo.Left, direction == geo.Top)
+		dx, dy := block.TopLeft.X-before.X, block.TopLeft.Y-before.Y
+		for _, child := range g.Containers[block] {
+			child.MoveWithChildren(dx, dy)
+		}
+	}
 }
 
 func (pn *placementNode) DebugID() string {

@@ -183,7 +183,8 @@ func newHierarchyExternalNearOwnerFixture(withHierarchy bool) (*layoutgraph.Grap
 	externalOwner.AddNewNodeToContainer(nil, external)
 	local.AddNear(external)
 	if withHierarchy {
-		local.Hierarchy = newHierarchyWithLevels(map[*layoutgraph.Node]int{local: 0})
+		local.Hierarchy = newHierarchyWithLevels(map[*layoutgraph.Node]int{local: 0, external: 0})
+		external.Hierarchy = local.Hierarchy
 	}
 	return graph, local, externalOwner, external
 }

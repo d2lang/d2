@@ -49,7 +49,7 @@ func shapeCanBeContainer(candidate nodeshape.Shape) bool {
 // A container can participate only when it has no internal edges and none of
 // its descendants belongs to another specialized layout structure.
 func isEligibleContainer(graph *layoutgraph.Graph, root *layoutgraph.Node) bool {
-	for _, child := range graph.Containers[root] {
+	for _, child := range graph.AllDescendantNodes(root, false) {
 		if child.FixedTopLeft != nil {
 			return false
 		}
@@ -69,9 +69,6 @@ func isEligibleContainer(graph *layoutgraph.Graph, root *layoutgraph.Node) bool 
 			if child.Adjacent(edge).IsDescendantOf(root) {
 				return false
 			}
-		}
-		if child.IsContainer() && !isEligibleContainer(graph, child) {
-			return false
 		}
 	}
 	return true
