@@ -51,12 +51,21 @@ func considerPlacementAxes(ctx context.Context, input seedInput, incumbent seedR
 		peer := n.Adjacent(n.Edges[0])
 		affected[n.ID], affected[peer.ID] = n, peer
 	}
-	if !incumbent.horizontalSource && len(lengths) == 0 {
+	var beforeFlow directionAgreement
+	distinct := incumbent.directionEligible && !incumbent.horizontalSource && len(lengths) == 0
+	if !incumbent.horizontalSource && len(lengths) == 0 && !distinct {
 		return incumbent, nil
 	}
+	if distinct {
+		var err error
+		beforeFlow, err = measureDirectionAgreement(ctx, incumbent.graph)
+		if err != nil {
+			return incumbent, err
+		}
+	}
 	return refineSeedResult(ctx, incumbent, func() (seedResult, error) {
-		trial := placement.SourceOrientationTrial{Apply: incumbent.horizontalSource}
-		graph, err := engine.Layout(placement.WithSourceOrientationTrial(ctx, &trial), input.graph, engine.LayoutOptions{Seed: incumbent.seed, PortLengths: lengths})
+		trial := placement.OrientationTrial{TurnSources: incumbent.horizontalSource, DistinctDirections: distinct}
+		graph, err := engine.Layout(placement.WithOrientationTrial(ctx, &trial), input.graph, engine.LayoutOptions{Seed: incumbent.seed, PortLengths: lengths})
 		if err != nil {
 			return incumbent, err
 		}
@@ -66,8 +75,17 @@ func considerPlacementAxes(ctx context.Context, input seedInput, incumbent seedR
 		}
 		// Turning a source is optional. Preserve the entire drawing's area, even
 		// when it contains several individually compact source containers.
-		if incumbent.horizontalSource && (!trial.Eligible || candidate.score.area > incumbent.score.area) {
+		if incumbent.horizontalSource && (!trial.SourceEligible || candidate.score.area > incumbent.score.area) {
 			return incumbent, nil
+		}
+		if distinct {
+			afterFlow, err := measureDirectionAgreement(ctx, graph)
+			if err != nil {
+				return incumbent, err
+			}
+			if afterFlow.distinct <= beforeFlow.distinct || afterFlow.all < beforeFlow.all || candidate.score.area > incumbent.score.area {
+				return incumbent, nil
+			}
 		}
 		if len(affected) > 0 {
 			guard, err := limits.NewWorkGuard(ctx, "PortClearance", limits.MaxEngineEdges)

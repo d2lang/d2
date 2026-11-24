@@ -152,7 +152,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 		}
 	}
 	if node.Icon != nil && node.shapeType != imageType && node.Icon.Position.IsOutside() && allNodes != nil {
-		iconSize := float64(MaxIconSize)
+		iconSize := node.OutsideIconReserve()
 		iconTL := node.LabelTopLeft(node.Icon.Position, iconSize, iconSize)
 
 		outsidePadding := 2. * label.PADDING
@@ -1019,6 +1019,9 @@ func (n *Node) UpdateSpacing() {
 
 	if n.Icon != nil && n.Icon.PositionFixed() {
 		iconSize := float64(MaxIconSize + 2*label.PADDING)
+		if n.Icon.Position.IsOutside() {
+			iconSize = n.OutsideIconReserve() + 2*label.PADDING
+		}
 		switch n.Icon.Position {
 		case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight:
 			n.margin.top = math.Max(n.margin.top, iconSize)
@@ -2346,6 +2349,16 @@ func (n *Node) isMajorityTarget() bool {
 		}
 	}
 	return counter > 0
+}
+
+// OutsideIconReserve uses the painted size when the icon has a fixed position
+// and its owner has no siblings. With siblings, the packing score does not
+// validate icon intersections, so retain the inter-node clearance there.
+func (n *Node) OutsideIconReserve() float64 {
+	if n.Icon.PositionFixed() && n.Graph != nil && len(n.Graph.Containers[n.OwningContainer()]) == 1 {
+		return math.Ceil(n.IconSize(n.Icon.Position))
+	}
+	return MaxIconSize
 }
 
 // IconSize returns the icon size appropriate for iconPosition on n.

@@ -124,7 +124,7 @@ func packNodeBoundingBox(node *layoutgraph.Node, allNodes layoutgraph.Nodes, gua
 		}
 	}
 	if node.Icon != nil && !node.IsImage() && node.Icon.Position.IsOutside() && allNodes != nil {
-		iconSize := float64(layoutgraph.MaxIconSize)
+		iconSize := node.OutsideIconReserve()
 		iconTopLeft := packOutsideLabelTopLeft(node, node.Icon.Position, iconSize, iconSize)
 		outsidePadding := 2. * label.PADDING
 		topLeft.X = math.Min(topLeft.X, math.Floor(iconTopLeft.X-outsidePadding))

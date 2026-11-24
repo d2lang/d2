@@ -3,10 +3,11 @@ package d2talalayout
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/stretchr/testify/require"
 )
 
 func TestPortClearanceChecksEachPairAtMixedPeer(t *testing.T) {

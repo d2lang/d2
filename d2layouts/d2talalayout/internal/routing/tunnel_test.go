@@ -177,3 +177,25 @@ func TestTunnelMultiple(t *testing.T) {
 		assert.Equal(t, 1, len(tunnels))
 	}
 }
+
+func TestNarrowSequenceStepKeepsVerticalTunnel(t *testing.T) {
+	g := layoutgraph.NewGraph()
+	step := layoutgraph.NewNode(0, 30, 40)
+	step.TopLeft = geo.NewPoint(0, 0)
+	peer := layoutgraph.NewNode(1, 30, 40)
+	peer.TopLeft = geo.NewPoint(0, 100)
+	step.Sequence = &layoutgraph.Sequence{Nodes: []*layoutgraph.Node{step, layoutgraph.NewNode(2, 30, 40)}}
+	g.AddNodeUnchecked(step)
+	g.AddNodeUnchecked(peer)
+
+	guard, err := newRouteWorkGuard(t.Context(), "test", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]*layoutgraph.Node{{step, peer}, {peer, step}} {
+		ranges, horizontal, err := tunnelRangesBetweenGuarded(g, pair[0], pair[1], false, guard)
+		if err != nil || horizontal || len(ranges) != 1 || ranges[0].start != 0 || ranges[0].end != 15 {
+			t.Fatalf("vertical tunnel on 30 px step = %v (horizontal %v, err %v)", ranges, horizontal, err)
+		}
+	}
+}

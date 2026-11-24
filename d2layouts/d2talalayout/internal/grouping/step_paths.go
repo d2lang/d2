@@ -3,6 +3,7 @@ package grouping
 import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
+	"github.com/d2lang/d2/lib/shape"
 )
 
 // A fused row of Step shapes replaces each ordinary transition with the
@@ -163,8 +164,14 @@ func (s stepNetwork) paths(component []*layoutgraph.Node) ([][]*layoutgraph.Node
 }
 
 func (s stepNetwork) orderedPath(group []*layoutgraph.Node) ([]*layoutgraph.Node, error) {
+	// The outlines of adjacent steps meet only when the wedges have the
+	// same depth. Keep the explicit transitions for incompatible shapes.
+	wedge := shape.StepWedgeWidth(sequenceStepWidth(group[0]))
 	var ends []*layoutgraph.Node
 	for _, n := range group {
+		if shape.StepWedgeWidth(sequenceStepWidth(n)) != wedge {
+			return nil, nil
+		}
 		degree := 0
 		for _, e := range s.links[n] {
 			if err := s.guard.Step(); err != nil {

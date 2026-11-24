@@ -95,3 +95,39 @@ Workflow: {
 		})
 	}
 }
+
+func TestFusedStepsRespectAuthoredWedgeWidths(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		widths [3]int
+		edges  int
+	}{
+		{"equal narrow steps", [3]int{30, 30, 30}, 0},
+		{"different wedge depths", [3]int{30, 90, 100}, 2},
+		{"same wedge depth at different widths", [3]int{36, 90, 100}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var source strings.Builder
+			for i, w := range tc.widths {
+				fmt.Fprintf(&source, "%c: {shape: step; width: %d; height: 56}\n", 'A'+i, w)
+			}
+			source.WriteString("A -> B -> C")
+			d := compileRoutingDiagram(t, t.Context(), source.String(), 1, nil)
+			if len(d.Shapes) != len(tc.widths) || len(d.Connections) != tc.edges {
+				t.Fatalf("got %d shapes and %d explicit transitions", len(d.Shapes), len(d.Connections))
+			}
+			for i, n := range d.Shapes {
+				if n.Width != tc.widths[i] {
+					t.Errorf("step %s has width %d, want %d", n.ID, n.Width, tc.widths[i])
+				}
+			}
+			if tc.widths[0] == 30 && tc.edges == 0 {
+				for i := 1; i < len(d.Shapes); i++ {
+					if d.Shapes[i].Pos.X-d.Shapes[i-1].Pos.X != 15 {
+						t.Errorf("step %s does not meet its predecessor", d.Shapes[i].ID)
+					}
+				}
+			}
+		})
+	}
+}

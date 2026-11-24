@@ -201,12 +201,6 @@ func placeNodes(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Nod
 				}
 			}
 		}
-		// reconnectTree restores the node to subgraph.Containers[root] but if the slice grows from an append,
-		// subgraph.Containers[root] will be a different slice than g.Containers[root] so we need to sync the entry in g.Containers
-		g.Containers[root] = subgraph.Containers[root]
-		for _, otherSubgraph := range subgraphs {
-			otherSubgraph.Containers[root] = subgraph.Containers[root]
-		}
 
 		// To determine within mirroring which container contents are reachable and should be recursively mirrored,
 		// the edges need to be temporarily restored

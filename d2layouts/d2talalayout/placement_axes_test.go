@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/stretchr/testify/require"
+
+	"github.com/d2lang/d2/d2renderers/d2svg"
 )
 
 func TestHorizontalSourceOrientationConsidersWholeDrawing(t *testing.T) {

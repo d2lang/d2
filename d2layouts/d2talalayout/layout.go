@@ -156,14 +156,15 @@ func runLocalSeed(
 		}
 	}()
 
-	orientation := placement.SourceOrientationTrial{}
-	laidOut, err := runSeed(placement.WithSourceOrientationTrial(ctx, &orientation), input, seed)
+	orientation := placement.OrientationTrial{}
+	laidOut, err := runSeed(placement.WithOrientationTrial(ctx, &orientation), input, seed)
 	if err != nil {
 		attempt.err = err
 		return attempt
 	}
 	attempt.result, attempt.err = evaluateSeedResult(ctx, input, laidOut)
-	attempt.result.horizontalSource = orientation.Eligible
+	attempt.result.horizontalSource = orientation.SourceEligible
+	attempt.result.directionEligible = orientation.DirectionEligible
 	return attempt
 }
 

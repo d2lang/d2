@@ -12,19 +12,20 @@ import (
 
 type containerOrientationDisabled struct{}
 
-// SourceOrientationTrial is private to one seed. Ordinary placement records
-// eligible horizontal turns; only a comparison against the completed winner
-// is allowed to apply them.
-type SourceOrientationTrial struct {
-	Apply    bool
-	Eligible bool
+// OrientationTrial records orientation alternatives during an ordinary seed
+// and enables them only for a comparison against the selected complete drawing.
+type OrientationTrial struct {
+	TurnSources        bool
+	SourceEligible     bool
+	DistinctDirections bool
+	DirectionEligible  bool
 }
 
-func WithSourceOrientationTrial(ctx context.Context, trial *SourceOrientationTrial) context.Context {
-	return context.WithValue(ctx, sourceOrientationKey{}, trial)
+func WithOrientationTrial(ctx context.Context, trial *OrientationTrial) context.Context {
+	return context.WithValue(ctx, orientationTrialKey{}, trial)
 }
 
-type sourceOrientationKey struct{}
+type orientationTrialKey struct{}
 
 // A container footprint can change the later placement of its siblings. Until
 // those later operations validate self-loop envelopes, leave loop-bearing
@@ -57,9 +58,9 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 	}
 	direction := g.Direction(root.OwningContainer())
 	horizontal := direction.IsHorizontal()
-	var trial *SourceOrientationTrial
+	var trial *OrientationTrial
 	if horizontal {
-		trial, _ = ctx.Value(sourceOrientationKey{}).(*SourceOrientationTrial)
+		trial, _ = ctx.Value(orientationTrialKey{}).(*OrientationTrial)
 	}
 	if (!direction.IsVertical() && trial == nil) || len(root.Edges) < 3 {
 		return nil
@@ -119,8 +120,8 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 		return nil
 	}
 	if horizontal {
-		if !trial.Apply {
-			trial.Eligible = true
+		if !trial.TurnSources {
+			trial.SourceEligible = true
 			return guard.Finish()
 		}
 	}
@@ -206,7 +207,7 @@ func orientSourceInterior(ctx context.Context, g *layoutgraph.Graph, root *layou
 		return err
 	}
 	if horizontal {
-		trial.Eligible = true
+		trial.SourceEligible = true
 	}
 	return nil
 }

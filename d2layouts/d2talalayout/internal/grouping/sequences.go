@@ -347,12 +347,19 @@ func AddSequences(ctx context.Context, graph *layoutgraph.Graph, random *rand.Ra
 	return nil
 }
 
+// Automatically sized steps need room for the full wedge. Keep the measured
+// width of an explicitly sized step, including the renderer’s narrow shape.
+func sequenceStepWidth(n *layoutgraph.Node) float64 {
+	if n.DesiredWidth == nil && n.Width <= shape.STEP_WEDGE_WIDTH {
+		return 2 * shape.STEP_WEDGE_WIDTH
+	}
+	return n.Width
+}
+
 func buildSequence(steps []*layoutgraph.Node, graph *layoutgraph.Graph, container *layoutgraph.Node, id layoutgraph.EntityID) *layoutgraph.Sequence {
 	maxHeight := 0.0
 	for _, node := range steps {
-		if node.Width <= shape.STEP_WEDGE_WIDTH {
-			node.Width = 2 * shape.STEP_WEDGE_WIDTH
-		}
+		node.Width = sequenceStepWidth(node)
 		maxHeight = math.Max(maxHeight, node.Height)
 	}
 	for _, node := range steps {

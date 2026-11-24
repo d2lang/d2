@@ -123,11 +123,7 @@ func SequenceAdvance(width float64) float64 {
 	if width <= 0 {
 		return 0
 	}
-	wedge := shape.STEP_WEDGE_WIDTH
-	if width <= wedge {
-		wedge = width / 2
-	}
-	return width - wedge
+	return width - shape.StepWedgeWidth(width)
 }
 
 // SyncSequences synchronizes every active sequence in nested graph order.
