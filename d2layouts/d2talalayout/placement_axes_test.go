@@ -68,3 +68,24 @@ func TestAuthoredDimensionRelievesOnlyCrowdedParallelPorts(t *testing.T) {
 		})
 	}
 }
+
+// The queue also talks to a third node, so it is not itself eligible to grow.
+func TestPortSizingKeepsDistinctArrivalsAtUnchangedPeer(t *testing.T) {
+	source := "direction: right\nP: Pub {height: 180}\nQ: Queue {height: 50}\n" + strings.Repeat("P -> Q\n", 9) + "Q -> A\nD -> D\nC -> A\nE -> B"
+	for _, seed := range []int64{1, 2, 3} {
+		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			d := compileRoutingDiagram(t, t.Context(), source, seed, &d2svg.RenderOpts{})
+			ports := map[[2]float64]bool{}
+			for _, e := range d.Connections {
+				if e.Dst != "Q" {
+					continue
+				}
+				port := e.Route[len(e.Route)-1]
+				key := [2]float64{port.X, port.Y}
+				require.False(t, ports[key], "two arrows arrive at the same point on Q")
+				ports[key] = true
+			}
+			require.Len(t, ports, 9)
+		})
+	}
+}

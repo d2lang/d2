@@ -1,6 +1,7 @@
 package d2talalayout
 
 import (
+	"cmp"
 	"context"
 	"math"
 	"slices"
@@ -11,12 +12,14 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placement"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placementcost"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/quality"
+	"github.com/d2lang/d2/lib/geo"
 )
 
 // At most one trial of the selected seed, regardless of the number of ports
 // and containers. Its independent workspace leaves the winner intact.
 func considerPlacementAxes(ctx context.Context, input seedInput, incumbent seedResult) (seedResult, error) {
 	var lengths, gaps map[layoutgraph.EntityID]float64
+	var affected map[layoutgraph.EntityID]*layoutgraph.Node
 	for _, n := range incumbent.graph.Nodes {
 		if err := ctx.Err(); err != nil {
 			return incumbent, err
@@ -41,9 +44,12 @@ func considerPlacementAxes(ctx context.Context, input seedInput, incumbent seedR
 		if lengths == nil {
 			lengths = make(map[layoutgraph.EntityID]float64)
 			gaps = make(map[layoutgraph.EntityID]float64)
+			affected = make(map[layoutgraph.EntityID]*layoutgraph.Node)
 		}
 		lengths[n.ID] = length
 		gaps[n.ID] = gap
+		peer := n.Adjacent(n.Edges[0])
+		affected[n.ID], affected[peer.ID] = n, peer
 	}
 	if !incumbent.horizontalSource && len(lengths) == 0 {
 		return incumbent, nil
@@ -63,9 +69,21 @@ func considerPlacementAxes(ctx context.Context, input seedInput, incumbent seedR
 		if incumbent.horizontalSource && (!trial.Eligible || candidate.score.area > incumbent.score.area) {
 			return incumbent, nil
 		}
-		if len(gaps) > 0 {
+		if len(affected) > 0 {
+			guard, err := limits.NewWorkGuard(ctx, "PortClearance", limits.MaxEngineEdges)
+			if err != nil {
+				return incumbent, err
+			}
 			for _, n := range graph.Nodes {
 				if err := ctx.Err(); err != nil {
+					return incumbent, err
+				}
+				prior := affected[n.ID]
+				if prior == nil {
+					continue
+				}
+				preserved, err := preservesPortClearance(guard, prior, n)
+				if err != nil || !preserved {
 					return incumbent, err
 				}
 				if gap, ok := gaps[n.ID]; ok {
@@ -133,4 +151,59 @@ func parallelPortGap(n *layoutgraph.Node, freeFacesOnly bool) (float64, bool) {
 		}
 	}
 	return gap, true
+}
+
+// Check each pair against its own previous distance. A preexisting overlap
+// elsewhere on this node cannot hide a newly coincident pair. Euclidean
+// distance includes neighboring faces, curved shapes and both ends of loops.
+func preservesPortClearance(guard *limits.WorkGuard, before, after *layoutgraph.Node) (bool, error) {
+	if err := guard.Add(int64(len(before.Edges) + len(after.Edges))); err != nil {
+		return false, err
+	}
+	prior := make(map[layoutgraph.EntityID]*layoutgraph.Edge, len(before.Edges))
+	for _, e := range before.Edges {
+		prior[e.ID] = e
+	}
+	type endpoint struct{ old, current *geo.Point }
+	ends := make([]endpoint, 0, len(after.Edges))
+	for _, e := range after.Edges {
+		if e.IsInvisible {
+			continue
+		}
+		old := prior[e.ID]
+		if old == nil || len(old.Points) < 2 || len(e.Points) < 2 {
+			return false, nil
+		}
+		if e.From == after {
+			ends = append(ends, endpoint{old.SourcePort(), e.SourcePort()})
+		}
+		if e.To == after {
+			ends = append(ends, endpoint{old.TargetPort(), e.TargetPort()})
+		}
+	}
+	// Pairs outside the desired spacing already have sufficient room. Sort by
+	// the new x coordinate so that only a narrow strip needs comparisons.
+	const spacing = placementcost.SideEdgeSpacing
+	slices.SortFunc(ends, func(a, b endpoint) int { return cmp.Compare(a.current.X, b.current.X) })
+	for i, a := range ends {
+		for _, b := range ends[i+1:] {
+			dx := b.current.X - a.current.X
+			if dx >= spacing {
+				break
+			}
+			if err := guard.Step(); err != nil {
+				return false, err
+			}
+			dy := b.current.Y - a.current.Y
+			next := dx*dx + dy*dy
+			if next >= spacing*spacing {
+				continue
+			}
+			dx, dy = b.old.X-a.old.X, b.old.Y-a.old.Y
+			if next+1e-8 < dx*dx+dy*dy {
+				return false, nil
+			}
+		}
+	}
+	return true, guard.Finish()
 }
