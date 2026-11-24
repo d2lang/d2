@@ -2,12 +2,10 @@ package imgbundler
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/internal/testlog"
@@ -30,7 +28,8 @@ func TestBundleLocalRootedPolicy(t *testing.T) {
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writeLocalPolicyImage(t, root, "inside.svg", `<svg xmlns="http://www.w3.org/2000/svg"/>`)
+	const inside = `<svg xmlns="http://www.w3.org/2000/svg"/>`
+	writeLocalPolicyImage(t, root, "inside.svg", inside)
 	outside := writeLocalPolicyImage(t, parent, "outside.svg", `<svg xmlns="http://www.w3.org/2000/svg"/>`)
 	policy, err := localfile.Rooted(root)
 	if err != nil {
@@ -43,9 +42,7 @@ func TestBundleLocalRootedPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(output), `data:image/svg+xml;base64,`) {
-		t.Fatalf("in-root image was not bundled: %s", output)
-	}
+	assertBundledImage(t, output, "image/svg+xml", []byte(inside))
 	for _, href := range []string{"../outside.svg", outside} {
 		if _, err := BundleLocalWithPolicy(ctx, logger, filepath.Join(root, "input.d2"), localPolicySVG(href), policy, false); err == nil {
 			t.Fatalf("rooted policy bundled outside path %q", href)
@@ -118,10 +115,7 @@ func TestBundleLocalCacheDoesNotCrossRootReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := base64.StdEncoding.EncodeToString([]byte(replacement))
-	if !strings.Contains(string(output), want) {
-		t.Fatal("replacement root reused the previous root's cached asset")
-	}
+	assertBundledImage(t, output, "image/svg+xml", []byte(replacement))
 }
 
 func TestBundleLocalCapsLocalFileBytes(t *testing.T) {

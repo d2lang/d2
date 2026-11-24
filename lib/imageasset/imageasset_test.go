@@ -105,6 +105,37 @@ func TestResourceDataURIContext(t *testing.T) {
 	}
 }
 
+func TestCompactSVGDataURIRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		percent       bool
+	}{
+		{"mostly ASCII", strings.Repeat("M100,200L300,400", 6000) + "日本語&lt; &amp; +%#'\"", true},
+		{"mostly non-ASCII", strings.Repeat("日本語", 1000), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			raw := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><desc>` + tc.content + `</desc></svg>`)
+			resolver := newTestResolver(t, Options{})
+			resource, err := resolver.Resolve(ctx, dataURI("image/svg+xml", raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			uri, err := resource.CompactDataURIContext(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.HasPrefix(uri, []byte("data:image/svg+xml,")) != tc.percent || bytes.ContainsAny(uri, "<>\"'&# \t\n") {
+				t.Fatalf("unexpected encoding at start of %q", uri[:60])
+			}
+			resolved, err := resolver.Resolve(ctx, string(uri))
+			if err != nil || !bytes.Equal(resolved.data, raw) {
+				t.Fatalf("round trip changed SVG content: %v", err)
+			}
+		})
+	}
+}
+
 func TestResolverClosesOnlyOwnedHTTPTransport(t *testing.T) {
 	owned, err := New(Options{Limits: generousLimits()})
 	if err != nil {

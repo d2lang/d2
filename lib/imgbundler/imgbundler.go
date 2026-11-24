@@ -373,7 +373,7 @@ func resolveReplacement(ctx context.Context, resolver *imageasset.Resolver, href
 	if resource == nil {
 		return nil, errors.New("image resolver returned nil")
 	}
-	dataURI, err := resource.DataURIContext(ctx)
+	dataURI, err := resource.CompactDataURIContext(ctx)
 	if err != nil {
 		return nil, err
 	}

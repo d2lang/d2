@@ -166,6 +166,16 @@ func (r *Resource) BytesContext(ctx context.Context) ([]byte, error) {
 // private backing bytes directly, avoiding the full owned copy required by
 // BytesContext for callers that only need a self-contained representation.
 func (r *Resource) DataURIContext(ctx context.Context) ([]byte, error) {
+	return r.dataURI(ctx, false)
+}
+
+// CompactDataURIContext returns a self-contained image href for SVG output.
+// For SVG XML, it uses percent encoding when that is shorter than base64.
+func (r *Resource) CompactDataURIContext(ctx context.Context) ([]byte, error) {
+	return r.dataURI(ctx, true)
+}
+
+func (r *Resource) dataURI(ctx context.Context, compact bool) ([]byte, error) {
 	if r == nil {
 		return nil, errors.New("imageasset: nil resource")
 	}
@@ -185,6 +195,11 @@ func (r *Resource) DataURIContext(ctx context.Context) ([]byte, error) {
 	maxInt := uint64(^uint(0) >> 1)
 	if totalBytes < 0 || uint64(totalBytes) > maxInt {
 		return nil, errors.New("imageasset: data URI is not representable")
+	}
+	if compact && r.kind == KindSVG {
+		if uri, err := compactSVGDataURI(ctx, r.data, totalBytes); uri != nil || err != nil {
+			return uri, err
+		}
 	}
 	result := make([]byte, int(totalBytes))
 	copy(result, prefix)
@@ -209,6 +224,57 @@ func (r *Resource) DataURIContext(ctx context.Context) ([]byte, error) {
 		return nil, errors.New("imageasset: data URI size preflight mismatch")
 	}
 	return result, nil
+}
+
+// Only URI characters safe inside an XML attribute can be copied literally.
+// In particular escape fragments, percent signs, XML syntax and whitespace.
+func imageURIByte(c byte) bool {
+	if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+		return true
+	}
+	switch c {
+	case '-', '.', '_', '~', '!', '$', '(', ')', '*', '+', ',', ';', '=', ':', '@', '/':
+		return true
+	}
+	return false
+}
+
+// Stop counting as soon as base64 is as small. Use exactly one output buffer.
+func compactSVGDataURI(ctx context.Context, data []byte, base64Bytes int64) ([]byte, error) {
+	const prefix = "data:image/svg+xml,"
+	size := int64(len(prefix)) + int64(len(data))
+	for i, c := range data {
+		if i%(32<<10) == 0 {
+			if err := checkContext(ctx); err != nil {
+				return nil, err
+			}
+		}
+		if !imageURIByte(c) {
+			if size >= base64Bytes-2 {
+				return nil, nil
+			}
+			size += 2
+		}
+	}
+	const hex = "0123456789ABCDEF"
+	uri := make([]byte, 0, int(size))
+	uri = append(uri, prefix...)
+	for i, c := range data {
+		if i%(32<<10) == 0 {
+			if err := checkContext(ctx); err != nil {
+				return nil, err
+			}
+		}
+		if imageURIByte(c) {
+			uri = append(uri, c)
+		} else {
+			uri = append(uri, '%', hex[c>>4], hex[c&15])
+		}
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	return uri, nil
 }
 
 // Cache is optional. Implementations must be safe for concurrent use. Only
