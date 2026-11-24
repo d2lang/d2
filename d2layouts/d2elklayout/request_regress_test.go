@@ -125,6 +125,7 @@ func origELKRequest(g *d2graph.Graph, opts *ConfigurableOpts) ([]byte, error) {
 	elkGraph := &ELKGraph{ID: "", LayoutOptions: origNewRootLayoutOptions(opts)}
 	// The native loop extension is the intentional addition to the original request.
 	elkGraph.LayoutOptions.RouteSelfLoops = opts.usesAlgorithm("stress") || opts.usesAlgorithm("force") || opts.usesAlgorithm("mrtree")
+	elkGraph.LayoutOptions.RouteCrossContainerEdges = elkGraph.LayoutOptions.RouteSelfLoops || opts.usesAlgorithm("radial")
 	if elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing == DefaultOpts.SelfLoopSpacing {
 		elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing = go2.Max(elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing, maxSelfLoopLabel(g.Root, vertical)/2+5)
 	}
@@ -663,12 +664,8 @@ func TestCallerOptionsNotRetained(t *testing.T) {
 	}
 }
 
-// TestPanicDropsScratch lays out a diagram on which Layout
-// panics (Radial leaves the container's self loop without a route, which
-// the route trimming then indexes; the original panics the same way) and
-// checks that the panic value reaches the caller unchanged and that the
-// scratch the layout took was not offered for reuse while the panic unwound;
-// later layouts are unchanged.
+// A panic from the layout provider must reach the caller unchanged and
+// discard in-use scratch before another layout can reuse it.
 func TestPanicDropsScratch(t *testing.T) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
@@ -687,27 +684,22 @@ func TestPanicDropsScratch(t *testing.T) {
 	}
 	input := "a -> b: label\nc: {d -> e}\nb -> c.d"
 	want := layout(input)
-	// The runtime error of indexing an empty slice at 0, as this runtime
-	// words it (TinyGo leaves out the index and length).
-	wantPanic := func() (value any) {
-		defer func() { value = recover() }()
-		var empty []int
-		index := 0
-		return empty[index]
-	}()
+	wantPanic := fmt.Errorf("injected ELK panic")
 	for round := 0; round < 3; round++ {
 		releasedScratch.Lock()
 		taken := releasedScratch.slot
 		releasedScratch.Unlock()
-		g := compileELKGoDiagram(t, ruler, "src.z.k\nB -> src.z.k\nsrc.z -> src.z")
-		g.Data = map[string]any{"elk-algorithm": "radial"}
+		g := compileELKGoDiagram(t, ruler, input)
 		recovered := func() (value any) {
 			defer func() { value = recover() }()
+			saved := beforeELKHook
+			defer func() { beforeELKHook = saved }()
+			beforeELKHook = func(*ELKGraph) { panic(wantPanic) }
 			_ = Layout(context.Background(), g, nil)
 			return nil
 		}()
-		if _, ok := recovered.(runtime.Error); !ok || fmt.Sprint(recovered) != fmt.Sprint(wantPanic) {
-			t.Fatalf("round %d: recovered %v, want %v (the original's runtime error)", round, recovered, wantPanic)
+		if recovered != wantPanic {
+			t.Fatalf("round %d: recovered %v, want %v", round, recovered, wantPanic)
 		}
 		releasedScratch.Lock()
 		slot := releasedScratch.slot

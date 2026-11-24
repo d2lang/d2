@@ -805,6 +805,7 @@ func appendOptionPairs(pairs []elkOptionPair, o *elkOpts) (_ []elkOptionPair, ma
 	b.str("elk.hierarchyHandling", o.HierarchyHandling, true)
 	b.boolean("elk.edgeLabels.inline", o.InlineEdgeLabels)
 	b.boolean("elkgo.routeSelfLoops", o.RouteSelfLoops)
+	b.boolean("elkgo.routeCrossContainerEdges", o.RouteCrossContainerEdges)
 	b.str("elk.layered.considerModelOrder.strategy", o.ConsiderModelOrder, true)
 	b.str("elk.layered.cycleBreaking.strategy", o.CycleBreakingStrategy, true)
 	b.str("elk.layered.edgeRouting.selfLoopDistribution", o.SelfLoopDistribution, true)

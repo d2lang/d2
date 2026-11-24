@@ -103,6 +103,7 @@
 - ELK moves a self-loop label beside the edge when it would cover a bend and there is room.
 - elk: fix Mr. Tree arrows doubling back through their target shapes and shortcut edges cutting through intervening nodes. [#2981](https://github.com/d2lang/d2/pull/2981)
 - elk: route self-loops in Stress, Force and Mr. Tree layouts, including labeled loops and multiple loops on the same shape. [#2997](https://github.com/d2lang/d2/issues/2997)
+- elk: route arrows across container boundaries in Stress, Force, Mr. Tree and Radial, including connections to SQL columns. [#2717](https://github.com/d2lang/d2/issues/2717)
 - rendering:
   - Keep nested isometric platforms visible when the diagram has a root border or fill pattern.
   - Keep outside-right isometric labels beside the projected shape wall.
