@@ -173,8 +173,8 @@ func testSolidContactArrowsTrafficAndMainCaption(t *testing.T, queue d2isometric
 	}
 	expected := &meshBuilder{ctx: ctx, scale: .01}
 	mat := nativeMaterial(nativeRouteTint(e), .6, .05, 1)
-	expected.arrowWithOpacity(string(e.SourceArrow), path[0], nsub(path[0], path[1]), mat, e.StrokeWidth, 1)
-	expected.arrowWithOpacity(string(e.TargetArrow), path[2], nsub(path[2], path[1]), mat, e.StrokeWidth, 1)
+	expected.arrowWithOpacity(string(e.SourceArrow), path[0], nsub(path[0], path[1]), mat, e.RenderedStrokeWidth(), 1)
+	expected.arrowWithOpacity(string(e.TargetArrow), path[2], nsub(path[2], path[1]), mat, e.RenderedStrokeWidth(), 1)
 	var markers []Triangle
 	for _, triangle := range b.triangles {
 		if triangle.DepthBias > .001 && triangle.Material.Texture == nil {

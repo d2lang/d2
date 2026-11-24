@@ -27,7 +27,7 @@ func minimumSketchGapRadius(back, front Connection, under, over crossingSegment,
 	// the parallelogram formed by those strips.
 	x, y := sketchLineDeviation(al, back.Animated), sketchLineDeviation(bl, front.Animated)
 	distance := math.Sqrt(x*x+y*y+2*x*y*cosine) / sine
-	return distance + float64(back.StrokeWidth)/2
+	return distance + back.RenderedStrokeWidth()/2
 }
 
 // Rough-go changes its line randomness gain above this length.

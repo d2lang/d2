@@ -3,6 +3,9 @@ package d2lib
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -76,5 +79,73 @@ steps: {
 			t.Fatal(err)
 		}
 		checkValue(restored.Steps[0].TweenFrames[1], "75%")
+	}
+}
+
+func TestCompileFractionalStrokeWidths(t *testing.T) {
+	const input = `vars: {n: 0; d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+style.stroke-width: 5
+classes: {
+  route: {style.stroke-width: "${n}"}
+  quiet: {style.stroke-width: 1}
+  loud: {style.stroke-width: 6}
+}
+a: "Count ${n}" {class: route}
+b: {style.stroke-width: ${n}}
+mode: {class: quiet}
+a -> b: {style.stroke-width: 2}
+a -> b: {style.stroke-width: 7}
+steps: {
+  grow: {
+    vars: {n: 1}
+    style.stroke-width: 4
+    (a -> b)[0].style.stroke-width: 8
+    fresh.style.stroke-width: 8
+    mode.class: loud
+  }
+  restore: {vars: {n: 0}; style.stroke-width: 5; (a -> b)[0].style.stroke-width: 2}
+}
+`
+	calls := 0
+	opts := dagreCompileOptions(&calls)
+	opts.LayoutReuse = true
+	board, _, err := Compile(d2log.WithDefault(context.Background()), input, opts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d2target.ValidateRenderTarget(board); err != nil {
+		t.Fatal(err)
+	}
+	for i, step := range board.Steps {
+		if len(step.TweenFrames) != 4 {
+			t.Fatalf("step %d has %d frames", i, len(step.TweenFrames))
+		}
+		for j, frame := range append(slices.Clone(step.TweenFrames), step) {
+			progress := float64(j) / 4
+			if i == 1 {
+				progress = 1 - progress
+			}
+			a := shapeByID(t, frame, "a")
+			for _, stroke := range []struct {
+				name      string
+				got, want float64
+			}{
+				{"class variable", a.RenderedStrokeWidth(), progress},
+				{"shared variable", shapeByID(t, frame, "b").RenderedStrokeWidth(), progress},
+				{"board", frame.Root.RenderedStrokeWidth(), 5 - progress},
+				{"first edge", frame.Connections[0].RenderedStrokeWidth(), 2 + 6*progress},
+				{"parallel edge", frame.Connections[1].RenderedStrokeWidth(), 7},
+				{"new shape", shapeByID(t, frame, "fresh").RenderedStrokeWidth(), 8},
+				{"class switch", shapeByID(t, frame, "mode").RenderedStrokeWidth(), 6},
+			} {
+				if stroke.got != stroke.want {
+					t.Errorf("step %d frame %d: %s stroke width %v, want %v", i, j, stroke.name, stroke.got, stroke.want)
+				}
+			}
+			wantLabel := "Count " + strconv.Itoa(int(math.RoundToEven(progress)))
+			if a.Label != wantLabel {
+				t.Errorf("step %d frame %d: shared variable label %q, want %q", i, j, a.Label, wantLabel)
+			}
+		}
 	}
 }

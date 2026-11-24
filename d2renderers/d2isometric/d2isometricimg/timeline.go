@@ -173,7 +173,7 @@ func timelineBoardAnimated(board *d2target.Diagram) bool {
 	}
 	for _, group := range edges {
 		for _, edge := range group {
-			if edge.Animated && edge.Opacity > 0 && edge.StrokeWidth > 0 {
+			if edge.Animated && edge.Opacity > 0 && edge.RenderedStrokeWidth() > 0 {
 				return true
 			}
 		}

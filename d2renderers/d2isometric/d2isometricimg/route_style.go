@@ -20,7 +20,7 @@ func nativeRouteTint(edge d2isometric.Edge) string {
 }
 
 func nativeRouteRadius(edge d2isometric.Edge) float64 {
-	return max(.012, min(.075, float64(edge.StrokeWidth)*.012))
+	return max(.012, min(.075, edge.RenderedStrokeWidth()*.012))
 }
 
 // Diagram ink is a flat, unlit ribbon. Its authored path and any crossing

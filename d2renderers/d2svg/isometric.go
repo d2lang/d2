@@ -163,7 +163,7 @@ func wrapIsometricSVG(diagram *d2target.Diagram, data []byte, opts *RenderOpts) 
 	if len(diagram.ExplicitDefaultStrokeWidths) != 0 {
 		var marked []byte
 		for i, shape := range diagram.Shapes {
-			if shape.StrokeWidth == d2target.DEFAULT_SHAPE_STROKE_WIDTH && diagram.ExplicitDefaultStrokeWidths[shape.ID] {
+			if shape.RenderedStrokeWidth() == d2target.DEFAULT_SHAPE_STROKE_WIDTH && diagram.ExplicitDefaultStrokeWidths[shape.ID] {
 				marked = strconv.AppendInt(marked, int64(i), 10)
 				marked = append(marked, ',')
 			}

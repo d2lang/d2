@@ -33,7 +33,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 			continue
 		}
 		box, topLeft := shapeLabelPlacement(targetShape)
-		holeBox, ok := borderLabelMaskBox(position, topLeft, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.StrokeWidth)
+		holeBox, ok := borderLabelMaskBox(position, topLeft, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.RenderedStrokeWidth())
 		if !ok || holeBox.Width <= 0 || holeBox.Height <= 0 {
 			continue
 		}
@@ -120,29 +120,28 @@ func crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap) *d2scene.M
 	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}
 }
 
-func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth, labelHeight int, shapeBox *geo.Box, strokeWidth int) (d2scene.Box, bool) {
-	effectiveStrokeWidth := float64(strokeWidth)
+func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth, labelHeight int, shapeBox *geo.Box, strokeWidth float64) (d2scene.Box, bool) {
 	var box d2scene.Box
 	switch position {
 	case label.BorderTopLeft, label.BorderTopCenter, label.BorderTopRight:
 		box = d2scene.Box{
-			X: topLeft.X - 2, Y: shapeBox.TopLeft.Y - effectiveStrokeWidth/2,
-			Width: float64(labelWidth + 4), Height: effectiveStrokeWidth,
+			X: topLeft.X - 2, Y: shapeBox.TopLeft.Y - strokeWidth/2,
+			Width: float64(labelWidth + 4), Height: strokeWidth,
 		}
 	case label.BorderBottomLeft, label.BorderBottomCenter, label.BorderBottomRight:
 		box = d2scene.Box{
-			X: topLeft.X - 2, Y: shapeBox.TopLeft.Y + shapeBox.Height - effectiveStrokeWidth/2,
-			Width: float64(labelWidth + 4), Height: effectiveStrokeWidth,
+			X: topLeft.X - 2, Y: shapeBox.TopLeft.Y + shapeBox.Height - strokeWidth/2,
+			Width: float64(labelWidth + 4), Height: strokeWidth,
 		}
 	case label.BorderLeftTop, label.BorderLeftMiddle, label.BorderLeftBottom:
 		box = d2scene.Box{
-			X: shapeBox.TopLeft.X - effectiveStrokeWidth/2, Y: topLeft.Y - 2,
-			Width: effectiveStrokeWidth, Height: float64(labelHeight + 4),
+			X: shapeBox.TopLeft.X - strokeWidth/2, Y: topLeft.Y - 2,
+			Width: strokeWidth, Height: float64(labelHeight + 4),
 		}
 	case label.BorderRightTop, label.BorderRightMiddle, label.BorderRightBottom:
 		box = d2scene.Box{
-			X: shapeBox.TopLeft.X + shapeBox.Width - effectiveStrokeWidth/2, Y: topLeft.Y - 2,
-			Width: effectiveStrokeWidth, Height: float64(labelHeight + 4),
+			X: shapeBox.TopLeft.X + shapeBox.Width - strokeWidth/2, Y: topLeft.Y - 2,
+			Width: strokeWidth, Height: float64(labelHeight + 4),
 		}
 	default:
 		return d2scene.Box{}, false

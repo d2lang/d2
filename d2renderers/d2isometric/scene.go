@@ -107,6 +107,16 @@ type Edge struct {
 	SequenceRole   string             `json:"sequenceRole,omitempty"`
 	Metadata       EdgeMetadata       `json:"metadata"`
 }
+
+// RenderedStrokeWidth includes the subpixel stroke sampled on the source board.
+func (n *Node) RenderedStrokeWidth() float64 {
+	return float64(n.StrokeWidth) + n.Metadata.Original.StrokeWidthOffset
+}
+
+func (e *Edge) RenderedStrokeWidth() float64 {
+	return float64(e.StrokeWidth) + e.Metadata.Original.StrokeWidthOffset
+}
+
 type Scene struct {
 	FontFamily     *d2fonts.FontFamily      `json:"fontFamily,omitempty"`
 	MonoFontFamily *d2fonts.FontFamily      `json:"monoFontFamily,omitempty"`
@@ -145,12 +155,12 @@ func BuildScene(diagram *d2target.Diagram, opts *RenderOpts) (*Scene, error) {
 		}
 	}
 	for _, s := range diagram.Shapes {
-		if s.Width < 0 || s.Height < 0 || s.LabelWidth < 0 || s.LabelHeight < 0 || s.StrokeWidth < 0 || s.Opacity < 0 || s.Opacity > 1 {
+		if s.Width < 0 || s.Height < 0 || s.LabelWidth < 0 || s.LabelHeight < 0 || !d2target.ValidStrokeWidthOffset(s.StrokeWidth, s.StrokeWidthOffset) || s.Opacity < 0 || s.Opacity > 1 {
 			return nil, fmt.Errorf("isometric: node %q has invalid dimensions or opacity", s.ID)
 		}
 	}
 	for _, c := range diagram.Connections {
-		if c.StrokeWidth < 0 || c.Opacity < 0 || c.Opacity > 1 {
+		if !d2target.ValidStrokeWidthOffset(c.StrokeWidth, c.StrokeWidthOffset) || c.Opacity < 0 || c.Opacity > 1 {
 			return nil, fmt.Errorf("isometric: edge %q has invalid stroke or opacity", c.ID)
 		}
 		for _, p := range c.Route {

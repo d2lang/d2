@@ -167,6 +167,9 @@ type RouteEdges func(context.Context, *Graph, []*Edge) error
 type Scalar struct {
 	Value  string     `json:"value"`
 	MapKey *d2ast.Key `json:"-"`
+	// TweenOffset retains subpixel paint for a sampled stroke width while
+	// keeping Value integral for geometry and layout.
+	TweenOffset float64 `json:"tweenOffset,omitempty"`
 }
 
 // TODO maybe rename to Shape

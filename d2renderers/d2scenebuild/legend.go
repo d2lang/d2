@@ -134,6 +134,7 @@ func legendConnectionIconTarget(index int, connection d2target.Connection) d2tar
 	icon.DstArrow = connection.DstArrow
 	icon.StrokeDash = connection.StrokeDash
 	icon.StrokeWidth = connection.StrokeWidth
+	icon.StrokeWidthOffset = connection.StrokeWidthOffset
 	icon.Stroke = connection.Stroke
 	icon.Fill = connection.Fill
 	icon.BorderRadius = connection.BorderRadius

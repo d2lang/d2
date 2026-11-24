@@ -176,6 +176,7 @@ func applyStyles(shape *d2target.Shape, obj *d2graph.Object) {
 	}
 	if obj.Style.StrokeWidth != nil {
 		shape.StrokeWidth, _ = strconv.Atoi(obj.Style.StrokeWidth.Value)
+		shape.StrokeWidthOffset = obj.Style.StrokeWidth.TweenOffset
 	}
 	if obj.Style.Shadow != nil {
 		shape.Shadow, _ = strconv.ParseBool(obj.Style.Shadow.Value)
@@ -406,6 +407,7 @@ func toConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 
 	if edge.Style.StrokeWidth != nil {
 		connection.StrokeWidth, _ = strconv.Atoi(edge.Style.StrokeWidth.Value)
+		connection.StrokeWidthOffset = edge.Style.StrokeWidth.TweenOffset
 	}
 
 	if edge.Style.Fill != nil {

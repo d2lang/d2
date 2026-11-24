@@ -115,7 +115,7 @@ func (b *builder) shapeLinkRegion(object string, targetShape d2target.Shape) (d2
 		return d2scene.LinkRegion{}, err
 	}
 	urlValue, target := linkDestination(targetShape.Link)
-	strokeWidth := float64(targetShape.StrokeWidth)
+	strokeWidth := targetShape.RenderedStrokeWidth()
 	region := d2scene.LinkRegion{
 		// PDF/PPTX annotations expand a shape by its full stroke width on every
 		// side.

@@ -269,7 +269,7 @@ func applyDirectChanges(frame *Map, changes []directChange, fraction float64) {
 			}
 			target.Primary().Value = change.hold.Primary().Value
 		} else {
-			target.Primary().Value = d2ast.FlatUnquotedString(change.value.at(fraction))
+			setTweenValue(target.Primary(), change.value, fraction)
 		}
 	}
 }

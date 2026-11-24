@@ -216,28 +216,29 @@ func validateShapeEffectIntegerBounds(object string, targetShape d2target.Shape)
 		}
 		return nil
 	}
+	strokeExtent := d2target.StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
 	if targetShape.ThreeDee {
 		offsetY := d2target.THREE_DEE_OFFSET
 		if targetShape.Type == d2target.ShapeHexagon {
 			offsetY /= 2
 		}
-		if err := check("pos.x", targetShape.Pos.X, targetShape.Width, d2target.THREE_DEE_OFFSET, targetShape.StrokeWidth); err != nil {
+		if err := check("pos.x", targetShape.Pos.X, targetShape.Width, d2target.THREE_DEE_OFFSET, strokeExtent); err != nil {
 			return err
 		}
-		if err := check("pos.y", targetShape.Pos.Y, -offsetY, -targetShape.StrokeWidth); err != nil {
+		if err := check("pos.y", targetShape.Pos.Y, -offsetY, -strokeExtent); err != nil {
 			return err
 		}
 	}
 	if !targetShape.ThreeDee && targetShape.Multiple {
-		if err := check("pos.x", targetShape.Pos.X, targetShape.Width, d2target.MULTIPLE_OFFSET, targetShape.StrokeWidth); err != nil {
+		if err := check("pos.x", targetShape.Pos.X, targetShape.Width, d2target.MULTIPLE_OFFSET, strokeExtent); err != nil {
 			return err
 		}
-		if err := check("pos.y", targetShape.Pos.Y, -d2target.MULTIPLE_OFFSET, -targetShape.StrokeWidth); err != nil {
+		if err := check("pos.y", targetShape.Pos.Y, -d2target.MULTIPLE_OFFSET, -strokeExtent); err != nil {
 			return err
 		}
 	}
 	if targetShape.Shadow {
-		halfStroke := targetShape.StrokeWidth/2 + targetShape.StrokeWidth%2
+		halfStroke := strokeExtent/2 + strokeExtent%2
 		if err := check("pos.x", targetShape.Pos.X, targetShape.Width, halfStroke, d2target.SHADOW_SIZE_X); err != nil {
 			return err
 		}

@@ -436,10 +436,10 @@ func (b *builder) preflightConnection(connection d2target.Connection) error {
 		if !finite(point.Y) {
 			return invalidField(object, field+".y", point.Y, "must be finite")
 		}
-		if err := validateRouteCoordinate(object, field+".x", point.X, connection.StrokeWidth); err != nil {
+		if err := validateRouteCoordinate(object, field+".x", point.X, connection.RenderedStrokeWidth()); err != nil {
 			return err
 		}
-		if err := validateRouteCoordinate(object, field+".y", point.Y, connection.StrokeWidth); err != nil {
+		if err := validateRouteCoordinate(object, field+".y", point.Y, connection.RenderedStrokeWidth()); err != nil {
 			return err
 		}
 		if i > 0 {
@@ -587,11 +587,11 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	rootStroke, err := b.stroke(b.diagram.Root.Stroke, b.diagram.Root.StrokeWidth, b.diagram.Root.StrokeDash, d2scene.CapButt, d2scene.JoinMiter, "root stroke")
+	rootStroke, err := b.stroke(b.diagram.Root.Stroke, b.diagram.Root.RenderedStrokeWidth(), b.diagram.Root.StrokeDash, d2scene.CapButt, d2scene.JoinMiter, "root stroke")
 	if err != nil {
 		return nil, err
 	}
-	strokePadding := int(math.Ceil(float64(b.diagram.Root.StrokeWidth) / 2))
+	strokePadding := int(math.Ceil(b.diagram.Root.RenderedStrokeWidth() / 2))
 	backgroundLeft, backgroundTop, backgroundWidth, backgroundHeight, ok := expandDimensions(left, top, width, height, strokePadding)
 	if !ok {
 		return nil, invalidPaddingError(pad)
@@ -858,7 +858,7 @@ func (b *builder) buildShape(targetShape d2target.Shape) (*d2scene.Node, error) 
 	if err != nil {
 		return nil, err
 	}
-	stroke, err := b.stroke(strokeValue, targetShape.StrokeWidth, targetShape.StrokeDash, d2scene.CapButt, d2scene.JoinRound, fmt.Sprintf("shape %q stroke", targetShape.ID))
+	stroke, err := b.stroke(strokeValue, targetShape.RenderedStrokeWidth(), targetShape.StrokeDash, d2scene.CapButt, d2scene.JoinRound, fmt.Sprintf("shape %q stroke", targetShape.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -1171,10 +1171,13 @@ func validateShapeNumbers(object string, targetShape d2target.Shape) error {
 			return invalidField(object, field.name, field.value, "must be non-negative")
 		}
 	}
+	if !d2target.ValidStrokeWidthOffset(targetShape.StrokeWidth, targetShape.StrokeWidthOffset) {
+		return invalidField(object, "strokeWidthOffset", targetShape.StrokeWidthOffset, "must be subpixel and keep stroke width in range")
+	}
 	if err := validateOpacity(object, targetShape.Opacity); err != nil {
 		return err
 	}
-	if err := validateDash(object, targetShape.StrokeDash, targetShape.StrokeWidth); err != nil {
+	if err := validateDash(object, targetShape.StrokeDash, targetShape.RenderedStrokeWidth()); err != nil {
 		return err
 	}
 	if targetShape.ContentAspectRatio != nil && (!finite(*targetShape.ContentAspectRatio) || *targetShape.ContentAspectRatio <= 0) {
@@ -1190,10 +1193,13 @@ func validateConnectionNumbers(object string, connection d2target.Connection) er
 	if connection.StrokeWidth < 0 {
 		return invalidField(object, "strokeWidth", connection.StrokeWidth, "must be non-negative")
 	}
+	if !d2target.ValidStrokeWidthOffset(connection.StrokeWidth, connection.StrokeWidthOffset) {
+		return invalidField(object, "strokeWidthOffset", connection.StrokeWidthOffset, "must be subpixel and keep stroke width in range")
+	}
 	if err := validateOpacity(object, connection.Opacity); err != nil {
 		return err
 	}
-	if err := validateDash(object, connection.StrokeDash, connection.StrokeWidth); err != nil {
+	if err := validateDash(object, connection.StrokeDash, connection.RenderedStrokeWidth()); err != nil {
 		return err
 	}
 	if !finite(connection.BorderRadius) || connection.BorderRadius < 0 {
@@ -1228,12 +1234,12 @@ func validateOpacity(object string, opacity float64) error {
 	return nil
 }
 
-func validateDash(object string, dash float64, strokeWidth int) error {
+func validateDash(object string, dash, strokeWidth float64) error {
 	if !finite(dash) || dash < 0 {
 		return invalidField(object, "strokeDash", dash, "must be finite and non-negative")
 	}
 	if dash > 0 && strokeWidth > 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(strokeWidth), dash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(strokeWidth, dash)
 		if !finite(dashSize) || !finite(gapSize) || dashSize < 0 || gapSize < 0 {
 			return invalidField(object, "strokeDash", dash, "must produce finite non-negative dash lengths with strokeWidth")
 		}
@@ -1257,7 +1263,8 @@ func validateTextNumbers(object, prefix string, text d2target.Text) error {
 func validateShapeIntegerBounds(object string, targetShape d2target.Shape) error {
 	maxInt := int64(^uint(0) >> 1)
 	minInt := -maxInt - 1
-	halfStroke := int64(targetShape.StrokeWidth/2 + targetShape.StrokeWidth%2)
+	extent := d2target.StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
+	halfStroke := int64(extent/2 + extent%2)
 	for _, axis := range []struct {
 		name      string
 		position  int
@@ -1280,10 +1287,10 @@ func validateShapeIntegerBounds(object string, targetShape d2target.Shape) error
 	return nil
 }
 
-func validateRouteCoordinate(object, field string, coordinate float64, strokeWidth int) error {
+func validateRouteCoordinate(object, field string, coordinate, strokeWidth float64) error {
 	maxInt := int64(^uint(0) >> 1)
 	minInt := -maxInt - 1
-	halfStroke := math.Ceil(float64(strokeWidth) / 2)
+	halfStroke := math.Ceil(strokeWidth / 2)
 	// BoundingBox floors/ceils route coordinates and converts them to int.
 	// Strict comparisons avoid the rounded float64 representation of MaxInt.
 	if math.Floor(coordinate)-halfStroke <= float64(minInt) || math.Ceil(coordinate)+halfStroke >= float64(maxInt) {
@@ -1374,7 +1381,7 @@ func expandDimensions(left, top, width, height, amount int) (int, int, int, int,
 	return int(left64), int(top64), int(width64), int(height64), true
 }
 
-func (b *builder) stroke(raw string, width int, dash float64, cap d2scene.LineCap, join d2scene.LineJoin, description string) (*d2scene.Stroke, error) {
+func (b *builder) stroke(raw string, width, dash float64, cap d2scene.LineCap, join d2scene.LineJoin, description string) (*d2scene.Stroke, error) {
 	paint, err := b.paint(raw, description)
 	if err != nil {
 		return nil, err
@@ -1382,9 +1389,9 @@ func (b *builder) stroke(raw string, width int, dash float64, cap d2scene.LineCa
 	if paint == nil || width <= 0 {
 		return nil, nil
 	}
-	stroke := &d2scene.Stroke{Paint: paint, Width: float64(width), Cap: cap, Join: join, MiterLimit: 4}
+	stroke := &d2scene.Stroke{Paint: paint, Width: width, Cap: cap, Join: join, MiterLimit: 4}
 	if dash != 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(width), dash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(width, dash)
 		stroke.Dashes = []float64{dashSize, gapSize}
 	}
 	return stroke, nil

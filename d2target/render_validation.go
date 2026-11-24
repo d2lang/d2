@@ -163,6 +163,7 @@ func validateRenderLegendConnection(connection Connection, path string) error {
 	legendConnection.DstArrow = connection.DstArrow
 	legendConnection.StrokeDash = connection.StrokeDash
 	legendConnection.StrokeWidth = connection.StrokeWidth
+	legendConnection.StrokeWidthOffset = connection.StrokeWidthOffset
 	legendConnection.BorderRadius = connection.BorderRadius
 	legendConnection.Opacity = connection.Opacity
 	if err := validateRenderConnectionNumbers(legendConnection, path); err != nil {
@@ -208,10 +209,10 @@ func validateRenderConnection(connection Connection, path string) error {
 			return fmt.Errorf("render target %s.route[%d] must contain finite coordinates", path, i)
 		}
 		pointPath := fmt.Sprintf("%s.route[%d]", path, i)
-		if err := validateRenderRouteCoordinate(pointPath, "x", point.X, connection.StrokeWidth); err != nil {
+		if err := validateRenderRouteCoordinate(pointPath, "x", point.X, connection.RenderedStrokeWidth()); err != nil {
 			return err
 		}
-		if err := validateRenderRouteCoordinate(pointPath, "y", point.Y, connection.StrokeWidth); err != nil {
+		if err := validateRenderRouteCoordinate(pointPath, "y", point.Y, connection.RenderedStrokeWidth()); err != nil {
 			return err
 		}
 		if i > 0 {
@@ -327,7 +328,10 @@ func validateRenderShapeNumbers(targetShape Shape, path string) error {
 	if err := validateRenderOpacity(path, targetShape.Opacity); err != nil {
 		return err
 	}
-	if err := validateRenderDash(path, targetShape.StrokeDash, targetShape.StrokeWidth); err != nil {
+	if !ValidStrokeWidthOffset(targetShape.StrokeWidth, targetShape.StrokeWidthOffset) {
+		return invalidRenderField(path, "strokeWidthOffset", targetShape.StrokeWidthOffset, "must be subpixel and keep stroke width in range")
+	}
+	if err := validateRenderDash(path, targetShape.StrokeDash, targetShape.RenderedStrokeWidth()); err != nil {
 		return err
 	}
 	if targetShape.ContentAspectRatio != nil && (!finiteRenderNumber(*targetShape.ContentAspectRatio) || *targetShape.ContentAspectRatio <= 0) {
@@ -349,7 +353,10 @@ func validateRenderConnectionNumbers(connection Connection, path string) error {
 	if err := validateRenderOpacity(path, connection.Opacity); err != nil {
 		return err
 	}
-	if err := validateRenderDash(path, connection.StrokeDash, connection.StrokeWidth); err != nil {
+	if !ValidStrokeWidthOffset(connection.StrokeWidth, connection.StrokeWidthOffset) {
+		return invalidRenderField(path, "strokeWidthOffset", connection.StrokeWidthOffset, "must be subpixel and keep stroke width in range")
+	}
+	if err := validateRenderDash(path, connection.StrokeDash, connection.RenderedStrokeWidth()); err != nil {
 		return err
 	}
 	if !finiteRenderNumber(connection.BorderRadius) || connection.BorderRadius < 0 {
@@ -384,12 +391,26 @@ func validateRenderOpacity(path string, opacity float64) error {
 	return nil
 }
 
-func validateRenderDash(path string, dash float64, strokeWidth int) error {
+// ValidStrokeWidthOffset checks that the fractional part of an animated stroke
+// preserves a nonnegative width and an outward bound representable as an int.
+func ValidStrokeWidthOffset(width int, offset float64) bool {
+	return offset > -1 && offset < 1 && (width > 0 || width == 0 && offset >= 0) && (width < math.MaxInt || offset <= 0)
+}
+
+// StrokeWidthExtent rounds a validated stroke outward for integer layout bounds.
+func StrokeWidthExtent(width int, offset float64) int {
+	if offset > 0 {
+		return width + 1
+	}
+	return width
+}
+
+func validateRenderDash(path string, dash, strokeWidth float64) error {
 	if !finiteRenderNumber(dash) || dash < 0 {
 		return invalidRenderField(path, "strokeDash", dash, "must be finite and non-negative")
 	}
 	if dash > 0 && strokeWidth > 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(strokeWidth), dash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(strokeWidth, dash)
 		if !finiteRenderNumber(dashSize) || !finiteRenderNumber(gapSize) || dashSize < 0 || gapSize < 0 {
 			return invalidRenderField(path, "strokeDash", dash, "must produce finite non-negative dash lengths with strokeWidth")
 		}
@@ -416,7 +437,8 @@ func validateRenderTextNumbers(path, prefix string, text Text) error {
 func validateRenderShapeIntegerBounds(path string, targetShape Shape) error {
 	maxInt := int64(^uint(0) >> 1)
 	minInt := -maxInt - 1
-	halfStroke := int64(targetShape.StrokeWidth/2 + targetShape.StrokeWidth%2)
+	stroke := StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
+	halfStroke := int64(stroke/2 + stroke%2)
 	for _, axis := range []struct {
 		name      string
 		position  int
@@ -439,10 +461,10 @@ func validateRenderShapeIntegerBounds(path string, targetShape Shape) error {
 	return nil
 }
 
-func validateRenderRouteCoordinate(path, field string, coordinate float64, strokeWidth int) error {
+func validateRenderRouteCoordinate(path, field string, coordinate, strokeWidth float64) error {
 	maxInt := int64(^uint(0) >> 1)
 	minInt := -maxInt - 1
-	halfStroke := math.Ceil(float64(strokeWidth) / 2)
+	halfStroke := math.Ceil(strokeWidth / 2)
 	// BoundingBox floors/ceils route coordinates and converts them to int.
 	// Strict comparisons avoid the rounded float64 representation of MaxInt.
 	if math.Floor(coordinate)-halfStroke <= float64(minInt) || math.Ceil(coordinate)+halfStroke >= float64(maxInt) {

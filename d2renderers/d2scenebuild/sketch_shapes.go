@@ -108,7 +108,7 @@ func (b *builder) buildSketchOrdinaryShape(targetShape d2target.Shape, idPrefix 
 		idPrefix = targetShape.ID + ":sketch"
 	}
 	fillRaw, strokeRaw := d2themes.ShapeTheme(targetShape)
-	stroke, err := b.stroke(strokeRaw, targetShape.StrokeWidth, targetShape.StrokeDash, d2scene.CapRound, d2scene.JoinRound, fmt.Sprintf("shape %q sketch stroke", targetShape.ID))
+	stroke, err := b.stroke(strokeRaw, targetShape.RenderedStrokeWidth(), targetShape.StrokeDash, d2scene.CapRound, d2scene.JoinRound, fmt.Sprintf("shape %q sketch stroke", targetShape.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +561,7 @@ func (b *builder) buildSketchDoubleBorderShape(targetShape d2target.Shape, fill 
 
 func (b *builder) buildSketchOutlineOnly(targetShape d2target.Shape, idPrefix string) ([]*d2scene.Node, error) {
 	fillRaw, strokeRaw := d2themes.ShapeTheme(targetShape)
-	stroke, err := b.stroke(strokeRaw, targetShape.StrokeWidth, targetShape.StrokeDash, d2scene.CapRound, d2scene.JoinRound, fmt.Sprintf("shape %q sketch stroke", targetShape.ID))
+	stroke, err := b.stroke(strokeRaw, targetShape.RenderedStrokeWidth(), targetShape.StrokeDash, d2scene.CapRound, d2scene.JoinRound, fmt.Sprintf("shape %q sketch stroke", targetShape.ID))
 	if err != nil {
 		return nil, err
 	}

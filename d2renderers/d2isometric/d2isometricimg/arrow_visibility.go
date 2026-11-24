@@ -22,7 +22,7 @@ type nativeArrowOwner struct {
 
 type nativeArrowMarkerKey struct {
 	kind  d2target.Arrowhead
-	width int
+	width float64
 }
 
 // Query caches are local to mesh construction and bounded independently of
@@ -61,7 +61,7 @@ func (b *meshBuilder) rememberArrowOwner(node d2isometric.Node, board *d2isometr
 	b.arrowOwners[node.ID] = &nativeArrowOwner{first: first, last: len(b.triangles), node: node, board: board}
 }
 
-func (b *meshBuilder) arrowMarker(kind d2target.Arrowhead, width int) nativeArrowMarker {
+func (b *meshBuilder) arrowMarker(kind d2target.Arrowhead, width float64) nativeArrowMarker {
 	key := nativeArrowMarkerKey{kind, width}
 	if marker, ok := b.arrowMarkers[key]; ok {
 		return marker
@@ -401,7 +401,7 @@ func (b *meshBuilder) visibleArrowRange(edge d2isometric.Edge, points []Vec) (fl
 	if !b.arrowBudget(1) {
 		return 0, 1
 	}
-	source, target := b.arrowMarker(edge.SourceArrow, edge.StrokeWidth), b.arrowMarker(edge.TargetArrow, edge.StrokeWidth)
+	source, target := b.arrowMarker(edge.SourceArrow, edge.RenderedStrokeWidth()), b.arrowMarker(edge.TargetArrow, edge.RenderedStrokeWidth())
 	if len(source.vertices)+len(target.vertices) == 0 {
 		return 0, 1
 	}

@@ -140,6 +140,11 @@ func cubicPoint(start, control1, control2, end d2scene.Point, t float64) d2scene
 // endpoint gets a fresh seeded generator so output is independent of object or
 // frame traversal order.
 func ArrowheadDrawables(arrowhead d2target.Arrowhead, stroke string, strokeWidth int) ([]rough.Drawable, bool) {
+	return ArrowheadDrawablesWithWidth(arrowhead, stroke, float64(strokeWidth))
+}
+
+// ArrowheadDrawablesWithWidth accepts fractional widths from animation frames.
+func ArrowheadDrawablesWithWidth(arrowhead d2target.Arrowhead, stroke string, strokeWidth float64) ([]rough.Drawable, bool) {
 	generator := newGenerator()
 	line := func(points ...rough.Point) rough.Drawable {
 		return generator.LinearPath(points, arrowOptions(stroke, strokeWidth, 3))

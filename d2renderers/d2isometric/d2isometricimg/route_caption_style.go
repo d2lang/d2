@@ -109,7 +109,7 @@ func nativeConnectionCaptionSurface(points []Vec, original d2target.Connection, 
 		}
 		// Preserve the authored side and clear the wire with the span of
 		// the final print orientation, including a short run's fallback.
-		offset := side * (across/2 + (float64(original.StrokeWidth)/2+label.PADDING)*scale)
+		offset := side * (across/2 + (original.RenderedStrokeWidth()/2+label.PADDING)*scale)
 		center.X -= direction.Z * offset
 		center.Z += direction.X * offset
 		return labelSurface{center: center, width: width, depth: depth, angle: angle}, true

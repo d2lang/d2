@@ -249,7 +249,7 @@ func nativeResolveBridgeRoutes(ctx context.Context, edges []d2isometric.Edge, li
 func bridgeFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && math.Abs(v) <= 1e9 }
 
 func nativeRouteVisible(e d2isometric.Edge) bool {
-	return e.Opacity > 0 && e.StrokeWidth > 0 && (!e.StrokeExplicit || nativePaint(e.Stroke, "#657e9e").A > 0)
+	return e.Opacity > 0 && e.RenderedStrokeWidth() > 0 && (!e.StrokeExplicit || nativePaint(e.Stroke, "#657e9e").A > 0)
 }
 
 func bridgeStraightRuns(points []Vec) []Vec {

@@ -376,7 +376,12 @@ func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel floa
 	if s.Language == "latex" && scale != 1 {
 		s.MotionScale = scale
 	}
-	s.StrokeWidth, s.BorderRadius, s.IconBorderRadius = scaled(s.StrokeWidth), scaled(s.BorderRadius), scaled(s.IconBorderRadius)
+	if scale != 1 {
+		stroke := s.RenderedStrokeWidth() * scale
+		s.StrokeWidth = scaled(s.StrokeWidth)
+		s.StrokeWidthOffset = stroke - float64(s.StrokeWidth)
+	}
+	s.BorderRadius, s.IconBorderRadius = scaled(s.BorderRadius), scaled(s.IconBorderRadius)
 	if len(s.Columns) > 0 && scale != 1 {
 		s.Columns = slices.Clone(s.Columns)
 		for i := range s.Columns {

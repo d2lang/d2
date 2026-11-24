@@ -48,6 +48,19 @@ func markdownCardTestDecals(b *meshBuilder) []Triangle {
 	return out
 }
 
+func TestMarkdownCardTweenThroughDefaultStrokeWidth(t *testing.T) {
+	n := markdownCardTestNode()
+	n.Metadata.ExplicitDefaultStrokeWidth = true
+	b := markdownCardTestBuilder(t)
+	for _, offset := range []float64{-.25, 0, .25} {
+		n.Metadata.Original.StrokeWidthOffset = offset
+		paint := b.markdownCardPaint(n)
+		if nativePlainMarkdownCard(n) || paint.RenderedStrokeWidth() != 2+offset {
+			t.Fatalf("sample with offset %g lost the explicit border", offset)
+		}
+	}
+}
+
 func TestMarkdownCardsKeepSourceFootprintsAndAttachToSupport(t *testing.T) {
 	for _, tiny := range []bool{false, true} {
 		for _, hierarchy := range []bool{false, true} {

@@ -39,7 +39,7 @@ func (b *builder) sketchArrowhead(connection d2target.Connection, arrowhead d2ta
 		endpointName = "dst"
 	}
 	arrowID := fmt.Sprintf("%s:%s-arrowhead", connection.ID, endpointName)
-	drawables, ok := d2sketch.ArrowheadDrawables(arrowhead, connection.Stroke, connection.StrokeWidth)
+	drawables, ok := d2sketch.ArrowheadDrawablesWithWidth(arrowhead, connection.Stroke, connection.RenderedStrokeWidth())
 	if !ok {
 		return nil, unsupported(fmt.Sprintf("connection %q", connection.ID), "sketch arrowhead "+string(arrowhead))
 	}

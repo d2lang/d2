@@ -106,6 +106,29 @@ steps: {expand: {a.width: 380; c: C {width: 80; height: 46}}}`)
 	}
 }
 
+func TestGridPopScalesFractionalStrokeWidth(t *testing.T) {
+	board, graph := compileGridMotionTest(t, `vars: {n: 1; d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+grid-columns: 1
+a: {style.stroke-width: ${n}}
+steps: {grow: {vars: {n: 2}; b: {style.stroke-width: ${n}}}}
+`)
+	step := board.Steps[0]
+	index := slices.Index(step.TweenFrameEndsMS, 80)
+	if index < 0 {
+		t.Fatal("missing midpoint in grid step")
+	}
+	sample := step.TweenFrames[index+1]
+	if got := shapeByID(t, sample, "a").RenderedStrokeWidth(); got != 1.5 {
+		t.Fatalf("existing cell has width %v, want 1.5", got)
+	}
+	motion := newGridMotion(board, step, graph, graph.Steps[0])
+	start, end, _ := motion.popWindows(160)
+	scale, _ := gridPop(gridPhase(80, float64(start), float64(end)))
+	if got := shapeByID(t, sample, "b").RenderedStrokeWidth(); got != 1.5*scale {
+		t.Errorf("entering cell has width %v, want %v", got, 1.5*scale)
+	}
+}
+
 func TestGridStepCanStartAndFinishEmpty(t *testing.T) {
 	const input = `vars: {d2-config: {animate-interval: 300ms; animate-duration: 200ms}}
 grid-columns: 2
