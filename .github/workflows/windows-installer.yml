@@ -49,3 +49,11 @@ jobs:
           for path in "$exe" "$man" "$tree"; do
             [[ ! -e "$path" ]]
           done
+
+          # Also exercise the no-argument installation reported in #2044.
+          export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
+          sh -s -- < install.sh
+          installed=$(command -v d2)
+          "$installed" --version
+          sh -s -- --uninstall < install.sh
+          test ! -e "$installed"
