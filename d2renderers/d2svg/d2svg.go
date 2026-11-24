@@ -2610,13 +2610,18 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 		[]string{
 			`animated-connection`,
 		},
-		`
+		fmt.Sprintf(`
 @keyframes dashdraw {
 	from {
 		stroke-dashoffset: 0;
 	}
 }
-`,
+@media (prefers-reduced-motion: reduce) {
+	.%s .animated-connection {
+		animation: none !important;
+	}
+}
+`, diagramHash),
 	)
 
 	appendOnTrigger(

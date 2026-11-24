@@ -4,6 +4,11 @@
 		stroke-dashoffset: 0;
 	}
 }
+@media (prefers-reduced-motion: reduce) {
+	.d2-1571877943 .animated-connection {
+		animation: none !important;
+	}
+}
 
 .d2-1571877943 .text-bold {
 	font-family: "d2-1571877943-font-bold";

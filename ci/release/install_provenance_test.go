@@ -64,6 +64,7 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 			temp := t.TempDir()
 			bin := filepath.Join(temp, "bin")
 			prefix := filepath.Join(temp, "prefix")
+			prefixBin := filepath.Join(prefix, "bin")
 			cache := filepath.Join(temp, "cache")
 			staged := filepath.Join(temp, "fixtures")
 			oldVersion := "v0.7.0"
@@ -72,7 +73,7 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 			}
 			old := filepath.Join(prefix, "lib", "d2", "d2-"+oldVersion)
 			newDir := "d2-" + tc.version
-			for _, dir := range []string{bin, old, filepath.Join(staged, newDir), filepath.Join(cache, "d2", "release")} {
+			for _, dir := range []string{bin, prefixBin, old, filepath.Join(staged, newDir), filepath.Join(cache, "d2", "release")} {
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					t.Fatal(err)
 				}
@@ -84,7 +85,7 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 				}
 			}
 			write(filepath.Join(old, "old-install"), "working", 0o644)
-			write(filepath.Join(staged, newDir, "new-install"), "verified", 0o644)
+			write(filepath.Join(staged, newDir, "new-install"), "#!/bin/sh\necho \"$TAG\"\n", 0o755)
 			platform := "linux"
 			if tc.method != "" {
 				platform = "macos"
@@ -116,8 +117,17 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			write(filepath.Join(bin, "d2"), "#!/bin/sh\necho \"$OLD_VERSION\"\n", 0o755)
-			write(filepath.Join(bin, "make"), "#!/bin/sh\necho \"$1\" >> \"$EVENTS\"\n", 0o755)
+			write(filepath.Join(prefixBin, "d2"), "#!/bin/sh\necho \"$OLD_VERSION\"\n", 0o755)
+			write(filepath.Join(bin, "make"), `#!/bin/sh
+set -eu
+echo "$1" >> "$EVENTS"
+if [ "$1" = install ]; then
+  prefix=${2#PREFIX=}
+  mkdir -p "$prefix/bin" "$prefix/share/man/man1"
+  cp new-install "$prefix/bin/d2"
+  cp new-install "$prefix/share/man/man1/d2.1"
+fi
+`, 0o755)
 			write(filepath.Join(bin, "brew"), "#!/bin/sh\necho brew >> \"$EVENTS\"\nexit 1\n", 0o755)
 			write(filepath.Join(bin, "curl"), fakeReleaseCurl, 0o755)
 			write(filepath.Join(bin, "gh"), fakeAttestationVerifier, 0o755)
@@ -152,7 +162,7 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 			}
 			cmd := exec.Command("sh", args...)
 			cmd.Env = []string{
-				"PATH=" + bin + ":/usr/bin:/bin", "OS=" + platform, "ARCH=amd64", "TMPDIR=" + temp,
+				"PATH=" + bin + ":" + prefixBin + ":/usr/bin:/bin", "OS=" + platform, "ARCH=amd64", "TMPDIR=" + temp,
 				"XDG_CACHE_HOME=" + cache, "OLD_VERSION=" + oldVersion, "TAG=" + tc.version,
 				"ARCHIVE=" + archive, "ASSET=" + asset, "DIGEST=" + digest, "BUNDLE_URL=" + bundleURL, "EVENTS=" + events, "CALLS=" + calls, "RESULT=" + tc.outcome,
 			}
@@ -189,9 +199,12 @@ func TestStandaloneInstallProvenance(t *testing.T) {
 				t.Fatal("installer redownloaded a cache entry that passed its checksum")
 			}
 			if installed {
-				wantOrder := "verify\nuninstall\ninstall\n"
+				wantOrder := "verify\ninstall\n"
 				if tc.outcome == "legacy" || tc.outcome == "pinned" || tc.outcome == "corrupt_cache" {
-					wantOrder = "uninstall\ninstall\n"
+					wantOrder = "install\n"
+				}
+				if strings.Contains(trace, "uninstall\n") {
+					t.Fatalf("installer ran the previous release's uninstall recipe: %q", trace)
 				}
 				if !strings.HasSuffix(trace, wantOrder) {
 					t.Fatalf("unexpected upgrade order: %q", trace)

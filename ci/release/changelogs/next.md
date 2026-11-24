@@ -43,6 +43,8 @@
     and attributes. [#2919](https://github.com/d2lang/d2/pull/2919)
   - Encode unsafe local IDs consistently so definitions and references continue
     to match. [#2919](https://github.com/d2lang/d2/pull/2919)
+  - Disable animated connection CSS animations when
+    `prefers-reduced-motion: reduce` is active. [#1979](https://github.com/d2lang/d2/issues/1979)
 - assets:
   - Apply the same local/network access policy and cumulative resource budgets to
     SVG and raster exports. [#2918](https://github.com/d2lang/d2/pull/2918)
@@ -65,6 +67,8 @@
     outside the selected tree. [#2908](https://github.com/d2lang/d2/pull/2908)
 
 #### Bugfixes ⛑️
+
+- Standalone upgrades and forced reinstalls preserve the working installation if the replacement fails. The installer rejects install-only flags with `--uninstall` and falls back to the GitHub API when the latest-release redirect fails. [#84](https://github.com/d2lang/d2/issues/84)
 
 - TALA keeps hierarchy nodes and containers separated, preserves directed dependencies when orienting cycles and undirected links, and respects nested directions, container dimensions, edge labels, and proximity hints.
 
