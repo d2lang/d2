@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"strconv"
 	"strings"
 
-	"github.com/d2lang/d2/d2renderers/d2sketch"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/internal/svgframe"
 	"github.com/d2lang/d2/d2target"
@@ -17,33 +17,21 @@ import (
 
 var transitionDurationMS = 1
 
-func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash string) string {
-	percentageBefore := (math.Max(0, float64(delayMS-transitionDurationMS)) / float64(totalMS)) * 100.
-	percentageStart := (float64(delayMS) / float64(totalMS)) * 100.
-	percentageEnd := (float64(delayMS+durationMS-transitionDurationMS) / float64(totalMS)) * 100.
-	if int(math.Ceil(percentageEnd)) == 100 {
-		return fmt.Sprintf(`@keyframes d2Transition-%s-%d {
-		0%%, %f%% {
-				opacity: 0;
-		}
-		%f%%, %f%% {
-				opacity: 1;
-		}
-}`, diagramHash, identifier, percentageBefore, percentageStart, math.Ceil(percentageEnd))
-	}
+// Match the existing keyframe precision and omit only insignificant zeros.
+func percentage(v float64, precision int) string {
+	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', precision, 64), "0"), ".") + "%"
+}
 
-	percentageAfter := (float64(delayMS+durationMS) / float64(totalMS)) * 100.
-	return fmt.Sprintf(`@keyframes d2Transition-%s-%d {
-		0%%, %f%% {
-				opacity: 0;
-		}
-		%f%%, %f%% {
-				opacity: 1;
-		}
-		%f%%, 100%% {
-				opacity: 0;
-		}
-}`, diagramHash, identifier, percentageBefore, percentageStart, percentageEnd, percentageAfter)
+func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash string) string {
+	before := math.Max(0, float64(delayMS-transitionDurationMS)) / float64(totalMS) * 100
+	start := float64(delayMS) / float64(totalMS) * 100
+	end := float64(delayMS+durationMS-transitionDurationMS) / float64(totalMS) * 100
+	css := fmt.Sprintf("@keyframes d2Transition-%s-%d{0%%,%s{opacity:0}%s,", diagramHash, identifier, percentage(before, 6), percentage(start, 6))
+	if math.Ceil(end) == 100 {
+		return css + "100%{opacity:1}}"
+	}
+	after := float64(delayMS+durationMS) / float64(totalMS) * 100
+	return css + percentage(end, 6) + "{opacity:1}" + percentage(after, 6) + ",100%{opacity:0}}"
 }
 
 func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, intervalMS int) ([]byte, error) {
@@ -116,24 +104,31 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	}
 
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
+	styleFrames := svgs
+	graphics, svgs := shareFrameGraphics(svgs, diagramHash)
+	var styleGraphics []byte
+	if len(defs) != 0 {
+		// The static shapes already introduce references, so font selection uses
+		// the complete corpus. Scan the smaller shared artwork for theme classes.
+		styleGraphics = graphics
+		styleFrames = svgs
+	}
+	sourceSize := len(defs) + len(styleGraphics) + len(styleFrames) // One separator per frame.
+	for _, frame := range styleFrames {
+		sourceSize += len(frame)
+	}
 	var source strings.Builder
+	source.Grow(sourceSize)
 	source.Write(defs)
-	for _, frame := range svgs {
+	source.Write(styleGraphics)
+	for _, frame := range styleFrames {
 		source.Write(frame)
 		source.WriteByte(' ')
 	}
 	svgsStr := source.String()
 
-	d2svg.EmbedFonts(buf, diagramHash, svgsStr, rootDiagram.FontFamily, rootDiagram.MonoFontFamily, rootDiagram.GetNestedCorpus())
-
-	themeStylesheet, err := d2svg.ThemeCSS(diagramHash, renderOpts.ThemeID, renderOpts.DarkThemeID, renderOpts.ThemeOverrides, renderOpts.DarkThemeOverrides)
-	if err != nil {
+	if err := d2svg.WriteAnimationStyles(buf, diagramHash, svgsStr, rootDiagram, renderOpts); err != nil {
 		return nil, err
-	}
-	fmt.Fprintf(buf, `<style type="text/css"><![CDATA[%s%s]]></style>`, d2svg.BaseStylesheet, themeStylesheet)
-
-	if renderOpts.Sketch != nil && *renderOpts.Sketch {
-		d2sketch.DefineFillPatterns(buf, diagramHash)
 	}
 
 	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)
@@ -144,13 +139,13 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		} else {
 			// Use a discrete cut at exact boundaries. A 1 ms cross-fade or a
 			// whole-percent rounding error can hide an entire short sample.
-			fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d {", diagramHash, i)
+			fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d{", diagramHash, i)
 			if startMS > 0 {
 				fmt.Fprint(buf, "0%{opacity:0}")
 			}
-			fmt.Fprintf(buf, "%.9f%%{opacity:1}", 100*float64(startMS)/float64(totalMS))
+			fmt.Fprintf(buf, "%s{opacity:1}", percentage(100*float64(startMS)/float64(totalMS), 9))
 			if endMS := startMS + duration; endMS < totalMS {
-				fmt.Fprintf(buf, "%.9f%%,100%%{opacity:0}", 100*float64(endMS)/float64(totalMS))
+				fmt.Fprintf(buf, "%s,100%%{opacity:0}", percentage(100*float64(endMS)/float64(totalMS), 9))
 			} else {
 				fmt.Fprint(buf, "100%{opacity:1}")
 			}
@@ -160,20 +155,34 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	}
 	fmt.Fprint(buf, `]]></style>`)
 
-	buf.Write(defs)
-
 	timing := ""
 	if !uniform || len(svgs) > 100 {
 		timing = " steps(1,end)"
 	}
-	for i, svg := range svgs {
-		str := string(svg)
-		str = strings.Replace(str, "<g", fmt.Sprintf(`<g style="animation: d2Transition-%s-%d %dms%s infinite"`, diagramHash, i, totalMS, timing), 1)
-		buf.Write([]byte(str))
+	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"
+	styleSuffix := " " + strconv.Itoa(totalMS) + "ms" + timing + ` infinite"`
+	// Reserve room for the artwork and its timing attributes before copying
+	// multi-megabyte frames into the final output buffer.
+	attributeSize := len(stylePrefix) + len(strconv.Itoa(len(svgs))) + len(styleSuffix)
+	artworkSize := len(defs) + len(graphics) + len("</svg></svg>") + len(svgs)*attributeSize
+	for _, frame := range svgs {
+		artworkSize += len(frame)
 	}
-
-	fmt.Fprint(buf, "</svg>")
-	fmt.Fprint(buf, "</svg>")
+	buf.Grow(artworkSize)
+	buf.Write(defs)
+	buf.Write(graphics)
+	for i, frame := range svgs {
+		before, after, found := bytes.Cut(frame, []byte("<g"))
+		buf.Write(before)
+		if found {
+			buf.WriteString("<g")
+			buf.WriteString(stylePrefix)
+			buf.WriteString(strconv.Itoa(i))
+			buf.WriteString(styleSuffix)
+			buf.Write(after)
+		}
+	}
+	buf.WriteString("</svg></svg>")
 
 	return buf.Bytes(), nil
 }

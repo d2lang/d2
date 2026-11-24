@@ -1121,7 +1121,7 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.Rend
 		assetResolver.CloseIdleConnections()
 	}
 	if forceAppendix {
-		svg, err = appendix.AppendWithError(diagram, renderOpts, ruler, svg)
+		svg, err = appendix.AppendRendered(diagram, renderOpts, ruler, svg)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1271,7 +1271,7 @@ func appendRasterPreview(diagram *d2target.Diagram, opts d2svg.RenderOpts, ruler
 		return nil, nil
 	}
 	renderOpts := rasterRenderOptions(opts)
-	preview, err := appendix.AppendWithError(diagram, &renderOpts, ruler, sourceSVG)
+	preview, err := appendix.AppendRendered(diagram, &renderOpts, ruler, sourceSVG)
 	if err != nil {
 		return nil, err
 	}

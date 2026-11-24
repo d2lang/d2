@@ -4,12 +4,12 @@ package d2fonts
 import (
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/d2lang/d2/internal/bundledfont"
 	"github.com/d2lang/d2/lib/font"
-	fontlib "github.com/d2lang/d2/lib/font"
 	"github.com/d2lang/d2/lib/syncmap"
 )
 
@@ -30,16 +30,53 @@ func (f FontFamily) Font(size int, style FontStyle) Font {
 	}
 }
 
+const woffDataPrefix = "data:application/font-woff;base64,"
+
+// Some bundled data URLs historically contain a TTF with a WOFF MIME type.
+// Index by the original URL so callers overriding FontEncodings retain exactly
+// their registered value. Only bundled data is cached.
+var fullWoffEncodings = map[string]func() string{}
+
+func registerFullWoffEncoding(uri string) {
+	if !strings.HasPrefix(uri, woffDataPrefix+"AAEA") {
+		return
+	}
+	fullWoffEncodings[uri] = sync.OnceValue(func() string {
+		ttf, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(uri, woffDataPrefix))
+		if err != nil {
+			return uri
+		}
+		woff, err := font.FullWOFF(ttf)
+		if err != nil {
+			return uri
+		}
+		return woffDataPrefix + base64.StdEncoding.EncodeToString(woff)
+	})
+}
+
+// GetEncodedFull returns the complete embedded face, including its shaping
+// tables, in a compressed WOFF when one is available.
+func (f Font) GetEncodedFull() string {
+	uri := FontEncodings.Get(f)
+	if compressed := fullWoffEncodings[uri]; compressed != nil {
+		return compressed()
+	}
+	return uri
+}
+
 func (f Font) GetEncodedSubset(corpus string) string {
-	var unique strings.Builder
-	uniqueMap := make(map[rune]bool)
+	seen := make(map[rune]bool)
+	var chars []rune
 	for _, char := range corpus {
-		if _, exists := uniqueMap[char]; !exists {
-			uniqueMap[char] = true
-			unique.WriteRune(char)
+		if !seen[char] {
+			seen[char] = true
+			chars = append(chars, char)
 		}
 	}
-	uniqueChars := unique.String()
+	// The subsetter orders glyphs by ID. Share the result across boards
+	// that rearrange labels while using the same characters.
+	slices.Sort(chars)
+	uniqueChars := string(chars)
 
 	FontFamiliesMu.Lock()
 	defer FontFamiliesMu.Unlock()
@@ -54,14 +91,10 @@ func (f Font) GetEncodedSubset(corpus string) string {
 			return encoded
 		}
 	}
-	fontBuf := make([]byte, len(face))
-	copy(fontBuf, face)
-	fontBuf = font.UTF8CutFont(fontBuf, uniqueChars)
-
-	fontBuf, err := fontlib.Sfnt2Woff(fontBuf)
+	fontBuf, err := font.SubsetWOFF(face, uniqueChars)
 	if err != nil {
 		// If subset fails, return full encoding
-		return FontEncodings.Get(f)
+		return f.GetEncodedFull()
 	}
 
 	encoded := fmt.Sprintf("data:application/font-woff;base64,%v", base64.StdEncoding.EncodeToString(fontBuf))
@@ -69,6 +102,9 @@ func (f Font) GetEncodedSubset(corpus string) string {
 		// The key is retained too, and characters the font lacks lengthen it
 		// without adding anything to the subset.
 		size := len(encoded) + len(uniqueChars)
+		if size > maxEncodedSubsetsSize {
+			return encoded
+		}
 		if encodedSubsetsSize+size > maxEncodedSubsetsSize {
 			clear(encodedSubsets)
 			encodedSubsetsSize = 0
@@ -80,7 +116,7 @@ func (f Font) GetEncodedSubset(corpus string) string {
 }
 
 // encodedSubsetKey identifies a subset by a bundled font file's backing array
-// and the characters retained, in order of first use.
+// and its sorted set of characters.
 type encodedSubsetKey struct {
 	face  *byte
 	chars string
@@ -150,15 +186,15 @@ var D2_FONT_TO_FAMILY = map[string]FontFamily{
 	"mono":    SourceCodePro,
 }
 
-func AddFontStyle(font Font, style FontStyle, ttf []byte) error {
-	FontFaces.Set(font, ttf)
+func AddFontStyle(f Font, style FontStyle, ttf []byte) error {
+	FontFaces.Set(f, ttf)
 
-	woff, err := fontlib.Sfnt2Woff(ttf)
+	woff, err := font.Sfnt2Woff(ttf)
 	if err != nil {
 		return fmt.Errorf("failed to encode ttf to woff: %v", err)
 	}
 	encodedWoff := fmt.Sprintf("data:application/font-woff;base64,%v", base64.StdEncoding.EncodeToString(woff))
-	FontEncodings.Set(font, encodedWoff)
+	FontEncodings.Set(f, encodedWoff)
 
 	return nil
 }

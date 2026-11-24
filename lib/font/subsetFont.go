@@ -33,6 +33,7 @@ const symbolAllScale = 1 << 6
 const symbol2x2 = 1 << 7
 
 type utf8FontFile struct {
+	compact              bool
 	fileReader           *fileReader
 	tableDescriptions    map[string]*tableDescription
 	outTablesData        map[string][]byte
@@ -314,10 +315,14 @@ func (utf *utf8FontFile) generateCMAPTable(cidSymbolPairCollection map[int]int, 
 
 	}
 	cmap = append(cmap, 0)
-	for _, start := range cidArrayKeys {
-		cmap = append(cmap, cidArray[start]...)
+	// Every segment uses idDelta (all idRangeOffset entries above are
+	// zero). No character references the format-4 glyphIdArray.
+	if !utf.compact {
+		for _, start := range cidArrayKeys {
+			cmap = append(cmap, cidArray[start]...)
+		}
+		cmap = append(cmap, 0)
 	}
-	cmap = append(cmap, 0)
 
 	// Calculating cmap length based off of fpdf https://github.com/Setasign/FPDF/blob/f4104a04c9a3f95c4c26a0a0531abebcc980987a/makefont/ttfparser.php#L476
 	// https://learn.microsoft.com/en-us/typography/opentype/spec/cmap#format-4-segment-mapping-to-delta-values
@@ -340,6 +345,21 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 	utf.outTablesData = make(map[string][]byte)
 	utf.skip(4)
 	utf.generateTableDescriptions()
+	if utf.compact {
+		for _, table := range utf.tableDescriptions {
+			if table.position < 0 || table.size < 0 || table.position > len(utf.fileReader.array)-table.size {
+				return nil
+			}
+		}
+		for tag, minSize := range map[string]int{
+			"head": 54, "hhea": 36, "maxp": 6, "cmap": 4,
+			"loca": 2, "glyf": 0, "hmtx": 4, "post": 16,
+		} {
+			if table := utf.tableDescriptions[tag]; table == nil || table.size < minSize {
+				return nil
+			}
+		}
+	}
 
 	utf.SeekTable("head")
 	utf.skip(50)
@@ -385,6 +405,12 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 	offsets := make([]int, 0)
 	glyfData := make([]byte, 0)
 	pos := 0
+	alignment := 4
+	if utf.compact {
+		// Short loca offsets count words. Every glyph still starts at a
+		// multiple of two, and the SFNT table itself remains four-aligned.
+		alignment = 2
+	}
 	hmtxData := make([]byte, 0)
 
 	for _, originalSymbolIdx := range symbolCollectionKeys {
@@ -427,8 +453,8 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 
 		glyfData = append(glyfData, data...)
 		pos += symbolLen
-		if pos%4 != 0 {
-			padding := 4 - (pos % 4)
+		if pos%alignment != 0 {
+			padding := alignment - pos%alignment
 			glyfData = append(glyfData, make([]byte, padding)...)
 			pos += padding
 		}
@@ -437,6 +463,9 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 	offsets = append(offsets, pos)
 	utf.setOutTable("glyf", glyfData)
 
+	if utf.compact {
+		hmtxData, metricsCount = compactHorizontalMetrics(hmtxData)
+	}
 	utf.setOutTable("hmtx", hmtxData)
 
 	locaData := make([]byte, 0)
@@ -469,6 +498,21 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 	utf.setOutTable("OS/2", os2Data)
 
 	return utf.assembleTables()
+}
+
+// Trailing glyphs with the same advance width as the final long metric
+// store only their individual left side bearings.
+func compactHorizontalMetrics(metrics []byte) ([]byte, int) {
+	count := len(metrics) / 4
+	lastAdvance := binary.BigEndian.Uint16(metrics[len(metrics)-4:])
+	for count > 1 && binary.BigEndian.Uint16(metrics[(count-2)*4:]) == lastAdvance {
+		count--
+	}
+	out := metrics[:count*4]
+	for offset := len(out); offset < len(metrics); offset += 4 {
+		out = append(out, metrics[offset+2:offset+4]...)
+	}
+	return out, count
 }
 
 func (utf *utf8FontFile) getSymbols(originalSymbolIdx int, start *int, symbolSet map[int]int, SymbolsCollection map[int]int, SymbolsCollectionKeys []int) (*int, map[int]int, map[int]int, []int) {
@@ -752,11 +796,15 @@ func keySortArrayRangeMap(s map[int][]int) []int {
 // only of the runes included in cutset. The rune glyphs are copied from This
 // function is demonstrated in ExampleUTF8CutFont().
 func UTF8CutFont(inBuf []byte, cutset string) (outBuf []byte) {
-	f := newUTF8Font(&fileReader{readerPosition: 0, array: inBuf})
+	return cutFont(inBuf, cutset, false)
+}
+
+func cutFont(inBuf []byte, cutset string, compact bool) []byte {
+	f := newUTF8Font(&fileReader{array: inBuf})
+	f.compact = compact
 	runes := map[int]int{}
 	for i, r := range cutset {
 		runes[i] = int(r)
 	}
-	outBuf = f.GenerateCutFont(runes)
-	return
+	return f.GenerateCutFont(runes)
 }

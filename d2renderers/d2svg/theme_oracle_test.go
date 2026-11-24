@@ -11,12 +11,10 @@ import (
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 )
 
-// Match only the palette and sketch rules emitted by ThemeCSS. Other rules,
-// including Markdown variables and light/dark code visibility, stay intact.
-var legacyThemePaletteRule = regexp.MustCompile(`\s*(?:\.[\w-]+ \.((?:fill|stroke|background-color|color)-[A-Z0-9]+)|\.(sketch-overlay-[A-Z0-9]+))\{[^{}]*\}`)
+// Match the palette, sketch, Markdown and code rules emitted by ThemeCSS.
+var legacyThemePaletteRule = regexp.MustCompile(`\s*(?:\.[\w-]+ \.((?:fill|stroke|background-color|color)-[A-Z0-9]+)|\.(sketch-overlay-[A-Z0-9]+|md|light-code|dark-code))\{[^{}]*\}`)
 
-// Frozen implementation from before the selector scanner. It deliberately
-// retains the original regexp and XML checks as an exact-output oracle.
+// The independent regexp and XML checks form an exact-output oracle.
 func legacyPruneThemeCSS(stylesheet string, sources ...string) string {
 	if stylesheet == "" {
 		return stylesheet
@@ -57,7 +55,7 @@ func legacyPruneThemeCSS(stylesheet string, sources ...string) string {
 				}
 				if attr.Name.Local == "class" {
 					for _, class := range strings.Fields(attr.Value) {
-						if isPaletteClass(class) {
+						if isThemeClass(class) {
 							used[class] = true
 						}
 					}
@@ -72,7 +70,7 @@ func legacyPruneThemeCSS(stylesheet string, sources ...string) string {
 		if class == "" {
 			class = match[2]
 		}
-		if isPaletteClass(class) && !used[class] {
+		if isThemeClass(class) && !used[class] {
 			return ""
 		}
 		return rule
@@ -125,7 +123,7 @@ func TestPruneThemeRulesLegacyOracle(t *testing.T) {
 			if class == "" {
 				class = match[2]
 			}
-			if isPaletteClass(class) && !used[class] {
+			if isThemeClass(class) && !used[class] {
 				return ""
 			}
 			return rule

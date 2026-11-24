@@ -68,9 +68,20 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	return out
 }
 
+// AppendRendered adds an appendix to output from d2svg.Render. Its scoped
+// stylesheet already selects any faces embedded by the diagram, including
+// for the new footnotes and numbered markers.
+func AppendRendered(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) ([]byte, error) {
+	return appendWithError(diagram, renderOpts, ruler, in, true)
+}
+
 // AppendWithError adds footnotes and reports errors such as an appendix
 // exceeding the scaled SVG dimension range.
 func AppendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) ([]byte, error) {
+	return appendWithError(diagram, renderOpts, ruler, in, false)
+}
+
+func appendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte, rendered bool) ([]byte, error) {
 	svg := string(in)
 	tl, br := diagram.BoundingBox()
 	isFrame := strings.HasPrefix(svg, "<g ")
@@ -123,7 +134,11 @@ func AppendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ru
 		if renderOpts != nil && renderOpts.Scale != nil {
 			scale = *renderOpts.Scale
 		}
-		svg, err = appendToStandaloneSVG(svg, appendix, w, h, scale)
+		fontScope := ""
+		if rendered && d2svg.UsesDefaultStylesheet() {
+			fontScope = diagramHash
+		}
+		svg, err = appendToStandaloneSVG(svg, appendix, w, h, scale, fontScope)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +146,7 @@ func AppendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ru
 	return []byte(numberIcons(diagram, diagramHash, svg)), nil
 }
 
-func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) (string, error) {
+func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64, fontScope string) (string, error) {
 	// match 1st two viewboxes, 1st is outer fit-to-screen viewbox="0 0 innerWidth innerHeight"
 	viewboxMatches := viewboxRegex.FindAllStringSubmatch(svg, 2)
 	viewboxMatch := viewboxMatches[1]
@@ -176,7 +191,7 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) (strin
 	}
 	svg = outer + inner
 
-	if !strings.Contains(svg, `font-family: "font-regular"`) {
+	if needsAppendixFont(svg, fontScope, "text", "regular") {
 		appendix += fmt.Sprintf(`<style type="text/css"><![CDATA[
 .text {
 	font-family: "font-regular";
@@ -185,9 +200,9 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) (strin
 	font-family: font-regular;
 	src: url("%s");
 }
-]]></style>`, d2fonts.FontEncodings.Get(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR)))
+]]></style>`, d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR).GetEncodedFull())
 	}
-	if !strings.Contains(svg, `font-family: "font-bold"`) {
+	if needsAppendixFont(svg, fontScope, "text-bold", "bold") {
 		appendix += fmt.Sprintf(`<style type="text/css"><![CDATA[
 .text-bold {
 	font-family: "font-bold";
@@ -196,11 +211,21 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64) (strin
 	font-family: font-bold;
 	src: url("%s");
 }
-]]></style>`, d2fonts.FontEncodings.Get(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_BOLD)))
+]]></style>`, d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_BOLD).GetEncodedFull())
 	}
 
 	closingIndex := strings.LastIndex(svg, "</svg></svg>")
 	return svg[:closingIndex] + appendix + svg[closingIndex:], nil
+}
+
+func needsAppendixFont(svg, scope, class, face string) bool {
+	if strings.Contains(svg, `font-family: "font-`+face+`"`) {
+		return false
+	}
+	// Use the renderer's exact class selector. A face declaration alone can
+	// select a different class, and unscoped styles on arbitrary input can
+	// still refer to the legacy family.
+	return scope == "" || !strings.Contains(svg, "."+scope+" ."+class+" {\n\tfont-family: \""+scope+"-font-"+face+"\";")
 }
 
 func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {

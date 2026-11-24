@@ -914,7 +914,7 @@ func (s Shape) CSSStyle() string {
 	out += "stroke-width:" + svg.FormatFloat(s.RenderedStrokeWidth()) + ";"
 	if s.StrokeDash != 0 {
 		dashSize, gapSize := svg.GetStrokeDashAttributes(s.RenderedStrokeWidth(), s.StrokeDash)
-		out += fmt.Sprintf(`stroke-dasharray:%f,%f;`, dashSize, gapSize)
+		out += "stroke-dasharray:" + svg.FormatFloat(dashSize) + "," + svg.FormatFloat(gapSize) + ";"
 	}
 
 	return out
@@ -1110,15 +1110,15 @@ func (c Connection) CSSStyle() string {
 	}
 	if strokeDash != 0 {
 		dashSize, gapSize := svg.GetStrokeDashAttributes(c.RenderedStrokeWidth(), strokeDash)
-		out += fmt.Sprintf(`stroke-dasharray:%f,%f;`, dashSize, gapSize)
+		out += "stroke-dasharray:" + svg.FormatFloat(dashSize) + "," + svg.FormatFloat(gapSize) + ";"
 
 		if c.Animated {
 			dashOffset := -10
 			if c.SrcArrow != NoArrowhead && c.DstArrow == NoArrowhead {
 				dashOffset = 10
 			}
-			out += fmt.Sprintf(`stroke-dashoffset:%f;`, float64(dashOffset)*(dashSize+gapSize))
-			out += fmt.Sprintf(`animation: dashdraw %fs linear infinite;`, gapSize*0.5)
+			out += "stroke-dashoffset:" + svg.FormatFloat(float64(dashOffset)*(dashSize+gapSize)) + ";"
+			out += "animation: dashdraw " + svg.FormatFloat(gapSize*0.5) + "s linear infinite;"
 		}
 	}
 	return out

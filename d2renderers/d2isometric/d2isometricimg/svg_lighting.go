@@ -34,6 +34,28 @@ func svgTextureLighting(camera rasterCamera, t Triangle) (slope, intercept [3]fl
 	return slope, intercept
 }
 
+// The transfer function depends on the light and material, while the
+// transform and clip belong to each individual face.
+func (w *nativeSVGWriter) textureLight(id int, slope, intercept [3]float64) int {
+	// Compare at SVG precision. Equivalent normals can differ by floating-point
+	// roundoff across architectures.
+	var key [6]string
+	for i := range slope {
+		key[2*i], key[2*i+1] = svgNumber(slope[i]), svgNumber(intercept[i])
+	}
+	if shared, ok := w.textureLights[key]; ok {
+		return shared
+	}
+	if w.textureLights == nil {
+		w.textureLights = make(map[[6]string]int)
+	}
+	if len(w.textureLights) < 8192 {
+		w.textureLights[key] = id
+	}
+	w.write(`<defs><filter id="light-%d" color-interpolation-filters="linearRGB"><feComponentTransfer><feFuncR type="linear" slope="%s" intercept="%s"/><feFuncG type="linear" slope="%s" intercept="%s"/><feFuncB type="linear" slope="%s" intercept="%s"/></feComponentTransfer></filter></defs>`, id, key[0], key[1], key[2], key[3], key[4], key[5])
+	return id
+}
+
 func svgTriangleNormal(t Triangle, i int) Vec {
 	normal := t.V[i].Normal
 	if nlen(normal) < 1e-12 {
@@ -443,8 +465,12 @@ func writeSVGGroundCasters(w *nativeSVGWriter, scene *nativeScene, triangles []T
 				w.err = err
 				return
 			}
-			w.write(`<defs><clipPath id="shadow-clip-%d-%d"><path d="%s"/></clipPath><filter id="shadow-ink-%d-%d" color-interpolation-filters="sRGB"><feColorMatrix values="0 0 0 0 0.14117647 0 0 0 0 0.21568627 0 0 0 0 0.32941176 0 0 0 1 0"/></filter></defs>`, layer, i, svgFillPath(visible[i]), layer, i)
-			w.write(`<g clip-path="url(#shadow-clip-%d-%d)"><g transform="matrix(%s %s %s %s %s %s)" filter="url(#shadow-ink-%d-%d)"><use xlink:href="#%s"/></g></g>`, layer, i, svgNumber(affine[0]), svgNumber(affine[1]), svgNumber(affine[2]), svgNumber(affine[3]), svgNumber(affine[4]), svgNumber(affine[5]), layer, i, surfaceID)
+			if !w.shadowInk {
+				w.write(`<defs><filter id="shadow-ink" color-interpolation-filters="sRGB"><feColorMatrix values="0 0 0 0 0.14117647 0 0 0 0 0.21568627 0 0 0 0 0.32941176 0 0 0 1 0"/></filter></defs>`)
+				w.shadowInk = true
+			}
+			w.write(`<defs><clipPath id="shadow-clip-%d-%d"><path d="%s"/></clipPath></defs>`, layer, i, svgFillPath(visible[i]))
+			w.write(`<g clip-path="url(#shadow-clip-%d-%d)"><g transform="matrix(%s %s %s %s %s %s)" filter="url(#shadow-ink)"><use xlink:href="#%s"/></g></g>`, layer, i, svgNumber(affine[0]), svgNumber(affine[1]), svgNumber(affine[2]), svgNumber(affine[3]), svgNumber(affine[4]), svgNumber(affine[5]), surfaceID)
 		}
 		w.write(`</g>`)
 	}

@@ -10,7 +10,6 @@ import (
 
 func TestEmbedFontsMatchesLegacy(t *testing.T) {
 	for _, source := range []string{
-		`<svg/>`,
 		`<text class="text">Hello</text>`,
 		`<text class="text another-class">Hello</text>`,
 		`<text class="text-mono-bold">Code</text>`,
@@ -27,6 +26,15 @@ func TestEmbedFontsMatchesLegacy(t *testing.T) {
 				t.Fatalf("font CSS differs for %s and source %q", family, source)
 			}
 		}
+	}
+}
+
+func TestNoEmptyFontStylesheet(t *testing.T) {
+	var buf bytes.Buffer
+	buf.WriteString("previous content")
+	EmbedFonts(&buf, "diagram", `<rect/>`, nil, nil, "")
+	if got := buf.String(); got != "previous content" {
+		t.Fatalf("unlabeled shapes appended %q", got[len("previous content"):])
 	}
 }
 

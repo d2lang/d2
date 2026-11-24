@@ -5,6 +5,8 @@
 package font
 
 import (
+	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -79,7 +81,48 @@ func calcChecksum(buf []byte) uint32 {
 	return sum
 }
 
+// SubsetWOFF produces a self-contained font for an SVG. The compact subset
+// drops redundant SFNT entries, retains every selected glyph and its metrics,
+// and uses the same WOFF container as the full-font fallback.
+func SubsetWOFF(face []byte, chars string) ([]byte, error) {
+	if !hasSFNTDirectory(face) {
+		return nil, fmt.Errorf("incomplete SFNT table directory")
+	}
+	// The subsetter rewrites TrueType glyph outlines. Other SFNT flavors,
+	// including OpenType/CFF, need their complete face.
+	switch string(face[:4]) {
+	case "\x00\x01\x00\x00", "true":
+	default:
+		return nil, fmt.Errorf("unsupported outline format %q", face[:4])
+	}
+	subset := cutFont(bytes.Clone(face), chars, true)
+	if len(subset) == 0 {
+		return nil, fmt.Errorf("font does not contain the tables needed for a TrueType subset")
+	}
+	return sfnt2Woff(subset, true, nil)
+}
+
+// FullWOFF losslessly encodes a complete SFNT face for embedding. The
+// stronger compression is intended for full fonts encoded once and reused.
+func FullWOFF(face []byte) ([]byte, error) {
+	if !hasSFNTDirectory(face) {
+		return nil, fmt.Errorf("incomplete SFNT table directory")
+	}
+	var compression woffCompression
+	compression.writer, _ = zlib.NewWriterLevel(&compression.buffer, zlib.BestCompression)
+	return sfnt2Woff(face, true, &compression)
+}
+
+func hasSFNTDirectory(face []byte) bool {
+	return len(face) >= SIZE_OF_SFNT_HEADER &&
+		int(binary.BigEndian.Uint16(face[4:])) <= (len(face)-SIZE_OF_SFNT_HEADER)/SIZE_OF_SFNT_TABLE_ENTRY
+}
+
 func Sfnt2Woff(fontBuf []byte) ([]byte, error) {
+	return sfnt2Woff(fontBuf, false, nil)
+}
+
+func sfnt2Woff(fontBuf []byte, compact bool, compression *woffCompression) ([]byte, error) {
 	numTables := binary.BigEndian.Uint16(fontBuf[4:])
 
 	woffHeader := make([]byte, SIZE_OF_WOFF_HEADER)
@@ -104,6 +147,12 @@ func Sfnt2Woff(fontBuf []byte) ([]byte, error) {
 			Length:   binary.BigEndian.Uint32(table[SFNT_OFFSET_LENGTH:]),
 		}
 
+		if compact {
+			paddedLength := (uint64(entry.Length) + 3) &^ 3
+			if uint64(entry.Offset)+paddedLength > uint64(len(fontBuf)) || (string(entry.Tag) == "head" && entry.Length < 12) {
+				return nil, fmt.Errorf("invalid SFNT table %q", entry.Tag)
+			}
+		}
 		entries = append(entries, entry)
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -150,15 +199,9 @@ func Sfnt2Woff(fontBuf []byte) ([]byte, error) {
 
 	majorVersion := uint16(0)
 	minVersion := uint16(1)
-	flavor := uint32(0)
+	flavor := binary.BigEndian.Uint32(fontBuf)
 	offset := SIZE_OF_WOFF_HEADER + int(numTables)*SIZE_OF_WOFF_ENTRY
 	var tableBytes []byte
-	var compression *woffCompression
-	defer func() {
-		if compression != nil {
-			releaseWoffCompression(compression)
-		}
-	}()
 
 	for i := 0; i < len(entries); i++ {
 		tableEntry := entries[i]
@@ -167,14 +210,18 @@ func Sfnt2Woff(fontBuf []byte) ([]byte, error) {
 		if string(tableEntry.Tag) == "head" {
 			majorVersion = binary.BigEndian.Uint16(sfntData[SFNT_ENTRY_OFFSET_VERSION_MAJ:])
 			minVersion = binary.BigEndian.Uint16(sfntData[SFNT_ENTRY_OFFSET_VERSION_MIN:])
-			flavor = binary.BigEndian.Uint32(sfntData[SFNT_ENTRY_OFFSET_FLAVOR:])
+			if compact {
+				// The renderer may share the input face across diagrams.
+				sfntData = bytes.Clone(sfntData)
+			}
 			binary.BigEndian.PutUint32(sfntData[SFNT_ENTRY_OFFSET_CHECKSUM_ADJUSTMENT:], uint32(checksumAdjustment))
 		}
 
 		if compression == nil {
 			compression = acquireWoffCompression()
+			defer releaseWoffCompression(compression)
 		}
-		compressed := compression.compressTable(sfntData)
+		compressed := compression.compressTableMode(sfntData, compact)
 
 		compLength := math.Min(float64(len(compressed)), float64(len(sfntData)))
 		length := longAlign(uint32(compLength))

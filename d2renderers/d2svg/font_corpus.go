@@ -14,10 +14,6 @@ import (
 // its legacy source triggers and whole-diagram corpus instead.
 type fontCorpora map[string]string
 
-// BaseStylesheet is public and callers may add font-selection rules. Keep the
-// original text so those callers retain whole-corpus font subsets.
-var fontCorpusBaseStylesheet = BaseStylesheet
-
 // restrictFontCorpora narrows the freshly collected map in place only when its
 // characters appeared in the legacy corpus. Rendering can introduce characters
 // absent from that corpus (notably code's nonbreaking spaces). Their browser
@@ -88,7 +84,7 @@ func collectFontCorporaAndClasses(source string) (fontCorpora, map[string]bool, 
 // scanFontCorporaAndClasses reads one or more complete sibling elements.
 // The legacy regular-face trigger must be checked against the entire board.
 func scanFontCorporaAndClasses(source io.Reader, buf *bufio.Reader) (fontCorpora, map[string]bool, bool) {
-	if BaseStylesheet != fontCorpusBaseStylesheet {
+	if !UsesDefaultStylesheet() {
 		return nil, nil, false
 	}
 	buf.Reset(io.MultiReader(
@@ -173,7 +169,7 @@ func scanFontCorporaAndClasses(source io.Reader, buf *bufio.Reader) (fontCorpora
 						}
 						return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f'
 					}) {
-						if isPaletteClass(class) {
+						if isThemeClass(class) {
 							classes[class] = true
 						}
 						for i, fontClass := range embeddedFontClasses {

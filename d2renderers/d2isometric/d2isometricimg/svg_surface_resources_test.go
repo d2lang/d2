@@ -1,11 +1,14 @@
 package d2isometricimg
 
 import (
+	"bytes"
 	"context"
+	"image/color"
 	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2isometric"
+	"github.com/d2lang/d2/d2renderers/d2scene"
 )
 
 func TestSVGSurfaceResourcesAreSharedAcrossPaintPasses(t *testing.T) {
@@ -45,6 +48,11 @@ func TestNativeSVGLargeRichTextAndPaperStayWithinBudget(t *testing.T) {
 			if strings.Contains(string(svg), "data:image") {
 				t.Fatal("large vector source was replaced by raster pixels")
 			}
+			if strings.Contains(fixture, "patterns/paper") {
+				if defs, uses := bytes.Count(svg, []byte(`id="shadow-ink"`)), bytes.Count(svg, []byte(`filter="url(#shadow-ink)"`)); defs != 1 || uses < 2 {
+					t.Fatalf("textured shadows used %d ink filters for %d projections", defs, uses)
+				}
+			}
 			if strings.Contains(fixture, "giant_markdown") {
 				uses := strings.Count(string(svg), `href="#surface-`)
 				definitions := strings.Count(string(svg), `id="surface-`)
@@ -53,5 +61,21 @@ func TestNativeSVGLargeRichTextAndPaperStayWithinBudget(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestIdenticalPatternArtworkSharedBetweenSurfaces(t *testing.T) {
+	writer := &nativeSVGWriter{ctx: context.Background()}
+	tile := d2scene.Box{Width: 2, Height: 2}
+	for _, red := range []uint8{0, 255, 0} {
+		pattern := d2scene.PatternPaint{Tile: tile, Transform: d2scene.Identity(), Root: d2scene.NewNode(d2scene.Rect{Box: tile, Fill: d2scene.SolidPaint{Color: color.NRGBA{R: red, A: 255}}})}
+		writer.surfaceDefinition(&nativeVectorSurface{document: nativePaintDocument(pattern)})
+	}
+	if writer.err != nil {
+		t.Fatal(writer.err)
+	}
+	markup := writer.buf.String()
+	if strings.Count(markup, "<pattern ") != 2 || strings.Count(markup, "url(#surface-0--paint-1)") != 2 || strings.Count(markup, "url(#surface-1--paint-1)") != 1 {
+		t.Fatal("expected two identical tiles to reference the same paint server and the distinct tile to have its own", markup)
 	}
 }

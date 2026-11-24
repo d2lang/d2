@@ -58,7 +58,7 @@ func (w *objectWriter) classes(value string) {
 		}
 	}
 	for class := range strings.FieldsSeq(value) {
-		if isPaletteClass(class) {
+		if isThemeClass(class) {
 			w.usage.classes[class] = true
 		}
 	}

@@ -35,9 +35,8 @@ func TestEncodedSubsetsAreRememberedForBundledFontsOnly(t *testing.T) {
 	}
 	entries++
 
-	// The same characters in the same first-use order are one subset, however
-	// often they repeat.
-	if got := bundled.GetEncodedSubset("subset cache subset"); got != want {
+	// Moving or repeating labels between boards still uses one subset.
+	if got := bundled.GetEncodedSubset("cache subset cache"); got != want {
 		t.Fatal("repeated characters changed the encoded subset")
 	}
 	if n, _ := cache(); n != entries {

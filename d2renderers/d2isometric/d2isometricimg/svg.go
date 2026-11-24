@@ -92,6 +92,9 @@ type nativeSVGWriter struct {
 	err           error
 	surfaces      map[*nativeVectorSurface]string
 	lightingStops map[string]string
+	textureLights map[[6]string]int
+	shadowInk     bool
+	patterns      nativeSVGPatterns
 }
 
 func (w *nativeSVGWriter) write(format string, args ...any) {
@@ -615,8 +618,8 @@ func writeSVGBatch(w *nativeSVGWriter, b *svgPaintBatch, id int, camera rasterCa
 		filter := ""
 		if !m.Unlit {
 			slope, intercept := svgTextureLighting(camera, b.triangle)
-			w.write(`<defs><filter id="light-%d" color-interpolation-filters="linearRGB"><feComponentTransfer><feFuncR type="linear" slope="%s" intercept="%s"/><feFuncG type="linear" slope="%s" intercept="%s"/><feFuncB type="linear" slope="%s" intercept="%s"/></feComponentTransfer></filter></defs>`, id, svgNumber(slope[0]), svgNumber(intercept[0]), svgNumber(slope[1]), svgNumber(intercept[1]), svgNumber(slope[2]), svgNumber(intercept[2]))
-			filter = fmt.Sprintf(` filter="url(#light-%d)"`, id)
+			lightID := w.textureLight(id, slope, intercept)
+			filter = fmt.Sprintf(` filter="url(#light-%d)"`, lightID)
 		}
 		a := b.affine
 		w.write(`<g clip-path="url(#face-%d)" opacity="%s"%s><g transform="matrix(%s %s %s %s %s %s)"%s>`, id, svgNumber(alpha), blend, svgNumber(a[0]), svgNumber(a[1]), svgNumber(a[2]), svgNumber(a[3]), svgNumber(a[4]), svgNumber(a[5]), filter)
