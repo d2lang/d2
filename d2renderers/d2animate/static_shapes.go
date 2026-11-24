@@ -12,8 +12,6 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-var defaultBaseStylesheet = d2svg.BaseStylesheet
-
 // The first drawable board may live below a folder. Its native shape IDs
 // distinguish diagram objects from unrelated <g> elements in the fragments.
 func firstGridPlaybackFrame(root *d2target.Diagram) *d2target.Diagram {
@@ -193,7 +191,7 @@ func frameShapeSpans(frame []byte, hash string, index int, candidates map[string
 // shareStaticShapes keeps each run in its original position in the paint order.
 // The caller's frame buffers stay intact. Unrecognized fragments pass through.
 func shareStaticShapes(root *d2target.Diagram, frames [][]byte, hash string) (defs []byte, reduced [][]byte) {
-	if len(frames) < 2 || d2svg.BaseStylesheet != defaultBaseStylesheet {
+	if len(frames) < 2 || !d2svg.UsesDefaultStylesheet() {
 		return nil, frames
 	}
 	first := firstGridPlaybackFrame(root)

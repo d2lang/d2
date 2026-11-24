@@ -64,7 +64,13 @@ var TooltipIcon string
 var LinkIcon string
 
 //go:embed style.css
-var BaseStylesheet string
+var defaultBaseStylesheet string
+
+var BaseStylesheet = defaultBaseStylesheet
+
+// UsesDefaultStylesheet reports whether generated markup can be optimized
+// without affecting selectors supplied by the caller.
+func UsesDefaultStylesheet() bool { return BaseStylesheet == defaultBaseStylesheet }
 
 // MarkdownCSS is retained for compatibility with callers that used the
 // browser-era Markdown stylesheet directly.
@@ -2960,7 +2966,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 
 	buf := &bytes.Buffer{}
 	writer := &objectWriter{buf: buf}
-	if opts.MasterID == "" && !sketch && BaseStylesheet == fontCorpusBaseStylesheet {
+	if opts.MasterID == "" && !sketch && UsesDefaultStylesheet() {
 		writer.usage = &svgUsage{classes: make(map[string]bool)}
 	}
 
@@ -3146,7 +3152,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	// Label masks contain only fixed-color geometry and contribute no font or palette classes.
 	// Connections reference the mask even without a label. A shape or a
 	// legend can also reference it without a connection on the board.
-	if BaseStylesheet != fontCorpusBaseStylesheet || len(diagram.Connections) != 0 || bytes.Contains(buf.Bytes(), []byte(svg.LocalIRI(svg.LiteralID(isolatedDiagramHash)))) {
+	if !UsesDefaultStylesheet() || len(diagram.Connections) != 0 || bytes.Contains(buf.Bytes(), []byte(svg.LocalIRI(svg.LiteralID(isolatedDiagramHash)))) {
 		bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", w), svg.IntAttr("height", h)}
 		attrs := []svg.Attribute{svg.Attr("id", isolatedDiagramHash), svg.Attr("maskUnits", "userSpaceOnUse")}
 		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
@@ -3348,7 +3354,7 @@ func WriteAnimationStyles(buf *bytes.Buffer, diagramHash, source string, diagram
 	}
 	corpora, classes, _ := collectFontCorporaAndClasses(source)
 	embedFonts(buf, diagramHash, source, diagram.FontFamily, diagram.MonoFontFamily, diagram.GetNestedCorpus(), corpora)
-	if BaseStylesheet == fontCorpusBaseStylesheet {
+	if UsesDefaultStylesheet() {
 		if classes == nil {
 			stylesheet = pruneThemeCSS(stylesheet, source)
 		} else {
@@ -3363,7 +3369,7 @@ func WriteAnimationStyles(buf *bytes.Buffer, diagramHash, source string, diagram
 }
 
 func writeSketchPatterns(buf *bytes.Buffer, diagramHash string) {
-	if BaseStylesheet == fontCorpusBaseStylesheet {
+	if UsesDefaultStylesheet() {
 		d2sketch.DefineSharedFillPatterns(buf, diagramHash)
 	} else {
 		d2sketch.DefineFillPatterns(buf, diagramHash)

@@ -75,8 +75,6 @@ func AppendRendered(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, rul
 	return appendWithError(diagram, renderOpts, ruler, in, true)
 }
 
-var defaultBaseStylesheet = d2svg.BaseStylesheet
-
 // AppendWithError adds footnotes and reports errors such as an appendix
 // exceeding the scaled SVG dimension range.
 func AppendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) ([]byte, error) {
@@ -137,7 +135,7 @@ func appendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ru
 			scale = *renderOpts.Scale
 		}
 		fontScope := ""
-		if rendered && d2svg.BaseStylesheet == defaultBaseStylesheet {
+		if rendered && d2svg.UsesDefaultStylesheet() {
 			fontScope = diagramHash
 		}
 		svg, err = appendToStandaloneSVG(svg, appendix, w, h, scale, fontScope)
