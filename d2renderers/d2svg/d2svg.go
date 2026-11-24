@@ -3255,7 +3255,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		writeThemeStyle(upperBuf, themeStylesheet)
 
 		if sketch {
-			d2sketch.DefineFillPatterns(upperBuf, diagramHash)
+			writeSketchPatterns(upperBuf, diagramHash)
 		}
 	}
 
@@ -3354,7 +3354,18 @@ func WriteAnimationStyles(buf *bytes.Buffer, diagramHash, source string, diagram
 		stylesheet = pruneThemeCSSWithClasses(stylesheet, classes)
 	}
 	writeThemeStyle(buf, stylesheet)
+	if opts.Sketch != nil && *opts.Sketch {
+		writeSketchPatterns(buf, diagramHash)
+	}
 	return nil
+}
+
+func writeSketchPatterns(buf *bytes.Buffer, diagramHash string) {
+	if BaseStylesheet == fontCorpusBaseStylesheet {
+		d2sketch.DefineSharedFillPatterns(buf, diagramHash)
+	} else {
+		d2sketch.DefineFillPatterns(buf, diagramHash)
+	}
 }
 
 func writeThemeStyle(buf *bytes.Buffer, stylesheet string) {

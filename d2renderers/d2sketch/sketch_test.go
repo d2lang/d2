@@ -1482,7 +1482,7 @@ func TestSketchFillPatternsShareTheStreakPath(t *testing.T) {
 			b.WriteString("url(#streaks-" + shade + "-test)")
 		}
 		offset := b.Len()
-		d2sketch.DefineFillPatterns(&b, "test")
+		d2sketch.DefineSharedFillPatterns(&b, "test")
 		defs := b.String()[offset:]
 		if strings.Count(defs, "<pattern ") != count || strings.Count(defs, "<path ") != min(count, 1) {
 			t.Fatalf("%d shades should share one drawing", count)

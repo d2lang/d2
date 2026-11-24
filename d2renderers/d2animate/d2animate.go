@@ -7,7 +7,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/d2lang/d2/d2renderers/d2sketch"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/internal/svgframe"
 	"github.com/d2lang/d2/d2target"
@@ -126,10 +125,6 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 
 	if err := d2svg.WriteAnimationStyles(buf, diagramHash, svgsStr, rootDiagram, &renderOpts); err != nil {
 		return nil, err
-	}
-
-	if renderOpts.Sketch != nil && *renderOpts.Sketch {
-		d2sketch.DefineFillPatterns(buf, diagramHash)
 	}
 
 	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)

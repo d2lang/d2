@@ -45,6 +45,16 @@ func baseOptions(strokeWidth float64) *rough.Options {
 // fill. This gives it a subtle streaky effect that subtly looks hand-drawn but
 // not distractingly so.
 func DefineFillPatterns(buf *bytes.Buffer, diagramHash string) {
+	defineFillPatterns(buf, diagramHash, false)
+}
+
+// DefineSharedFillPatterns reuses the path between inks. Use DefineFillPatterns
+// when a custom stylesheet can target the path inside each pattern.
+func DefineSharedFillPatterns(buf *bytes.Buffer, diagramHash string) {
+	defineFillPatterns(buf, diagramHash, true)
+}
+
+func defineFillPatterns(buf *bytes.Buffer, diagramHash string, share bool) {
 	// All four inks use the same geometry. Keep the geometry in defs so a
 	// theme switch can select a different ink without storing another path.
 	type shade struct{ id, ink string }
@@ -65,12 +75,13 @@ func DefineFillPatterns(buf *bytes.Buffer, diagramHash string) {
 	}
 	buf.WriteString("<defs>")
 	pathID := "streak-path-" + diagramHash
-	if len(used) > 1 {
+	share = share && len(used) > 1
+	if share {
 		buf.WriteString(svg.EmptyElement("path", svg.Attr("id", pathID), svg.Attr("d", patternassets.StreakPathData()), svg.Attr("fill-rule", "evenodd"), svg.Attr("clip-rule", "evenodd")))
 	}
 	for _, pattern := range used {
 		buf.WriteString(svg.OpenElement("pattern", svg.Attr("id", pattern.id), svg.Attr("patternUnits", "userSpaceOnUse"), svg.IntAttr("width", 100), svg.IntAttr("height", 100)))
-		if len(used) == 1 {
+		if !share {
 			buf.WriteString(svg.EmptyElement("path", svg.Attr("d", patternassets.StreakPathData()), svg.Attr("fill", pattern.ink), svg.Attr("fill-rule", "evenodd"), svg.Attr("clip-rule", "evenodd")))
 		} else {
 			buf.WriteString(svg.EmptyElement("use", append(svg.HrefAttributes("#"+pathID), svg.Attr("fill", pattern.ink))...))
