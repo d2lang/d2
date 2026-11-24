@@ -964,12 +964,8 @@ func makeLabelMaskWithTransform(labelTL *geo.Point, width, height int, opacity f
 		y -= shapePos.Y
 	}
 
-	return fmt.Sprintf(`<rect x="%s" y="%s" width="%d" height="%d" fill="%s"></rect>`,
-		svg.FormatFloat(x), svg.FormatFloat(y),
-		width+4,
-		height,
-		fill,
-	)
+	return svg.CompactEmptyElement("rect", svg.FloatAttr("x", x), svg.FloatAttr("y", y),
+		svg.IntAttr("width", width+4), svg.IntAttr("height", height), svg.Attr("fill", fill))
 }
 
 // border label mask is minimal, intending to only cover the portion of the border that passes through the label
@@ -1025,9 +1021,8 @@ func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, label
 		maskY -= shapePos.Y
 	}
 
-	return fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" fill="%s"></rect>`,
-		svg.FormatFloat(maskX), svg.FormatFloat(maskY), svg.FormatFloat(maskWidth), svg.FormatFloat(maskHeight), fill,
-	)
+	return svg.CompactEmptyElement("rect", svg.FloatAttr("x", maskX), svg.FloatAttr("y", maskY),
+		svg.FloatAttr("width", maskWidth), svg.FloatAttr("height", maskHeight), svg.Attr("fill", fill))
 }
 
 func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
@@ -3071,7 +3066,6 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	}
 	writer.finish()
 
-	// Note: we always want this since we reference it on connections even if there end up being no masked labels
 	left, top, w, h := dimensions(diagram, pad, tl, br)
 
 	if diagram.Legend != nil && (len(diagram.Legend.Shapes) > 0 || len(diagram.Legend.Connections) > 0) {
@@ -3144,16 +3138,18 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		return nil, invalidPaddingError(int64(pad))
 	}
 	// Label masks contain only fixed-color geometry and contribute no font or palette classes.
-	fmt.Fprint(buf, strings.Join([]string{
-		fmt.Sprintf(`<mask id="%s" maskUnits="userSpaceOnUse" x="%d" y="%d" width="%d" height="%d">`,
-			isolatedDiagramHash, left, top, w, h,
-		),
-		fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d" fill="white"></rect>`,
-			left, top, w, h,
-		),
-		strings.Join(labelMasks, "\n"),
-		`</mask>`,
-	}, "\n"))
+	// Connections reference the mask even without a label. A shape or a
+	// legend can also reference it without a connection on the board.
+	if len(diagram.Connections) != 0 || bytes.Contains(buf.Bytes(), []byte(svg.LocalIRI(svg.LiteralID(isolatedDiagramHash)))) {
+		bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", w), svg.IntAttr("height", h)}
+		attrs := []svg.Attribute{svg.Attr("id", isolatedDiagramHash), svg.Attr("maskUnits", "userSpaceOnUse")}
+		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
+		buf.WriteString(svg.CompactEmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
+		for _, label := range labelMasks {
+			buf.WriteString(label)
+		}
+		buf.WriteString(svg.CloseElement("mask"))
+	}
 
 	writeCrossingMasks(buf, isolatedDiagramHash, crossings, left, top, w, h)
 
@@ -3250,7 +3246,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		} else {
 			themeStylesheet = pruneThemeCSSWithClasses(themeStylesheet, classes, backgroundStr, doubleBorderElStr)
 		}
-		fmt.Fprintf(upperBuf, `<style type="text/css"><![CDATA[%s%s]]></style>`, BaseStylesheet, themeStylesheet)
+		writeThemeStyle(upperBuf, themeStylesheet)
 
 		if sketch {
 			d2sketch.DefineFillPatterns(upperBuf, diagramHash)
@@ -3335,6 +3331,28 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		fitToScreenWrapperClosing,
 	)
 	return []byte(docRendered), nil
+}
+
+// WriteAnimationStyles embeds the font faces and theme rules used by a complete
+// animation. Source includes the shared definitions and all rendered frames.
+func WriteAnimationStyles(buf *bytes.Buffer, diagramHash, source string, diagram *d2target.Diagram, opts *RenderOpts) error {
+	stylesheet, err := ThemeCSS(diagramHash, opts.ThemeID, opts.DarkThemeID, opts.ThemeOverrides, opts.DarkThemeOverrides)
+	if err != nil {
+		return err
+	}
+	corpora, classes, _ := collectFontCorporaAndClasses(source)
+	embedFonts(buf, diagramHash, source, diagram.FontFamily, diagram.MonoFontFamily, diagram.GetNestedCorpus(), corpora)
+	if classes == nil {
+		stylesheet = pruneThemeCSS(stylesheet, source)
+	} else {
+		stylesheet = pruneThemeCSSWithClasses(stylesheet, classes)
+	}
+	writeThemeStyle(buf, stylesheet)
+	return nil
+}
+
+func writeThemeStyle(buf *bytes.Buffer, stylesheet string) {
+	fmt.Fprintf(buf, `<style type="text/css"><![CDATA[%s%s]]></style>`, BaseStylesheet, stylesheet)
 }
 
 func ThemeCSS(diagramHash string, themeID *int64, darkThemeID *int64, overrides, darkOverrides *d2target.ThemeOverrides) (stylesheet string, err error) {

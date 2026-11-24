@@ -173,7 +173,7 @@ func scanFontCorporaAndClasses(source io.Reader, buf *bufio.Reader) (fontCorpora
 						}
 						return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f'
 					}) {
-						if isPaletteClass(class) {
+						if isThemeClass(class) {
 							classes[class] = true
 						}
 						for i, fontClass := range embeddedFontClasses {

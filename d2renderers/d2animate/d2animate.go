@@ -124,13 +124,9 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	}
 	svgsStr := source.String()
 
-	d2svg.EmbedFonts(buf, diagramHash, svgsStr, rootDiagram.FontFamily, rootDiagram.MonoFontFamily, rootDiagram.GetNestedCorpus())
-
-	themeStylesheet, err := d2svg.ThemeCSS(diagramHash, renderOpts.ThemeID, renderOpts.DarkThemeID, renderOpts.ThemeOverrides, renderOpts.DarkThemeOverrides)
-	if err != nil {
+	if err := d2svg.WriteAnimationStyles(buf, diagramHash, svgsStr, rootDiagram, &renderOpts); err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(buf, `<style type="text/css"><![CDATA[%s%s]]></style>`, d2svg.BaseStylesheet, themeStylesheet)
 
 	if renderOpts.Sketch != nil && *renderOpts.Sketch {
 		d2sketch.DefineFillPatterns(buf, diagramHash)

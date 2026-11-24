@@ -22,7 +22,7 @@ func TestPruneThemeCSS(t *testing.T) {
 			t.Fatalf("%s retained %d rules, want both light and dark rules", class, count)
 		}
 	}
-	for _, class := range []string{"fill-N2", "background-color-B1", "sketch-overlay-N1"} {
+	for _, class := range []string{"fill-N2", "background-color-B1", "sketch-overlay-N1", "md", "light-code", "dark-code"} {
 		if strings.Contains(got, "."+class+"{") {
 			t.Fatalf("unused %s was retained", class)
 		}
@@ -30,9 +30,10 @@ func TestPruneThemeCSS(t *testing.T) {
 	if !strings.Contains(got, "@media screen and (prefers-color-scheme:dark){") {
 		t.Fatal("dark media scope was changed")
 	}
-	for _, selector := range []string{".md{", ".appendix text.text{", ".light-code{", ".dark-code{"} {
-		if strings.Count(got, selector) != strings.Count(full, selector) {
-			t.Fatalf("non-palette selector %s was changed", selector)
+	withContent := pruneThemeCSS(full, `<g class="md"/><g class="light-code"/><g class="dark-code"/>`)
+	for _, selector := range []string{".appendix text.text{", ".md{", ".light-code{", ".dark-code{"} {
+		if strings.Count(withContent, selector) != strings.Count(full, selector) {
+			t.Fatalf("used selector %s was changed", selector)
 		}
 	}
 	if len(got) >= len(full)/2 {
