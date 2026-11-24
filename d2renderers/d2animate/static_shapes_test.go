@@ -82,6 +82,7 @@ func TestStaticShapeSharingFallback(t *testing.T) {
 		{"changed", strings.ReplaceAll(string(frame), "alpha", "beta")},
 		{"duplicate", `<g class="d2-test">` + group + group + `</g>`},
 		{"malformed", string(frame[:len(frame)-1])},
+		{"custom style", `<g class="d2-test"><style>g > g {opacity:.5}</style>` + group + `</g>`},
 		{"id collision", `<g class="d2-test"><g id="d2-test-grid-static-0"/>` + group + `</g>`},
 		{"transformed parent", `<g class="d2-test" transform="translate(10)">` + group + `</g>`},
 	} {

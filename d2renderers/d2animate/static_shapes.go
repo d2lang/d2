@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/svg"
 )
+
+var defaultBaseStylesheet = d2svg.BaseStylesheet
 
 // The first drawable board may live below a folder. Its native shape IDs
 // distinguish diagram objects from unrelated <g> elements in the fragments.
@@ -141,18 +144,15 @@ func frameShapeSpans(frame []byte, hash string, index int, candidates map[string
 
 		// We are at a direct child boundary. A byte-identical subtree that
 		// was parsed in the first frame needs no further XML decoding.
-		if index > 0 {
-			if body, ok := bytes.CutPrefix(rest, []byte(`<g class="`)); ok {
-				if class, _, ok := bytes.Cut(body, []byte(`"`)); ok {
-					shape := candidates[string(class)]
-					if shape != nil && shape.frames == index && bytes.HasPrefix(rest, shape.markup) {
-						end := start + len(shape.markup)
-						spans = append(spans, shapeSpan{start, end, shape})
-						shape.frames++
-						start = end
-						continue
-					}
-				}
+		if index > 0 && bytes.HasPrefix(rest, []byte(`<g class="`)) {
+			class, _, _ := bytes.Cut(rest[len(`<g class="`):], []byte(`"`))
+			shape := candidates[string(class)]
+			if shape != nil && shape.frames == index && bytes.HasPrefix(rest, shape.markup) {
+				end := start + len(shape.markup)
+				spans = append(spans, shapeSpan{start, end, shape})
+				shape.frames++
+				start = end
+				continue
 			}
 		}
 
@@ -193,7 +193,7 @@ func frameShapeSpans(frame []byte, hash string, index int, candidates map[string
 // shareStaticShapes keeps each run in its original position in the paint order.
 // The caller's frame buffers stay intact. Unrecognized fragments pass through.
 func shareStaticShapes(root *d2target.Diagram, frames [][]byte, hash string) (defs []byte, reduced [][]byte) {
-	if len(frames) < 2 {
+	if len(frames) < 2 || d2svg.BaseStylesheet != defaultBaseStylesheet {
 		return nil, frames
 	}
 	first := firstGridPlaybackFrame(root)
@@ -212,7 +212,8 @@ func shareStaticShapes(root *d2target.Diagram, frames [][]byte, hash string) (de
 	prefix := hash + "-grid-static-"
 	spans := make([][]shapeSpan, len(frames))
 	for i, frame := range frames {
-		if bytes.Contains(frame, []byte(prefix)) {
+		// Fragment-local CSS or scripts can depend on the original DOM hierarchy.
+		if bytes.Contains(frame, []byte(prefix)) || bytes.Contains(frame, []byte("<style")) || bytes.Contains(frame, []byte("<script")) {
 			return nil, frames
 		}
 		var ok bool
