@@ -192,6 +192,24 @@ func TestSVGShadowUnionsEqualOpacityAndKeepsNearestCaster(t *testing.T) {
 	}
 }
 
+func TestSVGTextureFilterSharing(t *testing.T) {
+	w := &nativeSVGWriter{ctx: context.Background()}
+	slope := [3]float64{.2, .4, .6}
+	intercept := [3]float64{.02, .04, .06}
+	w.textureLight(1, slope, intercept)
+	slope[2] = math.Nextafter(slope[2], 1)
+	if id := w.textureLight(2, slope, intercept); id != 1 {
+		t.Fatalf("same serialized lighting got filter %d", id)
+	}
+	intercept[1] += .1
+	if id := w.textureLight(3, slope, intercept); id != 3 {
+		t.Fatalf("different green intercept reused filter %d", id)
+	}
+	if got := strings.Count(w.buf.String(), "<filter "); got != 2 {
+		t.Fatalf("wrote %d filter definitions", got)
+	}
+}
+
 func TestSVGRepeatedLightingStopsUseOneDefinition(t *testing.T) {
 	w := &nativeSVGWriter{ctx: context.Background()}
 	g := svgLightingGradient{end: svgPoint{x: 1}, valid: true, stops: []svgGradientStop{{0, nv(0, 0, 0)}, {1, nv(1, 1, 1)}}}

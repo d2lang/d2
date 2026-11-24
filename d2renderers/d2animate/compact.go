@@ -27,40 +27,50 @@ type graphic struct {
 }
 
 type paintResources struct {
-	ids    map[string]string
-	bodies map[string]string
+	ids    map[string]*paintResource
+	bodies map[paintKey]string
 	next   int
 	prefix string
-	// A non-pooled fragment ID must keep the same meaning throughout playback.
-	original map[string]string
+}
+
+type paintKey struct {
+	scope, markup string
+}
+
+type paintResource struct {
+	markup, alias string
+	seen, pooled  int
 }
 
 // SVG fragment links resolve to the first matching ID in document order.
 // Leave that definition under its original ancestors, including tagged objects
 // with externally supplied CSS. Only pool different IDs for self-contained
 // native paints outside authored objects.
-func (r *paintResources) take(markup, id string, share bool) (*paintNode, bool) {
+func (r *paintResources) take(markup, id, scope string) (*paintNode, bool) {
 	attr := ` id="` + id + `"`
 	i := strings.Index(markup, attr)
 	if i < 0 {
 		return nil, false
 	}
-	if _, seen := r.ids[id]; seen {
+	resource := r.ids[id]
+	resource.pooled++
+	if resource.alias != "" {
 		return nil, true
 	}
-	key := markup[:i] + markup[i+len(attr):]
-	if share {
+	var key paintKey
+	if scope != "" {
+		key = paintKey{scope: scope, markup: markup[:i] + markup[i+len(attr):]}
 		if alias := r.bodies[key]; alias != "" {
-			r.ids[id] = alias
+			resource.alias = alias
 			return nil, true
 		}
 	}
 	alias := r.prefix + strconv.FormatInt(int64(r.next), 36)
 	r.next++
-	if share {
+	if scope != "" {
 		r.bodies[key] = alias
 	}
-	r.ids[id] = alias
+	resource.alias = alias
 	return &paintNode{open: markup[:i] + ` id="` + alias + `"` + markup[i+len(attr):]}, true
 }
 
@@ -122,7 +132,7 @@ func safePaintElement(el xml.StartElement) bool {
 			}
 		case "href":
 			// Foreign documents have their own fragment ID namespace.
-			if !strings.HasPrefix(a.Value, "#") {
+			if !strings.HasPrefix(a.Value, "#") || !validFragmentID(a.Value[1:]) {
 				return false
 			}
 		case "aria-hidden", "d", "points", "x", "y", "dx", "dy", "x1", "x2", "y1", "y2", "r", "rx", "ry", "cx", "cy",
@@ -140,6 +150,34 @@ func safePaintElement(el xml.StartElement) bool {
 	return true
 }
 
+// D2 emits literal ASCII fragment IDs. Encoded IDs require XML, CSS or URL
+// decoding before they can safely be compared or shortened.
+func fragmentByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+		c == '-' || c == '_' || c == '.' || c == ':'
+}
+
+func validFragmentID(id string) bool {
+	for i := 0; i < len(id); i++ {
+		if !fragmentByte(id[i]) {
+			return false
+		}
+	}
+	return id != ""
+}
+
+func canonicalPaintURL(value string) bool {
+	id, ok := strings.CutPrefix(value, "url(")
+	if !ok || !strings.HasSuffix(id, ")") {
+		return false
+	}
+	id = id[:len(id)-1]
+	if len(id) > 1 && (id[0] == '\'' || id[0] == '"') && id[0] == id[len(id)-1] {
+		id = id[1 : len(id)-1]
+	}
+	return strings.HasPrefix(id, "#") && validFragmentID(id[1:])
+}
+
 func nativeGraphicsClass(class string) bool {
 	for _, c := range strings.Fields(class) {
 		if c != "shape" && c != "connection" && !strings.HasPrefix(c, "fill-") && !strings.HasPrefix(c, "stroke-") && !strings.HasPrefix(c, "sketch-overlay-") {
@@ -150,9 +188,10 @@ func nativeGraphicsClass(class string) bool {
 }
 
 type frameParser struct {
-	d   *xml.Decoder
-	src string
-	res *paintResources
+	frame, object string // The two ancestors of a native connection marker.
+	d             *xml.Decoder
+	src           string
+	res           *paintResources
 }
 
 func (p *frameParser) node(el xml.StartElement, start, depth int, collect, protected bool) (*paintNode, bool) {
@@ -164,8 +203,12 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 	// Accept D2's canonical local URL spelling. Unusual XML entity or CSS
 	// whitespace spellings may refer to the same ID without using those bytes.
 	for _, a := range el.Attr {
-		if a.Name.Local == "href" || strings.Contains(a.Value, "url(") {
-			if strings.Contains(open, "&") || strings.Count(a.Value, "url(") > 1 || (strings.Contains(a.Value, "url(") && !(strings.HasPrefix(a.Value, "url(#") || strings.HasPrefix(a.Value, "url('#") || strings.HasPrefix(a.Value, `url("#`))) {
+		if strings.Contains(a.Value, `\`) {
+			return nil, false
+		}
+		isURL := strings.Contains(a.Value, "(") && strings.Contains(strings.ToLower(a.Value), "url(")
+		if isURL || a.Name.Local == "href" {
+			if strings.Contains(open, "&") || (isURL && !canonicalPaintURL(a.Value)) {
 				return nil, false
 			}
 		}
@@ -175,6 +218,12 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 	}
 	if el.Name.Local == "g" && len(strings.Fields(attrValue(el, "class"))) > 1 {
 		protected = true
+	}
+	if depth == 1 {
+		p.object = ""
+		if el.Name.Local == "g" && len(el.Attr) == 1 && attrValue(el, "class") != "" && !protected {
+			p.object = open
+		}
 	}
 	n := &paintNode{open: p.src[start:openEnd]}
 	switch el.Name.Local {
@@ -192,6 +241,7 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 	mask := depth == 1 && el.Name.Local == "mask" && strings.HasPrefix(id, "d2-")
 	var gradient, gradientID string
 	marker := collect && el.Name.Local == "marker" && strings.HasPrefix(id, "mk-d2-")
+	simpleMarker := marker && depth == 2 && p.object != "" && !protected
 	childScope := collect && group
 	childCount := 0
 	for {
@@ -212,6 +262,9 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 			if marker && (c == nil || attrValue(x, "fill") == "" || attrValue(x, "style") != "") {
 				marker = false
 			}
+			// Only share markers across IDs when every child is a plain drawable,
+			// without its own ID, nested content, or an inherited paint server.
+			simpleMarker = simpleMarker && c != nil && c.geometry && !strings.Contains(attrValue(x, "fill"), "(")
 			n.geometry = n.geometry && group && c != nil && c.geometry && c.close == ""
 			if group && c != nil {
 				n.children = append(n.children, c)
@@ -227,16 +280,27 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 		case xml.EndElement:
 			raw := p.src[start:p.d.InputOffset()]
 			if id != "" {
-				if previous, exists := p.res.original[id]; exists && previous != raw {
+				resource := p.res.ids[id]
+				if resource == nil {
+					resource = &paintResource{markup: raw}
+					p.res.ids[id] = resource
+				} else if resource.markup != raw {
 					return nil, false
 				}
-				p.res.original[id] = raw
+				resource.seen++
 			}
 			if gradientDefs && childCount == 1 && gradient != "" && len(el.Attr) == 0 {
-				return p.res.take(raw, gradientID, false)
+				return p.res.take(raw, gradientID, "")
 			}
 			if (mask || marker) && childCount > 0 {
-				return p.res.take(raw, id, !protected && mask)
+				scope := ""
+				switch {
+				case mask && !protected:
+					scope = "mask"
+				case marker && simpleMarker:
+					scope = p.frame + p.object
+				}
+				return p.res.take(raw, id, scope)
 			}
 			if group {
 				n.close = p.src[before:p.d.InputOffset()]
@@ -255,6 +319,9 @@ func (p *frameParser) node(el xml.StartElement, start, depth int, collect, prote
 }
 
 func parsePaintFrame(src, hash string, res *paintResources) (*paintNode, bool) {
+	if strings.Contains(src, "<![CDATA[") {
+		return nil, false
+	}
 	p := frameParser{d: xml.NewDecoder(strings.NewReader(src)), src: src, res: res}
 	t, err := p.d.Token()
 	root, ok := t.(xml.StartElement)
@@ -268,6 +335,7 @@ func parsePaintFrame(src, hash string, res *paintResources) (*paintNode, bool) {
 			return nil, false
 		}
 	}
+	p.frame = src[:p.d.InputOffset()]
 	n, ok := p.node(root, 0, 0, true, false)
 	if !ok {
 		return nil, false
@@ -287,6 +355,7 @@ func (r *paintResources) refs(raw string) string {
 	var b strings.Builder
 	start := 0
 	inTag := false
+	valueStart := 0
 	var quote byte
 	for i := 0; i < len(raw); i++ {
 		c := raw[i]
@@ -300,6 +369,7 @@ func (r *paintResources) refs(raw string) string {
 				inTag = false
 			case '"', '\'':
 				quote = c
+				valueStart = i + 1
 			}
 			continue
 		}
@@ -311,19 +381,15 @@ func (r *paintResources) refs(raw string) string {
 		if c != '#' {
 			continue
 		}
-		before := raw[:i]
-		isHref := strings.HasSuffix(before, `href="`) || strings.HasSuffix(before, "href='")
-		isPaint := strings.HasSuffix(before, "url(") || strings.HasSuffix(before, `url("`) || strings.HasSuffix(before, "url('")
-		if !isHref && !isPaint {
-			continue
-		}
 		end := i + 1
-		for end < len(raw) && (raw[end] >= 'a' && raw[end] <= 'z' || raw[end] >= 'A' && raw[end] <= 'Z' || raw[end] >= '0' && raw[end] <= '9' || raw[end] == '-' || raw[end] == '_') {
+		for end < len(raw) && fragmentByte(raw[end]) {
 			end++
 		}
-		if alias := r.ids[raw[i+1:end]]; alias != "" {
+		prefix := raw[valueStart:i]
+		if resource := r.ids[raw[i+1:end]]; resource != nil && resource.alias != "" &&
+			(prefix == "url(" || prefix == "url('" || prefix == `url("` || prefix == "" && hrefAttribute(raw[:valueStart-1])) {
 			b.WriteString(raw[start : i+1])
-			b.WriteString(alias)
+			b.WriteString(resource.alias)
 			start = end
 		}
 		i = end - 1
@@ -333,6 +399,12 @@ func (r *paintResources) refs(raw string) string {
 	}
 	b.WriteString(raw[start:])
 	return b.String()
+}
+
+func hrefAttribute(beforeQuote string) bool {
+	beforeQuote = strings.TrimRight(beforeQuote, " \t\r\n")
+	name, ok := strings.CutSuffix(beforeQuote, "=")
+	return ok && strings.HasSuffix(strings.TrimRight(name, " \t\r\n"), "href")
 }
 
 // A shared path may have different paint in each frame. Keep those attributes
@@ -455,7 +527,7 @@ func shareFrameGraphics(frames [][]byte, hash string) (defs []byte, reduced [][]
 	if h, err := strconv.ParseUint(strings.TrimPrefix(hash, "d2-"), 10, 32); err == nil {
 		prefix = "d2x" + strconv.FormatUint(h, 36)
 	}
-	res := paintResources{prefix: prefix + "r", ids: map[string]string{}, bodies: map[string]string{}, original: map[string]string{}}
+	res := paintResources{prefix: prefix + "r", ids: map[string]*paintResource{}, bodies: map[paintKey]string{}}
 	g := graphics{index: map[string]*graphic{}, prefix: prefix + "u"}
 	roots := make([]*paintNode, len(frames))
 	sourceSize := 0
@@ -469,6 +541,13 @@ func shareFrameGraphics(frames [][]byte, hash string) (defs []byte, reduced [][]
 		}
 		roots[i] = n
 		sourceSize += len(frame)
+	}
+	// A reference can resolve to an earlier ID in a retained subtree, where
+	// paint inherits different properties. Keep its original document order.
+	for _, resource := range res.ids {
+		if resource.pooled != 0 && resource.pooled != resource.seen {
+			return nil, frames
+		}
 	}
 	for _, r := range roots {
 		g.collect(r, &res)

@@ -106,14 +106,21 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
 	styleFrames := svgs
 	graphics, svgs := shareFrameGraphics(svgs, diagramHash)
-	var source strings.Builder
-	source.Write(defs)
+	var styleGraphics []byte
 	if len(defs) != 0 {
 		// The static shapes already introduce references, so font selection uses
 		// the complete corpus. Scan the smaller shared artwork for theme classes.
-		source.Write(graphics)
+		styleGraphics = graphics
 		styleFrames = svgs
 	}
+	sourceSize := len(defs) + len(styleGraphics) + len(styleFrames) // One separator per frame.
+	for _, frame := range styleFrames {
+		sourceSize += len(frame)
+	}
+	var source strings.Builder
+	source.Grow(sourceSize)
+	source.Write(defs)
+	source.Write(styleGraphics)
 	for _, frame := range styleFrames {
 		source.Write(frame)
 		source.WriteByte(' ')
@@ -148,21 +155,34 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	}
 	fmt.Fprint(buf, `]]></style>`)
 
-	buf.Write(defs)
-	buf.Write(graphics)
-
 	timing := ""
 	if !uniform || len(svgs) > 100 {
 		timing = " steps(1,end)"
 	}
-	for i, svg := range svgs {
-		str := string(svg)
-		str = strings.Replace(str, "<g", fmt.Sprintf(`<g style="animation: d2Transition-%s-%d %dms%s infinite"`, diagramHash, i, totalMS, timing), 1)
-		buf.Write([]byte(str))
+	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"
+	styleSuffix := " " + strconv.Itoa(totalMS) + "ms" + timing + ` infinite"`
+	// Reserve room for the artwork and its timing attributes before copying
+	// multi-megabyte frames into the final output buffer.
+	attributeSize := len(stylePrefix) + len(strconv.Itoa(len(svgs))) + len(styleSuffix)
+	artworkSize := len(defs) + len(graphics) + len("</svg></svg>") + len(svgs)*attributeSize
+	for _, frame := range svgs {
+		artworkSize += len(frame)
 	}
-
-	fmt.Fprint(buf, "</svg>")
-	fmt.Fprint(buf, "</svg>")
+	buf.Grow(artworkSize)
+	buf.Write(defs)
+	buf.Write(graphics)
+	for i, frame := range svgs {
+		before, after, found := bytes.Cut(frame, []byte("<g"))
+		buf.Write(before)
+		if found {
+			buf.WriteString("<g")
+			buf.WriteString(stylePrefix)
+			buf.WriteString(strconv.Itoa(i))
+			buf.WriteString(styleSuffix)
+			buf.Write(after)
+		}
+	}
+	buf.WriteString("</svg></svg>")
 
 	return buf.Bytes(), nil
 }

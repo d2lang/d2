@@ -22,7 +22,7 @@ func TestShareFrameGraphics(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		stroke := fmt.Sprintf(`<path d="%s" fill="url('#%s')" mask="url(#d2-100)" stroke-width="%d"/>`, path, gradient, i)
 		root := `<g class="d2-100 " viewBox="0 0 500 400">`
-		frames = append(frames, []byte(root+resources+`<g class="authored">`+label+stroke+label+`</g></g>`))
+		frames = append(frames, []byte(root+resources+`<use xlink:href = "#`+gradient+`"/><g class="authored">`+label+stroke+label+`</g></g>`))
 	}
 	defs, reduced := shareFrameGraphics(frames, hash)
 	if len(defs) == 0 || bytes.Count(bytes.Join(reduced, nil), []byte("<linearGradient ")) != 1 || bytes.Count(bytes.Join(reduced, nil), []byte("<mask ")) != 1 || bytes.Count(defs, []byte(path)) != 1 || bytes.Contains(defs, []byte("<text")) {
@@ -34,7 +34,7 @@ func TestShareFrameGraphics(t *testing.T) {
 		if bytes.Count(fr, []byte(label)) != 2 || !bytes.Contains(fr, []byte(`<g class="authored">`+label+`<use `)) || !bytes.Contains(fr, []byte(fmt.Sprintf(`stroke-width="%d"/>%s`, i, label))) {
 			t.Fatalf("frame %d changed its labels, order or per-frame stroke", i)
 		}
-		if bytes.Contains(fr, []byte("url(#d2-100)")) || bytes.Contains(fr, []byte("url('#"+gradient+"')")) {
+		if bytes.Contains(fr, []byte(`href = "#`+gradient)) || bytes.Contains(fr, []byte("url(#d2-100)")) || bytes.Contains(fr, []byte("url('#"+gradient+"')")) {
 			t.Errorf("original paint reference in frame %d", i)
 		}
 		doc.Write(fr)
@@ -94,6 +94,12 @@ func TestFrameGraphicsFallback(t *testing.T) {
 		"entity fragment":               `<use href="&#35;target"/>`,
 		"noncanonical url":              `<rect fill="url( #target )"/>`,
 		"external use":                  `<use href="external.svg#node"/>`,
+		"uppercase CSS URL":             `<rect fill="URL(#d2-10)"/>`,
+		"percent-encoded reference":     `<rect fill="url(#d2-%31%30)"/>`,
+		"percent-encoded href":          `<use href="#d2-%31%30"/>`,
+		"CSS escape":                    `<rect fill="u\72 l(#d2-10)"/>`,
+		"CDATA label":                   `<text><![CDATA[<use href="#d2-10"/>]]></text>`,
+		"retained resource before pool": `<g fill="red"><mask id="d2-10"><rect fill="white"/></mask></g><mask id="d2-10"><rect fill="white"/></mask>`,
 		"aria label":                    `<rect aria-label="status"/>`,
 		"id conflict":                   `<g class="d2x2su0"/>`,
 		"script":                        `<script/>`,
@@ -133,5 +139,24 @@ func TestTaggedObjectKeepsLiveGeometry(t *testing.T) {
 		if !bytes.Contains(frame, []byte(tagged)) || !bytes.Contains(frame, []byte(`<g class="Yg=="><g class="shape"><use `)) {
 			t.Fatal("lost selectors or event targets")
 		}
+	}
+}
+
+func TestConnectionMarkerScopes(t *testing.T) {
+	const hash = "d2-100"
+	marker := func(id int, extra string) string {
+		return fmt.Sprintf(`<marker id="mk-d2-%d"><path d="M0 0L10 5 0 10Z" fill="red"%s/></marker><path marker-end="url(#mk-d2-%d)" d="M0 0L100 100"/>`, id, extra, id)
+	}
+	build := func(connection int, width int) []byte {
+		return []byte(fmt.Sprintf(`<g class="%s" width="%d"><g class="edge">%s</g><g class="edge my-tag">%s</g><g fill="blue"><g class="edge">%s</g></g><g class="edge">%s</g></g>`,
+			hash, width, marker(connection, ""), marker(connection+1, ""), marker(connection+2, ""), marker(connection+3, ` id="pencil-d2-named"`)))
+	}
+	frames := [][]byte{build(10, 100), build(20, 100), build(30, 200)}
+	_, reduced := shareFrameGraphics(frames, hash)
+	all := bytes.Join(reduced, nil)
+	// Only the first two plain markers share both ancestors; distinct tagged
+	// parents, inherited paint, child IDs or viewport dimensions stay scoped.
+	if got := bytes.Count(all, []byte("<marker ")); got != 11 {
+		t.Fatalf("got %d markers, want 11", got)
 	}
 }

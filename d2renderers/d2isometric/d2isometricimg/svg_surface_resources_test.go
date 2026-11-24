@@ -1,6 +1,7 @@
 package d2isometricimg
 
 import (
+	"bytes"
 	"context"
 	"image/color"
 	"strings"
@@ -46,6 +47,11 @@ func TestNativeSVGLargeRichTextAndPaperStayWithinBudget(t *testing.T) {
 			t.Logf("%s: %d vector SVG bytes", fixture, len(svg))
 			if strings.Contains(string(svg), "data:image") {
 				t.Fatal("large vector source was replaced by raster pixels")
+			}
+			if strings.Contains(fixture, "patterns/paper") {
+				if defs, uses := bytes.Count(svg, []byte(`id="shadow-ink"`)), bytes.Count(svg, []byte(`filter="url(#shadow-ink)"`)); defs != 1 || uses < 2 {
+					t.Fatalf("textured shadows used %d ink filters for %d projections", defs, uses)
+				}
 			}
 			if strings.Contains(fixture, "giant_markdown") {
 				uses := strings.Count(string(svg), `href="#surface-`)

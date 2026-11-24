@@ -4,6 +4,7 @@ package d2fonts
 import (
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -45,7 +46,7 @@ func registerFullWoffEncoding(uri string) {
 		if err != nil {
 			return uri
 		}
-		woff, err := font.Sfnt2Woff(ttf)
+		woff, err := font.FullWOFF(ttf)
 		if err != nil {
 			return uri
 		}
@@ -64,15 +65,18 @@ func (f Font) GetEncodedFull() string {
 }
 
 func (f Font) GetEncodedSubset(corpus string) string {
-	var unique strings.Builder
-	uniqueMap := make(map[rune]bool)
+	seen := make(map[rune]bool)
+	var chars []rune
 	for _, char := range corpus {
-		if _, exists := uniqueMap[char]; !exists {
-			uniqueMap[char] = true
-			unique.WriteRune(char)
+		if !seen[char] {
+			seen[char] = true
+			chars = append(chars, char)
 		}
 	}
-	uniqueChars := unique.String()
+	// The subsetter orders glyphs by ID. Share the result across boards
+	// that rearrange labels while using the same characters.
+	slices.Sort(chars)
+	uniqueChars := string(chars)
 
 	FontFamiliesMu.Lock()
 	defer FontFamiliesMu.Unlock()
@@ -98,6 +102,9 @@ func (f Font) GetEncodedSubset(corpus string) string {
 		// The key is retained too, and characters the font lacks lengthen it
 		// without adding anything to the subset.
 		size := len(encoded) + len(uniqueChars)
+		if size > maxEncodedSubsetsSize {
+			return encoded
+		}
 		if encodedSubsetsSize+size > maxEncodedSubsetsSize {
 			clear(encodedSubsets)
 			encodedSubsetsSize = 0
@@ -109,7 +116,7 @@ func (f Font) GetEncodedSubset(corpus string) string {
 }
 
 // encodedSubsetKey identifies a subset by a bundled font file's backing array
-// and the characters retained, in order of first use.
+// and its sorted set of characters.
 type encodedSubsetKey struct {
 	face  *byte
 	chars string

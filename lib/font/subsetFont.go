@@ -345,6 +345,21 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 	utf.outTablesData = make(map[string][]byte)
 	utf.skip(4)
 	utf.generateTableDescriptions()
+	if utf.compact {
+		for _, table := range utf.tableDescriptions {
+			if table.position < 0 || table.size < 0 || table.position > len(utf.fileReader.array)-table.size {
+				return nil
+			}
+		}
+		for tag, minSize := range map[string]int{
+			"head": 54, "hhea": 36, "maxp": 6, "cmap": 4,
+			"loca": 2, "glyf": 0, "hmtx": 4, "post": 16,
+		} {
+			if table := utf.tableDescriptions[tag]; table == nil || table.size < minSize {
+				return nil
+			}
+		}
+	}
 
 	utf.SeekTable("head")
 	utf.skip(50)
