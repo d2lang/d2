@@ -231,6 +231,11 @@ func extractTrees(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*layoutgra
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
+		// A tree sentinel would make the entire connected component ineligible
+		// for the layered placement requested on this container.
+		if g.ForcesHierarchy(container) {
+			continue
+		}
 		containerTrees, err := extractTreesInContainer(g, container, guard)
 		if err != nil {
 			return nil, err

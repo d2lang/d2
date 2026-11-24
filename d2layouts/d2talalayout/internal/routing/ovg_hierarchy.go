@@ -146,8 +146,19 @@ func newOVGForHierarchy(g *layoutgraph.Graph, h *layoutgraph.Hierarchy, guard *o
 		return nil, err
 	}
 
-	// if the current direction is Left or Top, we need to mirror for the OVG creation, then mirror back at the very end
-	switch nodes[0].ContainerDirection() {
+	// Descendants inherit the containing block's rank. Only the blocks that
+	// were placed in ranks determine the flow, including the SQL table rule.
+	var placementRoots []*layoutgraph.Node
+	for _, node := range nodes {
+		if err := guard.step(); err != nil {
+			return nil, err
+		}
+		if _, nested := levels[node.Container]; !nested {
+			placementRoots = append(placementRoots, node)
+		}
+	}
+	// Mirror leftward and upward flows before building the routing graph.
+	switch placementRoots[0].ContainerDirection() {
 	case geo.Left:
 		if err := guard.reserveHierarchyTransform(ovg, len(nodes)); err != nil {
 			return nil, err
@@ -205,7 +216,7 @@ func newOVGForHierarchy(g *layoutgraph.Graph, h *layoutgraph.Hierarchy, guard *o
 	if err := guard.reserveWork(uint64(len(nodes))); err != nil {
 		return nil, err
 	}
-	isHorizontalHierarchy := hierarchy.IsHorizontal(nodes)
+	isHorizontalHierarchy := hierarchy.IsHorizontal(placementRoots)
 	if isHorizontalHierarchy {
 		if err := guard.reserveHierarchyTransform(ovg, len(ovg.NodesInsideBoundingBox)); err != nil {
 			return nil, err

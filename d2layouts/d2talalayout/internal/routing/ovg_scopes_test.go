@@ -5,6 +5,7 @@ import (
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/shape"
 )
 
 func TestOVGCandidateBudgetDoesNotSelectDifferentRoutes(t *testing.T) {
@@ -130,5 +131,57 @@ func TestHierarchyRoutingLanes(t *testing.T) {
 		if scopes[n] != h {
 			t.Fatalf("a single container lost its hierarchy lanes for node %d", n.ID)
 		}
+	}
+}
+
+func TestHierarchyLanesUseOuterRankDirection(t *testing.T) {
+	for _, flow := range []geo.Orientation{geo.Right, geo.Left, geo.Top, geo.Bottom} {
+		t.Run(flow.ToString(), func(t *testing.T) {
+			g := layoutgraph.NewGraph()
+			g.Directions[nil] = flow
+			h := layoutgraph.NewHierarchy()
+			add := func(id layoutgraph.EntityID, parent *layoutgraph.Node, level int, x, y, size float64) *layoutgraph.Node {
+				n := layoutgraph.NewNode(id, size, size)
+				n.TopLeft = geo.NewPoint(x, y)
+				g.AddNewNodeToContainer(parent, n)
+				h.Levels()[n] = level
+				n.Hierarchy = h
+				return n
+			}
+			startX, startY, boxX, boxY := 0., 0., 0., 238.
+			if flow.IsHorizontal() {
+				boxX, boxY = boxY, boxX
+			}
+			if flow == geo.Left || flow == geo.Top {
+				startX, boxX = boxX, startX
+				startY, boxY = boxY, startY
+			}
+			start := add(2, nil, 0, startX, startY, 40)
+			block := add(3, nil, 1, boxX, boxY, 40)
+			// The descendant sorts before both rank nodes. Its container direction
+			// is unset, and a nested table must not turn vertical ranks horizontal.
+			child := add(1, block, 1, boxX+10, boxY+10, 20)
+			if !flow.IsHorizontal() {
+				child.SetShape(shape.TABLE_TYPE)
+				child.SetNumColumns(1)
+			}
+			g.Connect(start, child)
+			ovg, err := newOVGForHierarchy(g, h, newBackgroundOVGBuildGuardForTest(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// With one edge between ranks, the router adds a lane halfway across
+			// the gap, aligned with the port at the center of the start node's side.
+			want := geo.Point{X: 20, Y: 139}
+			if flow.IsHorizontal() {
+				want.X, want.Y = want.Y, want.X
+			}
+			for _, n := range ovg.Nodes {
+				if *n.Point == want {
+					return
+				}
+			}
+			t.Fatalf("missing between-rank lane waypoint at %v", want)
+		})
 	}
 }

@@ -57,3 +57,31 @@ func TestCombineSubgraphsMidLoopCancellationRestoresExactGeometry(t *testing.T) 
 		}
 	}
 }
+
+func TestCombineNearRespectsFixedAndAncestorObstacles(t *testing.T) {
+	fixed, moving := layoutgraph.NewGraph(), layoutgraph.NewGraph()
+	addFixed := func(id int64, x, y float64) *layoutgraph.Node {
+		node := fixed.AddNode(layoutgraph.NewNode(id, 40, 40))
+		node.FixedTopLeft = geo.NewPoint(x, y)
+		node.TopLeft = node.FixedTopLeft.Copy()
+		return node
+	}
+	target := addFixed(1, 200, 200)
+	addFixed(2, 260, 200)
+	addFixed(3, 200, 260)
+	note := moving.AddNode(layoutgraph.NewNode(4, 40, 40))
+	note.TopLeft = geo.NewPoint(0, 0)
+	note.AddNear(target)
+	above := geo.Box{TopLeft: geo.NewPoint(200, 140), Width: 40, Height: 40}
+	if _, err := CombineSubgraphs(t.Context(), layoutgraph.NewGraph(), []*layoutgraph.Graph{fixed, moving}, []geo.Box{above}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := *note.TopLeft, (geo.Point{X: 140, Y: 200}); got != want {
+		t.Fatalf("placed note at %v, want %v on target's only free side", got, want)
+	}
+	for _, node := range fixed.Nodes {
+		if *node.TopLeft != *node.FixedTopLeft {
+			t.Errorf("fixed node %d moved to %v", node.ID, *node.TopLeft)
+		}
+	}
+}

@@ -1,9 +1,13 @@
 package hierarchy
 
 import (
+	"cmp"
 	"context"
 	"math"
+	"math/bits"
+	"slices"
 
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 )
@@ -110,12 +114,7 @@ func RemoveIsolatedMemberships(g *layoutgraph.Graph) {
 
 func assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, hierarchicalNodes map[*layoutgraph.Node]struct{}) error {
 
-	var force bool
-	if root == nil {
-		force = g.IsRootHierarchy
-	} else {
-		force = root.ForceHierarchy
-	}
+	force := g.ForcesHierarchy(root)
 
 	hierarchyGraph := layoutgraph.NewGraph()
 	hierarchyGraph.CopyEntitiesFrom(g)
@@ -169,21 +168,6 @@ func assign(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Node, h
 	}
 	g.RestoreEdgeAbductions(edgeAbductions)
 	edgesRestored = true
-
-	// remove Nears of nodes in hierarchies
-	if root == nil {
-		for _, node := range g.Nodes {
-			nears := node.Nears
-			node.Nears = map[*layoutgraph.Node]struct{}{}
-			if node.Hierarchy == nil {
-				for near := range nears {
-					if near.Hierarchy == nil {
-						node.AddNear(near)
-					}
-				}
-			}
-		}
-	}
 
 	return nil
 }
@@ -409,48 +393,30 @@ func is1N1(h *layoutgraph.Hierarchy, edgeAbductions []*layoutgraph.EdgeAbduction
 	// .             └───────► │       │ ◄────────┘
 	// .                       │       │
 	// .                       └───────┘
-	var sourceEdgeAbduction *layoutgraph.EdgeAbduction
-	var sinkEdgeAbduction *layoutgraph.EdgeAbduction
-	for _, ea := range edgeAbductions {
-		if !isHierarchyStructuralEdge(ea.Edge) {
-			continue
-		}
-		if ea.CurrentFrom == nodesByLevel[0][0] {
-			if sourceEdgeAbduction != nil {
-				if ea.OriginallyFrom != sourceEdgeAbduction.OriginallyFrom {
-					return false
-				}
-			} else {
-				sourceEdgeAbduction = ea
+	// A terminal represents a single real endpoint on every branch. Edges
+	// attached directly to the container still count alongside redirected ones.
+	originals := make(map[*layoutgraph.Edge]*layoutgraph.EdgeAbduction, len(edgeAbductions))
+	for _, abduction := range edgeAbductions {
+		originals[abduction.Edge] = abduction
+	}
+	for _, terminal := range []*layoutgraph.Node{nodesByLevel[0][0], nodesByLevel[2][0]} {
+		var first *layoutgraph.Node
+		for _, edge := range terminal.Edges {
+			if !isHierarchyStructuralEdge(edge) {
+				continue
 			}
-		}
-		if ea.CurrentTo == nodesByLevel[0][0] {
-			if sourceEdgeAbduction != nil {
-				if ea.OriginallyTo != sourceEdgeAbduction.OriginallyTo {
-					return false
+			endpoint := terminal
+			if original := originals[edge]; original != nil {
+				if edge.From == terminal && original.OriginallyFrom != nil {
+					endpoint = original.OriginallyFrom
+				} else if edge.To == terminal && original.OriginallyTo != nil {
+					endpoint = original.OriginallyTo
 				}
-			} else {
-				sourceEdgeAbduction = ea
 			}
-		}
-
-		if ea.CurrentFrom == nodesByLevel[2][0] {
-			if sinkEdgeAbduction != nil {
-				if ea.OriginallyFrom != sinkEdgeAbduction.OriginallyFrom {
-					return false
-				}
-			} else {
-				sinkEdgeAbduction = ea
+			if first != nil && first != endpoint {
+				return false
 			}
-		}
-		if ea.CurrentTo == nodesByLevel[2][0] {
-			if sinkEdgeAbduction != nil {
-				if ea.OriginallyTo != sinkEdgeAbduction.OriginallyTo {
-					return false
-				}
-			} else {
-				sinkEdgeAbduction = ea
-			}
+			first = endpoint
 		}
 	}
 
@@ -494,53 +460,41 @@ func is1N1(h *layoutgraph.Hierarchy, edgeAbductions []*layoutgraph.EdgeAbduction
 	return true
 }
 
-// makeSimpleDAG transforms the input into a DAG and removes duplicate edges
-// - undirected (a -- b) and bidirectional (a <-> b) edges are split in 2: a -> b and b -> a
-// - cycles are broken by reversing some edges
-// - duplicate edges are combined, preserving one rank-weight unit per authored edge
-// - loops (self-edges) are removed
+// makeSimpleDAG preserves the directed component order and gives every
+// non-loop authored edge one unit of rank weight, including neutral edges.
 func makeSimpleDAG(ctx context.Context, g *layoutgraph.Graph) (*layoutgraph.Graph, error) {
 	guard, err := limits.NewWorkGuard(ctx, "MakeSimpleDAG", limits.MaxEngineWorkUnits)
 	if err != nil {
 		return nil, err
 	}
 	dag := layoutgraph.NewGraph()
-	connect := func(from, to *layoutgraph.Node, rankWeight int) {
-		e := dag.Connect(from, to)
-		e.SourceArrowhead = layoutgraph.NoArrowhead
-		e.TargetArrowhead = layoutgraph.TriangleArrowhead
-		e.ID = layoutgraph.EntityID(len(dag.Edges))
-		e.SetHierarchyRankWeight(rankWeight)
-	}
-
-	idToNode := make(map[layoutgraph.EntityID]*layoutgraph.Node)
+	nodes := make(map[*layoutgraph.Node]*layoutgraph.Node, len(g.Nodes))
 	for _, n := range g.Nodes {
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
 		newN := dag.AddNode(layoutgraph.NewNode(n.ID, n.Width, n.Height))
 		newN.D2ID = n.D2ID
-		idToNode[n.ID] = newN
+		nodes[n] = newN
 	}
 
-	for _, e := range g.Edges {
+	connect := func(from, to *layoutgraph.Node) {
+		e := dag.Connect(from, to)
+		e.SourceArrowhead = layoutgraph.NoArrowhead
+		e.TargetArrowhead = layoutgraph.TriangleArrowhead
+	}
+	var neutral []*layoutgraph.Edge
+	for _, edge := range g.Edges {
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
-		if !isHierarchyStructuralEdge(e) {
+		if !isHierarchyStructuralEdge(edge) {
 			continue
 		}
-		if e.IsDirected() {
-			from, to, _ := e.DirectedEndpoints()
-			connect(idToNode[from.ID], idToNode[to.ID], 1)
+		if from, to, directed := edge.DirectedEndpoints(); directed {
+			connect(nodes[from], nodes[to])
 		} else {
-			// An undirected or bidirectional edge expands to opposing arcs so the
-			// cycle breaker can choose a feasible orientation. The two arcs still
-			// represent one authored edge, not two independent rank objectives.
-			// They necessarily converge after cycle removal, so carry its unit
-			// weight on one half and zero on the other before simplification.
-			connect(idToNode[e.From.ID], idToNode[e.To.ID], 1)
-			connect(idToNode[e.To.ID], idToNode[e.From.ID], 0)
+			neutral = append(neutral, edge)
 		}
 	}
 
@@ -551,31 +505,116 @@ func makeSimpleDAG(ctx context.Context, g *layoutgraph.Graph) (*layoutgraph.Grap
 	if err := reverseEdges(ctx, cycleEdges); err != nil {
 		return nil, err
 	}
+	if len(neutral) > 0 {
+		order, err := topologicalOrder(dag, guard)
+		if err != nil {
+			return nil, err
+		}
+		for _, edge := range neutral {
+			if err := guard.Step(); err != nil {
+				return nil, err
+			}
+			from, to := nodes[edge.From], nodes[edge.To]
+			if order[from] > order[to] {
+				from, to = to, from
+			}
+			connect(from, to)
+		}
+	}
 	if err := removeDuplicateEdges(ctx, dag); err != nil {
 		return nil, err
 	}
-	// Preserve preparation's work charge and cancellation checkpoints after
-	// simplifying the graph.
-	for range dag.Nodes {
+
+	// Simple edges have unique endpoint pairs. Number them by this stable
+	// identity so simplex pivot ties are independent of declaration order.
+	if err := chargeHierarchySort(guard, len(dag.Edges)); err != nil {
+		return nil, err
+	}
+	slices.SortFunc(dag.Edges, func(a, b *layoutgraph.Edge) int {
+		if order := cmp.Compare(a.From.ID, b.From.ID); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.To.ID, b.To.ID)
+	})
+	for i, edge := range dag.Edges {
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
+		edge.ID = layoutgraph.EntityID(i + 1)
 	}
-
 	if err := guard.Finish(); err != nil {
 		return nil, err
 	}
 	return dag, nil
 }
 
-// findCycleEdges implements "A fast and effective heuristic for the feedback arc set problem" by P. Eades
-// Here is an explanation of the algorithm https://youtu.be/Z0RGCWxvCxA?t=561
-// A rough explanation
-// 1. sources and sinks can't be in cycles, so remove them and flag their edges as non cycle
-// 2. for the remaining nodes, take the node max(outgoing - incoming)
-// 3. remove the node and flag the outgoing as non cycle
-// 4. repeat from 1 until all nodes were processed
-// return set(all edges) - set(non cycle edges)
+func chargeHierarchySort(guard *limits.WorkGuard, n int) error {
+	if n < 2 {
+		return nil
+	}
+	return guard.Add(int64(n) * int64(bits.Len(uint(n-1))))
+}
+
+// topologicalOrder extends the directed precedence to a total order. Neutral
+// edges can follow this order without introducing cycles or reversing arrows.
+func topologicalOrder(dag *layoutgraph.Graph, guard *limits.WorkGuard) (map[*layoutgraph.Node]int, error) {
+	if err := chargeHierarchySort(guard, len(dag.Nodes)); err != nil {
+		return nil, err
+	}
+	nodes := slices.Clone(dag.Nodes)
+	layoutgraph.SortNodesByID(nodes)
+	index := make(map[*layoutgraph.Node]int, len(nodes))
+	indegree := make([]int, len(nodes))
+	for i, node := range nodes {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		index[node] = i
+	}
+	for _, edge := range dag.Edges {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		indegree[index[edge.To]]++
+	}
+	var ready nodeMinHeap
+	for i, degree := range indegree {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if degree == 0 {
+			ready.push(i)
+		}
+	}
+	order := make(map[*layoutgraph.Node]int, len(nodes))
+	for len(ready) > 0 {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		n := nodes[ready.pop()]
+		order[n] = len(order)
+		for _, edge := range n.Edges {
+			if err := guard.Step(); err != nil {
+				return nil, err
+			}
+			if edge.From == n {
+				to := index[edge.To]
+				indegree[to]--
+				if indegree[to] == 0 {
+					ready.push(to)
+				}
+			}
+		}
+	}
+	if len(order) != len(nodes) {
+		return nil, invariant.New("directed hierarchy still contains a cycle")
+	}
+	return order, nil
+}
+
+// findCycleEdges selects feedback edges within each strongly connected
+// component of the directed graph. Inter-component arrows retain their
+// original direction.
 func findCycleEdges(ctx context.Context, g *layoutgraph.Graph) (map[*layoutgraph.Edge]struct{}, error) {
 	guard, err := limits.NewWorkGuard(ctx, "FindCycleEdges", limits.MaxEngineWorkUnits)
 	if err != nil {
@@ -585,6 +624,116 @@ func findCycleEdges(ctx context.Context, g *layoutgraph.Graph) (map[*layoutgraph
 }
 
 func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*layoutgraph.Edge]struct{}, error) {
+	// Kosaraju's first pass records directed DFS finishing order. Use an
+	// explicit stack so graph depth does not consume the call stack.
+	type frame struct {
+		node *layoutgraph.Node
+		next int
+	}
+	const (
+		visiting = 1
+		visited  = 2
+	)
+	color := make(map[*layoutgraph.Node]uint8, len(g.Nodes))
+	hasCycle := false
+	finished := make([]*layoutgraph.Node, 0, len(g.Nodes))
+	var stack []frame
+	for _, node := range g.Nodes {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if color[node] != 0 {
+			continue
+		}
+		color[node] = visiting
+		stack = append(stack, frame{node: node})
+		for len(stack) > 0 {
+			if err := guard.Step(); err != nil {
+				return nil, err
+			}
+			top := &stack[len(stack)-1]
+			if top.next == len(top.node.Edges) {
+				color[top.node] = visited
+				finished = append(finished, top.node)
+				stack = stack[:len(stack)-1]
+				continue
+			}
+			edge := top.node.Edges[top.next]
+			top.next++
+			from, to, _ := edge.DirectedEndpoints()
+			if from == top.node {
+				switch color[to] {
+				case 0:
+					color[to] = visiting
+					stack = append(stack, frame{node: to})
+				case visiting:
+					hasCycle = true
+				}
+			}
+		}
+	}
+
+	if !hasCycle {
+		return nil, guard.Finish()
+	}
+
+	// Walk incoming edges in reverse finishing order. Only edges internal
+	// to one strong component can belong to a directed cycle.
+	component := make(map[*layoutgraph.Node]int, len(g.Nodes))
+	var componentEdges [][]*layoutgraph.Edge
+	var queue []*layoutgraph.Node
+	for i := len(finished) - 1; i >= 0; i-- {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		root := finished[i]
+		if _, found := component[root]; found {
+			continue
+		}
+		id := len(componentEdges)
+		componentEdges = append(componentEdges, nil)
+		component[root] = id
+		queue = append(queue[:0], root)
+		for head := 0; head < len(queue); head++ {
+			for _, edge := range queue[head].Edges {
+				if err := guard.Step(); err != nil {
+					return nil, err
+				}
+				from, to, _ := edge.DirectedEndpoints()
+				if _, found := component[from]; to == queue[head] && !found {
+					component[from] = id
+					queue = append(queue, from)
+				}
+			}
+		}
+	}
+	for _, edge := range g.Edges {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		id := component[edge.From]
+		if id == component[edge.To] {
+			componentEdges[id] = append(componentEdges[id], edge)
+		}
+	}
+	reverse := make(map[*layoutgraph.Edge]struct{})
+	for _, edges := range componentEdges {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if len(edges) > 0 {
+			if err := markComponentFeedback(edges, reverse, guard); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return reverse, guard.Finish()
+}
+
+// markComponentFeedback applies the Eades feedback-arc heuristic: prune
+// sources and sinks, then choose the node with the largest outdegree minus
+// indegree and reverse its remaining incoming edges.
+func markComponentFeedback(componentEdges []*layoutgraph.Edge, reverse map[*layoutgraph.Edge]struct{}, guard *limits.WorkGuard) error {
 	incomingEdges := make(map[*layoutgraph.Node]map[*layoutgraph.Edge]struct{})
 	outgoingEdges := make(map[*layoutgraph.Node]map[*layoutgraph.Edge]struct{})
 	addEdgeToSet := func(e *layoutgraph.Edge, n *layoutgraph.Node, set map[*layoutgraph.Node]map[*layoutgraph.Edge]struct{}) {
@@ -596,11 +745,6 @@ func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*
 	}
 
 	nodes := make(map[*layoutgraph.Node]struct{})
-	// nodeOrder lists nodes in first-insertion order: the passes below visit
-	// the nodes still in the set in this order. They visited the set in map
-	// order, so the nodes a pass reached before pruning removed them, and the
-	// units it charged, varied from run to run; the edges found are the same
-	// in any order.
 	var nodeOrder []*layoutgraph.Node
 	addNode := func(n *layoutgraph.Node) {
 		if _, ok := nodes[n]; !ok {
@@ -608,13 +752,10 @@ func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*
 			nodeOrder = append(nodeOrder, n)
 		}
 	}
-	// set of edges to take the difference with set of non cycle edges
-	edges := make(map[*layoutgraph.Edge]struct{})
-	for _, e := range g.Edges {
+	for _, e := range componentEdges {
 		if err := guard.Step(); err != nil {
-			return nil, err
+			return err
 		}
-		edges[e] = struct{}{}
 		addNode(e.From)
 		addNode(e.To)
 		if e.IsTargetedTo(e.From) {
@@ -626,13 +767,16 @@ func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*
 		}
 	}
 
-	nonCycleEdges := make(map[*layoutgraph.Edge]struct{})
+	if err := chargeHierarchySort(guard, len(nodeOrder)); err != nil {
+		return err
+	}
+	layoutgraph.SortNodesByID(nodeOrder)
+
 	pruneNode := func(n *layoutgraph.Node) error {
 		for e := range incomingEdges[n] {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			nonCycleEdges[e] = struct{}{}
 			// update the adjacent node
 			adj := n.Adjacent(e)
 			adjEdges := outgoingEdges[adj]
@@ -648,7 +792,6 @@ func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			nonCycleEdges[e] = struct{}{}
 			// update the adjacent node
 			adj := n.Adjacent(e)
 			adjEdges := incomingEdges[adj]
@@ -667,24 +810,24 @@ func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*
 	}
 	for len(nodes) > 0 {
 		if err := guard.Step(); err != nil {
-			return nil, err
+			return err
 		}
 		for {
 			// as we delete sinks we might be creating new sinks
 			// so this part runs until all sinks were removed
 			foundSink := false
 			for _, n := range nodeOrder {
+				if err := guard.Step(); err != nil {
+					return err
+				}
 				if _, ok := nodes[n]; !ok {
 					continue
-				}
-				if err := guard.Step(); err != nil {
-					return nil, err
 				}
 				// only incoming edges = sink
 				if len(outgoingEdges[n]) == 0 {
 					foundSink = true
 					if err := pruneNode(n); err != nil {
-						return nil, err
+						return err
 					}
 				}
 			}
@@ -699,17 +842,17 @@ func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*
 		for {
 			foundSource := false
 			for _, n := range nodeOrder {
+				if err := guard.Step(); err != nil {
+					return err
+				}
 				if _, ok := nodes[n]; !ok {
 					continue
-				}
-				if err := guard.Step(); err != nil {
-					return nil, err
 				}
 				// only outgoing edges = source
 				if len(incomingEdges[n]) == 0 {
 					foundSource = true
 					if err := pruneNode(n); err != nil {
-						return nil, err
+						return err
 					}
 				}
 			}
@@ -722,11 +865,11 @@ func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*
 			var maxNode *layoutgraph.Node
 			maxDiff := math.Inf(-1)
 			for _, node := range nodeOrder {
+				if err := guard.Step(); err != nil {
+					return err
+				}
 				if _, ok := nodes[node]; !ok {
 					continue
-				}
-				if err := guard.Step(); err != nil {
-					return nil, err
 				}
 				diff := float64(len(outgoingEdges[node]) - len(incomingEdges[node]))
 				if diff > maxDiff {
@@ -748,28 +891,19 @@ func findCycleEdgesGuarded(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*
 			}
 			for e := range incomingEdges[maxNode] {
 				if err := guard.Step(); err != nil {
-					return nil, err
+					return err
 				}
+				reverse[e] = struct{}{}
 				delete(incomingEdges[maxNode], e)
 				delete(outgoingEdges[maxNode.Adjacent(e)], e)
 			}
 			if err := pruneNode(maxNode); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
 
-	for e := range nonCycleEdges {
-		if err := guard.Step(); err != nil {
-			return nil, err
-		}
-		delete(edges, e)
-	}
-
-	if err := guard.Finish(); err != nil {
-		return nil, err
-	}
-	return edges, nil
+	return nil
 }
 
 // ReverseEdges exchanges from, to = to, from

@@ -142,6 +142,13 @@ func placeNodes(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Nod
 	if err := proximity.AssignHerds(ctx, childrenGraph, root, prevEdgeAbductions); err != nil {
 		return err
 	}
+	// Retain independent coordinates for ranked components while the
+	// orthogonal placer lays out their neighbors.
+	restoreNears, err := layoutgraph.Nodes(childrenGraph.Nodes).DetachHierarchyNears(ctx)
+	if err != nil {
+		return err
+	}
+	defer restoreNears()
 	subgraphs, splitOwnership, err := childrenGraph.SplitSubgraphsTracked(ctx, layoutgraph.SplitOptions{
 		IncludeNears:  true,
 		TraverseTrees: true,
@@ -214,6 +221,7 @@ func placeNodes(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.Nod
 			return err
 		}
 	}
+	restoreNears()
 	combined, err := packing.CombineSubgraphs(ctx, g, subgraphs, ancestorObstacles)
 	if err != nil {
 		return err

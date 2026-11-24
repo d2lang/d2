@@ -78,6 +78,15 @@ func Validate(ctx context.Context, operation string, g *Graph) error {
 	return validateEngineGraph(ctx, operation, g)
 }
 
+// ForcesHierarchy reports whether the diagram explicitly requests layered placement
+// inside container. A nil container denotes the diagram root.
+func (g *Graph) ForcesHierarchy(container *Node) bool {
+	if container == nil {
+		return g.IsRootHierarchy
+	}
+	return container.ForceHierarchy
+}
+
 func (g *Graph) HasFixedNode() bool {
 	return g.hasFixedNode()
 }
@@ -123,6 +132,43 @@ func (spacing Spacing) Left() float64 {
 
 func (spacing Spacing) Right() float64 {
 	return spacing.right
+}
+
+// DetachHierarchyNears temporarily separates components that require different
+// placement algorithms. The returned function restores their proximity hints
+// for packing and may be called again on an error path.
+func (nodes Nodes) DetachHierarchyNears(ctx context.Context) (func(), error) {
+	guard, err := limits.NewWorkGuard(ctx, "DetachHierarchyNears", limits.MaxEngineWorkUnits)
+	if err != nil {
+		return nil, err
+	}
+	type hint struct{ node, near *Node }
+	var detached []hint
+	for _, node := range nodes {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		for near := range node.Nears {
+			if err := guard.Step(); err != nil {
+				return nil, err
+			}
+			if node.Hierarchy != near.Hierarchy {
+				detached = append(detached, hint{node, near})
+			}
+		}
+	}
+	if err := guard.Finish(); err != nil {
+		return nil, err
+	}
+	for _, h := range detached {
+		delete(h.node.Nears, h.near)
+	}
+	return func() {
+		for _, h := range detached {
+			h.node.Nears[h.near] = struct{}{}
+		}
+		detached = nil
+	}, nil
 }
 
 func (nodes Nodes) SetGraphReference(g *Graph) {

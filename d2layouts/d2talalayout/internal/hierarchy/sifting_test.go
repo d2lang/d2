@@ -63,3 +63,40 @@ func TestSiftingDoesNotIncreaseCrossings(t *testing.T) {
 		}
 	}
 }
+
+func TestSiftingRetainsShorterOrderAtEqualCrossings(t *testing.T) {
+	graph := flowRuleGraph(7, [][2]int{
+		{0, 2}, {0, 3}, {0, 4}, {1, 2}, {1, 4}, {2, 6}, {3, 5}, {3, 6}, {4, 5},
+	})
+	levels := []int{0, 0, 1, 1, 1, 2, 2}
+	h := layoutgraph.NewHierarchy()
+	for i, node := range graph.Nodes {
+		node.Hierarchy = h
+		h.Levels()[node] = levels[i]
+	}
+	nodes := createPlacementNodes(graph, graph.Nodes, nil)
+	connectPlacementNodes(graph, nodes)
+	rows := groupPlacementNodesByLevel(nodes)
+	initializeRanks(rows)
+	minimizeHierarchyCrossings(rows)
+	var scratch crossingScratch
+	score := func() (int64, float64) {
+		var crossings int64
+		var length float64
+		for level := 0; level < len(rows)-1; level++ {
+			segments := scratch.crossLevelSegments(rows[level], false, true)
+			crossings += scratch.countCrossings(segments)
+			length += addLengths(segments)
+		}
+		return crossings, length
+	}
+	beforeCrossings, beforeLength := score()
+	if err := globalSifting(rows); err != nil {
+		t.Fatal(err)
+	}
+	afterCrossings, afterLength := score()
+	if beforeCrossings != 2 || afterCrossings != beforeCrossings || afterLength > beforeLength+crossingComparisonPrecision {
+		t.Fatalf("score went from (%d crossings, %.5f) to (%d crossings, %.5f)", beforeCrossings, beforeLength, afterCrossings, afterLength)
+	}
+	t.Logf("sifting: (%d crossings, %.5f) to (%d crossings, %.5f)", beforeCrossings, beforeLength, afterCrossings, afterLength)
+}

@@ -36,7 +36,7 @@ func mustMarkConflicts(
 	byLevel map[int][]*placementNode,
 ) map[*placementNode]map[*placementNode]struct{} {
 	t.Helper()
-	conflicts, err := markConflicts(ctx, byLevel)
+	conflicts, err := markConflicts(ctx, mustCreateAlignmentNodes(t, ctx, byLevel, geo.Top, geo.Left))
 	require.NoError(t, err)
 	return conflicts
 }
@@ -257,8 +257,8 @@ func TestPlaceBlockBottomRight(t *testing.T) {
 	require.NoError(t, placeBlock(f, geo.Right, mustWorkGuard(t, ctx, "test")))
 
 	assert.Equal(t, 0.0, e.x)
-	assert.Equal(t, e.x-e.blockSize-distanceFromPreviousRoot(e, g, geo.Right), g.x)
-	assert.Equal(t, g.x-f.blockSize-distanceFromPreviousRoot(g, f, geo.Right), f.x)
+	assert.Equal(t, e.x-e.blockSize-alignmentGap(e, g, geo.Right), g.x)
+	assert.Equal(t, g.x-f.blockSize-alignmentGap(g, f, geo.Right), f.x)
 	assert.True(t, math.IsInf(a.x, 1))
 	assert.True(t, math.IsInf(b.x, 1))
 	assert.True(t, math.IsInf(c.x, 1))
@@ -598,4 +598,81 @@ func buildHierarchicalGraph() map[int][]*placementNode {
 	}
 	initializeRanks(byLevel)
 	return byLevel
+}
+
+func TestConflictRequiresAnInnerSegment(t *testing.T) {
+	// U | A B | C dummy D | E, where the dummy belongs to edge B -> E.
+	g := flowRuleGraph(6, [][2]int{{0, 1}, {0, 2}, {1, 3}, {2, 4}, {2, 5}, {3, 5}, {4, 5}})
+	h := layoutgraph.NewHierarchy()
+	for i, rank := range []int{0, 1, 1, 2, 2, 3} {
+		h.Levels()[g.Nodes[i]] = rank
+		g.Nodes[i].Hierarchy = h
+	}
+	nodes := createPlacementNodes(g, g.Nodes, nil)
+	connectPlacementNodes(g, nodes)
+	rows := groupPlacementNodesByLevel(nodes)
+	initializeRanks(rows)
+	dummies := breakLongConnections(nodes, rows)
+	require.Len(t, dummies, 1)
+	rows[2] = []*placementNode{nodes[3], dummies[0], nodes[4]}
+	initializeRanks(rows)
+	require.Empty(t, mustMarkConflicts(t, t.Context(), rows))
+}
+
+func TestCompactionSeparatesClassesAcrossMultipleShifts(t *testing.T) {
+	// The first node of each row anchors a class. X aligns with X' and Y
+	// with Y'. Row 1 shifts the B class relative to A; row 2 must then
+	// shift C relative to that final B position.
+	//    A  X
+	//    B  Y  X'
+	//    C  Y'
+	g := flowRuleGraph(7, [][2]int{{1, 4}, {3, 6}})
+	h := layoutgraph.NewHierarchy()
+	for i, level := range []int{0, 0, 1, 1, 1, 2, 2} {
+		node := g.Nodes[i]
+		node.Hierarchy = h
+		h.Levels()[node] = level
+	}
+	nodes := createPlacementNodes(g, g.Nodes, nil)
+	connectPlacementNodes(g, nodes)
+	rows := groupPlacementNodesByLevel(nodes)
+	initializeRanks(rows)
+	alignment := mustCreateAlignmentNodes(t, t.Context(), rows, geo.Top, geo.Left)
+	require.NoError(t, verticalAlignment(t.Context(), alignment, nil, geo.Left))
+	require.NoError(t, horizontalCompaction(t.Context(), alignment, geo.Left))
+	require.Equal(t, alignment[1].x, alignment[4].x)
+	require.Equal(t, alignment[3].x, alignment[6].x)
+	for _, n := range alignment {
+		if prev := n.prevSibling; prev != nil {
+			require.GreaterOrEqual(t, n.x-(prev.x+prev.graphNode.Width), siblingSpacing)
+		}
+	}
+}
+
+func TestWrappedContainersKeepSiblingSeparation(t *testing.T) {
+	g := flowRuleGraph(4, [][2]int{{0, 1}, {0, 2}, {1, 3}, {2, 3}, {0, 3}})
+	left, right := g.Nodes[1], g.Nodes[2]
+	setContainerChildrenForTest(g, nil, g.Nodes)
+	width := 450.
+	left.DesiredWidth, right.DesiredWidth = &width, &width
+	leftChild, rightChild := layoutgraph.NewNode(20, 50, 40), layoutgraph.NewNode(21, 50, 40)
+	g.AddNodeUnchecked(leftChild)
+	g.AddNodeUnchecked(rightChild)
+	setContainerChildrenForTest(g, left, []*layoutgraph.Node{leftChild})
+	setContainerChildrenForTest(g, right, []*layoutgraph.Node{rightChild})
+	g.IsRootHierarchy = true
+	require.NoError(t, Assign(t.Context(), g, nil, Candidates(g)))
+	require.NoError(t, Place(t.Context(), g, nil, nil))
+	if left.TopLeft.X > right.TopLeft.X {
+		left, right = right, left
+		leftChild, rightChild = rightChild, leftChild
+	}
+	require.Equal(t, width, left.Width)
+	require.Equal(t, width, right.Width)
+	require.GreaterOrEqual(t, right.TopLeft.X-left.TopLeft.X-left.Width, siblingSpacing)
+	for _, pair := range [][2]*layoutgraph.Node{{left, leftChild}, {right, rightChild}} {
+		parent, child := pair[0], pair[1]
+		require.GreaterOrEqual(t, child.TopLeft.X, parent.TopLeft.X)
+		require.LessOrEqual(t, child.TopLeft.X+child.Width, parent.TopLeft.X+parent.Width)
+	}
 }
