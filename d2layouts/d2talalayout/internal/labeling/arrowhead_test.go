@@ -1,9 +1,10 @@
 package labeling
 
 import (
-	"github.com/d2lang/d2/d2target"
 	"slices"
 	"testing"
+
+	"github.com/d2lang/d2/d2target"
 
 	"github.com/d2lang/d2/lib/geo"
 
