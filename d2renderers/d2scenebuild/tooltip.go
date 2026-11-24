@@ -80,9 +80,8 @@ func (b *builder) buildPositionedTooltip(targetShape d2target.Shape) (*d2scene.N
 	root.Children = append(root.Children, tail)
 
 	content, err := b.buildMarkdownLabel(
-		object, root.ID+":markdown", targetShape.Tooltip, targetShape.FontFamily,
-		d2fonts.FONT_SIZE_M, layout.Width, layout.Height,
-		libcolor.N1, "", false, false,
+		object, root.ID+":markdown", d2target.Text{Label: targetShape.Tooltip, FontFamily: targetShape.FontFamily, FontSize: d2fonts.FONT_SIZE_M, LabelWidth: layout.Width, LabelHeight: layout.Height},
+		libcolor.N1, "", false,
 		geo.NewPoint(x+positionedTooltipPadding, y+positionedTooltipPadding),
 	)
 	if err != nil {

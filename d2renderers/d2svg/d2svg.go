@@ -1239,7 +1239,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 			gEl.SetInnerSVG(svg.TrustedFragment(render))
 			fmt.Fprint(writer, gEl.Render())
 		} else if connection.Language == "markdown" {
-			layout, err := markdown.layout(connection.Label, connection.FontFamily, connection.FontSize)
+			layout, err := markdown.layout(connection.Label, connection.FontFamily, connection.FontSize, connection.MarkdownStrike)
 			if err != nil {
 				return labelMask, err
 			}
@@ -1252,7 +1252,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 				connection.GetFontColor(),
 				connection.Fill,
 				connection.Link != "",
-				connection.Underline,
+				connection.Underline, connection.UnderlineProgress,
 			))
 		} else if connection.Language != "" {
 			lexer := lexers.Get(connection.Language)
@@ -1337,7 +1337,13 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 				textEl.Fill = connection.GetFontColor()
 			}
 
-			writer.label(textEl, connection.Label, float64(connection.LabelHeight))
+			if connection.Link != "" {
+				// Links have a permanent underline regardless of the authored style.
+				writer.label(textEl, connection.Label, float64(connection.LabelHeight))
+			} else {
+				writer.animatedUnderline(textEl, connection.Label, float64(connection.LabelHeight), connection.UnderlineProgress)
+			}
+			writer.plainStrike(textEl, connection.Text, inlineTheme, connection.Link != "")
 
 			if connection.Link != "" {
 				fmt.Fprintf(writer, "</a>")
@@ -2130,7 +2136,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			gEl.SetInnerSVG(svg.TrustedFragment(render))
 			fmt.Fprint(writer, gEl.Render())
 		} else if targetShape.Language == "markdown" {
-			layout, err := markdown.layout(targetShape.Label, targetShape.FontFamily, targetShape.FontSize)
+			layout, err := markdown.layout(targetShape.Label, targetShape.FontFamily, targetShape.FontSize, targetShape.MarkdownStrike)
 			if err != nil {
 				return labelMask, err
 			}
@@ -2141,9 +2147,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 				targetShape.LabelWidth,
 				targetShape.LabelHeight,
 				targetShape.GetFontColor(),
-				targetShape.Fill,
+				d2sketch.MarkdownBackground(targetShape, sketch),
 				targetShape.Link != "",
-				targetShape.Underline,
+				targetShape.Underline, targetShape.UnderlineProgress,
 			))
 		} else if targetShape.Language != "" {
 			lexer := lexers.Get(targetShape.Language)
@@ -2222,7 +2228,8 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			textEl.Fill = targetShape.GetFontColor()
 			textEl.ClassName = fontClass
 			textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "middle", targetShape.FontSize)
-			writer.label(textEl, targetShape.Label, float64(targetShape.LabelHeight))
+			writer.animatedUnderline(textEl, targetShape.Label, float64(targetShape.LabelHeight), targetShape.UnderlineProgress)
+			writer.plainStrike(textEl, targetShape.Text, inlineTheme, false)
 		}
 	}
 	if targetShape.Tooltip != "" && targetShape.TooltipPosition == "" {
@@ -2432,7 +2439,7 @@ func renderPositionedTooltip(targetShape d2target.Shape, tooltipPosition string,
 		return "", nil
 	}
 
-	layout, err := markdown.layout(targetShape.Tooltip, targetShape.FontFamily, d2fonts.FONT_SIZE_M)
+	layout, err := markdown.layout(targetShape.Tooltip, targetShape.FontFamily, d2fonts.FONT_SIZE_M, nil)
 	if err != nil {
 		return "", err
 	}
@@ -2449,7 +2456,7 @@ func renderPositionedTooltip(targetShape d2target.Shape, tooltipPosition string,
 		color.N1,
 		"",
 		false,
-		false,
+		false, nil,
 	)
 
 	tooltipBox := d2themes.NewThemableElement("rect", markdown.inlineTheme)

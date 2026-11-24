@@ -1039,19 +1039,20 @@ func (b *builder) buildShapeText(targetShape d2target.Shape) ([]*d2scene.Node, e
 			baseline += float64(i) * lineAdvance
 		}
 		run := d2scene.TextRun{
-			Text:      line,
-			Origin:    d2scene.Point{X: topLeft.X + float64(targetShape.LabelWidth)/2, Y: baseline},
-			Anchor:    d2scene.AnchorMiddle,
-			Font:      font,
-			Fill:      fill,
-			Underline: targetShape.Underline,
-			Ink:       d2scene.NewBounds(topLeft.X, topLeft.Y+float64(i)*lineAdvance, topLeft.X+float64(targetShape.LabelWidth), topLeft.Y+float64(i+1)*lineAdvance),
+			Text:              line,
+			Origin:            d2scene.Point{X: topLeft.X + float64(targetShape.LabelWidth)/2, Y: baseline},
+			Anchor:            d2scene.AnchorMiddle,
+			Font:              font,
+			Fill:              fill,
+			Underline:         targetShape.Underline,
+			UnderlineProgress: copyUnderlineProgress(targetShape.UnderlineProgress),
+			Ink:               d2scene.NewBounds(topLeft.X, topLeft.Y+float64(i)*lineAdvance, topLeft.X+float64(targetShape.LabelWidth), topLeft.Y+float64(i+1)*lineAdvance),
 		}
 		textNode := d2scene.NewNode(run)
 		textNode.ID = fmt.Sprintf("%s:label:%d", targetShape.ID, i)
 		nodes = append(nodes, textNode)
 	}
-	return nodes, nil
+	return appendPlainStrikes(nodes, targetShape.Text, topLeft, fill), nil
 }
 
 func targetGeometry(targetShape d2target.Shape) shape.Shape {

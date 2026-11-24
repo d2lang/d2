@@ -111,8 +111,8 @@ func TestCompactCompoundRoutes(t *testing.T) {
 			"g2.n0 -> g4.n2": {{X: 122, Y: 678}, {X: 122, Y: 1164}},
 		}},
 		{"shared-target", map[string]geo.Points{
-			"g0.n1 -> g1.n2": {{X: 962, Y: 126}, {X: 962, Y: 231}, {X: 452, Y: 231}, {X: 452, Y: 336}},
-			"g0.n0 -> g1.n2": {{X: 682, Y: 93}, {X: 452, Y: 93}, {X: 452, Y: 336}},
+			"g0.n1 -> g1.n2": {{X: 902, Y: 126}, {X: 902, Y: 231}, {X: 422, Y: 231}, {X: 422, Y: 336}},
+			"g0.n0 -> g1.n2": {{X: 705, Y: 93}, {X: 422, Y: 93}, {X: 422, Y: 336}},
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -256,7 +256,7 @@ func TestBuildMarkdownPrimitiveCoversLineAndSyntheticText(t *testing.T) {
 		Kind: textmeasure.MarkdownLinePrimitive,
 		X:    1, Y: 2, X2: 11, Y2: 2, StrokeWidth: 2,
 		StrokeRole: textmeasure.MarkdownColorForegroundStroke,
-	}, d2fonts.SourceSansPro, d2fonts.SourceCodePro, paints, false)
+	}, d2fonts.SourceSansPro, d2fonts.SourceCodePro, paints, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestBuildMarkdownPrimitiveCoversLineAndSyntheticText(t *testing.T) {
 		Text: "-", Font: textmeasure.MarkdownFontItalic, FontSize: 16,
 		FillRole:      textmeasure.MarkdownColorForeground,
 		SyntheticBold: true, SyntheticItalic: true, TextLength: true,
-	}, d2fonts.SourceSansPro, d2fonts.SourceCodePro, paints, true)
+	}, d2fonts.SourceSansPro, d2fonts.SourceCodePro, paints, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -639,6 +639,32 @@ func TestTextAnchorsUnderlineAndErrors(t *testing.T) {
 		t.Fatalf("underline row has only %d opaque pixels", countOpaqueInRow(underlined, 27))
 	}
 
+	t.Run("draw half the underline without moving the glyphs", func(t *testing.T) {
+		node := textNode(25, d2scene.AnchorMiddle, true, "SCHEDULER")
+		doc := d2scene.NewDocument(d2scene.Box{Width: 160, Height: 45}, node)
+		doc.Assets[assetID] = underlineDocument.Assets[assetID]
+		full, err := Render(context.Background(), doc, testOptions())
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := node.Primitive.(d2scene.TextRun)
+		half := .5
+		run.Underline, run.UnderlineProgress = false, &half
+		node.Primitive = run
+		partial, err := Render(context.Background(), doc, testOptions())
+		if err != nil {
+			t.Fatal(err)
+		}
+		left, right := alphaXBounds(full, 27, 28)
+		partialLeft, partialRight := alphaXBounds(partial, 27, 28)
+		if left != partialLeft || math.Abs(float64(partialRight)-float64(left+right)/2) > 1 {
+			t.Fatalf("partial underline bounds [%d,%d], full [%d,%d]", partialLeft, partialRight, left, right)
+		}
+		if !bytes.Equal(full.Pix[:25*full.Stride], partial.Pix[:25*partial.Stride]) {
+			t.Fatal("underlining changed glyph pixels")
+		}
+	})
+
 	for _, test := range []struct {
 		name  string
 		value string

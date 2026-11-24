@@ -1,0 +1,59 @@
+name: Windows installer
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-installer.yml
+      - install.sh
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/windows-installer.yml
+      - install.sh
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install, run and uninstall the published D2 release in Git Bash
+        shell: bash
+        run: |
+          set -euxo pipefail
+          root=$(mktemp -d)
+          prefix="$root/D2 prefix"
+          export XDG_CACHE_HOME="$root/cache"
+          # This published release has a Windows archive pinned in install.sh.
+          version=v0.9.0
+          exe="$prefix/bin/d2.exe"
+          man="$prefix/share/man/man1/d2.1"
+          tree="$prefix/lib/d2/d2-$version"
+
+          sh -s -- --version "$version" --prefix "$prefix" < install.sh
+          actual=$("$exe" --version)
+          [[ "${actual%$'\r'}" == "$version" ]]
+          test -s "$man"
+          test -s "$tree/bin/d2.exe"
+          echo 'a -> b' > "$root/input.d2"
+          "$exe" "$root/input.d2" "$root/output.svg"
+          grep -q '<svg' "$root/output.svg"
+
+          sh -s -- --uninstall --prefix "$prefix" < install.sh
+          for path in "$exe" "$man" "$tree"; do
+            [[ ! -e "$path" ]]
+          done
+
+          # Also exercise the no-argument installation reported in #2044.
+          export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
+          sh -s -- < install.sh
+          installed=$(command -v d2)
+          "$installed" --version
+          sh -s -- --uninstall < install.sh
+          test ! -e "$installed"

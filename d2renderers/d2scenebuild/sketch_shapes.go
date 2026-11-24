@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
+	"github.com/d2lang/d2/d2renderers/d2sketch"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	libcolor "github.com/d2lang/d2/lib/color"
@@ -60,6 +61,7 @@ func (b *builder) compileSketchShapeDrawable(
 	if err != nil {
 		return nil, err
 	}
+	pencil := d2sketch.SamplePencilFill(targetShape)
 	nodes := make([]*d2scene.Node, 0, len(paths))
 	for index, source := range paths {
 		if err := b.ctx.Err(); err != nil {
@@ -74,12 +76,17 @@ func (b *builder) compileSketchShapeDrawable(
 		if err != nil {
 			return nil, err
 		}
-		if path.Fill == nil && path.Stroke == nil {
+		if path.Fill == nil && path.Stroke == nil && pencil == nil {
 			continue
 		}
 		node := d2scene.NewNode(path)
 		node.ID = fmt.Sprintf("%s:set:%d", idPrefix, index)
 		node.Transform = transform
+		if pencil != nil {
+			if err := b.addPencilFill(node, path, targetShape, pencil, object); err != nil {
+				return nil, err
+			}
+		}
 		b.maskSketchShapeNode(node, targetShape)
 		nodes = append(nodes, node)
 	}
@@ -535,6 +542,7 @@ func (b *builder) buildSketchDoubleBorderShape(targetShape d2target.Shape, fill 
 	inner.Width -= 2 * d2target.INNER_BORDER_OFFSET
 	inner.Height -= 2 * d2target.INNER_BORDER_OFFSET
 	inner.Fill = "transparent"
+	inner.SketchFillTransition = nil
 	innerNodes, err := b.buildSketchOutlineOnly(inner, targetShape.ID+":double-border:inner:sketch")
 	if err != nil {
 		return nil, err
@@ -737,6 +745,7 @@ func (b *builder) buildSketchStreakOverlays(
 	fillRaw, idPrefix string,
 	primitives []d2scene.Primitive,
 ) ([]*d2scene.Node, error) {
+	fillRaw = d2sketch.TexturePaint(targetShape, fillRaw)
 	if len(primitives) == 0 || strings.EqualFold(fillRaw, libcolor.None) || fillRaw == "" {
 		return nil, nil
 	}

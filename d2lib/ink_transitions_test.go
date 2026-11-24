@@ -1,0 +1,304 @@
+package d2lib
+
+import (
+	"context"
+	"slices"
+	"testing"
+
+	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2target"
+	d2log "github.com/d2lang/d2/lib/log"
+)
+
+func TestInkFollowsPlaybackAcrossBoards(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+a: Stable {style.fill: white}
+b
+a -> b: Active
+layers: {one: {
+  a: Stable {style: {underline: true; fill: green}}
+  b
+  a -> b: Active {style.underline: true}
+}}
+scenarios: {two: {a.style.fill: red}}
+steps: {three: {a: Different {style.underline: true}}}
+`
+	for _, sketch := range []bool{false, true} {
+		calls := 0
+		d, _, err := Compile(d2log.WithDefault(context.Background()), source, dagreCompileOptions(&calls), &d2svg.RenderOpts{Sketch: &sketch})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d2target.ValidateRenderTarget(d); err != nil {
+			t.Fatal(err)
+		}
+		for idx, board := range []*d2target.Diagram{d.Layers[0], d.Scenarios[0]} {
+			if len(board.TweenFrames) != 4 {
+				t.Fatalf("board %d has %d frames", idx, len(board.TweenFrames))
+			}
+			for j, frame := range board.TweenFrames {
+				want := float64(j) / 4
+				if idx == 1 {
+					want = 1 - want
+				}
+				s := shapeByID(t, frame, "a")
+				for _, txt := range []d2target.Text{s.Text, frame.Connections[0].Text} {
+					if txt.UnderlineProgress == nil || *txt.UnderlineProgress != want {
+						t.Fatalf("board %d sample %d: underline %v, want %v", idx, j, txt.UnderlineProgress, want)
+					}
+				}
+				if (s.SketchFillTransition != nil) != sketch {
+					t.Fatalf("sketch=%v, fill=%v", sketch, s.SketchFillTransition)
+				}
+				if sketch && s.SketchFillTransition.Progress != float64(j)/4 {
+					t.Fatalf("sketch fill at %d: %v", j, s.SketchFillTransition)
+				}
+			}
+			if shapeByID(t, board, "a").UnderlineProgress != nil || board.Connections[0].UnderlineProgress != nil {
+				t.Fatal("transition mutated a final label")
+			}
+		}
+		for _, frame := range d.Steps[0].TweenFrames {
+			if shapeByID(t, frame, "a").UnderlineProgress != nil {
+				t.Fatal("animated a replacement label")
+			}
+		}
+	}
+}
+
+func TestPlainMarkdownStrikeRoundTrip(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 220ms; animate-duration: 160ms}}
+a: Retired API
+b: Version 1 active {shape: rectangle}
+c: Healthy
+a -> b: Use old API
+steps: {
+  retire: {
+    a: |md ~~Retired API~~ |
+    b: |md Version ~~1~~ active | {shape: rectangle}
+    c: |md Healthy | {style.underline: true}
+    (a -> b)[0]: |md Use ~~old~~ API |
+  }
+  restore: {
+    a: Retired API
+    b: Version 1 active
+    c: Healthy {style.underline: false}
+    (a -> b)[0]: Use old API
+  }
+}
+`
+	calls := 0
+	d, _, err := Compile(d2log.WithDefault(context.Background()), source, dagreCompileOptions(&calls), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d2target.ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+	for i, board := range d.Steps {
+		if len(board.TweenFrames) != 4 {
+			t.Fatalf("%s: got %d samples", board.Name, len(board.TweenFrames))
+		}
+		for j, frame := range board.TweenFrames {
+			a, b := shapeByID(t, frame, "a"), shapeByID(t, frame, "b")
+			for _, label := range []d2target.Text{a.Text, b.Text, frame.Connections[0].Text} {
+				strike := label.MarkdownStrike
+				if strike == nil || strike.Progress != float64(j)/4 {
+					t.Fatalf("%s sample %d missing strike on %q", board.Name, j, label.Label)
+				}
+				if i == 1 && (label.Language != "" || len(strike.PlainRanges) != 1) {
+					t.Fatalf("restored label %q lost its plain glyphs or measured strike", label.Label)
+				}
+			}
+			status := shapeByID(t, frame, "c").Text
+			wantUnderline := float64(j) / 4
+			if i == 1 {
+				wantUnderline = 1 - wantUnderline
+			}
+			if status.MarkdownStrike != nil || status.UnderlineProgress == nil || *status.UnderlineProgress != wantUnderline {
+				t.Fatalf("underline-only %s sample %d: %+v", board.Name, j, status)
+			}
+			if i == 1 {
+				if a.Type != d2target.ShapeRectangle || !a.Bold || a.MarkdownStrike.PlainRanges[0] != [2]float64{0, 1} {
+					t.Fatalf("restored inferred shape/label: %+v", a.Text)
+				}
+				r := b.MarkdownStrike.PlainRanges[0]
+				if r[0] <= 0 || r[1] >= 1 || r[1] <= r[0] {
+					t.Fatalf("middle word strike should cover only its own advance, got %v", r)
+				}
+			}
+		}
+		if shapeByID(t, board, "a").MarkdownStrike != nil {
+			t.Fatal("mutated authored endpoint")
+		}
+	}
+}
+
+func TestRetractingStrikeMeasuresTheDestinationFont(t *testing.T) {
+	planner := labelInkPlanner{board: d2target.NewDiagram()}
+	old := d2target.Text{Label: "iii~~WWW~~", Language: "markdown", FontSize: 16}
+	next := d2target.Text{Label: "iiiWWW", FontSize: 16}
+	regular := planner.plan(old, next).plainRanges
+	next.FontFamily = "mono"
+	mono := planner.plan(old, next).plainRanges
+	if len(regular) != 1 || len(mono) != 1 || regular[0][0] >= .35 || mono[0][0] < .49 || mono[0][0] > .51 {
+		t.Fatalf("struck word offsets for regular %v and mono %v", regular, mono)
+	}
+}
+
+func TestInkComposesWithGridAndMarkdown(t *testing.T) {
+	const source = `vars: {d2-config: {sketch: true; animate-interval: 300ms; animate-duration: 240ms}}
+grid-columns: 2
+a: |md webhook v1 |
+b: Retry queue {style.fill: white}
+steps: {cutover: {a: |md webhook ~~v1~~ |; b.style.fill: green; c: Dead letters}}
+`
+	calls := 0
+	d, _, err := Compile(d2log.WithDefault(context.Background()), source, dagreCompileOptions(&calls), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := d.Steps[0]
+	if !board.GridMotion || len(board.TweenFrames) < 2 {
+		t.Fatal("missing grid/ink motion")
+	}
+	var last float64
+	for i, frame := range board.TweenFrames {
+		strike := shapeByID(t, frame, "a").MarkdownStrike
+		fill := shapeByID(t, frame, "b").SketchFillTransition
+		if strike == nil || fill == nil || strike.Progress != fill.Progress || (i > 0 && strike.Progress <= last) {
+			t.Fatalf("frame %d: strike=%v fill=%v", i, strike, fill)
+		}
+		last = strike.Progress
+	}
+	off := false
+	opts := dagreCompileOptions(&calls)
+	opts.AnimateTweens = &off
+	static, _, err := Compile(d2log.WithDefault(context.Background()), source, opts, nil)
+	if err != nil || len(static.Steps[0].TweenFrames) != 0 {
+		t.Fatalf("static export: %v", err)
+	}
+}
+
+func TestInvisibleInkEdits(t *testing.T) {
+	for _, pair := range [][2]string{{"white", "#fff"}, {"#fff", "#ffffff"}, {"Transparent", "transparent"}} {
+		if !sameSketchFill(pair[0], pair[1]) {
+			t.Errorf("planned pencil strokes for %q -> %q", pair[0], pair[1])
+		}
+	}
+	for _, kind := range []string{d2target.ShapeClass, d2target.ShapeSQLTable} {
+		shape := d2target.Shape{ID: "a", Type: kind, Text: d2target.Text{Label: "header"}}
+		prev := &d2target.Diagram{Shapes: []d2target.Shape{shape}}
+		shape.Underline = true
+		next := &d2target.Diagram{Shapes: []d2target.Shape{shape}}
+		if planBoardInk(prev, next, true, false) != nil {
+			t.Errorf("planned ink for %s header", kind)
+		}
+	}
+}
+
+func TestPrepareSketchTransitionsPreservesExistingGrid(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 2000ms; animate-duration: 1600ms}}
+grid-columns: 3
+a: Block {style.fill: white}
+b: Retry
+steps: {ready: {a.style.fill: green; b.style.underline: true; c: Other}}
+`
+	calls := 0
+	d, _, err := Compile(d2log.WithDefault(context.Background()), source, dagreCompileOptions(&calls), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := d.Steps[0]
+	original := append([]*d2target.Diagram(nil), board.TweenFrames...)
+	ends := append([]int(nil), board.TweenFrameEndsMS...)
+	if len(original) == 0 || !board.GridMotion {
+		t.Fatal("missing grid motion")
+	}
+	if err := PrepareSketchTransitions(context.Background(), d, 1600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d2target.ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+	if !board.GridMotion || len(board.TweenFrames) > d2target.MaxTweenFrames {
+		t.Fatal("lost grid timing")
+	}
+	start := 0
+	for i, frame := range board.TweenFrames {
+		j := 0
+		for j < len(ends) && ends[j] <= start {
+			j++
+		}
+		want := board
+		if j < len(original) {
+			want = original[j]
+		}
+		gotB, wantB := shapeByID(t, frame, "b"), shapeByID(t, want, "b")
+		if gotB.Pos != wantB.Pos || gotB.UnderlineProgress == nil || wantB.UnderlineProgress == nil || *gotB.UnderlineProgress != *wantB.UnderlineProgress {
+			t.Fatalf("changed existing frame's position or underline at %dms", start)
+		}
+		fill := shapeByID(t, frame, "a").SketchFillTransition
+		if fill == nil || fill.From != "white" || fill.To != "green" || fill.Progress != float64(start)/1600 {
+			t.Fatalf("pencil at %dms: %+v", start, fill)
+		}
+		start = board.TweenFrameEndsMS[i]
+	}
+	if start != 1600 || shapeByID(t, board, "a").SketchFillTransition != nil {
+		t.Fatal("invalid endpoint")
+	}
+}
+
+func TestPencilScheduleWithExistingFrames(t *testing.T) {
+	const duration = 6000
+	early := make([]int, d2target.MaxTweenFrames)
+	for i := range early {
+		early[i] = i + 1
+	}
+	for _, ends := range [][]int{{50, duration}, early} {
+		d := &d2target.Diagram{TweenFrameEndsMS: ends}
+		schedule := inkBoundaries(d, duration, d2target.TweenFrameCount(duration))
+		if len(schedule) != d2target.MaxTweenFrames+1 || schedule[0] != 0 || schedule[len(schedule)-1] != duration {
+			t.Fatalf("invalid merged schedule: %v", schedule)
+		}
+		d.TweenFrameEndsMS = schedule[1:]
+		if again := inkBoundaries(d, duration, d2target.TweenFrameCount(duration)); !slices.Equal(again, schedule) {
+			t.Fatalf("preparing the schedule again changed it: %v -> %v", schedule, again)
+		}
+	}
+}
+
+func TestSketchHoldUsesDisplayedBoard(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+a: Stable {style.fill: gray}
+layers: {blue: {a: Stable {style.fill: blue}}}
+steps: {stay-blue: {a.style.fill: blue}}
+`
+	for _, late := range []bool{false, true} {
+		sketch := !late
+		calls := 0
+		d, _, err := Compile(d2log.WithDefault(context.Background()), source, dagreCompileOptions(&calls), &d2svg.RenderOpts{Sketch: &sketch})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if late {
+			if err := PrepareSketchTransitions(context.Background(), d, 160); err != nil {
+				t.Fatal(err)
+			}
+		}
+		step := d.Steps[0]
+		if len(step.TweenFrames) != 4 {
+			t.Fatalf("late=%v: expected four paint frames, got %d", late, len(step.TweenFrames))
+		}
+		for i, frame := range step.TweenFrames {
+			shape := shapeByID(t, frame, "a")
+			fill := shape.SketchFillTransition
+			if fill == nil || fill.From != "blue" || fill.To != "blue" || fill.Progress != 1 {
+				t.Fatalf("late=%v, sample %d: did not hold blue: %+v", late, i, fill)
+			}
+			if i == 0 && shape.Fill != "gray" {
+				t.Fatalf("overwrote regular paint %s", shape.Fill)
+			}
+		}
+	}
+}

@@ -80,12 +80,26 @@ type TextRun struct {
 	Fill      Paint
 	Stroke    *Stroke
 	Underline bool
-	Strike    bool
-	Glyphs    []Glyph
-	Ink       Bounds
+	// UnderlineProgress overrides Underline for a sampled transition. The
+	// fraction is measured over this shaped run's advance, from the left.
+	UnderlineProgress *float64
+	Strike            bool
+	Glyphs            []Glyph
+	Ink               Bounds
 }
 
 func (TextRun) isPrimitive() {}
+
+// UnderlineFraction resolves a static or partially drawn underline.
+func UnderlineFraction(enabled bool, progress *float64) float64 {
+	if progress != nil {
+		return min(1, max(0, *progress))
+	}
+	if enabled {
+		return 1
+	}
+	return 0
+}
 
 type AspectAlign uint8
 

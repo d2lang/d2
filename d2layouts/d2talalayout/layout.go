@@ -211,6 +211,7 @@ func coordinateLocalSeeds(ctx context.Context, seeds []int64, concurrency int, r
 		if bestIndex < 0 || comparison < 0 || (comparison == 0 && attempt.index > bestIndex) {
 			bestIndex = attempt.index
 			best = attempt.result
+			best.seed = attempt.seed
 		}
 	}
 
@@ -298,6 +299,16 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 		if err != nil {
 			return err
 		}
+	} else {
+		// A fresh compact trial cannot reproduce a selected rigid-container
+		// arrangement and its preserved interior routes.
+		best, err = considerCompactHierarchy(workCtx, input, best)
+		if err != nil {
+			return err
+		}
+	}
+	if err := orderEquivalentBranchSlots(workCtx, graph, best); err != nil {
+		return err
 	}
 	return applySeedResult(workCtx, graph, best)
 }

@@ -86,6 +86,30 @@ func TestBuildConnectionLabelsAndDiagramWideMask(t *testing.T) {
 	}
 }
 
+func TestBuildOwnsSampledUnderlineProgress(t *testing.T) {
+	diagram := validDiagram()
+	half, full := .5, 1.
+	label := d2target.Text{Label: "ok", FontSize: 16, LabelWidth: 20, LabelHeight: 20, UnderlineProgress: &half}
+	diagram.Shapes[0].Text = label
+	diagram.Connections[0].Text = label
+	diagram.Connections[0].LabelPosition = "INSIDE_MIDDLE_CENTER"
+	diagram.Shapes[1].Text = label
+	diagram.Shapes[1].Language = "markdown"
+	diagram.Shapes[1].UnderlineProgress = &full
+	document, err := Build(context.Background(), diagram, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	half, full = 0, 0
+	for id, want := range map[string]float64{"a:label:0": .5, "a-b:label:0": .5, "b:markdown:primitive:0": 1} {
+		run := findSceneNode(t, document.Root, id).Primitive.(d2scene.TextRun)
+		if got := d2scene.UnderlineFraction(run.Underline, run.UnderlineProgress); got != want {
+			t.Errorf("mutating the input changed %s underline to %g, want %g", id, got, want)
+		}
+	}
+}
+
 func TestBuildOutsideConnectionLabelUsesPartialMask(t *testing.T) {
 	t.Parallel()
 

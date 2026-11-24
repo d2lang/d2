@@ -19,7 +19,7 @@
         "x": 0,
         "y": 0
       },
-      "width": 668,
+      "width": 608,
       "height": 573,
       "opacity": 1,
       "strokeDash": 0,
@@ -184,7 +184,7 @@
       "id": "build_workflow.Terraform",
       "type": "rectangle",
       "pos": {
-        "x": 450,
+        "x": 390,
         "y": 248
       },
       "width": 158,
@@ -226,7 +226,7 @@
       "id": "build_workflow.AWS",
       "type": "rectangle",
       "pos": {
-        "x": 482,
+        "x": 422,
         "y": 436
       },
       "width": 95,
@@ -326,7 +326,7 @@
       "underline": false,
       "labelWidth": 138,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_TOP_CENTER",
+      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
       "labelPercentage": 0,
       "link": "",
       "route": [
@@ -374,15 +374,15 @@
           "y": 474
         },
         {
-          "x": 375,
+          "x": 345,
           "y": 474
         },
         {
-          "x": 375,
+          "x": 345,
           "y": 286
         },
         {
-          "x": 450,
+          "x": 390,
           "y": 286
         }
       ],
@@ -417,11 +417,11 @@
       "link": "",
       "route": [
         {
-          "x": 529,
+          "x": 469,
           "y": 325
         },
         {
-          "x": 529,
+          "x": 469,
           "y": 436
         }
       ],
