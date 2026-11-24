@@ -122,6 +122,16 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 			geometryChildren = append(geometryChildren, dstArrowNode)
 		}
 	}
+	switch strokePaint.(type) {
+	case d2scene.LinearGradient, d2scene.RadialGradient:
+		box := connection.GradientBounds()
+		transform := d2scene.Translate(box.TopLeft.X, box.TopLeft.Y).Mul(d2scene.Scale(box.Width, box.Height))
+		for _, node := range geometryChildren {
+			if err := applyConnectionGradient(node, transform); err != nil {
+				return nil, fmt.Errorf("scene: connection %q gradient: %w", connection.ID, err)
+			}
+		}
+	}
 	if b.connectionMask == nil {
 		group.Children = append(group.Children, geometryChildren...)
 	} else {
@@ -137,6 +147,48 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 	}
 	group.Children = append(group.Children, labels...)
 	return group, nil
+}
+
+// The shaft and markers all sample the same gradient in connection space.
+// Express it in each primitive's local coordinates, including rotated markers
+// and the extra transforms inside multipart arrowheads.
+func applyConnectionGradient(node *d2scene.Node, transform d2scene.Matrix) error {
+	inverse, err := node.Transform.Inverse()
+	if err != nil {
+		return err
+	}
+	transform = inverse.Mul(transform)
+	paint := func(p d2scene.Paint) d2scene.Paint {
+		switch gradient := p.(type) {
+		case d2scene.LinearGradient:
+			gradient.Units, gradient.Transform = d2scene.UserSpaceOnUse, transform
+			return gradient
+		case d2scene.RadialGradient:
+			gradient.Units, gradient.Transform = d2scene.UserSpaceOnUse, transform
+			return gradient
+		}
+		return p
+	}
+	var stroke *d2scene.Stroke
+	switch p := node.Primitive.(type) {
+	case d2scene.Path:
+		p.Fill = paint(p.Fill)
+		stroke = p.Stroke
+		node.Primitive = p
+	case d2scene.Ellipse:
+		p.Fill = paint(p.Fill)
+		stroke = p.Stroke
+		node.Primitive = p
+	}
+	if stroke != nil {
+		stroke.Paint = paint(stroke.Paint)
+	}
+	for _, child := range node.Children {
+		if err := applyConnectionGradient(child, transform); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func animatedConnectionPathNode(id string, path d2scene.Path, track *d2scene.Track, crossingMask *d2scene.Mask) *d2scene.Node {

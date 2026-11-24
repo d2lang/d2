@@ -829,29 +829,48 @@ func arrowheadDrawable(g *rough.Generator, arrowhead d2target.Arrowhead, stroke 
 	return arrow, extra, true
 }
 
+// ArrowheadPlacement positions a sketch arrowhead's local geometry in diagram
+// coordinates. Gradient paints use the same placement as the rendered paths.
+func ArrowheadPlacement(connection d2target.Connection, isTarget bool, adjustment *geo.Point) (anchor geo.Point, degrees float64) {
+	if isTarget {
+		last := len(connection.Route) - 1
+		segment := geo.NewSegment(connection.Route[last-1], connection.Route[last])
+		return geo.Point{X: segment.End.X + adjustment.X, Y: segment.End.Y + adjustment.Y}, segment.ToVector().Degrees()
+	}
+	segment := geo.NewSegment(connection.Route[0], connection.Route[1])
+	return geo.Point{X: segment.Start.X + adjustment.X, Y: segment.Start.Y + adjustment.Y}, segment.ToVector().Reverse().Degrees()
+}
+
 func Arrowheads(connection d2target.Connection, srcAdj, dstAdj *geo.Point) (string, error) {
-	arrowPaths := []string{}
+	return ArrowheadsWithPaint(connection, srcAdj, dstAdj, connection.Stroke, connection.Stroke)
+}
 
-	if connection.SrcArrow != d2target.NoArrowhead {
+// ArrowheadsWithPaint accepts a paint for each endpoint in its local coordinates.
+func ArrowheadsWithPaint(connection d2target.Connection, srcAdj, dstAdj *geo.Point, srcStroke, dstStroke string) (string, error) {
+	var arrowPaths []string
+	for _, end := range []struct {
+		arrow      d2target.Arrowhead
+		adjustment *geo.Point
+		stroke     string
+		isTarget   bool
+	}{
+		{connection.SrcArrow, srcAdj, srcStroke, false},
+		{connection.DstArrow, dstAdj, dstStroke, true},
+	} {
+		if end.arrow == d2target.NoArrowhead {
+			continue
+		}
 		g := newGenerator()
-		arrow, extra, ok := arrowheadDrawable(g, connection.SrcArrow, connection.Stroke, connection.StrokeWidth)
+		arrow, extra, ok := arrowheadDrawable(g, end.arrow, end.stroke, connection.StrokeWidth)
 		if !ok {
 			return "", nil
 		}
-
-		startingSegment := geo.NewSegment(connection.Route[0], connection.Route[1])
-		startingVector := startingSegment.ToVector().Reverse()
-		angle := startingVector.Degrees()
-
-		transform := fmt.Sprintf("translate(%f %f) rotate(%v)",
-			startingSegment.Start.X+srcAdj.X, startingSegment.Start.Y+srcAdj.Y, angle,
-		)
-
+		anchor, angle := ArrowheadPlacement(connection, end.isTarget, end.adjustment)
+		transform := fmt.Sprintf("translate(%f %f) rotate(%v)", anchor.X, anchor.Y, angle)
 		roughPaths := computeRoughPaths(g, arrow)
 		if extra != nil {
 			roughPaths = append(roughPaths, computeRoughPaths(g, *extra)...)
 		}
-
 		pathEl := d2themes.NewThemableElement("path", nil)
 		pathEl.ClassName = "connection"
 		pathEl.AddAttributes(svg.Attr("transform", transform))
@@ -863,39 +882,5 @@ func Arrowheads(connection d2target.Connection, srcAdj, dstAdj *geo.Point) (stri
 			arrowPaths = append(arrowPaths, pathEl.Render())
 		}
 	}
-
-	if connection.DstArrow != d2target.NoArrowhead {
-		g := newGenerator()
-		arrow, extra, ok := arrowheadDrawable(g, connection.DstArrow, connection.Stroke, connection.StrokeWidth)
-		if !ok {
-			return "", nil
-		}
-
-		length := len(connection.Route)
-		endingSegment := geo.NewSegment(connection.Route[length-2], connection.Route[length-1])
-		endingVector := endingSegment.ToVector()
-		angle := endingVector.Degrees()
-
-		transform := fmt.Sprintf("translate(%f %f) rotate(%v)",
-			endingSegment.End.X+dstAdj.X, endingSegment.End.Y+dstAdj.Y, angle,
-		)
-
-		roughPaths := computeRoughPaths(g, arrow)
-		if extra != nil {
-			roughPaths = append(roughPaths, computeRoughPaths(g, *extra)...)
-		}
-
-		pathEl := d2themes.NewThemableElement("path", nil)
-		pathEl.ClassName = "connection"
-		pathEl.AddAttributes(svg.Attr("transform", transform))
-		for _, rp := range roughPaths {
-			pathEl.D = rp.Attrs.D
-			pathEl.Fill = rp.Style.Fill
-			pathEl.Stroke = rp.Style.Stroke
-			pathEl.Style = rp.StyleCSS()
-			arrowPaths = append(arrowPaths, pathEl.Render())
-		}
-	}
-
 	return strings.Join(arrowPaths, " "), nil
 }
