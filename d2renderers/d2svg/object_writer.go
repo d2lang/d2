@@ -219,7 +219,8 @@ func (w *objectWriter) animatedUnderline(el *d2themes.ThemableElement, text stri
 	plain.Style += ";clip-path:" + plainClip
 	ink := el.Copy()
 	ink.ClassName += " text-underline"
-	ink.Style += ";clip-path:" + decoratedClip + ";pointer-events:none;user-select:none"
+	// Both clipped halves must receive pointer events for an enclosing label link.
+	ink.Style += ";clip-path:" + decoratedClip + ";user-select:none"
 	ink.AddAttributes(svg.Attr("aria-hidden", "true"))
 	lineHeight := height / float64(1+strings.Count(text, "\n"))
 	for line := range strings.SplitSeq(text, "\n") {

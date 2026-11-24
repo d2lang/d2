@@ -132,3 +132,16 @@ func TestSketchPencilFillBehindMarkdown(t *testing.T) {
 		})
 	}
 }
+
+func TestSketchMaterialFollowsPlaybackPaint(t *testing.T) {
+	s := d2target.Shape{Fill: "gray", LabelPosition: "OUTSIDE_TOP_CENTER", SketchFillTransition: &d2target.SketchFillTransition{From: "blue", To: "red", Progress: .5}}
+	if got := d2sketch.TexturePaint(s, s.Fill); got != "#800080" {
+		t.Fatalf("sketch material %s, want playback midpoint", got)
+	}
+	if got := d2sketch.MarkdownBackground(s, true); got != "#800080" {
+		t.Fatalf("outside label backing %s, want playback midpoint", got)
+	}
+	if got := d2sketch.MarkdownBackground(s, false); got != "gray" {
+		t.Fatalf("regular label backing changed to %s", got)
+	}
+}

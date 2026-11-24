@@ -182,9 +182,7 @@ steps: {cutover: {a: |md webhook ~~v1~~ |; b.style.fill: green; c: Dead letters}
 
 func TestInvisibleInkEdits(t *testing.T) {
 	for _, pair := range [][2]string{{"white", "#fff"}, {"#fff", "#ffffff"}, {"Transparent", "transparent"}} {
-		old := d2target.Shape{Fill: pair[0]}
-		next := d2target.Shape{Fill: pair[1]}
-		if changedSketchFill(&old, &next) {
+		if !sameSketchFill(pair[0], pair[1]) {
 			t.Errorf("planned pencil strokes for %q -> %q", pair[0], pair[1])
 		}
 	}
@@ -266,6 +264,41 @@ func TestPencilScheduleWithExistingFrames(t *testing.T) {
 		d.TweenFrameEndsMS = schedule[1:]
 		if again := inkBoundaries(d, duration, d2target.TweenFrameCount(duration)); !slices.Equal(again, schedule) {
 			t.Fatalf("preparing the schedule again changed it: %v -> %v", schedule, again)
+		}
+	}
+}
+
+func TestSketchHoldUsesDisplayedBoard(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+a: Stable {style.fill: gray}
+layers: {blue: {a: Stable {style.fill: blue}}}
+steps: {stay-blue: {a.style.fill: blue}}
+`
+	for _, late := range []bool{false, true} {
+		sketch := !late
+		calls := 0
+		d, _, err := Compile(d2log.WithDefault(context.Background()), source, dagreCompileOptions(&calls), &d2svg.RenderOpts{Sketch: &sketch})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if late {
+			if err := PrepareSketchTransitions(context.Background(), d, 160); err != nil {
+				t.Fatal(err)
+			}
+		}
+		step := d.Steps[0]
+		if len(step.TweenFrames) != 4 {
+			t.Fatalf("late=%v: expected four paint frames, got %d", late, len(step.TweenFrames))
+		}
+		for i, frame := range step.TweenFrames {
+			shape := shapeByID(t, frame, "a")
+			fill := shape.SketchFillTransition
+			if fill == nil || fill.From != "blue" || fill.To != "blue" || fill.Progress != 1 {
+				t.Fatalf("late=%v, sample %d: did not hold blue: %+v", late, i, fill)
+			}
+			if i == 0 && shape.Fill != "gray" {
+				t.Fatalf("overwrote regular paint %s", shape.Fill)
+			}
 		}
 	}
 }

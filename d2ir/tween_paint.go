@@ -1,14 +1,11 @@
 package d2ir
 
 import (
-	"fmt"
 	"image/color"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/mazznoer/csscolorparser"
 
 	d2color "github.com/d2lang/d2/lib/color"
 )
@@ -28,8 +25,8 @@ func newTweenPaint(start, end string) (tweenValue, bool) {
 	if !d2color.ValidColor(start) || !d2color.ValidColor(end) {
 		return nil, false
 	}
-	from, okFrom := tweenRGBA(start)
-	to, okTo := tweenRGBA(end)
+	from, okFrom := d2color.ParseRGBA(start)
+	to, okTo := d2color.ParseRGBA(end)
 	if !okFrom || !okTo || from.A != 255 || to.A != 255 || from == to {
 		return nil, false
 	}
@@ -48,35 +45,7 @@ func (c tweenColor) at(fraction float64) string {
 	case 1:
 		return c.end
 	}
-	return interpolateHex(c.from, c.to, fraction)
-}
-
-func tweenRGBA(raw string) (color.NRGBA, bool) {
-	parsed, err := csscolorparser.Parse(raw)
-	if err != nil {
-		return color.NRGBA{}, false
-	}
-	r, g, b, a := parsed.RGBA255()
-	return color.NRGBA{R: r, G: g, B: b, A: a}, true
-}
-
-// Mix sRGB channels with premultiplied alpha. Fading from transparent to a
-// color increases its opacity without darkening it along the way.
-func interpolateHex(from, to color.NRGBA, fraction float64) string {
-	alpha := float64(from.A) + (float64(to.A)-float64(from.A))*fraction
-	weight := fraction
-	if from.A != to.A && alpha > 0 {
-		weight = fraction * float64(to.A) / alpha
-	}
-	channel := func(a, b uint8) uint8 {
-		return uint8(math.Round(float64(a) + (float64(b)-float64(a))*weight))
-	}
-	r, g, b := channel(from.R, to.R), channel(from.G, to.G), channel(from.B, to.B)
-	a := uint8(math.Round(alpha))
-	if a == 255 {
-		return fmt.Sprintf("#%02x%02x%02x", r, g, b)
-	}
-	return fmt.Sprintf("#%02x%02x%02x%02x", r, g, b, a)
+	return d2color.InterpolateHex(c.from, c.to, fraction)
 }
 
 type tweenGradient struct {
@@ -111,7 +80,7 @@ func resolveTweenStops(gradient d2color.Gradient) ([]tweenStop, bool) {
 	stops := make([]tweenStop, len(gradient.ColorStops))
 	previous := 0.0
 	for i, stop := range gradient.ColorStops {
-		paint, ok := tweenRGBA(stop.Color)
+		paint, ok := d2color.ParseRGBA(stop.Color)
 		offset, err := stop.Offset(i, len(stops), previous)
 		if !ok || err != nil {
 			return nil, false
@@ -166,7 +135,7 @@ func (g tweenGradient) at(fraction float64) string {
 			buf.WriteString(", ")
 		}
 		b := g.to[i]
-		buf.WriteString(interpolateHex(a.color, b.color, fraction))
+		buf.WriteString(d2color.InterpolateHex(a.color, b.color, fraction))
 		buf.WriteByte(' ')
 		offset := a.offset + (b.offset-a.offset)*fraction
 		buf.WriteString(strconv.FormatFloat(offset*100, 'g', 15, 64))

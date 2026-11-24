@@ -343,8 +343,7 @@ func (p *textPainter) texture(value string, style labelTextStyle) (*image.RGBA, 
 			}
 		}
 		left, right := x+float64(line.minX*unitScale), x+float64(line.maxX*unitScale)
-		drawRule := func(left, top, width, height float64) {
-			right, bottom := left+width, top+height
+		drawRule := func(left, top, right, bottom float64) {
 			left, right = left*drawScaleX, right*drawScaleX
 			top, bottom = top*drawScaleY, bottom*drawScaleY
 			raster.MoveTo(float32(left), float32(top))
@@ -360,9 +359,15 @@ func (p *textPainter) texture(value string, style labelTextStyle) (*image.RGBA, 
 		}
 		underline := d2scene.UnderlineFraction(style.Underline, style.UnderlineProgress)
 		if underline > 0 && right > left {
-			drawRule(left, y+float64(fontPixels*.10), (right-left)*underline, float64(fontPixels*.05))
+			end := right
+			if underline < 1 {
+				end = left + (right-left)*underline
+			}
+			drawRule(left, y+float64(fontPixels*.10), end, y+float64(fontPixels*.15))
 		}
-		style.MarkdownStrike.PlainRules(left, y, right-left, float64(fontPixels), drawRule)
+		style.MarkdownStrike.PlainRules(left, y, right-left, float64(fontPixels), func(x, y, w, h float64) {
+			drawRule(x, y, x+w, y+h)
+		})
 	}
 	foreground := style.Color
 	foreground.A = uint8(math.Round(float64(foreground.A) * style.Opacity))

@@ -144,7 +144,18 @@ func TexturePaint(s d2target.Shape, renderedFill string) string {
 		if t.Progress == 1 {
 			return t.To
 		}
-		return s.Fill
+		// The IR paint can inherit from a different board than the one
+		// visible before this transition. Mix the actual playback endpoints.
+		from, fromOK := color.ParseRGBA(t.From)
+		to, toOK := color.ParseRGBA(t.To)
+		if fromOK && toOK {
+			return color.InterpolateHex(from, to, t.Progress)
+		}
+		// Theme tokens remain resolvable by the light and dark theme in SVG.
+		if t.Progress < .5 {
+			return t.From
+		}
+		return t.To
 	}
 	return renderedFill
 }

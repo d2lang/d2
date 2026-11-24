@@ -5,9 +5,8 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
-	"github.com/mazznoer/csscolorparser"
-
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
@@ -120,14 +119,32 @@ func (p *labelInkPlanner) plan(old, next d2target.Text) labelInk {
 	return change
 }
 
-func changedSketchFill(old, next *d2target.Shape) bool {
-	if strings.EqualFold(old.Fill, next.Fill) || !old.CanShadeSketchFill() || !next.CanShadeSketchFill() {
-		return false
+func sameSketchFill(a, b string) bool {
+	if strings.EqualFold(a, b) {
+		return true
 	}
 	// Theme tokens remain unresolved until rendering, including the dark theme.
-	from, fromErr := csscolorparser.Parse(old.Fill)
-	to, toErr := csscolorparser.Parse(next.Fill)
-	return fromErr != nil || toErr != nil || from != to
+	from, fromOK := color.ParseRGBA(a)
+	to, toOK := color.ParseRGBA(b)
+	return fromOK && toOK && from == to
+}
+
+func planSketchFill(old, next, inherited *d2target.Shape) *d2target.SketchFillTransition {
+	if old.Fill == next.Fill && (inherited == nil || inherited.Fill == next.Fill) {
+		return nil
+	}
+	if !old.CanShadeSketchFill() || !next.CanShadeSketchFill() {
+		return nil
+	}
+	if !sameSketchFill(old.Fill, next.Fill) {
+		return &d2target.SketchFillTransition{From: old.Fill, To: next.Fill}
+	}
+	if inherited != nil && !sameSketchFill(inherited.Fill, next.Fill) {
+		// Keep an unchanged surface painted through an unrelated inherited tween.
+		// Regular rendering still uses the original frame's fill.
+		return &d2target.SketchFillTransition{From: next.Fill, To: next.Fill, Progress: 1}
+	}
+	return nil
 }
 
 func planBoardInk(prev, next *d2target.Diagram, sketch, pencilOnly bool) *boardInk {
@@ -137,6 +154,12 @@ func planBoardInk(prev, next *d2target.Diagram, sketch, pencilOnly bool) *boardI
 	var ink boardInk
 	labels := labelInkPlanner{board: next}
 	shapes := gridEdgeShapeMap(prev.Shapes)
+	// A step inherits paint samples from its parent or previous sibling. Its
+	// predecessor on the playback timeline can instead be a layer or scenario.
+	var inherited map[string]*d2target.Shape
+	if sketch && len(next.TweenFrames) > 0 {
+		inherited = gridEdgeShapeMap(next.TweenFrames[0].Shapes)
+	}
 	for i := range next.Shapes {
 		s := &next.Shapes[i]
 		old := shapes[s.ID]
@@ -155,8 +178,8 @@ func planBoardInk(prev, next *d2target.Diagram, sketch, pencilOnly bool) *boardI
 		if !pencilOnly && s.Type != d2target.ShapeClass && s.Type != d2target.ShapeSQLTable {
 			edit.label = labels.plan(old.Text, s.Text)
 		}
-		if sketch && sameShape && changedSketchFill(old, s) {
-			edit.fill = &d2target.SketchFillTransition{From: old.Fill, To: s.Fill}
+		if sketch && sameShape {
+			edit.fill = planSketchFill(old, s, inherited[s.ID])
 		}
 		if edit.fill != nil || edit.label.label != "" {
 			if ink.shapes == nil {
@@ -217,7 +240,9 @@ func (ink *boardInk) apply(frame *d2target.Diagram, progress float64) {
 			edit.label.apply(&s.Text, progress)
 			if edit.fill != nil {
 				fill := *edit.fill
-				fill.Progress = progress
+				if fill.From != fill.To {
+					fill.Progress = progress
+				}
 				s.SketchFillTransition = &fill
 			}
 		}

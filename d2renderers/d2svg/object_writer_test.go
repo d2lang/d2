@@ -107,6 +107,9 @@ func TestPartialUnderlineUsesEachLineWidth(t *testing.T) {
 	fraction := .3
 	w.animatedUnderline(el, "gyp\nx", 36, &fraction)
 	out := w.buf.String()
+	if strings.Contains(out, "pointer-events:none") {
+		t.Fatal("disabling hit testing on either half makes part of a linked label unclickable")
+	}
 	for _, fragment := range []string{`x="55" y="20"`, `x="55" y="38"`, ">gyp</text>", ">x</text>", "inset(-100% 70% -100% -100%) fill-box", "inset(-100% -100% -100% 30%) fill-box", `aria-hidden="true"`} {
 		if strings.Count(out, fragment) != 2 {
 			t.Errorf("expected two occurrences of %q in %s", fragment, out)
