@@ -194,26 +194,20 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 	enterStart, enterEnd, exitEnd := m.popWindows(durationMS)
 	// A connection alone can enter or leave during a shuffle. In that case
 	// its fade follows the step clock alongside the moving endpoints.
-	enter, exit := fraction, 1-fraction
+	enterScale, exitScale := 1., 1.
+	enterOpacity, exitOpacity := travel, gridEase(1-fraction)
 	if m.hasEnter {
-		enter = gridPhase(elapsed, float64(enterStart), float64(enterEnd))
+		enterScale, enterOpacity = gridPop(gridPhase(elapsed, float64(enterStart), float64(enterEnd)))
 	}
 	if m.hasExit {
-		exit = 1 - gridPhase(elapsed, 0, float64(exitEnd))
+		exitScale, exitOpacity = gridPop(1 - gridPhase(elapsed, 0, float64(exitEnd)))
 	}
-	// Grow quickly and settle without overshooting. The short scale range
-	// keeps text readable and gives small cells enough pixels to render.
-	unopened := 1 - enter
-	enterScale := 1 - .32*unopened*unopened*unopened
-	enterOpacity := gridEase(enter)
-	exitOpacity := gridEase(exit)
-	exitScale := .70 + .30*exitOpacity
 	for _, shape := range base.Shapes {
 		item := m.items[shape.ID]
 		switch {
 		case item == nil:
 		case item.from == nil:
-			if enter == 0 {
+			if enterOpacity == 0 {
 				continue
 			}
 			shape = item.bubble(shape, enterScale, enterOpacity, travel)
@@ -228,7 +222,7 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 		}
 		result.Shapes = append(result.Shapes, shape)
 	}
-	if exit > 0 {
+	if exitOpacity > 0 {
 		for _, s := range m.removed {
 			result.Shapes = append(result.Shapes, m.items[s.ID].bubble(s, exitScale, exitOpacity, travel))
 		}
@@ -282,6 +276,14 @@ func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel floa
 	}
 	s.Opacity *= opacity
 	return s
+}
+
+// Sample the same gesture forward for entry and backward for exit. Quadratic
+// ease-out settles at full size. Fade only near the small end so the change
+// in speed stays visible for most of the gesture.
+func gridPop(visible float64) (scale, opacity float64) {
+	remaining := 1 - visible
+	return 1 - .60*remaining*remaining, gridEase(min(1, visible/.36))
 }
 
 func gridLerpInt(a, b int, t float64) int {

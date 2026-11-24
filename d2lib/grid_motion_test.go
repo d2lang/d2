@@ -92,7 +92,7 @@ steps: {
 		motion *gridMotion
 		base   *d2target.Diagram
 		time   int
-	}{{add, next, 144}, {remove, last, 60}} {
+	}{{add, next, 144}, {remove, last, 128}} {
 		mid := tc.motion.sample(tc.base, tc.time, 240)
 		group, child := shapeByID(t, mid, "service.cold"), shapeByID(t, mid, "service.cold.stores")
 		endGroup, endChild := shapeByID(t, next, "service.cold"), shapeByID(t, next, "service.cold.stores")

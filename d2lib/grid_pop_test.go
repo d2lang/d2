@@ -20,6 +20,22 @@ steps: {
 	}
 	const duration = 4000
 	target := shapeByID(t, up, "spare")
+	// Midway through either gesture the card should be fully legible while
+	// it still has a visible distance to grow (entry) or shrink (exit).
+	inWidth := func(ms int) int { return shapeByID(t, enter.sample(up, ms, duration), "spare").Width }
+	outWidth := func(ms int) int { return shapeByID(t, exit.sample(down, ms, duration), "spare").Width }
+	halfIn := shapeByID(t, enter.sample(up, 110, duration), "spare")
+	halfOut := shapeByID(t, exit.sample(down, 80, duration), "spare")
+	if halfIn.Opacity != target.Opacity || halfOut.Opacity != target.Opacity ||
+		halfIn.Width > target.Width*9/10 || halfIn.Width != halfOut.Width {
+		t.Fatalf("midpoint width/opacity: entry %d/%.2f, exit %d/%.2f", halfIn.Width, halfIn.Opacity, halfOut.Width, halfOut.Opacity)
+	}
+	if inWidth(110)-inWidth(55) <= inWidth(165)-inWidth(110) {
+		t.Fatal("arrival should decelerate toward the destination")
+	}
+	if outWidth(40)-outWidth(80) >= outWidth(80)-outWidth(120) {
+		t.Fatal("removal should accelerate inward")
+	}
 	lastWidth, lastOpacity := 0, 0.
 	for ms := 10; ms <= 220; ms += 10 {
 		s := shapeByID(t, enter.sample(up, ms, duration), "spare")
