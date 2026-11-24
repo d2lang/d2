@@ -104,9 +104,17 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	}
 
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
+	styleFrames := svgs
+	graphics, svgs := shareFrameGraphics(svgs, diagramHash)
 	var source strings.Builder
 	source.Write(defs)
-	for _, frame := range svgs {
+	if len(defs) != 0 {
+		// The static shapes already introduce references, so font selection uses
+		// the complete corpus. Scan the smaller shared artwork for theme classes.
+		source.Write(graphics)
+		styleFrames = svgs
+	}
+	for _, frame := range styleFrames {
 		source.Write(frame)
 		source.WriteByte(' ')
 	}
@@ -116,7 +124,6 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		return nil, err
 	}
 
-	graphics, svgs := shareFrameGraphics(svgs, diagramHash)
 	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)
 	startMS := 0
 	for i, duration := range durationsMS {
