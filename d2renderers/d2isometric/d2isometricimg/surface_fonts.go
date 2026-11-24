@@ -215,7 +215,7 @@ func nativeFallbackTextTexture(ctx context.Context, value string, style labelTex
 	}
 	w := max(1, int(math.Min(100000, math.Ceil(style.Width/style.PixelScale))))
 	h := max(1, int(math.Min(100000, math.Ceil(float64(len(lines))*fontSize*1.2))))
-	s := d2target.Shape{ID: "surface-text", Type: d2target.ShapeText, Width: w, Height: h, Fill: "transparent", Stroke: "none", Opacity: 1, LabelPosition: "INSIDE_MIDDLE_CENTER", Text: d2target.Text{Label: normalizeLabel(value), FontSize: max(1, int(math.Round(fontSize))), LabelWidth: w, LabelHeight: h, FontFamily: "default", Color: richColor(style.Color), Bold: style.Bold, Italic: style.Italic, Underline: style.Underline}}
+	s := d2target.Shape{ID: "surface-text", Type: d2target.ShapeText, Width: w, Height: h, Fill: "transparent", Stroke: "none", Opacity: 1, LabelPosition: "INSIDE_MIDDLE_CENTER", Text: d2target.Text{Label: normalizeLabel(value), FontSize: max(1, int(math.Round(fontSize))), LabelWidth: w, LabelHeight: h, FontFamily: "default", Color: richColor(style.Color), Bold: style.Bold, Italic: style.Italic, Underline: style.Underline, UnderlineProgress: style.UnderlineProgress}}
 	if style.ForegroundPaint != nil {
 		s.Color = style.Foreground
 	}

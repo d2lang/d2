@@ -342,7 +342,8 @@ func (p *preflight) text(nodeID string, text d2scene.TextRun, transform d2scene.
 	}
 
 	var decorations []subpath
-	if (text.Underline || text.Strike) && advance > 0 {
+	underline := d2scene.UnderlineFraction(text.Underline, text.UnderlineProgress)
+	if (underline > 0 || text.Strike) && advance > 0 {
 		var buffer sfnt.Buffer
 		metrics, err := primary.outline.Metrics(&buffer, ppem, font.HintingNone)
 		if err != nil {
@@ -354,10 +355,10 @@ func (p *preflight) text(nodeID string, text d2scene.TextRun, transform d2scene.
 		}
 		thickness := math.Max(text.Font.Size/16, minThickness)
 		left := text.Origin.X + anchorOffset
-		if text.Underline {
+		if underline > 0 {
 			descent := fixedToFloat(metrics.Descent)
 			top := text.Origin.Y + math.Max(text.Font.Size/12, descent*0.25)
-			decoration, err := decorationSubpath(left, top, advance, thickness, p.addPathSegment)
+			decoration, err := decorationSubpath(left, top, advance*underline, thickness, p.addPathSegment)
 			if err != nil {
 				return nil, fmt.Errorf("d2raster: node %q underline: %w", nodeID, err)
 			}

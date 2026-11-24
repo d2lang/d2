@@ -238,10 +238,12 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 			}
 			fontColor := connection.GetFontColor()
 			underline := connection.Underline
+			progress := connection.UnderlineProgress
 			if connection.Link != "" {
 				// Linked connection labels are underlined and use unvisited-link blue.
 				fontColor = "blue"
 				underline = true
+				progress = nil
 			}
 			fill, err := b.paint(fontColor, fmt.Sprintf("connection %q label color", connection.ID))
 			if err != nil {
@@ -250,7 +252,7 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 			nodes = append(nodes, centeredTextRuns(
 				connection.ID+":label", connection.Label, topLeft,
 				connection.LabelWidth, connection.LabelHeight, connection.FontSize,
-				font, fill, underline,
+				font, fill, underline, progress,
 			)...)
 		}
 	}
@@ -289,13 +291,22 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 		nodes = append(nodes, centeredTextRuns(
 			fmt.Sprintf("%s:%s-label", connection.ID, endpoint.name), endpoint.text.Label, topLeft,
 			endpoint.text.LabelWidth, endpoint.text.LabelHeight, connection.FontSize,
-			font, fill, false,
+			font, fill, false, nil,
 		)...)
 	}
 	return nodes, nil
 }
 
-func centeredTextRuns(idPrefix, text string, topLeft *geo.Point, width, height, fontSize int, font d2scene.Font, fill d2scene.Paint, underline bool) []*d2scene.Node {
+// The scene owns its text runs independently of the sampled render target.
+func copyUnderlineProgress(progress *float64) *float64 {
+	if progress == nil {
+		return nil
+	}
+	visible := *progress
+	return &visible
+}
+
+func centeredTextRuns(idPrefix, text string, topLeft *geo.Point, width, height, fontSize int, font d2scene.Font, fill d2scene.Paint, underline bool, progress *float64) []*d2scene.Node {
 	lines := strings.Split(text, "\n")
 	lineAdvance := float64(height) / float64(len(lines))
 	nodes := make([]*d2scene.Node, 0, len(lines))
@@ -307,11 +318,12 @@ func centeredTextRuns(idPrefix, text string, topLeft *geo.Point, width, height, 
 				X: topLeft.X + float64(width)/2,
 				Y: topLeft.Y + float64(fontSize) + float64(index)*lineAdvance,
 			},
-			Anchor:    d2scene.AnchorMiddle,
-			Font:      font,
-			Fill:      fill,
-			Underline: underline,
-			Ink:       d2scene.NewBounds(topLeft.X, lineTop, topLeft.X+float64(width), lineTop+lineAdvance),
+			Anchor:            d2scene.AnchorMiddle,
+			Font:              font,
+			Fill:              fill,
+			Underline:         underline,
+			UnderlineProgress: copyUnderlineProgress(progress),
+			Ink:               d2scene.NewBounds(topLeft.X, lineTop, topLeft.X+float64(width), lineTop+lineAdvance),
 		}
 		node := d2scene.NewNode(run)
 		node.ID = fmt.Sprintf("%s:%d", idPrefix, index)

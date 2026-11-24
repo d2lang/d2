@@ -12,76 +12,182 @@ import (
 
 // A single source may have many large steps. Bound the total geometry copied
 // into render targets before allocating it, including the points of routes.
-const maxGridSampleElements = 1_000_000
+const maxBoardSampleElements = 1_000_000
 
-type gridStepPlan struct {
+type boardTransitionPlan struct {
 	board  *d2target.Diagram
 	motion *gridMotion
+	ink    *boardInk
 	bounds []int
 	cost   int // Geometry elements per sample.
 }
 
-// Grid placement is only known after both authored endpoints have been laid out.
-func sampleGridSteps(ctx context.Context, root *d2target.Diagram, graph *d2graph.Graph, duration, boardLimit int) error {
-	var plans []gridStepPlan
-	available := boardLimit
-	var walk func(*d2target.Diagram, *d2graph.Graph) error
-	walk = func(parent *d2target.Diagram, g *d2graph.Graph) error {
+// Compare successive drawable boards for ink changes after layout. Grid moves
+// are still determined by step inheritance, independently of playback order.
+func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *d2graph.Graph, duration, boardLimit int, sketch bool) error {
+	// Discover empty grid endpoints before walking playback order, since those
+	// boards gain a visible slot when cells enter or leave them.
+	grids := make(map[*d2target.Diagram]boardTransitionPlan)
+	var visit func(*d2target.Diagram, *d2graph.Graph) error
+	visit = func(board *d2target.Diagram, g *d2graph.Graph) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		available -= 1 + len(parent.TweenFrames)
-		for i, layer := range parent.Layers {
-			if err := walk(layer, g.Layers[i]); err != nil {
-				return err
-			}
-		}
-		for i, scenario := range parent.Scenarios {
-			if err := walk(scenario, g.Scenarios[i]); err != nil {
-				return err
-			}
-		}
-		prev, prevGraph := parent, g
-		for i, next := range parent.Steps {
+		prev, prevGraph := board, g
+		for i, next := range board.Steps {
 			nextGraph := g.Steps[i]
-			if plan, ok := planGridStep(prev, next, prevGraph, nextGraph, duration); ok {
-				plans = append(plans, plan)
-				// These samples supply the paint for the replacement grid frames.
-				available += len(next.TweenFrames)
+			if motion, cost := planGridStep(prev, next, prevGraph, nextGraph); motion != nil {
 				prev.IsFolderOnly, next.IsFolderOnly = false, false
-			}
-			if err := walk(next, nextGraph); err != nil {
-				return err
+				grids[next] = boardTransitionPlan{motion: motion, cost: cost}
 			}
 			prev, prevGraph = next, nextGraph
 		}
+		for i, children := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
+			graphs := [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps}[i]
+			for j, child := range children {
+				if err := visit(child, graphs[j]); err != nil {
+					return err
+				}
+			}
+		}
 		return nil
 	}
-	if err := walk(root, graph); err != nil {
+	if err := visit(root, graph); err != nil {
+		return err
+	}
+	return samplePlannedTransitions(ctx, root, duration, boardLimit, sketch, false, grids)
+}
+
+// PrepareSketchTransitions adds pencil samples to a compiled diagram when a
+// caller enables sketch at render time. It modifies the supplied board tree.
+func PrepareSketchTransitions(ctx context.Context, root *d2target.Diagram, duration int64) error {
+	if duration < 0 || duration > d2target.MaxTweenDurationMS {
+		return fmt.Errorf("unsupported animation duration %d", duration)
+	}
+	if duration == 0 {
+		return nil
+	}
+	if err := d2target.ValidateRenderTarget(root); err != nil {
+		return err
+	}
+	return samplePlannedTransitions(ctx, root, int(duration), d2target.MaxRenderTargetBoards, true, true, nil)
+}
+
+func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, duration, boardLimit int, sketch, pencilOnly bool, grids map[*d2target.Diagram]boardTransitionPlan) error {
+	var plans []boardTransitionPlan
+	available := boardLimit
+	var previous *d2target.Diagram
+	var walk func(*d2target.Diagram) error
+	walk = func(board *d2target.Diagram) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		available -= 1 + len(board.TweenFrames)
+		if !board.IsFolderOnly {
+			p := grids[board]
+			p.ink = planBoardInk(previous, board, sketch, pencilOnly)
+			if p.motion != nil || p.ink != nil {
+				p.board = board
+				count := len(board.TweenFrames)
+				if p.ink != nil {
+					count = d2target.TweenFrameCount(duration)
+				}
+				if p.motion != nil {
+					p.bounds = p.motion.sampleBoundaries(duration, count)
+				} else {
+					p.cost = gridFrameElements(board)
+					for _, frame := range board.TweenFrames {
+						p.cost = max(p.cost, gridFrameElements(frame))
+					}
+					p.bounds = inkBoundaries(board, duration, count)
+				}
+				plans = append(plans, p)
+				available += len(board.TweenFrames)
+			}
+			previous = board
+		}
+		for _, children := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
+			for _, child := range children {
+				if err := walk(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(root); err != nil {
 		return err
 	}
 	if len(plans) == 0 {
 		return nil
 	}
 	if available < len(plans) {
-		return fmt.Errorf("grid animation needs at least one sample per transition within the limit of %d total boards", boardLimit)
+		return fmt.Errorf("animation needs at least one sample per transition within the limit of %d total boards", boardLimit)
 	}
-	if err := fitGridSamples(plans, available, maxGridSampleElements); err != nil {
+	if err := fitBoardSamples(plans, available, maxBoardSampleElements); err != nil {
 		return err
 	}
 	for i := range plans {
 		if err := plans[i].sample(ctx, duration); err != nil {
 			return err
 		}
-		plans[i] = gridStepPlan{}
+		plans[i] = boardTransitionPlan{}
 	}
 	return nil
+}
+
+// Keep both the pencil schedule and the timing of any precompiled grid moves.
+// If their union exceeds the per-board budget, reserve half the sample slots
+// for pencil strokes across the duration and spread the rest over grid events.
+func inkBoundaries(board *d2target.Diagram, duration, count int) []int {
+	uniform := make([]int, count+1)
+	for i := range uniform {
+		uniform[i] = int(int64(i) * int64(duration) / int64(count))
+	}
+	if len(board.TweenFrameEndsMS) == 0 {
+		return uniform
+	}
+
+	bounds := slices.Clone(uniform)
+	for _, end := range board.TweenFrameEndsMS {
+		if end < duration {
+			bounds = append(bounds, end)
+		}
+	}
+	slices.Sort(bounds)
+	bounds = slices.Compact(bounds)
+	if len(bounds) <= d2target.MaxTweenFrames+1 {
+		return bounds
+	}
+
+	anchors := make([]int, 0, d2target.MaxTweenFrames+1)
+	for i, ms := range uniform {
+		if i%2 == 0 || i == count {
+			anchors = append(anchors, ms)
+		}
+	}
+	addWithinBudget := func(times []int) {
+		var missing []int
+		for _, ms := range times {
+			if _, exists := slices.BinarySearch(anchors, ms); ms < duration && !exists {
+				missing = append(missing, ms)
+			}
+		}
+		keep := min(len(missing), d2target.MaxTweenFrames+1-len(anchors))
+		for i := 0; i < keep; i++ {
+			anchors = append(anchors, missing[i*len(missing)/keep])
+		}
+		slices.Sort(anchors)
+	}
+	addWithinBudget(board.TweenFrameEndsMS)
+	addWithinBudget(uniform)
+	return anchors
 }
 
 // Reserve one starting sample per transition. Share the remaining slots in
 // proportion to the desired schedules, accounting for the geometry each
 // sample copies before allocating frames.
-func fitGridSamples(plans []gridStepPlan, available, geometryLimit int) error {
+func fitBoardSamples(plans []boardTransitionPlan, available, geometryLimit int) error {
 	extraNeeded := 0
 	geometryLeft := int64(geometryLimit)
 	var extraGeometry int64
@@ -92,7 +198,7 @@ func fitGridSamples(plans []gridStepPlan, available, geometryLimit int) error {
 		extraGeometry += int64(extra) * int64(p.cost)
 	}
 	if geometryLeft < 0 {
-		return fmt.Errorf("grid animation exceeds the limit of %d sampled geometry elements", geometryLimit)
+		return fmt.Errorf("animation exceeds the limit of %d sampled geometry elements", geometryLimit)
 	}
 	extraAvailable := min(extraNeeded, available-len(plans))
 	var remainder int64
@@ -122,27 +228,27 @@ func fitGridSamples(plans []gridStepPlan, available, geometryLimit int) error {
 	return nil
 }
 
-func planGridStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph, duration int) (gridStepPlan, bool) {
+func planGridStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph) (*gridMotion, int) {
 	// A folder contributes no playback slot. An explicitly empty grid, or a
 	// step removing the last cell, does have an observable animation state.
 	if prev.IsFolderOnly && (len(prev.Shapes) != 0 || !prevGraph.Root.IsGridDiagram()) {
-		return gridStepPlan{}, false
+		return nil, 0
 	}
 	if next.IsFolderOnly && len(next.Shapes) != 0 {
-		return gridStepPlan{}, false
+		return nil, 0
 	}
 	motion := newGridMotion(prev, next, prevGraph, nextGraph)
 	if motion == nil {
-		return gridStepPlan{}, false
+		return nil, 0
 	}
 	cost := gridFrameElements(prev) + gridFrameElements(next)
 	if motion.handoffs != nil {
 		cost += 3 * len(motion.handoffs.pairs)
 	}
-	return gridStepPlan{board: next, motion: motion, bounds: motion.sampleBoundaries(duration, len(next.TweenFrames)), cost: cost}, true
+	return motion, cost
 }
 
-func (p gridStepPlan) sample(ctx context.Context, duration int) error {
+func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 	frames := make([]*d2target.Diagram, len(p.bounds)-1)
 	for i, ms := range p.bounds[:len(frames)] {
 		if err := ctx.Err(); err != nil {
@@ -153,12 +259,36 @@ func (p gridStepPlan) sample(ctx context.Context, duration int) error {
 		base := p.board
 		if len(base.TweenFrames) != 0 {
 			// Uniform style sample j starts at floor(j*duration/n).
-			j := ((ms+1)*len(base.TweenFrames) - 1) / duration
-			base = base.TweenFrames[j]
+			var j int
+			if len(base.TweenFrameEndsMS) > 0 {
+				j = sort.SearchInts(base.TweenFrameEndsMS, ms+1)
+			} else {
+				j = int((int64(ms+1)*int64(len(base.TweenFrames)) - 1) / int64(base.TweenDurationMS))
+			}
+			if j < len(base.TweenFrames) {
+				base = base.TweenFrames[j]
+			}
 		}
-		frames[i] = p.motion.sample(base, ms, duration)
+		if p.motion != nil {
+			frames[i] = p.motion.sample(base, ms, duration)
+		} else {
+			sample := *base
+			sample.Layers, sample.Scenarios, sample.Steps, sample.TweenFrames = nil, nil, nil, nil
+			sample.TweenDurationMS, sample.TweenFrameEndsMS, sample.GridMotion = 0, nil, false
+			if len(p.ink.shapes) != 0 {
+				sample.Shapes = slices.Clone(base.Shapes)
+			}
+			frames[i] = &sample
+		}
+		if p.ink != nil {
+			// Grid motion may share an unchanged edge slice with its authored endpoint.
+			if len(p.ink.edges) > 0 {
+				frames[i].Connections = slices.Clone(frames[i].Connections)
+			}
+			p.ink.apply(frames[i], float64(ms)/float64(duration))
+		}
 	}
-	p.board.TweenFrames, p.board.TweenDurationMS, p.board.GridMotion = frames, duration, true
+	p.board.TweenFrames, p.board.TweenDurationMS, p.board.GridMotion = frames, duration, p.motion != nil || p.board.GridMotion
 	p.board.TweenFrameEndsMS = p.bounds[1:]
 	return nil
 }

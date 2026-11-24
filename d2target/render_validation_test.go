@@ -1,6 +1,8 @@
 package d2target
 
 import (
+	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 )
@@ -79,6 +81,44 @@ func TestValidateRenderTargetTweenFrames(t *testing.T) {
 	for i, diagram := range invalid {
 		if err := ValidateRenderTarget(diagram); err == nil {
 			t.Errorf("accepted invalid tween target %d", i)
+		}
+	}
+}
+
+func TestValidateRenderInk(t *testing.T) {
+	progress := 0.5
+	shape := *BaseShape()
+	shape.SketchFillTransition = &SketchFillTransition{From: "N2", To: "transparent", Progress: progress}
+	shape.UnderlineProgress = &progress
+	shape.MarkdownStrike = &MarkdownStrikeTransition{From: "previous", Progress: progress}
+	target := &Diagram{Shapes: []Shape{shape}}
+	raw, err := json.Marshal(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Diagram
+	if err := json.Unmarshal(raw, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRenderTarget(&roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	restored := roundTrip.Shapes[0]
+	if restored.UnderlineProgress == nil || *restored.UnderlineProgress != progress || restored.MarkdownStrike == nil || *restored.MarkdownStrike != *shape.MarkdownStrike || restored.SketchFillTransition == nil || *restored.SketchFillTransition != *shape.SketchFillTransition {
+		t.Fatal("lost ink in render target JSON")
+	}
+	for _, edit := range []func(*Shape){
+		func(s *Shape) { s.SketchFillTransition.Progress = math.NaN() },
+		func(s *Shape) { s.SketchFillTransition.To = "bogus" },
+		func(s *Shape) { *s.UnderlineProgress = math.Inf(-1) },
+		func(s *Shape) { s.MarkdownStrike.Progress = 1.01 },
+	} {
+		if err := json.Unmarshal(raw, &roundTrip); err != nil {
+			t.Fatal(err)
+		}
+		edit(&roundTrip.Shapes[0])
+		if err := ValidateRenderTarget(&roundTrip); err == nil {
+			t.Error("invalid ink sample accepted")
 		}
 	}
 }

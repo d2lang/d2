@@ -304,6 +304,14 @@ func validateMotionClip(c *MotionClip, path string) error {
 }
 
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
+	if t := targetShape.SketchFillTransition; t != nil {
+		if !validSketchFillPaint(t.From) || !validSketchFillPaint(t.To) {
+			return fmt.Errorf("render target %s sketchFillTransition requires solid fills", path)
+		}
+		if err := validateInkProgress(path, "sketchFillTransition.progress", t.Progress); err != nil {
+			return err
+		}
+	}
 	if !finiteRenderNumber(targetShape.MotionScale) || targetShape.MotionScale < 0 || targetShape.MotionScale > 1 {
 		return invalidRenderField(path, "motionScale", targetShape.MotionScale, "must be between zero and one")
 	}
@@ -397,7 +405,24 @@ func validateRenderDash(path string, dash float64, strokeWidth int) error {
 	return nil
 }
 
+func validateInkProgress(path, field string, progress float64) error {
+	if !(progress >= 0 && progress <= 1) {
+		return invalidRenderField(path, field, progress, "must be finite and within [0,1]")
+	}
+	return nil
+}
+
 func validateRenderTextNumbers(path, prefix string, text Text) error {
+	if p := text.UnderlineProgress; p != nil {
+		if err := validateInkProgress(path, prefix+"underlineProgress", *p); err != nil {
+			return err
+		}
+	}
+	if t := text.MarkdownStrike; t != nil {
+		if err := validateInkProgress(path, prefix+"markdownStrike.progress", t.Progress); err != nil {
+			return err
+		}
+	}
 	for _, field := range []struct {
 		name  string
 		value int

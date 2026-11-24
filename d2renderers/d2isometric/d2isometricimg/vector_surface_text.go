@@ -151,7 +151,8 @@ func (w *nativeSurfaceSVGWriter) text(run d2scene.TextRun, depth int) string {
 		}
 		w.append(&body, w.glyph(face, g.ID, ppem, origin, run.Fill, run.Stroke, depth+1))
 	}
-	if (run.Underline || run.Strike) && advance > 0 {
+	underline := d2scene.UnderlineFraction(run.Underline, run.UnderlineProgress)
+	if (underline > 0 || run.Strike) && advance > 0 {
 		var buffer sfnt.Buffer
 		metrics, err := primary.Outline.Metrics(&buffer, ppem, font.HintingNone)
 		if err != nil {
@@ -160,18 +161,18 @@ func (w *nativeSurfaceSVGWriter) text(run d2scene.TextRun, depth int) string {
 		}
 		scale := w.transform.MaxScale()
 		thickness := max(run.Font.Size/16, 1/max(1e-12, scale))
-		add := func(top float64) {
-			w.append(&body, w.primitive(d2scene.Rect{Box: d2scene.Box{X: run.Origin.X + anchor, Y: top, Width: advance, Height: thickness}, Fill: run.Fill}, depth+1))
+		add := func(top, width float64) {
+			w.append(&body, w.primitive(d2scene.Rect{Box: d2scene.Box{X: run.Origin.X + anchor, Y: top, Width: width, Height: thickness}, Fill: run.Fill}, depth+1))
 		}
-		if run.Underline {
-			add(run.Origin.Y + max(run.Font.Size/12, float64(metrics.Descent)/64*.25))
+		if underline > 0 {
+			add(run.Origin.Y+max(run.Font.Size/12, float64(metrics.Descent)/64*.25), advance*underline)
 		}
 		if run.Strike {
 			xHeight := float64(metrics.XHeight) / 64
 			if xHeight <= 0 {
 				xHeight = run.Font.Size * .5
 			}
-			add(run.Origin.Y - xHeight/2 - thickness/2)
+			add(run.Origin.Y-xHeight/2-thickness/2, advance)
 		}
 	}
 	return body.String()

@@ -69,10 +69,10 @@ func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, 0, 0)
 	pathEl := d2themes.NewThemableElement("path", nil)
 	pathEl.SetTranslate(float64(shape.Pos.X), float64(shape.Pos.Y))
-	pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+	pathEl.Fill, pathEl.Stroke = paint, stroke
 	pathEl.FillPattern = shape.FillPattern
 	pathEl.ClassName = "shape"
 	pathEl.Style = shape.CSSStyle()
@@ -95,7 +95,7 @@ func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 		sketchOEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
-	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, pathEl.Fill).Render()
+	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, TexturePaint(shape, pathEl.Fill)).Render()
 	if err != nil {
 		return "", err
 	}
@@ -118,11 +118,11 @@ func DoubleRect(shape d2target.Shape, diagramHash string) (string, error) {
 		return "", err
 	}
 
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, 0, 0)
 
 	pathEl := d2themes.NewThemableElement("path", nil)
 	pathEl.SetTranslate(float64(shape.Pos.X), float64(shape.Pos.Y))
-	pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+	pathEl.Fill, pathEl.Stroke = paint, stroke
 	pathEl.FillPattern = shape.FillPattern
 	pathEl.ClassName = "shape"
 	pathEl.Style = shape.CSSStyle()
@@ -162,7 +162,7 @@ func DoubleRect(shape d2target.Shape, diagramHash string) (string, error) {
 		sketchOEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
-	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, shape.Fill).Render()
+	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, TexturePaint(shape, shape.Fill)).Render()
 	if err != nil {
 		return "", err
 	}
@@ -179,10 +179,10 @@ func Oval(shape d2target.Shape, diagramHash string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, 0, 0)
 	pathEl := d2themes.NewThemableElement("path", nil)
 	pathEl.SetTranslate(float64(shape.Pos.X), float64(shape.Pos.Y))
-	pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+	pathEl.Fill, pathEl.Stroke = paint, stroke
 	pathEl.FillPattern = shape.FillPattern
 	pathEl.ClassName = "shape"
 	pathEl.Style = shape.CSSStyle()
@@ -207,7 +207,7 @@ func Oval(shape d2target.Shape, diagramHash string) (string, error) {
 
 	renderedSO, err := d2themes.NewThemableSketchOverlay(
 		soElement,
-		pathEl.Fill,
+		TexturePaint(shape, pathEl.Fill),
 	).Render()
 	if err != nil {
 		return "", err
@@ -234,11 +234,11 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 		return "", err
 	}
 
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, 0, 0)
 
 	pathEl := d2themes.NewThemableElement("path", nil)
 	pathEl.SetTranslate(float64(shape.Pos.X), float64(shape.Pos.Y))
-	pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+	pathEl.Fill, pathEl.Stroke = paint, stroke
 	pathEl.FillPattern = shape.FillPattern
 	pathEl.ClassName = "shape"
 	pathEl.Style = shape.CSSStyle()
@@ -279,7 +279,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 
 	renderedSO, err := d2themes.NewThemableSketchOverlay(
 		soElement,
-		shape.Fill,
+		TexturePaint(shape, shape.Fill),
 	).Render()
 	if err != nil {
 		return "", err
@@ -291,7 +291,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 
 // TODO need to personalize this per shape like we do in Terrastruct app
 func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, error) {
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, shape.Pos.X, shape.Pos.Y)
 	for _, path := range paths {
 		g := newGenerator()
 		sketchPaths, err := computeRoughPathData(g, g.Path(path, baseOptions(float64(shape.StrokeWidth))))
@@ -299,7 +299,7 @@ func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, er
 			return "", err
 		}
 		pathEl := d2themes.NewThemableElement("path", nil)
-		pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+		pathEl.Fill, pathEl.Stroke = paint, stroke
 		pathEl.FillPattern = shape.FillPattern
 		pathEl.ClassName = "shape"
 		pathEl.Style = shape.CSSStyle()
@@ -323,7 +323,7 @@ func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, er
 			soElement.D = p
 			renderedSO, err := d2themes.NewThemableSketchOverlay(
 				soElement,
-				pathEl.Fill,
+				TexturePaint(shape, pathEl.Fill),
 			).Render()
 			if err != nil {
 				return "", err

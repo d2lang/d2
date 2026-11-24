@@ -503,14 +503,6 @@ func render(input RenderRequest) ([]byte, error) {
 		renderOpts.Salt = input.Opts.Salt
 	}
 
-	if animateInterval > 0 {
-		masterID, err := diagram.HashID(renderOpts.Salt)
-		if err != nil {
-			return nil, &WASMError{Message: fmt.Sprintf("cannot process animate interval: %s", err.Error()), Code: 500}
-		}
-		renderOpts.MasterID = masterID
-	}
-
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err.Error()), Code: 500}
@@ -591,6 +583,20 @@ func render(input RenderRequest) ([]byte, error) {
 	if animateInterval == 0 {
 		return renderSingleBoard(renderOpts, forceAppendix, ruler, diagram)
 	}
+	// An animated subtree includes its first board's incoming transition.
+	// Late sketch needs the original playback order to find its predecessor.
+	config := input.Diagram.Config
+	if !noChildren && renderOpts.Sketch != nil && *renderOpts.Sketch && config != nil &&
+		(config.Sketch == nil || !*config.Sketch) && config.AnimateDuration != nil && *config.AnimateDuration > 0 {
+		if err := d2lib.PrepareSketchTransitions(context.Background(), input.Diagram, *config.AnimateDuration); err != nil {
+			return nil, &WASMError{Message: fmt.Sprintf("cannot prepare sketch animation: %s", err), Code: 400}
+		}
+	}
+	masterID, err := diagram.HashID(renderOpts.Salt)
+	if err != nil {
+		return nil, &WASMError{Message: fmt.Sprintf("cannot process animate interval: %s", err.Error()), Code: 500}
+	}
+	renderOpts.MasterID = masterID
 	frames, err := d2animate.Timeline(diagram, animateInterval)
 	if err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid timeline: %s", err), Code: 400}

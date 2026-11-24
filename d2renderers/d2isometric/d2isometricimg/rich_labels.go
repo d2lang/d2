@@ -178,6 +178,11 @@ func richSourceSize(s d2target.Shape) (int, int, error) {
 	if err := add(s.Label); err != nil {
 		return 0, 0, err
 	}
+	if strike := s.MarkdownStrike; strike != nil {
+		if err := add(strike.From); err != nil {
+			return 0, 0, err
+		}
+	}
 	for _, f := range s.Fields {
 		for _, value := range []string{f.Name, f.Type, f.Visibility} {
 			if err := add(value); err != nil {

@@ -182,11 +182,11 @@ func TestFontCorporaGeneratedCode(t *testing.T) {
 func TestFontCorporaNativeMarkdownPrimitives(t *testing.T) {
 	for _, baseFont := range []string{"", "mono"} {
 		renderer := newMarkdownRenderer(nil, nil, nil)
-		layout, err := renderer.layout("# Heading Ω\n\n- plain &amp; **bold** *italic* ***both***\n- `code` **`strong code`**\n\n| A | B |\n| - | - |\n| é | Ж |", baseFont, 16)
+		layout, err := renderer.layout("# Heading Ω\n\n- plain &amp; **bold** *italic* ***both***\n- `code` **`strong code`**\n\n| A | B |\n| - | - |\n| é | Ж |", baseFont, 16, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, ok := collectFontCorpora(renderer.render(layout, 0, 0, layout.Width, layout.Height, "#000", "", false, false))
+		got, ok := collectFontCorpora(renderer.render(layout, 0, 0, layout.Width, layout.Height, "#000", "", false, false, nil))
 		if !ok {
 			t.Fatal("generated native Markdown requested fallback")
 		}

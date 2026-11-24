@@ -39,6 +39,7 @@ type labelTextStyle struct {
 	Width, Depth, FontSize, PixelScale float64
 	FontFamily                         string
 	Bold, Italic, Underline            bool
+	UnderlineProgress                  *float64
 	Color                              color.NRGBA
 	Background                         *color.NRGBA
 	ForegroundPaint, BackgroundPaint   d2scene.Paint
@@ -339,8 +340,10 @@ func (p *textPainter) texture(value string, style labelTextStyle) (*image.RGBA, 
 				record(d2scene.ClosePath())
 			}
 		}
-		if style.Underline && line.maxX > line.minX {
+		underline := d2scene.UnderlineFraction(style.Underline, style.UnderlineProgress)
+		if underline > 0 && line.maxX > line.minX {
 			left, right := x+float64(line.minX*unitScale), x+float64(line.maxX*unitScale)
+			right = left + (right-left)*underline
 			top, bottom := y+float64(fontPixels*.10), y+float64(fontPixels*.15)
 			left, right = left*drawScaleX, right*drawScaleX
 			top, bottom = top*drawScaleY, bottom*drawScaleY

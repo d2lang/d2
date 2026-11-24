@@ -185,3 +185,34 @@ func (w *objectWriter) metadata(source string) (fontCorpora, map[string]bool) {
 	}
 	return fonts, w.usage.classes
 }
+
+// Let the browser draw the same underline (including descender gaps) as the
+// static label. Each centered line gets its own font-relative clip.
+func (w *objectWriter) animatedUnderline(el *d2themes.ThemableElement, text string, height float64, progress *float64) {
+	if progress == nil {
+		w.label(el, text, height)
+		return
+	}
+	el.ClassName = strings.ReplaceAll(el.ClassName, " text-underline", "")
+	if *progress <= 0 || *progress >= 1 {
+		if *progress >= 1 {
+			el.ClassName += " text-underline"
+		}
+		w.label(el, text, height)
+		return
+	}
+	decoratedClip, plainClip := svg.UnderlineClips(*progress)
+	plain := el.Copy()
+	plain.Style += ";clip-path:" + plainClip
+	ink := el.Copy()
+	ink.ClassName += " text-underline"
+	ink.Style += ";clip-path:" + decoratedClip + ";pointer-events:none;user-select:none"
+	ink.AddAttributes(svg.Attr("aria-hidden", "true"))
+	lineHeight := height / float64(1+strings.Count(text, "\n"))
+	for line := range strings.SplitSeq(text, "\n") {
+		w.text(plain, line)
+		w.text(ink, line)
+		plain.Y += lineHeight
+		ink.Y += lineHeight
+	}
+}

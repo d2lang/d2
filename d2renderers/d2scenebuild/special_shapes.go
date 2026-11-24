@@ -101,7 +101,7 @@ func (b *builder) buildClassContents(targetShape d2target.Shape, box d2scene.Box
 		headerRuns := centeredTextRuns(
 			headerID, targetShape.Label, topLeft,
 			targetShape.LabelWidth, targetShape.LabelHeight, targetShape.FontSize,
-			font, fill, false,
+			font, fill, false, nil,
 		)
 		// Preserve the historical single-line scene ID while assigning stable,
 		// unique suffixes to additional multiline baselines.

@@ -319,7 +319,7 @@ func (b *meshBuilder) printStyle(s labelSurface, style d2target.Text, ink string
 			ink = readableSurfaceInk(style.LabelFill, opacity)
 		}
 	}
-	result := labelTextStyle{Foreground: ink, Width: s.width, Depth: s.depth, FontSize: fontSize, PixelScale: b.scale, FontFamily: style.FontFamily, Bold: style.Bold, Italic: style.Italic, Underline: style.Underline, Color: nativePaint(ink, "#253650"), Background: bg, Opacity: opacity, Align: s.align, MaxLines: 64}
+	result := labelTextStyle{Foreground: ink, Width: s.width, Depth: s.depth, FontSize: fontSize, PixelScale: b.scale, FontFamily: style.FontFamily, Bold: style.Bold, Italic: style.Italic, Underline: style.Underline, UnderlineProgress: style.UnderlineProgress, Color: nativePaint(ink, "#253650"), Background: bg, Opacity: opacity, Align: s.align, MaxLines: 64}
 	for _, entry := range []struct {
 		raw   string
 		paint *d2scene.Paint

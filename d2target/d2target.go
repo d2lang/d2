@@ -799,6 +799,13 @@ type MotionClip struct {
 	Height int `json:"height"`
 }
 
+// SketchFillTransition describes the pencil shading on one sampled frame.
+type SketchFillTransition struct {
+	From     string  `json:"from"`
+	To       string  `json:"to"`
+	Progress float64 `json:"progress"`
+}
+
 type Shape struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
@@ -820,9 +827,10 @@ type Shape struct {
 
 	BorderRadius int `json:"borderRadius"`
 
-	Fill        string `json:"fill"`
-	FillPattern string `json:"fillPattern,omitempty"`
-	Stroke      string `json:"stroke"`
+	Fill                 string                `json:"fill"`
+	FillPattern          string                `json:"fillPattern,omitempty"`
+	SketchFillTransition *SketchFillTransition `json:"sketchFillTransition,omitempty"`
+	Stroke               string                `json:"stroke"`
 
 	Animated     bool `json:"animated"`
 	Shadow       bool `json:"shadow"`
@@ -858,6 +866,22 @@ type Shape struct {
 	PrimaryAccentColor   string `json:"primaryAccentColor,omitempty"`
 	SecondaryAccentColor string `json:"secondaryAccentColor,omitempty"`
 	NeutralAccentColor   string `json:"neutralAccentColor,omitempty"`
+}
+
+// CanShadeSketchFill reports whether the shape has a single solid sketch surface.
+func (s *Shape) CanShadeSketchFill() bool {
+	if s.ThreeDee || s.Multiple || (s.FillPattern != "" && s.FillPattern != "none") {
+		return false
+	}
+	switch s.Type {
+	case ShapeText, ShapeCode, ShapeImage, ShapeClass, ShapeSQLTable:
+		return false
+	}
+	return validSketchFillPaint(s.Fill)
+}
+
+func validSketchFillPaint(paint string) bool {
+	return color.IsThemeColor(paint) || (!color.IsGradient(paint) && color.ValidColor(paint))
 }
 
 func (s Shape) GetFontColor() string {
@@ -921,6 +945,12 @@ func (s Shape) AppendixLinkText() string {
 	return s.Link
 }
 
+// MarkdownStrikeTransition retains the previous markup when only strikethrough spans change.
+type MarkdownStrikeTransition struct {
+	From     string  `json:"from"`
+	Progress float64 `json:"progress"`
+}
+
 type Text struct {
 	Label      string `json:"label"`
 	FontSize   int    `json:"fontSize"`
@@ -931,6 +961,9 @@ type Text struct {
 	Italic    bool `json:"italic"`
 	Bold      bool `json:"bold"`
 	Underline bool `json:"underline"`
+	// UnderlineProgress is the visible fraction of the underline on a sampled frame.
+	UnderlineProgress *float64                  `json:"underlineProgress,omitempty"`
+	MarkdownStrike    *MarkdownStrikeTransition `json:"markdownStrike,omitempty"`
 
 	LabelWidth  int    `json:"labelWidth"`
 	LabelHeight int    `json:"labelHeight"`
