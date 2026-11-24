@@ -29,6 +29,40 @@ func (f FontFamily) Font(size int, style FontStyle) Font {
 	}
 }
 
+const woffDataPrefix = "data:application/font-woff;base64,"
+
+// Some bundled data URLs historically contain a TTF with a WOFF MIME type.
+// Index by the original URL so callers overriding FontEncodings retain exactly
+// their registered value. Only bundled data is cached.
+var fullWoffEncodings = map[string]func() string{}
+
+func registerFullWoffEncoding(uri string) {
+	if !strings.HasPrefix(uri, woffDataPrefix+"AAEA") {
+		return
+	}
+	fullWoffEncodings[uri] = sync.OnceValue(func() string {
+		ttf, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(uri, woffDataPrefix))
+		if err != nil {
+			return uri
+		}
+		woff, err := font.Sfnt2Woff(ttf)
+		if err != nil {
+			return uri
+		}
+		return woffDataPrefix + base64.StdEncoding.EncodeToString(woff)
+	})
+}
+
+// GetEncodedFull returns the complete embedded face, including its shaping
+// tables, in a compressed WOFF when one is available.
+func (f Font) GetEncodedFull() string {
+	uri := FontEncodings.Get(f)
+	if compressed := fullWoffEncodings[uri]; compressed != nil {
+		return compressed()
+	}
+	return uri
+}
+
 func (f Font) GetEncodedSubset(corpus string) string {
 	var unique strings.Builder
 	uniqueMap := make(map[rune]bool)
@@ -56,7 +90,7 @@ func (f Font) GetEncodedSubset(corpus string) string {
 	fontBuf, err := font.SubsetWOFF(face, uniqueChars)
 	if err != nil {
 		// If subset fails, return full encoding
-		return FontEncodings.Get(f)
+		return f.GetEncodedFull()
 	}
 
 	encoded := fmt.Sprintf("data:application/font-woff;base64,%v", base64.StdEncoding.EncodeToString(fontBuf))

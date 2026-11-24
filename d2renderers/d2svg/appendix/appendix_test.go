@@ -172,7 +172,8 @@ func run(t *testing.T, tc testCase) {
 
 	svgBytes, err := d2svg.Render(diagram, renderOpts)
 	assert.Success(t, err)
-	svgBytes = appendix.Append(diagram, nil, ruler, svgBytes)
+	svgBytes, err = appendix.AppendRendered(diagram, renderOpts, ruler, svgBytes)
+	assert.Success(t, err)
 
 	err = os.MkdirAll(dataPath, 0755)
 	assert.Success(t, err)
