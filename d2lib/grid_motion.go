@@ -303,6 +303,13 @@ func (item *gridMotionItem) position(t float64) d2target.Point {
 }
 
 func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel float64) d2target.Shape {
+	// A concurrent numeric tween can produce a separately laid-out paint
+	// sample. Grow around the incoming board's slot even when that sample
+	// places a neighbor at a different width. Removed cells already come
+	// from the outgoing board.
+	if item.to != nil {
+		s.Pos, s.Width, s.Height = item.to.Pos, item.to.Width, item.to.Height
+	}
 	p := item.pivot
 	cx, cy := float64(p.Pos.X)+float64(p.Width)/2, float64(p.Pos.Y)+float64(p.Height)/2
 	x := cx + (float64(s.Pos.X)-cx)*scale

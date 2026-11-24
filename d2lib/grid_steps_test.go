@@ -76,6 +76,36 @@ layers: {separate: {grid-columns: 1; a; b; steps: {expand: {c}}}}
 	}
 }
 
+func TestGridPopUsesAuthoredSlotDuringConcurrentResize(t *testing.T) {
+	board, _ := compileGridMotionTest(t, `vars: {d2-config: {animate-interval: 1200ms; animate-duration: 900ms}}
+grid-rows: 1
+grid-columns: 3
+grid-gap: 10
+a: A {width: 80; height: 46}
+b: B {width: 80; height: 46}
+steps: {expand: {a.width: 380; c: C {width: 80; height: 46}}}`)
+	next := board.Steps[0]
+	target := shapeByID(t, next, "c")
+	centerX := 2*target.Pos.X + target.Width
+	grew := false
+	for i, frame := range next.TweenFrames {
+		for _, cell := range frame.Shapes {
+			if cell.ID != target.ID {
+				continue
+			}
+			// Width and x are independently rounded to whole pixels.
+			delta := 2*cell.Pos.X + cell.Width - centerX
+			if delta < -1 || delta > 1 {
+				t.Fatalf("frame %d: incoming cell left its slot by %.1fpx", i, float64(delta)/2)
+			}
+			grew = grew || cell.Width < target.Width
+		}
+	}
+	if !grew {
+		t.Fatal("expected an intermediate arrival")
+	}
+}
+
 func TestGridStepCanStartAndFinishEmpty(t *testing.T) {
 	const input = `vars: {d2-config: {animate-interval: 300ms; animate-duration: 200ms}}
 grid-columns: 2
