@@ -19,7 +19,7 @@
         "x": 0,
         "y": 0
       },
-      "width": 668,
+      "width": 608,
       "height": 583,
       "opacity": 1,
       "strokeDash": 0,
@@ -184,7 +184,7 @@
       "id": "build_workflow.Terraform",
       "type": "rectangle",
       "pos": {
-        "x": 450,
+        "x": 390,
         "y": 253
       },
       "width": 158,
@@ -226,7 +226,7 @@
       "id": "build_workflow.AWS",
       "type": "rectangle",
       "pos": {
-        "x": 482,
+        "x": 422,
         "y": 446
       },
       "width": 95,
@@ -268,7 +268,7 @@
       "id": "deploy_workflow",
       "type": "rectangle",
       "pos": {
-        "x": 688,
+        "x": 628,
         "y": 0
       },
       "width": 331,
@@ -310,7 +310,7 @@
       "id": "deploy_workflow.manual",
       "type": "rectangle",
       "pos": {
-        "x": 748,
+        "x": 688,
         "y": 60
       },
       "width": 211,
@@ -352,7 +352,7 @@
       "id": "deploy_workflow.GHA",
       "type": "rectangle",
       "pos": {
-        "x": 749,
+        "x": 689,
         "y": 271
       },
       "width": 209,
@@ -394,7 +394,7 @@
       "id": "deploy_workflow.AWS",
       "type": "rectangle",
       "pos": {
-        "x": 806,
+        "x": 746,
         "y": 482
       },
       "width": 95,
@@ -436,7 +436,7 @@
       "id": "apollo_workflow",
       "type": "rectangle",
       "pos": {
-        "x": 1039,
+        "x": 979,
         "y": 0
       },
       "width": 329,
@@ -478,7 +478,7 @@
       "id": "apollo_workflow.apollo",
       "type": "rectangle",
       "pos": {
-        "x": 1115,
+        "x": 1055,
         "y": 60
       },
       "width": 178,
@@ -520,7 +520,7 @@
       "id": "apollo_workflow.GHA",
       "type": "rectangle",
       "pos": {
-        "x": 1099,
+        "x": 1039,
         "y": 269
       },
       "width": 209,
@@ -562,7 +562,7 @@
       "id": "apollo_workflow.AWS",
       "type": "rectangle",
       "pos": {
-        "x": 1156,
+        "x": 1096,
         "y": 478
       },
       "width": 95,
@@ -701,7 +701,7 @@
       "underline": false,
       "labelWidth": 149,
       "labelHeight": 26,
-      "labelPosition": "OUTSIDE_TOP_CENTER",
+      "labelPosition": "OUTSIDE_BOTTOM_LEFT",
       "labelPercentage": 0,
       "link": "",
       "route": [
@@ -710,15 +710,15 @@
           "y": 484
         },
         {
-          "x": 375,
+          "x": 345,
           "y": 484
         },
         {
-          "x": 375,
+          "x": 345,
           "y": 291
         },
         {
-          "x": 450,
+          "x": 390,
           "y": 291
         }
       ],
@@ -753,11 +753,11 @@
       "link": "",
       "route": [
         {
-          "x": 529,
+          "x": 469,
           "y": 330
         },
         {
-          "x": 529,
+          "x": 469,
           "y": 446
         }
       ],
@@ -792,11 +792,11 @@
       "link": "",
       "route": [
         {
-          "x": 853,
+          "x": 793,
           "y": 137
         },
         {
-          "x": 853,
+          "x": 793,
           "y": 271
         }
       ],
@@ -831,11 +831,11 @@
       "link": "",
       "route": [
         {
-          "x": 853,
+          "x": 793,
           "y": 348
         },
         {
-          "x": 853,
+          "x": 793,
           "y": 482
         }
       ],
@@ -870,11 +870,11 @@
       "link": "",
       "route": [
         {
-          "x": 1204,
+          "x": 1144,
           "y": 137
         },
         {
-          "x": 1204,
+          "x": 1144,
           "y": 269
         }
       ],
@@ -909,11 +909,11 @@
       "link": "",
       "route": [
         {
-          "x": 1203,
+          "x": 1143,
           "y": 346
         },
         {
-          "x": 1203,
+          "x": 1143,
           "y": 478
         }
       ],
