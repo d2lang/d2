@@ -110,17 +110,19 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		width, height, left, top, width, height)
 	fmt.Fprint(buf, innerOpening)
 
-	var source strings.Builder
-	for _, svg := range svgs {
-		source.Write(svg)
-		source.WriteByte(' ')
-	}
-	svgsStr := source.String()
-
 	diagramHash, err := rootDiagram.HashID(renderOpts.Salt)
 	if err != nil {
 		return nil, err
 	}
+
+	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
+	var source strings.Builder
+	source.Write(defs)
+	for _, frame := range svgs {
+		source.Write(frame)
+		source.WriteByte(' ')
+	}
+	svgsStr := source.String()
 
 	d2svg.EmbedFonts(buf, diagramHash, svgsStr, rootDiagram.FontFamily, rootDiagram.MonoFontFamily, rootDiagram.GetNestedCorpus())
 
@@ -157,6 +159,8 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		startMS += duration
 	}
 	fmt.Fprint(buf, `]]></style>`)
+
+	buf.Write(defs)
 
 	timing := ""
 	if !uniform || len(svgs) > 100 {

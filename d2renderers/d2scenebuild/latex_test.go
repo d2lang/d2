@@ -108,6 +108,24 @@ func TestBuildLatexUsesIntrinsicViewportAndPlacement(t *testing.T) {
 	}
 }
 
+func TestBuildLatexUsesSampledScaleAroundLabelOrigin(t *testing.T) {
+	diagram := validDiagram()
+	shape := &diagram.Shapes[0]
+	shape.Text = d2target.Text{Label: "x^2", Language: "latex", LabelWidth: 12, LabelHeight: 8}
+	shape.LabelPosition = "INSIDE_MIDDLE_CENTER"
+	shape.MotionScale = .5
+	document, err := Build(context.Background(), diagram, Options{Assets: testAssetOptions(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := findSceneNode(t, document.Root, "a:label:0").Primitive.(d2scene.Image)
+	full := document.Assets[image.Asset].(d2scene.VectorAsset).ViewBox
+	anchor := latexShapeLabelTopLeft(*shape)
+	if image.Box.X != anchor.X || image.Box.Y != anchor.Y || image.Box.Width != full.Width/2 || image.Box.Height != full.Height/2 {
+		t.Fatalf("sampled formula box = %+v, want half of %+v at %v", image.Box, full, anchor)
+	}
+}
+
 func TestBuildLatexResolvesCurrentColorWithoutOverridingExplicitColor(t *testing.T) {
 	formula := `\textcolor{red}{y} = x`
 	width, height, err := d2latex.Measure(formula)

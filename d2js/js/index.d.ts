@@ -87,7 +87,7 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
-  /** Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
+  /** Milliseconds to animate numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps (0–600000, default 0). Overrides vars.d2-config.animate-duration at compile time. */
   animateDuration?: number;
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";
@@ -136,8 +136,11 @@ export interface Diagram {
   layers?: (Diagram | undefined)[];
   scenarios?: (Diagram | undefined)[];
   steps?: (Diagram | undefined)[];
-  /** Intermediate samples of this step’s incoming variable tween. */
+  /** Samples of the incoming step transition. */
   tweenFrames?: Diagram[];
+  /** Exclusive millisecond end offsets for nonuniform samples. Omitted for uniform timing. */
+  tweenFrameEndsMS?: number[];
+  gridMotion?: boolean;
   tweenDurationMS?: number;
 }
 
@@ -149,6 +152,9 @@ export interface Legend {
 export type Shape = (Class | SQLTable | Text) & ShapeBase;
 
 export interface ShapeBase {
+  motionClip?: MotionClip;
+  motionLabelTopLeft?: Point;
+  motionScale?: number;
   id: string;
   type: string;
   classes?: string[];
@@ -194,6 +200,11 @@ export interface Point {
   y: number /* int */;
 }
 
+export interface MotionClip extends Point {
+  width: number;
+  height: number;
+}
+
 export interface Class {
   fields: ClassField[];
   methods: ClassMethod[];
@@ -237,6 +248,7 @@ export interface Text {
 }
 
 export interface Connection extends Text {
+  motionClip?: MotionClip;
   id: string;
   classes?: string[];
   src: string;

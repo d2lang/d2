@@ -454,7 +454,7 @@ func renderLegendShapeIcon(s d2target.Shape, x, y int, diagramHash string, theme
 	finalBuf := &bytes.Buffer{}
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
-	_, err := drawShape(&objectWriter{buf: buf}, appendixBuf, diagramHash, iconShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawShape(&objectWriter{buf: buf}, appendixBuf, diagramHash, diagramHash, iconShape, false, theme, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -1028,7 +1028,19 @@ func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, label
 	)
 }
 
+func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
+	// Identical viewBox and viewport coordinates clip without translating
+	// the child. This also avoids document-wide clip IDs in animated SVGs.
+	fmt.Fprint(writer, svg.OpenElement("svg",
+		svg.IntAttr("x", c.X), svg.IntAttr("y", c.Y), svg.IntAttr("width", c.Width), svg.IntAttr("height", c.Height),
+		svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", c.X, c.Y, c.Width, c.Height)), svg.Attr("overflow", "hidden")))
+}
+
 func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+	if c := connection.MotionClip; c != nil {
+		openMotionViewport(writer, c)
+		defer writer.buf.WriteString("</svg>")
+	}
 	classes := []string{base64.URLEncoding.EncodeToString([]byte(svg.EscapeText(connection.ID)))}
 	classes = append(classes, connection.Classes...)
 	opacityStyle := ""
@@ -1663,8 +1675,12 @@ func render3DHexagon(diagramHash string, targetShape d2target.Shape, inlineTheme
 	return borderMask + mainShapeRendered + renderedSides + renderedBorder
 }
 
-func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash string, targetShape d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, err error) {
+func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, resourceHash string, targetShape d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, err error) {
 	closingTag := "</g>"
+	if c := targetShape.MotionClip; c != nil {
+		openMotionViewport(writer, c)
+		defer writer.buf.WriteString("</svg>")
+	}
 	if targetShape.Link != "" {
 		fmt.Fprint(writer, svg.OpenElement("a", svg.HrefAttributes(targetShape.Link)...))
 		closingTag += "</a>"
@@ -1672,14 +1688,14 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 
 	// this clipPath must be defined outside `g` element
 	if targetShape.BorderRadius != 0 && (targetShape.Type == d2target.ShapeClass || targetShape.Type == d2target.ShapeSQLTable) {
-		fmt.Fprint(writer, clipPathForBorderRadius(diagramHash, targetShape))
+		fmt.Fprint(writer, clipPathForBorderRadius(resourceHash, targetShape))
 	}
 	var iconClipPathID svg.ID
 	if targetShape.IconBorderRadius != 0 && (targetShape.Type == d2target.ShapeImage) {
 		// Set the icon's border-radius to half of it's smaller dimension in case it exceeds that
 		// https://www.w3.org/Style/CSS/Tracker/issues/29?changelog
 		targetShape.IconBorderRadius = min(targetShape.IconBorderRadius, min(targetShape.Width, targetShape.Height)/2)
-		iconClipPathID = svg.LiteralID(fmt.Sprintf("%v-%v-icon", diagramHash, svg.SVGID(targetShape.ID)))
+		iconClipPathID = svg.LiteralID(fmt.Sprintf("%v-%v-icon", resourceHash, svg.SVGID(targetShape.ID)))
 		fmt.Fprint(writer, applyIconBorderRadius(iconClipPathID, targetShape))
 	}
 	classes := []string{base64.URLEncoding.EncodeToString([]byte(svg.EscapeText(targetShape.ID)))}
@@ -1737,7 +1753,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 			}
 			fmt.Fprint(writer, out)
 		} else {
-			drawClass(writer, diagramHash, targetShape, inlineTheme)
+			drawClass(writer, resourceHash, targetShape, inlineTheme)
 		}
 		err := addAppendixItems(appendixWriter, diagramHash, targetShape, s, markdown)
 		if err != nil {
@@ -1754,7 +1770,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 			}
 			fmt.Fprint(writer, out)
 		} else {
-			drawTable(writer, diagramHash, targetShape, inlineTheme)
+			drawTable(writer, resourceHash, targetShape, inlineTheme)
 		}
 		err := addAppendixItems(appendixWriter, diagramHash, targetShape, s, markdown)
 		if err != nil {
@@ -1769,7 +1785,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 				drawDoubleOval(writer, multipleTL, width, height, fill, "", stroke, style, inlineTheme)
 			}
 			if sketch {
-				out, err := d2sketch.DoubleOval(targetShape, diagramHash)
+				out, err := d2sketch.DoubleOval(targetShape, resourceHash)
 				if err != nil {
 					return "", err
 				}
@@ -1782,7 +1798,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 				drawOval(writer, multipleTL, width, height, fill, "", stroke, style, inlineTheme)
 			}
 			if sketch {
-				out, err := d2sketch.Oval(targetShape, diagramHash)
+				out, err := d2sketch.Oval(targetShape, resourceHash)
 				if err != nil {
 					return "", err
 				}
@@ -1814,7 +1830,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 			borderRadius = float64(targetShape.BorderRadius)
 		}
 		if targetShape.ThreeDee {
-			fmt.Fprint(writer, render3DRect(diagramHash, targetShape, inlineTheme))
+			fmt.Fprint(writer, render3DRect(resourceHash, targetShape, inlineTheme))
 		} else {
 			if !targetShape.DoubleBorder {
 				if targetShape.Multiple {
@@ -1830,7 +1846,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 					writer.element(el)
 				}
 				if sketch {
-					out, err := d2sketch.Rect(targetShape, diagramHash)
+					out, err := d2sketch.Rect(targetShape, resourceHash)
 					if err != nil {
 						return "", err
 					}
@@ -1848,7 +1864,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 					el.Rx = borderRadius
 
 					if targetShape.Label != "" && label.FromString(targetShape.LabelPosition).IsBorder() {
-						el.SetMaskID(svg.LiteralID(diagramHash))
+						el.SetMaskID(svg.LiteralID(resourceHash))
 					}
 
 					writer.element(el)
@@ -1879,7 +1895,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 					writer.element(el)
 				}
 				if sketch {
-					out, err := d2sketch.DoubleRect(targetShape, diagramHash)
+					out, err := d2sketch.DoubleRect(targetShape, resourceHash)
 					if err != nil {
 						return "", err
 					}
@@ -1912,7 +1928,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 		}
 	case d2target.ShapeHexagon:
 		if targetShape.ThreeDee {
-			fmt.Fprint(writer, render3DHexagon(diagramHash, targetShape, inlineTheme))
+			fmt.Fprint(writer, render3DHexagon(resourceHash, targetShape, inlineTheme))
 		} else {
 			if targetShape.Multiple {
 				multiplePathData := shape.NewShape(shapeType, geo.NewBox(multipleTL, width, height)).GetSVGPathData()
@@ -1927,7 +1943,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 			}
 
 			if sketch {
-				out, err := d2sketch.Paths(targetShape, diagramHash, s.GetSVGPathData())
+				out, err := d2sketch.Paths(targetShape, resourceHash, s.GetSVGPathData())
 				if err != nil {
 					return "", err
 				}
@@ -1959,7 +1975,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 		}
 
 		if sketch {
-			out, err := d2sketch.Paths(targetShape, diagramHash, s.GetSVGPathData())
+			out, err := d2sketch.Paths(targetShape, resourceHash, s.GetSVGPathData())
 			if err != nil {
 				return "", err
 			}
@@ -1972,7 +1988,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 			el.Style = style
 
 			if targetShape.Label != "" && label.FromString(targetShape.LabelPosition).IsBorder() {
-				el.SetMaskID(svg.LiteralID(diagramHash))
+				el.SetMaskID(svg.LiteralID(resourceHash))
 			}
 
 			for _, pathData := range s.GetSVGPathData() {
@@ -2053,6 +2069,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 			float64(targetShape.LabelHeight),
 		)
 
+		if p := targetShape.MotionLabelTopLeft; p != nil {
+			labelTL = geo.NewPoint(float64(p.X), float64(p.Y))
+		}
 		if labelPosition.IsBorder() {
 			if sketch {
 				labelMask = makeBorderLabelMask(labelPosition, labelTL, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.StrokeWidth, 1.0, tl)
@@ -2101,6 +2120,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash strin
 				float64(targetShape.LabelHeight),
 			)
 			gEl.SetTranslate(labelTL.X, labelTL.Y)
+			if targetShape.MotionScale != 0 {
+				gEl.Transform += fmt.Sprintf(" scale(%s)", svg.FormatFloat(targetShape.MotionScale))
+			}
 
 			gEl.Color = targetShape.GetFontColor()
 			gEl.SetInnerSVG(svg.TrustedFragment(render))
@@ -2240,6 +2262,14 @@ func applyIconBorderRadius(clipPathID svg.ID, shape d2target.Shape) string {
 func addAppendixItems(writer io.Writer, diagramHash string, targetShape d2target.Shape, s shape.Shape, markdown *markdownRenderer) error {
 	var p1, p2 *geo.Point
 	if targetShape.Tooltip != "" || targetShape.Link != "" {
+		if c := targetShape.MotionClip; c != nil {
+			openMotionViewport(writer, c)
+			defer fmt.Fprint(writer, "</svg>")
+		}
+		if targetShape.Opacity != 1 {
+			fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("opacity", svg.FormatFloat(targetShape.Opacity))))
+			defer fmt.Fprint(writer, "</g>")
+		}
 		bothIcons := targetShape.Tooltip != "" && targetShape.Link != ""
 		corner := geo.NewPoint(float64(targetShape.Pos.X+targetShape.Width), float64(targetShape.Pos.Y))
 		center := geo.NewPoint(
@@ -2952,7 +2982,8 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	// Some targeting is still per-board, like masks for connections
+	// Shape and connection geometry can change per frame. Keep its clips and
+	// masks local while sharing theme, font and icon resources across boards.
 	isolatedDiagramHash := diagramHash
 	if opts != nil && opts.MasterID != "" {
 		diagramHash = opts.MasterID
@@ -3002,7 +3033,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 				labelMasks = append(labelMasks, labelMask)
 			}
 		} else if s, is := obj.(d2target.Shape); is {
-			labelMask, err := drawShape(writer, appendixItemBuf, diagramHash, s, sketch, inlineTheme, markdown)
+			labelMask, err := drawShape(writer, appendixItemBuf, diagramHash, isolatedDiagramHash, s, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
 			} else if labelMask != "" {

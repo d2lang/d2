@@ -22,6 +22,13 @@ func TestRenderRejectsMalformedJSONTargetsWithoutPanicking(t *testing.T) {
 		wantError string
 	}{
 		{
+			name: "invalid sampled shape scale",
+			configure: func(diagram *d2target.Diagram) {
+				diagram.Shapes[0].MotionScale = 1.5
+			},
+			wantError: "motionScale",
+		},
+		{
 			name: "unsupported source arrowhead",
 			configure: func(diagram *d2target.Diagram) {
 				diagram.Connections[0].SrcArrow = d2target.Arrowhead("attacker-controlled")

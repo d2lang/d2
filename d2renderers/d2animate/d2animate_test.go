@@ -85,3 +85,22 @@ func TestTimelineSampleBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestTimelineWithExplicitSampleTimes(t *testing.T) {
+	root := d2target.NewDiagram()
+	root.TweenDurationMS = 1000
+	root.TweenFrames = []*d2target.Diagram{d2target.NewDiagram(), d2target.NewDiagram(), d2target.NewDiagram()}
+	root.TweenFrameEndsMS = []int{17, 140, 220}
+	frames, err := Timeline(root, 1400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var starts, delays []int
+	for _, f := range frames {
+		starts = append(starts, f.ElapsedMS)
+		delays = append(delays, f.DurationMS)
+	}
+	if !slices.Equal(starts, []int{0, 17, 140, 220}) || !slices.Equal(delays, []int{17, 123, 80, 1180}) {
+		t.Fatalf("starts %v, durations %v", starts, delays)
+	}
+}

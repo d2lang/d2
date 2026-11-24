@@ -13,7 +13,8 @@ const (
 	// Bound raw render targets before they reach recursive hashing and
 	// multi-board rendering. Validation itself remains iterative.
 	maxRenderTargetBoardDepth = 1_024
-	maxRenderTargetBoardCount = 4_096
+	// MaxRenderTargetBoards includes authored boards and their tween samples.
+	MaxRenderTargetBoards = 16_384
 )
 
 // ValidateRenderTarget checks the invariants required by renderers which
@@ -73,8 +74,8 @@ func ValidateRenderTarget(root *Diagram) error {
 					return fmt.Errorf("render target board %s reuses board %s", childPath, firstPath)
 				}
 				boardCount++
-				if boardCount > maxRenderTargetBoardCount {
-					return fmt.Errorf("render target board tree exceeds %d total boards", maxRenderTargetBoardCount)
+				if boardCount > MaxRenderTargetBoards {
+					return fmt.Errorf("render target board tree exceeds %d total boards", MaxRenderTargetBoards)
 				}
 				seen[child] = childPath
 				stack = append(stack, boardEntry{diagram: child, path: childPath, depth: childDepth})
@@ -91,6 +92,16 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 	}
 	if diagram.TweenDurationMS > MaxTweenDurationMS || diagram.TweenDurationMS < len(diagram.TweenFrames) || (len(diagram.TweenFrames) == 0 && diagram.TweenDurationMS != 0) {
 		return fmt.Errorf("render target %s has inconsistent tween duration %dms for %d frames", path, diagram.TweenDurationMS, len(diagram.TweenFrames))
+	}
+	if times := diagram.TweenFrameEndsMS; len(times) > 0 {
+		if len(times) != len(diagram.TweenFrames) {
+			return fmt.Errorf("render target %s requires one end time per tween frame", path)
+		}
+		for i, ms := range times {
+			if ms <= 0 || ms > diagram.TweenDurationMS || (i > 0 && ms <= times[i-1]) {
+				return fmt.Errorf("render target %s has invalid tween frame time %dms at index %d", path, ms, i)
+			}
+		}
 	}
 	if err := validateRenderFontFamily(diagram.FontFamily, path+".fontFamily"); err != nil {
 		return err
@@ -285,7 +296,20 @@ func validateRenderFontFamily(family *d2fonts.FontFamily, path string) error {
 	return nil
 }
 
+func validateMotionClip(c *MotionClip, path string) error {
+	if c != nil && (c.Width <= 0 || c.Height <= 0) {
+		return invalidRenderField(path, "motionClip", c, "must have positive dimensions")
+	}
+	return nil
+}
+
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
+	if !finiteRenderNumber(targetShape.MotionScale) || targetShape.MotionScale < 0 || targetShape.MotionScale > 1 {
+		return invalidRenderField(path, "motionScale", targetShape.MotionScale, "must be between zero and one")
+	}
+	if err := validateMotionClip(targetShape.MotionClip, path); err != nil {
+		return err
+	}
 	for _, field := range []struct {
 		name  string
 		value int
@@ -316,6 +340,9 @@ func validateRenderShapeNumbers(targetShape Shape, path string) error {
 }
 
 func validateRenderConnectionNumbers(connection Connection, path string) error {
+	if err := validateMotionClip(connection.MotionClip, path); err != nil {
+		return err
+	}
 	if connection.StrokeWidth < 0 {
 		return invalidRenderField(path, "strokeWidth", connection.StrokeWidth, "must be non-negative")
 	}

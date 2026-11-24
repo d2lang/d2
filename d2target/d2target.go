@@ -108,6 +108,11 @@ const (
 	MaxTweenFrames     = 120
 )
 
+// TweenFrameCount samples at 25 fps up to the per-transition frame limit.
+func TweenFrameCount(durationMS int) int {
+	return min(MaxTweenFrames, (durationMS+39)/40)
+}
+
 type Diagram struct {
 	Name   string  `json:"name"`
 	Config *Config `json:"config,omitempty"`
@@ -132,10 +137,16 @@ type Diagram struct {
 	Scenarios []*Diagram `json:"scenarios,omitempty"`
 	Steps     []*Diagram `json:"steps,omitempty"`
 
-	// TweenFrames are equally spaced samples of this board's incoming transition,
-	// starting at time zero. The board itself is the endpoint at TweenDurationMS.
+	// TweenFrames are samples of this board's incoming transition,
+	// starting at time zero. The board itself supplies the exact endpoint.
 	TweenFrames     []*Diagram `json:"tweenFrames,omitempty"`
 	TweenDurationMS int        `json:"tweenDurationMS,omitempty"`
+	// TweenFrameEndsMS holds exclusive sample ends for nonuniform playback.
+	// The authored endpoint takes over when the final sample ends.
+	// Omit it for uniformly spaced samples.
+	TweenFrameEndsMS []int `json:"tweenFrameEndsMS,omitempty"`
+	// GridMotion keeps a common coordinate system for raster playback as cells reflow.
+	GridMotion bool `json:"gridMotion,omitempty"`
 }
 
 type Legend struct {
@@ -235,6 +246,10 @@ func (diagram Diagram) Bytes() ([]byte, error) {
 	if diagram.TweenDurationMS != 0 {
 		base = append(base, "tween-ms:"...)
 		base = strconv.AppendInt(base, int64(diagram.TweenDurationMS), 10)
+		for _, ms := range diagram.TweenFrameEndsMS {
+			base = append(base, ',')
+			base = strconv.AppendInt(base, int64(ms), 10)
+		}
 	}
 	for _, group := range diagram.renderChildren() {
 		for _, child := range group {
@@ -777,11 +792,23 @@ func NewDiagram() *Diagram {
 	}
 }
 
+// MotionClip is the visible rectangle of an unfolding grid cell, in diagram coordinates.
+type MotionClip struct {
+	Point
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 type Shape struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
 
 	Classes []string `json:"classes,omitempty"`
+
+	// Only intermediate grid frames carry a viewport, caption anchor or LaTeX scale.
+	MotionScale        float64     `json:"motionScale,omitempty"`
+	MotionClip         *MotionClip `json:"motionClip,omitempty"`
+	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
 
 	Pos    Point `json:"pos"`
 	Width  int   `json:"width"`
@@ -924,6 +951,8 @@ func BaseShape() *Shape {
 
 type Connection struct {
 	ID string `json:"id"`
+
+	MotionClip *MotionClip `json:"motionClip,omitempty"`
 
 	Classes []string `json:"classes,omitempty"`
 

@@ -5,6 +5,7 @@ package d2scenebuild
 import (
 	"context"
 	"fmt"
+	"image"
 	"math"
 	"sort"
 	"strings"
@@ -96,6 +97,8 @@ type SketchBudget struct {
 // dimensions, while the raster device scale is supplied to d2raster
 // separately.
 type Options struct {
+	// MinimumBounds is the unpadded world-space viewport shared by animation frames.
+	MinimumBounds  *image.Rectangle
 	Pad            *int64
 	Scale          *float64
 	Center         *bool
@@ -556,6 +559,13 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	}
 	// Legend placement uses the unfiltered diagram bounds. visualBoundingBox
 	// removes appendix-only metadata because scenes do not paint those icons.
+	if bounds := b.options.MinimumBounds; bounds != nil {
+		tl.X, tl.Y = min(tl.X, bounds.Min.X), min(tl.Y, bounds.Min.Y)
+		br.X, br.Y = max(br.X, bounds.Max.X), max(br.Y, bounds.Max.Y)
+		// Keep the legend and appendix anchored to the shared diagram as cells move.
+		diagramTL.X, diagramTL.Y = min(diagramTL.X, bounds.Min.X), min(diagramTL.Y, bounds.Min.Y)
+		diagramBR.X, diagramBR.Y = max(diagramBR.X, bounds.Max.X), max(diagramBR.Y, bounds.Max.Y)
+	}
 	legendLayout, err := b.measureLegend(diagramTL, diagramBR)
 	if err != nil {
 		return nil, err
@@ -702,16 +712,19 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			return nil, err
 		}
 		var node *d2scene.Node
+		var clip *d2target.MotionClip
 		if object.shape != nil {
+			clip = object.shape.MotionClip
 			node, err = b.buildShape(*object.shape)
 		} else {
+			clip = object.connection.MotionClip
 			gaps := crossings[object.order-len(b.diagram.Shapes)]
 			node, err = b.buildConnection(*object.connection, crossingMask(viewBox, gaps))
 		}
 		if err != nil {
 			return nil, err
 		}
-		renderedObjects[index] = node
+		renderedObjects[index] = clipMotionNode(node, clip)
 		if object.shape != nil {
 			positionedTooltips[index], err = b.buildPositionedTooltip(*object.shape)
 			if err != nil {
@@ -749,9 +762,6 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			return nil, err
 		}
 		if object.shape != nil {
-			if positionedTooltips[index] != nil {
-				metadataNodes = append(metadataNodes, positionedTooltips[index])
-			}
 			icons, err := b.buildAppendixIcons(
 				appendixLayout, *object.shape, object.order,
 				tooltipNumbers[object.order], linkNumbers[object.order],
@@ -759,7 +769,14 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			if err != nil {
 				return nil, err
 			}
-			metadataNodes = append(metadataNodes, icons...)
+			if tooltip := positionedTooltips[index]; tooltip != nil {
+				tooltip.Opacity = object.shape.Opacity
+				metadataNodes = append(metadataNodes, clipMotionNode(tooltip, object.shape.MotionClip))
+			}
+			for _, icon := range icons {
+				icon.Opacity = object.shape.Opacity
+				metadataNodes = append(metadataNodes, clipMotionNode(icon, object.shape.MotionClip))
+			}
 		}
 	}
 	// Paint positioned tooltips and appendix badges above every ordinary object,
@@ -814,6 +831,16 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	document.LogicalWidth = math.Ceil(scaledWidth)
 	document.LogicalHeight = math.Ceil(scaledHeight)
 	return document, nil
+}
+
+func clipMotionNode(node *d2scene.Node, c *d2target.MotionClip) *d2scene.Node {
+	if c == nil {
+		return node
+	}
+	wrapper := d2scene.NewNode(nil)
+	wrapper.Clip = boxClip(d2scene.Box{X: float64(c.X), Y: float64(c.Y), Width: float64(c.Width), Height: float64(c.Height)})
+	wrapper.Children = []*d2scene.Node{node}
+	return wrapper
 }
 
 type diagramObject struct {
@@ -972,7 +999,7 @@ func (b *builder) buildShapeText(targetShape d2target.Shape) ([]*d2scene.Node, e
 		topLeft := latexShapeLabelTopLeft(targetShape)
 		node, err := b.buildLatexLabelNode(
 			fmt.Sprintf("shape %q", targetShape.ID), targetShape.ID+":label:0",
-			targetShape.Label, targetShape.GetFontColor(), topLeft,
+			targetShape.Label, targetShape.GetFontColor(), topLeft, targetShape.MotionScale,
 		)
 		if err != nil {
 			return nil, err

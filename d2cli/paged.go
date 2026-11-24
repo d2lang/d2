@@ -20,7 +20,6 @@ import (
 
 const (
 	pagedMaxBoards                    = 1_024
-	pagedMaxTreeNodes                 = 4_096
 	pagedMaxTotalPixels         int64 = 256 * 1024 * 1024
 	pagedMaxEncodedBytes        int64 = 512 * 1024 * 1024
 	pagedMaxLinkRegions               = 65_536
@@ -150,7 +149,7 @@ func (r *pagedRenderer) render(diagram *d2target.Diagram, wantsPreview bool) (*p
 	if err != nil {
 		return nil, err
 	}
-	document, err := buildSceneWithResourcesAndLinks(r.ctx, &board, renderOpts, r.assets, r.fonts, r.linkBudget, sceneAdmissionLimitsForFrame(frameOptions))
+	document, err := buildSceneWithResourcesAndLinks(r.ctx, &board, renderOpts, r.assets, r.fonts, r.linkBudget, sceneOptionsForFrame(frameOptions))
 	if err != nil {
 		return nil, fmt.Errorf("paged board %d scene: %w", r.renderedBoards, err)
 	}
@@ -363,8 +362,8 @@ func indexPagedBoards(ctx context.Context, root *d2target.Diagram) (map[string]i
 			return fmt.Errorf("paged board tree exceeds depth %d", rasterMaxDepth)
 		}
 		visited++
-		if visited > pagedMaxTreeNodes {
-			return fmt.Errorf("paged board tree exceeds %d total nodes", pagedMaxTreeNodes)
+		if visited > d2target.MaxRenderTargetBoards {
+			return fmt.Errorf("paged board tree exceeds %d total nodes", d2target.MaxRenderTargetBoards)
 		}
 		if _, ok := active[diagram]; ok {
 			return fmt.Errorf("paged board tree contains a cycle")

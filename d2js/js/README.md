@@ -186,7 +186,7 @@ resources are released. Calling `dispose()` more than once is safe.
 All [RenderOptions](#renderoptions) properties in addition to:
 
 - `layout`: Layout engine to use (`'dagre' | 'elk' | 'tala'`) [default: `'dagre'`]
-- `animateDuration`: Milliseconds to animate numeric properties, solid colors, compatible gradients, and variables between steps (0–600000, default 0). Overrides `vars.d2-config.animate-duration`. Set this when calling `compile()` or `renderSVG()`. A shorter transition uses the rest of the board interval to hold its final value. A longer transition extends the step.
+- `animateDuration`: Milliseconds to animate numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps (0–600000, default 0). Overrides `vars.d2-config.animate-duration`. Set this when calling `compile()` or `renderSVG()`. A shorter transition uses the rest of the board interval to hold its final value. A longer transition extends the step.
 - `fontRegular` A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used.
 - `fontItalic` A byte array containing .ttf file to use for the italic font. If none provided, Source Sans Pro Italic is used.
 - `fontBold` A byte array containing .ttf file to use for the bold font. If none provided, Source Sans Pro Bold is used.

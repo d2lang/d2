@@ -3,6 +3,7 @@ package d2svg_test
 import (
 	"encoding/xml"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 func TestRenderEscapesRoundedSpecialShapeClipPathIDs(t *testing.T) {
 	t.Parallel()
 
-	for _, shapeType := range []string{d2target.ShapeClass, d2target.ShapeSQLTable} {
+	for _, shapeType := range []string{d2target.ShapeClass, d2target.ShapeSQLTable, d2target.ShapeImage} {
 		shapeType := shapeType
 		t.Run(shapeType, func(t *testing.T) {
 			t.Parallel()
@@ -21,6 +22,10 @@ func TestRenderEscapesRoundedSpecialShapeClipPathIDs(t *testing.T) {
 			shape := *d2target.BaseShape()
 			shape.ID = `x)" onload="document.documentElement.dataset.pwned=1//`
 			shape.Type = shapeType
+			if shapeType == d2target.ShapeImage {
+				shape.Icon = &url.URL{Path: "grid-cell.png"}
+				shape.IconBorderRadius = 5
+			}
 			shape.Pos = d2target.Point{X: 10, Y: 10}
 			shape.Width = 220
 			shape.Height = 120
@@ -41,11 +46,26 @@ func TestRenderEscapesRoundedSpecialShapeClipPathIDs(t *testing.T) {
 				t.Fatalf("Render() error = %v", err)
 			}
 			assertSafeClipPathReference(t, out)
+			// Moving a rounded shape changes its clip geometry. Frames share
+			// CSS under MasterID but must resolve their own clip paths.
+			ids := make(map[string]bool)
+			for _, x := range []int{10, 60} {
+				diagram.Shapes[0].Pos.X = x
+				frame, err := d2svg.Render(diagram, &d2svg.RenderOpts{MasterID: "shared"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				id := assertSafeClipPathReference(t, frame)
+				if ids[id] {
+					t.Fatal("different clip geometry reused frame ID", id)
+				}
+				ids[id] = true
+			}
 		})
 	}
 }
 
-func assertSafeClipPathReference(t *testing.T, source []byte) {
+func assertSafeClipPathReference(t *testing.T, source []byte) string {
 	t.Helper()
 
 	decoder := xml.NewDecoder(strings.NewReader(string(source)))
@@ -91,4 +111,5 @@ func assertSafeClipPathReference(t *testing.T, source []byte) {
 			t.Fatalf("Render() clip-path reference %q has no matching definition in %v", reference, clipIDs)
 		}
 	}
+	return strings.TrimSuffix(strings.TrimPrefix(references[0], "url(#"), ")")
 }

@@ -129,6 +129,17 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 	}
 
 	d, err := compile(ctx, g, compileOpts, renderOpts)
+	if err == nil && config != nil && config.AnimateDuration != nil && *config.AnimateDuration > 0 {
+		animated := config.AnimateInterval != nil && *config.AnimateInterval > 0
+		if compileOpts.AnimateTweens != nil {
+			animated = *compileOpts.AnimateTweens
+		}
+		if animated {
+			if err := sampleGridSteps(ctx, d, g, int(*config.AnimateDuration), d2target.MaxRenderTargetBoards); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	if d != nil {
 		if config == nil {
 			config = &d2target.Config{}
