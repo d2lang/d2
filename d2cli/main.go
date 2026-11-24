@@ -60,6 +60,10 @@ func privateNetworkEnvDefault(ms *xmain.State) (bool, error) {
 }
 
 func Run(ctx context.Context, ms *xmain.State) (err error) {
+	return runWithPanicRecovery(ctx, ms, run)
+}
+
+func run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx = log.WithDefault(ctx)
 	// These should be kept up-to-date with the d2 man page
 	watchFlag, err := ms.Opts.Bool("D2_WATCH", "watch", "w", false, "watch for changes to input and live reload. Use $HOST and $PORT to specify the listening address.\n(default localhost:0, which will open on a randomly available local port).")
