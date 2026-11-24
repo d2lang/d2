@@ -465,7 +465,9 @@ case "$previous" in
     previous= ;; # A source build on PATH may have no managed release tree.
 esac
 mkdir -p "$lib"
-if ! mkdir -m 700 "$lock"; then
+# Set permissions at creation. Git Bash can create the directory but fail a
+# subsequent chmod from mkdir -m, leaving a lock behind on a fresh install.
+if ! (umask 077 && mkdir "$lock"); then
   if [ -d "$lock" ]; then
     echo >&2 "Cannot update $prefix while $lock exists"
     echo >&2 "Wait for the other installer to finish. If it was interrupted, inspect the lock directory for a saved release tree before removing it."
