@@ -307,6 +307,9 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 			return err
 		}
 	}
+	if err := orderEquivalentBranchSlots(workCtx, graph, best); err != nil {
+		return err
+	}
 	return applySeedResult(workCtx, graph, best)
 }
 

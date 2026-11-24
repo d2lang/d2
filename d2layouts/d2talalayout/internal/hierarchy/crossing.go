@@ -1,7 +1,6 @@
 package hierarchy
 
 import (
-	"cmp"
 	"math"
 	"slices"
 
@@ -30,80 +29,6 @@ type crossingScratch struct {
 // - they don't handle containers
 // - they don't consider the edge lengths in case crossings stay the same
 // - they consider only one direction when computing crossings
-
-// Use diagram order to break ties between interchangeable fan-in, fan-out and
-// parallel branches. Only their own slots in the seeded permutation change.
-// The crossing and sifting passes remain free to improve the resulting order.
-func orderEquivalentBranches(g *layoutgraph.Graph, byLevel map[int][]*placementNode) {
-	type branch struct {
-		above, below  *placementNode
-		width, height float64
-		shape         string
-	}
-	sourceOrder := make(map[*layoutgraph.Node]int)
-	var orderSiblings func([]*placementNode)
-	orderSiblings = func(siblings []*placementNode) {
-		groups := make(map[branch][]int)
-		for i, pn := range siblings {
-			if len(pn.children) != 0 {
-				if pn.optimizeChildrenCrossings {
-					orderSiblings(pn.children)
-				}
-				continue
-			}
-			node := pn.graphNode
-			neighbors := len(pn.aboves) + len(pn.belows)
-			if pn.isDummy || neighbors == 0 || len(pn.aboves) > 1 || len(pn.belows) > 1 ||
-				len(node.Edges) != neighbors || len(node.Nears) != 0 ||
-				node.Label != nil && node.Label.Position.IsOutside() ||
-				node.Icon != nil && node.Icon.Position.IsOutside() {
-				continue
-			}
-			// Labels and table ports distinguish otherwise identical routes.
-			if slices.ContainsFunc(node.Edges, func(e *layoutgraph.Edge) bool {
-				return e.Label != nil || e.SourceArrowheadLabel != nil || e.TargetArrowheadLabel != nil ||
-					e.FromTableColumnIndex != nil || e.ToTableColumnIndex != nil
-			}) {
-				continue
-			}
-			key := branch{width: node.Width, height: node.Height, shape: node.ShapeType()}
-			for above := range pn.aboves {
-				key.above = above
-			}
-			for below := range pn.belows {
-				key.below = below
-			}
-			groups[key] = append(groups[key], i)
-		}
-		for _, slots := range groups {
-			if len(slots) < 2 {
-				continue
-			}
-			peers := make([]*placementNode, len(slots))
-			for i, index := range slots {
-				peers[i] = siblings[index]
-			}
-			first := peers[0].graphNode
-			if _, ok := sourceOrder[first]; !ok {
-				for i, n := range g.Containers[first.Container] {
-					sourceOrder[n] = i
-				}
-			}
-			slices.SortFunc(peers, func(a, b *placementNode) int {
-				if order := cmp.Compare(sourceOrder[a.graphNode], sourceOrder[b.graphNode]); order != 0 {
-					return order
-				}
-				return cmp.Compare(a.graphNode.ID, b.graphNode.ID)
-			})
-			for i, index := range slots {
-				siblings[index] = peers[i]
-			}
-		}
-	}
-	for _, siblings := range byLevel {
-		orderSiblings(siblings)
-	}
-}
 
 func initializeRanks(byLevel map[int][]*placementNode) {
 	for i := 0; i < len(byLevel); i++ {

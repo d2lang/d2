@@ -244,7 +244,6 @@ func (p Placement) placeNodesInHierarchy(ctx context.Context, g *layoutgraph.Gra
 	placementNodes := createPlacementNodes(g, g.Nodes, p.Random)
 	connectPlacementNodes(g, placementNodes)
 	byLevel := groupPlacementNodesByLevel(placementNodes)
-	orderEquivalentBranches(g, byLevel)
 	initializeRanks(byLevel)
 	breakLongConnections(placementNodes, byLevel)
 	minimizeHierarchyCrossings(byLevel)
