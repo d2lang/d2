@@ -19,8 +19,8 @@
         "x": 0,
         "y": 0
       },
-      "width": 711,
-      "height": 839,
+      "width": 668,
+      "height": 573,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -100,8 +100,8 @@
       "id": "build_workflow.GHA",
       "type": "rectangle",
       "pos": {
-        "x": 442,
-        "y": 60
+        "x": 91,
+        "y": 248
       },
       "width": 209,
       "height": 77,
@@ -142,8 +142,8 @@
       "id": "build_workflow.S3",
       "type": "rectangle",
       "pos": {
-        "x": 511,
-        "y": 274
+        "x": 160,
+        "y": 436
       },
       "width": 71,
       "height": 77,
@@ -184,8 +184,8 @@
       "id": "build_workflow.Terraform",
       "type": "rectangle",
       "pos": {
-        "x": 468,
-        "y": 488
+        "x": 450,
+        "y": 248
       },
       "width": 158,
       "height": 77,
@@ -226,8 +226,8 @@
       "id": "build_workflow.AWS",
       "type": "rectangle",
       "pos": {
-        "x": 499,
-        "y": 702
+        "x": 482,
+        "y": 436
       },
       "width": 95,
       "height": 77,
@@ -292,12 +292,12 @@
       "link": "",
       "route": [
         {
-          "x": 330,
-          "y": 98
+          "x": 195,
+          "y": 137
         },
         {
-          "x": 442,
-          "y": 98
+          "x": 195,
+          "y": 248
         }
       ],
       "animated": false,
@@ -331,12 +331,12 @@
       "link": "",
       "route": [
         {
-          "x": 546,
-          "y": 137
+          "x": 195,
+          "y": 325
         },
         {
-          "x": 546,
-          "y": 274
+          "x": 195,
+          "y": 436
         }
       ],
       "animated": false,
@@ -370,12 +370,20 @@
       "link": "",
       "route": [
         {
-          "x": 546,
-          "y": 351
+          "x": 231,
+          "y": 474
         },
         {
-          "x": 546,
-          "y": 488
+          "x": 375,
+          "y": 474
+        },
+        {
+          "x": 375,
+          "y": 286
+        },
+        {
+          "x": 450,
+          "y": 286
         }
       ],
       "animated": false,
@@ -404,17 +412,17 @@
       "underline": false,
       "labelWidth": 169,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_BOTTOM_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "labelPercentage": 0,
       "link": "",
       "route": [
         {
-          "x": 546,
-          "y": 565
+          "x": 529,
+          "y": 325
         },
         {
-          "x": 546,
-          "y": 702
+          "x": 529,
+          "y": 436
         }
       ],
       "animated": false,
