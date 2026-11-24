@@ -3146,7 +3146,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	// Label masks contain only fixed-color geometry and contribute no font or palette classes.
 	// Connections reference the mask even without a label. A shape or a
 	// legend can also reference it without a connection on the board.
-	if len(diagram.Connections) != 0 || bytes.Contains(buf.Bytes(), []byte(svg.LocalIRI(svg.LiteralID(isolatedDiagramHash)))) {
+	if BaseStylesheet != fontCorpusBaseStylesheet || len(diagram.Connections) != 0 || bytes.Contains(buf.Bytes(), []byte(svg.LocalIRI(svg.LiteralID(isolatedDiagramHash)))) {
 		bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", w), svg.IntAttr("height", h)}
 		attrs := []svg.Attribute{svg.Attr("id", isolatedDiagramHash), svg.Attr("maskUnits", "userSpaceOnUse")}
 		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
@@ -3348,10 +3348,12 @@ func WriteAnimationStyles(buf *bytes.Buffer, diagramHash, source string, diagram
 	}
 	corpora, classes, _ := collectFontCorporaAndClasses(source)
 	embedFonts(buf, diagramHash, source, diagram.FontFamily, diagram.MonoFontFamily, diagram.GetNestedCorpus(), corpora)
-	if classes == nil {
-		stylesheet = pruneThemeCSS(stylesheet, source)
-	} else {
-		stylesheet = pruneThemeCSSWithClasses(stylesheet, classes)
+	if BaseStylesheet == fontCorpusBaseStylesheet {
+		if classes == nil {
+			stylesheet = pruneThemeCSS(stylesheet, source)
+		} else {
+			stylesheet = pruneThemeCSSWithClasses(stylesheet, classes)
+		}
 	}
 	writeThemeStyle(buf, stylesheet)
 	if opts.Sketch != nil && *opts.Sketch {

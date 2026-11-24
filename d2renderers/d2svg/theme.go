@@ -26,6 +26,11 @@ func pruneThemeCSSWithClasses(stylesheet string, used map[string]bool, sources .
 		used = make(map[string]bool)
 	}
 	used["stroke-B2"] = true
+	if BaseStylesheet != fontCorpusBaseStylesheet {
+		// Historically these unscoped selectors were exposed alongside a
+		// caller-supplied base stylesheet, even on diagrams without code.
+		used["md"], used["light-code"], used["dark-code"] = true, true, true
+	}
 	for _, source := range sources {
 		decoder := xml.NewDecoder(strings.NewReader(source))
 		for {

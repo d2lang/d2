@@ -1,6 +1,8 @@
 package d2svg
 
 import (
+	"bytes"
+	"github.com/d2lang/d2/d2target"
 	"strings"
 	"testing"
 )
@@ -87,5 +89,30 @@ func TestPruneThemeCSSPaletteAlphabet(t *testing.T) {
 	const want = " .d2-test .fill-N10{fill:blue;} .sketch-overlay-bright{fill:yellow;}"
 	if got := pruneThemeCSS(stylesheet, source); got != want {
 		t.Fatalf("non-palette classes affected pruning: %q, want %q", got, want)
+	}
+}
+
+func TestCustomStylesheetKeepsGeneratedResources(t *testing.T) {
+	original := BaseStylesheet
+	t.Cleanup(func() { BaseStylesheet = original })
+	diagram := d2target.NewDiagram()
+	hash, err := diagram.HashID(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	BaseStylesheet += ".shape {mask:url(#" + hash + ")}"
+	markup, err := Render(diagram, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(markup, []byte(`<mask id="`+hash+`"`)) || !bytes.Contains(markup, []byte(`.light-code{`)) {
+		t.Fatal("custom styles lost the generated label mask or code stylesheet")
+	}
+	var styles bytes.Buffer
+	if err := WriteAnimationStyles(&styles, hash, "<rect/>", diagram, &RenderOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(styles.String(), ".fill-B1{") {
+		t.Fatal("custom animation stylesheet lost its palette")
 	}
 }
