@@ -949,6 +949,18 @@ func (s Shape) AppendixLinkText() string {
 type MarkdownStrikeTransition struct {
 	From     string  `json:"from"`
 	Progress float64 `json:"progress"`
+	// On a plain destination these are the struck ranges of its shaped line,
+	// in fractions of the total advance. Its own renderer paints the glyphs.
+	PlainRanges [][2]float64 `json:"plainRanges,omitempty"`
+}
+
+func (t *MarkdownStrikeTransition) PlainRules(left, baseline, width, fontSize float64, draw func(x, y, width, height float64)) {
+	if t == nil || t.Progress >= 1 {
+		return
+	}
+	for _, span := range t.PlainRanges {
+		draw(left+span[0]*width, baseline-.3*fontSize, (span[1]-span[0])*width*(1-t.Progress), math.Max(1, fontSize/16))
+	}
 }
 
 type Text struct {

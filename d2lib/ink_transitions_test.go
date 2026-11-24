@@ -66,6 +66,74 @@ steps: {three: {a: Different {style.underline: true}}}
 	}
 }
 
+func TestPlainMarkdownStrikeRoundTrip(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 220ms; animate-duration: 160ms}}
+a: Retired API
+b: Version 1 active {shape: rectangle}
+c: Healthy
+a -> b: Use old API
+steps: {
+  retire: {
+    a: |md ~~Retired API~~ |
+    b: |md Version ~~1~~ active | {shape: rectangle}
+    c: |md Healthy | {style.underline: true}
+    (a -> b)[0]: |md Use ~~old~~ API |
+  }
+  restore: {
+    a: Retired API
+    b: Version 1 active
+    c: Healthy {style.underline: false}
+    (a -> b)[0]: Use old API
+  }
+}
+`
+	calls := 0
+	d, _, err := Compile(d2log.WithDefault(context.Background()), source, dagreCompileOptions(&calls), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d2target.ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+	for i, board := range d.Steps {
+		if len(board.TweenFrames) != 4 {
+			t.Fatalf("%s: got %d samples", board.Name, len(board.TweenFrames))
+		}
+		for j, frame := range board.TweenFrames {
+			a, b := shapeByID(t, frame, "a"), shapeByID(t, frame, "b")
+			for _, label := range []d2target.Text{a.Text, b.Text, frame.Connections[0].Text} {
+				strike := label.MarkdownStrike
+				if strike == nil || strike.Progress != float64(j)/4 {
+					t.Fatalf("%s sample %d missing strike on %q", board.Name, j, label.Label)
+				}
+				if i == 1 && (label.Language != "" || len(strike.PlainRanges) != 1) {
+					t.Fatalf("restored label %q lost its plain glyphs or measured strike", label.Label)
+				}
+			}
+			status := shapeByID(t, frame, "c").Text
+			wantUnderline := float64(j) / 4
+			if i == 1 {
+				wantUnderline = 1 - wantUnderline
+			}
+			if status.MarkdownStrike != nil || status.UnderlineProgress == nil || *status.UnderlineProgress != wantUnderline {
+				t.Fatalf("underline-only %s sample %d: %+v", board.Name, j, status)
+			}
+			if i == 1 {
+				if a.Type != d2target.ShapeRectangle || !a.Bold || a.MarkdownStrike.PlainRanges[0] != [2]float64{0, 1} {
+					t.Fatalf("restored inferred shape/label: %+v", a.Text)
+				}
+				r := b.MarkdownStrike.PlainRanges[0]
+				if r[0] <= 0 || r[1] >= 1 || r[1] <= r[0] {
+					t.Fatalf("middle word strike should cover only its own advance, got %v", r)
+				}
+			}
+		}
+		if shapeByID(t, board, "a").MarkdownStrike != nil {
+			t.Fatal("mutated authored endpoint")
+		}
+	}
+}
+
 func TestInkComposesWithGridAndMarkdown(t *testing.T) {
 	const source = `vars: {d2-config: {sketch: true; animate-interval: 300ms; animate-duration: 240ms}}
 grid-columns: 2

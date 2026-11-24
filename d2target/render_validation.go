@@ -422,6 +422,16 @@ func validateRenderTextNumbers(path, prefix string, text Text) error {
 		if err := validateInkProgress(path, prefix+"markdownStrike.progress", t.Progress); err != nil {
 			return err
 		}
+		if len(t.PlainRanges) > len(text.Label) {
+			return fmt.Errorf("render target %s.%smarkdownStrike has more ranges than label bytes", path, prefix)
+		}
+		last := 0.
+		for _, span := range t.PlainRanges {
+			if !(span[0] >= last && span[1] > span[0] && span[1] <= 1) {
+				return fmt.Errorf("render target %s.%smarkdownStrike.plainRanges must be ordered, nonoverlapping fractions within [0,1]", path, prefix)
+			}
+			last = span[1]
+		}
 	}
 	for _, field := range []struct {
 		name  string

@@ -1341,6 +1341,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 			} else {
 				writer.animatedUnderline(textEl, connection.Label, float64(connection.LabelHeight), connection.UnderlineProgress)
 			}
+			writer.plainStrike(textEl, connection.Text, inlineTheme, connection.Link != "")
 
 			if connection.Link != "" {
 				fmt.Fprintf(writer, "</a>")
@@ -2226,6 +2227,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			textEl.ClassName = fontClass
 			textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "middle", targetShape.FontSize)
 			writer.animatedUnderline(textEl, targetShape.Label, float64(targetShape.LabelHeight), targetShape.UnderlineProgress)
+			writer.plainStrike(textEl, targetShape.Text, inlineTheme, false)
 		}
 	}
 	if targetShape.Tooltip != "" && targetShape.TooltipPosition == "" {

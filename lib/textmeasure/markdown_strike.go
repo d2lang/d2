@@ -5,6 +5,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 
@@ -28,6 +29,107 @@ func MarkdownStrikeChanged(from, to string) bool {
 
 func mayContainStrike(source string) bool {
 	return strings.ContainsAny(source, "~<")
+}
+
+// PlainMarkdownStrikes identifies struck literal byte ranges in a matching
+// single paragraph. An empty slice means a match without strikes; nil means
+// different wording or formatting.
+func PlainMarkdownStrikes(plain, markdown string) [][2]int {
+	if plain == "" || strings.ContainsAny(plain, "\r\n") {
+		return nil
+	}
+	rendered, err := RenderMarkdown(markdown)
+	if err != nil {
+		return nil
+	}
+	body, ok := strings.CutPrefix(strings.TrimSpace(rendered), "<p>")
+	body, closed := strings.CutSuffix(body, "</p>")
+	if !ok || !closed {
+		return nil
+	}
+	tokens := html.NewTokenizer(strings.NewReader(body))
+	spans := make([][2]int, 0)
+	var offset, start, depth int
+	for {
+		switch kind := tokens.Next(); kind {
+		case html.ErrorToken:
+			if tokens.Err() == io.EOF && offset == len(plain) && depth == 0 {
+				return spans
+			}
+			return nil
+		case html.TextToken:
+			text := string(tokens.Text())
+			if !strings.HasPrefix(plain[offset:], text) {
+				return nil
+			}
+			offset += len(text)
+		case html.StartTagToken, html.EndTagToken:
+			tag, attrs := tokens.TagName()
+			if attrs || (string(tag) != "del" && string(tag) != "s" && string(tag) != "strike") {
+				return nil
+			}
+			if kind == html.StartTagToken {
+				if depth == 0 {
+					start = offset
+				}
+				depth++
+			} else {
+				depth--
+				if depth < 0 {
+					return nil
+				}
+				if depth == 0 && offset > start {
+					spans = append(spans, [2]int{start, offset})
+				}
+			}
+		default:
+			return nil
+		}
+	}
+}
+
+// StrikeAdvances measures a plain run once, retaining kerning across span
+// boundaries. The positions can be reused at any sampled label width.
+func (r *Ruler) StrikeAdvances(text string, spans [][2]int, font d2fonts.Font) [][2]float64 {
+	face := font
+	face.Size = SIZELESS_FONT_SIZE
+	if r == nil || font.Size <= 0 || r.ttfs[face] == nil {
+		return nil
+	}
+	r.MeasurePrecise(font, "")
+	offset := 0
+	advanceTo := func(end int) float64 {
+		r.buf = append(r.buf, text[offset:end]...)
+		r.drawBuf(font)
+		offset = end
+		return r.Dot.X - r.Orig.X
+	}
+	out := make([][2]float64, 0, len(spans))
+	for _, span := range spans {
+		if span[0] < offset || span[1] <= span[0] || span[1] > len(text) ||
+			!utf8.RuneStart(text[span[0]]) || (span[1] < len(text) && !utf8.RuneStart(text[span[1]])) {
+			return nil
+		}
+		left, right := advanceTo(span[0]), advanceTo(span[1])
+		if right > left {
+			out = append(out, [2]float64{left, right})
+		}
+	}
+	width := advanceTo(len(text))
+	if width <= 0 {
+		return nil
+	}
+	n := 0
+	var end float64
+	for _, span := range out {
+		left, right := max(end, span[0]/width), min(1., span[1]/width)
+		if right > left {
+			out[n] = [2]float64{left, right}
+			end = right
+			n++
+		}
+	}
+	return out[:n]
 }
 
 func markdownWithoutStrike(source string) (string, [][2]int, bool) {

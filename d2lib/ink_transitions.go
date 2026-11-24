@@ -1,8 +1,10 @@
 package d2lib
 
 import (
+	"html"
 	"strings"
 
+	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/mazznoer/csscolorparser"
 
 	"github.com/d2lang/d2/d2target"
@@ -22,14 +24,83 @@ type shapeInk struct {
 }
 
 type labelInk struct {
-	label      string
-	underline  bool
-	strikeFrom string
+	label       string
+	underline   bool
+	strikeFrom  string
+	plainRanges [][2]float64
 }
 
-func planLabelInk(old, next d2target.Text) labelInk {
-	if next.Label == "" || old.Language != next.Language {
+type labelInkPlanner struct {
+	board *d2target.Diagram
+	ruler *textmeasure.Ruler
+}
+
+func (p *labelInkPlanner) plainStrikeRanges(text d2target.Text, spans [][2]int) [][2]float64 {
+	if len(spans) == 1 && spans[0] == [2]int{0, len(text.Label)} {
+		return [][2]float64{{0, 1}}
+	}
+	if p.ruler == nil {
+		p.ruler, _ = textmeasure.NewRuler()
+	}
+	if p.ruler == nil {
+		return nil
+	}
+	family := d2fonts.SourceSansPro
+	if p.board.FontFamily != nil {
+		family = *p.board.FontFamily
+	}
+	if strings.EqualFold(text.FontFamily, "mono") {
+		family = d2fonts.SourceCodePro
+		if p.board.MonoFontFamily != nil {
+			family = *p.board.MonoFontFamily
+		}
+	} else if override, ok := d2fonts.D2_FONT_TO_FAMILY[strings.ToLower(text.FontFamily)]; ok && !strings.EqualFold(text.FontFamily, "default") {
+		family = override
+	}
+	style := d2fonts.FONT_STYLE_REGULAR
+	if text.Bold {
+		style = d2fonts.FONT_STYLE_BOLD
+	} else if text.Italic {
+		style = d2fonts.FONT_STYLE_ITALIC
+	}
+	return p.ruler.StrikeAdvances(text.Label, spans, family.Font(text.FontSize, style))
+}
+
+func (p *labelInkPlanner) plan(old, next d2target.Text) labelInk {
+	if next.Label == "" {
 		return labelInk{}
+	}
+	if old.Language != next.Language {
+		plain, marked := old, next
+		if next.Language == "" {
+			plain, marked = next, old
+		}
+		if plain.Language != "" || marked.Language != "markdown" {
+			return labelInk{}
+		}
+		underline := old.Underline != next.Underline
+		if !underline && !strings.ContainsAny(marked.Label, "~<") {
+			return labelInk{}
+		}
+		spans := textmeasure.PlainMarkdownStrikes(plain.Label, marked.Label)
+		if spans == nil || (len(spans) == 0 && !underline) {
+			return labelInk{}
+		}
+		change := labelInk{label: next.Label, underline: underline}
+		if len(spans) != 0 {
+			if next.Language == "markdown" {
+				// Character data preserves literal punctuation across the Markdown parser.
+				change.strikeFrom = "<p>" + html.EscapeString(plain.Label) + "</p>"
+			} else {
+				change.plainRanges = p.plainStrikeRanges(plain, spans)
+				if len(change.plainRanges) != 0 {
+					change.strikeFrom = marked.Label
+				} else if !underline {
+					return labelInk{}
+				}
+			}
+		}
+		return change
 	}
 	switch next.Language {
 	case "", "markdown":
@@ -64,18 +135,27 @@ func planBoardInk(prev, next *d2target.Diagram, sketch, pencilOnly bool) *boardI
 		return nil
 	}
 	var ink boardInk
+	labels := labelInkPlanner{board: next}
 	shapes := gridEdgeShapeMap(prev.Shapes)
 	for i := range next.Shapes {
 		s := &next.Shapes[i]
 		old := shapes[s.ID]
-		if old == nil || old.Type != s.Type {
+		if old == nil {
+			continue
+		}
+		sameShape := old.Type == s.Type
+		// D2 infers a text shape for a Markdown block and a rectangle for
+		// a plain label. Their matching words can still gain or lose a strike.
+		plainToText := old.Type == d2target.ShapeRectangle && s.Type == d2target.ShapeText && old.Language == "" && s.Language == "markdown"
+		textToPlain := old.Type == d2target.ShapeText && s.Type == d2target.ShapeRectangle && old.Language == "markdown" && s.Language == ""
+		if !sameShape && !plainToText && !textToPlain {
 			continue
 		}
 		var edit shapeInk
 		if !pencilOnly && s.Type != d2target.ShapeClass && s.Type != d2target.ShapeSQLTable {
-			edit.label = planLabelInk(old.Text, s.Text)
+			edit.label = labels.plan(old.Text, s.Text)
 		}
-		if sketch && changedSketchFill(old, s) {
+		if sketch && sameShape && changedSketchFill(old, s) {
 			edit.fill = &d2target.SketchFillTransition{From: old.Fill, To: s.Fill}
 		}
 		if edit.fill != nil || edit.label.label != "" {
@@ -94,7 +174,7 @@ func planBoardInk(prev, next *d2target.Diagram, sketch, pencilOnly bool) *boardI
 		for i := range next.Connections {
 			c := &next.Connections[i]
 			if old := edges[c.ID]; old != nil {
-				edit := planLabelInk(old.Text, c.Text)
+				edit := labels.plan(old.Text, c.Text)
 				// A plain linked connection label already has a permanent underline.
 				if c.Language == "" && (old.Link != "" || c.Link != "") {
 					edit.underline = false
@@ -126,7 +206,7 @@ func (edit labelInk) apply(t *d2target.Text, progress float64) {
 		t.UnderlineProgress = &visible
 	}
 	if edit.strikeFrom != "" {
-		t.MarkdownStrike = &d2target.MarkdownStrikeTransition{From: edit.strikeFrom, Progress: progress}
+		t.MarkdownStrike = &d2target.MarkdownStrikeTransition{From: edit.strikeFrom, Progress: progress, PlainRanges: edit.plainRanges}
 	}
 }
 

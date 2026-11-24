@@ -1052,7 +1052,7 @@ func (b *builder) buildShapeText(targetShape d2target.Shape) ([]*d2scene.Node, e
 		textNode.ID = fmt.Sprintf("%s:label:%d", targetShape.ID, i)
 		nodes = append(nodes, textNode)
 	}
-	return nodes, nil
+	return appendPlainStrikes(nodes, targetShape.Text, topLeft, fill), nil
 }
 
 func targetGeometry(targetShape d2target.Shape) shape.Shape {

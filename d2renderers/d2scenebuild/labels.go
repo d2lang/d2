@@ -254,6 +254,7 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 				connection.LabelWidth, connection.LabelHeight, connection.FontSize,
 				font, fill, underline, progress,
 			)...)
+			nodes = appendPlainStrikes(nodes, connection.Text, topLeft, fill)
 		}
 	}
 
@@ -304,6 +305,13 @@ func copyUnderlineProgress(progress *float64) *float64 {
 	}
 	visible := *progress
 	return &visible
+}
+
+func appendPlainStrikes(nodes []*d2scene.Node, label d2target.Text, topLeft *geo.Point, fill d2scene.Paint) []*d2scene.Node {
+	label.MarkdownStrike.PlainRules(topLeft.X, topLeft.Y+float64(label.FontSize), float64(label.LabelWidth), float64(label.FontSize), func(x, y, width, height float64) {
+		nodes = append(nodes, d2scene.NewNode(d2scene.Rect{Box: d2scene.Box{X: x, Y: y, Width: width, Height: height}, Fill: fill}))
+	})
+	return nodes
 }
 
 func centeredTextRuns(idPrefix, text string, topLeft *geo.Point, width, height, fontSize int, font d2scene.Font, fill d2scene.Paint, underline bool, progress *float64) []*d2scene.Node {

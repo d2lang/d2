@@ -19,6 +19,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/internal/fontface"
+	"github.com/d2lang/d2/d2target"
 )
 
 const (
@@ -40,6 +41,7 @@ type labelTextStyle struct {
 	FontFamily                         string
 	Bold, Italic, Underline            bool
 	UnderlineProgress                  *float64
+	MarkdownStrike                     *d2target.MarkdownStrikeTransition
 	Color                              color.NRGBA
 	Background                         *color.NRGBA
 	ForegroundPaint, BackgroundPaint   d2scene.Paint
@@ -340,11 +342,9 @@ func (p *textPainter) texture(value string, style labelTextStyle) (*image.RGBA, 
 				record(d2scene.ClosePath())
 			}
 		}
-		underline := d2scene.UnderlineFraction(style.Underline, style.UnderlineProgress)
-		if underline > 0 && line.maxX > line.minX {
-			left, right := x+float64(line.minX*unitScale), x+float64(line.maxX*unitScale)
-			right = left + (right-left)*underline
-			top, bottom := y+float64(fontPixels*.10), y+float64(fontPixels*.15)
+		left, right := x+float64(line.minX*unitScale), x+float64(line.maxX*unitScale)
+		drawRule := func(left, top, width, height float64) {
+			right, bottom := left+width, top+height
 			left, right = left*drawScaleX, right*drawScaleX
 			top, bottom = top*drawScaleY, bottom*drawScaleY
 			raster.MoveTo(float32(left), float32(top))
@@ -358,6 +358,11 @@ func (p *textPainter) texture(value string, style labelTextStyle) (*image.RGBA, 
 			record(d2scene.LineTo(left, bottom))
 			record(d2scene.ClosePath())
 		}
+		underline := d2scene.UnderlineFraction(style.Underline, style.UnderlineProgress)
+		if underline > 0 && right > left {
+			drawRule(left, y+float64(fontPixels*.10), (right-left)*underline, float64(fontPixels*.05))
+		}
+		style.MarkdownStrike.PlainRules(left, y, right-left, float64(fontPixels), drawRule)
 	}
 	foreground := style.Color
 	foreground.A = uint8(math.Round(float64(foreground.A) * style.Opacity))

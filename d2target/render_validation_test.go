@@ -3,6 +3,7 @@ package d2target
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -90,7 +91,8 @@ func TestValidateRenderInk(t *testing.T) {
 	shape := *BaseShape()
 	shape.SketchFillTransition = &SketchFillTransition{From: "N2", To: "transparent", Progress: progress}
 	shape.UnderlineProgress = &progress
-	shape.MarkdownStrike = &MarkdownStrikeTransition{From: "previous", Progress: progress}
+	shape.Label = "previous"
+	shape.MarkdownStrike = &MarkdownStrikeTransition{From: "~~previous~~", Progress: progress, PlainRanges: [][2]float64{{0, 1}}}
 	target := &Diagram{Shapes: []Shape{shape}}
 	raw, err := json.Marshal(target)
 	if err != nil {
@@ -104,7 +106,7 @@ func TestValidateRenderInk(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := roundTrip.Shapes[0]
-	if restored.UnderlineProgress == nil || *restored.UnderlineProgress != progress || restored.MarkdownStrike == nil || *restored.MarkdownStrike != *shape.MarkdownStrike || restored.SketchFillTransition == nil || *restored.SketchFillTransition != *shape.SketchFillTransition {
+	if restored.UnderlineProgress == nil || *restored.UnderlineProgress != progress || restored.MarkdownStrike == nil || restored.MarkdownStrike.From != shape.MarkdownStrike.From || restored.MarkdownStrike.Progress != progress || !slices.Equal(restored.MarkdownStrike.PlainRanges, shape.MarkdownStrike.PlainRanges) || restored.SketchFillTransition == nil || *restored.SketchFillTransition != *shape.SketchFillTransition {
 		t.Fatal("lost ink in render target JSON")
 	}
 	for _, edit := range []func(*Shape){
@@ -112,6 +114,8 @@ func TestValidateRenderInk(t *testing.T) {
 		func(s *Shape) { s.SketchFillTransition.To = "bogus" },
 		func(s *Shape) { *s.UnderlineProgress = math.Inf(-1) },
 		func(s *Shape) { s.MarkdownStrike.Progress = 1.01 },
+		func(s *Shape) { s.MarkdownStrike.PlainRanges[0][0] = math.NaN() },
+		func(s *Shape) { s.Label = "" },
 	} {
 		if err := json.Unmarshal(raw, &roundTrip); err != nil {
 			t.Fatal(err)

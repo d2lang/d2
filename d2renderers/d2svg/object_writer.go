@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/lib/svg"
 )
@@ -107,6 +108,18 @@ func (w *objectWriter) text(el *d2themes.ThemableElement, text string) {
 	w.glyphs(el.ClassName, text)
 	el.SetText(text)
 	w.element(el)
+}
+
+func (w *objectWriter) plainStrike(el *d2themes.ThemableElement, label d2target.Text, theme *d2themes.Theme, linked bool) {
+	label.MarkdownStrike.PlainRules(el.X-float64(label.LabelWidth)/2, el.Y, float64(label.LabelWidth), float64(label.FontSize), func(x, y, width, height float64) {
+		rule := d2themes.NewThemableElement("rect", theme)
+		rule.X, rule.Y, rule.Width, rule.Height = x, y, width, height
+		rule.Fill = el.Fill
+		if linked {
+			rule.ClassName = "text-link"
+		}
+		w.element(rule)
+	})
 }
 
 func (w *objectWriter) label(el *d2themes.ThemableElement, text string, height float64) {

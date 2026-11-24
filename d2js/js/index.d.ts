@@ -244,7 +244,7 @@ export interface Text {
   bold: boolean;
   underline: boolean;
   underlineProgress?: number;
-  markdownStrike?: { from: string; progress: number };
+  markdownStrike?: { from: string; progress: number; plainRanges?: [number, number][] };
   labelWidth: number /* int */;
   labelHeight: number /* int */;
   labelFill?: string;
