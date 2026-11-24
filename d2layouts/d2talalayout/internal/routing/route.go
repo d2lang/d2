@@ -89,6 +89,11 @@ func (r *Route) isEntireColinear(from, to *OVGNode) bool {
 // TODO consider min distance for labels
 // Not self-route
 func (r *Route) canSwapEdgesGuarded(r2 *Route, allRoutes []*Route, guard workBudget) (bool, error) {
+	// A SQL row is part of the authored endpoint, even when both routes
+	// use the same table face.
+	if r.GEdge.HasTableColumn() || r2.GEdge.HasTableColumn() {
+		return false, nil
+	}
 	if r.GEdge.From == r.GEdge.To {
 		return false, nil
 	}

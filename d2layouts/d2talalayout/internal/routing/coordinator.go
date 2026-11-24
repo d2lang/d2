@@ -463,7 +463,7 @@ func routeEdgesWithResourceGuards(
 			isRouted[tree.SentinelEdge] = struct{}{}
 		} else {
 			for _, routedEdge := range loops.Route(node) {
-				existingRoutes = append(existingRoutes, makeLoopRoute(routedEdge, ovg))
+				existingRoutes = append(existingRoutes, makeLoopRoute(routedEdge, routedEdge.Points, ovg))
 				isRouted[routedEdge] = struct{}{}
 			}
 		}
@@ -549,7 +549,47 @@ func routeAdditionalEdgesWithResourceLimits(
 	}
 	guard := ovg.buildGuard
 
+	// Seed row-bound loops with their explicit ports. Searching from the
+	// table center back to itself would discard the row identities.
+	searchEdges := edges
 	existingRoutes := make([]*Route, 0)
+	if slices.ContainsFunc(edges, loops.IsTableRowLoop) {
+		searchEdges = make([]*layoutgraph.Edge, 0, len(edges))
+		byTable := make(map[*layoutgraph.Node]map[*layoutgraph.Edge][]*geo.Point)
+		for _, e := range edges {
+			if err := guard.step(); err != nil {
+				return ovg, err
+			}
+			if !loops.IsTableRowLoop(e) {
+				searchEdges = append(searchEdges, e)
+				continue
+			}
+			if byTable[e.From] == nil {
+				// The plan sorts the incident edges and the occupied bands once
+				// per table and inspects each retained loop's existing path.
+				for range 2 {
+					if err := guard.reserveSortWork(len(e.From.Edges)); err != nil {
+						return ovg, err
+					}
+				}
+				for _, incident := range e.From.Edges {
+					units := 1
+					if _, moving := newEdges[incident]; !moving && incident.IsLoop() {
+						units += len(incident.Points)
+					}
+					if err := guard.reserveWork(uint64(units)); err != nil {
+						return ovg, err
+					}
+				}
+				byTable[e.From] = loops.SelectedTableRowRoutes(e.From, newEdges)
+			}
+			points := byTable[e.From][e]
+			if len(points) < 2 {
+				return ovg, fmt.Errorf("table loop %d missing from its endpoint's incident edges", e.IDValue())
+			}
+			existingRoutes = append(existingRoutes, makeLoopRoute(e, points, ovg))
+		}
+	}
 	for _, e := range g.Edges {
 		if err := guard.step(); err != nil {
 			return ovg, err
@@ -633,7 +673,7 @@ func routeAdditionalEdgesWithResourceLimits(
 	routers := make([]*ovgEdgeRouter, 0, len(flavors))
 	var shared ovgRouterShared
 	for _, flavor := range flavors {
-		router, err := newSharingOVGEdgeRouter(ctx, flavor, ovg, g, existingRoutes, edges, searchWorkLimit, &shared)
+		router, err := newSharingOVGEdgeRouter(ctx, flavor, ovg, g, existingRoutes, searchEdges, searchWorkLimit, &shared)
 		if err != nil {
 			return ovg, err
 		}

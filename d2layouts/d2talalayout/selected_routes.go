@@ -36,9 +36,6 @@ func supportsRouteRefinements(g *d2graph.Graph) bool {
 func refineSelectedRoutes(ctx context.Context, g *layoutgraph.Graph) (err error) {
 	hierarchy := slices.ContainsFunc(g.Nodes, func(n *layoutgraph.Node) bool { return n.Hierarchy != nil })
 	pair := routing.CanRefineLabeledLanes(g)
-	if !hierarchy && !pair {
-		return ctx.Err()
-	}
 	// Each stage installs a new slice when changing a route. Keep the old
 	// headers so even a failed or interrupted final inspection is reversible.
 	original := make([][]*geo.Point, len(g.Edges))
@@ -64,6 +61,16 @@ func refineSelectedRoutes(ctx context.Context, g *layoutgraph.Graph) (err error)
 			return err
 		}
 		if err := routing.RefineHierarchyFanPorts(ctx, g); err != nil {
+			return err
+		}
+	} else if !g.IsRootHierarchy && !slices.ContainsFunc(g.Nodes, func(n *layoutgraph.Node) bool { return n.ForceHierarchy }) {
+		if err := routing.RefineOrdinaryLabelRoutes(ctx, g); err != nil {
+			return err
+		}
+		if err := routing.RefineOrdinaryDetours(ctx, g); err != nil {
+			return err
+		}
+		if err := routing.RefineOrdinaryFanLanes(ctx, g, g.Edges); err != nil {
 			return err
 		}
 	}

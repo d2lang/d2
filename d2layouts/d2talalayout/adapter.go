@@ -523,6 +523,12 @@ func RouteEdges(ctx context.Context, g *d2graph.Graph, edges []*d2graph.Edge) (e
 		return preferContextError(ctx, "edge routing", err)
 	}
 
+	if supportsRouteRefinements(g) {
+		if err := routing.RefineOrdinaryFanLanes(workCtx, talaGraph, talaEdges); err != nil {
+			return preferContextError(ctx, "edge routing", err)
+		}
+	}
+
 	patch, err := buildRoutePatch(workCtx, g, bindings, talaEdges)
 	if err != nil {
 		return preferContextError(ctx, "edge routing", err)

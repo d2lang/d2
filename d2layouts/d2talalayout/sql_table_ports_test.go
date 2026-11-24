@@ -5,11 +5,14 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/textmeasure"
 )
 
 func TestSQLTableRowPortsWithPlainEndpoint(t *testing.T) {
@@ -86,5 +89,125 @@ func TestSQLTableRowPortsWithPlainEndpoint(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestSQLRowBindingsSurviveRouting(t *testing.T) {
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const table = "table: {shape: sql_table; id: int; ref: int; status: text}\n"
+	for _, tc := range []struct {
+		name, links string
+		// Row indices in authored endpoint order. -1 denotes a table-level or plain end.
+		want [][2]int
+	}{
+		{"reciprocal", "table.status -> client: send\nclient -> table.ref: read", [][2]int{{2, -1}, {-1, 1}}},
+		{"same table", "table.ref -> table.id", [][2]int{{1, 0}}},
+		{"same row", "table.ref -> table.ref", [][2]int{{1, 1}}},
+		{"table to row", "table -> table.status", [][2]int{{-1, 2}}},
+		{"row to table", "table.ref <- table", [][2]int{{1, -1}}},
+		{"multiple loops", "table.ref -> table.id\ntable.id -> table.ref", [][2]int{{1, 0}, {0, 1}}},
+		{"whole table", "table -> table", [][2]int{{-1, -1}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, _, err := d2compiler.Compile("table.d2", strings.NewReader(table+tc.links), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := DefaultLayout(t.Context(), g); err != nil {
+				t.Fatal(err)
+			}
+			for _, operation := range []string{"layout", "reroute"} {
+				if operation == "reroute" {
+					if tc.name == "whole table" {
+						continue
+					}
+					if err := RouteEdges(t.Context(), g, g.Edges); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for i, edge := range g.Edges {
+					if len(edge.Route) < 2 {
+						t.Fatalf("%s: empty route", operation)
+					}
+					start, end := edge.Route[0], edge.Route[len(edge.Route)-1]
+					if *start == *end {
+						t.Fatalf("%s: coincident ends of %s", operation, edge.AbsID())
+					}
+					for j, row := range tc.want[i] {
+						idx, obj, pt := edge.SrcTableColumnIndex, edge.Src, start
+						if j == 1 {
+							idx, obj, pt = edge.DstTableColumnIndex, edge.Dst, end
+						}
+						if row < 0 {
+							if idx != nil {
+								t.Fatalf("unexpected binding %d", *idx)
+							}
+							continue
+						}
+						wantY := obj.TopLeft.Y + math.Round(obj.Height/float64(1+len(obj.SQLTable.Columns))*(float64(row)+1.5))
+						if idx == nil || *idx != row || pt.Y != wantY || (pt.X != obj.TopLeft.X && pt.X != obj.TopLeft.X+obj.Width) {
+							t.Errorf("%s: edge %d endpoint %d at %v, want side of row %d at y=%v", operation, i, j, pt, row, wantY)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPartialSQLLoopReroutingRespectsFrozenLanes(t *testing.T) {
+	const source = "table: {shape: sql_table; id: int; ref: int; status: text}\ntable.ref -> table.id: long label\ntable.status -> table.id"
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, _, err := d2compiler.Compile("table.d2", strings.NewReader(source), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := DefaultLayout(t.Context(), g); err != nil {
+		t.Fatal(err)
+	}
+	selected, frozen := g.Edges[0], g.Edges[1]
+	if len(selected.Route) != 4 || len(frozen.Route) != 4 {
+		t.Fatalf("unexpected row loop routes %v, %v", selected.Route, frozen.Route)
+	}
+	original := selected.Route[1].X
+	reroute := func() float64 {
+		t.Helper()
+		if err := RouteEdges(t.Context(), g, []*d2graph.Edge{selected}); err != nil {
+			t.Fatal(err)
+		}
+		if len(selected.Route) != 4 || selected.Route[1].X != selected.Route[2].X {
+			t.Fatalf("invalid row loop: %v", selected.Route)
+		}
+		return selected.Route[1].X
+	}
+	if got := reroute(); got != original {
+		t.Fatalf("partial reroute changed native lane from %g to %g", original, got)
+	}
+
+	// A caller can retain a lane laid out by another engine. Put it exactly
+	// where the selected loop was and keep its port and route storage fixed.
+	frozen.Route[1].X, frozen.Route[2].X = original, original
+	retained := slices.Clone(frozen.Route)
+	got := reroute()
+	if math.Abs(got-original) < 30 {
+		t.Fatalf("selected lane %g overlaps retained lane %g", got, original)
+	}
+	if again := reroute(); again != got {
+		t.Fatalf("repeated reroute moved lane from %g to %g", got, again)
+	}
+	if !slices.Equal(retained, frozen.Route) || frozen.Route[1].X != original || frozen.Route[2].X != original {
+		t.Fatalf("unselected path changed: %v", frozen.Route)
 	}
 }
