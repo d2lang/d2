@@ -93,3 +93,17 @@ func (c Connection) PathCommands(srcAdj, dstAdj *geo.Point) iter.Seq[ConnectionP
 		yield(ConnectionPathCommand{Kind: 'L', End: end})
 	}
 }
+
+// GradientBounds anchors a connection's stroke paint to its full route, before
+// the shaft is shortened for arrowheads. Even a straight horizontal or vertical
+// connection needs a paintable cross section for its stroke and markers.
+func (c Connection) GradientBounds() *geo.Box {
+	tl, br := geo.Route(c.Route).GetBoundingBox()
+	stroke := float64(c.StrokeWidth)
+	_, srcHeight := c.SrcArrow.Dimensions(stroke)
+	_, dstHeight := c.DstArrow.Dimensions(stroke)
+	minSize := max(1, stroke, srcHeight, dstHeight)
+	w, h := br.X-tl.X, br.Y-tl.Y
+	width, height := max(w, minSize), max(h, minSize)
+	return geo.NewBox(geo.NewPoint(tl.X-(width-w)/2, tl.Y-(height-h)/2), width, height)
+}

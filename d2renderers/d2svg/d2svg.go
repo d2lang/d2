@@ -24,6 +24,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2latex"
+	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2renderers/d2sketch"
 	"github.com/d2lang/d2/d2renderers/internal/codestyle"
 	"github.com/d2lang/d2/d2renderers/internal/patternassets"
@@ -496,13 +497,13 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 
 	legendHash := fmt.Sprintf("legend-%s", hash(fmt.Sprintf("%s-%d-%d", c.ID, x, y)))
 
-	markers := make(map[string]struct{})
+	defined := make(map[string]struct{})
 	idToShape := make(map[string]d2target.Shape)
 
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, markers, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -527,13 +528,41 @@ func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Co
 	)))
 }
 
-func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, inlineTheme *d2themes.Theme) string {
+func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, inlineTheme *d2themes.Theme, gradient *connectionGradient, worldToMarker d2scene.Matrix) string {
 	arrowhead := connection.DstArrow
 	if !isTarget {
 		arrowhead = connection.SrcArrow
 	}
 	strokeWidth := float64(connection.StrokeWidth)
 	width, height := arrowhead.Dimensions(strokeWidth)
+
+	markerWidth := width
+	var refX float64
+	refY := height / 2
+	switch arrowhead {
+	case d2target.DiamondArrowhead:
+		if isTarget {
+			refX = width - 0.6*strokeWidth
+		} else {
+			refX = width/8 + 0.6*strokeWidth
+		}
+		markerWidth *= 1.1
+	default:
+		if isTarget {
+			refX = width - 1.5*strokeWidth
+		} else {
+			refX = 1.5 * strokeWidth
+		}
+	}
+
+	if gradient != nil {
+		worldToMarker = d2scene.Translate(refX, refY).Mul(worldToMarker)
+		if !isTarget && (arrowhead == d2target.CfOne || arrowhead == d2target.CfOneRequired || arrowhead == d2target.CfMany || arrowhead == d2target.CfManyRequired) {
+			// The source crow's foot is flipped inside the marker viewport.
+			worldToMarker = d2scene.Translate(width, height).Mul(d2scene.Scale(-1, -1)).Mul(worldToMarker)
+		}
+		connection.Stroke = gradient.paint(worldToMarker)
+	}
 
 	var path string
 	switch arrowhead {
@@ -725,6 +754,10 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		)
 		crossEl.Transform = fmt.Sprintf("translate(%s, %s) rotate(45)", svg.FormatFloat(-newOrigin.X+width/2), svg.FormatFloat(-newOrigin.Y+height/2))
 
+		if gradient != nil {
+			crossEl.Stroke = gradient.paint(d2scene.RotateAround(-rotationAngle, width/2, height/2).Mul(worldToMarker))
+		}
+
 		childPathEl := d2themes.NewThemableElement("path", inlineTheme)
 		if isTarget {
 			childPathEl.D = fmt.Sprintf("M%s,%s %s,%s",
@@ -851,29 +884,11 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		return ""
 	}
 
-	var refX float64
-	refY := height / 2
-	switch arrowhead {
-	case d2target.DiamondArrowhead:
-		if isTarget {
-			refX = width - 0.6*strokeWidth
-		} else {
-			refX = width/8 + 0.6*strokeWidth
-		}
-		width *= 1.1
-	default:
-		if isTarget {
-			refX = width - 1.5*strokeWidth
-		} else {
-			refX = 1.5 * strokeWidth
-		}
-	}
-
 	return strings.Join([]string{
 		fmt.Sprintf(`<marker id="%s" markerWidth="%s" markerHeight="%s" refX="%s" refY="%s"`,
-			id, svg.FormatFloat(width), svg.FormatFloat(height), svg.FormatFloat(refX), svg.FormatFloat(refY),
+			id, svg.FormatFloat(markerWidth), svg.FormatFloat(height), svg.FormatFloat(refX), svg.FormatFloat(refY),
 		),
-		fmt.Sprintf(`viewBox="%s %s %s %s"`, svg.FormatFloat(0.), svg.FormatFloat(0.), svg.FormatFloat(width), svg.FormatFloat(height)),
+		fmt.Sprintf(`viewBox="%s %s %s %s"`, svg.FormatFloat(0.), svg.FormatFloat(0.), svg.FormatFloat(markerWidth), svg.FormatFloat(height)),
 		`orient="auto" markerUnits="userSpaceOnUse">`,
 		path,
 		"</marker>",
@@ -1013,7 +1028,7 @@ func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, label
 	)
 }
 
-func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, markers map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
 	classes := []string{base64.URLEncoding.EncodeToString([]byte(svg.EscapeText(connection.ID)))}
 	classes = append(classes, connection.Classes...)
 	opacityStyle := ""
@@ -1021,33 +1036,44 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		opacityStyle = fmt.Sprintf(" style='opacity:%s'", svg.FormatFloat(connection.Opacity))
 	}
 	writer.openGroup(classes, opacityStyle)
-	var markerStart []svg.Attribute
-	if connection.SrcArrow != d2target.NoArrowhead {
-		id := arrowheadMarkerID(diagramHash, false, connection)
-		if _, in := markers[id]; !in {
-			marker := arrowheadMarker(false, id, connection, inlineTheme)
-			if marker == "" {
+	srcAdj, dstAdj := connection.ArrowheadAdjustments(idToShape)
+	var gradient *connectionGradient
+	var srcMarker, dstMarker d2scene.Matrix
+	if color.IsGradient(connection.Stroke) {
+		var err error
+		gradient, err = newConnectionGradient(writer, connection, defined)
+		if err != nil {
+			return "", err
+		}
+		connection.Stroke = gradient.paint(d2scene.Identity())
+		if !sketch {
+			srcMarker, dstMarker = markerEndpoints(connection, srcAdj, dstAdj)
+		}
+	}
+	marker := func(arrow d2target.Arrowhead, target bool, placement d2scene.Matrix) []svg.Attribute {
+		if arrow == d2target.NoArrowhead || (sketch && gradient != nil) {
+			return nil
+		}
+		id := arrowheadMarkerID(diagramHash, target, connection)
+		if gradient != nil {
+			id += "-" + hash(fmt.Sprint(placement))
+		}
+		if _, exists := defined[id]; !exists {
+			markup := arrowheadMarker(target, id, connection, inlineTheme, gradient, placement)
+			if markup == "" {
 				panic(fmt.Sprintf("received empty arrow head marker for: %#v", connection))
 			}
-			fmt.Fprint(writer, marker)
-			markers[id] = struct{}{}
+			fmt.Fprint(writer, markup)
+			defined[id] = struct{}{}
 		}
-		markerStart = []svg.Attribute{svg.Attr("marker-start", svg.LocalIRI(svg.LiteralID(id)))}
-	}
-
-	var markerEnd []svg.Attribute
-	if connection.DstArrow != d2target.NoArrowhead {
-		id := arrowheadMarkerID(diagramHash, true, connection)
-		if _, in := markers[id]; !in {
-			marker := arrowheadMarker(true, id, connection, inlineTheme)
-			if marker == "" {
-				panic(fmt.Sprintf("received empty arrow head marker for: %#v", connection))
-			}
-			fmt.Fprint(writer, marker)
-			markers[id] = struct{}{}
+		attr := "marker-start"
+		if target {
+			attr = "marker-end"
 		}
-		markerEnd = []svg.Attribute{svg.Attr("marker-end", svg.LocalIRI(svg.LiteralID(id)))}
+		return []svg.Attribute{svg.Attr(attr, svg.LocalIRI(svg.LiteralID(id)))}
 	}
+	markerStart := marker(connection.SrcArrow, false, srcMarker)
+	markerEnd := marker(connection.DstArrow, true, dstMarker)
 
 	if connection.Icon != nil {
 		iconPos := connection.GetIconPosition()
@@ -1101,7 +1127,6 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		}
 	}
 
-	srcAdj, dstAdj := connection.ArrowheadAdjustments(idToShape)
 	path := pathData(connection, srcAdj, dstAdj)
 	mask := svg.Attr("mask", svg.LocalIRI(svg.LiteralID(diagramHash)))
 	if crossingMask != "" {
@@ -1116,7 +1141,15 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		fmt.Fprint(writer, out)
 
 		// render sketch arrowheads separately
-		arrowPaths, err := d2sketch.Arrowheads(connection, srcAdj, dstAdj)
+		sketchPaint := func(arrow d2target.Arrowhead, target bool, adjustment *geo.Point) string {
+			if gradient == nil || arrow == d2target.NoArrowhead {
+				return connection.Stroke
+			}
+			p, degrees := d2sketch.ArrowheadPlacement(connection, target, adjustment)
+			return gradient.paint(worldToEndpoint(p, degrees*math.Pi/180))
+		}
+		arrowPaths, err := d2sketch.ArrowheadsWithPaint(connection, srcAdj, dstAdj,
+			sketchPaint(connection.SrcArrow, false, srcAdj), sketchPaint(connection.DstArrow, true, dstAdj))
 		if err != nil {
 			return "", err
 		}
@@ -1367,9 +1400,12 @@ func drawDoubleOval(writer *objectWriter, tl *geo.Point, width, height float64, 
 	drawOval(writer, innerTL, width-10, height-10, fill, "", stroke, style, inlineTheme)
 }
 
-func defineGradients(writer io.Writer, cssGradient string) {
-	gradient, _ := color.ParseGradient(cssGradient)
-	fmt.Fprint(writer, fmt.Sprintf(`<defs>%s</defs>`, color.GradientToSVG(gradient)))
+func defineGradient(writer io.Writer, gradient color.Gradient, defined map[string]struct{}) {
+	if _, ok := defined[gradient.ID]; ok {
+		return
+	}
+	fmt.Fprint(writer, svg.OpenElement("defs"), color.GradientToSVG(gradient), svg.CloseElement("defs"))
+	defined[gradient.ID] = struct{}{}
 }
 
 func defineShadowFilter(writer io.Writer) {
@@ -2891,30 +2927,22 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		}
 	}
 
-	if color.IsGradient(diagram.Root.Fill) {
-		defineGradients(writer, diagram.Root.Fill)
-	}
-	if color.IsGradient(diagram.Root.Stroke) {
-		defineGradients(writer, diagram.Root.Stroke)
-	}
-	for _, s := range diagram.Shapes {
-		if color.IsGradient(s.Fill) {
-			defineGradients(writer, s.Fill)
-		}
-		if color.IsGradient(s.Stroke) {
-			defineGradients(writer, s.Stroke)
-		}
-		if color.IsGradient(s.Color) {
-			defineGradients(writer, s.Color)
+	defined := make(map[string]struct{})
+	definePaint := func(paint string) {
+		if color.IsGradient(paint) {
+			gradient, _ := color.ParseGradient(paint) // validated above
+			defineGradient(writer, gradient, defined)
 		}
 	}
-	for _, c := range diagram.Connections {
-		if color.IsGradient(c.Stroke) {
-			defineGradients(writer, c.Stroke)
-		}
-		if color.IsGradient(c.Fill) {
-			defineGradients(writer, c.Fill)
-		}
+	definePaint(diagram.Root.Fill)
+	definePaint(diagram.Root.Stroke)
+	for _, shape := range diagram.Shapes {
+		definePaint(shape.Fill)
+		definePaint(shape.Stroke)
+		definePaint(shape.Color)
+	}
+	for _, connection := range diagram.Connections {
+		definePaint(connection.Fill)
 	}
 
 	writer.finish()
@@ -2959,7 +2987,6 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	appendixItemBuf := &bytes.Buffer{}
 
 	var labelMasks []string
-	markers := map[string]struct{}{}
 	markdown := newMarkdownRenderer(diagram.FontFamily, diagram.MonoFontFamily, inlineTheme)
 	for _, obj := range allObjects {
 		if c, is := obj.(indexedConnection); is {
@@ -2967,7 +2994,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 			if len(crossings[c.index]) != 0 {
 				maskID = crossingMaskID(isolatedDiagramHash, c.index)
 			}
-			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, markers, idToShape, sketch, inlineTheme, markdown)
+			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
 			}
