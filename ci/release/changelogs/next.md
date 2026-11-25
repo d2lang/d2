@@ -157,6 +157,7 @@
     label is available (e.g. `link: _` in a scenario). [#2961](https://github.com/d2lang/d2/issues/2961)
   - Render forced appendices inside their animated SVG frames and size the
     animation to include every board's footnotes.
+- sequence diagrams: fix a compile error ("invalid position with infinity value") when a group nested in another group contains only a note. [#2750](https://github.com/d2lang/d2/issues/2750)
 
 ---
 

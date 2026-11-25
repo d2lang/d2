@@ -783,6 +783,19 @@ b
 }
 `,
 		},
+		{
+			name: "sequence-note-in-nested-group",
+			script: `shape: sequence_diagram
+
+actor: Actor
+
+outer group: {
+  inner group: {
+    actor."Think about life"
+  }
+}
+`,
+		},
 		loadFromFile(t, "unconnected"),
 		{
 			name: "straight_hierarchy_container_direction_right",
