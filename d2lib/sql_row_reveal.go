@@ -7,8 +7,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 )
 
-// Tables grow from their existing top edge. A column's contents stay at their
-// authored endpoint, including the type alignment shared by the whole table.
+// Append rows beneath a stationary table with unchanged column alignment.
 type sqlRowReveal struct {
 	tables map[int]int // Shape index to number of existing columns.
 }
@@ -23,7 +22,7 @@ func planSQLRowReveal(prev, next *d2target.Diagram) *sqlRowReveal {
 		if to.Type != d2target.ShapeSQLTable || len(to.Columns) <= len(from.Columns) {
 			continue
 		}
-		if from.Type != to.Type || from.Pos != to.Pos || from.Width != to.Width || from.Height <= 0 ||
+		if from.Type != to.Type || from.Pos != to.Pos || from.Width != to.Width || from.Width <= 0 || from.Height <= 0 ||
 			from.SQLRowHeight() != to.SQLRowHeight() || from.Icon != nil ||
 			len(from.Columns) == 0 && from.BorderRadius > 0 ||
 			len(from.Columns) > 0 && !reflect.DeepEqual(from.Columns, to.Columns[:len(from.Columns)]) {
@@ -64,16 +63,12 @@ func (p *sqlRowReveal) apply(frame *d2target.Diagram, t float64) {
 	for i, count := range p.tables {
 		table := &frame.Shapes[i]
 		added := len(table.Columns) - count
-		// Open the space before bringing in its lettering. Each row follows
-		// the same timing, including when several arrive in one step.
-		at := min(float64(added), t*float64(added))
-		whole, local := math.Modf(at)
-		slot := boardStroke(min(1, local/.8))
-		height := table.SQLRowHeight() * (1 + float64(count) + whole + slot)
-		table.RowReveal = &d2target.SQLRowReveal{
-			FullHeight:  table.Height,
-			VisibleRows: float64(count) + whole + max(0, min(1, (local-.52)/.40)),
+		// Each row drops the height of one slot before the next one enters.
+		whole, local := math.Modf(t * float64(added))
+		height := int(math.Round(table.SQLRowHeight() * (1 + float64(count) + whole + boardStroke(local))))
+		if height < table.Height {
+			table.RowReveal = &d2target.SQLRowReveal{FullHeight: table.Height}
+			table.Height = height
 		}
-		table.Height = int(math.Round(height))
 	}
 }

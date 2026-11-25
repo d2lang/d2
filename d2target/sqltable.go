@@ -17,11 +17,10 @@ type SQLTable struct {
 	Columns []SQLColumn `json:"columns"`
 }
 
-// SQLRowReveal holds the final table height for row layout while an incoming
-// step expands the body. The fractional row count controls the new text's opacity.
+// SQLRowReveal fixes row spacing at the authored height while the table's
+// moving bottom edge uncovers each appended row.
 type SQLRowReveal struct {
-	FullHeight  int     `json:"fullHeight"`
-	VisibleRows float64 `json:"visibleRows"`
+	FullHeight int `json:"fullHeight"`
 }
 
 func (s *Shape) SQLRowHeight() float64 {
@@ -32,15 +31,16 @@ func (s *Shape) SQLRowHeight() float64 {
 	return float64(height) / float64(1+len(s.Columns))
 }
 
-func (s *Shape) SQLRowOpacity(index int) float64 {
+// SQLRowVisibleHeight is the portion of a row below its stationary top edge.
+// While the slot opens, its contents travel with the bottom of the table.
+func (s *Shape) SQLRowVisibleHeight(top, height float64) float64 {
 	if s.RowReveal == nil {
-		return 1
+		return height
 	}
-	return max(0, min(1, s.RowReveal.VisibleRows-float64(index)))
+	return max(0, min(height, float64(s.Pos.Y)+float64(s.Height)-top))
 }
 
-// SQLRowDivider positions the separator below a row. The growing body's
-// bottom border moves ahead of the text; keep its divider on that border.
+// SQLRowDivider keeps the separator and moving bottom border together.
 func (s *Shape) SQLRowDivider(index int, y, radius float64) (bottom, inset float64, last bool) {
 	last = index == len(s.Columns)-1
 	if s.RowReveal != nil {

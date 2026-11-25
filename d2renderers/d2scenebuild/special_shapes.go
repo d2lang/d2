@@ -253,16 +253,24 @@ func (b *builder) buildSQLTableContents(targetShape d2target.Shape, box d2scene.
 		nameTopLeft := label.InsideMiddleLeft.GetPointOnBox(geoBox, d2target.NamePadding, 0, float64(targetShape.FontSize))
 		baseline := nameTopLeft.Y + float64(targetShape.FontSize)*3/4
 		prefix := fmt.Sprintf("%s:table-row:%d", targetShape.ID, index)
-		if alpha := targetShape.SQLRowOpacity(index); alpha > 0 {
-			start := len(nodes)
-			nodes = append(nodes,
-				structuredTextNode(prefix+":name", column.Name.Label, d2scene.Point{X: nameTopLeft.X, Y: baseline}, d2scene.AnchorStart, rowFont, namePaint, false, rowBox),
-				structuredTextNode(prefix+":type", column.Type.Label, d2scene.Point{X: nameTopLeft.X + float64(longestNameWidth+d2target.TypePadding), Y: baseline}, d2scene.AnchorStart, rowFont, typePaint, false, rowBox),
-				structuredTextNode(prefix+":constraint", column.ConstraintAbbr(), d2scene.Point{X: rowBox.X + rowBox.Width - d2target.NamePadding, Y: baseline}, d2scene.AnchorEnd, rowFont, constraintPaint, false, rowBox),
-			)
-			for _, node := range nodes[start:] {
-				node.Opacity = alpha
-			}
+		visible := targetShape.SQLRowVisibleHeight(rowBox.Y, rowHeight)
+		if targetShape.RowReveal != nil && visible <= 0 {
+			break
+		}
+		rowNodes := []*d2scene.Node{
+			structuredTextNode(prefix+":name", column.Name.Label, d2scene.Point{X: nameTopLeft.X, Y: baseline}, d2scene.AnchorStart, rowFont, namePaint, false, rowBox),
+			structuredTextNode(prefix+":type", column.Type.Label, d2scene.Point{X: nameTopLeft.X + float64(longestNameWidth+d2target.TypePadding), Y: baseline}, d2scene.AnchorStart, rowFont, typePaint, false, rowBox),
+			structuredTextNode(prefix+":constraint", column.ConstraintAbbr(), d2scene.Point{X: rowBox.X + rowBox.Width - d2target.NamePadding, Y: baseline}, d2scene.AnchorEnd, rowFont, constraintPaint, false, rowBox),
+		}
+		if visible < rowHeight {
+			offset := rowHeight - visible
+			row := d2scene.NewNode(nil)
+			row.Transform = d2scene.Translate(0, -offset)
+			row.Clip = boxClip(d2scene.Box{X: rowBox.X, Y: rowBox.Y + offset, Width: rowBox.Width, Height: visible})
+			row.Children = rowNodes
+			nodes = append(nodes, row)
+		} else {
+			nodes = append(nodes, rowNodes...)
 		}
 		y, inset, last := targetShape.SQLRowDivider(index, rowBox.Y+rowHeight, radius)
 		rowBox.Y = y

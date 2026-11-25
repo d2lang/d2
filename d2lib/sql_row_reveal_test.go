@@ -1,22 +1,25 @@
 package d2lib
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/svg"
 )
 
-func TestSQLAppendKeepsFieldPortsAndTextStill(t *testing.T) {
+func TestSQLAppendDropsRowsAndKeepsExistingFieldPortsStill(t *testing.T) {
 	const src = `vars: {d2-config: {animate-interval: 700ms; animate-duration: 420ms}}
 direction: right
 albums: Albums {shape: sql_table; id: int {constraint: primary_key}; title: text}
 tracks: Tracks {shape: sql_table; id: int; album_id: int {constraint: foreign_key}; title: text}
 albums.id -> tracks.album_id
-steps: {timing: {tracks.seconds: int; tracks.plays: int}}`
+steps: {timing: {tracks.seconds: int {constraint: foreign_key}; tracks.plays: int}}`
 	before, _ := compileContinuity(t, src, d2talalayout.ContinueBoard)
 	board := before.Steps[0]
 	if len(board.TweenFrames) < 5 {
@@ -45,22 +48,39 @@ steps: {timing: {tracks.seconds: int; tracks.plays: int}}`
 			continue
 		}
 		for j, label := range newRows {
-			alpha := table.SQLRowOpacity(start + j)
-			if alpha == 0 {
+			rowHeight := afterTable.SQLRowHeight()
+			top := float64(table.Pos.Y) + float64(start+j+1)*rowHeight
+			height := max(0, min(rowHeight, float64(table.Pos.Y+table.Height)-top))
+			got := visibleArrivalLettering(t, frame, label)
+			if height == 0 {
+				if len(got) > 0 {
+					t.Fatalf("frame %d painted %s before its slot opened", i, label)
+				}
 				continue
 			}
-			if j > 0 && table.SQLRowOpacity(start+j-1) != 1 {
-				t.Fatal("later row overtook the earlier row")
+			final := visibleArrivalLettering(t, board, label)
+			if len(got) != 1 || len(final) != 1 || got[0].element != final[0].element || got[0].opacity != final[0].opacity {
+				t.Fatalf("frame %d changed %s lettering", i, label)
 			}
-			partial[j] = partial[j] || alpha < 1
-			got, final := visibleArrivalLettering(t, frame, label), visibleArrivalLettering(t, board, label)
-			if len(got) != 1 || len(final) != 1 || got[0].element != final[0].element {
-				t.Fatalf("frame %d moved the lettering for %s", i, label)
+			if height == rowHeight {
+				if got[0] != final[0] {
+					t.Fatalf("frame %d displaced the settled row %s", i, label)
+				}
+				continue
+			}
+			partial[j] = true
+			// The clip starts at the previous divider and maps glyphs one to one.
+			// As the bottom edge descends, the source window slides up the row.
+			viewport := fmt.Sprintf("x=%d y=%s width=%d height=%s viewBox=%d %s %d %s overflow=hidden",
+				table.Pos.X, svg.FormatFloat(top), table.Width, svg.FormatFloat(height),
+				table.Pos.X, svg.FormatFloat(top+(rowHeight-height)), table.Width, svg.FormatFloat(height))
+			if !strings.Contains(got[0].transform, viewport) {
+				t.Fatalf("frame %d clipped %s with %q, want %q", i, label, got[0].transform, viewport)
 			}
 		}
 	}
 	if !partial[0] || !partial[1] || afterTable.RowReveal != nil || beforeTable.RowReveal != nil {
-		t.Fatalf("missing gradual row lettering or mutated board: %v", partial)
+		t.Fatalf("missing sliding row or mutated board: %v", partial)
 	}
 }
 

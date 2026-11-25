@@ -681,7 +681,7 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 		return
 	}
 	keyword := strings.ToLower(f.Name.ScalarString())
-	isStyleReserved := d2ast.IsReservedStyleKeyword(keyword)
+	_, isStyleReserved := d2ast.StyleKeywords[keyword]
 	if isStyleReserved && f.Name.IsUnquoted() {
 		c.errorf(f.LastRef().AST(), "%v must be style.%v", f.Name.ScalarString(), f.Name.ScalarString())
 		return
@@ -1224,8 +1224,6 @@ func compileStyleFieldInit(styles *d2graph.Style, f *d2ir.Field) {
 		styles.Stroke = &d2graph.Scalar{MapKey: f.LastPrimaryKey()}
 	case "fill":
 		styles.Fill = &d2graph.Scalar{MapKey: f.LastPrimaryKey()}
-	case "fill-transition":
-		styles.FillTransition = &d2graph.Scalar{MapKey: f.LastPrimaryKey()}
 	case "fill-pattern":
 		styles.FillPattern = &d2graph.Scalar{MapKey: f.LastPrimaryKey()}
 	case "stroke-width":
@@ -1361,7 +1359,7 @@ func (c *compiler) compileEdgeMap(edge *d2graph.Edge, m *d2ir.Map) {
 
 func (c *compiler) compileEdgeField(edge *d2graph.Edge, f *d2ir.Field) {
 	keyword := strings.ToLower(f.Name.ScalarString())
-	isStyleReserved := d2ast.IsReservedStyleKeyword(keyword)
+	_, isStyleReserved := d2ast.StyleKeywords[keyword]
 	isStyleReserved = isStyleReserved && f.Name.IsUnquoted()
 	if isStyleReserved {
 		c.errorf(f.LastRef().AST(), "%v must be style.%v", f.Name.ScalarString(), f.Name.ScalarString())

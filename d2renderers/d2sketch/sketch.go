@@ -530,9 +530,12 @@ func Table(shape d2target.Shape) (string, error) {
 	rowBox := geo.NewBox(box.TopLeft.Copy(), box.Width, rowHeight)
 	rowBox.TopLeft.Y += headerBox.Height
 	for index, f := range shape.Columns {
-		alpha := shape.SQLRowOpacity(index)
-		if alpha < 1 {
-			output += svg.OpenElement("g", svg.FloatAttr("opacity", alpha))
+		visible := shape.SQLRowVisibleHeight(rowBox.TopLeft.Y, rowHeight)
+		if shape.RowReveal != nil && visible <= 0 {
+			break
+		}
+		if visible < rowHeight {
+			output += svg.OpenClippedViewport(rowBox.TopLeft.X, rowBox.TopLeft.Y, rowBox.Width, visible, rowBox.TopLeft.Y+(rowHeight-visible))
 		}
 		nameTL := label.InsideMiddleLeft.GetPointOnBox(
 			rowBox,
@@ -567,8 +570,8 @@ func Table(shape d2target.Shape) (string, error) {
 		textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx;letter-spacing:2px", "end", float64(shape.FontSize))
 		textEl.SetText(f.ConstraintAbbr())
 		output += textEl.Render()
-		if alpha < 1 {
-			output += "</g>"
+		if visible < rowHeight {
+			output += "</svg>"
 		}
 		y, _, last := shape.SQLRowDivider(index, rowBox.TopLeft.Y+rowHeight, 0)
 		rowBox.TopLeft.Y = y

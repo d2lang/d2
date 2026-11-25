@@ -142,15 +142,16 @@ func drawTable(writer *objectWriter, diagramHash string, targetShape d2target.Sh
 	rowBox := geo.NewBox(box.TopLeft.Copy(), box.Width, rowHeight)
 	rowBox.TopLeft.Y += headerBox.Height
 	for idx, f := range targetShape.Columns {
-		alpha := targetShape.SQLRowOpacity(idx)
-		if alpha > 0 {
-			if alpha < 1 {
-				fmt.Fprint(writer.buf, svg.OpenElement("g", svg.FloatAttr("opacity", alpha)))
-			}
-			tableRow(writer, targetShape, rowBox, f.Name.Label, f.Type.Label, f.ConstraintAbbr(), float64(targetShape.FontSize), float64(longestNameWidth), float64(longestTypeWidth), inlineTheme)
-			if alpha < 1 {
-				writer.buf.WriteString("</g>")
-			}
+		visible := targetShape.SQLRowVisibleHeight(rowBox.TopLeft.Y, rowHeight)
+		if targetShape.RowReveal != nil && visible <= 0 {
+			break
+		}
+		if visible < rowHeight {
+			fmt.Fprint(writer.buf, svg.OpenClippedViewport(rowBox.TopLeft.X, rowBox.TopLeft.Y, rowBox.Width, visible, rowBox.TopLeft.Y+(rowHeight-visible)))
+		}
+		tableRow(writer, targetShape, rowBox, f.Name.Label, f.Type.Label, f.ConstraintAbbr(), float64(targetShape.FontSize), float64(longestNameWidth), float64(longestTypeWidth), inlineTheme)
+		if visible < rowHeight {
+			writer.buf.WriteString("</svg>")
 		}
 		y, inset, last := targetShape.SQLRowDivider(idx, rowBox.TopLeft.Y+rowHeight, float64(targetShape.BorderRadius))
 		rowBox.TopLeft.Y = y

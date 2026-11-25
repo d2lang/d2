@@ -25,7 +25,6 @@ type boardTransitionPlan struct {
 	transfer *boardTransfer
 	sqlRows  *sqlRowReveal
 	sequence *sequenceTrace
-	wipes    *boardFillWipes
 	bounds   []int
 	cost     int // Geometry elements per sample.
 }
@@ -49,13 +48,6 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 				stepPlans[next] = boardTransitionPlan{motion: motion, cost: cost}
 			} else if structural && !prev.IsFolderOnly && !next.IsFolderOnly {
 				if p := planStructuralStep(prev, next, prevGraph, nextGraph, sketch); p.from != nil {
-					stepPlans[next] = p
-				}
-			}
-			if !sketch && !prev.IsFolderOnly && !next.IsFolderOnly {
-				if wipes := planBoardFillWipes(prev, next, nextGraph); wipes != nil {
-					p := stepPlans[next]
-					p.wipes = wipes
 					stepPlans[next] = p
 				}
 			}
@@ -146,14 +138,11 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 				// Only draw a structural transition from the board on screen.
 				p = boardTransitionPlan{}
 			}
-			if p.wipes != nil && p.wipes.from != previous {
-				p.wipes = nil
-			}
 			p.ink = planBoardInk(previous, board, sketch, pencilOnly)
-			if p.motion != nil || p.ink != nil || p.from != nil || p.wipes != nil {
+			if p.motion != nil || p.ink != nil || p.from != nil {
 				p.board = board
 				count := len(board.TweenFrames)
-				if p.from != nil || p.wipes != nil {
+				if p.from != nil {
 					// Give a short arrival or landing enough distinct samples to
 					// show its acceleration. The existing per-board and total
 					// geometry limits still apply when many steps play together.
@@ -357,7 +346,7 @@ func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 			sample := *base
 			sample.Layers, sample.Scenarios, sample.Steps, sample.TweenFrames = nil, nil, nil, nil
 			sample.TweenDurationMS, sample.TweenFrameEndsMS, sample.GridMotion = 0, nil, false
-			if p.from != nil || p.wipes != nil || p.ink != nil && len(p.ink.shapes) != 0 {
+			if p.from != nil || p.ink != nil && len(p.ink.shapes) != 0 {
 				sample.Shapes = slices.Clone(base.Shapes)
 			}
 			frames[i] = &sample
@@ -380,9 +369,6 @@ func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 				frames[i].Connections = slices.Clone(frames[i].Connections)
 			}
 			p.ink.apply(frames[i], progress)
-		}
-		if p.wipes != nil {
-			p.wipes.apply(frames[i], progress)
 		}
 	}
 	p.board.TweenFrames, p.board.TweenDurationMS, p.board.GridMotion = frames, duration, p.motion != nil || p.board.GridMotion

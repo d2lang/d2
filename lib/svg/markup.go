@@ -147,6 +147,15 @@ func EmptyElement(name string, attributes ...Attribute) string {
 	return "<" + name + RenderAttributes(attributes...) + " />"
 }
 
+// OpenClippedViewport clips the child artwork to a rectangle and translates
+// it vertically by placing sourceY at the top of the viewport.
+func OpenClippedViewport(x, y, width, height, sourceY float64) string {
+	viewBox := strings.Join([]string{FormatFloat(x), FormatFloat(sourceY), FormatFloat(width), FormatFloat(height)}, " ")
+	return OpenElement("svg",
+		FloatAttr("x", x), FloatAttr("y", y), FloatAttr("width", width), FloatAttr("height", height),
+		Attr("viewBox", viewBox), Attr("overflow", "hidden"))
+}
+
 // CompactEmptyElement is equivalent to EmptyElement but preserves the compact
 // `/>` syntax used by older renderer output.
 func CompactEmptyElement(name string, attributes ...Attribute) string {

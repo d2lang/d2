@@ -306,9 +306,8 @@ func validateMotionClip(c *MotionClip, path string) error {
 
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
 	if r := targetShape.RowReveal; r != nil {
-		if targetShape.Type != ShapeSQLTable || r.FullHeight <= 0 || targetShape.Height <= 0 || r.FullHeight < targetShape.Height ||
-			len(targetShape.Columns) == 0 || !finiteRenderNumber(r.VisibleRows) || r.VisibleRows < 0 || r.VisibleRows > float64(len(targetShape.Columns)) ||
-			(1+r.VisibleRows)*targetShape.SQLRowHeight() > float64(targetShape.Height)+.5 {
+		if targetShape.Type != ShapeSQLTable || r.FullHeight <= 0 || targetShape.Width <= 0 || r.FullHeight < targetShape.Height ||
+			len(targetShape.Columns) == 0 || targetShape.Height <= 0 || targetShape.SQLRowHeight() > float64(targetShape.Height) {
 			return invalidRenderField(path, "rowReveal", r, "must describe rows within a growing SQL table")
 		}
 	}

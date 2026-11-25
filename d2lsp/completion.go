@@ -61,12 +61,6 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		"shadow:", "3d:", "multiple:", "animated:", "bold:", "italic:", "underline:", "filled:", "double-border:",
 		"style.shadow:", "style.3d:", "style.multiple:", "style.animated:", "style.bold:", "style.italic:", "style.underline:", "style.filled:", "style.double-border:":
 		return getBooleanCompletions(), nil
-	case "style.fill-transition:":
-		items := make([]CompletionItem, 0, len(d2ast.FillTransitions))
-		for _, transition := range d2ast.FillTransitions {
-			items = append(items, CompletionItem{Label: transition, Kind: KeywordCompletion, Detail: "fill transition", InsertText: transition})
-		}
-		return items, nil
 	case "fill-pattern", "fill-pattern:", "style.fill-pattern:":
 		return getFillPatternCompletions(), nil
 	case "text-transform", "text-transform:", "style.text-transform:":
@@ -185,12 +179,6 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		// Check nested map
 		if n.MapKey.Value.Map != nil && isPositionInMap(line, column, n.MapKey.Value.Map) {
 			if nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos); nested != "" {
-				if nested == "fill-transition:" && key != nil {
-					holder := key.Path[len(key.Path)-1].Unbox()
-					if holder.IsUnquoted() && holder.ScalarString() == "style" {
-						return "style.fill-transition:"
-					}
-				}
 				if isHolder {
 					// If we got a direct key completion from inside a holder's map,
 					// prefix it with the holder's name
@@ -227,10 +215,6 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 		if isAfterColon(lineText, lineColumn) {
 			if key != nil && len(key.Path) > 1 {
-				holder := key.Path[len(key.Path)-2].Unbox()
-				if lastPart == "fill-transition" && holder.IsUnquoted() && holder.ScalarString() == "style" {
-					return "style.fill-transition:"
-				}
 				if isHolder && (firstPart == "source-arrowhead" || firstPart == "target-arrowhead") {
 					return firstPart + "." + lastPart + ":"
 				}
