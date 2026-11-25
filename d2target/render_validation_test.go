@@ -31,6 +31,27 @@ func TestAnimatedStrokeBounds(t *testing.T) {
 	}
 }
 
+func TestValidateSQLRowReveal(t *testing.T) {
+	d := NewDiagram()
+	s := BaseShape()
+	s.ID, s.Type, s.Width, s.Height = "tracks", ShapeSQLTable, 160, 109
+	s.Columns = make([]SQLColumn, 2)
+	d.Shapes = []Shape{*s}
+	d.Shapes[0].RowReveal = &SQLRowReveal{FullHeight: 120, VisibleRows: 1.25}
+	if err := ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []SQLRowReveal{
+		{FullHeight: 100, VisibleRows: 1}, {FullHeight: 120, VisibleRows: math.NaN()},
+		{FullHeight: 120, VisibleRows: 2}, {FullHeight: 120, VisibleRows: -.1},
+	} {
+		d.Shapes[0].RowReveal = &invalid
+		if err := ValidateRenderTarget(d); err == nil || !strings.Contains(err.Error(), "rowReveal") {
+			t.Fatalf("accepted invalid row reveal %+v: %v", invalid, err)
+		}
+	}
+}
+
 func TestValidateRenderTargetBoundsBoardTree(t *testing.T) {
 	t.Parallel()
 

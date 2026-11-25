@@ -148,24 +148,11 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 				break
 			}
 		}
-		points := e.Route
-		if backwards {
-			points = slices.Clone(points)
-			slices.Reverse(points)
+		wire := newBoardTrace(e, backwards, start, end)
+		if wire == nil {
+			return nil
 		}
-		lengths := make([]float64, len(points))
-		for i := 1; i < len(points); i++ {
-			lengths[i] = lengths[i-1] + math.Hypot(points[i].X-points[i-1].X, points[i].Y-points[i-1].Y)
-			if !(lengths[i] > lengths[i-1]) || math.IsInf(lengths[i], 0) {
-				return nil
-			}
-		}
-		srcWidth, _ := e.SrcArrow.Dimensions(e.RenderedStrokeWidth())
-		dstWidth, _ := e.DstArrow.Dimensions(e.RenderedStrokeWidth())
-		m.wires[e.ID] = &boardTrace{
-			start: start, end: end, backwards: backwards, points: points, lengths: lengths,
-			minDraw: max(srcWidth, dstWidth, 2*e.RenderedStrokeWidth()),
-		}
+		m.wires[e.ID] = wire
 		m.end = max(m.end, end)
 	}
 	if m.end == 0 {
@@ -190,6 +177,29 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 		}
 	}
 	return m
+}
+
+// Precompute arc lengths and the minimum visible stroke for both diagram
+// arrivals and sequence messages. Points are ordered in the draw direction.
+func newBoardTrace(e *d2target.Connection, backwards bool, start, end float64) *boardTrace {
+	points := e.Route
+	if backwards {
+		points = slices.Clone(points)
+		slices.Reverse(points)
+	}
+	lengths := make([]float64, len(points))
+	for i := 1; i < len(points); i++ {
+		lengths[i] = lengths[i-1] + math.Hypot(points[i].X-points[i-1].X, points[i].Y-points[i-1].Y)
+		if !(lengths[i] > lengths[i-1]) || math.IsInf(lengths[i], 0) {
+			return nil
+		}
+	}
+	srcWidth, _ := e.SrcArrow.Dimensions(e.RenderedStrokeWidth())
+	dstWidth, _ := e.DstArrow.Dimensions(e.RenderedStrokeWidth())
+	return &boardTrace{
+		start: start, end: end, backwards: backwards, points: points, lengths: lengths,
+		minDraw: max(srcWidth, dstWidth, 2*e.RenderedStrokeWidth()),
+	}
 }
 
 // Start opening the node over the last six pixels of the incoming stroke.

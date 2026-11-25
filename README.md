@@ -177,6 +177,16 @@ one, please see [./d2renderers/d2fonts](./d2renderers/d2fonts).
 
 D2 supports SVG, PNG, GIF, PDF, and PPTX exports.
 
+For animated SVG and GIF, set `animate-interval` and `animate-duration` in
+`vars.d2-config`. With TALA, appending SQL fields can grow a table while its
+existing rows and connections stay anchored. Appending a sequence message can
+extend the activation bar and draw the arrow from sender to recipient.
+
+Shapes normally blend between solid fills. Set `style.fill-transition` to
+`wipe-right`, `wipe-left`, `wipe-up`, or `wipe-down` to sweep the new color
+across a stationary shape. Adjacent aligned grid cells changing in the same
+direction share one sweep. Use `blend` to restore the default in a step.
+
 ## Language tooling
 
 D2 is designed with language tooling in mind. D2's parser can parse multiple errors from a

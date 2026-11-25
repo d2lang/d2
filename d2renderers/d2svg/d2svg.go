@@ -1123,11 +1123,14 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 			maskTL.X -= float64(d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE)
 		}
 
-		if label.FromString(connection.LabelPosition).IsOnEdge() {
-			labelMask = makeLabelMask(maskTL, width, height, 1)
-		} else {
-			labelMask = makeLabelMask(maskTL, width, height, 0.75)
+		maskOpacity := 1.
+		if !label.FromString(connection.LabelPosition).IsOnEdge() {
+			maskOpacity *= .75
 		}
+		if p := connection.MotionLabel; p != nil {
+			maskOpacity *= p.Opacity
+		}
+		labelMask = makeLabelMask(maskTL, width, height, maskOpacity)
 	} else if connection.Icon != nil {
 		iconPos := connection.GetIconPosition()
 		if iconPos != nil {
@@ -1135,14 +1138,19 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 				X: iconPos.X,
 				Y: iconPos.Y,
 			}
-			if label.FromString(connection.IconPosition).IsOnEdge() {
-				labelMask = makeLabelMask(maskTL, d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE, 1)
-			} else {
-				labelMask = makeLabelMask(maskTL, d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE, 0.75)
+			maskOpacity := 1.
+			if !label.FromString(connection.IconPosition).IsOnEdge() {
+				maskOpacity *= .75
 			}
+			labelMask = makeLabelMask(maskTL, d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE, maskOpacity)
 		}
 	}
 
+	// An invisible caption or icon must not erase an unrelated stroke. A
+	// visible caption keeps its usual contrast even on a translucent wire.
+	if connection.Opacity == 0 {
+		labelMask = ""
+	}
 	path := pathData(connection, srcAdj, dstAdj)
 	mask := svg.Attr("mask", svg.LocalIRI(svg.LiteralID(diagramHash)))
 	if crossingMask != "" {
@@ -1221,6 +1229,9 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 	}
 
 	if connection.Label != "" {
+		if p := connection.MotionLabel; p != nil {
+			fmt.Fprint(writer, svg.OpenElement("g", svg.FloatAttr("opacity", p.Opacity)))
+		}
 		richLabelLink := connection.Link != "" && connection.Language != ""
 		if richLabelLink {
 			fmt.Fprint(writer, svg.OpenElement("a", svg.HrefAttributes(connection.Link)...))
@@ -1353,6 +1364,9 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		}
 		if richLabelLink {
 			fmt.Fprint(writer, "</a>")
+		}
+		if connection.MotionLabel != nil {
+			fmt.Fprint(writer, "</g>")
 		}
 	}
 

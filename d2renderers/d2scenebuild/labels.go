@@ -46,7 +46,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		if err := b.ctx.Err(); err != nil {
 			return nil, err
 		}
-		if connection.Label == "" && connection.Icon == nil {
+		if connection.Opacity == 0 || connection.Label == "" && connection.Icon == nil {
 			continue
 		}
 		var holeBox d2scene.Box
@@ -83,7 +83,10 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		})
 		hole.ID = connection.ID + ":label-mask-hole"
 		if !label.FromString(position).IsOnEdge() {
-			hole.Opacity = .75
+			hole.Opacity *= .75
+		}
+		if p := connection.MotionLabel; p != nil {
+			hole.Opacity *= p.Opacity
 		}
 		holes = append(holes, hole)
 	}
@@ -250,6 +253,11 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 				font, fill, underline, progress,
 			)...)
 			nodes = appendPlainStrikes(nodes, connection.Text, topLeft, fill)
+		}
+		if p := connection.MotionLabel; p != nil {
+			caption := d2scene.NewNode(nil)
+			caption.Opacity, caption.Children = p.Opacity, nodes
+			nodes = []*d2scene.Node{caption}
 		}
 	}
 

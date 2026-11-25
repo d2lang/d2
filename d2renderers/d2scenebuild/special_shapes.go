@@ -182,7 +182,7 @@ func buildClassRowNodes(shapeID, kind string, index int, box d2scene.Box, fontSi
 }
 
 func (b *builder) buildSQLTableContents(targetShape d2target.Shape, box d2scene.Box, radius float64) ([]*d2scene.Node, error) {
-	rowHeight := box.Height / float64(1+len(targetShape.Columns))
+	rowHeight := targetShape.SQLRowHeight()
 	headerBox := d2scene.Box{X: box.X, Y: box.Y, Width: box.Width, Height: rowHeight}
 	headerFill, err := b.paint(targetShape.Fill, fmt.Sprintf("shape %q table header", targetShape.ID))
 	if err != nil {
@@ -253,23 +253,29 @@ func (b *builder) buildSQLTableContents(targetShape d2target.Shape, box d2scene.
 		nameTopLeft := label.InsideMiddleLeft.GetPointOnBox(geoBox, d2target.NamePadding, 0, float64(targetShape.FontSize))
 		baseline := nameTopLeft.Y + float64(targetShape.FontSize)*3/4
 		prefix := fmt.Sprintf("%s:table-row:%d", targetShape.ID, index)
-		nodes = append(nodes,
-			structuredTextNode(prefix+":name", column.Name.Label, d2scene.Point{X: nameTopLeft.X, Y: baseline}, d2scene.AnchorStart, rowFont, namePaint, false, rowBox),
-			structuredTextNode(prefix+":type", column.Type.Label, d2scene.Point{X: nameTopLeft.X + float64(longestNameWidth+d2target.TypePadding), Y: baseline}, d2scene.AnchorStart, rowFont, typePaint, false, rowBox),
-			structuredTextNode(prefix+":constraint", column.ConstraintAbbr(), d2scene.Point{X: rowBox.X + rowBox.Width - d2target.NamePadding, Y: baseline}, d2scene.AnchorEnd, rowFont, constraintPaint, false, rowBox),
-		)
-		rowBox.Y += rowHeight
-		lineStart, lineEnd := rowBox.X, rowBox.X+rowBox.Width
-		if index == len(targetShape.Columns)-1 && radius != 0 {
-			lineStart += radius
-			lineEnd -= radius
+		if alpha := targetShape.SQLRowOpacity(index); alpha > 0 {
+			start := len(nodes)
+			nodes = append(nodes,
+				structuredTextNode(prefix+":name", column.Name.Label, d2scene.Point{X: nameTopLeft.X, Y: baseline}, d2scene.AnchorStart, rowFont, namePaint, false, rowBox),
+				structuredTextNode(prefix+":type", column.Type.Label, d2scene.Point{X: nameTopLeft.X + float64(longestNameWidth+d2target.TypePadding), Y: baseline}, d2scene.AnchorStart, rowFont, typePaint, false, rowBox),
+				structuredTextNode(prefix+":constraint", column.ConstraintAbbr(), d2scene.Point{X: rowBox.X + rowBox.Width - d2target.NamePadding, Y: baseline}, d2scene.AnchorEnd, rowFont, constraintPaint, false, rowBox),
+			)
+			for _, node := range nodes[start:] {
+				node.Opacity = alpha
+			}
 		}
+		y, inset, last := targetShape.SQLRowDivider(index, rowBox.Y+rowHeight, radius)
+		rowBox.Y = y
+		lineStart, lineEnd := rowBox.X+inset, rowBox.X+rowBox.Width-inset
 		separator := d2scene.NewNode(d2scene.Path{
 			Commands: []d2scene.PathCommand{d2scene.MoveTo(lineStart, rowBox.Y), d2scene.LineTo(lineEnd, rowBox.Y)},
 			Stroke:   &d2scene.Stroke{Paint: separatorPaint, Width: 2, Cap: d2scene.CapButt, Join: d2scene.JoinMiter, MiterLimit: 4},
 		})
 		separator.ID = prefix + ":separator"
 		nodes = append(nodes, separator)
+		if last {
+			break
+		}
 	}
 	return nodes, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -127,6 +128,30 @@ func TestBuildSQLTableExactColumnsAndSeparators(t *testing.T) {
 	lastSeparator := node.Children[10].Primitive.(d2scene.Path)
 	if !equalCommands(lastSeparator.Commands, []d2scene.PathCommand{d2scene.MoveTo(20, 130), d2scene.LineTo(240, 130)}) || lastSeparator.Stroke == nil || lastSeparator.Stroke.Width != 2 {
 		t.Fatalf("last rounded separator = %+v", lastSeparator)
+	}
+}
+
+func TestBuildSQLRowRevealKeepsTextAndMovesBorder(t *testing.T) {
+	table := structuredTestShape("tracks", d2target.ShapeSQLTable, 10, 10, 240, 120)
+	table.BorderRadius = 9
+	table.Columns = []d2target.SQLColumn{
+		{Name: d2target.Text{Label: "album_id", LabelWidth: 42}},
+		{Name: d2target.Text{Label: "seconds", LabelWidth: 39}},
+	}
+	end := buildStructuredDocument(t, table)
+	table.Height = 117
+	table.RowReveal = &d2target.SQLRowReveal{FullHeight: 120, VisibleRows: 1.25}
+	frame := buildStructuredDocument(t, table)
+	for i, alpha := range []float64{1, .25} {
+		id := fmt.Sprintf("tracks:table-row:%d:name", i)
+		text, final := findSceneNode(t, frame.Root, id), findSceneNode(t, end.Root, id)
+		if text.Opacity != alpha || text.Primitive.(d2scene.TextRun).Origin != final.Primitive.(d2scene.TextRun).Origin {
+			t.Fatalf("row %d shifted or lost its sampled opacity", i)
+		}
+	}
+	path := findSceneNode(t, frame.Root, "tracks:table-row:1:separator").Primitive.(d2scene.Path)
+	if !equalCommands(path.Commands, []d2scene.PathCommand{d2scene.MoveTo(19, 127), d2scene.LineTo(241, 127)}) {
+		t.Fatalf("bottom separator escaped rounded border: %+v", path.Commands)
 	}
 }
 

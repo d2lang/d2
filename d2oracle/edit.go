@@ -3,6 +3,7 @@ package d2oracle
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -869,6 +870,11 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 						attrs.Style.Underline.MapKey.SetScalar(mk.Value.ScalarBox())
 						return nil
 					}
+				case "fill-transition":
+					if inlined(attrs.Style.FillTransition) {
+						attrs.Style.FillTransition.MapKey.SetScalar(mk.Value.ScalarBox())
+						return nil
+					}
 				case "fill-pattern":
 					if inlined(attrs.Style.FillPattern) {
 						attrs.Style.FillPattern.MapKey.SetScalar(mk.Value.ScalarBox())
@@ -1214,7 +1220,7 @@ func renameConflictsToParent(g *d2graph.Graph, key *d2ast.KeyPath) (*d2graph.Gra
 				absKey.Path = append(absKey.Path, k.Path[0])
 				absKeys = append(absKeys, absKey)
 			}
-		} else if _, ok := d2ast.ReservedKeywords[ref.Key.Path[len(ref.Key.Path)-1].Unbox().ScalarString()]; !ok {
+		} else if !reservedPathPart(d2graph.Key(ref.Key), len(ref.Key.Path)-1) {
 			absKey, err := d2parser.ParseKey(ref.ScopeObj.AbsID())
 			if err != nil {
 				absKey = &d2ast.KeyPath{}
@@ -1310,6 +1316,18 @@ func renameConflictsToParent(g *d2graph.Graph, key *d2ast.KeyPath) (*d2graph.Gra
 	return g, nil
 }
 
+// A style map can contain contextual names that are ordinary object IDs elsewhere.
+func reservedPathPart(parts []string, i int) bool {
+	if _, ok := d2ast.ReservedKeywords[parts[i]]; ok {
+		return true
+	}
+	if i == 0 || parts[i-1] != "style" {
+		return false
+	}
+	_, ok := d2ast.StyleKeywords[parts[i]]
+	return ok
+}
+
 func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk *d2ast.Key) (*d2graph.Graph, error) {
 	targetKey := mk.Key
 	if len(mk.Edges) == 1 {
@@ -1318,12 +1336,13 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 		}
 		targetKey = mk.EdgeKey
 	}
-	_, ok := d2ast.ReservedKeywords[targetKey.Path[len(targetKey.Path)-1].Unbox().ScalarString()]
-	if !ok {
+	parts := d2graph.Key(targetKey)
+	if !reservedPathPart(parts, len(parts)-1) {
 		return g, nil
 	}
 
 	var e *d2graph.Edge
+	var ok bool
 	obj := g.Root
 	if len(boardPath) > 0 {
 		boardG := GetBoardGraph(g, boardPath)
@@ -1359,10 +1378,8 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 
 	isNestedKey := false
 	imported := false
-	parts := d2graph.Key(targetKey)
 	for i, id := range parts {
-		_, ok := d2ast.ReservedKeywords[id]
-		if ok {
+		if reservedPathPart(parts, i) {
 			if id == "style" {
 				isNestedKey = true
 				continue
@@ -1374,9 +1391,24 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 				}
 			}
 			if isNestedKey {
-				deleted, err := deleteObjField(g, baseAST, obj, id)
+				deleted, err := deleteObjField(g, boardPath, baseAST, obj, id)
 				if err != nil {
 					return nil, err
+				}
+				// A step, class, or glob can still supply this preference after its
+				// local declaration is removed. Cancel it on this board only.
+				if id == "fill-transition" && obj.Style.FillTransition != nil {
+					updated, err := recompile(g)
+					if err != nil {
+						return nil, err
+					}
+					effective, _ := GetBoardGraph(updated, boardPath).Root.HasChild(obj.AbsIDArray())
+					if effective == nil || effective.Style.FillTransition == nil {
+						return updated, nil
+					}
+					mk.Value = d2ast.MakeValueBox(&d2ast.Null{})
+					appendMapKey(baseAST, mk)
+					return recompile(g)
 				}
 				if !deleted && imported {
 					mk.Value = d2ast.MakeValueBox(&d2ast.Null{})
@@ -1393,7 +1425,7 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 				id == "left" ||
 				id == "top" ||
 				id == "link" {
-				deleted, err := deleteObjField(g, baseAST, obj, id)
+				deleted, err := deleteObjField(g, boardPath, baseAST, obj, id)
 				if err != nil {
 					return nil, err
 				}
@@ -1473,7 +1505,39 @@ func deleteEdgeField(g *d2graph.Graph, ast *d2ast.Map, e *d2graph.Edge, field st
 	return deleted, nil
 }
 
-func deleteObjField(g *d2graph.Graph, ast *d2ast.Map, obj *d2graph.Object, field string) (deleted bool, _ error) {
+// Remove an exact attribute path inside its owner's map. Matching the entire
+// path keeps same-named ordinary children and columns intact.
+func deleteFieldPath(m *d2ast.Map, path []string) (deleted bool) {
+	for i := len(m.Nodes) - 1; i >= 0; i-- {
+		k := m.Nodes[i].MapKey
+		if k == nil || k.Key == nil || len(k.Edges) != 0 {
+			continue
+		}
+		parts := d2graph.Key(k.Key)
+		if len(parts) > len(path) || !slices.Equal(parts, path[:len(parts)]) {
+			continue
+		}
+		if len(parts) < len(path) {
+			if k.Value.Map == nil || !deleteFieldPath(k.Value.Map, path[len(parts):]) {
+				continue
+			}
+			deleted = true
+			if len(k.Value.Map.Nodes) > 0 {
+				continue
+			}
+		}
+		deleteFromMap(m, k)
+		deleted = true
+	}
+	return deleted
+}
+
+func deleteObjField(g *d2graph.Graph, boardPath []string, ast *d2ast.Map, obj *d2graph.Object, field string) (deleted bool, _ error) {
+	styleField := field == "fill-transition"
+	stylePath := []string{"style", field}
+	if styleField && obj.Parent == nil {
+		return deleteFieldPath(ast, stylePath), nil
+	}
 	objK, err := d2parser.ParseKey(obj.AbsID())
 	if err != nil {
 		return false, err
@@ -1486,9 +1550,27 @@ func deleteObjField(g *d2graph.Graph, ast *d2ast.Map, obj *d2graph.Object, field
 		if ref.Key.Range.Path != ast.Range.Path {
 			continue
 		}
-		if ref.MapKey.Value.Map != nil {
+		if styleField {
+			if ref.Key.HasGlob() || len(boardPath) > 0 && ref.ScopeAST != ast {
+				continue
+			}
+			tail := d2graph.Key(ref.Key)[ref.KeyPathIndex+1:]
+			if len(tail) > len(stylePath) || !slices.Equal(tail, stylePath[:len(tail)]) {
+				continue
+			}
+			if len(tail) < len(stylePath) {
+				if ref.MapKey.Value.Map == nil || !deleteFieldPath(ref.MapKey.Value.Map, stylePath[len(tail):]) {
+					continue
+				}
+				deleted = true
+				if len(tail) == 0 || len(ref.MapKey.Value.Map.Nodes) > 0 {
+					continue
+				}
+			}
+		} else if ref.MapKey.Value.Map != nil {
 			deleteMapField(ref.MapKey.Value.Map, field)
-		} else if (len(ref.Key.Path) >= 2 &&
+			continue
+		} else if !((len(ref.Key.Path) >= 2 &&
 			ref.Key.Path[len(ref.Key.Path)-1].Unbox().ScalarString() == field &&
 			ref.Key.Path[len(ref.Key.Path)-2].Unbox().ScalarString() == obj.ID) ||
 			(len(ref.Key.Path) >= 3 &&
@@ -1496,25 +1578,29 @@ func deleteObjField(g *d2graph.Graph, ast *d2ast.Map, obj *d2graph.Object, field
 				(ref.Key.Path[len(ref.Key.Path)-2].Unbox().ScalarString() == "style" ||
 					ref.Key.Path[len(ref.Key.Path)-2].Unbox().ScalarString() == "label" ||
 					ref.Key.Path[len(ref.Key.Path)-2].Unbox().ScalarString() == "icon") &&
-				ref.Key.Path[len(ref.Key.Path)-3].Unbox().ScalarString() == obj.ID) {
-			tmpNodes := make([]d2ast.MapNodeBox, len(ref.Scope.Nodes))
-			copy(tmpNodes, ref.Scope.Nodes)
-			// If I delete this, will the object still exist?
-			deleted2 := deleteFromMap(ref.Scope, ref.MapKey)
-			if deleted2 {
-				deleted = true
-			}
-			g2, err := recompile(g)
-			if err != nil {
-				return false, err
-			}
-			if _, ok := g2.Root.HasChild(objGK); !ok {
-				// Nope, so can't delete it, just remove the field then
-				ref.Scope.Nodes = tmpNodes
-				ref.MapKey.Value = d2ast.ValueBox{}
-				ref.Key.Path = ref.Key.Path[:ref.KeyPathIndex+1]
-			}
-
+				ref.Key.Path[len(ref.Key.Path)-3].Unbox().ScalarString() == obj.ID)) {
+			continue
+		}
+		tmpNodes := make([]d2ast.MapNodeBox, len(ref.Scope.Nodes))
+		copy(tmpNodes, ref.Scope.Nodes)
+		// If I delete this, will the object still exist?
+		deleted2 := deleteFromMap(ref.Scope, ref.MapKey)
+		if deleted2 {
+			deleted = true
+		}
+		g2, err := recompile(g)
+		if err != nil {
+			return false, err
+		}
+		board := g2
+		if styleField {
+			board = GetBoardGraph(g2, boardPath)
+		}
+		if _, ok := board.Root.HasChild(objGK); !ok {
+			// Nope, so can't delete it, just remove the field then
+			ref.Scope.Nodes = tmpNodes
+			ref.MapKey.Value = d2ast.ValueBox{}
+			ref.Key.Path = ref.Key.Path[:ref.KeyPathIndex+1]
 		}
 	}
 	return deleted, nil
@@ -1537,10 +1623,8 @@ func deleteObject(g *d2graph.Graph, baseAST *d2ast.Map, key *d2ast.KeyPath, obj 
 				ref.MapKey.Primary = d2ast.ScalarBox{}
 			}
 			ref.Key.Path = append(ref.Key.Path[:ref.KeyPathIndex], ref.Key.Path[ref.KeyPathIndex+1:]...)
-			withoutSpecial := go2.Filter(ref.Key.Path, func(x *d2ast.StringBox) bool {
-				_, isReserved := d2ast.ReservedKeywords[x.Unbox().ScalarString()]
-				isSpecial := isReserved || x.Unbox().ScalarString() == "_"
-				return !isSpecial
+			withoutSpecial := go2.Filter(trimReservedSuffix(ref.Key.Path), func(x *d2ast.StringBox) bool {
+				return x.Unbox().ScalarString() != "_"
 			})
 			if obj.Shape.Value == d2target.ShapeSQLTable || obj.Shape.Value == d2target.ShapeClass {
 				deleteFromMap(ref.Scope, ref.MapKey)
@@ -1999,11 +2083,13 @@ func move(g *d2graph.Graph, boardPath []string, key, newKey string, includeDesce
 			ida = resolvedIDA
 		}
 		// e.g. "a.b.shape: circle"
-		_, endsWithReserved := d2ast.ReservedKeywords[ida[len(ida)-1]]
-		ida = go2.Filter(ida, func(x string) bool {
-			_, ok := d2ast.ReservedKeywords[x]
-			return !ok
-		})
+		endsWithReserved := reservedPathPart(ida, len(ida)-1)
+		for i := range ida {
+			if reservedPathPart(ida, i) {
+				ida = ida[:i]
+				break
+			}
+		}
 
 		// There are 3 cases of what we want to do with Key references in cross scope
 		// 1. Transplant. Remove from its current scope, plop it into new scope
@@ -2995,7 +3081,7 @@ func DeleteIDDeltas(g *d2graph.Graph, boardPath []string, key string) (deltas ma
 	if mk.Key != nil {
 		ida := d2graph.Key(mk.Key)
 		// Deleting a reserved field cannot possibly have any deltas
-		if _, ok := d2ast.ReservedKeywords[ida[len(ida)-1]]; ok {
+		if reservedPathPart(ida, len(ida)-1) {
 			return nil, nil
 		}
 

@@ -831,7 +831,8 @@ type Shape struct {
 	MotionClip         *MotionClip `json:"motionClip,omitempty"`
 	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
 	// MotionLabelBox holds the authored body bounds for a stationary inside label.
-	MotionLabelBox *MotionBox `json:"motionLabelBox,omitempty"`
+	MotionLabelBox *MotionBox    `json:"motionLabelBox,omitempty"`
+	RowReveal      *SQLRowReveal `json:"rowReveal,omitempty"`
 	// OutlineProgress traces an incoming container frame in a transition sample.
 	OutlineProgress *float64 `json:"outlineProgress,omitempty"`
 
@@ -1043,10 +1044,19 @@ func BaseShape() *Shape {
 	}
 }
 
+// MotionLabel anchors the caption and its mask while a partial route is drawn.
+type MotionLabel struct {
+	Point
+	Opacity float64 `json:"opacity"`
+}
+
 type Connection struct {
 	ID string `json:"id"`
 
-	MotionClip *MotionClip `json:"motionClip,omitempty"`
+	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
+	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`
+	// MotionDashOffset pins a return message's dashes to the stationary sender.
+	MotionDashOffset float64 `json:"motionDashOffset,omitempty"`
 
 	Classes []string `json:"classes,omitempty"`
 
@@ -1151,6 +1161,10 @@ func (c Connection) CSSStyle() string {
 		dashSize, gapSize := svg.GetStrokeDashAttributes(c.RenderedStrokeWidth(), strokeDash)
 		out += "stroke-dasharray:" + svg.FormatFloat(dashSize) + "," + svg.FormatFloat(gapSize) + ";"
 
+		if c.MotionDashOffset != 0 {
+			out += "stroke-dashoffset:" + svg.FormatFloat(c.MotionDashOffset) + ";"
+		}
+
 		if c.Animated {
 			dashOffset := -10
 			if c.SrcArrow != NoArrowhead && c.DstArrow == NoArrowhead {
@@ -1164,6 +1178,9 @@ func (c Connection) CSSStyle() string {
 }
 
 func (c *Connection) GetLabelTopLeft() *geo.Point {
+	if p := c.MotionLabel; p != nil {
+		return geo.NewPoint(float64(p.X), float64(p.Y))
+	}
 	point, _ := label.FromString(c.LabelPosition).GetPointOnRoute(
 		c.Route,
 		c.RenderedStrokeWidth(),

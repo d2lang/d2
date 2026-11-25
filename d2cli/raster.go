@@ -646,7 +646,9 @@ func renderGIFWithSession(
 	var boardFrames []d2animate.Frame
 	for _, board := range boards {
 		boardFrames = d2animate.AppendBoardFrames(boardFrames[:0], board, intervalMs)
-		motionTicks := board.GridMotion || board.LayoutContinuity && len(board.TweenFrames) > 0 &&
+		// Explicit motion schedules can run at 60 Hz even on an independently
+		// laid out board, for example a fill wipe on a single shape.
+		motionTicks := board.GridMotion || (board.LayoutContinuity || len(board.TweenFrameEndsMS) > 0) && len(board.TweenFrames) > 0 &&
 			slices.ContainsFunc(boardFrames, func(f d2animate.Frame) bool { return f.DurationMS < 20 })
 		if motionTicks {
 			boardFrames = motionGIFFrames(boardFrames)

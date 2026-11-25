@@ -44,6 +44,9 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 	if err != nil {
 		return nil, fmt.Errorf("scene: connection %q: %w", connection.ID, err)
 	}
+	if stroke != nil {
+		stroke.DashOffset = connection.MotionDashOffset
+	}
 	path.Stroke = stroke
 	var forwardTrack, reverseTrack *d2scene.Track
 	if connection.Animated && stroke != nil {

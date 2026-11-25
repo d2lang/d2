@@ -3,6 +3,7 @@ package d2lib
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 
@@ -22,6 +23,9 @@ type boardTransitionPlan struct {
 	reveal   *boardReveal
 	outline  *boardOutline
 	transfer *boardTransfer
+	sqlRows  *sqlRowReveal
+	sequence *sequenceTrace
+	wipes    *boardFillWipes
 	bounds   []int
 	cost     int // Geometry elements per sample.
 }
@@ -43,19 +47,15 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 			if motion, cost := planGridStep(prev, next, prevGraph, nextGraph); motion != nil {
 				prev.IsFolderOnly, next.IsFolderOnly = false, false
 				stepPlans[next] = boardTransitionPlan{motion: motion, cost: cost}
-			} else if structural && next.LayoutContinuity && !prev.IsFolderOnly && !next.IsFolderOnly && len(next.TweenFrames) == 0 {
-				p := boardTransitionPlan{from: prev, cost: gridFrameElements(prev) + gridFrameElements(next)}
-				p.transfer = newBoardTransfer(prev, next, prevGraph, nextGraph)
-				if p.transfer == nil {
-					p.reveal = planBoardReveal(prev, next, nextGraph)
-					if !sketch {
-						p.outline = planBoardOutline(prev, next, prevGraph, nextGraph)
-					}
-					if p.outline != nil && p.outline.needsReveal && p.reveal == nil {
-						p.outline = nil
-					}
+			} else if structural && !prev.IsFolderOnly && !next.IsFolderOnly {
+				if p := planStructuralStep(prev, next, prevGraph, nextGraph, sketch); p.from != nil {
+					stepPlans[next] = p
 				}
-				if p.reveal != nil || p.outline != nil || p.transfer != nil {
+			}
+			if !sketch && !prev.IsFolderOnly && !next.IsFolderOnly {
+				if wipes := planBoardFillWipes(prev, next, nextGraph); wipes != nil {
+					p := stepPlans[next]
+					p.wipes = wipes
 					stepPlans[next] = p
 				}
 			}
@@ -75,6 +75,43 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 		return err
 	}
 	return samplePlannedTransitions(ctx, root, duration, boardLimit, sketch, false, stepPlans)
+}
+
+func planStructuralStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph, sketch bool) boardTransitionPlan {
+	var p boardTransitionPlan
+	// Tables and sequence diagrams can prove their own anchors from the
+	// rendered endpoints even when TALA did not continue the graph layout.
+	if !sketch {
+		p.sequence = planSequenceTrace(prev, next, prevGraph, nextGraph)
+	}
+	if p.sequence == nil && len(next.TweenFrames) == 0 {
+		p.sqlRows = planSQLRowReveal(prev, next)
+	}
+	if next.LayoutContinuity && len(next.TweenFrames) == 0 && p.sqlRows == nil && p.sequence == nil {
+		p.transfer = newBoardTransfer(prev, next, prevGraph, nextGraph)
+		if p.transfer == nil {
+			p.reveal = planBoardReveal(prev, next, nextGraph)
+			if !sketch {
+				p.outline = planBoardOutline(prev, next, prevGraph, nextGraph)
+			}
+			if p.outline != nil && p.outline.needsReveal && p.reveal == nil {
+				p.outline = nil
+			}
+		}
+	}
+	if p.reveal != nil || p.outline != nil || p.transfer != nil || p.sqlRows != nil || p.sequence != nil {
+		p.from = prev
+		p.cost = gridFrameElements(prev) + gridFrameElements(next)
+	}
+	return p
+}
+
+// The root label stores the board name and is never painted on the canvas.
+func sameBoardCanvas(prev, next *d2target.Diagram) bool {
+	root := prev.Root
+	root.Label = next.Root.Label
+	return reflect.DeepEqual(root, next.Root) && reflect.DeepEqual(prev.Legend, next.Legend) &&
+		reflect.DeepEqual(prev.FontFamily, next.FontFamily) && reflect.DeepEqual(prev.MonoFontFamily, next.MonoFontFamily)
 }
 
 // PrepareSketchTransitions adds pencil samples to a compiled diagram when a
@@ -109,11 +146,14 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 				// Only draw a structural transition from the board on screen.
 				p = boardTransitionPlan{}
 			}
+			if p.wipes != nil && p.wipes.from != previous {
+				p.wipes = nil
+			}
 			p.ink = planBoardInk(previous, board, sketch, pencilOnly)
-			if p.motion != nil || p.ink != nil || p.from != nil {
+			if p.motion != nil || p.ink != nil || p.from != nil || p.wipes != nil {
 				p.board = board
 				count := len(board.TweenFrames)
-				if p.from != nil {
+				if p.from != nil || p.wipes != nil {
 					// Give a short arrival or landing enough distinct samples to
 					// show its acceleration. The existing per-board and total
 					// geometry limits still apply when many steps play together.
@@ -317,7 +357,7 @@ func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 			sample := *base
 			sample.Layers, sample.Scenarios, sample.Steps, sample.TweenFrames = nil, nil, nil, nil
 			sample.TweenDurationMS, sample.TweenFrameEndsMS, sample.GridMotion = 0, nil, false
-			if p.from != nil || p.ink != nil && len(p.ink.shapes) != 0 {
+			if p.from != nil || p.wipes != nil || p.ink != nil && len(p.ink.shapes) != 0 {
 				sample.Shapes = slices.Clone(base.Shapes)
 			}
 			frames[i] = &sample
@@ -327,6 +367,12 @@ func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 			if p.outline != nil {
 				p.outline.apply(&sample, progress)
 			}
+			if p.sqlRows != nil {
+				p.sqlRows.apply(&sample, progress)
+			}
+			if p.sequence != nil {
+				p.sequence.apply(&sample, progress)
+			}
 		}
 		if p.ink != nil {
 			// Grid motion may share an unchanged edge slice with its authored endpoint.
@@ -335,9 +381,15 @@ func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 			}
 			p.ink.apply(frames[i], progress)
 		}
+		if p.wipes != nil {
+			p.wipes.apply(frames[i], progress)
+		}
 	}
 	p.board.TweenFrames, p.board.TweenDurationMS, p.board.GridMotion = frames, duration, p.motion != nil || p.board.GridMotion
 	p.board.TweenFrameEndsMS = p.bounds[1:]
+	// A structural plan also proves the two authored boards share world
+	// coordinates. Keep that camera when a raster export fits its frames.
+	p.board.LayoutContinuity = p.board.LayoutContinuity || p.from != nil
 	return nil
 }
 

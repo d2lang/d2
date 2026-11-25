@@ -45,15 +45,16 @@ var CompositeReservedKeywords = map[string]struct{}{
 	"tooltip":          {},
 }
 
-// StyleKeywords are reserved keywords which cannot exist outside of the "style" keyword
+// StyleKeywords are fields accepted inside a style map.
 var StyleKeywords = map[string]struct{}{
-	"opacity":       {},
-	"stroke":        {},
-	"fill":          {},
-	"fill-pattern":  {},
-	"stroke-width":  {},
-	"stroke-dash":   {},
-	"border-radius": {},
+	"opacity":         {},
+	"stroke":          {},
+	"fill":            {},
+	"fill-pattern":    {},
+	"fill-transition": {},
+	"stroke-width":    {},
+	"stroke-dash":     {},
+	"border-radius":   {},
 
 	// Only for text
 	"font":           {},
@@ -201,6 +202,15 @@ var LabelPositionsMapping = map[string]label.Position{
 	"border-bottom-right":  label.BorderBottomRight,
 }
 
+// Fill transitions are contextual so older diagrams can still use
+// fill-transition as an object ID or a SQL column name.
+func IsReservedStyleKeyword(key string) bool {
+	_, ok := StyleKeywords[key]
+	return ok && key != "fill-transition"
+}
+
+var FillTransitions = []string{"blend", "wipe-right", "wipe-left", "wipe-up", "wipe-down"}
+
 var FillPatterns = []string{
 	"none",
 	"dots",
@@ -224,7 +234,9 @@ func init() {
 		ReservedKeywords[k] = v
 	}
 	for k, v := range StyleKeywords {
-		ReservedKeywords[k] = v
+		if IsReservedStyleKeyword(k) {
+			ReservedKeywords[k] = v
+		}
 	}
 	for k, v := range ReservedKeywordHolders {
 		CompositeReservedKeywords[k] = v

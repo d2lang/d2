@@ -305,6 +305,13 @@ func validateMotionClip(c *MotionClip, path string) error {
 }
 
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
+	if r := targetShape.RowReveal; r != nil {
+		if targetShape.Type != ShapeSQLTable || r.FullHeight <= 0 || targetShape.Height <= 0 || r.FullHeight < targetShape.Height ||
+			len(targetShape.Columns) == 0 || !finiteRenderNumber(r.VisibleRows) || r.VisibleRows < 0 || r.VisibleRows > float64(len(targetShape.Columns)) ||
+			(1+r.VisibleRows)*targetShape.SQLRowHeight() > float64(targetShape.Height)+.5 {
+			return invalidRenderField(path, "rowReveal", r, "must describe rows within a growing SQL table")
+		}
+	}
 	if b := targetShape.MotionLabelBox; b != nil && (b.Width <= 0 || b.Height <= 0) {
 		return invalidRenderField(path, "motionLabelBox", b, "must have positive dimensions")
 	}
@@ -360,6 +367,22 @@ func validateRenderShapeNumbers(targetShape Shape, path string) error {
 }
 
 func validateRenderConnectionNumbers(connection Connection, path string) error {
+	if v := connection.MotionDashOffset; v != 0 && (!finiteRenderNumber(v) || connection.StrokeDash <= 0 || connection.Animated) {
+		return invalidRenderField(path, "motionDashOffset", v, "requires a finite offset on a dashed, non-animated stroke")
+	}
+	if p := connection.MotionLabel; p != nil {
+		if connection.Label == "" {
+			return invalidRenderField(path, "motionLabel", p, "requires a connection caption")
+		}
+		// Caption backgrounds can extend four pixels past the text box.
+		caption := Shape{Pos: p.Point, Width: connection.LabelWidth, Height: connection.LabelHeight, StrokeWidth: 8}
+		if err := validateRenderShapeIntegerBounds(path+".motionLabel", caption); err != nil {
+			return err
+		}
+		if err := validateRenderOpacity(path+".motionLabel", p.Opacity); err != nil {
+			return err
+		}
+	}
 	if err := validateMotionClip(connection.MotionClip, path); err != nil {
 		return err
 	}
