@@ -519,9 +519,11 @@ func cloneNodeReferences(src, dst Node, cloneContext func(*RefContext) *RefConte
 		}
 	case *Field:
 		dst := dst.(*Field)
+		oldRefs := dst.References
 		dst.References = make([]*FieldReference, len(src.References))
 		for i, ref := range src.References {
 			copy := *ref
+			copy.order = oldRefs[i].order
 			copy.Context_ = cloneContext(ref.Context_)
 			dst.References[i] = &copy
 		}
@@ -530,9 +532,11 @@ func cloneNodeReferences(src, dst Node, cloneContext func(*RefContext) *RefConte
 		}
 	case *Edge:
 		dst := dst.(*Edge)
+		oldRefs := dst.References
 		dst.References = make([]*EdgeReference, len(src.References))
 		for i, ref := range src.References {
 			copy := *ref
+			copy.order = oldRefs[i].order
 			copy.Context_ = cloneContext(ref.Context_)
 			dst.References[i] = &copy
 		}

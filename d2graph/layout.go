@@ -293,6 +293,7 @@ func (obj *Object) GetModifierElementAdjustments() (dx, dy float64) {
 
 func (obj *Object) GetMargin() geo.Spacing {
 	margin := geo.Spacing{}
+	dx, dy := obj.GetModifierElementAdjustments()
 
 	if obj.HasLabel() && obj.LabelPosition != nil {
 		position := label.FromString(*obj.LabelPosition)
@@ -337,12 +338,26 @@ func (obj *Object) GetMargin() geo.Spacing {
 				margin.Top = dy
 			}
 		}
+
+		// Border labels straddle the painted outline, including 3D and multiple
+		// decorations. Reserve every part of their bounds outside that outline.
+		if position.IsBorder() {
+			outline := geo.NewBox(geo.NewPoint(0, 0), obj.Width+dx, obj.Height+dy)
+			p := position.GetPointOnBox(outline, label.PADDING, labelWidth, labelHeight)
+			margin.Left = max(0, -p.X)
+			margin.Right = max(0, p.X+labelWidth-outline.Width)
+			margin.Top = max(0, -p.Y)
+			margin.Bottom = max(0, p.Y+labelHeight-outline.Height)
+		}
 	}
 
 	if obj.HasIcon() && obj.IconPosition != nil {
 		position := label.FromString(*obj.IconPosition)
 
 		iconSize := float64(d2target.MAX_ICON_SIZE + label.PADDING)
+		// The icon can grow after tracks are stretched, when the available
+		// border gap has already been allocated.
+		position.ReserveBorderHalf(&margin, d2target.MAX_ICON_SIZE, d2target.MAX_ICON_SIZE)
 		switch position {
 		case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight:
 			margin.Top = math.Max(margin.Top, iconSize)
@@ -355,7 +370,6 @@ func (obj *Object) GetMargin() geo.Spacing {
 		}
 	}
 
-	dx, dy := obj.GetModifierElementAdjustments()
 	margin.Right += dx
 	margin.Top += dy
 	return margin
@@ -374,6 +388,15 @@ func (obj *Object) ToShape() shape.Shape {
 		s.SetInnerBoxAspectRatio(*obj.ContentAspectRatio)
 	}
 	return s
+}
+
+// LayoutInnerBox is the usable interior for a container's children.
+func (obj *Object) LayoutInnerBox() *geo.Box {
+	s := obj.ToShape()
+	if obj.IsGridDiagram() {
+		return shape.GridContentBox(s)
+	}
+	return s.GetInnerBox()
 }
 
 func (obj *Object) GetLabelTopLeft() *geo.Point {

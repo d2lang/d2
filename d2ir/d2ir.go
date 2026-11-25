@@ -5,6 +5,7 @@ package d2ir
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -145,6 +146,7 @@ func (r *FieldReference) DueToLazyGlob() bool  { return r.DueToLazyGlob_ }
 func (r *EdgeReference) DueToLazyGlob() bool   { return r.DueToLazyGlob_ }
 
 type Scalar struct {
+	order fieldOrder // Occurrence that supplied this primary value.
 	// binding retains a step expression for interpolation after its endpoint resolves.
 	binding *tweenBinding
 	parent  Node
@@ -187,7 +189,8 @@ type Map struct {
 	Fields            []*Field `json:"fields"`
 	Edges             []*Edge  `json:"edges"`
 
-	globs []*globContext
+	globs          []*globContext
+	pendingSpreads []*Field
 
 	// Fields and Edges retain source order. These indexes are derived lookup
 	// accelerators only; they never determine iteration order.
@@ -374,6 +377,9 @@ func (f *Field) setComposite(value Composite) {
 }
 
 func (m *Map) appendField(f *Field) {
+	if f.Name == nil {
+		m.pendingSpreads = append(m.pendingSpreads, f)
+	}
 	oldLen := len(m.Fields)
 	m.Fields = append(m.Fields, f)
 	if m.fieldIndex != nil && m.fieldIndexSize == oldLen && f != nil && f.Name != nil {
@@ -392,29 +398,13 @@ func (m *Map) appendField(f *Field) {
 	m.markStructureChanged()
 }
 
-func (m *Map) insertField(index int, f *Field) {
-	oldLen := len(m.Fields)
-	m.Fields = append(m.Fields, nil)
-	copy(m.Fields[index+1:], m.Fields[index:])
-	m.Fields[index] = f
-	if m.fieldIndex != nil && m.fieldIndexSize == oldLen && f != nil && f.Name != nil {
-		key := makeFieldIndexKey(f.Name)
-		if _, exists := m.fieldIndex[key]; !exists {
-			m.fieldIndex[key] = f
-		}
-		m.fieldIndexSize++
-	} else {
-		m.fieldIndex = nil
-		m.fieldIndexSize = 0
-	}
-	if f.Map().mayHaveEdges() {
-		f.noteEdges()
-	}
-	m.markStructureChanged()
-}
-
 func (m *Map) removeField(index int) *Field {
 	f := m.Fields[index]
+	if f.Name == nil {
+		if j := slices.Index(m.pendingSpreads, f); j >= 0 {
+			m.pendingSpreads = slices.Delete(m.pendingSpreads, j, j+1)
+		}
+	}
 	if f != nil && f.inEdgeFields {
 		for link := &m.firstEdgeField; *link != nil; link = &(*link).nextEdgeField {
 			if *link == f {
@@ -498,12 +488,16 @@ func (m *Map) Copy(newParent Node) Node {
 	m.edgeIndexSize = 0
 	m.structureVersion = 0
 	m.firstEdgeField = nil
+	m.pendingSpreads = nil
 
 	m.parent = newParent
 	pfields := m.Fields
 	m.Fields = make([]*Field, 0, len(pfields))
 	for _, f := range pfields {
 		field := f.Copy(m).(*Field)
+		if field.Name == nil {
+			m.pendingSpreads = append(m.pendingSpreads, field)
+		}
 		m.Fields = append(m.Fields, field)
 		if field.Map().mayHaveEdges() {
 			m.addEdgeField(field)
@@ -550,7 +544,7 @@ func (m *Map) CopyBase(newParent Node) *Map {
 	}
 	for _, board := range []*Field{layers, scenarios, steps} {
 		if board != nil {
-			m.deleteEdgesForFieldReferences(board)
+			m.deleteEdgesForReferences(board.References, nil)
 		}
 	}
 	base := *m
@@ -567,14 +561,20 @@ func (m *Map) CopyBase(newParent Node) *Map {
 	return copy
 }
 
-func (m *Map) deleteEdgesForFieldReferences(f *Field) {
-	for _, fr := range f.References {
+func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrder) {
+	for _, fr := range refs {
+		if cutoff != nil && (!fr.InEdge() || cutoff.before(fr.order)) {
+			continue
+		}
 		currM := m
 		for currM != nil {
-			for _, edge := range currM.Edges {
+			for i := len(currM.Edges) - 1; i >= 0; i-- {
+				edge := currM.Edges[i]
 				for _, er := range edge.References {
 					if er.Context_ == fr.Context_ {
-						currM.DeleteEdge(edge.ID)
+						if cutoff == nil || !edge.recreatedAfter(*cutoff) {
+							currM.removeEdge(i)
+						}
 						break
 					}
 				}
@@ -660,6 +660,11 @@ var _ Importable = &Field{}
 var _ Importable = &Map{}
 
 type Field struct {
+	templateNull    *fieldOrder // Last null assigned in a map variable, retained through later edits.
+	spreadDeletions *spreadDeletion
+	declaration     fieldOrder
+	compositeOrder  fieldOrder // Occurrence that supplied the map or array.
+	mapReset        fieldOrder // Last array replacement, even when the map was subsequently reopened.
 	// *Map.
 	parent        Node
 	importAST     d2ast.Node
@@ -689,6 +694,7 @@ func (f *Field) SetImportAST(node d2ast.Node) {
 }
 
 func (f *Field) Copy(newParent Node) Node {
+	old := f
 	tmp := *f
 	f = &tmp
 
@@ -699,7 +705,9 @@ func (f *Field) Copy(newParent Node) Node {
 	if f.Primary_ != nil {
 		f.Primary_ = f.Primary_.Copy(f).(*Scalar)
 	}
-	if f.Composite != nil {
+	if old.Map() != nil && old.Map().Parent() != old {
+		f.Composite = old.copyAliasMap(f)
+	} else if f.Composite != nil {
 		f.Composite = f.Composite.Copy(f).(Composite)
 	}
 	return f
@@ -926,6 +934,7 @@ func (a *Array) Copy(newParent Node) Node {
 }
 
 type FieldReference struct {
+	order   fieldOrder
 	String  d2ast.String   `json:"string"`
 	KeyPath *d2ast.KeyPath `json:"key_path"`
 
@@ -940,6 +949,7 @@ type FieldReference struct {
 // (context, key-path element) prevents glob evaluation order from inflating
 // reference lists quadratically while preserving every distinct source.
 func (f *Field) appendReference(ref *FieldReference) {
+	ref.order = ref.Context_.order
 	if ref.DueToLazyGlob_ {
 		for _, existing := range f.References {
 			if sameReferenceContext(existing.Context_, ref.Context_) &&
@@ -991,12 +1001,14 @@ func (fr *FieldReference) AST() d2ast.Node {
 }
 
 type EdgeReference struct {
+	order          fieldOrder
 	Context_       *RefContext `json:"context"`
 	DueToGlob_     bool        `json:"due_to_glob"`
 	DueToLazyGlob_ bool        `json:"due_to_lazy_glob"`
 }
 
 func (e *Edge) appendReference(ref *EdgeReference) {
+	ref.order = ref.Context_.order
 	if ref.DueToLazyGlob_ {
 		for _, existing := range e.References {
 			if sameReferenceContext(existing.Context_, ref.Context_) &&
@@ -1026,6 +1038,7 @@ func (er *EdgeReference) Primary() bool {
 }
 
 type RefContext struct {
+	order    fieldOrder  // Original key position, including its lazy glob applications.
 	Edge     *d2ast.Edge `json:"edge"`
 	Key      *d2ast.Key  `json:"key"`
 	Scope    *d2ast.Map  `json:"-"`
@@ -1518,6 +1531,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			return nil
 		}
 	}
+	if c != nil {
+		f.declaration = c.nextFieldOrder()
+	}
 	m.appendField(f)
 	*created = append(*created, f)
 	if i+1 == len(kp.Path) {
@@ -1570,27 +1586,11 @@ func (m *Map) DeleteField(ida ...string) *Field {
 	rest := ida[1:]
 
 	for i, f := range m.Fields {
-		if !strings.EqualFold(f.Name.ScalarString(), s) {
+		if f.Name == nil || !strings.EqualFold(f.Name.ScalarString(), s) {
 			continue
 		}
 		if len(rest) == 0 {
-			m.deleteEdgesForFieldReferences(f)
-			m.removeField(i)
-
-			// If a field was deleted from a keyword-holder keyword and that holder is empty,
-			// then that holder becomes meaningless and should be deleted too
-			parent := ParentField(f)
-			for keywordHolder := range d2ast.ReservedKeywordHolders {
-				if parent != nil && parent.Name.ScalarString() == keywordHolder && parent.Name.IsUnquoted() && len(parent.Map().Fields) == 0 {
-					keywordHolderParentMap := ParentMap(parent)
-					for i, f := range keywordHolderParentMap.Fields {
-						if f.Name.ScalarString() == keywordHolder && f.Name.IsUnquoted() {
-							keywordHolderParentMap.removeField(i)
-							break
-						}
-					}
-				}
-			}
+			m.deleteFieldAt(i)
 			return f
 		}
 		if f.Map() != nil {
@@ -1598,6 +1598,31 @@ func (m *Map) DeleteField(ida ...string) *Field {
 		}
 	}
 	return nil
+}
+
+func (m *Map) deleteField(f *Field) {
+	if i := slices.Index(m.Fields, f); i >= 0 {
+		m.deleteFieldAt(i)
+	}
+}
+
+func (m *Map) deleteFieldAt(i int) {
+	f := m.Fields[i]
+	m.deleteEdgesForReferences(f.References, nil)
+	m.removeField(i)
+	// An empty keyword holder has no independent meaning.
+	parent := ParentField(f)
+	if parent == nil || parent.Name == nil || !parent.Name.IsUnquoted() || len(m.Fields) != 0 {
+		return
+	}
+	if _, ok := d2ast.ReservedKeywordHolders[parent.Name.ScalarString()]; ok {
+		holder := ParentMap(parent)
+		if holder != nil {
+			if i := slices.Index(holder.Fields, parent); i >= 0 {
+				holder.removeField(i)
+			}
+		}
+	}
 }
 
 func (m *Map) GetEdges(eid *EdgeID, refctx *RefContext, c *compiler) []*Edge {
@@ -1986,6 +2011,7 @@ func (m *Map) createEdge2(eid *EdgeID, refctx *RefContext, gctx *globContext, c 
 		parent: m,
 		ID:     eid,
 		References: []*EdgeReference{{
+			order:          refctx.order,
 			Context_:       refctx,
 			DueToGlob_:     len(c.globRefContextStack) > 0,
 			DueToLazyGlob_: c.lazyGlobBeingApplied,

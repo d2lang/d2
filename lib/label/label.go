@@ -315,6 +315,21 @@ func (position Position) IsBorder() bool {
 	}
 }
 
+// ReserveBorderHalf accounts for the portion of a border decoration on either
+// side of the outline. It can be applied to outer margins or inner padding.
+func (position Position) ReserveBorderHalf(space *geo.Spacing, width, height float64) {
+	switch position {
+	case BorderTopLeft, BorderTopCenter, BorderTopRight:
+		space.Top = max(space.Top, height/2)
+	case BorderBottomLeft, BorderBottomCenter, BorderBottomRight:
+		space.Bottom = max(space.Bottom, height/2)
+	case BorderLeftTop, BorderLeftMiddle, BorderLeftBottom:
+		space.Left = max(space.Left, width/2)
+	case BorderRightTop, BorderRightMiddle, BorderRightBottom:
+		space.Right = max(space.Right, width/2)
+	}
+}
+
 func (position Position) IsOnEdge() bool {
 	switch position {
 	case InsideMiddleLeft, InsideMiddleCenter, InsideMiddleRight, UnlockedMiddle:

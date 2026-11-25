@@ -404,7 +404,8 @@
           },
           "gridColumns": {
             "value": "200"
-          }
+          },
+          "gridRowsFirst": true
         },
         "zIndex": 0
       },
@@ -708,7 +709,8 @@
           },
           "gridColumns": {
             "value": "2"
-          }
+          },
+          "gridRowsFirst": true
         },
         "zIndex": 0
       },

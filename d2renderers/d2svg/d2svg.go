@@ -2022,16 +2022,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	writer.buf.WriteString(`</g>`)
 
 	if targetShape.Icon != nil && targetShape.Type != d2target.ShapeImage && targetShape.Opacity != 0 {
-		iconPosition := label.FromString(targetShape.IconPosition)
-		var box *geo.Box
-		if iconPosition.IsOutside() {
-			box = s.GetBox()
-		} else {
-			box = s.GetInnerBox()
-		}
-		iconSize := d2target.GetIconSize(box, targetShape.IconPosition)
-
-		tl := iconPosition.GetPointOnBox(box, label.PADDING, float64(iconSize), float64(iconSize))
+		icon := targetShape.IconBounds(s)
+		tl := icon.TopLeft
+		iconSize := int(icon.Width)
 
 		attributes := []svg.Attribute{
 			svg.Attr("href", targetShape.Icon.String()),
@@ -2056,21 +2049,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		}
 		var box *geo.Box
 		if labelPosition.IsOutside() || labelPosition.IsBorder() {
-			box = s.GetBox().Copy()
-			// if it is 3d/multiple, place label using box around those
-			if targetShape.ThreeDee {
-				offsetY := d2target.THREE_DEE_OFFSET
-				if targetShape.Type == d2target.ShapeHexagon {
-					offsetY /= 2
-				}
-				box.TopLeft.Y -= float64(offsetY)
-				box.Height += float64(offsetY)
-				box.Width += d2target.THREE_DEE_OFFSET
-			} else if targetShape.Multiple {
-				box.TopLeft.Y -= d2target.MULTIPLE_OFFSET
-				box.Height += d2target.MULTIPLE_OFFSET
-				box.Width += d2target.MULTIPLE_OFFSET
-			}
+			box = targetShape.OuterLabelBox(s.GetBox())
 		} else {
 			box = s.GetInnerBox()
 		}
