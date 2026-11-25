@@ -10,10 +10,11 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/internal/grammartest"
 )
 
 func TestGrammarConformance(t *testing.T) {
-	grammar := loadGrammar(t)
+	grammar := grammartest.Load(t)
 	f, err := os.Open("../docs/grammar/testdata/conformance.json")
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +50,7 @@ func TestGrammarConformance(t *testing.T) {
 				t.Fatalf("lexicalConstraint %q must name a production for a rejected case", c.LexicalConstraint)
 			}
 			wantRecognition := !c.Reject || c.LexicalConstraint != ""
-			if got := grammarRecognizes(t, grammar, *c.Source); got != wantRecognition {
+			if got := grammartest.Recognizes(t, grammar, *c.Source); got != wantRecognition {
 				t.Errorf("EBNF File recognition = %t, want %t", got, wantRecognition)
 			}
 			tree, err := d2parser.Parse(c.Name+".d2", strings.NewReader(*c.Source), nil)

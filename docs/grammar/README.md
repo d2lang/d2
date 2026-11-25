@@ -56,15 +56,23 @@ Parse each record's `source` as a whole D2 file.
   `lexicalConstraint` names a production whose scanner rule is needed to
   reject the input, such as the matching closing fence for a block string.
 
-Run the grammar checks from the repository root.
+Run the grammar corpus, parser snapshots, and end-to-end fixture checks from
+the repository root. The fixture tests can run without rendering a diagram.
 
 ```sh
-go test ./d2parser -run '^TestGrammar'
+go test ./d2parser ./e2etests ./e2etests-cli -run '^(TestGrammarConformance|TestGrammarFixtures|TestParse)$'
 ```
 
 The tests verify that every production is defined and reachable from `File`.
 They also run the EBNF against the corpus and check the Go parser's trees and
 errors. The scanner rules account for rejections marked with `lexicalConstraint`.
+
+The regular Go test job runs these checks on every pull request. Each renderer
+fixture must pass both the Go parser and the EBNF, including inline examples,
+generated scripts, archive entries, and new `.d2` files in the fixture directory.
+CLI tests check their file and stdin inputs, including the expected rejection
+of a malformed connection. The existing parser snapshots check complete trees
+and diagnostics. Each successful snapshot input must also match the EBNF.
 
 Acceptance alone leaves some trees ambiguous. For example, the raw productions
 can match `build-server` as either a key path or an edge chain. The key scanner
