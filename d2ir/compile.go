@@ -34,6 +34,7 @@ type globContext struct {
 }
 
 type compiler struct {
+	fieldOrder          uint64
 	err                 *d2parser.ParseError
 	ctx                 context.Context
 	contextErr          error
@@ -1152,6 +1153,7 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 					},
 				}},
 			}
+			f.declaration = c.nextFieldOrder()
 			dst.appendField(f)
 		case n.Import != nil:
 			// Spread import

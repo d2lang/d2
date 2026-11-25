@@ -126,13 +126,18 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 					return nil, false
 				}
 				field := cloneImportField(selected)
+				order := c.nextFieldOrder()
+				field.nestDeclarationOrder(&order)
 				nilScopeMap(field)
 				return field, true
 			}
 			if !c.reserveVariableCopy(imp, template.ir) {
 				return nil, false
 			}
-			return c.selectImport(cloneImportMap(template.ir), imp)
+			ir := cloneImportMap(template.ir)
+			order := c.nextFieldOrder()
+			ir.nestDeclarationOrder(&order)
+			return c.selectImport(ir, imp)
 		}
 	}
 

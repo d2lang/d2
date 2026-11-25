@@ -25,34 +25,7 @@ func overlayMapIndexed(base, overlay *Map) {
 }
 
 func overlayMap(base, overlay *Map, indexed bool) {
-	for _, of := range overlay.Fields {
-		var bf *Field
-		if indexed {
-			bf = base.getFieldIndexed(of.Name)
-		} else {
-			bf = base.GetField(of.Name)
-		}
-		if bf == nil {
-			base.appendField(of.Copy(base).(*Field))
-			continue
-		}
-		overlayField(bf, of, indexed)
-	}
-
-	for _, oe := range overlay.Edges {
-		var bea []*Edge
-		if indexed {
-			bea = base.getEdgesIndexed(oe.ID)
-		} else {
-			bea = base.GetEdges(oe.ID, nil, nil)
-		}
-		if len(bea) == 0 {
-			base.appendEdge(oe.Copy(base).(*Edge))
-			continue
-		}
-		be := bea[0]
-		overlayEdge(be, oe, indexed)
-	}
+	mergeMap(base, overlay, indexed, nil, 0)
 }
 
 func ExpandSubstitution(m, resolved *Map, placeholder *Field) {
@@ -64,47 +37,62 @@ func expandSubstitutionIndexed(m, resolved *Map, placeholder *Field) {
 }
 
 func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool) {
-	// A later reference (including an edge endpoint) may already have created a
-	// field that this spread introduces. Keep earlier declarations in place
-	// and emit the remaining fields together in the spread's own order.
 	at := slices.Index(m.Fields, placeholder)
 	if at < 0 {
 		at = len(m.Fields)
 	}
-	spread := make(map[*Field]bool, len(resolved.Fields))
+	var site fieldOrder
+	if placeholder != nil {
+		site = placeholder.declaration
+	}
+	mergeMap(m, resolved, indexed, &site, at)
+}
+
+// Merge a deferred spread at its original position. Earlier declarations retain
+// their slots, while fields first mentioned by later keys or edge endpoints go
+// in the spread's order. Apply the same rule inside overlapping containers.
+func mergeMap(m, overlay *Map, indexed bool, site *fieldOrder, at int) {
+	var spread map[*Field]bool
 	var insert []*Field
-	for _, of := range resolved.Fields {
+	if site != nil {
+		spread = make(map[*Field]bool, len(overlay.Fields))
+	}
+	for _, of := range overlay.Fields {
 		var bf *Field
-		if indexed {
-			bf = m.getFieldIndexed(of.Name)
-		} else {
-			bf = m.GetField(of.Name)
+		if of.Name != nil { // An unresolved spread placeholder always has its own slot.
+			if indexed {
+				bf = m.getFieldIndexed(of.Name)
+			} else {
+				bf = m.GetField(of.Name)
+			}
 		}
 		if bf == nil {
 			bf = of.Copy(m).(*Field)
+			if site != nil {
+				bf.nestDeclarationOrder(site)
+			}
 			m.appendField(bf)
 		} else {
-			overlayField(bf, of, indexed)
+			overlayFieldAt(bf, of, indexed, site)
 		}
-		if !spread[bf] {
+		if site != nil && !spread[bf] {
 			spread[bf] = true
 			insert = append(insert, bf)
 		}
 	}
-	for _, f := range m.Fields[:at] {
-		delete(spread, f)
-	}
-	if len(spread) != 0 {
-		insert = slices.DeleteFunc(insert, func(f *Field) bool { return !spread[f] })
-		tail := slices.DeleteFunc(m.Fields[at:], func(f *Field) bool { return spread[f] })
-		copy(m.Fields[at+len(insert):], tail)
-		copy(m.Fields[at:], insert)
+	if site != nil {
+		for _, f := range m.Fields[:at] {
+			delete(spread, f)
+		}
+		if len(spread) != 0 {
+			insert = slices.DeleteFunc(insert, func(f *Field) bool { return !spread[f] })
+			tail := slices.DeleteFunc(m.Fields[at:], func(f *Field) bool { return spread[f] })
+			copy(m.Fields[at+len(insert):], tail)
+			copy(m.Fields[at:], insert)
+		}
 	}
 
-	// NOTE this doesn't expand edges in place, and just appends
-	// I suppose to do this, there needs to be an edge placeholder too on top of the field placeholder
-	// Will wait to see if a problem
-	for _, oe := range resolved.Edges {
+	for _, oe := range overlay.Edges {
 		var bea []*Edge
 		if indexed {
 			bea = m.getEdgesIndexed(oe.ID)
@@ -115,8 +103,7 @@ func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool) {
 			m.appendEdge(oe.Copy(m).(*Edge))
 			continue
 		}
-		be := bea[0]
-		overlayEdge(be, oe, indexed)
+		overlayEdge(bea[0], oe, indexed)
 	}
 }
 
@@ -134,16 +121,33 @@ func overlayFieldIndexed(bf, of *Field) {
 }
 
 func overlayField(bf, of *Field, indexed bool) {
+	overlayFieldAt(bf, of, indexed, nil)
+}
+
+func overlayFieldAt(bf, of *Field, indexed bool, site *fieldOrder) {
+	if site != nil && site.before(bf.declaration) {
+		bf.declaration = of.declaration.within(site)
+	}
 	if of.Primary_ != nil {
 		bf.Primary_ = of.Primary_.Copy(bf).(*Scalar)
 	}
 
 	if of.Composite != nil {
 		if bf.Map() != nil && of.Map() != nil {
-			overlayMap(bf.Map(), of.Map(), indexed)
+			at := 0
+			if site != nil {
+				children := bf.Map().Fields
+				for at < len(children) && !site.before(children[at].declaration) {
+					at++
+				}
+			}
+			mergeMap(bf.Map(), of.Map(), indexed, site, at)
 		} else {
 			beforeFields, beforeEdges := structureCounts(bf.Map())
 			bf.setComposite(of.Composite.Copy(bf).(Composite))
+			if site != nil {
+				bf.Map().nestDeclarationOrder(site)
+			}
 			markStructureCountDelta(ParentMap(bf), beforeFields, beforeEdges, bf.Map())
 		}
 	}

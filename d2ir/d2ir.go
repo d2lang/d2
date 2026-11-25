@@ -639,6 +639,7 @@ var _ Importable = &Field{}
 var _ Importable = &Map{}
 
 type Field struct {
+	declaration fieldOrder
 	// *Map.
 	parent        Node
 	importAST     d2ast.Node
@@ -1496,6 +1497,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		if !c.reserveGlobField(globSource) {
 			return nil
 		}
+	}
+	if c != nil {
+		f.declaration = c.nextFieldOrder()
 	}
 	m.appendField(f)
 	*created = append(*created, f)
