@@ -100,8 +100,8 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	hostFlag := ms.Opts.String("HOST", "host", "h", "localhost", "host listening address when used with watch")
-	portFlag := ms.Opts.String("PORT", "port", "p", "0", "port listening address when used with watch")
+	hostFlag := ms.Opts.String("HOST", "host", "h", "localhost", "host listening address when used with watch or serve")
+	portFlag := ms.Opts.String("PORT", "port", "p", "0", "port listening address when used with watch or serve")
 	bundleFlag, err := ms.Opts.Bool("D2_BUNDLE", "bundle", "b", true, "when outputting SVG, bundle all assets and layers into the output file")
 	if err != nil {
 		return err
@@ -234,6 +234,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if !*allowLocalFilesFlag {
 		localFiles = localfile.Policy{}
 	}
+	allowLocalFilesExplicit := ms.Opts.Flags.Changed("allow-local-files") || ms.Env.Getenv("D2_ALLOW_LOCAL_FILES") != ""
 	ctx = withLocalFiles(ctx, localFiles)
 
 	fontFamily, monoFontFamily, err := loadFonts(ms, *fontRegularFlag, *fontItalicFlag, *fontBoldFlag, *fontSemiboldFlag, *fontMonoFlag, *fontMonoBoldFlag, *fontMonoItalicFlag, *fontMonoSemiboldFlag)
@@ -291,55 +292,88 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		ms.Env.Setenv("BROWSER", *browserFlag)
 	}
 
+	isServe := len(args) > 0 && args[0] == "serve"
+
 	var inputPath string
 	var outputPath string
+	var outputFormat exportExtension
 
-	if len(args) == 0 {
-		if versionFlag != nil && *versionFlag {
-			fmt.Println(version.Version)
-			return nil
+	if isServe {
+		if *watchFlag {
+			return xmain.UsageErrorf("-w[atch] cannot be combined with serve")
 		}
-		help(ms)
-		return nil
-	} else if len(args) >= 3 {
-		return xmain.UsageErrorf("too many arguments passed")
-	}
-
-	inputPath = args[0]
-	if len(args) == 2 {
-		outputPath = args[1]
+		if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
+			return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
+		}
+		if *animateIntervalFlag < 0 {
+			return xmain.UsageErrorf("--animate-interval must be non-negative")
+		}
+		if int64(int(*animateIntervalFlag)) != *animateIntervalFlag {
+			return xmain.UsageErrorf("animate-interval exceeds the supported range on this platform")
+		}
 	} else {
-		if inputPath == "-" {
-			outputPath = "-"
+		if len(args) == 0 {
+			if versionFlag != nil && *versionFlag {
+				fmt.Println(version.Version)
+				return nil
+			}
+			help(ms)
+			return nil
+		} else if len(args) >= 3 {
+			return xmain.UsageErrorf("too many arguments passed")
+		}
+
+		inputPath = args[0]
+		if len(args) == 2 {
+			outputPath = args[1]
 		} else {
-			outputPath = renameExt(inputPath, ".svg")
+			if inputPath == "-" {
+				outputPath = "-"
+			} else {
+				outputPath = renameExt(inputPath, ".svg")
+			}
 		}
-	}
-	if inputPath != "-" {
-		inputPath = ms.AbsPath(inputPath)
-		d, err := os.Stat(inputPath)
-		if err == nil && d.IsDir() {
-			inputPath = filepath.Join(inputPath, "index.d2")
+		if inputPath != "-" {
+			inputPath = ms.AbsPath(inputPath)
+			d, err := os.Stat(inputPath)
+			if err == nil && d.IsDir() {
+				inputPath = filepath.Join(inputPath, "index.d2")
+			}
 		}
-	}
-	if filepath.Ext(outputPath) == ".ppt" {
-		return xmain.UsageErrorf("D2 does not support ppt exports, did you mean \"pptx\"?")
+		if filepath.Ext(outputPath) == ".ppt" {
+			return xmain.UsageErrorf("D2 does not support ppt exports, did you mean \"pptx\"?")
+		}
+
+		// An explicit --stdout-format has historically also selected the format of
+		// named files. A shell-wide default only applies when writing to stdout.
+		if outputPath != "-" && !ms.Opts.Flags.Changed("stdout-format") {
+			stdoutFormatFlag = nil
+		}
+		outputFormat = PNG
+		if review == "" {
+			outputFormat, err = getOutputFormat(stdoutFormatFlag, outputPath)
+			if err != nil {
+				return xmain.UsageErrorf("%v", err)
+			}
+		} else if ms.Opts.Flags.Changed("stdout-format") && (review != "storyboard" || !strings.EqualFold(*stdoutFormatFlag, "png")) {
+			return xmain.UsageErrorf("--stdout-format does not apply to d2 %s", review)
+		}
+		if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
+			return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
+		}
+		if review == "" {
+			if err := validateAnimateInterval(*animateIntervalFlag, outputFormat); err != nil {
+				return err
+			}
+		}
+		if outputPath != "-" {
+			outputPath = ms.AbsPath(outputPath)
+			if inputPath != "-" && sameInputAndOutput(inputPath, outputPath) {
+				return xmain.UsageErrorf("input and output refer to the same file: %s", ms.HumanPath(inputPath))
+			}
+		}
 	}
 
-	// An explicit --stdout-format has historically also selected the format of
-	// named files. A shell-wide default only applies when writing to stdout.
-	if outputPath != "-" && !ms.Opts.Flags.Changed("stdout-format") {
-		stdoutFormatFlag = nil
-	}
-	outputFormat := PNG
-	if review == "" {
-		outputFormat, err = getOutputFormat(stdoutFormatFlag, outputPath)
-		if err != nil {
-			return xmain.UsageErrorf("%v", err)
-		}
-	} else if ms.Opts.Flags.Changed("stdout-format") && (review != "storyboard" || !strings.EqualFold(*stdoutFormatFlag, "png")) {
-		return xmain.UsageErrorf("--stdout-format does not apply to d2 %s", review)
-	}
 	video := videoOptions{duration: *videoDuration, quality: videoQuality(*videoQualityFlag)}
 	for _, name := range []string{"video-duration", "video-size", "video-quality"} {
 		if ms.Opts.Flags.Changed(name) && outputFormat != MP4 {
@@ -360,20 +394,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	}
 	if _, ok := video.quality.crf(); !ok || *videoQualityFlag == "" {
 		return xmain.UsageErrorf("--video-quality must be low, medium, high, or best")
-	}
-	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
-		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
-	}
-	if review == "" {
-		if err := validateAnimateInterval(*animateIntervalFlag, outputFormat); err != nil {
-			return err
-		}
-	}
-	if outputPath != "-" {
-		outputPath = ms.AbsPath(outputPath)
-		if inputPath != "-" && sameInputAndOutput(inputPath, outputPath) {
-			return xmain.UsageErrorf("input and output refer to the same file: %s", ms.HumanPath(inputPath))
-		}
 	}
 
 	themeFlag, err := resolveThemeFlag(ms, "theme", *themeArg)
@@ -430,7 +450,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return err
 	}
 
-	if !outputFormat.supportsDarkTheme() {
+	if !isServe && !outputFormat.supportsDarkTheme() {
 		if darkThemeFlag != nil {
 			ms.Log.Warn.Printf("--dark-theme cannot be used while exporting to another format other than .svg")
 			darkThemeFlag = nil
@@ -446,6 +466,39 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		NoXMLTag:    noXMLTagFlag,
 		Salt:        saltFlag,
 		OmitVersion: omitVersionFlag,
+	}
+
+	if isServe {
+		if layoutFlag != nil && !isBuiltinLayout(*layoutFlag) {
+			return layoutNotFound(*layoutFlag)
+		}
+		if _, _, err := parseTarget(*targetFlag); err != nil {
+			return err
+		}
+		var requestTimeout time.Duration
+		if timeoutFlag != nil {
+			requestTimeout = time.Duration(*timeoutFlag) * time.Second
+		}
+		allowLocalFiles := false
+		if allowLocalFilesExplicit {
+			allowLocalFiles = *allowLocalFilesFlag
+		}
+		return serveCmd(ctx, ms, serveOpts{
+			host:            *hostFlag,
+			port:            *portFlag,
+			layout:          layoutFlag,
+			renderOpts:      renderOpts,
+			animateInterval: animateIntervalFlag,
+			animateDuration: animateDurationFlag,
+			bundle:          *bundleFlag,
+			forceAppendix:   forceAppendixFlag,
+			fontFamily:      fontFamily,
+			monoFontFamily:  monoFontFamily,
+			asciiMode:       *asciiModeFlag,
+			target:          *targetFlag,
+			requestTimeout:  requestTimeout,
+			allowLocalFiles: allowLocalFiles,
+		})
 	}
 
 	timeout := time.Duration(*timeoutFlag) * time.Second
@@ -497,24 +550,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return w.run()
 	}
 
-	var boardPath []string
-	var noChildren bool
-	switch *targetFlag {
-	case "*":
-	case "":
-		noChildren = true
-	default:
-		target := *targetFlag
-		if strings.HasSuffix(target, ".*") {
-			target = target[:len(target)-2]
-		} else {
-			noChildren = true
-		}
-		key, err := d2parser.ParseKey(target)
-		if err != nil {
-			return xmain.UsageErrorf("invalid target: %s", *targetFlag)
-		}
-		boardPath = key.StringIDA()
+	boardPath, noChildren, err := parseTarget(*targetFlag)
+	if err != nil {
+		return err
 	}
 
 	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, video, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, nil)
@@ -537,6 +575,38 @@ func sameInputAndOutput(input, output string) bool {
 	}
 	destination, err := os.Stat(output)
 	return err == nil && os.SameFile(source, destination)
+}
+
+func parseTarget(target string) (boardPath []string, noChildren bool, err error) {
+	switch target {
+	case "*":
+		return nil, false, nil
+	case "":
+		return nil, true, nil
+	default:
+		raw := target
+		if strings.HasSuffix(target, ".*") {
+			target = target[:len(target)-2]
+		} else {
+			noChildren = true
+		}
+		key, err := d2parser.ParseKey(target)
+		if err != nil {
+			return nil, false, xmain.UsageErrorf("invalid target: %s", raw)
+		}
+		return key.StringIDA(), noChildren, nil
+	}
+}
+
+type noLSPKey struct{}
+
+func withNoLSP(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noLSPKey{}, true)
+}
+
+func noLSPFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(noLSPKey{}).(bool)
+	return v
 }
 
 func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
@@ -616,7 +686,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		opts.AnimateTweens = go2.Pointer(*animateIntervalFlag > 0)
 	}
 
-	if os.Getenv("D2_LSP_MODE") == "1" {
+	if !noLSPFromContext(ctx) && os.Getenv("D2_LSP_MODE") == "1" {
 		// only the parse result is needed if running d2 for lsp,
 		// if this, "fails", the AST is still valid and can be sent
 		// to vscode extension

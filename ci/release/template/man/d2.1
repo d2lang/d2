@@ -37,6 +37,10 @@
 .Op Fl -root Ar dir
 .Op Fl -no-ui
 .Op Fl -timeout Ar seconds
+.Nm d2
+.Ar serve
+.Op Fl h , -host Ar localhost
+.Op Fl p , -port Ar 0
 .Sh DESCRIPTION
 .Nm
 compiles and renders
@@ -93,10 +97,14 @@ Watch for changes to input and live reload. Use
 .It Fl h , -host Ar localhost
 Host listening address when used with
 .Ar watch
+or
+.Ar serve
 .Ns .
 .It Fl p , -port Ar 0
 Port listening address when used with
 .Ar watch
+or
+.Ar serve
 .Ns .
 .It Fl t , -theme Ar theme
 Set the diagram theme by ID or name. For example, 300 and Terminal select the same theme.
@@ -378,6 +386,18 @@ or
 The default is 60 seconds and the accepted range is 1 through 600.
 When a call reaches its deadline, the server asks the renderer to stop.
 If the renderer finishes successfully, the server returns the completed diagram.
+.It Ar serve
+Runs an HTTP server responding to
+.Pa /render/*
+requests (for example
+.Pa /render/svg ,
+.Pa /render/png ,
+.Pa /render/txt ) .
+Local-file reads remain disabled by default unless
+.Fl -allow-local-files
+or
+.Ev D2_ALLOW_LOCAL_FILES
+is explicitly enabled.
 .El
 .Sh ENVIRONMENT VARIABLES
 Many flags can also be set with environment variables.
