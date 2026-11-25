@@ -67,9 +67,11 @@ func newGridDiagram(root *d2graph.Object) (*gridDiagram, error) {
 		// .  │ d e f │    │ b e h │
 		// .  │ g h i │    │ c f i │
 		// .  └───────┘    └───────┘
-		// if keyword rows is first, make it row-directed, if columns is first it is column-directed
-		if root.GridRows.MapKey == nil || root.GridColumns.MapKey == nil || root.GridRows.MapKey.Range.Before(root.GridColumns.MapKey.Range) {
-			gd.rowDirected = true
+		if root.GridRowsFirst != nil {
+			gd.rowDirected = *root.GridRowsFirst
+		} else {
+			// Older graphs only have source positions (and serialized ones omit them).
+			gd.rowDirected = root.GridRows.MapKey == nil || root.GridColumns.MapKey == nil || root.GridRows.MapKey.Range.Before(root.GridColumns.MapKey.Range)
 		}
 
 		// rows and columns specified, but we want to continue naturally if user enters more objects

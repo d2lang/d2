@@ -2,6 +2,25 @@ package d2grid
 
 import "math"
 
+// Scoring a cut visits at most n items. Stop computing the number of
+// possible cuts as soon as exhaustive scoring would exceed the work budget.
+func affordablePartitions(n, cuts int) bool {
+	const maxMeasurements = 1 << 17
+	limit := maxMeasurements / n
+	if limit == 0 {
+		return false
+	}
+	choices := 1
+	for i := 1; i <= min(cuts, n-1-cuts); i++ {
+		// choices <= limit and (n-i) < n, so the product fits even on wasm32.
+		choices = choices * (n - i) / i
+		if choices > limit {
+			return false
+		}
+	}
+	return true
+}
+
 // integralCuts minimizes the total absolute deviation from the mean track size.
 // It returns nil when the bounded search in getBestLayout should handle the grid.
 // Rows and columns use the same one-dimensional partition.

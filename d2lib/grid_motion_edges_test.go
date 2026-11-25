@@ -53,6 +53,25 @@ func TestGridMotionAttachedRouting(t *testing.T) {
 	}
 }
 
+func TestGridMotionKeepsCenteredSQLPorts(t *testing.T) {
+	board, graph := compileGridMotionTest(t, `grid-rows: 1
+a: {shape: sql_table; id: int; value: int}
+b: {shape: sql_table; fk: int; value: int}
+a.id -> b.fk`)
+	edges := newGridMotionEdges(board, board, graph, graph, map[string]bool{"b": true})
+	shapes := slices.Clone(board.Shapes)
+	shapes[1].Pos.Y += 80
+	actual := edges.sample(board.Connections, shapes, .5, 1, 1, nil)
+	if len(actual) != 1 {
+		t.Fatalf("moving cell lost its row edge")
+	}
+	original, sampled := board.Connections[0].Route, actual[0].Route
+	want := geo.NewPoint(original[1].X, original[1].Y+80)
+	if !sampled[0].Equals(original[0]) || !sampled[1].Equals(want) {
+		t.Fatalf("row ports moved off their table rows: %v", sampled)
+	}
+}
+
 func TestGridMotionEdgeLifecycle(t *testing.T) {
 	a, b, c := gridEdgeTestShape("a", 0, 0), gridEdgeTestShape("b", 100, 0), gridEdgeTestShape("c", 0, 100)
 	old := gridEdgeTestConnection("old", "a", "b", geo.NewPoint(40, 20), geo.NewPoint(100, 20))

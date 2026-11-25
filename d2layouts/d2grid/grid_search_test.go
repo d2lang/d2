@@ -14,8 +14,8 @@ import (
 func TestBoundedGridSearchMatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewPCG(17, 53))
 	for fixture := 0; fixture < 120; fixture++ {
-		n := 17 + rng.IntN(4)
-		gd := benchmarkGrid(n, 1+rng.IntN(n))
+		n := 20 + rng.IntN(4)
+		gd := benchmarkGrid(n, 7+rng.IntN(5))
 		gd.columns = gd.rows
 		gd.horizontalGap = rng.IntN(80)
 		gd.verticalGap = rng.IntN(80)

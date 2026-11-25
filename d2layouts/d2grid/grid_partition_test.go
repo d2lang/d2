@@ -98,3 +98,16 @@ func TestGridPartitionBoundsAndTies(t *testing.T) {
 		}
 	}
 }
+
+func TestFractionalGridWithFewCuts(t *testing.T) {
+	widths := []float64{40, 100, 40, 60, 60, 40, 60, 100, 100, 40, 40, 140, 60, 100, 40, 100, 60.5}
+	gd := benchmarkGrid(len(widths), len(widths)-1)
+	for i, w := range widths {
+		gd.objects[i].Width = w
+	}
+	target := gridTarget(gd, false)
+	got := gd.getBestLayout(target, false)
+	if cost := getDistToTarget(got, target, 40, 40, false); cost != 452.0625 {
+		t.Fatalf("partition cost %g, want 452.0625", cost)
+	}
+}

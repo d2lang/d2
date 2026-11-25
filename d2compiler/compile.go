@@ -1111,6 +1111,9 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			c.errorf(scalar, "grid-rows %d exceeds the maximum of %d", v, d2graph.MaxGridDimension)
 			return
 		}
+		if attrs.GridRows == nil && attrs.GridColumns != nil {
+			attrs.GridRowsFirst = go2.Pointer(false)
+		}
 		attrs.GridRows = &d2graph.Scalar{}
 		attrs.GridRows.Value = scalar.ScalarString()
 		attrs.GridRows.MapKey = f.LastPrimaryKey()
@@ -1127,6 +1130,9 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 		if v > d2graph.MaxGridDimension {
 			c.errorf(scalar, "grid-columns %d exceeds the maximum of %d", v, d2graph.MaxGridDimension)
 			return
+		}
+		if attrs.GridColumns == nil && attrs.GridRows != nil {
+			attrs.GridRowsFirst = go2.Pointer(true)
 		}
 		attrs.GridColumns = &d2graph.Scalar{}
 		attrs.GridColumns.Value = scalar.ScalarString()
@@ -1681,7 +1687,7 @@ func (c *compiler) validateNear(g *d2graph.Graph) {
 						continue
 					}
 				}
-				if nearObj.ClosestGridDiagram() != nil {
+				if nearObj.ClosestGridCell() != nil {
 					c.errorf(obj.NearKey, "near keys cannot be set to descendants of special objects, like grid cells")
 					continue
 				}
@@ -1752,6 +1758,12 @@ func (c *compiler) validateEdges(g *d2graph.Graph) {
 		//   grid -> outside : ok
 		//   grid -> grid.cell : not ok
 		//   grid -> grid.cell.inner : not ok
+		if edge.Src == edge.Dst && (edge.Src.IsGridDiagram() || edge.Src.Parent.IsGridDiagram()) && !edge.Src.IsSequenceDiagram() {
+			if edge.Src.IsContainer() {
+				c.errorf(edge.GetAstEdge(), "self-loops on grid containers are not supported")
+			}
+			continue
+		}
 		if edge.Src.IsGridDiagram() && edge.Dst.IsDescendantOf(edge.Src) {
 			c.errorf(edge.GetAstEdge(), "edge from grid diagram %#v cannot enter itself", edge.Src.AbsID())
 			continue

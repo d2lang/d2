@@ -13,9 +13,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2near"
 	"github.com/d2lang/d2/d2layouts/d2sequence"
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/log"
-	"github.com/d2lang/util-go/go2"
 )
 
 type DiagramType string
@@ -217,6 +215,10 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 			// │ └────┘      └───────────────┘ │    │ └────┘      └───────────────┘ │
 			// └───────────────────────────────┘    └───────────────────────────────┘
 			nestedGraph, externalEdges, externalEdgeIDs = ExtractSubgraph(curr, false)
+			// Preserve the cell's pre-grid bounds. PositionNested uses its original
+			// inner box if the parent's tracks stretch a shaped container.
+			nestedGraph.Root.Box = geo.NewBox(geo.NewPoint(0, 0), curr.Width, curr.Height)
+			nestedGraph.Root.ContentAspectRatio = curr.ContentAspectRatio
 			extractedEdges = append(extractedEdges, externalEdges...)
 			extractedEdgeIDs = append(extractedEdgeIDs, externalEdgeIDs...)
 
@@ -297,7 +299,7 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 		switch graphInfo.DiagramType {
 		case GridDiagram:
 			log.Debug(ctx, "layout grid", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", graphShapes{g}))
-			if err = d2grid.Layout(ctx, g); err != nil {
+			if err = d2grid.LayoutWithRouter(ctx, g, edgeRouter); err != nil {
 				return err
 			}
 
@@ -399,15 +401,7 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 }
 
 func DefaultRouter(ctx context.Context, graph *d2graph.Graph, edges []*d2graph.Edge) error {
-	for _, e := range edges {
-		// TODO replace simple straight line edge routing
-		e.Route = []*geo.Point{e.Src.Center(), e.Dst.Center()}
-		e.TraceToShape(e.Route, 0, 1)
-		if e.Label.Value != "" {
-			e.LabelPosition = go2.Pointer(label.InsideMiddleCenter.String())
-		}
-	}
-	return nil
+	return d2grid.RouteEdges(ctx, graph, edges)
 }
 
 func NestedGraphInfo(obj *d2graph.Object) (gi GraphInfo) {
@@ -790,10 +784,18 @@ func InjectNested(container *d2graph.Object, nestedGraph *d2graph.Graph, isRoot 
 }
 
 func PositionNested(container *d2graph.Object, nestedGraph *d2graph.Graph) {
-	// tl, _ := boundingBox(nestedGraph)
-	// Note: assumes nestedGraph's layout has contents positioned relative to 0,0
-	dx := container.TopLeft.X //- tl.X
-	dy := container.TopLeft.Y //- tl.Y
+	// Children and internal routes are relative to the original container.
+	dx, dy := container.TopLeft.X, container.TopLeft.Y
+	original := nestedGraph.Root
+	if container.Parent.IsGridDiagram() && original.Box != nil && original.Width > 0 && original.Height > 0 &&
+		(container.Width != original.Width || container.Height != original.Height) {
+		// Stretching a shaped cell can move its usable interior (e.g. the
+		// sloping sides of a diamond). Preserve the children's inset from it.
+		oldInner := original.ToShape().GetInnerBox()
+		newInner := container.ToShape().GetInnerBox()
+		dx = newInner.TopLeft.X - oldInner.TopLeft.X
+		dy = newInner.TopLeft.Y - oldInner.TopLeft.Y
+	}
 	if dx == 0 && dy == 0 {
 		return
 	}
@@ -839,6 +841,9 @@ func validateObjectPositions(objects []*d2graph.Object) error {
 }
 
 func FitToGraph(container *d2graph.Object, nestedGraph *d2graph.Graph, padding geo.Spacing) {
+	if nestedGraph.Root.ContentAspectRatio != nil {
+		container.ContentAspectRatio = nestedGraph.Root.ContentAspectRatio
+	}
 	var width, height float64
 	width = nestedGraph.Root.Width
 	height = nestedGraph.Root.Height

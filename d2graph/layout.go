@@ -293,6 +293,7 @@ func (obj *Object) GetModifierElementAdjustments() (dx, dy float64) {
 
 func (obj *Object) GetMargin() geo.Spacing {
 	margin := geo.Spacing{}
+	dx, dy := obj.GetModifierElementAdjustments()
 
 	if obj.HasLabel() && obj.LabelPosition != nil {
 		position := label.FromString(*obj.LabelPosition)
@@ -337,6 +338,17 @@ func (obj *Object) GetMargin() geo.Spacing {
 				margin.Top = dy
 			}
 		}
+
+		// Border labels straddle the painted outline, including 3D and multiple
+		// decorations. Reserve every part of their bounds outside that outline.
+		if position.IsBorder() {
+			outline := geo.NewBox(geo.NewPoint(0, 0), obj.Width+dx, obj.Height+dy)
+			p := position.GetPointOnBox(outline, label.PADDING, labelWidth, labelHeight)
+			margin.Left = max(0, -p.X)
+			margin.Right = max(0, p.X+labelWidth-outline.Width)
+			margin.Top = max(0, -p.Y)
+			margin.Bottom = max(0, p.Y+labelHeight-outline.Height)
+		}
 	}
 
 	if obj.HasIcon() && obj.IconPosition != nil {
@@ -355,7 +367,6 @@ func (obj *Object) GetMargin() geo.Spacing {
 		}
 	}
 
-	dx, dy := obj.GetModifierElementAdjustments()
 	margin.Right += dx
 	margin.Top += dy
 	return margin

@@ -392,27 +392,6 @@ func (m *Map) appendField(f *Field) {
 	m.markStructureChanged()
 }
 
-func (m *Map) insertField(index int, f *Field) {
-	oldLen := len(m.Fields)
-	m.Fields = append(m.Fields, nil)
-	copy(m.Fields[index+1:], m.Fields[index:])
-	m.Fields[index] = f
-	if m.fieldIndex != nil && m.fieldIndexSize == oldLen && f != nil && f.Name != nil {
-		key := makeFieldIndexKey(f.Name)
-		if _, exists := m.fieldIndex[key]; !exists {
-			m.fieldIndex[key] = f
-		}
-		m.fieldIndexSize++
-	} else {
-		m.fieldIndex = nil
-		m.fieldIndexSize = 0
-	}
-	if f.Map().mayHaveEdges() {
-		f.noteEdges()
-	}
-	m.markStructureChanged()
-}
-
 func (m *Map) removeField(index int) *Field {
 	f := m.Fields[index]
 	if f != nil && f.inEdgeFields {

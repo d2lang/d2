@@ -1,5 +1,7 @@
 package d2ir
 
+import "slices"
+
 func structureCounts(m *Map) (fields, edges int) {
 	if m == nil {
 		return 0, 0
@@ -62,14 +64,15 @@ func expandSubstitutionIndexed(m, resolved *Map, placeholder *Field) {
 }
 
 func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool) {
-	fi := -1
-	for i := 0; i < len(m.Fields); i++ {
-		if m.Fields[i] == placeholder {
-			fi = i
-			break
-		}
+	// A later reference (including an edge endpoint) may already have created a
+	// field that this spread introduces. Keep earlier declarations in place
+	// and emit the remaining fields together in the spread's own order.
+	at := slices.Index(m.Fields, placeholder)
+	if at < 0 {
+		at = len(m.Fields)
 	}
-
+	spread := make(map[*Field]bool, len(resolved.Fields))
+	var insert []*Field
 	for _, of := range resolved.Fields {
 		var bf *Field
 		if indexed {
@@ -78,11 +81,24 @@ func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool) {
 			bf = m.GetField(of.Name)
 		}
 		if bf == nil {
-			m.insertField(fi, of.Copy(m).(*Field))
-			fi++
-			continue
+			bf = of.Copy(m).(*Field)
+			m.appendField(bf)
+		} else {
+			overlayField(bf, of, indexed)
 		}
-		overlayField(bf, of, indexed)
+		if !spread[bf] {
+			spread[bf] = true
+			insert = append(insert, bf)
+		}
+	}
+	for _, f := range m.Fields[:at] {
+		delete(spread, f)
+	}
+	if len(spread) != 0 {
+		insert = slices.DeleteFunc(insert, func(f *Field) bool { return !spread[f] })
+		tail := slices.DeleteFunc(m.Fields[at:], func(f *Field) bool { return spread[f] })
+		copy(m.Fields[at+len(insert):], tail)
+		copy(m.Fields[at:], insert)
 	}
 
 	// NOTE this doesn't expand edges in place, and just appends

@@ -773,24 +773,24 @@ func routeAdditionalEdgesWithResourceLimits(
 	}
 	guard := ovg.buildGuard
 
-	// Seed row-bound loops with their explicit ports. Searching from the
-	// table center back to itself would discard the row identities.
+	// Seed loops with distinct attachments. A search from a node back to
+	// itself can return a single point.
 	searchEdges := edges
 	existingRoutes := make([]*Route, 0)
-	if slices.ContainsFunc(edges, loops.IsTableRowLoop) {
+	if slices.ContainsFunc(edges, (*layoutgraph.Edge).IsLoop) {
 		searchEdges = make([]*layoutgraph.Edge, 0, len(edges))
-		byTable := make(map[*layoutgraph.Node]map[*layoutgraph.Edge][]*geo.Point)
+		planned := make(map[*layoutgraph.Node]bool)
 		for _, e := range edges {
 			if err := guard.step(); err != nil {
 				return ovg, err
 			}
-			if !loops.IsTableRowLoop(e) {
+			if !e.IsLoop() {
 				searchEdges = append(searchEdges, e)
 				continue
 			}
-			if byTable[e.From] == nil {
+			if !planned[e.From] {
 				// The plan sorts the incident edges and the occupied bands once
-				// per table and inspects each retained loop's existing path.
+				// per node and inspects each retained loop's existing path.
 				for range 2 {
 					if err := guard.reserveSortWork(len(e.From.Edges)); err != nil {
 						return ovg, err
@@ -805,11 +805,12 @@ func routeAdditionalEdgesWithResourceLimits(
 						return ovg, err
 					}
 				}
-				byTable[e.From] = loops.SelectedTableRowRoutes(e.From, newEdges)
+				loops.RouteSelected(e.From, newEdges)
+				planned[e.From] = true
 			}
-			points := byTable[e.From][e]
+			points := e.Points
 			if len(points) < 2 {
-				return ovg, fmt.Errorf("table loop %d missing from its endpoint's incident edges", e.IDValue())
+				return ovg, fmt.Errorf("loop %d missing from its endpoint's incident edges", e.IDValue())
 			}
 			existingRoutes = append(existingRoutes, makeLoopRoute(e, points, ovg))
 		}

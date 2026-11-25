@@ -3,11 +3,13 @@ package d2grid
 import (
 	"context"
 	"math"
+	"strings"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/shape"
 	"github.com/d2lang/util-go/go2"
 )
 
@@ -16,16 +18,40 @@ const (
 	DEFAULT_GAP       = 40
 )
 
-// Layout runs the grid layout on containers with rows/columns
-// Note: children are not allowed edges or descendants
-// 1. Run grid layout on the graph root
-// 2. Set the resulting dimensions to the graph root
+// Layout places the grid and routes connections using straight joins between cells.
 func Layout(ctx context.Context, g *d2graph.Graph) error {
+	return LayoutWithRouter(ctx, g, RouteEdges)
+}
+
+// LayoutWithRouter gives the selected layout engine the final positions of the
+// direct grid cells. Edges crossing extracted subgraphs are routed by LayoutNested.
+func LayoutWithRouter(ctx context.Context, g *d2graph.Graph, router d2graph.RouteEdges) error {
 	obj := g.Root
 
 	gd, err := layoutGrid(g, obj)
 	if err != nil {
 		return err
+	}
+
+	var direct []*d2graph.Edge
+	for _, e := range g.Edges {
+		if e.Src.Parent.IsDescendantOf(obj) || e.Dst.Parent.IsDescendantOf(obj) {
+			gd.edges = append(gd.edges, e)
+		}
+		if e.Src.Parent == obj && e.Dst.Parent == obj {
+			direct = append(direct, e)
+		}
+	}
+	if len(direct) > 0 {
+		if router == nil {
+			router = RouteEdges
+		}
+		if err := router(ctx, g, direct); err != nil {
+			return err
+		}
+		if g.RootLevel > 0 {
+			gd.fitRoutes(direct)
+		}
 	}
 
 	if obj.HasLabel() && obj.LabelPosition == nil {
@@ -140,25 +166,6 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 		}
 	}
 
-	// simple straight line edge routing between grid objects
-	for _, e := range g.Edges {
-		if !e.Src.Parent.IsDescendantOf(obj) && !e.Dst.Parent.IsDescendantOf(obj) {
-			continue
-		}
-		// if edge is within grid, remove it from outer layout
-		gd.edges = append(gd.edges, e)
-
-		if e.Src.Parent != obj || e.Dst.Parent != obj {
-			continue
-		}
-		// if edge is grid child, use simple routing
-		e.Route = []*geo.Point{e.Src.Center(), e.Dst.Center()}
-		e.TraceToShape(e.Route, 0, 1)
-		if e.Label.Value != "" {
-			e.LabelPosition = go2.Pointer(label.InsideMiddleCenter.String())
-		}
-	}
-
 	if g.Root.IsGridDiagram() && len(g.Root.ChildrenArray) != 0 {
 		g.Root.TopLeft = geo.NewPoint(0, 0)
 	}
@@ -217,7 +224,7 @@ func layoutGrid(g *d2graph.Graph, obj *d2graph.Object) (*gridDiagram, error) {
 
 	// to handle objects with outside labels, we adjust their dimensions before layout and
 	// after layout, we remove the label adjustment and reposition TopLeft if needed
-	revertAdjustments := gd.sizeForOutsideLabels()
+	placeWithinCells := gd.reserveCellMargins()
 
 	if gd.rows != 0 && gd.columns != 0 {
 		gd.layoutEvenly(g, obj)
@@ -225,7 +232,7 @@ func layoutGrid(g *d2graph.Graph, obj *d2graph.Object) (*gridDiagram, error) {
 		gd.layoutDynamic(g, obj)
 	}
 
-	revertAdjustments()
+	placeWithinCells()
 
 	return gd, nil
 }
@@ -690,9 +697,9 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 		return count >= ATTEMPT_LIMIT || skipCount >= SKIP_LIMIT
 	}
 
-	// Small fractional grids can afford every partition (at most C(15,7)
-	// candidates). Score them in their original floating-point addition order.
-	if len(sizes) <= 16 {
+	// When every cut is cheap to check, score fractional rows in their
+	// original floating-point addition order without heuristic pruning.
+	if affordablePartitions(len(sizes), nCuts) {
 		iterDivisions(len(sizes), nCuts, tryDivision, func(_, _ int, _ bool) bool { return true })
 		return bestLayout
 	}
@@ -848,12 +855,15 @@ func getDistToTarget(layout [][]*d2graph.Object, targetSize float64, horizontalG
 	return totalDelta
 }
 
-func (gd *gridDiagram) sizeForOutsideLabels() (revert func()) {
-	margins := make(map[*d2graph.Object]geo.Spacing)
-
-	for _, o := range gd.objects {
+func (gd *gridDiagram) reserveCellMargins() (placeWithinCells func()) {
+	type measuredCell struct {
+		margin        geo.Spacing
+		width, height float64
+	}
+	cells := make([]measuredCell, len(gd.objects))
+	for i, o := range gd.objects {
 		margin := o.GetMargin()
-		margins[o] = margin
+		cells[i] = measuredCell{margin, o.Width, o.Height}
 
 		o.Height += margin.Top + margin.Bottom
 		o.Width += margin.Left + margin.Right
@@ -925,11 +935,10 @@ func (gd *gridDiagram) sizeForOutsideLabels() (revert func()) {
 	// .           ├───mr────┤ margin.right is still needed
 
 	return func() {
-		for _, o := range gd.objects {
-			m, has := margins[o]
-			if !has {
-				continue
-			}
+		for i, o := range gd.objects {
+			cell := cells[i]
+			slotWidth, slotHeight := o.Width, o.Height
+			m := cell.margin
 			dy := m.Top + m.Bottom
 			dx := m.Left + m.Right
 			o.Height -= dy
@@ -949,7 +958,26 @@ func (gd *gridDiagram) sizeForOutsideLabels() (revert func()) {
 				o.Height += dy - marginY
 			}
 
-			if margin.Left > 0 || margin.Top > 0 {
+			// A track can stretch independently along either axis. Fit constrained
+			// shapes inside it, preserving their measured minimum dimensions.
+			var ratio float64
+			switch strings.ToLower(o.Shape.Value) {
+			case d2target.ShapeCircle, d2target.ShapeSquare:
+				ratio = 1
+			case d2target.ShapePerson:
+				ratio = shape.PERSON_AR_LIMIT
+			case d2target.ShapeOval:
+				ratio = shape.OVAL_AR_LIMIT
+			}
+			if ratio > 0 {
+				o.Width = min(o.Width, max(cell.width, ratio*o.Height))
+				o.Height = min(o.Height, max(cell.height, ratio*o.Width))
+				margin = o.GetMargin()
+				// Center the shape and its outside decorations as a unit.
+				margin.Left += (slotWidth - o.Width - margin.Left - margin.Right) / 2
+				margin.Top += (slotHeight - o.Height - margin.Top - margin.Bottom) / 2
+			}
+			if margin.Left != 0 || margin.Top != 0 {
 				o.MoveWithDescendants(margin.Left, margin.Top)
 			}
 		}

@@ -82,7 +82,7 @@ func computeOffsets(node *layoutgraph.Node) {
 
 	tl, br := node.BoundingBox(nil)
 	loopTL, loopBR := node.BoundingBox(nil)
-	for _, edge := range routeLoops(node) {
+	for _, edge := range routeLoops(node, nil) {
 		if !edge.IsLoop() {
 			continue
 		}
@@ -141,44 +141,54 @@ func newLoopPorts(from, to *geo.Point, fromDirection, toDirection geo.Orientatio
 
 // Route computes every self-edge route for node.
 func Route(n *layoutgraph.Node) []*layoutgraph.Edge {
-	return routeLoops(n)
+	return routeLoops(n, nil)
 }
 
 // routeLoops routes loops in a rule based approach and sets the proper label position
 // edges are routed based on their arrowheads and label size
 // there are 4 possible positions for loops, one at each corner
-func routeLoops(n *layoutgraph.Node) []*layoutgraph.Edge {
-	availablePorts := makeLoopPorts(n)
+func routeLoops(n *layoutgraph.Node, selected map[*layoutgraph.Edge]struct{}) []*layoutgraph.Edge {
+	var availablePorts []*loopPorts
 
 	split := n.SeparateLoopCorners && separateCorners(n.Edges)
 	var routedEdges []*layoutgraph.Edge
 	ordered := edgesInOrder(n.Edges)
 	var rowRoutes map[*layoutgraph.Edge][]*geo.Point
 	if nodeshape.NumColumns(n.Shape) > 0 {
-		rowRoutes = tableRowRoutes(ordered, nil)
+		rowRoutes = tableRowRoutes(ordered, selected)
 	}
+	loopIndex := 0
 	for _, e := range ordered {
 		if !e.IsLoop() {
 			continue
 		}
 
-		routedEdges = append(routedEdges, e)
-		if points := rowRoutes[e]; points != nil {
-			e.Points = points
+		_, moving := selected[e]
+		moving = moving || selected == nil
+		if moving {
+			routedEdges = append(routedEdges, e)
 			if e.Label != nil {
 				e.Label.Position = label.OutsideTopCenter
 			}
+		}
+		loopIndex++
+		if IsTableRowLoop(e) {
+			if moving {
+				e.Points = rowRoutes[e]
+			}
 			continue
+		}
+		if availablePorts == nil {
+			availablePorts = makeLoopPorts(n)
 		}
 		portsPair := findLoopPortsForEdge(e, availablePorts)
 		if split {
 			// Start on opposite corners to separate both incoming and outgoing ports.
 			order := [...]int{0, 3, 1, 2}
-			portsPair = availablePorts[order[(len(routedEdges)-1)%len(order)]]
+			portsPair = availablePorts[order[(loopIndex-1)%len(order)]]
 		}
-		e.Points = routeLoop(portsPair)
-		if e.Label != nil {
-			e.Label.Position = label.OutsideTopCenter
+		if moving {
+			e.Points = routeLoop(portsPair)
 		}
 		portsPair.verticalOffset, portsPair.horizontalOffset = computeEdgeOffset(e)
 		portsPair.hasSourceArrowhead = new(e.HasSourceArrow())
@@ -189,9 +199,9 @@ func routeLoops(n *layoutgraph.Node) []*layoutgraph.Edge {
 	return routedEdges
 }
 
-// SelectedTableRowRoutes applies the same lane order used at layout time.
-func SelectedTableRowRoutes(n *layoutgraph.Node, selected map[*layoutgraph.Edge]struct{}) map[*layoutgraph.Edge][]*geo.Point {
-	return tableRowRoutes(edgesInOrder(n.Edges), selected)
+// RouteSelected plans chosen loops together and keeps unselected routes fixed.
+func RouteSelected(n *layoutgraph.Node, selected map[*layoutgraph.Edge]struct{}) []*layoutgraph.Edge {
+	return routeLoops(n, selected)
 }
 
 func tableRowRoutes(ordered []*layoutgraph.Edge, selected map[*layoutgraph.Edge]struct{}) map[*layoutgraph.Edge][]*geo.Point {

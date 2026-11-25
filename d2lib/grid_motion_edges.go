@@ -22,6 +22,7 @@ type gridMotionEdges struct {
 type gridEdgeLayout struct {
 	edge     *d2target.Connection
 	src, dst *d2target.Shape
+	rowPort  bool
 }
 
 type gridEdgePair struct {
@@ -39,8 +40,12 @@ func newGridMotionEdges(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.
 		// Lifelines have a synthetic destination with no rendered shape. Anchor
 		// both route ports to their own actor, including during a subtree pop.
 		lifelines := make(map[string]bool)
+		rowPorts := make(map[string]bool)
 		if graph := graphs[i]; graph != nil {
 			for _, edge := range graph.Edges {
+				if edge.SrcTableColumnIndex != nil || edge.DstTableColumnIndex != nil {
+					rowPorts[edge.AbsID()] = true
+				}
 				if d2sequence.IsLifelineEnd(edge.Dst) {
 					lifelines[edge.AbsID()] = true
 				}
@@ -65,7 +70,7 @@ func newGridMotionEdges(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.
 			if len(e.Route) < 2 || e.IsCurve && (len(e.Route)-1)%3 != 0 || slices.Contains(e.Route, nil) {
 				continue
 			}
-			layout := gridEdgeLayout{e, shapes[e.Src], shapes[pair.dstAnchor]}
+			layout := gridEdgeLayout{edge: e, src: shapes[e.Src], dst: shapes[pair.dstAnchor], rowPort: rowPorts[e.ID]}
 			if i == 0 {
 				pair.before = layout
 			} else {
@@ -161,7 +166,7 @@ func gridEdgeRevealed(e *d2target.Connection, src, dst *d2target.MotionClip) boo
 // A distance of roughly one pixel accounts for integer target shape
 // bounds versus subpixel layout ports. Preserve off-center and named ports.
 func (l gridEdgeLayout) direct() bool {
-	if l.src == nil || l.dst == nil || l.src == l.dst || len(l.edge.Route) != 2 {
+	if l.rowPort || l.src == nil || l.dst == nil || l.src == l.dst || len(l.edge.Route) != 2 {
 		return false
 	}
 	a, b := gridEdgeCenter(l.src), gridEdgeCenter(l.dst)

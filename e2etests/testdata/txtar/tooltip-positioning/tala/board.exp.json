@@ -361,10 +361,10 @@
       "type": "oval",
       "pos": {
         "x": 155,
-        "y": 0
+        "y": 6
       },
       "width": 106,
-      "height": 118,
+      "height": 106,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -404,10 +404,10 @@
       "type": "oval",
       "pos": {
         "x": 155,
-        "y": 158
+        "y": 165
       },
       "width": 106,
-      "height": 118,
+      "height": 106,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -447,10 +447,10 @@
       "type": "oval",
       "pos": {
         "x": 155,
-        "y": 317
+        "y": 323
       },
       "width": 106,
-      "height": 118,
+      "height": 106,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -490,10 +490,10 @@
       "type": "oval",
       "pos": {
         "x": 155,
-        "y": 476
+        "y": 482
       },
       "width": 106,
-      "height": 118,
+      "height": 106,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -533,10 +533,10 @@
       "type": "oval",
       "pos": {
         "x": 155,
-        "y": 634
+        "y": 641
       },
       "width": 106,
-      "height": 118,
+      "height": 106,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -576,10 +576,10 @@
       "type": "oval",
       "pos": {
         "x": 155,
-        "y": 793
+        "y": 799
       },
       "width": 106,
-      "height": 118,
+      "height": 106,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -618,10 +618,10 @@
       "id": "circle_bottom_center",
       "type": "oval",
       "pos": {
-        "x": 301,
+        "x": 326,
         "y": 0
       },
-      "width": 156,
+      "width": 106,
       "height": 106,
       "opacity": 1,
       "strokeDash": 0,
@@ -661,10 +661,10 @@
       "id": "circle_bottom_right",
       "type": "oval",
       "pos": {
-        "x": 301,
+        "x": 326,
         "y": 146
       },
-      "width": 156,
+      "width": 106,
       "height": 106,
       "opacity": 1,
       "strokeDash": 0,
