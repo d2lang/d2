@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labelgeom"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
@@ -116,24 +117,88 @@ func (s *Sequence) PlaceVessel() {
 	s.Vessel.TopLeft = topLeft
 }
 
-// StepCaptionSpan projects an upper or lower caption onto a horizontal
-// step row. The interval is relative to the left edge of the proposed body.
-func (node *Node) StepCaptionSpan(bodyWidth float64) (side geo.Orientation, left, right float64) {
-	l := node.Label
-	if l == nil {
-		return geo.NONE, 0, 0
-	}
-	switch l.Position {
+// SVG collapses repeated whitespace; the measured text box can then include
+// a substantial span that contains no visible glyph.
+func PlainCaptionSpacing(text string) bool {
+	return strings.TrimSpace(text) == text && !strings.Contains(text, "  ") && !strings.ContainsAny(text, "\r\n\t")
+}
+
+// StepDecorationSide identifies the outside edge of a step carrying a fixed decoration.
+func StepDecorationSide(position label.Position) geo.Orientation {
+	switch position {
 	case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight:
-		side = geo.Top
+		return geo.Top
 	case label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight:
-		side = geo.Bottom
-	default:
-		return geo.NONE, 0, 0
+		return geo.Bottom
+	case label.OutsideLeftTop, label.OutsideLeftMiddle, label.OutsideLeftBottom:
+		return geo.Left
+	case label.OutsideRightTop, label.OutsideRightMiddle, label.OutsideRightBottom:
+		return geo.Right
 	}
-	body := geo.Box{TopLeft: &geo.Point{}, Width: bodyWidth, Height: node.Height}
-	left = l.Position.GetPointOnBox(&body, label.PADDING, l.Width, l.Height).X
-	return side, left, left + l.Width
+	return geo.NONE
+}
+
+// StepPaint records the renderer's ordering and whether the face can cover
+// an earlier sibling's ink. The order is the one-based public export index.
+type StepPaint struct {
+	Order  int  `json:"order"`
+	ZIndex int  `json:"zIndex,omitempty"`
+	Opaque bool `json:"opaque,omitempty"`
+}
+
+func (p *StepPaint) Copy() *StepPaint {
+	if p == nil {
+		return nil
+	}
+	return new(*p)
+}
+
+type StepDecoration struct {
+	Side  geo.Orientation
+	Box   geo.Box
+	Owner *Node
+}
+
+func (n *Node) StepDecorations(body *geo.Box) [2]StepDecoration {
+	var items [2]StepDecoration
+	at := func(p label.Position, w, h float64) StepDecoration {
+		side := StepDecorationSide(p)
+		if side == geo.NONE || w <= 0 || h <= 0 {
+			return StepDecoration{}
+		}
+		return StepDecoration{side, geo.Box{TopLeft: p.GetPointOnBox(body, label.PADDING, w, h), Width: w, Height: h}, n}
+	}
+	if l := n.Label; l != nil && l.Position.IsOutside() {
+		items[0] = at(l.Position, l.Width, l.Height)
+		if b := &items[0].Box; b.TopLeft != nil && (items[0].Side == geo.Left || items[0].Side == geo.Right) {
+			// Text is centered on its measured line box. Require intrusion
+			// into its middle band, away from the leading above and below.
+			b.TopLeft.Y += l.Height / 4
+			b.Height = l.Height / 2
+			if !PlainCaptionSpacing(l.Text) {
+				// SVG collapses runs of spaces. One line height on both sides
+				// per collapsed byte bounds the space lost, leaving only the
+				// central portion that could still be covered by a later step.
+				if len(l.Text) > 1024 || strings.ContainsAny(l.Text, "\r\n\t") {
+					items[0] = StepDecoration{}
+				} else {
+					collapsed := strings.Join(strings.Fields(l.Text), " ")
+					inset := float64(len(l.Text)-len(collapsed)) * l.Height
+					if collapsed == "" || b.Width <= 2*inset {
+						items[0] = StepDecoration{}
+					} else {
+						b.TopLeft.X += inset
+						b.Width -= 2 * inset
+					}
+				}
+			}
+		}
+	}
+	if i := n.Icon; i != nil && i.Position.IsOutside() {
+		size := labelgeom.IconSize(body, i.Position.String())
+		items[1] = at(i.Position, size, size)
+	}
+	return items
 }
 
 // SequenceAdvance is the horizontal distance from one step's top-left to

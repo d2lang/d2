@@ -4,7 +4,6 @@ import (
 	"image"
 	"math"
 	"slices"
-	"strings"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -14,10 +13,8 @@ import (
 	"github.com/d2lang/d2/lib/shape"
 )
 
-// SVG collapses repeated whitespace; the measured text box can then include
-// a substantial span that contains no visible glyph.
 func plainCaptionSpacing(text string) bool {
-	return strings.TrimSpace(text) == text && !strings.Contains(text, "  ") && !strings.ContainsAny(text, "\r\n\t")
+	return layoutgraph.PlainCaptionSpacing(text)
 }
 
 type nodeDecorationBoxes struct {

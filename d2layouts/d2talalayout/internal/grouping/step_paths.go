@@ -182,9 +182,6 @@ func rightwardStepRow(first *layoutgraph.Node) bool {
 func compatibleStepGeometry(steps []*layoutgraph.Node, guard *limits.WorkGuard) (bool, error) {
 	first := steps[0]
 	wedge := shape.StepWedgeWidth(sequenceStepWidth(first))
-	type span struct{ left, right float64 }
-	var captions [2][]span
-	x := 0.
 	maxHeight, minAuthoredHeight := 0., math.Inf(1)
 	for _, n := range steps {
 		if err := guard.Step(); err != nil {
@@ -194,38 +191,107 @@ func compatibleStepGeometry(steps []*layoutgraph.Node, guard *limits.WorkGuard) 
 		if n.DesiredHeight != nil {
 			minAuthoredHeight = min(minAuthoredHeight, n.Height)
 		}
-		width := sequenceStepWidth(n)
-		if maxHeight > minAuthoredHeight || shape.StepWedgeWidth(width) != wedge {
+		if maxHeight > minAuthoredHeight || shape.StepWedgeWidth(sequenceStepWidth(n)) != wedge {
 			return false, nil
 		}
-		side, left, right := n.StepCaptionSpan(width)
-		if side != geo.NONE {
-			row := 0
-			if side == geo.Bottom {
-				row = 1
+	}
+
+	var decorations []layoutgraph.StepDecoration
+	x := 0.
+	for i, n := range steps {
+		if err := guard.Step(); err != nil {
+			return false, err
+		}
+		width := sequenceStepWidth(n)
+		body := geo.Box{TopLeft: &geo.Point{X: x}, Width: width, Height: maxHeight}
+		for _, decoration := range n.StepDecorations(&body) {
+			if decoration.Box.TopLeft == nil {
+				continue
 			}
-			captions[row] = append(captions[row], span{x + left, x + right})
+			decorations = append(decorations, decoration)
+			if decoration.Side != geo.Left && decoration.Side != geo.Right {
+				continue
+			}
+			covered, err := stepFaceCovers(steps, i, x, maxHeight, decoration, guard)
+			if err != nil || covered {
+				return false, err
+			}
 		}
 		x += layoutgraph.SequenceAdvance(width)
 	}
-	for _, row := range captions {
-		if len(row) < 2 {
-			continue
-		}
-		if err := guard.Add(int64(len(row)) * int64(bits.Len(uint(len(row)-1)))); err != nil {
+	// Sweep the painted rectangles from left to right. Decorations on the
+	// same step cannot be separated by keeping a connector explicit.
+	if len(decorations) > 1 {
+		if err := guard.Add(int64(len(decorations)) * int64(bits.Len(uint(len(decorations)-1)))); err != nil {
 			return false, err
 		}
-		slices.SortFunc(row, func(a, b span) int { return cmp.Compare(a.left, b.left) })
-		for i := 1; i < len(row); i++ {
-			if err := guard.Step(); err != nil {
-				return false, err
-			}
-			if row[i].left < row[i-1].right {
-				return false, nil
+		slices.SortFunc(decorations, func(a, b layoutgraph.StepDecoration) int { return cmp.Compare(a.Box.TopLeft.X, b.Box.TopLeft.X) })
+		for i, a := range decorations {
+			for _, b := range decorations[i+1:] {
+				if err := guard.Step(); err != nil {
+					return false, err
+				}
+				if b.Box.TopLeft.X >= a.Box.TopLeft.X+a.Box.Width {
+					break
+				}
+				if a.Owner != b.Owner && a.Box.Overlaps(b.Box) {
+					return false, nil
+				}
 			}
 		}
 	}
 	return true, nil
+}
+
+func stepFaceCovers(steps []*layoutgraph.Node, i int, x, height float64, decoration layoutgraph.StepDecoration, guard *limits.WorkGuard) (bool, error) {
+	delta := 1
+	if decoration.Side == geo.Left {
+		delta = -1
+	}
+	box := decoration.Box
+	for j := i + delta; j >= 0 && j < len(steps); j += delta {
+		if err := guard.Step(); err != nil {
+			return false, err
+		}
+		other := steps[j]
+		width := sequenceStepWidth(other)
+		if delta > 0 {
+			x += layoutgraph.SequenceAdvance(sequenceStepWidth(steps[j-1]))
+			if x >= box.TopLeft.X+box.Width {
+				break
+			}
+		} else {
+			x -= layoutgraph.SequenceAdvance(width)
+			if x+width <= box.TopLeft.X {
+				break
+			}
+		}
+		if laterOpaqueStep(other.StepPaint, steps[i].StepPaint) && stepIntersectsDecoration(x, width, height, box) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func laterOpaqueStep(face, owner *layoutgraph.StepPaint) bool {
+	return face != nil && owner != nil && face.Opaque &&
+		(face.ZIndex > owner.ZIndex || face.ZIndex == owner.ZIndex && face.Order > owner.Order)
+}
+
+// At each height, the step is a horizontal strip of constant width, shifted
+// by the two matching chevrons. Compare only the strip swept through the
+// decoration, preserving a fused row when the item fits inside the notch.
+func stepIntersectsDecoration(x, width, height float64, box geo.Box) bool {
+	top, bottom := max(0, box.TopLeft.Y), min(height, box.TopLeft.Y+box.Height)
+	if top >= bottom {
+		return false
+	}
+	wedge := shape.StepWedgeWidth(width)
+	offset := func(y float64) float64 { return wedge * (1 - math.Abs(2*y/height-1)) }
+	left := x + min(offset(top), offset(bottom))
+	middle := min(bottom, max(top, height/2))
+	right := x + width - wedge + offset(middle)
+	return min(right, box.TopLeft.X+box.Width)-max(left, box.TopLeft.X) >= 1
 }
 
 func (s stepNetwork) orderedPath(group []*layoutgraph.Node) ([]*layoutgraph.Node, error) {

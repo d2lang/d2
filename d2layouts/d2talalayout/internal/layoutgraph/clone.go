@@ -701,6 +701,7 @@ func copyNodeRecord(source *Node, owner *Graph) *Node {
 	cloned.ForceHierarchy = source.ForceHierarchy
 	cloned.Label = copyLabelRecord(source.Label)
 	cloned.Icon = copyIconRecord(source.Icon)
+	cloned.StepPaint = source.StepPaint.Copy()
 	cloned.Is3D = source.Is3D
 	cloned.IsMultiple = source.IsMultiple
 	cloned.IsInvisible = source.IsInvisible

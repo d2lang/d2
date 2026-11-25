@@ -274,6 +274,15 @@ func TestAddSequencesDiscardsStaleRememberedMembership(t *testing.T) {
 		}
 	}
 
+	t.Run("later sibling now covers the right caption", func(t *testing.T) {
+		run(t, func(_ *layoutgraph.Graph, a, b *layoutgraph.Node) {
+			a.Width, b.Width = 120, 120
+			a.Label = &layoutgraph.Label{Text: "Middle", Position: label.OutsideRightMiddle, Width: 48, Height: 21}
+			a.StepPaint = &layoutgraph.StepPaint{Order: 1, Opaque: true}
+			b.StepPaint = &layoutgraph.StepPaint{Order: 2, Opaque: true}
+		})
+	})
+
 	t.Run("reading direction changed", func(t *testing.T) {
 		run(t, func(g *layoutgraph.Graph, _, _ *layoutgraph.Node) {
 			g.Directions[nil] = geo.Bottom

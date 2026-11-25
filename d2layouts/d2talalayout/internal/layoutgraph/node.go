@@ -662,6 +662,7 @@ type Node struct {
 	nodeshape.Shape
 	shapeType nodeshape.Kind
 
+	StepPaint      *StepPaint
 	ForceHierarchy bool
 
 	Container      *Node

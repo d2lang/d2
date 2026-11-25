@@ -16,6 +16,7 @@ import (
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
@@ -256,7 +257,7 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 				n.IsInvisible = true
 			}
 		}
-		if obj.Label.Value == "" && obj.Icon == nil && unpaintedBody(obj) {
+		if obj.Label.Value == "" && obj.Icon == nil && unpaintedBody(obj, g) {
 			n.IsInvisible = true
 		}
 
@@ -265,11 +266,24 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		talaGraph.AddNewNodeToContainer(toNode[parent], n)
 	}
 
-	for _, visit := range visits {
+	unpaintedSteps := map[*d2graph.Object]bool{}
+	// The exporter retains g.Objects order for sibling shapes of equal ZIndex.
+	for i, obj := range g.Objects {
 		if err := ctx.Err(); err != nil {
 			return bindings, err
 		}
-		obj := visit.object
+		if n := toNode[obj]; n.IsSequenceStep() {
+			low, high := paintAlphaRange(obj.Style.Fill)
+			opacity := 1.
+			if obj.Style.Opacity != nil {
+				opacity, _ = strconv.ParseFloat(obj.Style.Opacity.Value, 64)
+			}
+			// Even black and white underneath this fill can differ by at most
+			// three sRGB channel levels, including a 99% opaque face.
+			covers := 255-float64(low)*opacity <= 3
+			n.StepPaint = &layoutgraph.StepPaint{Order: i + 1, ZIndex: obj.ZIndex, Opaque: covers}
+			unpaintedSteps[obj] = high == 0 && invisibleOutline(obj) && !hasFillPattern(obj, g)
+		}
 		if obj.NearKey != nil {
 			if len(obj.NearKey.Path) > maxInputTreeDepth {
 				return bindings, fmt.Errorf("D2 object %q near key depth exceeds limit %d", obj.AbsID(), maxInputTreeDepth)
@@ -332,7 +346,7 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		talaEdge.ReversedForLayout = reversed
 		talaEdge.KeepExplicit = e.Tooltip != nil || e.Link != nil || e.Icon != nil || len(e.Classes) > 0 ||
 			e.SrcArrowhead != nil || e.DstArrowhead != nil || e.ZIndex != 0
-		if talaEdge.From.IsSequenceStep() && talaEdge.To.IsSequenceStep() && (unpaintedBody(edgeSrc) || unpaintedBody(edgeDst)) {
+		if talaEdge.From.IsSequenceStep() && talaEdge.To.IsSequenceStep() && (unpaintedSteps[edgeSrc] || unpaintedSteps[edgeDst]) {
 			// The text or icon may be visible even when the connecting wedge is not.
 			talaEdge.KeepExplicit = true
 		}
@@ -353,13 +367,22 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		talaEdge.Style = cloneStyle(e.Style)
 		minWidth, minHeight, _ := talaEdge.LabelMinDimensions(e.LabelDimensions.Width, e.LabelDimensions.Height)
 		if a, b := talaEdge.From, talaEdge.To; a.IsSequenceStep() && b.IsSequenceStep() {
-			as, al, ar := a.StepCaptionSpan(a.Width)
-			bs, bl, br := b.StepCaptionSpan(b.Width)
-			if as != geo.NONE && as == bs {
-				// Explicit steps can be placed in either order on the same row.
-				// Reserve the opposing caption overhangs across the connecting gap.
-				gap := max(ar-a.Width-bl, br-b.Width-al) + label.PADDING
-				minWidth = max(minWidth, int64(math.Ceil(gap)))
+			// Explicit steps can be placed in either order on a row. Protect both
+			// facing overhangs of each fixed caption and icon above or below it.
+			ae := a.StepDecorations(geo.NewBox(&geo.Point{}, a.Width, a.Height))
+			be := b.StepDecorations(geo.NewBox(&geo.Point{}, b.Width, b.Height))
+			for _, left := range ae {
+				if left.Side != geo.Top && left.Side != geo.Bottom {
+					continue
+				}
+				for _, right := range be {
+					if right.Side != left.Side {
+						continue
+					}
+					l, r := left.Box, right.Box
+					gap := max(l.TopLeft.X+l.Width-a.Width-r.TopLeft.X, r.TopLeft.X+r.Width-b.Width-l.TopLeft.X) + label.PADDING
+					minWidth = max(minWidth, int64(math.Ceil(gap)))
+				}
 			}
 		}
 		if minWidth > maxResultCoordinate || minHeight > maxResultCoordinate {
@@ -412,18 +435,62 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 	return bindings, nil
 }
 
-func unpaintedBody(obj *d2graph.Object) bool {
-	if obj.Style.Fill == nil || !strings.EqualFold(obj.Style.Fill.Value, "transparent") {
-		return false
+// Unspecified and theme paints take their opaque defaults. A gradient with
+// clear stops throughout paints no body; the least opaque stop limits how
+// much of the whole face can cover for a neighboring annotation.
+func paintAlphaRange(paint *d2graph.Scalar) (uint8, uint8) {
+	if paint == nil {
+		return 255, 255
 	}
-	if obj.Style.Stroke != nil && strings.EqualFold(obj.Style.Stroke.Value, "transparent") {
-		return true
+	alpha := func(value string) uint8 {
+		if c, ok := color.ParseRGBA(value); ok {
+			return c.A
+		}
+		return 255
 	}
+	if color.IsGradient(paint.Value) {
+		g, err := color.ParseGradient(paint.Value)
+		if err != nil {
+			return 0, 255
+		}
+		low, high := uint8(255), uint8(0)
+		for _, stop := range g.ColorStops {
+			a := alpha(stop.Color)
+			low, high = min(low, a), max(high, a)
+		}
+		return low, high
+	}
+	a := alpha(paint.Value)
+	return a, a
+}
+
+func invisibleOutline(obj *d2graph.Object) bool {
 	if obj.Style.StrokeWidth != nil {
 		width, err := strconv.Atoi(obj.Style.StrokeWidth.Value)
-		return err == nil && width == 0
+		if err == nil && float64(width)+obj.Style.StrokeWidth.TweenOffset <= 0 {
+			return true
+		}
+	}
+	_, high := paintAlphaRange(obj.Style.Stroke)
+	return high == 0
+}
+
+func hasFillPattern(obj *d2graph.Object, g *d2graph.Graph) bool {
+	if pattern := obj.Style.FillPattern; pattern != nil {
+		return pattern.Value != "" && !strings.EqualFold(pattern.Value, "none")
+	}
+	if theme := g.Theme; theme != nil {
+		if theme.SpecialRules.ContainerDots {
+			return len(obj.ChildrenArray) != 0
+		}
+		return theme.SpecialRules.AllPaper
 	}
 	return false
+}
+
+func unpaintedBody(obj *d2graph.Object, g *d2graph.Graph) bool {
+	_, high := paintAlphaRange(obj.Style.Fill)
+	return high == 0 && invisibleOutline(obj) && !hasFillPattern(obj, g)
 }
 
 func cloneStyle(style d2graph.Style) layoutgraph.EdgeStyle {

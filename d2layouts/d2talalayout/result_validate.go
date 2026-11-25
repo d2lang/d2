@@ -186,6 +186,9 @@ func validateLayoutResultMetadata(
 		if input.IsMultiple != node.IsMultiple {
 			return fmt.Errorf("node %d multiple outline metadata changed", node.ID)
 		}
+		if !sameOptionalValue(input.StepPaint, node.StepPaint) {
+			return fmt.Errorf("node %d step paint metadata changed", node.ID)
+		}
 		if input.IsInvisible != node.IsInvisible {
 			return fmt.Errorf("node %d visibility metadata changed", node.ID)
 		}

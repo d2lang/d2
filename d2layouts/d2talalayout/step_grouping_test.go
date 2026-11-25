@@ -276,3 +276,100 @@ A -> B: " "`, 1, nil)
 		t.Fatalf("lost the explicit, blank-labeled transition")
 	}
 }
+
+func TestStepFusionChecksPaintedExteriorDecorations(t *testing.T) {
+	for _, tc := range []struct {
+		name, order, owner, caption, decoration, extra string
+		widths                                         [3]int
+		edges                                          int
+	}{
+		{"later opaque face covers caption", "ABC", "B", "Middle", "label.near: outside-right-center", "", [3]int{120, 120, 120}, 2},
+		{"later opaque face covers icon", "ABC", "B", "Middle", "icon: status.svg; icon.near: outside-right-center", "", [3]int{120, 120, 120}, 2},
+		{"earlier face keeps side caption visible", "ACB", "B", "Middle", "label.near: outside-right-center", "", [3]int{120, 120, 120}, 0},
+		{"left neighbor painted later", "BAC", "B", "Middle", "label.near: outside-left-center", "", [3]int{120, 120, 120}, 2},
+		{"side caption beyond last step", "ABC", "C", "Middle", "label.near: outside-right-center", "", [3]int{120, 120, 120}, 0},
+		{"nonadjacent face covers caption", "BAC", "A", "Fulfill outstanding payment request", "label.near: outside-right-center", "", [3]int{120, 120, 120}, 2},
+		{"visible glyphs after spaces collapse", "BAC", "A", "Wait for  reconciliation to finish", "label.near: outside-right-center", "", [3]int{120, 120, 120}, 2},
+		{"caption skips narrow adjacent step", "ABC", "A", "Middle", "label.near: outside-right-center", "", [3]int{120, 36, 120}, 2},
+		{"outline only", "ABC", "B", "Middle", "label.near: outside-right-center", "C.style.fill: transparent", [3]int{120, 120, 120}, 0},
+		{"effectively opaque face", "ABC", "B", "Middle", "label.near: outside-right-center", "C.style.opacity: 0.99", [3]int{120, 120, 120}, 2},
+		{"translucent face", "ABC", "B", "Middle", "label.near: outside-right-center", "C.style.opacity: 0.5", [3]int{120, 120, 120}, 0},
+		{"collapsed whitespace", "ABC", "B", "    ", "label.near: outside-right-center", "", [3]int{120, 120, 120}, 0},
+		{"repeated spaces in top captions", "ABC", "A", "Validate  incoming payment", "label.near: outside-top-center", "B: Check  settlement window\nB.label.near: outside-top-center", [3]int{100, 100, 100}, 2},
+		{"upper icons collide", "ABC", "A", "A", "icon: status.svg; icon.near: outside-top-center", "B.icon: status.svg\nB.icon.near: outside-top-center", [3]int{50, 50, 50}, 2},
+		{"upper icons fit", "ABC", "A", "A", "icon: status.svg; icon.near: outside-top-center", "B.icon: status.svg\nB.icon.near: outside-top-center", [3]int{120, 120, 120}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var source strings.Builder
+			source.WriteString("direction: right\n")
+			for _, id := range tc.order {
+				text, decoration := string(id), ""
+				if text == tc.owner {
+					text, decoration = tc.caption, tc.decoration
+				}
+				fmt.Fprintf(&source, "%c: %q { shape: step; width: %d; height: 65; %s }\n", id, text, tc.widths[id-'A'], decoration)
+			}
+			source.WriteString("A -> B -> C\n" + tc.extra)
+			d := compileRoutingDiagram(t, t.Context(), source.String(), 1, &d2svg.RenderOpts{})
+			if len(d.Connections) != tc.edges {
+				t.Fatalf("got %d connectors, want %d", len(d.Connections), tc.edges)
+			}
+		})
+	}
+}
+
+func TestStepWedgePaintIncludesGradientsAndPatterns(t *testing.T) {
+	for _, tc := range []struct {
+		style string
+		fused bool
+	}{
+		{`style.fill: "linear-gradient(transparent, transparent)"; style.stroke-width: 0`, false},
+		{`style.fill: "linear-gradient(#11223300, #11223300)"; style.stroke: transparent`, false},
+		{`style.fill: "linear-gradient(transparent, blue)"; style.stroke-width: 0`, true},
+		{"style.fill: transparent; style.stroke: transparent; style.fill-pattern: dots", true},
+		{"style.fill: transparent; style.stroke: transparent; style.fill-pattern: none", false},
+		{"style.fill: transparent; style.stroke: transparent; style.fill-pattern: NONE", false},
+	} {
+		d := compileRoutingDiagram(t, t.Context(), "A: {shape: step}\nB: {shape: step; "+tc.style+"}\nC: {shape: step}\nA -> B -> C", 1, nil)
+		if fused := len(d.Connections) == 0; fused != tc.fused {
+			t.Errorf("%s: fused = %t, want %t", tc.style, fused, tc.fused)
+		}
+	}
+}
+
+func TestThemePaperPreservesOtherwiseTransparentWedge(t *testing.T) {
+	const source = `A: {shape: step}
+B: Middle {shape: step; style.fill: transparent; style.stroke-width: 0}
+C: {shape: step}
+A -> B -> C`
+	d := compileRoutingDiagram(t, t.Context(), source, 1, &d2svg.RenderOpts{ThemeID: new(int64(302))})
+	if d.Shapes[1].FillPattern != "paper" || len(d.Connections) != 0 {
+		t.Fatal("the theme paints the middle wedge with paper")
+	}
+}
+
+func TestSubpixelStepOutlineStillShowsTransition(t *testing.T) {
+	const source = `vars: {n: 0; d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+direction: right
+A: First {shape: step; width: 120; height: 65}
+B: Middle {shape: step; width: 120; height: 65; style.fill: transparent; style.stroke: black; style.stroke-width: ${n}}
+C: Last {shape: step; width: 120; height: 65}
+A -> B -> C
+steps: {grow: {vars: {n: 1}}}`
+	d := compileRoutingDiagram(t, t.Context(), source, 1, &d2svg.RenderOpts{})
+	var checked int
+	for _, board := range d.Steps {
+		for _, frame := range board.TweenFrames {
+			b := frame.Shapes[1]
+			if b.StrokeWidth == 0 && b.StrokeWidthOffset > 0 {
+				checked++
+				if len(frame.Connections) != 0 {
+					t.Errorf("visible %.2f pixel wedge lost fusion", b.StrokeWidthOffset)
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("expected a sampled subpixel outline")
+	}
+}
