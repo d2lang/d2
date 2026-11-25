@@ -336,6 +336,7 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 		clearPinnedFrameNeighbor(graph, best.graph)
 		clearIsolatedFrameDecoration(graph, best.graph)
 		clearCrowdedCaptions(graph, best.graph)
+		clearStepConnectorDecorations(graph, best.graph)
 		if refineRoutes && hasCompetingTreeCaptions(best.graph) && supportsTreeCaptionComparison(graph) {
 			if err := routing.RefineCrowdedTreeFace(workCtx, best.graph); err != nil {
 				return err
