@@ -1367,6 +1367,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 						continue
 					}
 					if f.Map() == nil {
+						if !create {
+							continue
+						}
 						f.Composite = &Map{
 							parent: f,
 						}
@@ -1402,6 +1405,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 						continue
 					}
 					if f.Map() == nil {
+						if !create {
+							continue
+						}
 						f.Composite = &Map{
 							parent: f,
 						}
@@ -1469,6 +1475,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			return d2parser.Errorf(kp.Path[i].Unbox(), "cannot index into array")
 		}
 		if f.Map() == nil {
+			if !create {
+				return nil
+			}
 			f.Composite = &Map{
 				parent: f,
 			}

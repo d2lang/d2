@@ -1589,8 +1589,14 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		}
 
 		fa, err := node.Map().ensureFieldIndexed(propKeyPath, propRefCtx, false, c)
-		if err != nil || len(fa) == 0 {
+		if err != nil {
 			return false
+		}
+		if len(fa) == 0 {
+			if value == "*" {
+				return false
+			}
+			return c.matchDefaultSequenceOption(node.Map(), propRefCtx)
 		}
 
 		for _, f := range fa {
@@ -1658,7 +1664,6 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 				},
 			}
 			return c._ampersandFilter(f, refctx)
-
 		case "label":
 			f := &Field{}
 			n := refctx.ScopeMap.Parent()
@@ -1750,6 +1755,9 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 
 			return dstPath == filterValue
 		default:
+			if c.matchDefaultSequenceOption(refctx.ScopeMap, refctx) {
+				return true
+			}
 			parent := refctx.ScopeMap.Parent()
 			if field, ok := parent.(*Field); ok {
 				propName := refctx.Key.Key.Last().ScalarString()
@@ -1766,6 +1774,21 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		}
 	}
 	return true
+}
+
+func (c *compiler) matchDefaultSequenceOption(m *Map, refctx *RefContext) bool {
+	path := refctx.Key.Key.Path
+	if len(path) != 2 || !path[0].Unbox().IsUnquoted() || !strings.EqualFold(path[0].ScalarString(), "shape") {
+		return false
+	}
+	switch strings.ToLower(path[1].ScalarString()) {
+	case "numbered", "mirrored":
+		shape := m.getFieldIndexed(path[0].Unbox())
+		if shape != nil && shape.Primary() != nil && strings.EqualFold(shape.Primary().Value.ScalarString(), d2target.ShapeSequenceDiagramV2) {
+			return c._ampersandFilter(&Field{Primary_: &Scalar{Value: &d2ast.Boolean{Value: false}}}, refctx)
+		}
+	}
+	return false
 }
 
 // handles filters that are not based on fields

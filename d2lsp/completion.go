@@ -260,9 +260,33 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 // Only suggest sequence options after a dot when the local shape declaration
 // identifies a sequence diagram. The cursor may be at an incomplete key.
 func shapeOptionsContext(m *d2ast.Map, key *d2ast.KeyPath) string {
+	shape := declaredShape(m, key.Path)
+	if shape != nil && strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramV2) {
+		return "shape."
+	}
+	return ""
+}
+
+// A declaration for a.b.shape may be split across maps or dotted keys.
+func declaredShape(m *d2ast.Map, path []*d2ast.StringBox) d2ast.Scalar {
 	for i := len(m.Nodes) - 1; i >= 0; i-- {
 		k := m.Nodes[i].MapKey
-		if k == nil || len(k.Edges) != 0 || k.Key == nil || !k.Key.Equals(key) {
+		if k == nil || len(k.Edges) != 0 || k.NotAmpersand || k.Key == nil {
+			continue
+		}
+		n := len(k.Key.Path)
+		if n == 0 || n > len(path) || !k.Key.Equals(&d2ast.KeyPath{Path: path[:n]}) {
+			continue
+		}
+		if n < len(path) {
+			if k.Value.Map != nil {
+				if shape := declaredShape(k.Value.Map, path[n:]); shape != nil {
+					return shape
+				}
+			}
+			continue
+		}
+		if !k.Key.Last().Unbox().IsUnquoted() {
 			continue
 		}
 		shape := k.Primary.Unbox()
@@ -270,13 +294,10 @@ func shapeOptionsContext(m *d2ast.Map, key *d2ast.KeyPath) string {
 			shape = k.Value.ScalarBox().Unbox()
 		}
 		if shape != nil {
-			if strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramV2) {
-				return "shape."
-			}
-			break
+			return shape
 		}
 	}
-	return ""
+	return nil
 }
 
 func columnByteOffset(text string, column int, utf16Pos bool) int {

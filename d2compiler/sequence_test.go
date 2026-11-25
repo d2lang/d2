@@ -119,6 +119,35 @@ scenarios: {unmirrored: {configured.shape.mirrored: false}}
 	require.Equal(t, &d2graph.SequenceOptions{Numbered: true}, sequenceObject(t, g.Scenarios[0], "configured").Sequence)
 }
 
+func TestSequenceV2ShapeOptionGlobs(t *testing.T) {
+	t.Parallel()
+	g := compileSequence(t, `vars: {show-footer: true}
+*: {
+  &shape: sequence-diagram
+  shape.numbered: true
+  shape.mirrored: ${show-footer}
+}
+checkout: {shape: sequence-diagram; buyer -> shop: Pay}
+refund: {shape: sequence-diagram; shop -> buyer: Refund; shape.numbered: false}
+legacy: {shape: sequence_diagram; a -> b: Legacy}
+box.shape: rectangle
+*: {&shape.numbered: true; style.stroke: red}
+*: {&shape.numbered: false; style.stroke: blue}
+`)
+	checkout := sequenceObject(t, g, "checkout")
+	refund := sequenceObject(t, g, "refund")
+	require.Equal(t, &d2graph.SequenceOptions{Numbered: true, Mirrored: true}, checkout.Sequence)
+	require.Equal(t, &d2graph.SequenceOptions{Mirrored: true}, refund.Sequence)
+	require.Equal(t, "red", checkout.Style.Stroke.Value)
+	require.Equal(t, "blue", refund.Style.Stroke.Value)
+	require.Nil(t, sequenceObject(t, g, "legacy").Style.Stroke)
+	require.Nil(t, sequenceObject(t, g, "box").Style.Stroke)
+	require.Len(t, g.Edges, 3)
+	require.Equal(t, "1. Pay", g.Edges[0].Label.Value)
+	require.Equal(t, "Refund", g.Edges[1].Label.Value)
+	require.Equal(t, "Legacy", g.Edges[2].Label.Value)
+}
+
 func TestSequenceV2Invalid(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct{ source, want string }{

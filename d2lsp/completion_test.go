@@ -37,6 +37,28 @@ func TestGetCompletionItems(t *testing.T) {
 			line: 1, column: len("a.shape."),
 		},
 		{
+			name: "dotted sequence option from nested declaration",
+			text: "a: {b.shape: sequence-diagram {mirrored: true}}\na.b.shape.",
+			line: 1, column: len("a.b.shape."),
+			want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "dotted sequence option after nested override",
+			text: "a.shape: sequence-diagram\na: {shape: rectangle}\na.shape.",
+			line: 2, column: len("a.shape."),
+		},
+		{
+			name: "dotted sequence option inside shape filter",
+			text: "*: {\n  &shape: sequence-diagram\n  shape.\n}",
+			line: 2, column: len("  shape."),
+			want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "negated sequence shape filter",
+			text: "*: {\n  !&shape: sequence-diagram\n  shape.\n}",
+			line: 2, column: len("  shape."),
+		},
+		{
 			name:   "dotted sequence option boolean",
 			text:   "a.shape.mirrored:",
 			column: len("a.shape.mirrored:"),

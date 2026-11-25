@@ -124,6 +124,71 @@ func compileIndexTestSource(t *testing.T, source string) *Map {
 	return root
 }
 
+func TestLookupDoesNotCreateOptionMaps(t *testing.T) {
+	for _, selector := range []string{"ordinary.shape.numbered", "*.shape.numbered", "**.shape.numbered", "ordinary.*.numbered"} {
+		t.Run(selector, func(t *testing.T) {
+			root := compileIndexTestSource(t, "ordinary.shape: rectangle")
+			key, err := d2parser.ParseKey(selector)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found, err := root.EnsureField(key, nil, false, nil)
+			if err != nil || len(found) != 0 {
+				t.Fatalf("lookup = %v, %v; want no matches", found, err)
+			}
+			shape := root.GetField(d2ast.FlatUnquotedString("ordinary"), d2ast.FlatUnquotedString("shape"))
+			if shape.Map() != nil {
+				t.Fatal("reading a missing shape option changed a scalar shape into a composite")
+			}
+		})
+	}
+}
+
+func TestSequenceOptionGlobFilters(t *testing.T) {
+	root := compileIndexTestSource(t, `
+plain.shape: sequence-diagram
+enabled.shape: sequence-diagram {numbered: true}
+ordinary.shape: rectangle
+legacy.shape: sequence_diagram
+plain -> ordinary
+enabled -> ordinary
+legacy -> ordinary
+*: {&shape.numbered: false; tooltip: unnumbered}
+*: {&shape.numbered: true; shape.mirrored: true}
+(* -> *)[*]: {&src.shape.numbered: false; label: unnumbered}
+`)
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"plain.tooltip", "unnumbered"},
+		{"enabled.shape.mirrored", "true"},
+		{"plain.shape.mirrored", ""},
+		{"enabled.tooltip", ""},
+		{"ordinary.tooltip", ""},
+		{"legacy.tooltip", ""},
+	} {
+		key, err := d2parser.ParseKey(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := root.GetField(key.IDA()...)
+		if tc.want == "" {
+			if f != nil {
+				t.Errorf("unexpected match at %s", tc.path)
+			}
+		} else if f == nil || f.Primary() == nil || f.Primary().Value.ScalarString() != tc.want {
+			t.Errorf("%s did not receive %q", tc.path, tc.want)
+		}
+	}
+	for _, edge := range root.Edges {
+		gotLabel := edge.Map() != nil && edge.Map().GetField(d2ast.FlatUnquotedString("label")) != nil
+		if gotLabel != (edge.ID.SrcPath[0].ScalarString() == "plain") {
+			t.Errorf("unexpected source match for %s", edge.ID.SrcPath[0].ScalarString())
+		}
+	}
+}
+
 func TestOverlayMapUsesLivePublicFieldAndEdgeState(t *testing.T) {
 	base := compileIndexTestSource(t, "a: base field\nb\na -> b: base edge\n")
 	overlay := compileIndexTestSource(t, "c: overlay field\nb\nc -> b: overlay edge\n")

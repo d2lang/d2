@@ -159,6 +159,25 @@ bob.reminder: {shape: actor}
 alice -> bob: Later exchange
 ```
 
+To set a shared default, filter a glob to the v2 diagrams in its scope. An
+individual diagram can override the glob. Here the checkout message is
+numbered and the refund message keeps its original label.
+
+```d2
+vars: {show-steps: true}
+*: {
+  &shape: sequence-diagram
+  shape.numbered: ${show-steps}
+  shape.mirrored: true
+}
+checkout: {shape: sequence-diagram; buyer -> shop: Pay}
+refund: {shape: sequence-diagram; shop -> buyer: Refund; shape.numbered: false}
+```
+
+Glob filters inspect fields before D2 applies classes and substitutes variables.
+If a class supplies the shape type, match the class with `&class: trace` or
+put the defaults in the class itself.
+
 ## Migrating an existing diagram
 
 Keep `shape: sequence_diagram` to retain the original behavior. To opt into v2,
