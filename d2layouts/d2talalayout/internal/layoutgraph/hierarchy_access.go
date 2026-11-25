@@ -134,26 +134,44 @@ func (spacing Spacing) Right() float64 {
 	return spacing.right
 }
 
-// DetachHierarchyNears temporarily separates components that require different
-// placement algorithms. The returned function restores their proximity hints
-// for packing and may be called again on an error path.
-func (nodes Nodes) DetachHierarchyNears(ctx context.Context) (func(), error) {
-	guard, err := limits.NewWorkGuard(ctx, "DetachHierarchyNears", limits.MaxEngineWorkUnits)
+// DetachPlacementNears keeps proximity hints across independent placement
+// scopes out of the local search. Restore them when packing the completed
+// components. The returned function can also be called on an error path.
+func (nodes Nodes) DetachPlacementNears(ctx context.Context) (func(), error) {
+	guard, err := limits.NewWorkGuard(ctx, "DetachPlacementNears", limits.MaxEngineWorkUnits)
 	if err != nil {
 		return nil, err
 	}
 	type hint struct{ node, near *Node }
 	var detached []hint
-	for _, node := range nodes {
+	collect := func(node *Node) error {
 		if err := guard.Step(); err != nil {
-			return nil, err
+			return err
 		}
 		for near := range node.Nears {
 			if err := guard.Step(); err != nil {
-				return nil, err
+				return err
 			}
-			if node.Hierarchy != near.Hierarchy {
+			if node.Hierarchy != near.Hierarchy || node.OwningContainer() != near.OwningContainer() {
 				detached = append(detached, hint{node, near})
+			}
+		}
+		return nil
+	}
+	for _, node := range nodes {
+		if err := collect(node); err != nil {
+			return nil, err
+		}
+		// The optimizer also gathers near hints from members of a vessel.
+		var members Nodes
+		if cluster := node.Graph.Clusters[node]; cluster != nil {
+			members = cluster.Nodes
+		} else if sequence := node.Graph.Sequences[node]; sequence != nil {
+			members = sequence.Nodes
+		}
+		for _, member := range members {
+			if err := collect(member); err != nil {
+				return nil, err
 			}
 		}
 	}

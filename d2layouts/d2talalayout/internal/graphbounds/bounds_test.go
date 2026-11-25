@@ -258,3 +258,45 @@ func TestFixedBoundsPreserveAggregateWorkAccounting(t *testing.T) {
 		t.Fatalf("outside-label scan stopped at %d steps, want first rejected step 3", limited.used)
 	}
 }
+
+// The label starts on the near side of the body but its far edge extends
+// beyond the opposite side. A test on the top-left alone misses the overhang.
+func TestOutsideLabelFarEdgeIncludedInBounds(t *testing.T) {
+	for _, position := range []label.Position{label.OutsideTopLeft, label.OutsideLeftTop} {
+		n := layoutgraph.NewNode(1, 80, 60)
+		n.TopLeft = geo.NewPoint(100, 100)
+		n.Label = &layoutgraph.Label{Position: position, Width: 180, Height: 150}
+		nodes := layoutgraph.Nodes{n}
+		topLeft, bottomRight, err := NodeBoundingBox(n, nodes, newParityGuard(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := n.LabelTopLeft(position, n.Label.Width, n.Label.Height)
+		if text.X < topLeft.X || text.Y < topLeft.Y || text.X+n.Label.Width > bottomRight.X || text.Y+n.Label.Height > bottomRight.Y {
+			t.Errorf("%s label at %v (%g × %g) escapes %v–%v", position.String(), text, n.Label.Width, n.Label.Height, topLeft, bottomRight)
+		}
+		assertGeometryParity(t, nodes)
+	}
+}
+
+func TestDecoratedBoundsShareOneExtremaScan(t *testing.T) {
+	const count = 384
+	sides := [...]label.Position{label.OutsideBottomCenter, label.OutsideLeftMiddle, label.OutsideTopCenter, label.OutsideRightMiddle}
+	nodes := make(layoutgraph.Nodes, 0, count)
+	for i := range count {
+		node := layoutgraph.NewNode(layoutgraph.EntityID(i+1), 64, 45)
+		node.TopLeft = geo.NewPoint(float64(i%24)*100.5, float64(i/24)*77.5)
+		node.Label = &layoutgraph.Label{Position: sides[i%len(sides)], Width: 100, Height: 55}
+		nodes = append(nodes, node)
+	}
+	// The raw left, right, top and bottom extrema are shared by whole rows
+	// and columns. Each tie receives the same outer padding as the direct scan.
+	wantTL, wantBR := nodes.BoundingBox()
+	guard := &countingGuard{limit: 2 * count}
+	gotTL, gotBR, err := BoundingBox(nodes, guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPointParity(t, "top-left", gotTL, wantTL)
+	assertPointParity(t, "bottom-right", gotBR, wantBR)
+}

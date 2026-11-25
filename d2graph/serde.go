@@ -6,15 +6,19 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/util-go/go2"
 )
 
 type SerializedGraph struct {
+	Theme     *d2themes.Theme        `json:"theme,omitempty"`
 	Root      SerializedObject       `json:"root"`
 	Edges     []SerializedEdge       `json:"edges"`
 	Objects   []SerializedObject     `json:"objects"`
 	RootLevel int                    `json:"rootLevel"`
 	Data      map[string]interface{} `json:"data,omitempty"`
+
+	IsPartialLayout bool `json:"isPartialLayout,omitempty"`
 }
 
 type SerializedObject map[string]interface{}
@@ -29,10 +33,15 @@ func DeserializeGraph(bytes []byte, g *Graph) error {
 	}
 
 	g.Data = sg.Data
+	// Older payloads omit the theme and may rely on a configured receiver.
+	if sg.Theme != nil {
+		g.Theme = sg.Theme
+	}
 	var root Object
 	Convert(sg.Root, &root)
 	g.Root = &root
 	root.Graph = g
+	g.IsPartialLayout = sg.IsPartialLayout
 	g.RootLevel = sg.RootLevel
 
 	idToObj := make(map[string]*Object)
@@ -49,6 +58,12 @@ func DeserializeGraph(bytes []byte, g *Graph) error {
 	}
 
 	for _, so := range append(sg.Objects, sg.Root) {
+		if size, ok := so["layoutFontSize"].(string); ok {
+			id, _ := so["AbsID"].(string)
+			if obj := idToObj[id]; obj != nil && obj.Style.FontSize != nil && obj.Style.FontSize.Value == size {
+				obj.MarkLayoutFontSize()
+			}
+		}
 		if so["ChildrenArray"] != nil {
 			children := make(map[string]*Object)
 			var childrenArray []*Object
@@ -96,8 +111,10 @@ func SerializeGraph(g *Graph) ([]byte, error) {
 		return nil, err
 	}
 	sg.Root = root
+	sg.IsPartialLayout = g.IsPartialLayout
 	sg.RootLevel = g.RootLevel
 	sg.Data = g.Data
+	sg.Theme = g.Theme
 
 	var sobjects []SerializedObject
 	for _, o := range g.Objects {
@@ -129,6 +146,9 @@ func toSerializedObject(o *Object) (SerializedObject, error) {
 	}
 
 	so["AbsID"] = o.AbsID()
+	if o.HasLayoutFontSize() {
+		so["layoutFontSize"] = o.Style.FontSize.Value
+	}
 
 	if len(o.ChildrenArray) > 0 {
 		var children []string

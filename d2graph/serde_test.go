@@ -8,6 +8,7 @@ import (
 
 	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2themes"
 )
 
 func TestSerialization(t *testing.T) {
@@ -76,13 +77,61 @@ func TestCompareSerializedCompatibility(t *testing.T) {
 	g, _, err := d2compiler.Compile("", strings.NewReader("a -> b"), nil)
 	assert.NoError(t, err)
 
+	g.IsPartialLayout = true
 	b, err := d2graph.SerializeGraph(g)
 	assert.NoError(t, err)
 
 	var roundTrip d2graph.Graph
 	assert.NoError(t, d2graph.DeserializeGraph(b, &roundTrip))
 
+	assert.True(t, roundTrip.IsPartialLayout)
 	assert.NoError(t, d2graph.CompareSerializedGraph(g, &roundTrip))
 	assert.NoError(t, d2graph.CompareSerializedObject(g.Root, roundTrip.Root))
 	assert.NoError(t, d2graph.CompareSerializedEdge(g.Edges[0], roundTrip.Edges[0]))
+}
+
+func TestWholeLayoutRecognizesLegacyNestedGraphs(t *testing.T) {
+	g := d2graph.NewGraph()
+	assert.True(t, g.IsWholeLayout())
+	g.RootLevel = 1
+	assert.False(t, g.IsWholeLayout())
+
+	// An older core recorded the nesting level without an explicit partial flag.
+	const nested = `{"root":{"AbsID":"","attributes":{}},"edges":[],"objects":[],"rootLevel":1}`
+	var restored d2graph.Graph
+	if err := d2graph.DeserializeGraph([]byte(nested), &restored); err != nil {
+		t.Fatal(err)
+	}
+	assert.False(t, restored.IsWholeLayout())
+	restored.RootLevel = 0
+	restored.IsPartialLayout = true
+	assert.False(t, restored.IsWholeLayout())
+}
+
+func TestSerializationPreservesLayoutTheme(t *testing.T) {
+	source := d2graph.NewGraph()
+	source.Theme = &d2themes.Theme{ID: 302, SpecialRules: d2themes.SpecialRules{AllPaper: true}}
+	data, err := d2graph.SerializeGraph(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := d2graph.NewGraph()
+	if err := d2graph.DeserializeGraph(data, decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Theme == nil || *decoded.Theme != *source.Theme || decoded.Theme == source.Theme {
+		t.Fatalf("theme did not round-trip independently: %+v", decoded.Theme)
+	}
+	source.Theme = nil
+	legacy, err := d2graph.SerializeGraph(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := decoded.Theme
+	if err := d2graph.DeserializeGraph(legacy, decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Theme != configured {
+		t.Fatal("omitted theme overwrote the receiver's configuration")
+	}
 }

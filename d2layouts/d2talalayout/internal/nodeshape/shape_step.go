@@ -43,10 +43,7 @@ func (s shapeStep) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 
 func (s shapeStep) SnapPointPercentages() [][]*geo.RelativePoint {
 	width := s.GetBox().Width
-	wedgeWidth := shape.STEP_WEDGE_WIDTH
-	if width < wedgeWidth {
-		wedgeWidth = width / 2.0
-	}
+	wedgeWidth := shape.StepWedgeWidth(width)
 
 	return [][]*geo.RelativePoint{
 		// Top

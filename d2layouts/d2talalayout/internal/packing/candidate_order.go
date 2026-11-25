@@ -1,8 +1,6 @@
 package packing
 
 import (
-	"cmp"
-	"math"
 	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
@@ -19,7 +17,7 @@ var candidateOrderingDisabled bool
 // the score of the packing with the subgraph there.
 type packTrial struct {
 	index int
-	score float64
+	score packingScore
 }
 
 // candidateOrdering is BinPack's score-ordered candidate validation, with
@@ -28,7 +26,7 @@ type packTrial struct {
 // BinPack keeps the valid candidate with the lowest score (the first in
 // candidate order among equal scores), where a candidate is valid when its
 // transaction commits and the checks after the commit pass, and its score is
-// binPackScoreGuarded after the commit. Committing every candidate is the
+// the packing frame score after the commit. Committing every candidate is the
 // expensive part. Instead, prepare drops the candidates whose commit is
 // certain to be rejected (Transaction.PlacementRejected) and scores the
 // others on the translated geometry without a transaction; the caller then
@@ -59,7 +57,7 @@ func (o *candidateOrdering) prepare(
 	currPacking layoutgraph.Nodes,
 	currTL geo.Point,
 	packedWithCurr layoutgraph.Nodes,
-	root *layoutgraph.Node,
+	frame packingFrame,
 	guard *limits.WorkGuard,
 ) (bool, error) {
 	o.trials = o.trials[:0]
@@ -95,14 +93,14 @@ func (o *candidateOrdering) prepare(
 		for _, n := range currPacking {
 			n.Translate(offsetX, offsetY)
 		}
-		score, err := binPackScoreGuarded(packedWithCurr, root, guard)
+		score, err := frame.score(packedWithCurr, guard)
 		for k, n := range currPacking {
 			*n.TopLeft = o.saved[k]
 		}
 		if err != nil {
 			return false, err
 		}
-		if !(score < math.Inf(1)) {
+		if !score.usable() {
 			continue
 		}
 		o.trials = append(o.trials, packTrial{index: index, score: score})
@@ -114,7 +112,7 @@ func (o *candidateOrdering) prepare(
 		o.order = append(o.order, int32(k))
 	}
 	slices.SortStableFunc(o.order, func(a, b int32) int {
-		return cmp.Compare(o.trials[a].score, o.trials[b].score)
+		return o.trials[a].score.compare(o.trials[b].score)
 	})
 	return true, nil
 }

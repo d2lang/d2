@@ -21,6 +21,14 @@ func NewStep(box *geo.Box) Shape {
 
 const STEP_WEDGE_WIDTH = 35.0
 
+// StepWedgeWidth returns the depth of the two chevrons for a step of this width.
+func StepWedgeWidth(width float64) float64 {
+	if width <= STEP_WEDGE_WIDTH {
+		return width / 2
+	}
+	return STEP_WEDGE_WIDTH
+}
+
 func (s shapeStep) GetInnerBox() *geo.Box {
 	width := s.Box.Width
 	tl := s.Box.TopLeft.Copy()
@@ -35,10 +43,7 @@ func stepPath(box *geo.Box) *svg.SvgPathContext {
 
 // stepOutline draws the outline of stepPath into a path made by newPath.
 func stepOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
-	wedgeWidth := STEP_WEDGE_WIDTH
-	if box.Width <= wedgeWidth {
-		wedgeWidth = box.Width / 2.0
-	}
+	wedgeWidth := StepWedgeWidth(box.Width)
 	pc := newPath(box.TopLeft, 1, 1)
 	pc.StartAt(pc.Absolute(0, 0))
 	pc.L(false, box.Width-wedgeWidth, 0)

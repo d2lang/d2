@@ -20,6 +20,12 @@ func (n *Node) IsImage() bool {
 	return n != nil && n.shapeType == imageType
 }
 
+// HasIconDecoration reports whether the renderer positions an icon separately
+// from the node body. An image shape draws its URL into the body itself.
+func (n *Node) HasIconDecoration() bool {
+	return n != nil && n.Icon != nil && !n.IsImage()
+}
+
 // EffectiveContainer returns the node's active layout container. Active
 // cluster and sequence vessels replace the node's direct container while
 // those grouping algorithms are running.

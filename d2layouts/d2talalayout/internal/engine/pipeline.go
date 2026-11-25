@@ -27,6 +27,7 @@ const maxGraphSize = limits.MaxGraphSize
 
 // LayoutOptions configures one deterministic layout attempt.
 type LayoutOptions struct {
+	PortLengths             map[layoutgraph.EntityID]float64
 	Seed                    int64
 	CompactHierarchySpacing bool
 	LoopClearance           bool
@@ -532,6 +533,9 @@ func runLayout(ctx context.Context, graph *layoutgraph.Graph, options LayoutOpti
 		workCtx, cancelWork = context.WithCancel(ctx)
 	}
 	defer cancelWork()
+	if len(options.PortLengths) > 0 {
+		placement.ReservePortLengths(graph, options.PortLengths)
+	}
 	pipeline := newPipeline(graph, options.Seed, instrumentation.storeSnapshots)
 	if options.LoopClearance {
 		if err := loops.EnableSeparateCorners(workCtx, graph); err != nil {

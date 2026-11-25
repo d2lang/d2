@@ -10,6 +10,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 )
 
 type exactSliceSnapshot[S ~[]V, V any] struct {
@@ -291,11 +292,43 @@ func CombineSubgraphs(ctx context.Context, masterGraph *layoutgraph.Graph, graph
 		return nil, err
 	}
 
+	// The free corners around wide captions are usable packing positions. In a
+	// frame of independent tiles, an automatic caption still needs room to
+	// choose its side after packing.
+	compactCorners := false
+	if len(graphs) > 1 && len(masterGraph.Containers[nil]) == 1 {
+		frame := masterGraph.Containers[nil][0]
+		children := layoutgraph.Nodes(masterGraph.Containers[frame])
+		if len(children) == len(graphs) {
+			if err := guard.Add(int64(len(children))); err != nil {
+				return nil, err
+			}
+			compactCorners = frame.NeedsAutomaticCaptionRoom(children)
+		}
+	}
+
 	for _, graph := range sortedByArea {
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
 		graphTL, graphBR := graph.BoundingBox()
+		if compactCorners && len(graph.Nodes) == 1 {
+			n := graph.Nodes[0]
+			if captionTile(n) && n.FixedTopLeft == nil && n.Label != nil && n.Label.PositionFixed() && n.Label.Position.IsOutside() {
+				// Propose corners along the caption's face. Perpendicular overhang
+				// remains in the precise bounds used for fit and collision scoring.
+				body := *n
+				body.Label = nil
+				tl, br := body.BoundingBox(layoutgraph.Nodes{&body})
+				switch n.Label.Position {
+				case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight,
+					label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight:
+					graphTL.X, graphBR.X = math.Round(tl.X), math.Round(br.X)
+				default:
+					graphTL.Y, graphBR.Y = math.Round(tl.Y), math.Round(br.Y)
+				}
+			}
+		}
 
 		// Near candidates are specific to this rigid component; ordinary
 		// corner candidates remain available to every following graph.
@@ -524,11 +557,11 @@ func componentNearCandidates(master, moving, packed *layoutgraph.Graph, graphTL 
 				return err
 			}
 			outer := near
-			for outer.Container != nil && outer.Container.Graph == packed {
+			for parent := outer.OwningContainer(); parent != nil && parent.Graph == packed; parent = outer.OwningContainer() {
 				if err := guard.Step(); err != nil {
 					return err
 				}
-				outer = outer.Container
+				outer = parent
 			}
 			if root != node || outer != near {
 				if err := addSides(root, outer, dx, dy); err != nil {

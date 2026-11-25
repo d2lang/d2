@@ -21,6 +21,17 @@ func assignNearsWithWorkLimit(ctx context.Context, graph *layoutgraph.Graph, roo
 		return err
 	}
 	uncles := make(map[*layoutgraph.Node]map[*layoutgraph.Node]struct{})
+	children := graph.Containers[root]
+	// A direct child or a top-level endpoint can only belong to a child
+	// when it is that child. Inactive vessels still need the active slice
+	// membership check, and its declaration order decides ties.
+	shallowEnd := func(node *layoutgraph.Node) bool {
+		if node == nil {
+			return true
+		}
+		p := node.AncestryParent()
+		return p == nil || p == root
+	}
 	for _, abduction := range abductions {
 		if err := guard.Step(); err != nil {
 			return err
@@ -28,20 +39,27 @@ func assignNearsWithWorkLimit(ctx context.Context, graph *layoutgraph.Graph, roo
 		if abduction == nil {
 			return invariant.New("nil edge abduction while assigning nears")
 		}
+		if len(children) < 2 || len(abductions) < 2 {
+			continue
+		}
 		originallyFrom := groupVessel(abduction.OriginallyFrom)
 		originallyTo := groupVessel(abduction.OriginallyTo)
 		var uncle, connected *layoutgraph.Node
-		for _, node := range graph.Containers[root] {
+		shallow := shallowEnd(originallyFrom) && shallowEnd(originallyTo)
+		for _, node := range children {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			fromDescendant, err := isDescendantOf(originallyFrom, node, guard)
-			if err != nil {
-				return err
-			}
-			toDescendant, err := isDescendantOf(originallyTo, node, guard)
-			if err != nil {
-				return err
+			fromDescendant, toDescendant := node == originallyFrom, node == originallyTo
+			if !shallow {
+				fromDescendant, err = isDescendantOf(originallyFrom, node, guard)
+				if err != nil {
+					return err
+				}
+				toDescendant, err = isDescendantOf(originallyTo, node, guard)
+				if err != nil {
+					return err
+				}
 			}
 			if fromDescendant {
 				uncle, connected = abduction.CurrentTo, node

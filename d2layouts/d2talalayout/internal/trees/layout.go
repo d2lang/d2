@@ -14,7 +14,8 @@ import (
 
 func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, guard *limits.WorkGuard) (map[*layoutgraph.Node][]*layoutgraph.Tree, error) {
 	containerNodes := g.Containers[container]
-	nodeToTree := make(map[*layoutgraph.Node]*layoutgraph.Tree)
+	nodeToTree := make(map[*layoutgraph.Node]*layoutgraph.Tree, len(containerNodes))
+	var tables []*layoutgraph.Node
 	for _, node := range containerNodes {
 		if err := guard.Step(); err != nil {
 			return nil, err
@@ -23,14 +24,9 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 			return nil, treePreprocessBadState("tree container contains a nil node")
 		}
 		if node.IsTable() {
-			return nil, nil
+			tables = append(tables, node)
 		}
 		nodeToTree[node] = layoutgraph.NewTree(node)
-	}
-	// TODO: Compare this adjacency matrix with repeated ConnectionTo lookups.
-	edgeBetween, err := buildTreeAdjacencyMatrix(g, guard)
-	if err != nil {
-		return nil, err
 	}
 
 	// Terminal node: tree never reaches here, but roots can connect to graph here
@@ -39,6 +35,27 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 	sentinelToTreeRoots := make(map[*layoutgraph.Node][]*layoutgraph.Tree)
 	sentinelToArrowheads := make(map[*layoutgraph.Node]map[layoutgraph.Arrowhead]struct{})
 
+	// Column ports use the regular placement path. A table in another
+	// component of this container does not constrain a disconnected tree.
+	inScope := func(node *layoutgraph.Node) bool { return nodeToTree[node] != nil }
+	for _, table := range tables {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if isTerminal[table] {
+			continue
+		}
+		connected, err := table.ReachableNodesContext(inScope, false, true, false, nil, guard)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range connected {
+			if err := guard.Step(); err != nil {
+				return nil, err
+			}
+			isTerminal[node] = true
+		}
+	}
 	// mark all containers as terminal so they aren't in trees
 	for container := range g.Containers {
 		if err := guard.Step(); err != nil {
@@ -110,10 +127,7 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 			if tree == nil {
 				return nil, treePreprocessBadState("fringe node %d has no tree record", fn.ID)
 			}
-			tree.SentinelEdge = edgeBetween(fn, sentinelNode)
-			if tree.SentinelEdge == nil {
-				return nil, treePreprocessBadState("fringe node %d has no graph sentinel edge", fn.ID)
-			}
+			tree.SentinelEdge = fn.Edges[0]
 
 			if _, exists := sentinelToTreeRoots[sentinelNode]; !exists {
 				sentinelToTreeRoots[sentinelNode] = make([]*layoutgraph.Tree, 0)
@@ -227,6 +241,17 @@ func extractTrees(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*layoutgra
 		return nil, err
 	}
 	containerOrder = append(containerOrder, nil)
+	// Check the endpoints once even when there are no leaves and no
+	// adjacency lookup is needed. Extraction only removes edges.
+	for _, edge := range g.Edges {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if edge == nil || edge.From == nil || edge.To == nil {
+			return nil, treePreprocessBadState("tree preprocessing encountered an edge with missing endpoints")
+		}
+	}
+
 	for _, container := range containerOrder {
 		if err := guard.Step(); err != nil {
 			return nil, err
@@ -260,7 +285,20 @@ func handleTreeSubgraph(g *layoutgraph.Graph, rootSentinel, container *layoutgra
 	if !(len(rootSentinel.Edges) == 0 && len(roots) > 1) {
 		return rootSentinel, roots, nil
 	}
-	if rootSentinel.IsContainer() {
+	// A fixed junction must stay in the placement graph when its branches are restored.
+	if rootSentinel.IsContainer() || rootSentinel.FixedTopLeft != nil {
+		return rootSentinel, roots, nil
+	}
+	// Keep the movable end of a near relationship available when its peer
+	// has a fixed position and cannot follow a reconstructed branch.
+	nearFixedNode := false
+	for near := range rootSentinel.Nears {
+		if err := guard.Step(); err != nil {
+			return nil, nil, err
+		}
+		nearFixedNode = nearFixedNode || near.FixedTopLeft != nil
+	}
+	if nearFixedNode {
 		return rootSentinel, roots, nil
 	}
 
@@ -811,6 +849,23 @@ func placeTree(ctx context.Context, g *layoutgraph.Graph, placementTree *layoutg
 		}
 
 		direction := g.Direction(container)
+		if direction != geo.NONE && isIsolatedTree && placementTree.Node.FixedTopLeft != nil {
+			// The orientation places the neighbors relative to the fixed root.
+			// An incoming branch therefore sits upstream of the root.
+			incoming := len(placementTree.Children) > 0
+			for _, child := range placementTree.Children {
+				if err := guard.Step(); err != nil {
+					return bestOrientation, err
+				}
+				if treeEdgeDirection(placementTree.Node, child.SentinelEdge) != Inwards {
+					incoming = false
+					break
+				}
+			}
+			if incoming {
+				direction = direction.GetOpposite()
+			}
+		}
 		for _, orientation := range order {
 			if err := guard.Step(); err != nil {
 				return bestOrientation, err

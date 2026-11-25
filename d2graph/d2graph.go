@@ -68,8 +68,19 @@ type Graph struct {
 	// Object.Level uses the location of a nested graph
 	RootLevel int `json:"rootLevel,omitempty"`
 
+	// IsPartialLayout marks a layout input whose surrounding objects or edges
+	// were removed for a nested layout. RootLevel can still be zero when an
+	// extraction includes its top-level container.
+	IsPartialLayout bool `json:"isPartialLayout,omitempty"`
+
 	// Data embedded from source configuration variables, including layout options.
 	Data map[string]interface{} `json:"data,omitempty"`
+}
+
+// IsWholeLayout reports whether all surrounding objects and edges are present.
+// Older serialized subgraphs record their nesting only in RootLevel.
+func (g *Graph) IsWholeLayout() bool {
+	return g.RootLevel == 0 && !g.IsPartialLayout
 }
 
 type Legend struct {
@@ -203,6 +214,25 @@ type Object struct {
 	Attributes `json:"attributes"`
 
 	ZIndex int `json:"zIndex"`
+	// Retain the scalar identity and its value so a later author edit, even
+	// replacing it with a new scalar of the same size, takes precedence.
+	layoutFont      *Scalar
+	layoutFontValue string
+}
+
+// HasLayoutFontSize reports whether the current font was assigned by layout.
+func (obj *Object) HasLayoutFontSize() bool {
+	f := obj.Style.FontSize
+	return f != nil && f.MapKey == nil && obj.layoutFont == f && obj.layoutFontValue == f.Value
+}
+
+// MarkLayoutFontSize records the font after layout has committed the object.
+func (obj *Object) MarkLayoutFontSize() {
+	obj.layoutFont = obj.Style.FontSize
+	obj.layoutFontValue = ""
+	if obj.layoutFont != nil {
+		obj.layoutFontValue = obj.layoutFont.Value
+	}
 }
 
 type Attributes struct {

@@ -28,7 +28,9 @@ type Edge struct {
 
 	// ReversedForLayout records normalization of an authored source-only arrow.
 	// D2 still renders endpoint labels along the original path traversal.
-	ReversedForLayout    bool
+	ReversedForLayout bool
+	// KeepExplicit retains decorations and interactions omitted from the geometry model.
+	KeepExplicit         bool
 	SourceArrowhead      Arrowhead
 	TargetArrowhead      Arrowhead
 	SourceArrowheadLabel *Label
@@ -52,6 +54,24 @@ type Edge struct {
 	// zero-value unset state and therefore use unit weight.
 	hierarchyRankWeight    int
 	hierarchyRankWeightSet bool
+}
+
+// LabelMinDimensions reserves room for a connector label and its endpoint
+// annotations. A freely turning route needs the larger dimension of each
+// annotation. Upright text on a vertical branch needs only its height.
+func (e *Edge) LabelMinDimensions(width, height int) (minWidth, minHeight, branchHeight int64) {
+	minWidth = int64(width) + 2*label.PADDING
+	minHeight = int64(height) + 2*label.PADDING
+	branchHeight = minHeight
+	for _, annotation := range []*Label{e.SourceArrowheadLabel, e.TargetArrowheadLabel} {
+		if annotation != nil {
+			allowance := int64(math.Max(annotation.Width, annotation.Height) + label.PADDING)
+			minWidth += allowance
+			minHeight += allowance
+			branchHeight += int64(annotation.Height + label.PADDING)
+		}
+	}
+	return
 }
 
 func (e1 *Edge) EquivalentStyles(e2 *Edge) bool {

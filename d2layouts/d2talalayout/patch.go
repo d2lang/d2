@@ -129,11 +129,12 @@ func (patch d2Patch) apply() {
 			update.object.IconPosition = update.icon
 		}
 		if update.font != nil {
-			if update.font.existing != nil {
-				update.font.existing.Value = update.font.value
-			} else {
+			if update.font.replacement != nil {
 				update.object.Style.FontSize = update.font.replacement
+			} else {
+				update.font.existing.Value = update.font.value
 			}
+			update.object.MarkLayoutFontSize()
 		}
 	}
 	for _, update := range patch.edges {
@@ -363,6 +364,11 @@ func buildObjectPatch(ctx context.Context, object *d2graph.Object, node *layoutg
 		}
 		if font.existing == nil {
 			font.replacement = &d2graph.Scalar{Value: font.value}
+		} else if object.HasLayoutFontSize() && font.existing.Value != font.value {
+			// A caller may have copied the previous automatic font into another style.
+			scalar := *font.existing
+			scalar.Value = font.value
+			font.replacement = &scalar
 		}
 		patch.font = font
 	}
@@ -375,7 +381,7 @@ func buildEdgePatch(ctx context.Context, edge *d2graph.Edge, result *layoutgraph
 	}
 	patch := d2EdgePatch{
 		edge:  edge,
-		route: make([]*geo.Point, len(result.Points)),
+		route: make([]*geo.Point, 0, len(result.Points)),
 		curve: result.IsCurve,
 	}
 	if result.Label != nil {
@@ -402,11 +408,20 @@ func buildEdgePatch(ctx context.Context, edge *d2graph.Edge, result *layoutgraph
 				return d2EdgePatch{}, err
 			}
 		}
+		index := i
 		if edge.SrcArrow && !edge.DstArrow {
-			patch.route[len(result.Points)-i-1] = result.Points[i].Copy()
-		} else {
-			patch.route[i] = result.Points[i].Copy()
+			index = len(result.Points) - 1 - i
 		}
+		point := result.Points[index]
+		// A zero-length polyline leg has no geometry and is rejected by the
+		// renderer. On a curve a repeated point can be a control point.
+		if !result.IsCurve && len(patch.route) > 0 && point.Equals(patch.route[len(patch.route)-1]) {
+			continue
+		}
+		patch.route = append(patch.route, point.Copy())
+	}
+	if len(patch.route) < 2 {
+		return d2EdgePatch{}, fmt.Errorf("edge %d has no non-zero route segment", result.ID)
 	}
 	return patch, nil
 }

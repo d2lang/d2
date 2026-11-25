@@ -58,6 +58,11 @@ func ComputeOffsets(g *layoutgraph.Graph) {
 
 // UpdateOffsets refreshes the space reserved around node for self-edge routes.
 func UpdateOffsets(node *layoutgraph.Node) {
+	if !slices.ContainsFunc(node.Edges, (*layoutgraph.Edge).IsLoop) {
+		// The last loop may have been removed or reconnected.
+		node.LoopOffsets = nil
+		return
+	}
 	// need to set node TopLeft because the node position is required to get the ports
 	// which are required for routing
 	tlIsNil := node.TopLeft == nil

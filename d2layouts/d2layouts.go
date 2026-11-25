@@ -309,7 +309,14 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 			}
 		default:
 			log.Debug(ctx, "default layout", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", graphShapes{g}))
-			err := coreLayout(ctx, g)
+			err := func() error {
+				alreadyPartial := g.IsPartialLayout
+				if alreadyPartial || len(extracted) != 0 || len(constantNears) != 0 {
+					g.IsPartialLayout = true
+					defer func() { g.IsPartialLayout = alreadyPartial }()
+				}
+				return coreLayout(ctx, g)
+			}()
 			if err != nil {
 				return err
 			}
@@ -493,6 +500,10 @@ func extractSubgraphs(g *d2graph.Graph, specs []subgraphExtractionSpec) *subgrap
 			}
 		}
 		nestedGraph := d2graph.NewGraph()
+		nestedGraph.IsPartialLayout = true
+		if g.Theme != nil {
+			nestedGraph.Theme = new(*g.Theme)
+		}
 		nestedGraph.Data = cloneGraphData(g.Data)
 		nestedGraph.RootLevel = int(spec.container.Level())
 		if spec.includeSelf {
@@ -656,6 +667,10 @@ func ExtractSubgraph(container *d2graph.Object, includeSelf bool) (nestedGraph *
 	// includeSelf: when we have a constant near or a grid cell that is a container,
 	// we want to include itself in the nested graph, not just its descendants,
 	nestedGraph = d2graph.NewGraph()
+	nestedGraph.IsPartialLayout = true
+	if container.Graph.Theme != nil {
+		nestedGraph.Theme = new(*container.Graph.Theme)
+	}
 	nestedGraph.Data = cloneGraphData(container.Graph.Data)
 	nestedGraph.RootLevel = int(container.Level())
 	if includeSelf {

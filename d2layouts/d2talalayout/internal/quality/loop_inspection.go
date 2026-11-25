@@ -78,7 +78,12 @@ func (s *LoopInspection) add(a, b inspectionItem, count int64, concernsLoop bool
 }
 
 func (s *LoopInspection) Improves(before *LoopInspection) bool {
-	if s.incomplete || before.incomplete || s.LoopConflicts >= before.LoopConflicts {
+	return s.LoopConflicts < before.LoopConflicts && s.Preserves(before)
+}
+
+// Preserves checks every contact between two distinct pieces of painted geometry.
+func (s *LoopInspection) Preserves(before *LoopInspection) bool {
+	if s.incomplete || before.incomplete {
 		return false
 	}
 	for pair, count := range s.pairs {

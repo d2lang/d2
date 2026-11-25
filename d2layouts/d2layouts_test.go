@@ -317,6 +317,17 @@ func BenchmarkLayoutNestedPartitions(b *testing.B) {
 	}
 }
 
+func TestExtractAsNestedGraphPreservesTheme(t *testing.T) {
+	g := compileLayoutTestGraph(t, "box: {a -> b}")
+	if err := g.ApplyTheme(d2themescatalog.Origami.ID); err != nil {
+		t.Fatal(err)
+	}
+	nested := g.ExtractAsNestedGraph(g.Root.Children["box"])
+	if nested.Theme == nil || *nested.Theme != *g.Theme || nested.Theme == g.Theme {
+		t.Fatal("nested graph needs an independent copy of the board theme")
+	}
+}
+
 func TestExtractSubgraphsPreservesIndependentConfigData(t *testing.T) {
 	for _, batched := range []bool{false, true} {
 		t.Run(fmt.Sprintf("batched=%t", batched), func(t *testing.T) {
@@ -329,6 +340,9 @@ note: {near: top-left; c -> d}`)
 			g.Data = map[string]interface{}{
 				"tala-seeds": []interface{}{"7", "11"},
 				"metadata":   map[string]interface{}{"name": "original"},
+			}
+			if err := g.ApplyTheme(d2themescatalog.Origami.ID); err != nil {
+				t.Fatal(err)
 			}
 			specs := collectNestedExtractions(g)
 			var graphs []*d2graph.Graph
@@ -344,6 +358,9 @@ note: {near: top-left; c -> d}`)
 				}
 			}
 			for _, graph := range graphs {
+				if graph.Theme == nil || *graph.Theme != *g.Theme || graph.Theme == g.Theme {
+					t.Fatal("nested graph needs an independent copy of the board theme")
+				}
 				if !reflect.DeepEqual(graph.Data, data) {
 					t.Fatalf("nested data = %#v, want %#v", graph.Data, data)
 				}
@@ -421,5 +438,43 @@ func TestLayoutNestedLogsShapesLazily(t *testing.T) {
 	log.Debug(log.With(context.Background(), logger), "layout", attr)
 	if !strings.Contains(out.String(), "shapes="+strconv.Quote(want)) {
 		t.Fatalf("text handler wrote %q, want shapes=%q", out.String(), want)
+	}
+}
+
+func TestNestedLayoutMarksOnlyPartialInputs(t *testing.T) {
+	g := compileLayoutTestGraph(t, "a\nnote: {near: top-center}\na -> note")
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.ApplyTheme(d2themescatalog.NeutralDefault.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	var sawParent, sawNested bool
+	core := func(ctx context.Context, part *d2graph.Graph) error {
+		if !part.IsPartialLayout {
+			t.Fatal("core layout saw a partial graph marked as a whole board")
+		}
+		if part == g {
+			sawParent = true
+		} else {
+			sawNested = true
+		}
+		return d2dagrelayout.DefaultLayout(ctx, part)
+	}
+	router := func(ctx context.Context, board *d2graph.Graph, edges []*d2graph.Edge) error {
+		if board.IsPartialLayout {
+			t.Fatal("router saw a restored board marked as partial")
+		}
+		return DefaultRouter(ctx, board, edges)
+	}
+	if err := LayoutNested(log.WithDefault(t.Context()), g, GraphInfo{}, core, router); err != nil {
+		t.Fatal(err)
+	}
+	if !sawParent || !sawNested || g.IsPartialLayout {
+		t.Fatalf("partial input state: parent %v, extracted %v, returned board %v", sawParent, sawNested, g.IsPartialLayout)
 	}
 }

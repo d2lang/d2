@@ -33,7 +33,7 @@ func checkGraphPropertiesAfterAutolayout(start, afterAutolayout *layoutgraph.Gra
 // Layout-quality assertions, such as how tightly children fill a container,
 // belong to golden and benchmark tests rather than fuzz safety checks.
 func checkStructuralGraphPropertiesAfterAutolayout(start, afterAutolayout *layoutgraph.Graph) error {
-	sequenceDefiningEdges, err := grouping.SequenceDefiningEdges(context.Background(), start)
+	sequenceDefiningEdges, err := grouping.SequenceDefiningEdges(context.Background(), start, afterAutolayout)
 	if err != nil {
 		return err
 	}

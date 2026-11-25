@@ -113,26 +113,22 @@ func (router *ovgEdgeRouter) bindWork(ctx context.Context) error {
 	return router.work.bind(ctx)
 }
 
-// newSharingOVGEdgeRouter makes the edge router of one flavor over ovg, with
-// a route search budget of workLimit units; shared (if not nil) is common to
-// the flavor routers of an OVG.
+// newSharingOVGEdgeRouter consumes one flavor's guard and shares the OVG
+// indexes with other flavors when shared is supplied.
 func newSharingOVGEdgeRouter(
-	ctx context.Context,
-	flavor RouteGenerationFlavor,
+	guard *routeSearchWorkGuard,
 	ovg *OVG,
 	g *layoutgraph.Graph,
 	existingRoutes []*Route,
 	edges []*layoutgraph.Edge,
-	workLimit uint64,
 	shared *ovgRouterShared,
 ) (_ *ovgEdgeRouter, err error) {
-	guard, err := newRouteSearchWorkGuard(ctx, flavor, workLimit)
-	if err != nil {
-		return nil, err
-	}
+	flavor := guard.flavor
 	defer func() {
 		if err != nil {
-			_ = guard.finish()
+			if chargeErr := guard.finish(); chargeErr != nil {
+				err = chargeErr
+			}
 		}
 	}()
 	if err := guard.add(uint64(len(edges))); err != nil {
@@ -384,7 +380,7 @@ func (router *ovgEdgeRouter) generateRoutes(ctx context.Context, straightLineFal
 	}
 	resp.work = router.work
 	defer func() {
-		if err := router.work.finish(); resp.Err == nil && err != nil {
+		if err := router.work.finish(); err != nil {
 			resp.Err = err
 			resp.Routes = nil
 		}
@@ -402,7 +398,7 @@ func (router *ovgEdgeRouter) generateRoutes(ctx context.Context, straightLineFal
 
 		ovgNodes, distance, err = router.slingshot(ctx, edge)
 		if err != nil {
-			if straightLineFallback {
+			if straightLineFallback && !errors.Is(err, errRouteStageWorkLimit) && !isContextTermination(err) {
 				ovgNodes, distance, err = router.routeLine(ctx, edge)
 			}
 			if err != nil {
@@ -412,7 +408,7 @@ func (router *ovgEdgeRouter) generateRoutes(ctx context.Context, straightLineFal
 		}
 		if len(ovgNodes) <= 1 {
 			ovgNodes, distance, err = router.search(ctx, edge)
-			if isContextTermination(err) {
+			if isContextTermination(err) || errors.Is(err, errRouteStageWorkLimit) {
 				resp.Err = err
 				return resp
 			}

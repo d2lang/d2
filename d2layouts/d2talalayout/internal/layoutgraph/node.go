@@ -19,8 +19,9 @@ import (
 
 const (
 	defaultIconSize = 32.0
-	threeDOffset    = 15.0
-	multipleOffset  = 10.0
+	// The SVG renderer uses integer division for the height of a hexagon’s back face.
+	threeDOffset   = 15
+	multipleOffset = 10.0
 )
 
 // HasLeakyEdge checks if
@@ -55,8 +56,10 @@ func (node *Node) fitNodeToGraph(g *Graph, padding Spacing) {
 }
 
 func (node *Node) fitToBoundingBox(tl, br *geo.Point, padding Spacing) {
-	width := br.X - tl.X
-	height := br.Y - tl.Y
+	node.Width, node.Height = node.fittedDimensions(br.X-tl.X, br.Y-tl.Y, padding)
+}
+
+func (node *Node) fittedDimensions(width, height float64, padding Spacing) (float64, float64) {
 	if node.Label != nil && !node.Label.Position.IsOutside() {
 		minWidth := node.Label.Width - padding.left - padding.right + label.PADDING*4
 		minHeight := node.Label.Height - padding.top - padding.bottom + label.PADDING*4
@@ -70,15 +73,16 @@ func (node *Node) fitToBoundingBox(tl, br *geo.Point, padding Spacing) {
 	// TODO move type Spacing to d2 and update GetDimensionsToFit for all shapes
 	fitWidth, fitHeight := node.GetDimensionsToFit(width, height, padding.left+padding.right, padding.top+padding.bottom)
 	if node.DesiredWidth != nil {
-		node.Width = math.Max(fitWidth, *node.DesiredWidth)
-	} else {
-		node.Width = fitWidth
+		fitWidth = math.Max(fitWidth, *node.DesiredWidth)
 	}
 	if node.DesiredHeight != nil {
-		node.Height = math.Max(fitHeight, *node.DesiredHeight)
-	} else {
-		node.Height = fitHeight
+		fitHeight = math.Max(fitHeight, *node.DesiredHeight)
 	}
+	if node.AspectRatio1() {
+		side := math.Max(fitWidth, fitHeight)
+		return side, side
+	}
+	return fitWidth, fitHeight
 }
 
 func (node *Node) bounds(allNodes Nodes) (*geo.Point, *geo.Point) {
@@ -135,7 +139,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 				tl.Y = math.Floor(labelTL.Y - outsidePadding)
 			}
 		}
-		if labelTL.X > br.X {
+		if labelTL.X+node.Label.Width > br.X {
 			if allNodes.Rightmost(node) {
 				br.X = math.Ceil(labelTL.X + node.Label.Width + boundaryOutsidePadding)
 			} else {
@@ -143,7 +147,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 			}
 		}
 
-		if labelTL.Y > br.Y {
+		if labelTL.Y+node.Label.Height > br.Y {
 			if allNodes.Bottommost(node) {
 				br.Y = math.Ceil(labelTL.Y + node.Label.Height + boundaryOutsidePadding)
 			} else {
@@ -152,7 +156,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 		}
 	}
 	if node.Icon != nil && node.shapeType != imageType && node.Icon.Position.IsOutside() && allNodes != nil {
-		iconSize := float64(MaxIconSize)
+		iconSize := node.OutsideIconReserve()
 		iconTL := node.LabelTopLeft(node.Icon.Position, iconSize, iconSize)
 
 		outsidePadding := 2. * label.PADDING
@@ -658,6 +662,7 @@ type Node struct {
 	nodeshape.Shape
 	shapeType nodeshape.Kind
 
+	StepPaint      *StepPaint
 	ForceHierarchy bool
 
 	Container      *Node
@@ -1017,8 +1022,11 @@ func (n *Node) UpdateSpacing() {
 		}
 	}
 
-	if n.Icon != nil && n.Icon.PositionFixed() {
+	if n.HasIconDecoration() && n.Icon.PositionFixed() {
 		iconSize := float64(MaxIconSize + 2*label.PADDING)
+		if n.Icon.Position.IsOutside() {
+			iconSize = n.OutsideIconReserve() + 2*label.PADDING
+		}
 		switch n.Icon.Position {
 		case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight:
 			n.margin.top = math.Max(n.margin.top, iconSize)
@@ -2247,18 +2255,43 @@ func (n Node) CanContain() bool {
 		n.shapeType != textType
 }
 
-// Make enough room for label to be center positioned
-// Even though labels are placed at the last step, the most common is for long labels to be outside centered top or bottom.
-// So we pre-emptively make enough room for it.
+// A wide automatic caption beside an anchored icon has fewer usable sides.
+// Leave the shared margin available until its final position is known.
+func (frame *Node) NeedsAutomaticCaptionRoom(nodes Nodes) bool {
+	if !frame.IsRectangular() || frame.FixedTopLeft != nil || frame.DesiredWidth != nil || frame.DesiredHeight != nil {
+		return false
+	}
+	// One undetermined side can use the spare band. Competing automatic
+	// captions may need different sides, so leave their normal fit intact.
+	found := false
+	for _, n := range nodes {
+		if n.HasWideCaptionWithFixedIcon() {
+			if found {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
+}
+
+func (n *Node) HasWideCaptionWithFixedIcon() bool {
+	return n.HasIconDecoration() && n.Icon.PositionFixed() && n.Label != nil && !n.Label.PositionFixed() && n.Label.Width > n.Width
+}
+
+func (n *Node) NeedsCenteredLabelWidth(wideAutomatic bool) bool {
+	return n.Label != nil && n.Label.Width > n.Width &&
+		(wideAutomatic || !(n.Label.PositionFixed() && n.Label.Position.IsOutside()))
+}
+
 func (n *Node) expandForLabels(tl, br *geo.Point) {
-	children := n.Graph.Containers[n]
+	children := Nodes(n.Graph.Containers[n])
+	wideAutomatic := n.NeedsAutomaticCaptionRoom(children)
 
 	for _, child := range children {
-		if child.Label != nil && (child.TopLeft.X == tl.X || child.TopLeft.X+child.Width == br.X) {
-			if child.Label.Width > child.Width {
-				tl.X = math.Min(tl.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
-				br.X = math.Max(br.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
-			}
+		if child.NeedsCenteredLabelWidth(wideAutomatic) && (child.TopLeft.X == tl.X || child.TopLeft.X+child.Width == br.X) {
+			tl.X = math.Min(tl.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
+			br.X = math.Max(br.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
 		}
 	}
 }
@@ -2343,6 +2376,16 @@ func (n *Node) isMajorityTarget() bool {
 		}
 	}
 	return counter > 0
+}
+
+// OutsideIconReserve uses the painted size when the icon has a fixed position
+// and its owner has no siblings. Keep the full spacing between siblings
+// during placement, before the final packing comparison.
+func (n *Node) OutsideIconReserve() float64 {
+	if n.Icon.PositionFixed() && n.Graph != nil && len(n.Graph.Containers[n.OwningContainer()]) == 1 {
+		return math.Ceil(n.IconSize(n.Icon.Position))
+	}
+	return MaxIconSize
 }
 
 // IconSize returns the icon size appropriate for iconPosition on n.

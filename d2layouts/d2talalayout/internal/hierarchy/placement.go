@@ -143,7 +143,7 @@ func (p Placement) Place(ctx context.Context, g *layoutgraph.Graph, root *layout
 
 	// The hierarchy stage places each ranked component independently. Keep
 	// cross-component proximity hints for packing the completed components.
-	restoreNears, err := layoutgraph.Nodes(g.Nodes).DetachHierarchyNears(ctx)
+	restoreNears, err := layoutgraph.Nodes(g.Nodes).DetachPlacementNears(ctx)
 	if err != nil {
 		return err
 	}
