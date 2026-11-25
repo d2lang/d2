@@ -88,6 +88,10 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		return getArrowheadCompletions(), nil
 	case "source-arrowhead.shape:", "target-arrowhead.shape:":
 		return getArrowheadShapeCompletions(), nil
+	case "edge-group.label.":
+		return frameLabelCompletions(), nil
+	case "edge-group.label.style.":
+		return []CompletionItem{{Label: "fill", Kind: StyleCompletion, Detail: "frame caption background", InsertText: "fill: "}}, nil
 	case "label", "label.":
 		return getLabelCompletions(), nil
 	case "icon", "icon:":
@@ -148,10 +152,11 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		}
 		if key != nil && len(key.Path) > 0 {
 			firstKey := key.Path[0].Unbox()
-			if !firstKey.IsUnquoted() {
+			if firstKey.IsUnquoted() {
+				firstPart = firstKey.ScalarString()
+			} else if len(key.Path) == 1 && n.MapKey.Value.Map == nil {
 				continue
 			}
-			firstPart = firstKey.ScalarString()
 
 			pathLen := len(key.Path)
 			if pathLen > 1 {
@@ -168,6 +173,11 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 					if isHolderLast && keyRange.End.Line == line && isAfterDot(lineText, dotColumn) {
 						if lastPart == "shape" {
 							return shapeOptionsContext(m, key)
+						}
+						if len(n.MapKey.Edges) == 0 {
+							if caption := captionContext(m, key); caption != "" {
+								return caption
+							}
 						}
 						return lastPart + "."
 					}
@@ -196,7 +206,18 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 				nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
 				return prefix + strings.ToLower(nested)
 			}
-			if nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos); nested != "" {
+			nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
+			if len(n.MapKey.Edges) == 0 && key != nil {
+				if caption := captionContext(m, key); caption != "" {
+					switch nested {
+					case "":
+						return caption
+					case "style", "style.":
+						return caption + "style."
+					}
+				}
+			}
+			if nested != "" {
 				if isHolder {
 					// If we got a direct key completion from inside a holder's map,
 					// prefix it with the holder's name
@@ -257,11 +278,36 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 			if firstPart == "shape" {
 				return shapeOptionsContext(m, key)
 			}
+			if len(n.MapKey.Edges) == 0 && key != nil {
+				if caption := captionContext(m, key); caption != "" {
+					return caption
+				}
+			}
 			return firstPart
 		}
 	}
 
 	return ""
+}
+
+// Look up the shape belonging to the label, including declarations split
+// between a dotted path and nested maps. Only frame captions expose a fill.
+func captionContext(m *d2ast.Map, key *d2ast.KeyPath) string {
+	i := len(key.Path) - 1
+	option := "label."
+	if i >= 0 && key.Path[i].Unbox().IsUnquoted() && key.Path[i].ScalarString() == "style" {
+		i--
+		option = "label.style."
+	}
+	if i < 0 || !key.Path[i].Unbox().IsUnquoted() || key.Path[i].ScalarString() != "label" {
+		return ""
+	}
+	// Append to a copy so the incomplete AST key still names the label.
+	path := append(key.Path[:i:i], d2ast.MakeKeyPath([]string{"shape"}).Path[0])
+	if shape := declaredShape(m, path); shape != nil && strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramEdgeGroup) {
+		return "edge-group." + option
+	}
+	return option
 }
 
 // Only suggest sequence options after a dot when the local shape declaration
@@ -505,6 +551,10 @@ func getTextTransformCompletions() []CompletionItem {
 		items = append(items, item)
 	}
 	return items
+}
+
+func frameLabelCompletions() []CompletionItem {
+	return append(getLabelCompletions(), CompletionItem{Label: "style.fill", Kind: StyleCompletion, Detail: "frame caption background", InsertText: "style.fill: "})
 }
 
 func getLabelCompletions() []CompletionItem {

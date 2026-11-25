@@ -14,6 +14,46 @@ func TestGetCompletionItems(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			name: "quoted frame caption",
+			text: "\"payment.result\": {shape: edge-group}\n\"payment.result\".label.",
+			line: 1, column: len("\"payment.result\".label."), want: frameLabelCompletions(),
+		},
+		{
+			name: "message inside edge-group has ordinary label",
+			text: "result: {shape: edge-group\n  a -> b: {\n    label.\n  }\n}",
+			line: 2, column: len("    label."), want: getLabelCompletions(),
+		},
+		{
+			name: "edge-group dotted caption",
+			text: "result: {shape: edge-group}\nresult.label.",
+			line: 1, column: len("result.label."), want: frameLabelCompletions(),
+		},
+		{
+			name: "edge-group local caption",
+			text: "result: {\n  shape: edge-group\n  label.\n}",
+			line: 2, column: len("  label."), want: frameLabelCompletions(),
+		},
+		{
+			name: "edge-group block caption",
+			text: "result: {shape: edge-group; label: {\n  \n}}",
+			line: 1, column: 2, want: frameLabelCompletions(),
+		},
+		{
+			name: "edge-group caption paint only",
+			text: "result.shape: edge-group\nresult.label.style.",
+			line: 1, column: len("result.label.style."), want: []CompletionItem{{Label: "fill", Kind: StyleCompletion, Detail: "frame caption background", InsertText: "fill: "}},
+		},
+		{
+			name: "ordinary caption has position only",
+			text: "result.shape: rectangle\nresult.label.",
+			line: 1, column: len("result.label."), want: getLabelCompletions(),
+		},
+		{
+			name: "ordinary caption has no caption styles",
+			text: "result.shape: rectangle\nresult.label.style.",
+			line: 1, column: len("result.label.style."),
+		},
+		{
 			name: "edge-group block",
 			text: "result: {shape: edge-group {\n  \n}}",
 			line: 1, column: 2, want: getBranchOptionCompletions(),
