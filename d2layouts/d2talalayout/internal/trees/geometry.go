@@ -65,17 +65,45 @@ func shiftSubtreeHorizontally(t *layoutgraph.Tree, delta float64, guard *limits.
 	return offsetSubtree(t, delta, 0, guard)
 }
 
-func spacingToChildren(t *layoutgraph.Tree, childRankHeight float64, guard *limits.WorkGuard) (float64, error) {
-	maxLabelSize := 0.0
+func spacingToChildren(t *layoutgraph.Tree, childRankHeight float64, guard *limits.WorkGuard) (float64, float64, error) {
+	var annotated int
+	var firstTarget bool
+	var firstArrow layoutgraph.Arrowhead
+	var firstHeight, widest, maxBodyWidth float64
+	narrowest := math.Inf(1)
+	uniform := true
+	maxLabelSize, maxUpright := 0.0, 0.0
 	for _, c := range t.Children {
 		if err := guard.Step(); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if c == nil || c.Node == nil || c.SentinelEdge == nil {
-			return 0, treePreprocessBadState("tree placement encountered an incomplete child edge")
+			return 0, 0, treePreprocessBadState("tree placement encountered an incomplete child edge")
 		}
 		edge := c.SentinelEdge
 		labelSize := float64(edge.MinHeight)
+		maxLabelSize = max(maxLabelSize, labelSize)
+		if t.Orientation.IsVertical() && len(t.Children) > 1 {
+			target := edge.To == c.Node
+			caption, other := edge.SourceArrowheadLabel, edge.TargetArrowheadLabel
+			head := edge.SourceArrowhead
+			if target {
+				caption, other, head = other, caption, edge.TargetArrowhead
+			}
+			if caption != nil {
+				authoredTarget := target != edge.ReversedForLayout
+				if annotated == 0 {
+					firstTarget, firstArrow, firstHeight = authoredTarget, head, caption.Height
+				}
+				uniform = uniform && authoredTarget == firstTarget && head == firstArrow && firstHeight == caption.Height &&
+					c.Node.Height == childRankHeight && len(c.Children) == 0 &&
+					other == nil && edge.Label == nil && edge.D2ID != nil && edge.Style.StrokeWidth == nil
+				narrowest = min(narrowest, caption.Width)
+				widest = max(widest, caption.Width)
+				maxBodyWidth = max(maxBodyWidth, c.Node.Width)
+				annotated++
+			}
+		}
 		if t.Orientation.IsHorizontal() {
 			labelSize = float64(edge.MinWidth)
 		} else if len(t.Children) > 1 && c.Node.Height == childRankHeight && edge.D2ID != nil && (edge.SourceArrowheadLabel != nil || edge.TargetArrowheadLabel != nil) {
@@ -91,10 +119,24 @@ func spacingToChildren(t *layoutgraph.Tree, childRankHeight float64, guard *limi
 				labelSize = float64(upright)
 			}
 		}
-		maxLabelSize = math.Max(maxLabelSize, labelSize)
+		maxUpright = max(maxUpright, labelSize)
+	}
+	// A compact row keeps every upright caption on the same side of its
+	// terminal port. The padding absorbs the width difference if placement
+	// mirrors the order. A sparse or uneven row can require a staggered leaf.
+	pitch := 0.0
+	if annotated > 1 && annotated == len(t.Children) && uniform &&
+		widest-narrowest <= label.PADDING && narrowest > maxBodyWidth+siblingSpacing {
+		pitch = widest + 2*label.PADDING
+	}
+	// Horizontal flow also evaluates provisional vertical placements. Its
+	// chosen orientation relies on the upright height of those alternatives.
+	horizontalFlow := t.Node.Graph != nil && t.Node.ContainerDirection().IsHorizontal()
+	if annotated <= 1 || pitch > 0 || horizontalFlow {
+		maxLabelSize = maxUpright
 	}
 	if maxLabelSize == 0 {
-		return layoutgraph.TreeParentSpacing, nil
+		return layoutgraph.TreeParentSpacing, pitch, nil
 	}
 	labelSpacingWithArrowheads := maxLabelSize + 2*layoutgraph.MinArrowheadClearance
 	if len(t.Children) == 1 {
@@ -107,7 +149,7 @@ func spacingToChildren(t *layoutgraph.Tree, childRankHeight float64, guard *limi
 		//  ┌─▼─┐  ┴ MinArrowheadClearance
 		//  │   │
 		//  └───┘
-		return math.Max(layoutgraph.TreeParentSpacing, labelSpacingWithArrowheads), nil
+		return math.Max(layoutgraph.TreeParentSpacing, labelSpacingWithArrowheads), pitch, nil
 	}
 	//         ┌───┐
 	//         │   │       We want enough space to place the labels at the X positions
@@ -120,57 +162,13 @@ func spacingToChildren(t *layoutgraph.Tree, childRankHeight float64, guard *limi
 	//  ┌─▼─┐         ┌─▼─┐ ┴
 	//  │   │         │   │
 	//  └───┘         └───┘
-	return layoutgraph.TreeParentSpacing/2 + math.Max(layoutgraph.TreeParentSpacing/2, labelSpacingWithArrowheads), nil
+	return layoutgraph.TreeParentSpacing/2 + math.Max(layoutgraph.TreeParentSpacing/2, labelSpacingWithArrowheads), pitch, nil
 }
 
 // decorationOverhang is measured from the body in the bottom-oriented coordinate
 // system used during construction. Icons and text stay upright in the diagram.
 type decorationOverhang struct {
 	left, right, top, bottom float64
-}
-
-// Distinct endpoint annotations on adjacent child branches share the same
-// rank. Their projected text intervals need clearance alongside each other.
-func branchCaptionGap(a, b *layoutgraph.Tree) float64 {
-	if a.Parent != b.Parent || !b.Orientation.IsVertical() || a.SentinelEdge == nil || b.SentinelEdge == nil {
-		return 0
-	}
-	interval := func(t *layoutgraph.Tree) (float64, float64, bool) {
-		e := t.SentinelEdge
-		target := e.To == t.Node
-		annotation := e.SourceArrowheadLabel
-		if target {
-			annotation = e.TargetArrowheadLabel
-		}
-		if annotation == nil {
-			return 0, 0, false
-		}
-		// Measure the authored side of the upright terminal segment, including
-		// the rendered arrowhead and stroke clearance.
-		c := geo.Point{}
-		p := geo.Point{Y: -annotation.Height - 2*label.PADDING}
-		route := geo.Route{&p, &c}
-		if !target {
-			route[0], route[1] = route[1], route[0]
-		}
-		left := e.ArrowheadLabelTopLeft(route, target, annotation).X
-		return left, left + annotation.Width, true
-	}
-	leftA, rightA, ok := interval(a)
-	if !ok {
-		return 0
-	}
-	leftB, rightB, ok := interval(b)
-	if !ok {
-		return 0
-	}
-	extent := rightA - leftB
-	if a.SentinelEdge.ReversedForLayout != b.SentinelEdge.ReversedForLayout {
-		// The two authored traversals use opposite sides. Reserve clearance
-		// for either ordering when the component direction mirrors the fan.
-		extent = math.Max(extent, rightB-leftA)
-	}
-	return math.Max(0, extent+2*label.PADDING-(a.Node.Width+b.Node.Width)/2-siblingSpacing)
 }
 
 func treeDecorationOverhang(t *layoutgraph.Tree) decorationOverhang {
@@ -241,14 +239,21 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 	}
 	// 1.1. Edge labels may require additional spacing, so spacing for the level is based on the largest label
 	levelSpacings := make(map[int]float64)
+	var captionPitches map[*layoutgraph.Tree]float64
 	for level := 0; level < len(treeLevels)-1; level++ {
 		for _, levelNode := range treeLevels[level] {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			spacing, err := spacingToChildren(levelNode, ranks[level+1].height, guard)
+			spacing, pitch, err := spacingToChildren(levelNode, ranks[level+1].height, guard)
 			if err != nil {
 				return err
+			}
+			if pitch > 0 {
+				if captionPitches == nil {
+					captionPitches = make(map[*layoutgraph.Tree]float64)
+				}
+				captionPitches[levelNode] = pitch
 			}
 			levelSpacings[level+1] = math.Max(levelSpacings[level+1], spacing)
 		}
@@ -286,7 +291,11 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 				return err
 			}
 			if i > 0 {
-				nextPosition += branchCaptionGap(treeLevels[level][i-1], levelNode)
+				prior := treeLevels[level][i-1]
+				if prior.Parent == levelNode.Parent {
+					pitch := captionPitches[levelNode.Parent]
+					nextPosition += max(0, pitch-(prior.Node.Width+levelNode.Node.Width)/2-siblingSpacing)
+				}
 			}
 			nextPosition += overhangs[levelNode].left
 			if len(levelNode.Children) == 0 {
