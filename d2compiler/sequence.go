@@ -20,16 +20,16 @@ func sequencePathKey(path []d2ast.String) string {
 }
 
 func sequenceShape(m *d2ir.Map) string {
-	return sequenceClassShape(m, make(map[*d2ir.Map]bool))
+	return sequenceShapeValue(m, make(map[*d2ir.Map]bool), d2ast.FlatUnquotedString("shape"))
 }
 
-func sequenceClassShape(m *d2ir.Map, visiting map[*d2ir.Map]bool) string {
+func sequenceShapeValue(m *d2ir.Map, visiting map[*d2ir.Map]bool, path ...d2ast.String) string {
 	if m == nil || visiting[m] {
 		return ""
 	}
 	visiting[m] = true
 	defer delete(visiting, m)
-	f := m.GetField(d2ast.FlatUnquotedString("shape"))
+	f := m.GetField(path...)
 	if f != nil && f.Primary() != nil {
 		return strings.ToLower(f.Primary().Value.ScalarString())
 	}
@@ -49,7 +49,7 @@ func sequenceClassShape(m *d2ir.Map, visiting map[*d2ir.Map]bool) string {
 	}
 	shape := ""
 	for _, name := range names {
-		if inherited := sequenceClassShape(m.GetClassMap(name), visiting); inherited != "" {
+		if inherited := sequenceShapeValue(m.GetClassMap(name), visiting, path...); inherited != "" {
 			shape = inherited
 		}
 	}
@@ -81,18 +81,25 @@ func (c *compiler) sequenceDiagramMaps(m *d2ir.Map, diagrams []*d2ir.Map) []*d2i
 
 func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 	type scope struct {
-		m         *d2ir.Map
-		original  []d2ast.String
-		canonical []d2ast.String
+		m            *d2ir.Map
+		original     []d2ast.String
+		canonical    []d2ast.String
+		messageGroup bool
+		branched     bool
 	}
 	var scopes []scope
 	invalid := false
 	paths := make(map[string][]d2ast.String)
 	base := d2ir.BoardIDA(diagram)
-	var collect func(*d2ir.Map, []d2ast.String, []d2ast.String)
-	collect = func(m *d2ir.Map, canonical, group []d2ast.String) {
+	var collect func(*d2ir.Map, []d2ast.String, []d2ast.String, bool)
+	collect = func(m *d2ir.Map, canonical, group []d2ast.String, isGroup bool) {
 		original := d2ir.BoardIDA(m)
-		scopes = append(scopes, scope{m, original, canonical})
+		branched := isGroup && sequenceShapeValue(m, make(map[*d2ir.Map]bool), d2ast.FlatUnquotedString("shape"), d2ast.FlatUnquotedString("branched")) == "true"
+		if branched && len(m.Edges) > 0 {
+			c.errorf(m.Edges[0].LastRef().AST(), "place messages inside a named branch of the branched edge-group")
+			invalid = true
+		}
+		scopes = append(scopes, scope{m, original, canonical, isGroup, branched})
 		paths[sequencePathKey(original)] = canonical
 		// Retain the containing message group as the reference scope of moved
 		// actors' contents. Their graph parent remains the owning actor.
@@ -101,14 +108,19 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 			referenceScope = group
 		}
 		c.sequenceScopes[sequencePathKey(original)] = referenceScope
-		isGroup := sequenceShape(m) == d2target.ShapeSequenceDiagramEdgeGroup
 		for _, f := range m.Fields {
 			if !sequenceObjectField(f) {
 				continue
 			}
 			parent := canonical
 			childGroup := group
-			if isGroup && sequenceShape(f.Map()) != d2target.ShapeSequenceDiagramEdgeGroup {
+			childShape := sequenceShape(f.Map())
+			if branched && childShape != "" {
+				c.errorf(f.LastRef().AST(), "a branch cannot have a shape; place nested shapes inside the branch")
+				invalid = true
+			}
+			childIsGroup := childShape == d2target.ShapeSequenceDiagramEdgeGroup || branched
+			if isGroup && !childIsGroup {
 				parent = base
 				if existing := diagram.GetField(f.Name); existing != nil &&
 					sequenceShape(existing.Map()) == d2target.ShapeSequenceDiagramEdgeGroup {
@@ -117,17 +129,17 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 				}
 			}
 			childPath := append(append([]d2ast.String(nil), parent...), f.Name)
-			if sequenceShape(f.Map()) == d2target.ShapeSequenceDiagramEdgeGroup {
+			if childIsGroup {
 				childGroup = childPath
 			}
 			originalChild := append(append([]d2ast.String(nil), original...), f.Name)
 			paths[sequencePathKey(originalChild)] = childPath
 			if f.Map() != nil {
-				collect(f.Map(), childPath, childGroup)
+				collect(f.Map(), childPath, childGroup, childIsGroup)
 			}
 		}
 	}
-	collect(diagram, base, nil)
+	collect(diagram, base, nil, false)
 	if invalid {
 		return
 	}
@@ -177,7 +189,7 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 	// Iterate the snapshot: moving fields must not skip siblings or process
 	// newly appended actors again. Copy through OverlayMap to retain IR parents.
 	for _, s := range scopes {
-		if sequenceShape(s.m) != d2target.ShapeSequenceDiagramEdgeGroup {
+		if !s.messageGroup || s.branched {
 			continue
 		}
 		var retained []*d2ir.Field
@@ -256,9 +268,15 @@ func (c *compiler) sequenceScope(m *d2ir.Map) []d2ast.String {
 	return path
 }
 
-func (c *compiler) compileSequenceOptions(options *d2graph.SequenceOptions, m *d2ir.Map) {
+func (c *compiler) compileSequenceOptions(obj *d2graph.Object, m *d2ir.Map) {
+	group := obj.Shape.Value == d2target.ShapeSequenceDiagramEdgeGroup
+	owner := "sequence diagram"
+	if group {
+		owner = "edge-group"
+	}
+	options := obj.Sequence
 	if len(m.Edges) > 0 {
-		c.errorf(m.Edges[0].LastRef().AST(), "sequence diagram shape options cannot contain connections")
+		c.errorf(m.Edges[0].LastRef().AST(), "%s shape options cannot contain connections", owner)
 		return
 	}
 	for _, f := range m.Fields {
@@ -267,13 +285,15 @@ func (c *compiler) compileSequenceOptions(options *d2graph.SequenceOptions, m *d
 		}
 		name := strings.ToLower(f.Name.ScalarString())
 		var option *bool
-		switch name {
-		case "mirrored":
+		switch {
+		case group && name == "branched":
+			option = &options.Branched
+		case !group && name == "mirrored":
 			option = &options.Mirrored
-		case "numbered":
+		case !group && name == "numbered":
 			option = &options.Numbered
 		default:
-			c.errorf(f.LastRef().AST(), "unknown sequence diagram shape option %q", f.Name.ScalarString())
+			c.errorf(f.LastRef().AST(), "unknown %s shape option %q", owner, f.Name.ScalarString())
 			continue
 		}
 		if f.Primary() != nil && f.Composite == nil {
@@ -283,7 +303,7 @@ func (c *compiler) compileSequenceOptions(options *d2graph.SequenceOptions, m *d
 				continue
 			}
 		}
-		c.errorf(f.LastRef().AST(), "sequence diagram shape.%s must be true or false", name)
+		c.errorf(f.LastRef().AST(), "%s shape.%s must be true or false", owner, name)
 	}
 }
 
@@ -292,7 +312,7 @@ func (c *compiler) compileSequenceDiagrams(g *d2graph.Graph) {
 		switch obj.Shape.Value {
 		case d2target.ShapeSequenceDiagramEdgeGroup:
 			if !obj.OuterSequenceDiagram().IsSequenceDiagramV2() ||
-				(!obj.Parent.IsSequenceDiagramV2() && !obj.Parent.IsSequenceDiagramGroup()) {
+				(!obj.Parent.IsSequenceDiagramV2() && !obj.Parent.IsSequenceDiagramGroup() && !obj.Parent.IsSequenceDiagramBranch()) {
 				c.errorf(obj.Shape.MapKey, "edge-group must be inside a sequence-diagram or another edge-group")
 			}
 		case d2target.ShapeSequenceDiagramActorGroup:
@@ -306,6 +326,10 @@ func (c *compiler) compileSequenceDiagrams(g *d2graph.Graph) {
 		}
 		if len(c.sequenceScopes) == 0 {
 			continue
+		}
+		if obj.IsSequenceDiagramBranch() && obj.Label.Value != "" && obj.Language == "" &&
+			!(strings.HasPrefix(obj.Label.Value, "[") && strings.HasSuffix(obj.Label.Value, "]")) {
+			obj.Label.Value = "[" + obj.Label.Value + "]"
 		}
 		if obj.IsSequenceDiagramSpan() && !c.hasExplicitLabel(&obj.Attributes) {
 			obj.Label.Value = ""
@@ -350,6 +374,9 @@ func (c *compiler) compileSequenceDiagrams(g *d2graph.Graph) {
 			(!e.Dst.IsSequenceDiagramActor() && !e.Dst.IsSequenceDiagramSpan()) {
 			c.errorf(e.GetAstEdge(), "sequence diagram messages can only connect actors or spans")
 			continue
+		}
+		if near := e.Attributes.LabelPosition; near != nil && !d2ast.LabelPositionsMapping[near.Value].IsEdgePosition() {
+			c.errorf(near.MapKey, "sequence message label.near must use outside-top, center, or outside-bottom with left, center, or right")
 		}
 		if srcDiagram.Sequence != nil && srcDiagram.Sequence.Numbered {
 			numbers[srcDiagram]++

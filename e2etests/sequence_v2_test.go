@@ -12,6 +12,21 @@ import (
 func testSequenceV2(t *testing.T) {
 	runa(t, []testCase{
 		{
+			name: "branched_shared_rows",
+			script: `shape: sequence-diagram
+client.ready: Ready {shape: page; vertical-gap: 0}
+api.ready: Listening {shape: diamond}
+client -> api: Request {label.near: outside-top-center}
+result: Outcome {
+  shape: edge-group {branched: true}
+  style.fill: "#e5eef7"
+  label.style.fill: "#c4dbef"
+  ok: Available {api -> client: 200 OK {label.near: outside-top-center}}
+  no: Missing {api -> client: 404}
+}
+`,
+		},
+		{
 			name: "groups_create_actors",
 			script: `shape: sequence-diagram
 request: {

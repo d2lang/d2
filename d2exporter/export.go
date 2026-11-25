@@ -260,6 +260,9 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 		shape.SequenceRole = "container"
 	} else if obj.OuterSequenceDiagram().IsSequenceDiagramV2() {
 		switch {
+		case obj.IsSequenceDiagramBranch():
+			shape.SetType(d2target.ShapeText)
+			shape.SequenceRole = "branch"
 		case obj.IsSequenceDiagramActorGroup(), obj.IsSequenceDiagramGroup():
 			shape.SequenceRole = "group"
 		case obj.IsSequenceDiagramActor():
@@ -322,6 +325,12 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 			shape.ContentAspectRatio = go2.Pointer(*obj.ContentAspectRatio)
 		}
 	}
+	if obj.IsSequenceDiagramBranch() {
+		shape.StrokeWidth = 0
+		if obj.Style.Fill == nil {
+			shape.Fill = "transparent"
+		}
+	}
 	shape.Label = text.Text
 	shape.LabelWidth = text.Dimensions.Width
 
@@ -330,6 +339,9 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 		shape.LabelPosition = *obj.LabelPosition
 		if obj.IsSequenceDiagramGroup() {
 			shape.LabelFill = shape.Fill
+			if obj.LabelFill != nil {
+				shape.LabelFill = obj.LabelFill.Value
+			}
 		}
 	}
 
@@ -403,6 +415,8 @@ func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 	connection := d2target.BaseConnection()
 	if scope := edge.Src.OuterSequenceDiagram(); scope.IsSequenceDiagramV2() {
 		switch {
+		case edge.Dst.IsSequenceDiagramBranch() && edge.Dst.Parent == edge.Src:
+			connection.SequenceRole = "divider"
 		case d2sequence.IsLifelineEnd(edge.Dst):
 			connection.SequenceRole = "lifeline"
 		case edge.Dst.OuterSequenceDiagram() == scope:

@@ -352,7 +352,7 @@ func _set(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, key string, 
 		})
 	}
 
-	if handled, err := editSequenceShapeOption(g, boardPath, baseAST, mk, false); handled || err != nil {
+	if handled, err := editSequenceProperty(g, boardPath, baseAST, mk, false); handled || err != nil {
 		return err
 	}
 
@@ -905,32 +905,55 @@ func _set(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, key string, 
 	return nil
 }
 
-// editSequenceShapeOption edits a local declaration when possible. Options
-// supplied by another board, an import, a glob, or a class need a local override.
-func editSequenceShapeOption(board *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk *d2ast.Key, remove bool) (bool, error) {
+// editSequenceProperty uses the full IR path so frame and caption fills can
+// be edited independently. Inherited properties need a local override.
+func editSequenceProperty(board *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk *d2ast.Key, remove bool) (bool, error) {
 	if len(mk.Edges) != 0 || mk.Key == nil || len(mk.Key.Path) < 2 {
 		return false, nil
 	}
 	path := mk.Key.IDA()
-	shapeIndex := len(path) - 2
-	if !path[shapeIndex].IsUnquoted() || !strings.EqualFold(path[shapeIndex].ScalarString(), "shape") {
-		return false, nil
-	}
-	for _, part := range path[:shapeIndex] {
+	property := len(path)
+	for i, part := range path {
 		if _, reserved := d2ast.ReservedKeywords[strings.ToLower(part.ScalarString())]; reserved && part.IsUnquoted() {
-			return false, nil
+			property = i
+			break
 		}
 	}
-	obj, _ := board.Root.HasChild(d2graph.Key(mk.Key)[:shapeIndex])
-	if !obj.IsSequenceDiagramV2() {
+	if property+1 >= len(path) {
 		return false, nil
 	}
-	var enabled bool
-	switch strings.ToLower(path[shapeIndex+1].ScalarString()) {
-	case "numbered":
-		enabled = obj.Sequence.Numbered
-	case "mirrored":
-		enabled = obj.Sequence.Mirrored
+	parts := d2graph.Key(mk.Key)
+	obj, ok := board.Root.HasChild(parts[:property])
+	if !ok {
+		return false, nil
+	}
+	var active bool
+	var reset d2ast.Scalar = &d2ast.Boolean{Value: false}
+	switch strings.ToLower(strings.Join(parts[property:], ".")) {
+	case "shape.numbered", "shape.mirrored":
+		if !obj.IsSequenceDiagramV2() {
+			return false, nil
+		}
+		if strings.EqualFold(parts[property+1], "numbered") {
+			active = obj.Sequence.Numbered
+		} else {
+			active = obj.Sequence.Mirrored
+		}
+	case "shape.branched":
+		if obj.Shape.Value != d2target.ShapeSequenceDiagramEdgeGroup {
+			return false, nil
+		}
+		active = obj.Sequence != nil && obj.Sequence.Branched
+	case "style.fill", "label.style.fill":
+		if obj.Shape.Value != d2target.ShapeSequenceDiagramEdgeGroup {
+			return false, nil
+		}
+		if len(path)-property == 3 {
+			active = obj.LabelFill != nil
+		} else {
+			active = obj.Style.Fill != nil
+		}
+		reset = &d2ast.Null{}
 	default:
 		return false, nil
 	}
@@ -956,6 +979,7 @@ func editSequenceShapeOption(board *d2graph.Graph, boardPath []string, baseAST *
 			if remove {
 				if deleteFromMap(ctx.Scope, ctx.Key) {
 					removed = true
+					pruneEmptyPropertyMaps(field, ctx.Scope, len(path)-property-1)
 				}
 			} else if ctx.Key == last {
 				ctx.Key.SetScalar(mk.Value.ScalarBox())
@@ -964,13 +988,33 @@ func editSequenceShapeOption(board *d2graph.Graph, boardPath []string, baseAST *
 		}
 	}
 	if remove {
-		if removed || !enabled {
+		if removed || !active {
 			return true, nil
 		}
-		mk.Value = d2ast.MakeValueBox(&d2ast.Boolean{Value: false})
+		mk.Value = d2ast.MakeValueBox(reset)
 	}
 	appendMapKey(baseAST, mk)
 	return true, nil
+}
+
+// Remove empty style/label wrappers while keeping the object itself and any
+// primary label alongside its former style map.
+func pruneEmptyPropertyMaps(field *d2ir.Field, scope *d2ast.Map, levels int) {
+	for levels > 0 && len(scope.Nodes) == 0 {
+		field = d2ir.ParentField(field)
+		if field == nil {
+			return
+		}
+		for _, ref := range field.References {
+			ctx := ref.Context_
+			if ctx.Key.Value.Map == scope && ctx.Key.Primary.Unbox() == nil {
+				deleteFromMap(ctx.Scope, ctx.Key)
+				scope = ctx.Scope
+				break
+			}
+		}
+		levels--
+	}
 }
 
 func appendUniqueMapKey(m *d2ast.Map, mk *d2ast.Key) {
@@ -1038,7 +1082,7 @@ func Delete(g *d2graph.Graph, boardPath []string, key string) (_ *d2graph.Graph,
 		}
 	}
 
-	if handled, err := editSequenceShapeOption(boardG, boardPath, baseAST, mk, true); handled || err != nil {
+	if handled, err := editSequenceProperty(boardG, boardPath, baseAST, mk, true); handled || err != nil {
 		if err != nil {
 			return nil, err
 		}

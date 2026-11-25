@@ -14,6 +14,31 @@ func TestGetCompletionItems(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			name: "edge-group block",
+			text: "result: {shape: edge-group {\n  \n}}",
+			line: 1, column: 2, want: getBranchOptionCompletions(),
+		},
+		{
+			name: "edge-group option value",
+			text: "result: {shape: edge-group {\n  branched: \n}}",
+			line: 1, column: len("  branched: "), want: getBooleanCompletions(),
+		},
+		{
+			name: "edge-group dotted option",
+			text: "result.shape: edge-group\nresult.shape.",
+			line: 1, column: len("result.shape."), want: getBranchOptionCompletions(),
+		},
+		{
+			name: "edge-group dotted value",
+			text: "result.shape: edge-group\nresult.shape.branched: ",
+			line: 1, column: len("result.shape.branched: "), want: getBooleanCompletions(),
+		},
+		{
+			name: "branched is only valid on edge-groups",
+			text: "shape: sequence-diagram {\n  branched: \n}",
+			line: 1, column: len("  branched: "),
+		},
+		{
 			name: "sequence option block",
 			text: "a.shape: sequence-diagram {\n  \n}",
 			line: 1, column: 2,

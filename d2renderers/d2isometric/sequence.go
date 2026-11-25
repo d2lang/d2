@@ -112,5 +112,5 @@ func classifySequence(scene *Scene, indices map[string]int, parents []int) {
 }
 
 func sequenceSemanticChild(role string) bool {
-	return role == "span" || role == "note" || role == "group" || role == "repeat" || role == "event"
+	return role == "span" || role == "note" || role == "branch" || role == "group" || role == "repeat" || role == "event"
 }

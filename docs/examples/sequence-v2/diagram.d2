@@ -11,14 +11,21 @@ backend: Backend {
   api: API
   db: Database {shape: cylinder}
 }
-request: Handle request {
-  shape: edge-group
-  client -> backend.api.work: GET /items
-  backend.api.work -> backend.db.query: Read
-  backend.db.query -> backend.api.work: Rows
+
+client.start: Ready {shape: page; vertical-gap: 0}
+backend.api.start: Listening {shape: page}
+client -> backend.api.work: GET /items {label.near: outside-top-center}
+backend.api.work: Lookup {label.near: top-left}
+backend.api.work -> backend.db: Read
+
+result: Outcome {
+  shape: edge-group {branched: true}
+  style.fill: "#e5eef7"
+  label.style.fill: "#c4dbef"
+  hit: Found {
+    backend.api.work -> client: 200 OK
+  }
+  miss: Missing {
+    backend.api.work -> client: 404 Not found
+  }
 }
-backend.api.work: Processing {label.near: top-left}
-backend.api.work -> client: 200 OK
-client.note: Response received {shape: page}
-client.again: {shape: actor}
-client -> backend.api: Next request

@@ -8,6 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/d2lang/d2/d2compiler"
+	"github.com/d2lang/d2/d2exporter"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2sequence"
 	sequencediagram "github.com/d2lang/d2/d2layouts/d2sequence2"
@@ -94,6 +95,47 @@ func TestExplicitGapOverridesAutomaticOverlap(t *testing.T) {
 	es := messages(g)
 	if got := es[1].Route[0].Y - es[0].Route[0].Y; got != 13 {
 		t.Fatalf("after gap = %v, want 13", got)
+	}
+}
+
+func TestMixedSharedRowReservesTallestEvent(t *testing.T) {
+	g := compile(t, `vars: {together: 0}
+classes: {simultaneous: {vertical-gap: ${together}}}
+a; b; c; d; e; f
+f.vertical-gap: 1
+a -> b: Before
+a.note: Make key {shape: page; class: simultaneous}
+b.ready: Ready {shape: diamond; height: 240; vertical-gap: 0}
+c.again: {shape: actor; vertical-gap: 0}
+d -> e: Exchange {vertical-gap: 0}
+f.again: {shape: actor}
+e -> f: After`)
+	es := messages(g)
+	y := es[1].Route[0].Y
+	for _, id := range []string{"a.note", "b.ready", "c.again", "f.again"} {
+		if got := obj(t, g, id).Center().Y; got != y {
+			t.Fatalf("%s at y=%v, want shared row y=%v", id, got, y)
+		}
+	}
+	tall := obj(t, g, "b.ready")
+	if tall.TopLeft.Y-float64(es[0].LabelDimensions.Height)/2-es[0].Route[0].Y < 48 ||
+		es[2].Route[0].Y-float64(es[2].LabelDimensions.Height)/2-(tall.TopLeft.Y+tall.Height) < 48 {
+		t.Fatal("ordinary rows must clear the tallest shared event on both sides")
+	}
+	finiteBounds(t, g)
+}
+
+func TestEventGapAndSelfMessageReturn(t *testing.T) {
+	g := compile(t, `a -> a: Work {vertical-gap: 0}
+b.note: Done {shape: page; vertical-gap: 19}
+b -> c: Report`)
+	es := messages(g)
+	noteY := obj(t, g, "b.note").Center().Y
+	if got := es[0].Route[len(es[0].Route)-1].Y; got != noteY {
+		t.Fatalf("self-message returns at %v, next event at %v", got, noteY)
+	}
+	if got := es[1].Route[0].Y - noteY; got != 19 {
+		t.Fatalf("gap after note = %v, want 19", got)
 	}
 }
 func TestSelfMessagesNestedSpansAndNotes(t *testing.T) {
@@ -344,4 +386,76 @@ func TestMirroredSQLTableRecreatesChildMap(t *testing.T) {
 		t.Fatal("SQL table mirror is absent from its parent child map")
 	}
 	finiteBounds(t, g)
+}
+
+func TestMessageLabelNear(t *testing.T) {
+	g := compile(t, `a; b
+vars: {place: outside-top-center}
+frame: {
+  shape: edge-group
+  a -> b: request {label.near: ${place}; style.stroke-width: 12}
+  b -> a: reply with a long label anchored toward the left end of the arrow {label.near: outside-top-left}
+  b -> b: self above {label.near: outside-top-center}
+  b -> b: self below {label.near: outside-bottom-center}
+  a -> b: last
+}
+frame.(a -> b)[1].label.near: center-right
+`)
+	frame := obj(t, g, "frame")
+	for i, e := range messages(g) {
+		conn := d2exporter.ToConnection(e, nil)
+		text := conn.GetLabelTopLeft()
+		cx := text.X + float64(conn.LabelWidth)/2
+		stroke := conn.RenderedStrokeWidth()
+		first, last := conn.Route[0], conn.Route[len(conn.Route)-1]
+		mid := (first.X + last.X) / 2
+		bottom := text.Y + float64(conn.LabelHeight)
+		if !frame.Box.Contains(text) || !frame.Box.Contains(geo.NewPoint(text.X+float64(conn.LabelWidth), bottom)) {
+			t.Errorf("label %q outside its group", e.Label.Value)
+		}
+		if i <= 2 && bottom > first.Y-stroke/2-label.PADDING+.5 {
+			t.Errorf("label %q crosses its top wire", e.Label.Value)
+		}
+		switch i {
+		case 0:
+			if math.Abs(cx-mid) > .5 {
+				t.Errorf("request label %s is off-center. actual %f want %f position %s", e.Label.Value, cx, mid, conn.LabelPosition)
+			}
+		case 1:
+			if cx >= mid || text.X <= last.X {
+				t.Error("right-to-left reply label should fit between the left endpoint and the midpoint")
+			}
+		case 2, 3:
+			if math.Abs(cx-(first.X+conn.Route[1].X)/2) > .5 {
+				t.Errorf("label %q should center on the horizontal leg", e.Label.Value)
+			}
+			if i == 3 && text.Y < last.Y+stroke/2+label.PADDING-.5 {
+				t.Error("self-message's bottom label crosses its return wire")
+			}
+		case 4:
+			if cx <= mid || math.Abs((text.Y+bottom)/2-first.Y) > .5 {
+				t.Error("center-right label should stay on its arrow's right half")
+			}
+		}
+	}
+}
+
+func TestSharedRowsStayInsideTheirBranch(t *testing.T) {
+	g := compile(t, `a; b; c
+c.before: Previous {shape: page; height: 100; vertical-gap: 0}
+frame: {shape: edge-group {branched: true}
+  yes: {a -> b: Yes {vertical-gap: 0}; c.yes: OK {shape: page; height: 100; vertical-gap: 0}}
+  no: {a -> b: No {vertical-gap: 0}; c.no: Retry {shape: page; height: 100; vertical-gap: 0}}
+}
+c.after: Next {shape: page; height: 100}`)
+	before, after := obj(t, g, "c.before"), obj(t, g, "c.after")
+	frame := obj(t, g, "frame")
+	first, second := obj(t, g, "c.yes"), obj(t, g, "c.no")
+	if before.TopLeft.Y+before.Height > frame.TopLeft.Y || after.TopLeft.Y < frame.TopLeft.Y+frame.Height {
+		t.Fatalf("frame %.1f..%.1f intersects preceding bottom %.1f or following top %.1f", frame.TopLeft.Y, frame.TopLeft.Y+frame.Height, before.TopLeft.Y+before.Height, after.TopLeft.Y)
+	}
+	divider := obj(t, g, "frame.no").TopLeft.Y
+	if first.TopLeft.Y+first.Height > divider || second.TopLeft.Y < divider {
+		t.Fatalf("divider at %.1f crosses a branch row (%v, %v)", divider, first.Box, second.Box)
+	}
 }

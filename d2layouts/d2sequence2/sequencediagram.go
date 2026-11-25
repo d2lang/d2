@@ -32,6 +32,7 @@ const (
 type item struct {
 	object       *d2graph.Object
 	edge         *d2graph.Edge
+	afterGap     *d2graph.Scalar
 	pos          sourcePosition
 	above, below float64
 	loopHeight   float64
@@ -141,7 +142,9 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	d.placeTimeline()
+	if err := d.placeTimeline(); err != nil {
+		return err
+	}
 	d.placeSpans()
 	d.routeEndpoints()
 	d.placeMessageGroups()
@@ -181,17 +184,19 @@ func (d *diagram) collect(parent, actor *d2graph.Object, depth int) error {
 		if o.IsSequenceDiagram() {
 			return fmt.Errorf("actors in sequence diagrams cannot themselves be sequence diagrams: %s", o.AbsID())
 		}
+		if o.Shape.Value == d2target.ShapeSequenceDiagramEdgeGroup || o.IsSequenceDiagramBranch() {
+			d.groups = append(d.groups, o)
+			setPosition(&o.LabelPosition, label.InsideTopLeft)
+			if err := d.collect(o, actor, depth); err != nil {
+				return err
+			}
+			continue
+		}
 		switch o.Shape.Value {
 		case d2target.ShapeSequenceDiagramActorGroup:
 			d.actorGroups = append(d.actorGroups, o)
 			setPosition(&o.LabelPosition, label.InsideTopCenter)
 			if err := d.collect(o, nil, 0); err != nil {
-				return err
-			}
-		case d2target.ShapeSequenceDiagramEdgeGroup:
-			d.groups = append(d.groups, o)
-			setPosition(&o.LabelPosition, label.InsideTopLeft)
-			if err := d.collect(o, actor, depth); err != nil {
 				return err
 			}
 		default:
@@ -226,9 +231,10 @@ func (d *diagram) collect(parent, actor *d2graph.Object, depth int) error {
 					if o.Shape.Value == d2target.ShapeSequenceDiagramActor {
 						// A repeat has its own identity and source position, but the actor's
 						// appearance. Its children and references still belong to this object.
-						importPosition := o.SequenceImportPosition
+						importPosition, afterGap := o.SequenceImportPosition, o.VerticalGap
 						o.Attributes = actor.Attributes
 						o.SequenceImportPosition = importPosition
+						o.VerticalGap = afterGap
 						o.Shape.Value = d2target.ShapeSequenceDiagramActor
 						o.Box = geo.NewBox(geo.NewPoint(0, 0), actor.Width, actor.Height)
 						o.LabelPosition = actor.LabelPosition
@@ -281,16 +287,27 @@ func (d *diagram) buildTimeline() error {
 			}
 		}
 		h := float64(e.LabelDimensions.Height) / 2
-		it := &item{edge: e, pos: edgePosition(e), above: h, below: h}
+		it := &item{edge: e, pos: edgePosition(e), afterGap: e.VerticalGap, above: h, below: h}
 		if d.owner[e.Src] == d.owner[e.Dst] {
 			it.loopHeight = math.Max(32, float64(e.LabelDimensions.Height)+12)
 			it.below = it.loopHeight + h
+		}
+		if near := e.Attributes.LabelPosition; near != nil && e.Label.Value != "" {
+			position := d2ast.LabelPositionsMapping[near.Value]
+			if position.IsOutside() {
+				extent := float64(e.LabelDimensions.Height) + label.PADDING + messageStrokeWidth(e)/2
+				if !bottomMessageLabel(position) {
+					it.above, it.below = extent, it.loopHeight
+				} else {
+					it.above, it.below = 0, it.loopHeight+extent
+				}
+			}
 		}
 		d.timeline = append(d.timeline, it)
 	}
 	for _, o := range d.events {
 		margin, _ := o.Spacing()
-		d.timeline = append(d.timeline, &item{object: o, pos: objectPosition(o), above: o.Height/2 + margin.Top, below: o.Height/2 + margin.Bottom})
+		d.timeline = append(d.timeline, &item{object: o, pos: objectPosition(o), afterGap: o.VerticalGap, above: o.Height/2 + margin.Top, below: o.Height/2 + margin.Bottom})
 		for p := o.Parent; p != nil && p != d.owner[o]; p = p.Parent {
 			used[p] = true
 		}
@@ -303,6 +320,10 @@ func (d *diagram) buildTimeline() error {
 	// Empty message frames are timeline events too; they reserve space at
 	// their declaration rather than floating over a neighboring note or message.
 	for _, g := range d.groups {
+		// Even empty compartments reserve their own row in the enclosing frame.
+		if g.Sequence != nil && g.Sequence.Branched && len(g.ChildrenArray) > 0 {
+			continue
+		}
 		hasContent := false
 		for _, it := range d.timeline {
 			if d.inGroup(it, g) {
@@ -318,6 +339,14 @@ func (d *diagram) buildTimeline() error {
 	// or imported references that have no distinct source position.
 	sort.SliceStable(d.timeline, func(i, j int) bool { return d.timeline[i].pos.less(d.timeline[j].pos) })
 	d.reserveSpanExtents()
+	// The first item in a shared row must clear the previous row even if a
+	// later member is taller. A self-message joins the next item at its return.
+	for i := len(d.timeline) - 2; i >= 0; i-- {
+		it := d.timeline[i]
+		if it.afterGap != nil && gap(it.afterGap, -1) == 0 {
+			it.above = math.Max(it.above, d.timeline[i+1].above-it.loopHeight)
+		}
+	}
 	return nil
 }
 
@@ -461,7 +490,7 @@ func (d *diagram) placeActors() {
 		if lo == hi {
 			continue
 		}
-		want := float64(e.LabelDimensions.Width) + padding*2
+		want := messageLabelRun(e)
 		have := 0.
 		for i := lo; i < hi; i++ {
 			have += steps[i]
@@ -487,7 +516,24 @@ func (d *diagram) placeActors() {
 	}
 }
 
+// An off-center label sits a quarter of the way along the message. Reserve
+// enough horizontal space for its near half to clear the participant.
+func messageLabelRun(e *d2graph.Edge) float64 {
+	run := float64(e.LabelDimensions.Width) + 2*padding
+	if near := e.Attributes.LabelPosition; near != nil {
+		switch d2ast.LabelPositionsMapping[near.Value] {
+		case label.InsideMiddleLeft, label.InsideMiddleRight,
+			label.OutsideTopLeft, label.OutsideTopRight, label.OutsideBottomLeft, label.OutsideBottomRight:
+			run *= 2
+		}
+	}
+	return run
+}
+
 func selfTravel(e *d2graph.Edge) float64 {
+	if near := e.Attributes.LabelPosition; near != nil && d2ast.LabelPositionsMapping[near.Value].IsOutside() {
+		return math.Max(60, messageLabelRun(e))
+	}
 	return math.Max(60, float64(e.LabelDimensions.Width)/2+padding)
 }
 func (d *diagram) inGroup(it *item, g *d2graph.Object) bool {
@@ -497,7 +543,7 @@ func (d *diagram) inGroup(it *item, g *d2graph.Object) bool {
 	return it.object != g && (it.object.IsDescendantOf(g) || it.object.ContainedBy(g))
 }
 
-func (d *diagram) placeTimeline() {
+func (d *diagram) placeTimeline() error {
 	first, last := make(map[*d2graph.Object]int), make(map[*d2graph.Object]int)
 	for _, g := range d.groups {
 		first[g] = -1
@@ -505,6 +551,8 @@ func (d *diagram) placeTimeline() {
 			if d.inGroup(it, g) {
 				if first[g] < 0 {
 					first[g] = i
+				} else if g.IsSequenceDiagramBranch() && last[g]+1 != i {
+					return fmt.Errorf("events in sequence diagram branch %s must be consecutive", g.AbsID())
 				}
 				last[g] = i
 			}
@@ -518,19 +566,34 @@ func (d *diagram) placeTimeline() {
 	end, bottom := headerBottom, headerBottom
 	nextGap := d.vgap
 	explicit := false
+	closedBranch := false
 	for i, it := range d.timeline {
 		y := end + nextGap
 		if !explicit {
 			y = math.Max(y, bottom+d.vgap+it.above)
+		} else if closedBranch {
+			// A zero gap within a compartment may join rows; its closing
+			// boundary still belongs between the two compartments.
+			y = math.Max(y, bottom+it.above)
 		}
+		closedBranch = false
 		opening := append([]*d2graph.Object(nil), d.groups...)
 		sort.SliceStable(opening, func(i, j int) bool { return opening[i].Level() < opening[j].Level() })
 		for _, g := range opening {
 			if first[g] != i {
 				continue
 			}
+			if explicit && g.Sequence != nil && g.Sequence.Branched {
+				// A preceding event outside this frame cannot share its first
+				// row: the frame title and opening border precede the guard.
+				y = math.Max(y, bottom+it.above+framePadding)
+			}
 			top := y - it.above
 			d.frameTop[g] = top
+			if g.IsSequenceDiagramBranch() && first[g.Parent] == i && inlineGuard(g.Parent, g) {
+				y += math.Max(0, float64(g.LabelDimensions.Height-g.Parent.LabelDimensions.Height))
+				continue
+			}
 			y += framePadding + float64(g.LabelDimensions.Height) + label.PADDING*2
 		}
 		it.y = y
@@ -547,10 +610,10 @@ func (d *diagram) placeTimeline() {
 			}
 			e.IsCurve = false
 			e.ZIndex = 5
-			setPosition(&e.LabelPosition, label.InsideMiddleCenter)
 		} else {
 			o := it.object
 			if containsObject(d.groups, o) {
+				closedBranch = o.IsSequenceDiagramBranch()
 				d.frameTop[o] = y
 				d.frameBottom[o] = y + it.below
 			} else if _, isSpan := d.depth[o]; isSpan {
@@ -566,16 +629,24 @@ func (d *diagram) placeTimeline() {
 		}
 		bottom = math.Max(bottom, y+it.below)
 		for _, g := range opening {
+			if first[g] >= 0 && last[g] == i && g.IsSequenceDiagramBranch() {
+				closedBranch = true
+				break
+			}
+		}
+		for j, g := range opening {
+			if closedBranch {
+				// Finish inner compartment bounds before reserving the outer
+				// frame. The following item must clear both levels' padding.
+				g = opening[len(opening)-1-j]
+			}
 			if first[g] >= 0 && last[g] == i {
 				d.frameBottom[g] = bottom + framePadding
 				bottom += framePadding
 			}
 		}
-		explicit = it.edge != nil && it.edge.VerticalGap != nil
-		nextGap = d.vgap
-		if explicit {
-			nextGap = gap(it.edge.VerticalGap, d.vgap)
-		}
+		explicit = it.afterGap != nil
+		nextGap = gap(it.afterGap, d.vgap)
 	}
 	// An empty group still has a finite, visible frame at its textual position.
 	for _, g := range d.groups {
@@ -595,6 +666,7 @@ func (d *diagram) placeTimeline() {
 		d.frameTop[g] = y
 		d.frameBottom[g] = y + math.Max(40, float64(g.LabelDimensions.Height)+framePadding*2)
 	}
+	return nil
 }
 
 func (d *diagram) placeSpans() {
@@ -691,7 +763,56 @@ func (d *diagram) routeEndpoints() {
 			e.Route[1].X = x
 			e.Route[2].X = x
 		}
+		positionMessageLabel(e)
 	}
+}
+
+// D2 target positions follow the route direction. Sequence positions follow
+// the page: a return message's "top" must still be above its arrow.
+func positionMessageLabel(e *d2graph.Edge) {
+	near := e.Attributes.LabelPosition
+	if near == nil {
+		setPosition(&e.LabelPosition, label.InsideMiddleCenter)
+		return
+	}
+	position := d2ast.LabelPositionsMapping[near.Value]
+	if len(e.Route) == 4 && position.IsOutside() {
+		// The midpoint of a self-message is on its vertical leg. Anchor an
+		// outside caption along its top or bottom horizontal leg instead.
+		fraction := label.CENTER_LABEL_POSITION
+		switch position {
+		case label.OutsideTopLeft, label.OutsideBottomLeft:
+			fraction = label.LEFT_LABEL_POSITION
+		case label.OutsideTopRight, label.OutsideBottomRight:
+			fraction = label.RIGHT_LABEL_POSITION
+		}
+		length := geo.Route(e.Route).Length()
+		distance := fraction * (e.Route[1].X - e.Route[0].X)
+		if bottomMessageLabel(position) {
+			distance = length - fraction*(e.Route[2].X-e.Route[3].X)
+		}
+		percentage := distance / length
+		e.LabelPercentage = &percentage
+		// The top leg points right and the bottom leg points left. The
+		// route-relative top side is outside the loop on both legs.
+		position = label.UnlockedTop
+	} else if len(e.Route) == 2 && e.Route[0].X > e.Route[1].X {
+		position = position.Mirrored()
+	}
+	resolved := position.String()
+	e.LabelPosition = &resolved
+}
+
+func bottomMessageLabel(position label.Position) bool {
+	return position == label.OutsideBottomLeft || position == label.OutsideBottomCenter || position == label.OutsideBottomRight
+}
+
+func messageStrokeWidth(e *d2graph.Edge) float64 {
+	if width := e.Style.StrokeWidth; width != nil {
+		value, _ := strconv.Atoi(width.Value)
+		return float64(value) + width.TweenOffset
+	}
+	return 2
 }
 
 type bounds struct{ minX, minY, maxX, maxY float64 }
@@ -730,7 +851,11 @@ func edgeBounds(e *d2graph.Edge) bounds {
 		b.point(p.X, p.Y)
 	}
 	if e.Label.Value != "" && e.LabelPosition != nil {
-		p, _ := label.FromString(*e.LabelPosition).GetPointOnRoute(e.Route, 2, .5, float64(e.LabelDimensions.Width), float64(e.LabelDimensions.Height))
+		percentage := .5
+		if e.LabelPercentage != nil {
+			percentage = *e.LabelPercentage
+		}
+		p, _ := label.FromString(*e.LabelPosition).GetPointOnRoute(e.Route, messageStrokeWidth(e), percentage, float64(e.LabelDimensions.Width), float64(e.LabelDimensions.Height))
 		b.point(p.X, p.Y)
 		b.point(p.X+float64(e.LabelDimensions.Width), p.Y+float64(e.LabelDimensions.Height))
 	}
@@ -769,6 +894,48 @@ func (d *diagram) placeMessageGroups() {
 		}
 		g.Box = b.box()
 		g.ZIndex = 2
+		if g.Sequence != nil && g.Sequence.Branched {
+			d.placeBranches(g)
+		}
+	}
+}
+
+func inlineGuard(frame, branch *d2graph.Object) bool {
+	return frame.HasLabel() && frame.LabelPosition != nil && *frame.LabelPosition == label.InsideTopLeft.String() &&
+		branch.LabelPosition != nil && *branch.LabelPosition == label.InsideTopLeft.String()
+}
+
+// Child frame extents have already contributed to the enclosing frame. Keep
+// just the guard captions and draw separators across that frame's full width.
+func (d *diagram) placeBranches(frame *d2graph.Object) {
+	branches := append([]*d2graph.Object(nil), frame.ChildrenArray...)
+	sort.SliceStable(branches, func(i, j int) bool {
+		return d.frameTop[branches[i]] < d.frameTop[branches[j]]
+	})
+	if len(branches) == 0 {
+		return
+	}
+	first := branches[0]
+	inline := inlineGuard(frame, first)
+	if inline {
+		frame.Width = math.Max(frame.Width, float64(frame.LabelDimensions.Width+first.LabelDimensions.Width)+2*framePadding)
+	}
+	for i, branch := range branches {
+		x, y := frame.TopLeft.X, d.frameTop[branch]
+		if i == 0 && inline {
+			x += float64(frame.LabelDimensions.Width) + framePadding
+			y = frame.TopLeft.Y
+		} else if i > 0 {
+			d.graph.Edges = append(d.graph.Edges, &d2graph.Edge{
+				Src: frame, Dst: branch, ZIndex: 3,
+				Route: []*geo.Point{geo.NewPoint(x, y), geo.NewPoint(x+frame.Width, y)},
+				Attributes: d2graph.Attributes{Style: d2graph.Style{
+					Stroke: frame.Style.Stroke, StrokeWidth: &d2graph.Scalar{Value: "1"}, StrokeDash: &d2graph.Scalar{Value: "5"},
+				}},
+			})
+		}
+		branch.Box = geo.NewBox(geo.NewPoint(x, y), float64(branch.LabelDimensions.Width)+2*label.PADDING, float64(branch.LabelDimensions.Height)+2*label.PADDING)
+		branch.ZIndex = 3
 	}
 }
 func containsObject(list []*d2graph.Object, o *d2graph.Object) bool {

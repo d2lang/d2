@@ -2954,6 +2954,65 @@ func TestEditSequenceShapeOption(t *testing.T) {
 	}
 }
 
+func TestEditFrameAndCaptionFills(t *testing.T) {
+	t.Parallel()
+	for _, caption := range []string{"label.style.fill: red", "label.style: {fill: red}", "label: Outcome {style: {fill: red}}"} {
+		for _, property := range []string{"style.fill", "label.style.fill"} {
+			t.Run(caption+"/"+property, func(t *testing.T) {
+				src := "shape: sequence-diagram\nf: Outcome {shape: edge-group; a -> b; " + caption + "; style: {fill: blue}}"
+				g, _, err := d2compiler.Compile("main.d2", strings.NewReader(src), nil)
+				assert.Success(t, err)
+				g, err = d2oracle.Set(g, nil, "f."+property, nil, go2.Pointer("yellow"))
+				assert.Success(t, err)
+				f, _ := g.Root.HasChild([]string{"f"})
+				if property == "label.style.fill" {
+					if f.LabelFill.Value != "yellow" || f.Style.Fill.Value != "blue" || strings.Contains(d2format.Format(g.AST), "red") {
+						t.Fatal("caption fill did not update in place")
+					}
+				} else if f.Style.Fill.Value != "yellow" || f.LabelFill.Value != "red" || strings.Contains(d2format.Format(g.AST), "blue") {
+					t.Fatal("frame fill did not update in place")
+				}
+				g, err = d2oracle.Delete(g, nil, "f."+property)
+				assert.Success(t, err)
+				f, _ = g.Root.HasChild([]string{"f"})
+				deleted, sibling, wantSibling := f.LabelFill, f.Style.Fill, "blue"
+				if property == "style.fill" {
+					deleted, sibling, wantSibling = f.Style.Fill, f.LabelFill, "red"
+				}
+				if deleted != nil || sibling == nil || sibling.Value != wantSibling || f.Label.Value != "Outcome" {
+					t.Fatalf("deleting %s changed the wrong property:\n%s", property, d2format.Format(g.AST))
+				}
+			})
+		}
+	}
+}
+
+func TestDeleteInheritedFrameCaptionFill(t *testing.T) {
+	t.Parallel()
+	const group = "f: {shape: edge-group; a -> b; style.fill: blue}"
+	for _, src := range []string{
+		"classes: {box: {label.style.fill: red}}\n" + group + "\nf.class: box",
+		"vars: {box: {label.style.fill: red}}\n" + group + "\nf: ${box}",
+		"*: {&shape: edge-group; label.style.fill: red}\n" + group,
+		"...@trace",
+	} {
+		fs := fstest.MapFS{"trace.d2": {Data: []byte(group + "\nf.label.style.fill: red")}}
+		g, _, err := d2compiler.Compile("root.d2", strings.NewReader("shape: sequence-diagram\n"+src), &d2compiler.CompileOptions{FS: fs})
+		assert.Success(t, err)
+		f, _ := g.Root.HasChild([]string{"f"})
+		if f.LabelFill == nil || f.LabelFill.Value != "red" {
+			t.Fatal("expected inherited caption fill")
+		}
+		before := d2format.Format(g.AST)
+		g, err = d2oracle.Delete(g, nil, "f.label.style.fill")
+		assert.Success(t, err)
+		f, _ = g.Root.HasChild([]string{"f"})
+		if f.LabelFill != nil || f.Style.Fill.Value != "blue" || d2format.Format(g.AST) != before+"f.label.style.fill: null\n" {
+			t.Fatalf("expected a local reset of the inherited caption fill:\n%s", d2format.Format(g.AST))
+		}
+	}
+}
+
 func TestReconnectEdge(t *testing.T) {
 	t.Parallel()
 

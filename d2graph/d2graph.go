@@ -205,6 +205,7 @@ type Object struct {
 
 	*geo.Box      `json:"box,omitempty"`
 	LabelPosition *string `json:"labelPosition,omitempty"`
+	LabelFill     *Scalar `json:"labelFill,omitempty"`
 	IconPosition  *string `json:"iconPosition,omitempty"`
 
 	ContentAspectRatio *float64 `json:"contentAspectRatio,omitempty"`
@@ -241,6 +242,7 @@ func (obj *Object) MarkLayoutFontSize() {
 }
 
 type SequenceOptions struct {
+	Branched bool `json:"branched,omitempty"`
 	Mirrored bool `json:"mirrored,omitempty"`
 	Numbered bool `json:"numbered,omitempty"`
 }

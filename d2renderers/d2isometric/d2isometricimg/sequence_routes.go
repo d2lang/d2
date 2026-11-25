@@ -17,11 +17,11 @@ const (
 )
 
 func nativeSequenceEdge(edge d2isometric.Edge) bool {
-	return edge.SequenceRole == "lifeline" || edge.SequenceRole == "message"
+	return edge.SequenceRole == "lifeline" || edge.SequenceRole == "message" || edge.SequenceRole == "divider"
 }
 
 func nativeSequenceEdgeY(edge d2isometric.Edge) float64 {
-	if edge.SequenceRole == "lifeline" {
+	if edge.SequenceRole == "lifeline" || edge.SequenceRole == "divider" {
 		return nativeSequenceLifelineY
 	}
 	return nativeSequenceMessageY

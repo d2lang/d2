@@ -494,18 +494,21 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 	// collected options in class order once the object's final shape is known.
 	var shapeOptions []*d2ir.Field
 	c.compileMapFields(obj, m, &shapeOptions)
-	if obj.IsSequenceDiagramV2() {
+	if obj.LabelFill != nil && obj.Shape.Value != d2target.ShapeSequenceDiagramEdgeGroup {
+		c.errorf(obj.LabelFill.MapKey, "label.style.fill is only supported on sequence diagram edge-groups")
+	}
+	if obj.IsSequenceDiagramV2() || (obj.Shape.Value == d2target.ShapeSequenceDiagramEdgeGroup && len(shapeOptions) > 0) {
 		obj.Sequence = &d2graph.SequenceOptions{}
 	}
 	for _, shape := range shapeOptions {
 		if c.stopped() {
 			return
 		}
-		if !obj.IsSequenceDiagramV2() || shape.Map() == nil {
+		if obj.Sequence == nil || shape.Map() == nil {
 			c.errorf(shape.LastRef().Context().Key, "reserved field shape does not accept composite")
 			continue
 		}
-		c.compileSequenceOptions(obj.Sequence, shape.Map())
+		c.compileSequenceOptions(obj, shape.Map())
 	}
 }
 
@@ -771,7 +774,7 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 		}
 		return
 	} else if isReserved {
-		c.compileReserved(&obj.Attributes, f)
+		c.compileReserved(&obj.Attributes, f, obj)
 		return
 	} else if f.Name.ScalarString() == "style" && f.Name.IsUnquoted() {
 		if f.Map() == nil || len(f.Map().Fields) == 0 {
@@ -886,7 +889,7 @@ func (c *compiler) hasExplicitLabel(attrs *d2graph.Attributes) bool {
 	return ok
 }
 
-func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
+func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field, obj *d2graph.Object) {
 	if c.stopped() {
 		return
 	}
@@ -895,6 +898,14 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 		for _, f := range f.Map().Fields {
 			if c.stopped() {
 				return
+			}
+			if name.ScalarString() == "label" && f.Name.IsUnquoted() && f.Name.ScalarString() == "style" {
+				if obj == nil {
+					c.errorf(f.LastRef().AST(), "label.style.fill is only supported on sequence diagram edge-groups")
+				} else {
+					c.compileFrameLabelStyle(obj, f)
+				}
+				continue
 			}
 			if f.Name.ScalarString() == "near" && f.Name.IsUnquoted() {
 				if f.Primary() == nil {
@@ -951,6 +962,26 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 	}
 }
 
+func (c *compiler) compileFrameLabelStyle(obj *d2graph.Object, style *d2ir.Field) {
+	m := style.Map()
+	if style.Primary() != nil || m == nil || len(m.Fields) != 1 || len(m.Edges) != 0 {
+		c.errorf(style.LastRef().AST(), "label.style expects a fill color")
+		return
+	}
+	fill := m.GetField(d2ast.FlatUnquotedString("fill"))
+	if fill == nil || fill.Primary() == nil || fill.Composite != nil {
+		c.errorf(style.LastRef().AST(), "label.style expects a fill color")
+		return
+	}
+	if _, ok := fill.Primary().Value.(*d2ast.Null); ok {
+		obj.LabelFill = nil
+		return
+	}
+	var labelStyle d2graph.Style
+	c.compileStyleField(&labelStyle, fill)
+	obj.LabelFill = labelStyle.Fill
+}
+
 func (c *compiler) compileShape(attrs *d2graph.Attributes, f *d2ir.Field) {
 	scalar := f.Primary().Value
 	shapeVal := strings.ToLower(scalar.ScalarString())
@@ -967,7 +998,7 @@ func (c *compiler) compileShape(attrs *d2graph.Attributes, f *d2ir.Field) {
 	attrs.Shape.MapKey = f.LastPrimaryKey()
 }
 
-func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
+func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field, obj *d2graph.Object) {
 	if f.Name.ScalarString() == "shape" && f.Composite != nil {
 		c.errorf(f.LastRef().AST(), "shape options can only be used on sequence-diagram objects")
 		return
@@ -1007,7 +1038,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 					}
 				}
 			case "label", "icon", "tooltip":
-				c.compilePosition(attrs, f)
+				c.compilePosition(attrs, f, obj)
 			default:
 				c.errorf(f.LastPrimaryKey(), "reserved field %v does not accept composite", f.Name.ScalarString())
 			}
@@ -1020,7 +1051,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 	switch f.Name.ScalarString() {
 	case "label":
 		c.compileLabel(attrs, f)
-		c.compilePosition(attrs, f)
+		c.compilePosition(attrs, f, obj)
 	case "shape":
 		c.compileShape(attrs, f)
 	case "icon":
@@ -1030,7 +1061,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			return
 		}
 		attrs.Icon = iconURL
-		c.compilePosition(attrs, f)
+		c.compilePosition(attrs, f, obj)
 		if f.Map() != nil {
 			for _, ff := range f.Map().Fields {
 				if c.stopped() {
@@ -1074,7 +1105,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			}
 		}
 
-		c.compilePosition(attrs, f)
+		c.compilePosition(attrs, f, obj)
 	case "width":
 		_, err := strconv.Atoi(scalar.ScalarString())
 		if err != nil {
@@ -1424,7 +1455,7 @@ func (c *compiler) compileEdgeField(edge *d2graph.Edge, f *d2ir.Field) {
 	}
 	_, isReserved := d2ast.SimpleReservedKeywords[keyword]
 	if isReserved {
-		c.compileReserved(&edge.Attributes, f)
+		c.compileReserved(&edge.Attributes, f, nil)
 		return
 	} else if f.Name.ScalarString() == "style" {
 		if f.Map() == nil {
@@ -1469,7 +1500,7 @@ func (c *compiler) compileArrowheads(edge *d2graph.Edge, f *d2ir.Field) {
 			_, isReserved := d2ast.SimpleReservedKeywords[keyword]
 			isReserved = isReserved && f2.Name.IsUnquoted()
 			if isReserved {
-				c.compileReserved(attrs, f2)
+				c.compileReserved(attrs, f2, nil)
 				continue
 			} else if f2.Name.ScalarString() == "style" && f2.Name.IsUnquoted() {
 				if f2.Map() == nil {

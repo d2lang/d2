@@ -23,6 +23,11 @@ func (obj *Object) IsSequenceDiagramActorGroup() bool {
 	return obj != nil && obj.OuterSequenceDiagram().IsSequenceDiagramV2() && obj.Shape.Value == d2target.ShapeSequenceDiagramActorGroup
 }
 
+// IsSequenceDiagramBranch reports a named compartment of a branched message frame.
+func (obj *Object) IsSequenceDiagramBranch() bool {
+	return obj != nil && obj.Parent != nil && obj.Parent.Shape.Value == d2target.ShapeSequenceDiagramEdgeGroup && obj.Parent.Sequence != nil && obj.Parent.Sequence.Branched
+}
+
 // SequenceDiagramActor returns the lifeline owning this actor or timeline item.
 func (obj *Object) SequenceDiagramActor() *Object {
 	for obj != nil && !obj.IsSequenceDiagram() {
@@ -152,7 +157,7 @@ func (e *Edge) ContainedBy(obj *Object) bool {
 
 func (e *Edge) GetGroup() *Object {
 	for _, ref := range e.References {
-		if ref.ScopeObj.IsSequenceDiagramGroup() {
+		if ref.ScopeObj.IsSequenceDiagramGroup() || ref.ScopeObj.IsSequenceDiagramBranch() {
 			return ref.ScopeObj
 		}
 	}

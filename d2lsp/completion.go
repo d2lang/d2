@@ -57,9 +57,12 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		return getStyleCompletions(), nil
 	case "shape", "shape:":
 		return getShapeCompletions(), nil
-	case "shape.":
+	case "sequence-diagram.shape.":
 		return getSequenceOptionCompletions(), nil
-	case "shape.numbered:", "shape.mirrored:":
+	case "edge-group.shape.":
+		return getBranchOptionCompletions(), nil
+	case "sequence-diagram.shape.numbered:", "sequence-diagram.shape.mirrored:", "edge-group.shape.branched:",
+		"shape.numbered:", "shape.mirrored:", "shape.branched:":
 		return getBooleanCompletions(), nil
 	case "shadow", "3d", "multiple", "animated", "bold", "italic", "underline", "filled", "double-border",
 		"shadow:", "3d:", "multiple:", "animated:", "bold:", "italic:", "underline:", "filled:", "double-border:",
@@ -186,12 +189,12 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		// Check nested map
 		if n.MapKey.Value.Map != nil && isPositionInMap(line, column, n.MapKey.Value.Map) {
 			if key != nil && len(key.Path) > 0 && key.Last().Unbox().IsUnquoted() && strings.EqualFold(key.Last().Unbox().ScalarString(), "shape") {
-				shape := n.MapKey.Primary.Unbox()
-				if shape == nil || !strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramV2) {
+				prefix := shapeOptionsContext(m, key)
+				if prefix == "" {
 					return ""
 				}
 				nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
-				return "shape." + strings.ToLower(nested)
+				return prefix + strings.ToLower(nested)
 			}
 			if nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos); nested != "" {
 				if isHolder {
@@ -232,7 +235,11 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 			if key != nil && len(key.Path) > 1 {
 				parent := key.Path[len(key.Path)-2].Unbox()
 				if parent.IsUnquoted() && strings.EqualFold(parent.ScalarString(), "shape") {
-					return "shape." + strings.ToLower(lastPart) + ":"
+					prefix := shapeOptionsContext(m, &d2ast.KeyPath{Path: key.Path[:len(key.Path)-1]})
+					if prefix == "" {
+						prefix = "shape."
+					}
+					return prefix + strings.ToLower(lastPart) + ":"
 				}
 				if isHolder && (firstPart == "source-arrowhead" || firstPart == "target-arrowhead") {
 					return firstPart + "." + lastPart + ":"
@@ -261,8 +268,13 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 // identifies a sequence diagram. The cursor may be at an incomplete key.
 func shapeOptionsContext(m *d2ast.Map, key *d2ast.KeyPath) string {
 	shape := declaredShape(m, key.Path)
-	if shape != nil && strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramV2) {
-		return "shape."
+	if shape != nil {
+		switch strings.ToLower(shape.ScalarString()) {
+		case d2target.ShapeSequenceDiagramV2:
+			return "sequence-diagram.shape."
+		case d2target.ShapeSequenceDiagramEdgeGroup:
+			return "edge-group.shape."
+		}
 	}
 	return ""
 }
@@ -368,6 +380,10 @@ func getShapeCompletions() []CompletionItem {
 		items = append(items, item)
 	}
 	return items
+}
+
+func getBranchOptionCompletions() []CompletionItem {
+	return []CompletionItem{{Label: "branched", Kind: KeywordCompletion, Detail: "Divide an edge-group into named branches", InsertText: "branched: "}}
 }
 
 func getSequenceOptionCompletions() []CompletionItem {

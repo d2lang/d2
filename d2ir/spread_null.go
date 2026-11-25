@@ -12,10 +12,20 @@ type spreadNull struct {
 	source d2ast.Node
 }
 
+func isCaptionFill(f *Field) bool {
+	for _, name := range [...]string{"fill", "style", "label"} {
+		if f == nil || f.Name == nil || !f.Name.IsUnquoted() || f.Name.ScalarString() != name {
+			return false
+		}
+		f = ParentField(f)
+	}
+	return true
+}
+
 func (c *compiler) setFieldPrimary(f *Field, value d2ast.Scalar) {
 	order := c.assignmentOrder()
 	f.Primary_ = &Scalar{parent: f, Value: value, order: order}
-	if _, null := value.(*d2ast.Null); null {
+	if _, null := value.(*d2ast.Null); null && !isCaptionFill(f) {
 		// Ordinary nulls delete their field during compilation. A null inside
 		// vars remains a value so it can shadow a variable from an outer scope.
 		c.hasTemplateNull = true

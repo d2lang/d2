@@ -2994,6 +2994,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		definePaint(shape.Fill)
 		definePaint(shape.Stroke)
 		definePaint(shape.Color)
+		definePaint(shape.LabelFill)
 	}
 	for _, connection := range diagram.Connections {
 		definePaint(connection.Fill)

@@ -84,6 +84,30 @@ Indexed message overrides still use the group that defines the message. For
 example, `handshake.(alice -> bob)[0].style.stroke: blue` styles the first message
 in `handshake`. Inside that group, use `(alice -> bob)[0].style.stroke: blue`.
 
+### Branches
+
+Set `branched: true` on the **edge-group’s shape** to draw alternatives in one
+frame. Each direct child map provides a branch and its label. The branches
+appear in source order, separated by dashed lines. Keep the timeline items of
+each branch together. An indexed override can still style a message from an
+earlier branch. The frame title is ordinary text.
+
+```d2
+shape: sequence-diagram
+result: Payment outcome {
+  shape: edge-group {branched: true}
+  style.fill: "#e5eef7"
+  label.style.fill: "#c4dbef"
+  approved: Approved {api -> client: Receipt}
+  declined: Declined {api -> client: Retry}
+}
+```
+
+The dotted spelling is `result.shape.branched: true`. A nested `edge-group`
+inside a branch still has its own frame. Set `label.style.fill` on any v2
+edge-group to choose the backdrop for its caption. The frame body uses
+`style.fill`; by default the caption uses the frame fill too.
+
 ## Spans, notes, and events
 
 An actor's descendants have an explicit role:
@@ -119,14 +143,22 @@ Set spacing on the sequence diagram:
 - `vertical-gap` controls the space between successive messages and events.
 - `grid-gap` supplies a common gap; directional settings override it.
 
-Set `vertical-gap` on a message to change the spacing **after** that message.
-A value of `0` lets the next message share its vertical position:
+Set `vertical-gap` on a message, note, event, or midway actor repeat to change
+the spacing **after** that item. A value of `0` puts the next item on the same
+row. Consecutive zeroes can join three or more items:
 
 ```d2
 shape: sequence-diagram
-a -> b: First {vertical-gap: 0}
-b -> c: Second
+a.ready: Ready {shape: page; vertical-gap: 0}
+b.ready: Listening {shape: page}
+a -> b: Request {label.near: outside-top-center}
 ```
+
+Use `label.near: outside-top-center` to place message text above the wire.
+Use `outside-bottom-center` for text below. Left and right alternatives move
+the label toward that side of the page, including on replies that point left.
+`center-center` keeps it on the wire. On a self-message the top and bottom
+positions follow the outgoing and returning legs.
 
 Choose enough spacing for your labels and events. Connections written as a chain
 still advance through the sequence; use an explicit message gap when they should

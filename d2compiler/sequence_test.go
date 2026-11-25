@@ -151,6 +151,10 @@ box.shape: rectangle
 func TestSequenceV2Invalid(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct{ source, want string }{
+		{`shape: sequence-diagram {branched: true}`, "unknown sequence diagram shape option"},
+		{`shape: sequence-diagram; result: {shape: edge-group {branched: yes}}`, "shape.branched must be true or false"},
+		{`shape: sequence-diagram; result: {shape: edge-group {branched: true}; a -> b}`, "place messages inside a named branch"},
+		{`shape: sequence-diagram; result: {shape: edge-group {branched: true}; ok: {shape: square}}`, "a branch cannot have a shape"},
 		{`shape: sequence-diagram {mirrored: maybe}`, "shape.mirrored must be true or false"},
 		{`shape: sequence-diagram; shape.numbered: {yes}`, "shape.numbered must be true or false"},
 		{`shape: sequence-diagram; shape.mirror: true`, "unknown sequence diagram shape option \"mirror\""},
@@ -160,6 +164,7 @@ func TestSequenceV2Invalid(t *testing.T) {
 		{`shape: sequence_diagram; shape.numbered: true`, "shape does not accept composite"},
 		{`a -> b: {shape: sequence-diagram {numbered: true}}`, "shape options can only be used on sequence-diagram objects"},
 		{`a -> b: {target-arrowhead.shape: diamond {mirrored: true}}`, "shape options can only be used on sequence-diagram objects"},
+		{`shape: sequence-diagram; a -> b: hi {label.near: border-left-top}`, "sequence message label.near"},
 		{`shape: sequence-diagram; a.note.shape: page; a.note -> b`, "can only connect actors or spans"},
 		{`shape: sequence-diagram; a.event.shape: diamond; a.event -> b`, "can only connect actors or spans"},
 		{`shape: sequence-diagram; a.again.shape: actor; a.again -> b`, "can only connect actors or spans"},
@@ -374,4 +379,15 @@ func TestSequenceV2StructuredActorTimeline(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSequenceV2BranchedGlob(t *testing.T) {
+	g := compileSequence(t, `shape: sequence-diagram
+*: {&shape: edge-group; &shape.branched: false; shape.branched: true}
+decision: {shape: edge-group; yes: {a -> b: Done}}
+branched: ordinary actor`)
+	require.True(t, sequenceObject(t, g, "decision.yes").IsSequenceDiagramBranch())
+	require.True(t, sequenceObject(t, g, "branched").IsSequenceDiagramActor())
+	require.Equal(t, "a", g.Edges[0].Src.AbsID())
+	require.Equal(t, "b", g.Edges[0].Dst.AbsID())
 }
