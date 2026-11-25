@@ -52,16 +52,31 @@ func TestStepConnectorClearsAnchoredDecoration(t *testing.T) {
 	}
 }
 
-func TestUncertainStepCaptionsRetainClearCenterline(t *testing.T) {
-	for _, text := range []string{"  .", "  ˣ", "    ", "Review\nrequest"} {
-		source := fmt.Sprintf("direction: right\nA: First {shape: step; width: 120; height: 90}\nB: %q {shape: step; width: 120; height: 90; label.near: outside-right-center}\nC: Last {shape: step; width: 200; height: 90}\nA -> B -> C\n(A -> B)[0].style.stroke-width: 2", text)
+func TestUncertainStepCaptionCenterline(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		move bool
+	}{
+		{"  Review", true},
+		{"Ready\nGo\nDone", true},
+		{"Queue\nEntry\n2\nCount\nDone", true},
+		{"Review\nrequest", false},
+		{"Review\nand\napprove\nrequest", false},
+		{"  .", false},
+		{"  ᴬ", false},
+		{"    ", false},
+		{"Ready\n\nDone", false},
+		{"Start\nNext\n...\nLater\nEnd", false},
+	} {
+		source := fmt.Sprintf("direction: right\nA: First {shape: step; width: 120; height: 180}\nB: %q {shape: step; width: 120; height: 180; label.near: outside-right-center}\nC: Last {shape: step; width: 200; height: 180}\nA -> B -> C\n(A -> B)[0].style.stroke-width: 2", tc.text)
 		d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
 		if len(d.Connections) != 2 {
-			t.Fatalf("%q: expected explicit connections", text)
+			t.Fatalf("%q: expected explicit connections", tc.text)
 		}
 		route := d.Connections[1].Route
-		if len(route) != 2 || route[0].Y != float64(d.Shapes[1].Pos.Y)+float64(d.Shapes[1].Height)/2 || route[1].Y != route[0].Y {
-			t.Errorf("%q: clear centerline moved: %v", text, route)
+		center := float64(d.Shapes[1].Pos.Y) + float64(d.Shapes[1].Height)/2
+		if len(route) != 2 || (route[0].Y != center) != tc.move || route[1].Y != route[0].Y {
+			t.Errorf("%q: expected straight route with move=%t, got %v", tc.text, tc.move, route)
 		}
 	}
 }

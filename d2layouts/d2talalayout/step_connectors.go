@@ -93,11 +93,16 @@ func clearStepConnectorDecorations(source *d2graph.Graph, g *layoutgraph.Graph) 
 	}
 }
 
-// A centered shaft spanning a whole single line passes through ordinary
-// letters and digits, even when SVG collapses white space on either side.
-// Superscripts and punctuation can sit entirely above or below the shaft.
+// The SVG renderer puts one equally spaced tspan on each newline-delimited
+// row. An even row count leaves the centerline between rows. For odd counts,
+// only the middle row can be struck by a shaft centered on the label box.
 func centerLineText(text string) bool {
-	return len(text) <= 1024 && !strings.ContainsAny(text, "\r\n\t") && strings.ContainsFunc(text, func(r rune) bool {
+	if len(text) > 1024 || strings.ContainsAny(text, "\r\t") {
+		return false
+	}
+	lines := strings.Split(text, "\n")
+	return len(lines)%2 == 1 && strings.ContainsFunc(lines[len(lines)/2], func(r rune) bool {
+		// Superscripts and punctuation can lie above or below the shaft.
 		return r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r))
 	})
 }
