@@ -1887,7 +1887,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		}
 	}
 
-	if len(refctx.Key.Edges) == 0 && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
+	if (len(refctx.Key.Edges) == 0 || refctx.Key.EdgeKey != nil) && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
 		// For vars, if we delete the field, it may just resolve to an outer scope var of the same name
 		// Instead we keep it around, so that resolveSubstitutions can find it
 		if !IsVar(ParentMap(f)) {
@@ -2271,11 +2271,14 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 		return
 	}
 	eida := NewEdgeIDs(refctx.Key)
+	// A null selector with a property suffix clears only that edge field.
+	clearing := refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil
+	deleteEdge := clearing && refctx.Key.EdgeKey == nil
 	for i, eid := range eida {
 		if c.stopped() {
 			return
 		}
-		if !eid.Glob && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
+		if !eid.Glob && deleteEdge {
 			c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
 			refctx.ScopeMap.DeleteEdge(eid)
 			continue
@@ -2285,10 +2288,12 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 		refctx.Edge = refctx.Key.Edges[i]
 
 		var ea []*Edge
-		if eid.Index != nil || eid.Glob {
+		if eid.Index != nil || eid.Glob || clearing {
 			ea = refctx.ScopeMap.getEdgesForCompile(eid, refctx, c)
 			if len(ea) == 0 {
-				if !eid.Glob {
+				if clearing && !eid.Glob {
+					c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
+				} else if !eid.Glob {
 					c.errorf(refctx.Edge, "indexed edge does not exist")
 				}
 				continue
@@ -2297,7 +2302,7 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 				if c.stopped() {
 					return
 				}
-				if refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil {
+				if deleteEdge {
 					c.recordSpreadDeletion(ParentMap(e), &spreadMember{edge: e.ID}, refctx.Key)
 					refctx.ScopeMap.DeleteEdge(e.ID)
 					continue

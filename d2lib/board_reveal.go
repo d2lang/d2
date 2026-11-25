@@ -3,6 +3,7 @@ package d2lib
 import (
 	"image"
 	"math"
+	"reflect"
 	"slices"
 	"sort"
 
@@ -16,9 +17,10 @@ import (
 // around its incoming port, so the arriving wire stays attached throughout
 // the pop. Additional branches can then grow from that leaf.
 type boardReveal struct {
-	nodes map[string]boardBirth
-	wires map[string]*boardTrace
-	end   float64
+	nodes     map[string]boardBirth
+	wires     map[string]*boardTrace
+	end       float64
+	departing bool
 }
 
 type boardBirth struct {
@@ -39,6 +41,61 @@ type boardTrace struct {
 }
 
 func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardReveal {
+	return buildBoardReveal(prev, next, g, false)
+}
+
+// Every survivor must keep its paint, geometry and stacking order throughout
+// a departure. This also proves that both boards use the same coordinates.
+func planBoardDeparture(prev, next *d2target.Diagram, g *d2graph.Graph) *boardReveal {
+	if len(prev.Shapes) > 256 || len(prev.Connections) > 256 ||
+		len(next.Shapes) >= len(prev.Shapes) && len(next.Connections) >= len(prev.Connections) ||
+		!sameBoardCanvas(prev, next) || !unchangedSurvivors(prev.Shapes, next.Shapes) ||
+		!unchangedSurvivors(prev.Connections, next.Connections) {
+		return nil
+	}
+	m := buildBoardReveal(next, prev, g, true)
+	return m.ordinaryLeaves(next, prev, g)
+}
+
+// Each visibly changed body needs its own animation. Containers, sequence
+// actors and renderer-owned shapes require their dedicated transitions.
+func (m *boardReveal) ordinaryLeaves(short, full *d2target.Diagram, g *d2graph.Graph) *boardReveal {
+	if m == nil {
+		return nil
+	}
+	survivors := gridEdgeShapeMap(short.Shapes)
+	for i := range full.Shapes {
+		s := &full.Shapes[i]
+		if survivors[s.ID] == nil && s.Opacity > 0 {
+			if _, planned := m.nodes[s.ID]; !planned {
+				return nil
+			}
+		}
+	}
+	for _, n := range g.Objects {
+		if _, changed := m.nodes[n.AbsID()]; changed && n.OuterSequenceDiagram() != nil {
+			return nil
+		}
+	}
+	for _, e := range g.Edges {
+		if m.wires[e.AbsID()] != nil && (e.Src.OuterSequenceDiagram() != nil || e.Dst.OuterSequenceDiagram() != nil) {
+			return nil
+		}
+	}
+	return m
+}
+
+func unchangedSurvivors[T any](before, after []T) bool {
+	j := 0
+	for i := range before {
+		if j < len(after) && reflect.DeepEqual(&before[i], &after[j]) {
+			j++
+		}
+	}
+	return j == len(after)
+}
+
+func buildBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph, departing bool) *boardReveal {
 	if len(next.Shapes) > 256 || len(next.Connections) > 256 || len(prev.Shapes) > len(next.Shapes) || len(prev.Connections) > len(next.Connections) {
 		return nil
 	}
@@ -101,7 +158,7 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 			queue = append(queue, to)
 		}
 	}
-	m := &boardReveal{nodes: make(map[string]boardBirth), wires: make(map[string]*boardTrace)}
+	m := &boardReveal{nodes: make(map[string]boardBirth), wires: make(map[string]*boardTrace), departing: departing}
 	for _, n := range g.Objects {
 		if n.IsContainer() {
 			continue
@@ -170,7 +227,7 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 	}
 	// Only grow past the authored box after reserving the extra space.
 	// Large edits still get the damped arrival within the ordinary footprint.
-	if len(next.Shapes) <= 40 && len(next.Connections) <= 48 {
+	if !departing && len(next.Shapes) <= 40 && len(next.Connections) <= 48 {
 		for _, n := range g.Objects {
 			id := n.AbsID()
 			if birth, ok := m.nodes[id]; ok {
@@ -488,6 +545,9 @@ func (b boardBirth) sampleShape(final d2target.Shape, now float64) d2target.Shap
 }
 
 func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
+	if m.departing {
+		progress = 1 - progress
+	}
 	now := progress * m.end
 	for i := range frame.Shapes {
 		s := &frame.Shapes[i]

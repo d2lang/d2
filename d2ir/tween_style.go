@@ -62,6 +62,7 @@ func (c *compiler) directChanges(previous, board *Map) []directChange {
 
 		// Edge order may differ between authored boards. Match the scoped D2
 		// connection and its parallel-edge index, then use its frame position.
+		var byDeclaration map[*EdgeReference]*Edge
 		for i, edge := range current.Edges {
 			if c.stopped() {
 				return
@@ -74,6 +75,24 @@ func (c *compiler) directChanges(previous, board *Map) []directChange {
 				start = previous.Edges[i]
 			} else if matches := previous.getEdgesIndexed(edge.ID); len(matches) == 1 {
 				start = matches[0]
+			}
+			// Removing a parallel edge can reuse its index for a different
+			// declaration. Inherited IR edges share their original reference.
+			if len(edge.References) > 0 && (start == nil || len(start.References) == 0 || start.References[0] != edge.References[0]) {
+				if byDeclaration == nil {
+					byDeclaration = make(map[*EdgeReference]*Edge)
+					for _, old := range previous.Edges {
+						if len(old.References) != 0 {
+							ref := old.References[0]
+							if _, duplicate := byDeclaration[ref]; duplicate {
+								byDeclaration[ref] = nil
+							} else {
+								byDeclaration[ref] = old
+							}
+						}
+					}
+				}
+				start = byDeclaration[edge.References[0]]
 			}
 			walk(start.Map(), edge.Map(), append(path, propertyPathPart{edge: i}))
 		}

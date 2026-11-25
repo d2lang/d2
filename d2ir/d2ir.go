@@ -562,6 +562,11 @@ func (m *Map) CopyBase(newParent Node) *Map {
 }
 
 func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrder) {
+	// An edge attribute can refer to the edge selector that assigned it, but
+	// it is never an endpoint whose removal should delete that connection.
+	if ParentEdge(m) != nil {
+		return
+	}
 	for _, fr := range refs {
 		if cutoff != nil && (!fr.InEdge() || cutoff.before(fr.order)) {
 			continue

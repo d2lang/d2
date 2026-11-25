@@ -19,7 +19,7 @@ type spreadMember struct {
 
 // Record the deletion in the edge's owning scope. Either endpoint can use
 // underscores or a shared path prefix to name a different containing map.
-func (c *compiler) recordSpreadEdgeDeletion(m *Map, id *EdgeID, source d2ast.Node) {
+func (c *compiler) recordSpreadEdgeDeletion(m *Map, id *EdgeID, source *d2ast.Key) {
 	if !c.hasMapSpread {
 		return
 	}
@@ -36,6 +36,13 @@ func (c *compiler) recordSpreadEdgeDeletion(m *Map, id *EdgeID, source d2ast.Nod
 		common = common[1:]
 	}
 	path := &spreadMember{edge: edge}
+	if source.EdgeKey != nil {
+		member := path
+		for _, field := range source.EdgeKey.IDA() {
+			member.child = &spreadMember{field: field}
+			member = member.child
+		}
+	}
 	for i := len(common) - 1; i >= 0; i-- {
 		path = &spreadMember{field: common[i], child: path}
 	}
