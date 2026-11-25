@@ -8,7 +8,7 @@ import (
 // EditGraphScopes materializes selected submaps for graph normalization. A
 // true entry selects the whole scope; false marks an ancestor on the way to
 // one. Other maps are read-only during graph compilation and can be shared.
-func EditGraphScopes(ctx context.Context, root *Map, scopes map[*Map]bool, owned bool, edit func(*Map)) (*Map, error) {
+func EditGraphScopes(ctx context.Context, root *Map, scopes map[*Map]bool, owned bool, edit func(*Map) error) (*Map, error) {
 	budget := ensureVariableExpansionBudget(root)
 	var visit func(*Map, *Map, *Field, bool) (*Map, error)
 	visit = func(src, selection *Map, parent *Field, writable bool) (*Map, error) {
@@ -29,8 +29,7 @@ func EditGraphScopes(ctx context.Context, root *Map, scopes map[*Map]bool, owned
 			} else if err := detachGraphAliases(ctx, m); err != nil {
 				return nil, err
 			}
-			edit(m)
-			return m, nil
+			return m, edit(m)
 		}
 		if !writable {
 			// Only copy the slots needed to substitute the edited children.

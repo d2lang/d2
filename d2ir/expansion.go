@@ -18,6 +18,9 @@ const DefaultMaxVariableExpansion int64 = 65_536
 type variableExpansionBudget struct {
 	limit int64
 	used  int64
+	// A history shared by boards or templates only incurs expansion work
+	// when graph compilation actually visits an entry more than once.
+	sequenceDeletesSeen map[*sequenceDeletion]struct{}
 }
 
 type variableExpansionLimitError struct {
@@ -270,7 +273,6 @@ func variableExpansionNodeUnits(n Node) int64 {
 
 	switch n := n.(type) {
 	case *Map:
-		addVariableExpansionUnits(&units, len(n.sequenceDeletes))
 		addVariableExpansionUnits(&units, len(n.Fields))
 		addVariableExpansionUnits(&units, len(n.Edges))
 	case *Field:

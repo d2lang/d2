@@ -459,3 +459,27 @@ func (c *cancelAfterErrContext) Err() error {
 	}
 	return nil
 }
+
+func TestSequenceDeletionHistoryExpansionBudget(t *testing.T) {
+	t.Parallel()
+	m := &Map{}
+	m.initRoot()
+	f := &Field{Name: d2ast.FlatUnquotedString("actor")}
+	const count = 10
+	for i := range count {
+		m.rememberSequenceDeletion(f, fieldOrder{sequence: uint64(i + 1)})
+	}
+	root := m.sequenceDeletes
+	if root == nil || root.previous != nil || root.order.sequence != count {
+		t.Fatal("successive clears of the same actor did not coalesce")
+	}
+	// Logical occurrences grow exponentially using a linear number of links.
+	for i := range 16 {
+		m.sequenceDeletes = combineSequenceDeletions(m.sequenceDeletes, m.sequenceDeletes, &fieldOrder{sequence: uint64(i + 1)})
+	}
+	budget := &variableExpansionBudget{limit: 100}
+	err := m.sequenceDeletes.walk(context.Background(), budget, func(*sequenceDeletion, fieldOrder) {})
+	if !errors.As(err, new(*variableExpansionLimitError)) || budget.used != budget.limit {
+		t.Fatalf("replayed deletion history used %d units and returned %v", budget.used, err)
+	}
+}

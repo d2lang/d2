@@ -386,3 +386,50 @@ second: ${module}`
 		}
 	}
 }
+
+func TestOrdinaryBoardCopiesWithNulls(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, diagram string
+		scenarios     int
+		nestedNulls   bool
+	}{
+		{"ordinary", "", 50, false},
+		{"independent_sequence_layer", "layers: {trace: {seq: {shape: sequence-diagram; a -> b}}}", 50, false},
+		{"inherited_sequence", "seq: {shape: sequence-diagram; a -> b}", 16, true},
+		{"variable_sequence", "vars: {kind: sequence-diagram}; seq: {shape: ${kind}; a -> b}", 16, true},
+	} {
+		for _, distinct := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/distinct=%t", tc.name, distinct), func(t *testing.T) {
+				var source strings.Builder
+				source.WriteString("visible\n")
+				if tc.nestedNulls {
+					source.WriteString("ordinary: {\n")
+				}
+				for i := range 180 {
+					key := "unused"
+					if distinct {
+						key += fmt.Sprint(i)
+					}
+					fmt.Fprintf(&source, "%s: null\n", key)
+				}
+				if tc.nestedNulls {
+					source.WriteString("}\n")
+				}
+				fmt.Fprintln(&source, tc.diagram)
+				source.WriteString("scenarios: {\n")
+				for i := range tc.scenarios {
+					fmt.Fprintf(&source, "s%d: {}\n", i)
+				}
+				source.WriteString("}")
+				g, _, err := Compile("nulls.d2", strings.NewReader(source.String()), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(g.Scenarios) != tc.scenarios {
+					t.Fatalf("got %d scenarios, want %d", len(g.Scenarios), tc.scenarios)
+				}
+			})
+		}
+	}
+}

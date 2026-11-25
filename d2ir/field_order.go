@@ -100,9 +100,7 @@ func (m *Map) nestDeclarationOrder(site *fieldOrder) {
 	if m == nil {
 		return
 	}
-	for i := range m.sequenceDeletes {
-		m.sequenceDeletes[i].order = m.sequenceDeletes[i].order.within(site)
-	}
+	m.sequenceDeletes = combineSequenceDeletions(nil, m.sequenceDeletes, site)
 	for _, field := range m.Fields {
 		field.nestDeclarationOrder(site)
 	}

@@ -189,7 +189,7 @@ type Map struct {
 	Fields            []*Field `json:"fields"`
 	Edges             []*Edge  `json:"edges"`
 
-	sequenceDeletes []sequenceDeletion
+	sequenceDeletes *sequenceDeletion
 	globs           []*globContext
 	pendingSpreads  []*Field
 
@@ -490,7 +490,6 @@ func (m *Map) Copy(newParent Node) Node {
 	m.structureVersion = 0
 	m.firstEdgeField = nil
 	m.pendingSpreads = nil
-	m.sequenceDeletes = slices.Clone(m.sequenceDeletes)
 
 	m.parent = newParent
 	pfields := m.Fields

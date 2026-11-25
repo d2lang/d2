@@ -104,9 +104,12 @@ func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool, c *c
 // their slots, while fields first mentioned by later keys or edge endpoints go
 // in the spread's order. Apply the same rule inside overlapping containers.
 func mergeMap(m, overlay *Map, indexed bool, site *spreadSite, at int) {
-	for _, deletion := range overlay.sequenceDeletes {
-		deletion.order = site.place(deletion.order)
-		m.sequenceDeletes = append(m.sequenceDeletes, deletion)
+	if overlay.sequenceDeletes != nil {
+		var occurrence *fieldOrder
+		if site != nil {
+			occurrence = &site.fieldOrder
+		}
+		m.sequenceDeletes = combineSequenceDeletions(m.sequenceDeletes, overlay.sequenceDeletes, occurrence)
 	}
 	var spread map[*Field]bool
 	var insert []*Field

@@ -108,7 +108,7 @@ func (c *compiler) sequenceDiagramMaps(m *d2ir.Map, selected map[*d2ir.Map]bool)
 	return found
 }
 
-func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
+func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) error {
 	type scope struct {
 		m            *d2ir.Map
 		original     []d2ast.String
@@ -187,7 +187,7 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 	}
 	collect(diagram, base, nil, false)
 	if invalid {
-		return
+		return nil
 	}
 
 	// Deleting an actor or one of its attributes must also clear preceding
@@ -204,11 +204,15 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 				shared[key] = append(shared[key], s.m)
 			}
 		}
-		d2ir.ApplySequenceDeletions(actorScopes, func(f *d2ir.Field) bool {
+		if err := d2ir.ApplySequenceDeletions(c.ctx, actorScopes, func(f *d2ir.Field) bool {
 			return sequenceObjectField(f) && c.sequenceShape(f.Map()) != d2target.ShapeSequenceDiagramEdgeGroup
-		})
+		}); err != nil {
+			return err
+		}
 		for _, parts := range shared {
-			d2ir.ApplySequenceDeletions(parts, nil)
+			if err := d2ir.ApplySequenceDeletions(c.ctx, parts, nil); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -277,6 +281,7 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 		// messages whose original references named the moved actors.
 		s.m.Fields = retained
 	}
+	return nil
 }
 
 // An imported reference has no local ScopeMap; a reusable map's reference

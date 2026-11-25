@@ -506,6 +506,32 @@ frame: {shape: edge-group; a.n: Canceled {shape: page}; a.style.fill: red; a -> 
 	require.Equal(t, "1. New", step.Edges[0].Label.Value)
 }
 
+func TestSequenceDeletionInCachedNestedImports(t *testing.T) {
+	t.Parallel()
+	files := fstest.MapFS{
+		"clean.d2":  {Data: []byte("a.note: null")},
+		"bundle.d2": {Data: []byte("...@clean")},
+	}
+	const input = `shape: sequence-diagram
+before: {shape: edge-group; a.note: First {shape: page}; a -> b}
+...@bundle
+after: {shape: edge-group; a.note: Second {shape: page}; b -> a}
+`
+	for _, repeat := range []bool{false, true} {
+		source := input
+		if repeat {
+			source += "...@bundle"
+		}
+		g, _, err := d2compiler.Compile("test.d2", strings.NewReader(source), &d2compiler.CompileOptions{FS: files})
+		require.NoError(t, err)
+		note, found := g.Root.HasChild([]string{"a", "note"})
+		require.Equal(t, !repeat, found)
+		if found {
+			require.Equal(t, "Second", note.Label.Value)
+		}
+	}
+}
+
 func TestSequenceNestedFrameDeletionKeepsActor(t *testing.T) {
 	t.Parallel()
 	for _, decl := range []string{"shape: edge-group", "class: frame"} {
