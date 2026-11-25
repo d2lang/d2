@@ -512,7 +512,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, defined, idToShape, false, theme, true, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -1047,7 +1047,7 @@ func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
 		svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", c.X, c.Y, c.Width, c.Height)), svg.Attr("overflow", "hidden")))
 }
 
-func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, maskCaption bool, markdown *markdownRenderer) (labelMask string, _ error) {
 	if c := connection.MotionClip; c != nil {
 		openMotionViewport(writer, c)
 		defer writer.buf.WriteString("</svg>")
@@ -1120,7 +1120,8 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		labelTL = connection.GetLabelTopLeft()
 		labelTL.X = math.Round(labelTL.X)
 		labelTL.Y = math.Round(labelTL.Y)
-
+	}
+	if labelTL != nil && maskCaption {
 		maskTL := labelTL.Copy()
 		width := connection.LabelWidth
 		height := connection.LabelHeight
@@ -3053,7 +3054,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 			if len(crossings[c.index]) != 0 || len(lifelineGaps[c.index]) != 0 {
 				maskID = crossingMaskID(isolatedDiagramHash, c.index)
 			}
-			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
+			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, defined, idToShape, sketch, inlineTheme, c.LabelMasksStroke(paintVisible), markdown)
 			if err != nil {
 				return nil, err
 			}

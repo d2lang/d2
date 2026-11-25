@@ -15,6 +15,13 @@ type SequenceLabelGap struct {
 	Opacity float64
 }
 
+// LabelMasksStroke reports whether the main caption contributes a knockout.
+// Rich content can supply its own ink. Legacy labels keep their existing masks.
+func (c *Connection) LabelMasksStroke(paintVisible func(string) bool) bool {
+	return c.Label != "" && (c.SequenceRole != "message" || c.Language != "" ||
+		paintVisible(c.GetFontColor()) || paintVisible(c.Fill))
+}
+
 // SequenceLifelineLabelGaps returns stroke masks keyed by connection index. Keeping
 // the original route intact preserves the phase of its dashes and its animation.
 func (d *Diagram) SequenceLifelineLabelGaps(sketch bool, paintVisible func(string) bool) map[int][]SequenceLabelGap {
@@ -114,7 +121,7 @@ func (d *Diagram) SequenceLifelineLabelGaps(sketch bool, paintVisible func(strin
 		if c.MotionLabel != nil {
 			opacity *= c.MotionLabel.Opacity
 		}
-		if c.Label != "" && opacity > 0 && paintVisible(c.GetFontColor()) {
+		if opacity > 0 && c.LabelMasksStroke(paintVisible) {
 			if tl := c.GetLabelTopLeft(); tl != nil {
 				add(geo.NewPoint(math.Round(tl.X), math.Round(tl.Y)), &c.Text, opacity, c.MotionClip)
 			}

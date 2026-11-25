@@ -8,6 +8,7 @@ import (
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
@@ -42,16 +43,18 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		holes = append(holes, hole)
 	}
 
+	paintVisible := d2themes.PaintVisibleIn(b.theme)
 	for _, connection := range b.diagram.Connections {
 		if err := b.ctx.Err(); err != nil {
 			return nil, err
 		}
-		if connection.Opacity == 0 || connection.Label == "" && connection.Icon == nil {
+		maskCaption := connection.LabelMasksStroke(paintVisible)
+		if connection.Opacity == 0 || !maskCaption && connection.Icon == nil {
 			continue
 		}
 		var holeBox d2scene.Box
 		position := connection.IconPosition
-		if connection.Label != "" {
+		if maskCaption {
 			topLeft := connection.GetLabelTopLeft()
 			if topLeft == nil {
 				return nil, invalidField(fmt.Sprintf("connection %q", connection.ID), "labelPosition", connection.LabelPosition, "does not resolve on the route")
