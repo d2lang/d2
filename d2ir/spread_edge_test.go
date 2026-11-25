@@ -1,6 +1,7 @@
 package d2ir
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2ast"
@@ -104,5 +105,27 @@ func TestClearEdgeSelectorProperty(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClearPropertiesOnScopedParallelSpreadEdges(t *testing.T) {
+	const links = `a -> b: Alpha {style.opacity: 0.2}; a -> b: Beta {style.opacity: 0.3}; q -> z: Other {style.opacity: 0.7}`
+	const prefix = "vars: {t: {" + links + "}}\n"
+	const use = "scope: {...${t}}; other: {...${t}}; "
+	for _, sel := range []string{
+		"scope.(a -> b)[*]", "(scope.a -> scope.b)[*]", "scope.(a -> *)[*]", "scope.(* -> b)[*]",
+		"scope.(** -> **)[*]", "(scope.a -> scope.*)[*]", "scope.(a -> *)[0]", "(** -> **)[1]",
+	} {
+		source := prefix + use + sel + ".style.opacity: null"
+		got := compileIndexTestSource(t, source)
+		want := compileIndexTestSource(t, strings.ReplaceAll(source, "...${t}", links))
+		for _, scope := range []string{"scope", "other"} {
+			inScope := func(m *Map) string {
+				return m.getFieldIndexed(d2ast.FlatUnquotedString(scope)).Map().String()
+			}
+			if inScope(got) != inScope(want) {
+				t.Errorf("%s, %s: got\n%s\nwant\n%s", sel, scope, inScope(got), inScope(want))
+			}
+		}
 	}
 }

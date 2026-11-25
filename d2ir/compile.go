@@ -39,6 +39,7 @@ type compiler struct {
 	hasTemplateNull     bool
 	spreadNulls         []spreadNull
 	hasMapSpread        bool
+	hasEdgeClearGlob    bool
 	fieldOrder          uint64
 	err                 *d2parser.ParseError
 	ctx                 context.Context
@@ -618,10 +619,14 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 							}
 						}
 
-						if removedField && len(m.globs) > 0 && !c.lazyGlobBeingApplied {
+						if removedField && !c.lazyGlobBeingApplied {
+							globs := m.globs
+							if c.hasEdgeClearGlob && resolvedField.Map().mayHaveEdges() {
+								globs = c.edgePropertyGlobsForSpread(m)
+							}
 							origGlobStack := c.globContextStack
-							c.globContextStack = append(c.globContextStack, m.globs)
-							for _, gctx := range m.globs {
+							c.globContextStack = append(c.globContextStack, globs)
+							for _, gctx := range globs {
 								old := c.lazyGlobBeingApplied
 								priorReplay := c.replayingSpreadGlobs
 								c.lazyGlobBeingApplied, c.replayingSpreadGlobs = true, true
@@ -2274,9 +2279,17 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 	// A null selector with a property suffix clears only that edge field.
 	clearing := refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil
 	deleteEdge := clearing && refctx.Key.EdgeKey == nil
+	if clearing && refctx.Key.EdgeKey != nil && refctx.Key.HasGlob() {
+		c.hasEdgeClearGlob = true
+	}
 	for i, eid := range eida {
 		if c.stopped() {
 			return
+		}
+		if clearing && eid.Glob && refctx.Key.EdgeKey != nil {
+			// A pending spread can add matching parallel edges after this
+			// selector has already processed the ones currently in scope.
+			c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
 		}
 		if !eid.Glob && deleteEdge {
 			c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
