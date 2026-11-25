@@ -253,7 +253,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 		return err
 	}
 
-	frame, err := newPackingFrame(root, g.Containers[root], guard)
+	frame, err := newPackingFrame(root, g.Containers[root], len(g.Edges) == 0, guard)
 	if err != nil {
 		return err
 	}

@@ -60,6 +60,8 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 		}
 	}
 
+	fixedCaptionCount := len(placedFakeNodes)
+
 	// add all arrowhead labels to placedFakeNodes
 	for _, e := range g.Edges {
 		if err := checkCanceled(); err != nil {
@@ -285,7 +287,19 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 				if err != nil {
 					return err
 				}
-				labelOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes, label.PADDING, guard)
+				// A fixed caption's preferred padding can touch another caption
+				// without covering it. Within a frame, compare their actual text
+				// before the tiebreaker evaluates the space around each caption.
+				fixed := 0
+				if node.Container != nil && node.HasWideCaptionWithFixedIcon() {
+					fixed = fixedCaptionCount
+				}
+				fixedOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes[:fixed], 0, guard)
+				if err != nil {
+					return err
+				}
+				labelOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes[fixed:], label.PADDING, guard)
+				labelOverlaps += fixedOverlaps
 				if err != nil {
 					return err
 				}

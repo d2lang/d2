@@ -51,7 +51,7 @@ func TestBinPackScoreGuardedMatchesLegacyPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			frame, err := newPackingFrame(test.root, nodes, guard)
+			frame, err := newPackingFrame(test.root, nodes, true, guard)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,7 +70,7 @@ func TestBinPackScoreGuardedMatchesLegacyPolicy(t *testing.T) {
 func TestPackingScoreOrdersCollisionAndFrameCosts(t *testing.T) {
 	// Compactness grows quadratically with coordinates and cannot serve as a
 	// safe multiplier for a collision or for overflow on a feasible frame.
-	withCollision := packingScore{captionCollisions: 1, footprint: 10}
+	withCollision := packingScore{decorationBodyOverlaps: 1, footprint: 10}
 	clear := packingScore{excessArea: 1e19, footprint: 1e20}
 	withinFrame := packingScore{footprint: 1e25}
 	if clear.compare(withCollision) >= 0 || withinFrame.compare(clear) >= 0 {

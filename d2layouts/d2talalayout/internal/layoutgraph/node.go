@@ -2254,19 +2254,41 @@ func (n Node) CanContain() bool {
 		n.shapeType != textType
 }
 
-// NeedsCenteredLabelWidth reports whether container fitting must reserve room
-// for a wide caption to be centered later. The measured node bounds already
-// include an exterior caption whose position is fixed.
-func (n *Node) NeedsCenteredLabelWidth() bool {
+// A wide automatic caption beside an anchored icon has fewer usable sides.
+// Leave the shared margin available until its final position is known.
+func (frame *Node) NeedsAutomaticCaptionRoom(nodes Nodes) bool {
+	if !frame.IsRectangular() || frame.FixedTopLeft != nil || frame.DesiredWidth != nil || frame.DesiredHeight != nil {
+		return false
+	}
+	// One undetermined side can use the spare band. Competing automatic
+	// captions may need different sides, so leave their normal fit intact.
+	found := false
+	for _, n := range nodes {
+		if n.HasWideCaptionWithFixedIcon() {
+			if found {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
+}
+
+func (n *Node) HasWideCaptionWithFixedIcon() bool {
+	return n != nil && n.Icon != nil && n.Icon.PositionFixed() && n.Label != nil && !n.Label.PositionFixed() && n.Label.Width > n.Width
+}
+
+func (n *Node) NeedsCenteredLabelWidth(wideAutomatic bool) bool {
 	return n.Label != nil && n.Label.Width > n.Width &&
-		!(n.Label.PositionFixed() && n.Label.Position.IsOutside())
+		(wideAutomatic || !(n.Label.PositionFixed() && n.Label.Position.IsOutside()))
 }
 
 func (n *Node) expandForLabels(tl, br *geo.Point) {
-	children := n.Graph.Containers[n]
+	children := Nodes(n.Graph.Containers[n])
+	wideAutomatic := n.NeedsAutomaticCaptionRoom(children)
 
 	for _, child := range children {
-		if child.NeedsCenteredLabelWidth() && (child.TopLeft.X == tl.X || child.TopLeft.X+child.Width == br.X) {
+		if child.NeedsCenteredLabelWidth(wideAutomatic) && (child.TopLeft.X == tl.X || child.TopLeft.X+child.Width == br.X) {
 			tl.X = math.Min(tl.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
 			br.X = math.Max(br.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
 		}
@@ -2356,8 +2378,8 @@ func (n *Node) isMajorityTarget() bool {
 }
 
 // OutsideIconReserve uses the painted size when the icon has a fixed position
-// and its owner has no siblings. With siblings, the packing score does not
-// validate icon intersections, so retain the inter-node clearance there.
+// and its owner has no siblings. Keep the full spacing between siblings
+// during placement, before the final packing comparison.
 func (n *Node) OutsideIconReserve() float64 {
 	if n.Icon.PositionFixed() && n.Graph != nil && len(n.Graph.Containers[n.OwningContainer()]) == 1 {
 		return math.Ceil(n.IconSize(n.Icon.Position))

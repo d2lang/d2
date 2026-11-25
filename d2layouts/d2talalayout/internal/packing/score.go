@@ -7,23 +7,24 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 )
 
 // Readability and an attainable authored frame take precedence over compactness.
 // Keep these as independent criteria so coordinate magnitude cannot change
 // their priority or hide differences between footprint scores.
 type packingScore struct {
-	captionCollisions int
-	captionPairs      int
-	excessArea        float64
-	footprint         float64
+	decorationBodyOverlaps int
+	decorationPairs        int
+	excessArea             float64
+	footprint              float64
 }
 
 func (s packingScore) compare(t packingScore) int {
-	if c := cmp.Compare(s.captionCollisions, t.captionCollisions); c != 0 {
+	if c := cmp.Compare(s.decorationBodyOverlaps, t.decorationBodyOverlaps); c != 0 {
 		return c
 	}
-	if c := cmp.Compare(s.captionPairs, t.captionPairs); c != 0 {
+	if c := cmp.Compare(s.decorationPairs, t.decorationPairs); c != 0 {
 		return c
 	}
 	if c := cmp.Compare(s.excessArea, t.excessArea); c != 0 {
@@ -40,14 +41,32 @@ var worstPackingScore = packingScore{math.MaxInt, math.MaxInt, math.Inf(1), math
 
 type packingFrame struct {
 	useCanvasBounds       bool
+	decoratedCanvas       bool
 	horizontal            bool
 	desired, reserved     float64
 	gridWidth, gridHeight float64
-	captions              captionComparisons
+	decorations           decorationComparisons
 }
 
-func newPackingFrame(root *layoutgraph.Node, children layoutgraph.Nodes, guard *limits.WorkGuard) (packingFrame, error) {
-	frame := packingFrame{useCanvasBounds: root == nil}
+func newPackingFrame(root *layoutgraph.Node, children layoutgraph.Nodes, edgeless bool, guard *limits.WorkGuard) (packingFrame, error) {
+	frame := packingFrame{useCanvasBounds: root == nil, decoratedCanvas: root == nil && edgeless}
+	// Fixed decorations are sufficient for comparing these positions only
+	// while unplaced captions cannot compete for space around multiple tiles.
+	if frame.decoratedCanvas {
+		unplaced := 0
+		for _, n := range children {
+			if err := guard.Step(); err != nil {
+				return packingFrame{}, err
+			}
+			if l := n.Label; l != nil && !l.PositionFixed() && (l.Width > n.Width || l.Height > n.Height) {
+				unplaced++
+				if unplaced > 1 || n.Icon != nil && n.Icon.PositionFixed() && n.Icon.Position.IsOutside() {
+					frame.decoratedCanvas = false
+					break
+				}
+			}
+		}
+	}
 	for _, child := range children {
 		if err := guard.Step(); err != nil {
 			return packingFrame{}, err
@@ -58,12 +77,12 @@ func newPackingFrame(root *layoutgraph.Node, children layoutgraph.Nodes, guard *
 			(child.Label.Position.IsOutside() || child.Label.Width > child.Width || child.Label.Height > child.Height)) {
 			frame.useCanvasBounds = false
 		}
-		if child.Label != nil && child.Label.PositionFixed() && child.Label.Position.IsOutside() && plainTile(child) {
-			group, err := newCaptionGroup(children, root, guard)
+		if child.Label != nil && child.Label.PositionFixed() && child.Label.Position.IsOutside() && frame.canCompareDecorations(child) {
+			group, err := frame.newDecorationGroup(children, root, guard)
 			if err != nil {
 				return packingFrame{}, err
 			}
-			frame.captions = captionComparisons{first: group, second: group}
+			frame.decorations = decorationComparisons{first: group, second: group}
 			break
 		}
 	}
@@ -122,10 +141,22 @@ func newPackingFrame(root *layoutgraph.Node, children layoutgraph.Nodes, guard *
 	return frame, nil
 }
 
+// A frame's walls constrain label positions that are still automatic. Score
+// its plain tiles here; the canvas can also compare icons and near groups.
+func (frame packingFrame) canCompareDecorations(n *layoutgraph.Node) bool {
+	return captionTile(n) && (frame.decoratedCanvas || n.Icon == nil && len(n.Nears) == 0)
+}
+
 func plainTile(n *layoutgraph.Node) bool {
-	return !n.IsContainer() && len(n.Edges) == 0 && len(n.Nears) == 0 &&
+	return n.Icon == nil && len(n.Nears) == 0 && captionTile(n)
+}
+
+// A fixed caption moves with its tile, including when the tile carries an
+// icon or moves alongside a near peer in the same rigid component.
+func captionTile(n *layoutgraph.Node) bool {
+	return !n.IsContainer() && len(n.Edges) == 0 &&
 		n.Hierarchy == nil && n.Cluster == nil && n.Sequence == nil && !n.IsInvisible &&
-		!n.Is3D && !n.IsMultiple && n.Icon == nil && n.IsRectangular()
+		!n.Is3D && !n.IsMultiple && n.IsRectangular()
 }
 
 func (frame packingFrame) score(nodes layoutgraph.Nodes, guard *limits.WorkGuard) (packingScore, error) {
@@ -155,52 +186,60 @@ func (frame packingFrame) score(nodes layoutgraph.Nodes, guard *limits.WorkGuard
 	}
 	score.footprint = width*height + math.Pow(width-height, 2)*subgraphSquareDampener +
 		math.Pow(shortfall, 2)*subgraphSquareDampener
-	score.captionCollisions, err = frame.captions.count(guard)
+	score.decorationBodyOverlaps, err = frame.decorations.count(guard)
 	if err != nil {
 		return packingScore{}, err
 	}
-	score.captionPairs, err = frame.captions.captionOverlapCount(guard)
+	score.decorationPairs, err = frame.decorations.decorationOverlapCount(guard)
 	if err != nil {
 		return packingScore{}, err
 	}
 	return score, guard.Finish()
 }
 
-type captionGroup struct {
-	bodies layoutgraph.Nodes
-	owners []packedCaption
+type decorationGroup struct {
+	bodies      layoutgraph.Nodes
+	decorations []packedDecoration
 }
 
-// The tile moves during packing trials. Its fixed caption moves with it.
-type packedCaption struct {
-	owner  *layoutgraph.Node
-	offset geo.Point
+// Measured captions and icons keep their offsets during rigid packing trials.
+type packedDecoration struct {
+	owner         *layoutgraph.Node
+	offset        geo.Point
+	width, height float64
 }
 
-func (c packedCaption) box() geo.Box {
-	return geo.Box{TopLeft: &geo.Point{X: c.owner.TopLeft.X + c.offset.X, Y: c.owner.TopLeft.Y + c.offset.Y}, Width: c.owner.Label.Width, Height: c.owner.Label.Height}
+func (c packedDecoration) box() geo.Box {
+	return geo.Box{TopLeft: &geo.Point{X: c.owner.TopLeft.X + c.offset.X, Y: c.owner.TopLeft.Y + c.offset.Y}, Width: c.width, Height: c.height}
 }
 
-func newCaptionGroup(nodes layoutgraph.Nodes, root *layoutgraph.Node, guard *limits.WorkGuard) (captionGroup, error) {
-	var group captionGroup
+func (frame packingFrame) newDecorationGroup(nodes layoutgraph.Nodes, root *layoutgraph.Node, guard *limits.WorkGuard) (decorationGroup, error) {
+	var group decorationGroup
 	for _, n := range nodes {
 		if err := guard.Step(); err != nil {
-			return captionGroup{}, err
+			return decorationGroup{}, err
 		}
-		if n.Container != root || !plainTile(n) {
+		if n.Container != root || !frame.canCompareDecorations(n) {
 			continue
 		}
 		group.bodies = append(group.bodies, n)
+		add := func(position label.Position, width, height float64) {
+			p := n.LabelTopLeft(position, width, height)
+			group.decorations = append(group.decorations, packedDecoration{n, geo.Point{X: p.X - n.TopLeft.X, Y: p.Y - n.TopLeft.Y}, width, height})
+		}
 		if n.Label != nil && n.Label.PositionFixed() && n.Label.Position.IsOutside() {
-			p := n.LabelTopLeft(n.Label.Position, n.Label.Width, n.Label.Height)
-			group.owners = append(group.owners, packedCaption{n, geo.Point{X: p.X - n.TopLeft.X, Y: p.Y - n.TopLeft.Y}})
+			add(n.Label.Position, n.Label.Width, n.Label.Height)
+		}
+		if n.Icon != nil && n.Icon.PositionFixed() && n.Icon.Position.IsOutside() {
+			size := math.Ceil(n.IconSize(n.Icon.Position))
+			add(n.Icon.Position, size, size)
 		}
 	}
 	return group, nil
 }
 
-type captionComparisons struct {
-	first, second captionGroup
+type decorationComparisons struct {
+	first, second decorationGroup
 	split         bool
 }
 
@@ -208,33 +247,33 @@ type captionComparisons struct {
 // translations, only intersections between the moving and stationary sets can
 // change. The incumbent/final comparison counts all intersections once.
 func (frame packingFrame) forCandidates(packed, moving layoutgraph.Nodes, root *layoutgraph.Node, guard *limits.WorkGuard) (packingFrame, error) {
-	if len(frame.captions.first.owners) == 0 {
+	if len(frame.decorations.first.decorations) == 0 {
 		return frame, nil
 	}
-	stationary, err := newCaptionGroup(packed, root, guard)
+	stationary, err := frame.newDecorationGroup(packed, root, guard)
 	if err != nil {
 		return packingFrame{}, err
 	}
-	translated, err := newCaptionGroup(moving, root, guard)
+	translated, err := frame.newDecorationGroup(moving, root, guard)
 	if err != nil {
 		return packingFrame{}, err
 	}
-	frame.captions = captionComparisons{first: stationary, second: translated, split: true}
+	frame.decorations = decorationComparisons{first: stationary, second: translated, split: true}
 	return frame, nil
 }
 
-func (pairs captionComparisons) count(guard *limits.WorkGuard) (int, error) {
-	count, err := countCaptionBodyOverlaps(pairs.first.owners, pairs.second.bodies, guard)
+func (pairs decorationComparisons) count(guard *limits.WorkGuard) (int, error) {
+	count, err := countDecorationBodyOverlaps(pairs.first.decorations, pairs.second.bodies, guard)
 	if err != nil || !pairs.split {
 		return count, err
 	}
-	other, err := countCaptionBodyOverlaps(pairs.second.owners, pairs.first.bodies, guard)
+	other, err := countDecorationBodyOverlaps(pairs.second.decorations, pairs.first.bodies, guard)
 	return count + other, err
 }
 
-func countCaptionBodyOverlaps(owners []packedCaption, bodies layoutgraph.Nodes, guard *limits.WorkGuard) (int, error) {
+func countDecorationBodyOverlaps(decorations []packedDecoration, bodies layoutgraph.Nodes, guard *limits.WorkGuard) (int, error) {
 	count := 0
-	for _, owner := range owners {
+	for _, owner := range decorations {
 		if err := guard.Step(); err != nil {
 			return 0, err
 		}
@@ -256,14 +295,14 @@ func countCaptionBodyOverlaps(owners []packedCaption, bodies layoutgraph.Nodes, 
 
 // Compare the two measured exterior rectangles once per pair. During a trial
 // pairs on the same stationary or moving component cannot change.
-func (pairs captionComparisons) captionOverlapCount(guard *limits.WorkGuard) (int, error) {
+func (pairs decorationComparisons) decorationOverlapCount(guard *limits.WorkGuard) (int, error) {
 	hits := 0
-	for i, a := range pairs.first.owners {
+	for i, a := range pairs.first.decorations {
 		if err := guard.Step(); err != nil {
 			return 0, err
 		}
 		caption := a.box()
-		others := pairs.second.owners
+		others := pairs.second.decorations
 		if !pairs.split {
 			others = others[i+1:]
 		}
@@ -271,7 +310,7 @@ func (pairs captionComparisons) captionOverlapCount(guard *limits.WorkGuard) (in
 			if err := guard.Step(); err != nil {
 				return 0, err
 			}
-			if caption.Overlaps(b.box()) {
+			if a.owner != b.owner && caption.Overlaps(b.box()) {
 				hits++
 			}
 		}

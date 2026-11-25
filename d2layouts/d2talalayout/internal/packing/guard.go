@@ -208,11 +208,15 @@ func binPackWrapChildren(root *layoutgraph.Node, guard *limits.WorkGuard) error 
 	if err != nil {
 		return err
 	}
+	if err := guard.Add(int64(len(children))); err != nil {
+		return err
+	}
+	wideAutomatic := root.NeedsAutomaticCaptionRoom(children)
 	for _, child := range children {
 		if err := guard.Step(); err != nil {
 			return err
 		}
-		if child.NeedsCenteredLabelWidth() && (child.TopLeft.X == topLeft.X || child.TopLeft.X+child.Width == bottomRight.X) {
+		if child.NeedsCenteredLabelWidth(wideAutomatic) && (child.TopLeft.X == topLeft.X || child.TopLeft.X+child.Width == bottomRight.X) {
 			topLeft.X = math.Min(topLeft.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
 			bottomRight.X = math.Max(bottomRight.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
 		}
@@ -265,6 +269,10 @@ func binPackPositionContainerChildren(node *layoutgraph.Node, guard *limits.Work
 	if err != nil {
 		return err
 	}
+	if err := guard.Add(int64(len(children))); err != nil {
+		return err
+	}
+	wideAutomatic := node.NeedsAutomaticCaptionRoom(children)
 	for _, child := range children {
 		if err := guard.Step(); err != nil {
 			return err
@@ -272,7 +280,7 @@ func binPackPositionContainerChildren(node *layoutgraph.Node, guard *limits.Work
 		if child == nil || child.TopLeft == nil {
 			return invariant.New("BinPack container contains an unplaced child")
 		}
-		if child.NeedsCenteredLabelWidth() && (child.TopLeft.X == topLeft.X || child.TopLeft.X+child.Width == bottomRight.X) {
+		if child.NeedsCenteredLabelWidth(wideAutomatic) && (child.TopLeft.X == topLeft.X || child.TopLeft.X+child.Width == bottomRight.X) {
 			topLeft.X = math.Min(topLeft.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
 			bottomRight.X = math.Max(bottomRight.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
 		}
