@@ -7,6 +7,7 @@ on:
       - .github/workflows/ci.yml
       - .github/workflows/windows-msi.yml
       - ci/release/**
+      - '!ci/release/changelogs/**'
       - d2layouts/d2talalayout/**
       - ci/sub
       - install.sh

@@ -45,9 +45,14 @@ D2, make sure you initialize the submodules:
 git submodule update --init --recursive
 ```
 
-`./make.sh` runs the standard checks, including JS and Go WASM tests. Install the
-Go version from `go.mod`, the Bun version from `d2js/js/package.json`, and Node.js
-24 with npm. Subcommands to run individual parts of the CI:
+`./make.sh ci` runs the native Go checks, D2.js formatting, and TypeScript
+declaration tests used on pull requests. Install the Go version from `go.mod`,
+the Bun version from `d2js/js/package.json`, and Node.js 24 with npm.
+
+`./make.sh` also builds the D2.js WebAssembly package, tests its browser and Node
+entry points, and runs the Go WebAssembly tests. These checks use TinyGo and
+Binaryen and run daily, on release tags, and on demand in the **WASM tests**
+workflow. Subcommands to run individual parts of CI:
 
 - `./make.sh fmt`
 - `./make.sh lint`
