@@ -103,6 +103,9 @@ func TestInheritedWildcardSpreadProperties(t *testing.T) {
 	}{
 		{"new property", `vars: {t: {a -> b}}; box: {...${t}}; steps: {first: {box.(a -> *)[*].style.opacity: 0.4; box.(a -> *)[*].style.opacity: 0.7}; hold: {another}}`, []float64{1, .7, .7}},
 		{"reopened scope and inherited reset", `vars: {t: {a -> b: wire {style.opacity: 0.3}}}; box: {...${t}}; box: {(a -> *)[*].style.opacity: 0.4}; steps: {reset: {box: {(a -> *)[*].style.opacity: null}}; hold: {another}}`, []float64{.4, 1, 1}},
+		{"rule-only template and inherited reset", `vars: {wire: {a -> b}; paint: {(a -> *)[*].style.opacity: 0.52}; reset: {(a -> *)[*].style.opacity: null}}; box: {...${paint}; ...${wire}}; steps: {clear: {box: {...${reset}}}; hold: {another}}`, []float64{.52, 1, 1}},
+		{"unrelated spread while rebinding", `vars: {wire: {a -> b {style.opacity: 0.2}}; tiny: {x}}; box: {...${tiny}; ...${wire}; (a -> *)[*].style.opacity: 0.8}; steps: {hold: {another}}`, []float64{.8, .8}},
+		{"rule-only template addressing parent", `vars: {paint: {(_.a -> _.b)[*].style.opacity: 0.6}}; a -> b; child: {...${paint}}; steps: {hold: {another}}`, []float64{.6, .6}},
 		{"nested property in a shape glob", `vars: {t: {group: {a -> b}}}; ...${t}; gro*: {(a -> *)[*].style.opacity: 0.6}`, []float64{.6}},
 		{"global default before explicit template", `vars: {t: {a -> b: wire {style.opacity: 0.2}}}; (*** -> ***)[*].style.opacity: 0.6; steps: {first: {box: {...${t}}}; hold: {another}}`, []float64{-1, .2, .2}},
 	} {

@@ -622,7 +622,7 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 
 						if removedField && !c.lazyGlobBeingApplied {
 							globs := m.globs
-							if c.hasEdgePropertyGlob && resolvedField.Map().mayHaveEdges() {
+							if c.hasEdgePropertyGlob && m.shouldReplayEdgeProperties(resolvedField.Map()) {
 								globs = c.edgePropertyGlobsForSpread(m, box.Substitution)
 							}
 							origGlobStack := c.globContextStack

@@ -6,17 +6,40 @@ import (
 	"github.com/d2lang/d2/d2ast"
 )
 
+// A copied board must bind any captured glob to its own scope, even when
+// the spread that wakes it only adds ordinary fields. Otherwise a hold step
+// can consume or reuse its predecessor's edge matches.
+func (m *Map) shouldReplayEdgeProperties(incoming *Map) bool {
+	if len(m.globs) != 0 || incoming.mayHaveEdges() {
+		return true
+	}
+	if incoming == nil || incoming.edgePropertyRules == nil {
+		return false
+	}
+	// A rule-only template can style an already present edge. A relative
+	// endpoint can reach outside its destination even when that map is empty.
+	return m.mayHaveEdges() || incoming.edgePropertyRules.reachesParent
+}
+
 // A spread can introduce the endpoints of an indexed property selector long
 // after its declaration. A copied step inherits the selector but can materialize
 // a different set of edges, so its matches belong to that physical scope.
 func (c *compiler) edgePropertyGlobsForSpread(m *Map, source d2ast.Node) []*globContext {
 	var globs []*globContext
 	crossedBoard := false
+	skippedEmptyScope := false
 	for scope := m; scope != nil; scope = ParentMap(scope) {
 		if !c.reserveGlobWork(source, 1) {
 			return nil
 		}
-		for rule := scope.edgePropertyRules; rule != nil; rule = rule.next {
+		rules := scope.edgePropertyRules
+		// Empty rule-bearing spreads can repeat in the same empty map. A
+		// selector can only match here if it addresses a parent with `_`.
+		if rules != nil && !rules.reachesParent && !scope.mayHaveEdges() {
+			rules = nil
+			skippedEmptyScope = true
+		}
+		for rule := rules; rule != nil; rule = rule.next {
 			g := rule.glob
 			if !c.reserveGlobWork(g.refctx.Key, 1) {
 				return nil
@@ -34,7 +57,7 @@ func (c *compiler) edgePropertyGlobsForSpread(m *Map, source d2ast.Node) []*glob
 			crossedBoard = true
 		}
 	}
-	if len(globs) == 0 {
+	if len(globs) == 0 && !skippedEmptyScope {
 		return m.globs
 	}
 	if !c.reserveGlobWork(source, int64(len(m.globs))) {
@@ -98,13 +121,15 @@ type spreadEdgeRule struct {
 	// The owning map builds this index only when combining independent
 	// histories. Copies share the immutable tail and build their own index.
 	index map[*globContext]struct{}
+	// Includes preceding rules in this list.
+	reachesParent bool
 }
 
 func (rules *spreadEdgeRule) clone(cloneGlob func(*globContext) *globContext) *spreadEdgeRule {
 	var head *spreadEdgeRule
 	tail := &head
 	for r := rules; r != nil; r = r.next {
-		*tail = &spreadEdgeRule{glob: cloneGlob(r.glob)}
+		*tail = &spreadEdgeRule{glob: cloneGlob(r.glob), reachesParent: r.reachesParent}
 		tail = &(*tail).next
 	}
 	return head
@@ -121,11 +146,12 @@ func (rules *spreadEdgeRule) fork() *spreadEdgeRule {
 	if rules == nil || rules.index == nil {
 		return rules
 	}
-	return &spreadEdgeRule{glob: rules.glob, next: rules.next}
+	return &spreadEdgeRule{glob: rules.glob, next: rules.next, reachesParent: rules.reachesParent}
 }
 
 func (m *Map) addEdgeRule(g *globContext) {
 	r := &spreadEdgeRule{glob: g, next: m.edgePropertyRules}
+	r.reachesParent = (r.next != nil && r.next.reachesParent) || edgeRuleReachesParent(g.refctx.Key)
 	if r.next != nil && r.next.index != nil {
 		r.index = r.next.index
 		r.index[g] = struct{}{}
@@ -160,4 +186,19 @@ func (m *Map) mergeEdgeRules(rules *spreadEdgeRule, site *spreadSite) {
 			m.addEdgeRule(r.glob)
 		}
 	}
+}
+
+func edgeRuleReachesParent(k *d2ast.Key) bool {
+	parent := func(path *d2ast.KeyPath) bool {
+		return path != nil && len(path.Path) != 0 && path.Path[0].UnquotedString != nil && path.Path[0].ScalarString() == "_"
+	}
+	if parent(k.Key) {
+		return true
+	}
+	for _, e := range k.Edges {
+		if parent(e.Src) || parent(e.Dst) {
+			return true
+		}
+	}
+	return false
 }
