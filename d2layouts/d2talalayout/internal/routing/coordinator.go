@@ -210,19 +210,43 @@ func finalizeSelectedRoutes(
 	work *routeSearchWorkGuard,
 	reorderParallelEdges bool,
 ) (err error) {
+	updates, err := prepareSelectedRoutes(ctx, g, routes, selectedEdges, work, reorderParallelEdges)
+	if err != nil {
+		return err
+	}
+	applyRouteUpdates(updates)
+	return nil
+}
+
+func applyRouteUpdates(updates []selectedRouteUpdate) {
+	for _, update := range updates {
+		update.edge.Points = update.points
+	}
+}
+
+func prepareSelectedRoutes(
+	ctx context.Context,
+	g *layoutgraph.Graph,
+	routes []*Route,
+	selectedEdges map[*layoutgraph.Edge]struct{},
+	work *routeSearchWorkGuard,
+	reorderParallelEdges bool,
+) (updates []selectedRouteUpdate, err error) {
 	if work == nil {
-		return invariant.New("selected edge-routing flavor has no work guard")
+		return nil, invariant.New("selected edge-routing flavor has no work guard")
 	}
 	if g == nil {
-		return invariant.New("selected edge-routing flavor has no graph")
+		return nil, invariant.New("selected edge-routing flavor has no graph")
 	}
 	if err := work.bind(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	finished := false
 	defer func() {
 		if !finished {
-			_ = work.finish()
+			if chargeErr := work.finish(); chargeErr != nil {
+				err = chargeErr
+			}
 		}
 	}()
 	if selectedEdges != nil {
@@ -230,59 +254,59 @@ func finalizeSelectedRoutes(
 		found := make(map[*layoutgraph.Edge]struct{}, len(selectedEdges))
 		for _, route := range routes {
 			if err := work.step(); err != nil {
-				return err
+				return nil, err
 			}
 			if route == nil {
-				return invariant.New("selected edge-routing flavor produced a nil route")
+				return nil, invariant.New("selected edge-routing flavor produced a nil route")
 			}
 			if _, selected := selectedEdges[route.GEdge]; !selected {
 				continue
 			}
 			if _, duplicate := found[route.GEdge]; duplicate {
-				return invariant.New("selected edge-routing flavor produced duplicate routes for an edge")
+				return nil, invariant.New("selected edge-routing flavor produced duplicate routes for an edge")
 			}
 			found[route.GEdge] = struct{}{}
 			selectedRoutes = append(selectedRoutes, route)
 		}
 		if len(found) != len(selectedEdges) {
-			return invariant.New("selected edge-routing flavor omitted a requested edge")
+			return nil, invariant.New("selected edge-routing flavor omitted a requested edge")
 		}
 		routes = selectedRoutes
 	}
 
 	for _, route := range routes {
 		if err := work.step(); err != nil {
-			return err
+			return nil, err
 		}
 		if route == nil || route.GEdge == nil || route.GEdge.From == nil || route.GEdge.To == nil || len(route.OVGNodes) < 2 {
-			return invariant.New("selected edge-routing flavor produced an invalid route")
+			return nil, invariant.New("selected edge-routing flavor produced an invalid route")
 		}
 		for _, node := range route.OVGNodes {
 			if err := work.step(); err != nil {
-				return err
+				return nil, err
 			}
 			if node == nil || node.Point == nil {
-				return invariant.New("selected edge-routing flavor produced an invalid route node")
+				return nil, invariant.New("selected edge-routing flavor produced an invalid route node")
 			}
 		}
 	}
 
 	if reorderParallelEdges {
 		if err := reorderSelectedRoutes(g, routes, work); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if err := work.add(uint64(len(routes))); err != nil {
-		return err
+		return nil, err
 	}
-	updates := make([]selectedRouteUpdate, 0, len(routes))
+	updates = make([]selectedRouteUpdate, 0, len(routes))
 	for _, route := range routes {
 		if err := work.step(); err != nil {
-			return err
+			return nil, err
 		}
 		if err := work.add(uint64(len(route.OVGNodes))); err != nil {
-			return err
+			return nil, err
 		}
 		updates = append(updates, selectedRouteUpdate{
 			edge:   route.GEdge,
@@ -290,16 +314,11 @@ func finalizeSelectedRoutes(
 		})
 	}
 	if err := work.finish(); err != nil {
-		return err
+		return nil, err
 	}
 
-	// The commit contains no fallible work. A route-search error or cancellation
-	// above therefore leaves every graph edge byte-for-byte unchanged.
-	for _, update := range updates {
-		update.edge.Points = update.points
-	}
 	finished = true
-	return nil
+	return updates, nil
 }
 
 func reorderSelectedRoutes(g *layoutgraph.Graph, routes []*Route, work *routeSearchWorkGuard) error {
@@ -435,7 +454,6 @@ func routeEdgesWithResourceGuards(
 
 	var parentByAnnotation map[*layoutgraph.Edge]*layoutgraph.Node
 	var annotationCount map[*layoutgraph.Node]int
-	var competingAnnotations bool
 	existingPortArrowheads := make(map[*OVGNode]map[layoutgraph.Arrowhead]struct{})
 	isRouted := map[*layoutgraph.Edge]struct{}{}
 	for _, node := range g.Nodes {
@@ -460,7 +478,6 @@ func routeEdgesWithResourceGuards(
 				}
 				parentByAnnotation[e] = parent
 				annotationCount[parent]++
-				competingAnnotations = competingAnnotations || annotationCount[parent] > 1
 			}
 
 			existingRoutes = append(existingRoutes, route)
@@ -486,6 +503,18 @@ func routeEdgesWithResourceGuards(
 	// show multiple annotations anchored at the same port. Let the router
 	// score alternate ports for those branches while the tree stays put.
 	var treeFallback []*Route
+	competingAnnotations := false
+	for parent, count := range annotationCount {
+		if err := ovgGuard.step(); err != nil {
+			return ovg, err
+		}
+		// Giving each caption its own port is impossible at this junction.
+		if count > len(ovg.Ports[parent]) {
+			delete(annotationCount, parent)
+		} else if count > 1 {
+			competingAnnotations = true
+		}
+	}
 	if competingAnnotations && len(existingRoutes) == len(g.Edges) {
 		treeFallback = existingRoutes
 		existingRoutes = make([]*Route, 0, len(treeFallback))
@@ -519,9 +548,26 @@ func routeEdgesWithResourceGuards(
 	}
 	routers := make([]*ovgEdgeRouter, 0, len(flavors))
 	var shared ovgRouterShared
-	for _, flavor := range flavors {
-		router, err := newSharingOVGEdgeRouter(ctx, flavor, ovg, g, existingRoutes, unroutedEdges, searchWorkLimit, &shared)
+	var fallback []selectedRouteUpdate
+	for i, flavor := range flavors {
+		work, err := newRouteSearchWorkGuard(ctx, flavor, searchWorkLimit)
 		if err != nil {
+			return ovg, err
+		}
+		if i == 0 && treeFallback != nil {
+			// Sentinel edges have one route per parent-child pair, and loops
+			// never exchange routes. Their original endpoints can be prepared
+			// without reordering or mutating any route used by the workers.
+			fallback, err = prepareSelectedRoutes(ctx, g, treeFallback, nil, work, false)
+			if err != nil {
+				return ovg, err
+			}
+		}
+		router, err := newSharingOVGEdgeRouter(work, ovg, g, existingRoutes, unroutedEdges, &shared)
+		if err != nil {
+			if fallback != nil && errors.Is(err, errRouteSearchWorkLimit) {
+				continue
+			}
 			return ovg, err
 		}
 		routers = append(routers, router)
@@ -537,9 +583,20 @@ func routeEdgesWithResourceGuards(
 	var bestWork *routeSearchWorkGuard
 	leastDistance := math.Inf(1)
 
-	flavorToResponse, err := successfulRouteFlavorResponses(responses)
-	if err != nil {
-		return ovg, err
+	if fallback != nil {
+		// Only the individual search limit can abandon an optional trial.
+		// Keep aggregate, cancellation, and other failures for the normal
+		// response selection below.
+		responses = slices.DeleteFunc(responses, func(response GenerateRouteResponse) bool {
+			return errors.Is(response.Err, errRouteSearchWorkLimit)
+		})
+	}
+	var flavorToResponse map[RouteGenerationFlavor]GenerateRouteResponse
+	if len(responses) > 0 || fallback == nil {
+		flavorToResponse, err = successfulRouteFlavorResponses(responses)
+		if err != nil {
+			return ovg, err
+		}
 	}
 
 	// Compare responses in fixed order. If changed ports would hide text
@@ -549,12 +606,12 @@ func routeEdgesWithResourceGuards(
 		if !has || geo.PrecisionCompare(response.Distance, leastDistance, geo.PRECISION) >= 0 {
 			continue
 		}
-		if treeFallback != nil {
-			if bestWork == nil {
-				bestRoutes, bestWork = treeFallback, response.work
-			}
+		if fallback != nil {
 			clear, err := treeCaptionsClearNodes(ctx, response.Routes, parentByAnnotation, annotationCount, g.Nodes, nearbyNodes, response.work)
-			if err != nil {
+			if chargeErr := response.work.finish(); chargeErr != nil {
+				return ovg, chargeErr
+			}
+			if err != nil && !errors.Is(err, errRouteSearchWorkLimit) {
 				return ovg, err
 			}
 			if !clear {
@@ -564,9 +621,16 @@ func routeEdgesWithResourceGuards(
 		leastDistance, bestRoutes, bestWork = response.Distance, response.Routes, response.work
 	}
 
-	if err := finalizeSelectedRoutes(ctx, g, bestRoutes, nil, bestWork, true); err != nil {
+	if bestWork != nil || fallback == nil {
+		err := finalizeSelectedRoutes(ctx, g, bestRoutes, nil, bestWork, true)
+		if err == nil || fallback == nil || !errors.Is(err, errRouteSearchWorkLimit) {
+			return ovg, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return ovg, err
 	}
+	applyRouteUpdates(fallback)
 
 	return ovg, nil
 }
@@ -751,7 +815,11 @@ func routeAdditionalEdgesWithResourceLimits(
 	routers := make([]*ovgEdgeRouter, 0, len(flavors))
 	var shared ovgRouterShared
 	for _, flavor := range flavors {
-		router, err := newSharingOVGEdgeRouter(ctx, flavor, ovg, g, existingRoutes, searchEdges, searchWorkLimit, &shared)
+		work, err := newRouteSearchWorkGuard(ctx, flavor, searchWorkLimit)
+		if err != nil {
+			return ovg, err
+		}
+		router, err := newSharingOVGEdgeRouter(work, ovg, g, existingRoutes, searchEdges, &shared)
 		if err != nil {
 			return ovg, err
 		}

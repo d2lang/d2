@@ -97,7 +97,11 @@ func newOVGEdgeRouterWithWorkLimit(
 	edges []*layoutgraph.Edge,
 	workLimit uint64,
 ) (_ *ovgEdgeRouter, err error) {
-	return newSharingOVGEdgeRouter(ctx, flavor, ovg, g, existingRoutes, edges, workLimit, nil)
+	guard, err := newRouteSearchWorkGuard(ctx, flavor, workLimit)
+	if err != nil {
+		return nil, err
+	}
+	return newSharingOVGEdgeRouter(guard, ovg, g, existingRoutes, edges, nil)
 }
 
 // routesAtPoint is the former pointToRoute[point].

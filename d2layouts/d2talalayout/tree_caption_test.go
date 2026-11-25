@@ -2,6 +2,7 @@ package d2talalayout_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
@@ -224,6 +225,29 @@ Hub -> Send: {source-arrowhead: Deferred pending verification}`
 		caption := geo.NewBox(edge.GetArrowheadLabelPosition(false), float64(edge.SrcLabel.LabelWidth), float64(edge.SrcLabel.LabelHeight))
 		if caption.Overlaps(*body) {
 			t.Fatalf("%s source caption covers Hub", edge.ID)
+		}
+	}
+}
+
+func TestTreeFanKeepsRoutesWhenCaptionsOutnumberPorts(t *testing.T) {
+	const leaves = 256
+	var source strings.Builder
+	source.WriteString("direction: down\n")
+	for i := range leaves {
+		fmt.Fprintf(&source, "Leaf%03d: \"\" {width: 8; height: 18}\n", i)
+		if i%2 == 0 {
+			fmt.Fprintf(&source, "Intake -> Leaf%03d: {source-arrowhead: Status %03d}\n", i, i)
+		} else {
+			fmt.Fprintf(&source, "Leaf%03d -> Intake: {target-arrowhead: Status %03d}\n", i, i)
+		}
+	}
+	d := compileRoutingDiagram(t, t.Context(), source.String(), 1, nil)
+	if len(d.Shapes) != leaves+1 || len(d.Connections) != leaves {
+		t.Fatalf("got %d shapes and %d connections", len(d.Shapes), len(d.Connections))
+	}
+	for _, edge := range d.Connections {
+		if len(edge.Route) < 2 || edge.Src == "Intake" && edge.SrcLabel == nil || edge.Dst == "Intake" && edge.DstLabel == nil {
+			t.Fatalf("lost route or caption on %s", edge.ID)
 		}
 	}
 }
