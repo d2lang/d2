@@ -416,3 +416,43 @@ func TestBoardTraceRoundsOffSpeedAtSharpTurns(t *testing.T) {
 		t.Fatal("collinear waypoints slowed down the tip")
 	}
 }
+
+func TestBoardRevealLeavesRoomForArrowheads(t *testing.T) {
+	const config = "vars: {d2-config: {animate-interval: 1900ms; animate-duration: 1500ms}}\ndirection: right\n"
+	for _, tc := range []struct{ name, source string }{
+		{"two arrows", "queue\nsteps: {add: {queue <-> worker}}"},
+		{"thick endpoints", "queue.style.stroke-width: 15\nsteps: {add: {queue -> worker; worker.style.stroke-width: 15}}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			board, _ := compileContinuity(t, config+tc.source, d2talalayout.ContinueBoard)
+			step := board.Steps[0]
+			full := geo.Route(step.Connections[0].Route).Length()
+			visible := false
+			for _, frame := range step.TweenFrames {
+				for _, e := range frame.Connections {
+					if geo.Route(e.Route).Length() >= full {
+						continue
+					}
+					visible = true
+					src, dst := e.ArrowheadAdjustmentsForWidths(shapeByID(t, frame, e.Src).RenderedStrokeWidth(), shapeByID(t, frame, e.Dst).RenderedStrokeWidth())
+					cmd := slices.Collect(e.PathCommands(src, dst))
+					separation := cmd[len(cmd)-1].End.X - cmd[0].End.X
+					if separation <= 0 {
+						t.Fatalf("rightward trace points left by %.2f px", -separation)
+					}
+					if e.SrcArrow != d2target.NoArrowhead {
+						width, _ := e.DstArrow.Dimensions(e.RenderedStrokeWidth())
+						// Each triangle extends inward from its marker reference point.
+						inward := width - 1.5*e.RenderedStrokeWidth()
+						if separation < 2*inward {
+							t.Fatalf("marker origins are %.2f apart; triangles occupy %.2f", separation, 2*inward)
+						}
+					}
+				}
+			}
+			if !visible {
+				t.Fatal("expected a partially drawn connection")
+			}
+		})
+	}
+}

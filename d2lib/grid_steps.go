@@ -16,17 +16,19 @@ import (
 const maxBoardSampleElements = 1_000_000
 
 type boardTransitionPlan struct {
-	board    *d2target.Diagram
-	motion   *gridMotion
-	ink      *boardInk
-	from     *d2target.Diagram // logical predecessor required for structural effects
-	reveal   *boardReveal
-	outline  *boardOutline
-	transfer *boardTransfer
-	sqlRows  *sqlRowReveal
-	sequence *sequenceTrace
-	bounds   []int
-	cost     int // Geometry elements per sample.
+	board      *d2target.Diagram
+	emptyAfter *d2target.Diagram // An explicitly emptied step is drawable after this board.
+	motion     *gridMotion
+	ink        *boardInk
+	opacity    *stepOpacity
+	from       *d2target.Diagram // logical predecessor required for structural effects
+	reveal     *boardReveal
+	outline    *boardOutline
+	transfer   *boardTransfer
+	sqlRows    *sqlRowReveal
+	sequence   *sequenceTrace
+	bounds     []int
+	cost       int // Geometry elements per sample.
 }
 
 // Compare successive drawable boards for ink changes after layout. Grid moves
@@ -43,11 +45,25 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 		prev, prevGraph := board, g
 		for i, next := range board.Steps {
 			nextGraph := g.Steps[i]
+			previousEmpty := stepPlans[prev].emptyAfter != nil
+			emptyLeaf := next.IsFolderOnly && len(next.Shapes) == 0 && len(next.Layers)+len(next.Scenarios)+len(next.Steps) == 0
 			if motion, cost := planGridStep(prev, next, prevGraph, nextGraph); motion != nil {
 				prev.IsFolderOnly, next.IsFolderOnly = false, false
 				stepPlans[next] = boardTransitionPlan{motion: motion, cost: cost}
-			} else if structural && !prev.IsFolderOnly && !next.IsFolderOnly {
-				if p := planStructuralStep(prev, next, prevGraph, nextGraph, sketch); p.from != nil {
+			} else if structural && (!prev.IsFolderOnly || previousEmpty) && (!next.IsFolderOnly || emptyLeaf) {
+				p := planStructuralStep(prev, next, prevGraph, nextGraph, sketch)
+				if emptyLeaf && (p.reveal != nil && p.reveal.departing || previousEmpty && sameBoardCanvas(prev, next)) {
+					p.emptyAfter = prev
+				}
+				if p.from != nil || p.emptyAfter != nil {
+					stepPlans[next] = p
+				}
+			}
+			p := stepPlans[next]
+			// Sequence tracing owns the visibility of newly exposed messages.
+			if !prev.IsFolderOnly && !next.IsFolderOnly && p.sequence == nil {
+				if opacity := planStepOpacity(prev, next, prevGraph, nextGraph); opacity != nil {
+					p.opacity = opacity
 					stepPlans[next] = p
 				}
 			}
@@ -79,7 +95,15 @@ func planStructuralStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2gr
 	if p.sequence == nil && len(next.TweenFrames) == 0 {
 		p.sqlRows = planSQLRowReveal(prev, next)
 	}
-	if next.LayoutContinuity && len(next.TweenFrames) == 0 && p.sqlRows == nil && p.sequence == nil {
+	deletion := len(prev.Shapes) > len(next.Shapes) || len(prev.Connections) > len(next.Connections)
+	if len(prev.Shapes) == 0 && len(next.Shapes) > 0 && len(next.TweenFrames) == 0 &&
+		!nextGraph.Root.IsGridDiagram() && !nextGraph.Root.IsSequenceDiagram() && sameBoardCanvas(prev, next) {
+		// With no surviving geometry to displace, ordinary leaves can enter
+		// in their authored positions on the previously cleared canvas.
+		p.reveal = planBoardReveal(prev, next, nextGraph).ordinaryLeaves(prev, next, nextGraph)
+	} else if deletion && len(next.TweenFrames) == 0 && p.sqlRows == nil && p.sequence == nil {
+		p.reveal = planBoardDeparture(prev, next, prevGraph)
+	} else if next.LayoutContinuity && len(next.TweenFrames) == 0 && p.sqlRows == nil && p.sequence == nil {
 		p.transfer = newBoardTransfer(prev, next, prevGraph, nextGraph)
 		if p.transfer == nil {
 			p.reveal = planBoardReveal(prev, next, nextGraph)
@@ -131,6 +155,10 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 			return err
 		}
 		available -= 1 + len(board.TweenFrames)
+		if p := stepPlans[board]; board.IsFolderOnly && p.emptyAfter != nil && p.emptyAfter == previous {
+			// A deletion or subsequent hold makes the empty canvas visible.
+			board.IsFolderOnly = false
+		}
 		if !board.IsFolderOnly {
 			p := stepPlans[board]
 			if p.from != nil && p.from != previous {
@@ -138,8 +166,13 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 				// Only draw a structural transition from the board on screen.
 				p = boardTransitionPlan{}
 			}
+			if p.opacity != nil && p.opacity.from != previous {
+				// A matching ID in an intervening independent board may
+				// describe a different object and a different starting opacity.
+				p.opacity = nil
+			}
 			p.ink = planBoardInk(previous, board, sketch, pencilOnly)
-			if p.motion != nil || p.ink != nil || p.from != nil {
+			if p.motion != nil || p.ink != nil || p.opacity != nil || p.from != nil {
 				p.board = board
 				count := len(board.TweenFrames)
 				if p.from != nil {
@@ -147,7 +180,7 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 					// show its acceleration. The existing per-board and total
 					// geometry limits still apply when many steps play together.
 					count = min(d2target.MaxTweenFrames, (60*duration+999)/1000)
-				} else if p.ink != nil {
+				} else if p.ink != nil || p.opacity != nil {
 					count = d2target.TweenFrameCount(duration)
 				}
 				if p.motion != nil {
@@ -338,11 +371,18 @@ func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 			frames[i] = &frame
 			continue
 		}
+		if p.opacity != nil {
+			base = p.opacity.sample(base, progress)
+		}
 		if p.motion != nil {
 			frames[i] = p.motion.sample(base, ms, duration)
 		} else if p.transfer != nil {
 			frames[i] = p.transfer.sample(base, progress)
 		} else {
+			if p.reveal != nil && p.reveal.departing {
+				// Departing bodies and their full routes belong to the board on screen.
+				base = p.from
+			}
 			sample := *base
 			sample.Layers, sample.Scenarios, sample.Steps, sample.TweenFrames = nil, nil, nil, nil
 			sample.TweenDurationMS, sample.TweenFrameEndsMS, sample.GridMotion = 0, nil, false

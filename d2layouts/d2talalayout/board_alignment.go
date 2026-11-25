@@ -180,7 +180,9 @@ func visibleBoardAnchor(n *d2graph.Object, g *d2graph.Graph) bool {
 func anchorOffset(a boardAnchor) geo.Point {
 	old, current := a.old, a.current
 	dy := float64(int(old.TopLeft.Y) - int(current.TopLeft.Y))
-	if int(old.Width) != int(current.Width) || !current.SQLTable.AppendsRowsTo(old.SQLTable, int(old.Height), int(current.Height)) {
+	stableRowPositions := current.SQLTable.AppendsRowsTo(old.SQLTable, int(old.Height), int(current.Height)) ||
+		old.SQLTable.AppendsRowsTo(current.SQLTable, int(current.Height), int(old.Height))
+	if int(old.Width) != int(current.Width) || !stableRowPositions {
 		dy += float64(int(old.Height)-int(current.Height)) / 2
 	}
 	return geo.Point{

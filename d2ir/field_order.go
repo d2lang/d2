@@ -96,6 +96,7 @@ func (m *Map) nestDeclarationOrder(site *fieldOrder) {
 	if m == nil {
 		return
 	}
+	m.edgePropertyRules = m.edgePropertyRules.clone(func(g *globContext) *globContext { return edgeRuleWithin(g, site) })
 	for _, field := range m.Fields {
 		field.nestDeclarationOrder(site)
 	}
