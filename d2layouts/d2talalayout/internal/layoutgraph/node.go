@@ -2053,7 +2053,7 @@ func (node *Node) LabelTopLeft(labelPosition label.Position, width, height float
 	if labelPosition.IsOutside() {
 		box = node.Shape.GetBox()
 	} else {
-		box = node.InnerBox()
+		box = node.LabelInnerBox(labelPosition, width, height)
 	}
 
 	return labelPosition.GetPointOnBox(box, label.PADDING, width, height)
@@ -2351,10 +2351,7 @@ func (n *Node) InsidePlacement(width, height float64, padding Spacing) geo.Point
 	return p
 }
 
-// InnerBox returns n's rounded content box.
-func (n *Node) InnerBox() *geo.Box {
-	// always round the results from shape
-	box := n.Shape.GetInnerBox()
+func roundBox(box *geo.Box) *geo.Box {
 	return &geo.Box{
 		TopLeft: &geo.Point{
 			X: math.Round(box.TopLeft.X),
@@ -2363,6 +2360,18 @@ func (n *Node) InnerBox() *geo.Box {
 		Width:  math.Round(box.Width),
 		Height: math.Round(box.Height),
 	}
+}
+
+// InnerBox returns n's rounded content box.
+func (n *Node) InnerBox() *geo.Box {
+	// always round the results from shape
+	return roundBox(n.Shape.GetInnerBox())
+}
+
+// LabelInnerBox returns the rounded inside box used to place a label of size
+// (width x height) at labelPosition.
+func (n *Node) LabelInnerBox(labelPosition label.Position, width, height float64) *geo.Box {
+	return roundBox(shape.GetInsideLabelBox(n.Shape, labelPosition, label.PADDING, width, height))
 }
 
 func (n *Node) isMajorityTarget() bool {

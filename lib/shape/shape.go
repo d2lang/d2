@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/svg"
 )
 
@@ -79,6 +80,26 @@ func GetPathCommands(s Shape) [][]svg.PathCommand {
 	return provider.GetPathCommands()
 }
 
+// LabelBoxProvider can be implemented by shapes whose inside label placement box
+// depends on the label position and dimensions (for example, package shapes
+// placing top labels inside their top tab when they fit).
+// It is separate from Shape so adding label-box access does not break external
+// implementations of Shape.
+type LabelBoxProvider interface {
+	GetLabelBox(position label.Position, padding, width, height float64) *geo.Box
+}
+
+// GetInsideLabelBox returns the box used to place an inside label of size
+// (width x height) with the given padding at position.
+func GetInsideLabelBox(s Shape, position label.Position, padding, width, height float64) *geo.Box {
+	if provider, ok := s.(LabelBoxProvider); ok {
+		if box := provider.GetLabelBox(position, padding, width, height); box != nil {
+			return box
+		}
+	}
+	return s.GetInnerBox()
+}
+
 func pathCommands(paths ...*svg.SvgPathContext) [][]svg.PathCommand {
 	commands := make([][]svg.PathCommand, len(paths))
 	for i, path := range paths {
@@ -98,6 +119,7 @@ type shapeKind struct {
 	paddingY     float64
 
 	innerBox           func(s *shape) *geo.Box
+	labelBox           func(s *shape, position label.Position, padding, width, height float64) *geo.Box
 	innerBoxForContent func(s *shape, width, height float64) *geo.Box
 	insidePlacement    func(s *shape, width, height, paddingX, paddingY float64) geo.Point
 	dimensionsToFit    func(width, height, paddingX, paddingY float64) (float64, float64)
@@ -159,6 +181,13 @@ func (s *shape) GetInnerBox() *geo.Box {
 		return s.kind.innerBox(s)
 	}
 	return s.Box
+}
+
+func (s *shape) GetLabelBox(position label.Position, padding, width, height float64) *geo.Box {
+	if s.kind.labelBox != nil {
+		return s.kind.labelBox(s, position, padding, width, height)
+	}
+	return s.GetInnerBox()
 }
 
 // only cloud shape needs this right now

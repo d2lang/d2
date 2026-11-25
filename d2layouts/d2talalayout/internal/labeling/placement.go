@@ -263,7 +263,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 				if !labelPosition.IsOutside() {
 					// inside labels must fit inside node with label.PADDING on each side
 					fakeLabelNode.PadLabelCandidate(label.PADDING)
-					if !layoutgraph.LabelBoxFits(node.InnerBox(), fakeLabelNode.Shape.GetBox()) {
+					if !layoutgraph.LabelBoxFits(node.LabelInnerBox(labelPosition, node.Label.Width, node.Label.Height), fakeLabelNode.Shape.GetBox()) {
 						continue
 					}
 					fakeLabelNode.PadLabelCandidate(-label.PADDING)
@@ -342,7 +342,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 					if !labelPosition.IsOutside() {
 						// inside labels must fit inside node with label.PADDING on each side
 						tiebreakFakeLabelNode.PadLabelCandidate(label.PADDING)
-						if !layoutgraph.LabelBoxFits(node.InnerBox(), tiebreakFakeLabelNode.Shape.GetBox()) {
+						if !layoutgraph.LabelBoxFits(node.LabelInnerBox(labelPosition, node.Label.Width*2, node.Label.Height*2), tiebreakFakeLabelNode.Shape.GetBox()) {
 							continue
 						}
 						tiebreakFakeLabelNode.PadLabelCandidate(-label.PADDING)

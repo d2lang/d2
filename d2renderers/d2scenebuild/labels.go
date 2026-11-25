@@ -10,6 +10,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/shape"
 )
 
 // buildConnectionMask creates one diagram-wide label mask. A label belonging
@@ -152,9 +153,19 @@ func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth,
 	return box, true
 }
 
+func shapeInsideLabelBox(geometry shape.Shape, targetShape d2target.Shape, position label.Position) *geo.Box {
+	return shape.GetInsideLabelBox(
+		geometry,
+		position,
+		label.PADDING,
+		float64(targetShape.LabelWidth),
+		float64(targetShape.LabelHeight),
+	)
+}
+
 // shapeLabelBox is the box a shape label at position is placed against:
 // the outer box, grown by a 3D or multiple offset, for outside and border
-// labels, and the inner box otherwise.
+// labels, and the inside label box otherwise.
 func shapeLabelBox(targetShape d2target.Shape, position label.Position) *geo.Box {
 	geometry := targetGeometry(targetShape)
 	var box *geo.Box
@@ -174,7 +185,7 @@ func shapeLabelBox(targetShape d2target.Shape, position label.Position) *geo.Box
 			box.Width += float64(d2target.MULTIPLE_OFFSET)
 		}
 	} else {
-		box = geometry.GetInnerBox()
+		box = shapeInsideLabelBox(geometry, targetShape, position)
 	}
 	return box
 }

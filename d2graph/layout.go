@@ -411,7 +411,10 @@ func (obj *Object) GetLabelTopLeft() *geo.Point {
 	if labelPosition.IsOutside() {
 		box = s.GetBox()
 	} else {
-		box = s.GetInnerBox()
+		box = shape.GetInsideLabelBox(s, labelPosition, label.PADDING,
+			float64(obj.LabelDimensions.Width),
+			float64(obj.LabelDimensions.Height),
+		)
 	}
 
 	labelTL := labelPosition.GetPointOnBox(box, label.PADDING,

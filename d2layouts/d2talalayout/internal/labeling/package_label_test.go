@@ -1,0 +1,66 @@
+package labeling
+
+import (
+	"context"
+	"testing"
+
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
+	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/shape"
+)
+
+func TestPackageTopLabelPlacementUsesTabWhenItFits(t *testing.T) {
+	t.Parallel()
+
+	t.Run("container default InsideTopCenter places inside tab", func(t *testing.T) {
+		t.Parallel()
+
+		g := layoutgraph.NewGraph()
+		pkg := layoutgraph.NewNode(1, 200, 200)
+		pkg.TopLeft = geo.NewPoint(0, 0)
+		pkg.SetShape(shape.PACKAGE_TYPE)
+		pkg.SetContainer(true)
+		pkg.Label = &layoutgraph.Label{
+			Text:   "aa",
+			Width:  40,
+			Height: 20,
+		}
+		child := layoutgraph.NewNode(2, 60, 40)
+		child.TopLeft = geo.NewPoint(70, 90)
+		child.Container = pkg
+		g.Nodes = []*layoutgraph.Node{pkg, child}
+		g.Containers[nil] = []*layoutgraph.Node{pkg}
+		g.Containers[pkg] = []*layoutgraph.Node{child}
+
+		Initialize(g)
+		if err := Place(context.Background(), g); err != nil {
+			t.Fatalf("Place() error = %v", err)
+		}
+		if pkg.Label.Position != label.InsideTopCenter {
+			t.Fatalf("pkg.Label.Position = %v, want InsideTopCenter", pkg.Label.Position)
+		}
+		tl := pkg.LabelTopLeft(pkg.Label.Position, pkg.Label.Width, pkg.Label.Height)
+		if tl.X != 30 || tl.Y != 5 {
+			t.Fatalf("LabelTopLeft() = (%v, %v), want (30, 5)", tl.X, tl.Y)
+		}
+	})
+
+	t.Run("fixed top-left places inside tab when it fits and below when it overflows", func(t *testing.T) {
+		t.Parallel()
+
+		pkg := layoutgraph.NewNode(1, 200, 200)
+		pkg.TopLeft = geo.NewPoint(0, 0)
+		pkg.SetShape(shape.PACKAGE_TYPE)
+
+		fit := pkg.LabelTopLeft(label.InsideTopLeft, 40, 20)
+		if fit.X != 5 || fit.Y != 5 {
+			t.Fatalf("fitting LabelTopLeft() = (%v, %v), want (5, 5)", fit.X, fit.Y)
+		}
+
+		overflow := pkg.LabelTopLeft(label.InsideTopLeft, 95, 20)
+		if overflow.X != 5 || overflow.Y != 45 {
+			t.Fatalf("overflowing LabelTopLeft() = (%v, %v), want (5, 45)", overflow.X, overflow.Y)
+		}
+	})
+}
