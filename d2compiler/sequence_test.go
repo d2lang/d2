@@ -1,6 +1,7 @@
 package d2compiler_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -294,8 +295,8 @@ a.note: At import {shape: page}`)},
 	require.Contains(t, labels, "1. Before")
 	require.Contains(t, labels, "2. Imported")
 	require.Contains(t, labels, "3. After")
-	require.Equal(t, 3, labels["2. Imported"].SequenceImportPosition.Line)
-	require.Equal(t, 3, sequenceObject(t, g, "a.note").SequenceImportPosition.Line)
+	require.Negative(t, slices.Compare(labels["2. Imported"].SequenceOrder, sequenceObject(t, g, "a.note").SequenceOrder))
+	require.Negative(t, slices.Compare(sequenceObject(t, g, "a.note").SequenceOrder, labels["3. After"].SequenceOrder))
 }
 
 func TestSequenceV2ImportedAttributeOrder(t *testing.T) {
@@ -390,4 +391,129 @@ branched: ordinary actor`)
 	require.True(t, sequenceObject(t, g, "branched").IsSequenceDiagramActor())
 	require.Equal(t, "a", g.Edges[0].Src.AbsID())
 	require.Equal(t, "b", g.Edges[0].Dst.AbsID())
+}
+
+func TestSequenceV2SpreadActorPrecedence(t *testing.T) {
+	t.Parallel()
+	for _, root := range []struct{ declarations, label, fill string }{
+		{"a: Local {style.fill: red}\n...${update}", "Grouped", "blue"},
+		{"...${update}\na: Local {style.fill: red}", "Local", "red"},
+	} {
+		g := compileSequence(t, "shape: sequence-diagram\n"+`vars: {update: {g: {shape: edge-group; a: Grouped {style.fill: blue}; a -> b}}}
+`+root.declarations)
+		a := sequenceObject(t, g, "a")
+		require.Equal(t, root.label, a.Label.Value)
+		require.Equal(t, root.fill, a.Style.Fill.Value)
+		require.Equal(t, root.label, a.Label.MapKey.Primary.Unbox().ScalarString())
+	}
+}
+
+func TestSequenceV2MaterializedFrameMembership(t *testing.T) {
+	t.Parallel()
+	for _, frame := range []string{"@frame", "${frame}"} {
+		t.Run(frame, func(t *testing.T) {
+			const body = `shape: edge-group {branched: true}
+ready: {a.note: Need input {shape: page}; a: {work -> _.b: Ask}}`
+			src := "shape: sequence-diagram\nvars: {frame: {" + body + "}}\na\nop: " + frame
+			g, _, err := d2compiler.Compile("root.d2", strings.NewReader(src), &d2compiler.CompileOptions{FS: fstest.MapFS{
+				"frame.d2": &fstest.MapFile{Data: []byte(body)},
+			}})
+			require.NoError(t, err)
+			branch := sequenceObject(t, g, "op.ready")
+			require.True(t, sequenceObject(t, g, "a.note").ContainedBy(branch))
+			require.Len(t, g.Edges, 1)
+			require.True(t, g.Edges[0].ContainedBy(branch))
+		})
+	}
+}
+
+func TestNestedSequenceActorError(t *testing.T) {
+	t.Parallel()
+	for _, shape := range []string{"sequence-diagram", "sequence_diagram"} {
+		src := "shape: sequence-diagram\nremote -> outer\ninner: {shape: " + shape + "; group: {a -> b}}"
+		_, _, err := d2compiler.Compile("sequence.d2", strings.NewReader(src), nil)
+		require.ErrorContains(t, err, "sequence.d2:3:1: actors in sequence diagrams cannot themselves be sequence diagrams: inner")
+	}
+}
+
+func TestSequenceV2InheritedBranchOptions(t *testing.T) {
+	t.Parallel()
+	g := compileSequence(t, `classes: {
+  frame: {shape: edge-group}
+  split: {shape.branched: true}
+  colored: {style.fill: blue}
+  ordinary: {shape.branched: false}
+}
+shape: sequence-diagram
+branchedFrame: {class: [frame; colored; split]; yes: {a -> b}}
+plainFrame: {class: [frame; split; ordinary]; c -> d}
+`)
+	require.True(t, sequenceObject(t, g, "branchedFrame.yes").IsSequenceDiagramBranch())
+	require.False(t, sequenceObject(t, g, "plainFrame").Sequence.Branched)
+	require.True(t, sequenceObject(t, g, "c").IsSequenceDiagramActor())
+}
+
+func TestCaptionFillNullInReusableStyles(t *testing.T) {
+	ordinary := compileSequence(t, `vars: {label: {style.fill: null}}
+app: {style.fill: red; ...${label}}`)
+	require.Nil(t, sequenceObject(t, ordinary, "app").Style.Fill)
+
+	// The same variable can clear an ordinary actor fill and an inherited
+	// frame caption. Its name or its position in vars cannot choose which.
+	g := compileSequence(t, `vars: {label: {style.fill: null}}
+shape: sequence-diagram
+classes: {tinted: {label.style.fill: green}}
+a: {style.fill: red; ...${label}}
+frame: {shape: edge-group; class: tinted; label: {...${label}}; a -> b}`)
+	require.Nil(t, sequenceObject(t, g, "a").Style.Fill)
+	require.Nil(t, sequenceObject(t, g, "frame").LabelFill)
+}
+
+func TestSequenceGroupedNulls(t *testing.T) {
+	t.Parallel()
+	const start = `shape: sequence-diagram {numbered: true}
+a
+frame: {shape: edge-group; a.n: Canceled {shape: page}; a.style.fill: red; a -> b: Old}
+`
+	for _, input := range []struct {
+		edit string
+		fs   fstest.MapFS
+	}{
+		{"a.n: null\na.style.fill: null", nil},
+		{"clear: {shape: edge-group; a.n: null; a.style.fill: null}", nil},
+		{"vars: {clean: {a.n: null; a.style.fill: null}}\n...${clean}", nil},
+		{"...@clean", fstest.MapFS{"clean.d2": {Data: []byte("a.n: null\na.style.fill: null")}}},
+	} {
+		g, _, err := d2compiler.Compile("sequence.d2", strings.NewReader(start+input.edit), &d2compiler.CompileOptions{FS: input.fs})
+		require.NoError(t, err)
+		_, found := g.Root.HasChild([]string{"a", "n"})
+		require.False(t, found)
+		require.Nil(t, sequenceObject(t, g, "a").Style.Fill)
+		require.Len(t, g.Edges, 1)
+	}
+
+	g := compileSequence(t, start+`steps: {replace: {
+  a: null
+  restored: {shape: edge-group; a -> b: New}
+  a.n: Restored {shape: page}
+}}`)
+	require.Equal(t, "Canceled", sequenceObject(t, g, "a.n").Label.Value)
+	require.Equal(t, "1. Old", g.Edges[0].Label.Value)
+	step := g.Steps[0]
+	require.Equal(t, "Restored", sequenceObject(t, step, "a.n").Label.Value)
+	require.Nil(t, sequenceObject(t, step, "a").Style.Fill)
+	require.Len(t, step.Edges, 1)
+	require.Equal(t, "1. New", step.Edges[0].Label.Value)
+}
+
+func TestSequenceNestedFrameDeletionKeepsActor(t *testing.T) {
+	t.Parallel()
+	for _, decl := range []string{"shape: edge-group", "class: frame"} {
+		src := "shape: sequence-diagram\nclasses: {frame: {shape: edge-group}}\n" +
+			"a: Actor {shape: diamond}\ng: {shape: edge-group; a: {" + decl + "; x -> y}; a: null}\na -> b"
+		g := compileSequence(t, src)
+		require.Equal(t, "Actor", sequenceObject(t, g, "a").Label.Value)
+		require.Equal(t, "diamond", sequenceObject(t, g, "a").Shape.Value)
+		require.Len(t, g.Edges, 1)
+	}
 }

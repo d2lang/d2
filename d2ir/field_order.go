@@ -1,6 +1,10 @@
 package d2ir
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/d2lang/d2/d2ast"
+)
 
 // A deferred spread has to distinguish children declared before and after it,
 // even inside an existing map or across files. Ordinary fields have one
@@ -96,6 +100,9 @@ func (m *Map) nestDeclarationOrder(site *fieldOrder) {
 	if m == nil {
 		return
 	}
+	for i := range m.sequenceDeletes {
+		m.sequenceDeletes[i].order = m.sequenceDeletes[i].order.within(site)
+	}
 	for _, field := range m.Fields {
 		field.nestDeclarationOrder(site)
 	}
@@ -126,4 +133,42 @@ func edgeRefsWithin(refs []*EdgeReference, site *fieldOrder) []*EdgeReference {
 		moved[i] = &copies[i]
 	}
 	return moved
+}
+
+// DeclarationOrder gives the first authored occurrence of an object or connection
+// after expanding imports and spreads, and its index in the reference list.
+// Multiple endpoints of the same key use
+// their literal position as a tiebreaker. Later style overrides do not move them.
+func DeclarationOrder(n Node) ([]uint64, int) {
+	var best fieldOrder
+	var pos d2ast.Position
+	var found, explicit bool
+	var index int
+	consider := func(i int, r Reference, order fieldOrder) {
+		if r.AST() == nil || r.Context().Key == nil {
+			return
+		}
+		authored := !r.DueToGlob() && r.Context().Key.EdgeIndex == nil
+		at := r.AST().GetRange().Start
+		if !found || authored && !explicit ||
+			authored == explicit && (order.before(best) || !best.before(order) && at.Before(pos)) {
+			best, pos, found, explicit, index = order, at, true, authored, i
+		}
+	}
+	switch n := n.(type) {
+	case *Field:
+		for i, ref := range n.References {
+			consider(i, ref, ref.order)
+		}
+	case *Edge:
+		for i, ref := range n.References {
+			consider(i, ref, ref.order)
+		}
+	}
+	if !found {
+		return nil, 0
+	}
+	// Positive order components keep a parent declaration ahead of children
+	// expanded within that occurrence.
+	return append(best.path(nil), 0, uint64(pos.Line), uint64(pos.Column)), index
 }

@@ -249,9 +249,10 @@ type SequenceOptions struct {
 
 type Attributes struct {
 	Sequence *SequenceOptions `json:"sequence,omitempty"`
-	// Imported timeline items are ordered at the import site, with their source
-	// positions breaking ties within the imported file.
-	SequenceImportPosition *d2ast.Position `json:"sequenceImportPosition,omitempty"`
+	// SequenceOrder orders v2 timeline items at their import or spread occurrence.
+	SequenceOrder []uint64 `json:"sequenceOrder,omitempty"`
+	// SequenceDeclarationIndex identifies the reference that introduced this timeline item.
+	SequenceDeclarationIndex int `json:"sequenceDeclarationIndex,omitempty"`
 
 	Label           Scalar                  `json:"label"`
 	LabelDimensions d2target.TextDimensions `json:"labelDimensions"`
@@ -1278,6 +1279,12 @@ func (obj *Object) IsConstantNear() bool {
 }
 
 type Edge struct {
+	// SequenceKey is the v2 source address before participant hoisting and graph indexing.
+	SequenceKey *d2ast.Key `json:"-"`
+	// SequenceGraphOrder is the insertion order that assigns graph edge indexes,
+	// before the diagram's edges are sorted by their source locations.
+	SequenceGraphOrder int `json:"-"`
+
 	Index int `json:"index"`
 
 	SrcTableColumnIndex *int `json:"srcTableColumnIndex,omitempty"`
@@ -1304,7 +1311,8 @@ type Edge struct {
 }
 
 type EdgeReference struct {
-	Edge *d2ast.Edge `json:"-"`
+	IsVar bool        `json:"-"`
+	Edge  *d2ast.Edge `json:"-"`
 
 	MapKey          *d2ast.Key `json:"-"`
 	MapKeyEdgeIndex int        `json:"map_key_edge_index"`

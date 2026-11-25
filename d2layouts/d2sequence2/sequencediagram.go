@@ -7,11 +7,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2exporter"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2sequence"
@@ -36,85 +38,33 @@ type item struct {
 	pos          sourcePosition
 	above, below float64
 	loopHeight   float64
+	spanMinimums []spanMinimum
 	y            float64
 }
 
-type sourcePosition struct{ line, column, edge, sourceLine, sourceColumn int }
+// A minimum activation height constrains the bottom of its last row relative
+// to the first row, whose absolute position is known only during placement.
+type spanMinimum struct {
+	first  *item
+	height float64
+}
+
+type sourcePosition []uint64
 
 func (a sourcePosition) less(b sourcePosition) bool {
-	if a.line != b.line {
-		return a.line < b.line
-	}
-	if a.column != b.column {
-		return a.column < b.column
-	}
-	if a.sourceLine != b.sourceLine {
-		return a.sourceLine < b.sourceLine
-	}
-	if a.sourceColumn != b.sourceColumn {
-		return a.sourceColumn < b.sourceColumn
-	}
-	return a.edge < b.edge
-}
-func objectPosition(o *d2graph.Object) sourcePosition {
-	p := sourcePosition{line: math.MaxInt, column: math.MaxInt, edge: math.MaxInt}
-	var sourcePath string
-	for _, r := range o.References {
-		if r.MapKey == nil || (r.Key != nil && r.Key.HasGlob()) {
-			continue
-		}
-		source := r.MapKey.Range
-		// Endpoint references share their enclosing message's map key. Use the
-		// referenced path component so client -> server introduces client first,
-		// even when group normalization changed the children encounter order.
-		if r.Key != nil && r.KeyPathIndex >= 0 && r.KeyPathIndex < len(r.Key.Path) {
-			source = r.Key.Path[r.KeyPathIndex].Unbox().GetRange()
-		}
-		// Overlays append references from other files to an existing object.
-		// Only positions within the file that introduced it are comparable.
-		if p.line != math.MaxInt && source.Path != sourcePath {
-			continue
-		}
-		q := sourcePosition{line: source.Start.Line, column: source.Start.Column, edge: r.MapKeyEdgeIndex}
-		if q.less(p) {
-			p = q
-			sourcePath = source.Path
-		}
-	}
-	if o.SequenceImportPosition != nil {
-		p.sourceLine, p.sourceColumn = p.line, p.column
-		p.line, p.column = o.SequenceImportPosition.Line, o.SequenceImportPosition.Column
-	}
-	return p
-}
-func edgePosition(e *d2graph.Edge) sourcePosition {
-	p := sourcePosition{line: math.MaxInt, column: math.MaxInt, edge: math.MaxInt}
-	for _, r := range e.References {
-		if r.MapKey == nil || (r.Edge != nil && (r.Edge.Src.HasGlob() || r.Edge.Dst.HasGlob())) {
-			continue
-		}
-		q := sourcePosition{line: r.MapKey.Range.Start.Line, column: r.MapKey.Range.Start.Column, edge: r.MapKeyEdgeIndex}
-		if q.less(p) {
-			p = q
-		}
-	}
-	if e.SequenceImportPosition != nil {
-		p.sourceLine, p.sourceColumn = p.line, p.column
-		p.line, p.column = e.SequenceImportPosition.Line, e.SequenceImportPosition.Column
-	}
-	return p
+	return slices.Compare(a, b) < 0
 }
 
 type diagram struct {
-	graph                                      *d2graph.Graph
-	actors, spans, events, groups, actorGroups []*d2graph.Object
-	owner                                      map[*d2graph.Object]*d2graph.Object
-	rank                                       map[*d2graph.Object]int
-	depth                                      map[*d2graph.Object]int
-	timeline                                   []*item
-	emptySpans                                 map[*d2graph.Object]float64
-	frameTop, frameBottom                      map[*d2graph.Object]float64
-	hgap, vgap                                 float64
+	graph                                             *d2graph.Graph
+	actors, lanes, spans, events, groups, actorGroups []*d2graph.Object
+	owner                                             map[*d2graph.Object]*d2graph.Object
+	rank                                              map[*d2graph.Object]int
+	depth                                             map[*d2graph.Object]int
+	timeline                                          []*item
+	emptySpans                                        map[*d2graph.Object]float64
+	frameTop, frameBottom                             map[*d2graph.Object]float64
+	hgap, vgap                                        float64
 }
 
 // Layout places a single sequence diagram after graph text dimensions have been
@@ -129,10 +79,10 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 	if err := d.collect(g.Root, nil, 0); err != nil {
 		return err
 	}
-	for i, a := range d.actors {
+	for i, a := range d.lanes {
 		d.rank[a] = i
 	}
-	if len(d.actors) == 0 {
+	if len(d.lanes) == 0 {
 		return fmt.Errorf("no actors declared in sequence diagram")
 	}
 	if err := d.buildTimeline(); err != nil {
@@ -173,7 +123,7 @@ func setPosition(p **string, v label.Position) {
 
 func (d *diagram) collect(parent, actor *d2graph.Object, depth int) error {
 	children := append([]*d2graph.Object(nil), parent.ChildrenArray...)
-	sort.SliceStable(children, func(i, j int) bool { return objectPosition(children[i]).less(objectPosition(children[j])) })
+	sort.SliceStable(children, func(i, j int) bool { return sourcePosition(children[i].SequenceOrder).less(children[j].SequenceOrder) })
 	for _, o := range children {
 		if o.Box == nil {
 			o.Box = geo.NewBox(geo.NewPoint(0, 0), 100, 60)
@@ -195,6 +145,10 @@ func (d *diagram) collect(parent, actor *d2graph.Object, depth int) error {
 		switch o.Shape.Value {
 		case d2target.ShapeSequenceDiagramActorGroup:
 			d.actorGroups = append(d.actorGroups, o)
+			if len(o.ChildrenArray) == 0 {
+				// A group with no actors still occupies its own header column.
+				d.lanes = append(d.lanes, o)
+			}
 			setPosition(&o.LabelPosition, label.InsideTopCenter)
 			if err := d.collect(o, nil, 0); err != nil {
 				return err
@@ -202,6 +156,7 @@ func (d *diagram) collect(parent, actor *d2graph.Object, depth int) error {
 		default:
 			if actor == nil {
 				d.actors = append(d.actors, o)
+				d.lanes = append(d.lanes, o)
 				d.owner[o] = o
 				if o.WidthAttr == nil && o.Width < 100 {
 					switch o.Shape.Value {
@@ -231,9 +186,9 @@ func (d *diagram) collect(parent, actor *d2graph.Object, depth int) error {
 					if o.Shape.Value == d2target.ShapeSequenceDiagramActor {
 						// A repeat has its own identity and source position, but the actor's
 						// appearance. Its children and references still belong to this object.
-						importPosition, afterGap := o.SequenceImportPosition, o.VerticalGap
+						order, declaration, afterGap := o.SequenceOrder, o.SequenceDeclarationIndex, o.VerticalGap
 						o.Attributes = actor.Attributes
-						o.SequenceImportPosition = importPosition
+						o.SequenceOrder, o.SequenceDeclarationIndex = order, declaration
 						o.VerticalGap = afterGap
 						o.Shape.Value = d2target.ShapeSequenceDiagramActor
 						o.Box = geo.NewBox(geo.NewPoint(0, 0), actor.Width, actor.Height)
@@ -287,7 +242,7 @@ func (d *diagram) buildTimeline() error {
 			}
 		}
 		h := float64(e.LabelDimensions.Height) / 2
-		it := &item{edge: e, pos: edgePosition(e), afterGap: e.VerticalGap, above: h, below: h}
+		it := &item{edge: e, pos: e.SequenceOrder, afterGap: e.VerticalGap, above: h, below: h}
 		if d.owner[e.Src] == d.owner[e.Dst] {
 			it.loopHeight = math.Max(32, float64(e.LabelDimensions.Height)+12)
 			it.below = it.loopHeight + h
@@ -303,27 +258,41 @@ func (d *diagram) buildTimeline() error {
 				}
 			}
 		}
+		if hasEndpointLabels(e) {
+			// Endpoint captions follow route direction. Measure their vertical
+			// extents against the same horizontal legs we will route below.
+			reversed := d.rank[d.owner[e.Src]] > d.rank[d.owner[e.Dst]]
+			run := messageLabelRun(e, reversed)
+			if reversed {
+				run = -run
+			}
+			c := d2exporter.ToConnection(e, nil)
+			c.Route = []*geo.Point{geo.NewPoint(0, 0), geo.NewPoint(run, 0)}
+			if it.loopHeight > 0 {
+				c.Route = append(c.Route, geo.NewPoint(run, it.loopHeight), geo.NewPoint(0, it.loopHeight))
+			}
+			b := endpointLabelBounds(&c)
+			it.above, it.below = math.Max(it.above, -b.minY), math.Max(it.below, b.maxY)
+		}
 		d.timeline = append(d.timeline, it)
 	}
 	for _, o := range d.events {
 		margin, _ := o.Spacing()
-		d.timeline = append(d.timeline, &item{object: o, pos: objectPosition(o), afterGap: o.VerticalGap, above: o.Height/2 + margin.Top, below: o.Height/2 + margin.Bottom})
+		d.timeline = append(d.timeline, &item{object: o, pos: o.SequenceOrder, afterGap: o.VerticalGap, above: o.Height/2 + margin.Top, below: o.Height/2 + margin.Bottom})
 		for p := o.Parent; p != nil && p != d.owner[o]; p = p.Parent {
 			used[p] = true
 		}
 	}
 	for _, s := range d.spans {
 		if !used[s] {
-			d.timeline = append(d.timeline, &item{object: s, pos: objectPosition(s), above: spanPadding, below: spanPadding})
+			d.timeline = append(d.timeline, &item{object: s, pos: s.SequenceOrder, above: spanPadding, below: spanPadding})
 		}
 	}
 	// Empty message frames are timeline events too; they reserve space at
 	// their declaration rather than floating over a neighboring note or message.
-	for _, g := range d.groups {
-		// Even empty compartments reserve their own row in the enclosing frame.
-		if g.Sequence != nil && g.Sequence.Branched && len(g.ChildrenArray) > 0 {
-			continue
-		}
+	for i := len(d.groups) - 1; i >= 0; i-- {
+		// Schedule empty children before deciding whether their parent needs a row.
+		g := d.groups[i]
 		hasContent := false
 		for _, it := range d.timeline {
 			if d.inGroup(it, g) {
@@ -332,21 +301,13 @@ func (d *diagram) buildTimeline() error {
 			}
 		}
 		if !hasContent {
-			d.timeline = append(d.timeline, &item{object: g, pos: objectPosition(g), below: math.Max(40, float64(g.LabelDimensions.Height)+framePadding*2)})
+			d.timeline = append(d.timeline, &item{object: g, pos: g.SequenceOrder, below: math.Max(40, float64(g.LabelDimensions.Height)+framePadding*2)})
 		}
 	}
 	// Stable sorting uses the graph's deterministic encounter order for generated
 	// or imported references that have no distinct source position.
 	sort.SliceStable(d.timeline, func(i, j int) bool { return d.timeline[i].pos.less(d.timeline[j].pos) })
 	d.reserveSpanExtents()
-	// The first item in a shared row must clear the previous row even if a
-	// later member is taller. A self-message joins the next item at its return.
-	for i := len(d.timeline) - 2; i >= 0; i-- {
-		it := d.timeline[i]
-		if it.afterGap != nil && gap(it.afterGap, -1) == 0 {
-			it.above = math.Max(it.above, d.timeline[i+1].above-it.loopHeight)
-		}
-	}
 	return nil
 }
 
@@ -396,6 +357,13 @@ func (d *diagram) reserveSpanExtents() {
 				bottom += b
 			}
 		}
+		if s.HeightAttr != nil {
+			it := d.timeline[start]
+			// A self-message can enter the span on its return leg. Leave
+			// space below a fixed-height span for any enclosing borders.
+			height := gap(s.HeightAttr, 0) + it.loopHeight - spanPadding + bottom
+			d.timeline[end].spanMinimums = append(d.timeline[end].spanMinimums, spanMinimum{it, height})
+		}
 		above[start] = math.Max(above[start], top)
 		below[end] = math.Max(below[end], bottom)
 	}
@@ -416,10 +384,10 @@ func (d *diagram) actorGroupDepth(a *d2graph.Object) float64 {
 }
 
 func (d *diagram) placeActors() {
-	n := len(d.actors)
+	n := len(d.lanes)
 	left, right := make([]float64, n), make([]float64, n)
 	headerHeight := 0.
-	for i, a := range d.actors {
+	for i, a := range d.lanes {
 		margin, _ := a.Spacing()
 		left[i] = a.Width/2 + margin.Left
 		right[i] = a.Width/2 + margin.Right
@@ -437,7 +405,11 @@ func (d *diagram) placeActors() {
 	}
 	for _, s := range d.spans {
 		i := d.rank[d.owner[s]]
-		w := spanWidth + float64(d.depth[s])*spanWidth/2
+		offset := float64(d.depth[s]) * spanWidth / 2
+		halfWidth := activationWidth(s) / 2
+		left[i] = math.Max(left[i], halfWidth-offset)
+		right[i] = math.Max(right[i], halfWidth+offset)
+		w := spanWidth + offset
 		left[i] = math.Max(left[i], w)
 		right[i] = math.Max(right[i], w)
 		if s.HasLabel() {
@@ -463,7 +435,7 @@ func (d *diagram) placeActors() {
 	}
 	// Reserve the sides of all enclosing participant frames. This also
 	// handles a single participant whose group's label is wider than its lane.
-	for i, a := range d.actors {
+	for i, a := range d.lanes {
 		for p := a.Parent; p != nil && p != d.graph.Root; p = p.Parent {
 			if !containsObject(d.actorGroups, p) {
 				continue
@@ -490,7 +462,17 @@ func (d *diagram) placeActors() {
 		if lo == hi {
 			continue
 		}
-		want := messageLabelRun(e)
+		want := messageLabelRun(e, d.rank[d.owner[e.Src]] == hi)
+		// Messages attach to activation boundaries, not to the actor center.
+		for _, endpoint := range []*d2graph.Object{e.Src, e.Dst} {
+			if depth, ok := d.depth[endpoint]; ok {
+				offset := float64(depth) * spanWidth / 2
+				if d.rank[d.owner[endpoint]] == hi {
+					offset = -offset
+				}
+				want += activationWidth(endpoint)/2 + offset
+			}
+		}
 		have := 0.
 		for i := lo; i < hi; i++ {
 			have += steps[i]
@@ -506,7 +488,7 @@ func (d *diagram) placeActors() {
 	if d.graph.Root.HasLabel() {
 		titleHeight = float64(d.graph.Root.LabelDimensions.Height) + padding
 	}
-	for i, a := range d.actors {
+	for i, a := range d.lanes {
 		margin, _ := a.Spacing()
 		a.TopLeft = geo.NewPoint(x-a.Width/2, titleHeight+headerHeight-a.Height-margin.Bottom)
 		a.ZIndex = 3
@@ -518,29 +500,62 @@ func (d *diagram) placeActors() {
 
 // An off-center label sits a quarter of the way along the message. Reserve
 // enough horizontal space for its near half to clear the participant.
-func messageLabelRun(e *d2graph.Edge) float64 {
-	run := float64(e.LabelDimensions.Width) + 2*padding
+func messageLabelRun(e *d2graph.Edge, reversed bool) float64 {
+	mainWidth := float64(e.LabelDimensions.Width)
+	fraction := label.CENTER_LABEL_POSITION
 	if near := e.Attributes.LabelPosition; near != nil {
 		switch d2ast.LabelPositionsMapping[near.Value] {
-		case label.InsideMiddleLeft, label.InsideMiddleRight,
-			label.OutsideTopLeft, label.OutsideTopRight, label.OutsideBottomLeft, label.OutsideBottomRight:
-			run *= 2
+		case label.InsideMiddleLeft, label.OutsideTopLeft, label.OutsideBottomLeft:
+			fraction = label.LEFT_LABEL_POSITION
+		case label.InsideMiddleRight, label.OutsideTopRight, label.OutsideBottomRight:
+			fraction = label.RIGHT_LABEL_POSITION
 		}
 	}
-	return run
+	// On each side of the main label, allow room for the inward-facing
+	// endpoint caption and the portion of the main label on that side.
+	left, right := 0., 0.
+	if e.SrcArrowhead != nil && e.SrcArrowhead.Label.Value != "" {
+		left = float64(e.SrcArrowhead.LabelDimensions.Width)
+	}
+	if e.DstArrowhead != nil && e.DstArrowhead.Label.Value != "" {
+		right = float64(e.DstArrowhead.LabelDimensions.Width)
+	}
+	if reversed {
+		left, right = right, left
+	}
+	if e.Label.Value == "" {
+		return left + right + 2*padding
+	}
+	return math.Max((left+mainWidth/2+padding)/fraction, (right+mainWidth/2+padding)/(1-fraction))
 }
 
 func selfTravel(e *d2graph.Edge) float64 {
-	if near := e.Attributes.LabelPosition; near != nil && d2ast.LabelPositionsMapping[near.Value].IsOutside() {
-		return math.Max(60, messageLabelRun(e))
+	if near := e.Attributes.LabelPosition; hasEndpointLabels(e) || near != nil && d2ast.LabelPositionsMapping[near.Value].IsOutside() {
+		return math.Max(60, messageLabelRun(e, false))
 	}
 	return math.Max(60, float64(e.LabelDimensions.Width)/2+padding)
 }
 func (d *diagram) inGroup(it *item, g *d2graph.Object) bool {
-	if it.edge != nil {
-		return it.edge.ContainedBy(g)
+	// A style override in a later branch refers to the original item. Its
+	// declaring scope determines which compartment owns it.
+	var scope *d2graph.Object
+	if e := it.edge; e != nil {
+		if i := e.SequenceDeclarationIndex; i >= 0 && i < len(e.References) {
+			scope = e.References[i].ScopeObj
+		}
+	} else {
+		o := it.object
+		if o == g {
+			return false
+		}
+		if o.IsDescendantOf(g) {
+			return true
+		}
+		if i := o.SequenceDeclarationIndex; i >= 0 && i < len(o.References) {
+			scope = o.References[i].ScopeObj
+		}
 	}
-	return it.object != g && (it.object.IsDescendantOf(g) || it.object.ContainedBy(g))
+	return scope != nil && scope.IsDescendantOf(g)
 }
 
 func (d *diagram) placeTimeline() error {
@@ -558,36 +573,49 @@ func (d *diagram) placeTimeline() error {
 			}
 		}
 	}
+	// A frame boundary ends a shared row and leaves room for its border.
+	boundary := make([]bool, len(d.timeline)+1)
+	opening, closing := make([][]*d2graph.Object, len(d.timeline)), make([][]*d2graph.Object, len(d.timeline))
+	for _, g := range d.groups {
+		if first[g] >= 0 {
+			start, end := first[g], last[g]
+			boundary[start], boundary[end+1] = true, true
+			// Collection visits every parent before its descendants.
+			opening[start] = append(opening[start], g)
+			closing[end] = append(closing[end], g)
+		}
+	}
+	for i, it := range d.timeline {
+		if it.object != nil && containsObject(d.groups, it.object) {
+			boundary[i], boundary[i+1] = true, true
+		}
+	}
+	// The first item in a shared row must clear the previous row even if a
+	// later member is taller. A self-message joins the next item at its return.
+	for i := len(d.timeline) - 2; i >= 0; i-- {
+		it := d.timeline[i]
+		if !boundary[i+1] && it.afterGap != nil && gap(it.afterGap, -1) == 0 {
+			it.above = math.Max(it.above, d.timeline[i+1].above-it.loopHeight)
+		}
+	}
 	headerBottom := 0.
-	for _, a := range d.actors {
+	for _, a := range d.lanes {
 		b := objectBounds(a)
 		headerBottom = math.Max(headerBottom, b.maxY)
 	}
 	end, bottom := headerBottom, headerBottom
 	nextGap := d.vgap
 	explicit := false
-	closedBranch := false
 	for i, it := range d.timeline {
 		y := end + nextGap
 		if !explicit {
 			y = math.Max(y, bottom+d.vgap+it.above)
-		} else if closedBranch {
-			// A zero gap within a compartment may join rows; its closing
-			// boundary still belongs between the two compartments.
-			y = math.Max(y, bottom+it.above)
+		} else if boundary[i] {
+			// Rows may share time within a frame. Items outside it must
+			// clear its closing border, including when its last gap is zero.
+			y = math.Max(y, bottom+it.above+framePadding)
 		}
-		closedBranch = false
-		opening := append([]*d2graph.Object(nil), d.groups...)
-		sort.SliceStable(opening, func(i, j int) bool { return opening[i].Level() < opening[j].Level() })
-		for _, g := range opening {
-			if first[g] != i {
-				continue
-			}
-			if explicit && g.Sequence != nil && g.Sequence.Branched {
-				// A preceding event outside this frame cannot share its first
-				// row: the frame title and opening border precede the guard.
-				y = math.Max(y, bottom+it.above+framePadding)
-			}
+		for _, g := range opening[i] {
 			top := y - it.above
 			d.frameTop[g] = top
 			if g.IsSequenceDiagramBranch() && first[g.Parent] == i && inlineGuard(g.Parent, g) {
@@ -613,7 +641,6 @@ func (d *diagram) placeTimeline() error {
 		} else {
 			o := it.object
 			if containsObject(d.groups, o) {
-				closedBranch = o.IsSequenceDiagramBranch()
 				d.frameTop[o] = y
 				d.frameBottom[o] = y + it.below
 			} else if _, isSpan := d.depth[o]; isSpan {
@@ -628,22 +655,13 @@ func (d *diagram) placeTimeline() error {
 			}
 		}
 		bottom = math.Max(bottom, y+it.below)
-		for _, g := range opening {
-			if first[g] >= 0 && last[g] == i && g.IsSequenceDiagramBranch() {
-				closedBranch = true
-				break
-			}
+		for _, span := range it.spanMinimums {
+			bottom = math.Max(bottom, span.first.y+span.height)
 		}
-		for j, g := range opening {
-			if closedBranch {
-				// Finish inner compartment bounds before reserving the outer
-				// frame. The following item must clear both levels' padding.
-				g = opening[len(opening)-1-j]
-			}
-			if first[g] >= 0 && last[g] == i {
-				d.frameBottom[g] = bottom + framePadding
-				bottom += framePadding
-			}
+		for j := len(closing[i]) - 1; j >= 0; j-- {
+			g := closing[i][j]
+			bottom += framePadding
+			d.frameBottom[g] = bottom
 		}
 		explicit = it.afterGap != nil
 		nextGap = gap(it.afterGap, d.vgap)
@@ -657,7 +675,7 @@ func (d *diagram) placeTimeline() error {
 			continue
 		}
 		y := headerBottom + d.vgap
-		p := objectPosition(g)
+		p := g.SequenceOrder
 		for _, it := range d.timeline {
 			if it.pos.less(p) {
 				y = math.Max(y, it.y+it.below+framePadding)
@@ -845,6 +863,23 @@ func objectBounds(o *d2graph.Object) bounds {
 	}
 	return b
 }
+func hasEndpointLabels(e *d2graph.Edge) bool {
+	return e.SrcArrowhead != nil && e.SrcArrowhead.Label.Value != "" || e.DstArrowhead != nil && e.DstArrowhead.Label.Value != ""
+}
+
+func endpointLabelBounds(c *d2target.Connection) bounds {
+	b := emptyBounds()
+	for i, t := range []*d2target.Text{c.SrcLabel, c.DstLabel} {
+		if t == nil {
+			continue
+		}
+		p := c.GetArrowheadLabelPosition(i == 1)
+		b.point(p.X, p.Y)
+		b.point(p.X+float64(t.LabelWidth), p.Y+float64(t.LabelHeight))
+	}
+	return b
+}
+
 func edgeBounds(e *d2graph.Edge) bounds {
 	b := emptyBounds()
 	for _, p := range e.Route {
@@ -858,6 +893,10 @@ func edgeBounds(e *d2graph.Edge) bounds {
 		p, _ := label.FromString(*e.LabelPosition).GetPointOnRoute(e.Route, messageStrokeWidth(e), percentage, float64(e.LabelDimensions.Width), float64(e.LabelDimensions.Height))
 		b.point(p.X, p.Y)
 		b.point(p.X+float64(e.LabelDimensions.Width), p.Y+float64(e.LabelDimensions.Height))
+	}
+	if hasEndpointLabels(e) {
+		c := d2exporter.ToConnection(e, nil)
+		b.include(endpointLabelBounds(&c))
 	}
 	return b
 }
@@ -882,8 +921,8 @@ func (d *diagram) placeMessageGroups() {
 			}
 		}
 		if math.IsInf(b.minX, 1) {
-			b.minX = d.actors[0].Center().X - framePadding
-			b.maxX = d.actors[len(d.actors)-1].Center().X + framePadding
+			b.minX = d.lanes[0].Center().X - framePadding
+			b.maxX = d.lanes[len(d.lanes)-1].Center().X + framePadding
 		}
 		b.minX -= framePadding
 		b.maxX += framePadding
@@ -1032,6 +1071,10 @@ func (d *diagram) placeActorGroups() {
 	groups := append([]*d2graph.Object(nil), d.actorGroups...)
 	sort.SliceStable(groups, func(i, j int) bool { return groups[i].Level() > groups[j].Level() })
 	for _, g := range groups {
+		if len(g.ChildrenArray) == 0 {
+			g.ZIndex = 0
+			continue
+		}
 		b := emptyBounds()
 		for _, o := range d.graph.Objects {
 			if o != g && o.IsDescendantOf(g) {

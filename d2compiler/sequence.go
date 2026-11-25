@@ -2,6 +2,7 @@ package d2compiler
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -19,16 +20,23 @@ func sequencePathKey(path []d2ast.String) string {
 	return strings.Join(parts, "\x00")
 }
 
-func sequenceShape(m *d2ir.Map) string {
-	return sequenceShapeValue(m, make(map[*d2ir.Map]bool), d2ast.FlatUnquotedString("shape"))
+type sequenceClassProperty struct {
+	class    *d2ir.Map
+	branched bool
 }
 
-func sequenceShapeValue(m *d2ir.Map, visiting map[*d2ir.Map]bool, path ...d2ast.String) string {
-	if m == nil || visiting[m] {
+func (c *compiler) sequenceShape(m *d2ir.Map) string {
+	return c.sequenceShapeValue(m, false)
+}
+
+func (c *compiler) sequenceShapeValue(m *d2ir.Map, branched bool) string {
+	if m == nil || c.stopped() {
 		return ""
 	}
-	visiting[m] = true
-	defer delete(visiting, m)
+	path := []d2ast.String{d2ast.FlatUnquotedString("shape")}
+	if branched {
+		path = append(path, d2ast.FlatUnquotedString("branched"))
+	}
 	f := m.GetField(path...)
 	if f != nil && f.Primary() != nil {
 		return strings.ToLower(f.Primary().Value.ScalarString())
@@ -49,7 +57,23 @@ func sequenceShapeValue(m *d2ir.Map, visiting map[*d2ir.Map]bool, path ...d2ast.
 	}
 	shape := ""
 	for _, name := range names {
-		if inherited := sequenceShapeValue(m.GetClassMap(name), visiting, path...); inherited != "" {
+		classMap := c.getClassMap(m, name)
+		if classMap == nil {
+			continue
+		}
+		if c.sequenceClassValues == nil {
+			c.sequenceClassValues = make(map[sequenceClassProperty]string)
+		}
+		property := sequenceClassProperty{classMap, branched}
+		inherited, known := c.sequenceClassValues[property]
+		if !known {
+			// A temporary empty value also terminates cyclic lookups. The
+			// normal class compiler reports cycles at their source keys.
+			c.sequenceClassValues[property] = ""
+			inherited = c.sequenceShapeValue(classMap, branched)
+			c.sequenceClassValues[property] = inherited
+		}
+		if inherited != "" {
 			shape = inherited
 		}
 	}
@@ -64,19 +88,24 @@ func sequenceObjectField(f *d2ir.Field) bool {
 // Normalize v2 message groups only after imports, variables, and boards have
 // been resolved by the IR compiler. Legacy sequence_diagram scopes retain their
 // original implicit actor resolution.
-func (c *compiler) sequenceDiagramMaps(m *d2ir.Map, diagrams []*d2ir.Map) []*d2ir.Map {
+func (c *compiler) sequenceDiagramMaps(m *d2ir.Map, selected map[*d2ir.Map]bool) bool {
 	if c.stopped() {
-		return diagrams
+		return false
 	}
-	if sequenceShape(m) == d2target.ShapeSequenceDiagramV2 {
-		return append(diagrams, m)
+	if c.sequenceShape(m) == d2target.ShapeSequenceDiagramV2 {
+		selected[m] = true
+		return true
 	}
+	found := false
 	for _, f := range m.Fields {
-		if sequenceObjectField(f) && f.Map() != nil {
-			diagrams = c.sequenceDiagramMaps(f.Map(), diagrams)
+		if sequenceObjectField(f) && f.Map() != nil && c.sequenceDiagramMaps(f.Map(), selected) {
+			found = true
 		}
 	}
-	return diagrams
+	if found {
+		selected[m] = false
+	}
+	return found
 }
 
 func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
@@ -94,7 +123,7 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 	var collect func(*d2ir.Map, []d2ast.String, []d2ast.String, bool)
 	collect = func(m *d2ir.Map, canonical, group []d2ast.String, isGroup bool) {
 		original := d2ir.BoardIDA(m)
-		branched := isGroup && sequenceShapeValue(m, make(map[*d2ir.Map]bool), d2ast.FlatUnquotedString("shape"), d2ast.FlatUnquotedString("branched")) == "true"
+		branched := isGroup && c.sequenceShapeValue(m, true) == "true"
 		if branched && len(m.Edges) > 0 {
 			c.errorf(m.Edges[0].LastRef().AST(), "place messages inside a named branch of the branched edge-group")
 			invalid = true
@@ -108,13 +137,30 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 			referenceScope = group
 		}
 		c.sequenceScopes[sequencePathKey(original)] = referenceScope
+		if group != nil {
+			for _, e := range m.Edges {
+				for _, ref := range e.References {
+					c.recordMaterializedScope(ref, group)
+				}
+			}
+		}
 		for _, f := range m.Fields {
 			if !sequenceObjectField(f) {
 				continue
 			}
+			if group != nil {
+				for _, ref := range f.References {
+					c.recordMaterializedScope(ref, group)
+				}
+			}
 			parent := canonical
 			childGroup := group
-			childShape := sequenceShape(f.Map())
+			childShape := c.sequenceShape(f.Map())
+			if childShape == d2target.ShapeSequenceDiagramV2 || childShape == d2target.ShapeSequenceDiagram {
+				c.errorf(f.LastRef().AST(), "actors in sequence diagrams cannot themselves be sequence diagrams: %s", f.Name.ScalarString())
+				invalid = true
+				continue
+			}
 			if branched && childShape != "" {
 				c.errorf(f.LastRef().AST(), "a branch cannot have a shape; place nested shapes inside the branch")
 				invalid = true
@@ -123,7 +169,7 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 			if isGroup && !childIsGroup {
 				parent = base
 				if existing := diagram.GetField(f.Name); existing != nil &&
-					sequenceShape(existing.Map()) == d2target.ShapeSequenceDiagramEdgeGroup {
+					c.sequenceShape(existing.Map()) == d2target.ShapeSequenceDiagramEdgeGroup {
 					c.errorf(f.LastRef().AST(), "sequence diagram actor %q conflicts with an edge-group of the same name", f.Name.ScalarString())
 					invalid = true
 				}
@@ -144,11 +190,39 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 		return
 	}
 
+	// Deleting an actor or one of its attributes must also clear preceding
+	// declarations in sibling frames. Do this while each endpoint still has
+	// the original edge scope that created it.
+	if slices.ContainsFunc(scopes, func(s scope) bool { return s.m.HasSequenceDeletions() }) {
+		actorScopes := []*d2ir.Map{diagram}
+		shared := make(map[string][]*d2ir.Map)
+		for _, s := range scopes {
+			if s.messageGroup && !s.branched {
+				actorScopes = append(actorScopes, s.m)
+			} else if s.m != diagram {
+				key := sequencePathKey(s.canonical)
+				shared[key] = append(shared[key], s.m)
+			}
+		}
+		d2ir.ApplySequenceDeletions(actorScopes, func(f *d2ir.Field) bool {
+			return sequenceObjectField(f) && c.sequenceShape(f.Map()) != d2target.ShapeSequenceDiagramEdgeGroup
+		})
+		for _, parts := range shared {
+			d2ir.ApplySequenceDeletions(parts, nil)
+		}
+	}
+
 	// Resolve both endpoints independently in the original hierarchy, then
 	// express their canonical paths relative to their eventual graph scope.
 	// This also handles parent paths and edges within hoisted actor maps.
 	for _, s := range scopes {
 		for _, e := range s.m.Edges {
+			// Graph edge indexes span frames. Source indexes belong to the
+			// original IR scope, including materialized imports and variables.
+			e.SequenceKey = &d2ast.Key{Edges: []*d2ast.Edge{e.ID.AST()}, EdgeIndex: &d2ast.EdgeIndex{Int: e.ID.Index}}
+			if len(s.original) != 0 {
+				e.SequenceKey.Key = d2ast.MakeKeyPathString(s.original)
+			}
 			for _, endpoint := range []*[]d2ast.String{&e.ID.SrcPath, &e.ID.DstPath} {
 				absolute := append([]d2ast.String(nil), s.original...)
 				path := *endpoint
@@ -185,7 +259,6 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 		}
 	}
 
-	positions := make(map[*d2ir.Field]d2ast.Range)
 	// Iterate the snapshot: moving fields must not skip siblings or process
 	// newly appended actors again. Copy through OverlayMap to retain IR parents.
 	for _, s := range scopes {
@@ -194,11 +267,11 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 		}
 		var retained []*d2ir.Field
 		for _, f := range s.m.Fields {
-			if !sequenceObjectField(f) || sequenceShape(f.Map()) == d2target.ShapeSequenceDiagramEdgeGroup {
+			if !sequenceObjectField(f) || c.sequenceShape(f.Map()) == d2target.ShapeSequenceDiagramEdgeGroup {
 				retained = append(retained, f)
 				continue
 			}
-			sequenceOverlayMap(diagram, &d2ir.Map{Fields: []*d2ir.Field{f}}, positions)
+			d2ir.OverlaySequenceActor(diagram, f)
 		}
 		// This is a move, not a user deletion: DeleteField would also remove
 		// messages whose original references named the moved actors.
@@ -206,66 +279,32 @@ func (c *compiler) preprocessSequenceDiagram(diagram *d2ir.Map) {
 	}
 }
 
-// Declarations of a hoisted actor may occur both at the diagram root and in
-// multiple message groups. Merge each attribute in source order rather than
-// letting the order of the normalization traversal decide which one wins.
-func sequenceOverlayMap(base, overlay *d2ir.Map, positions map[*d2ir.Field]d2ast.Range) {
-	for _, field := range overlay.Fields {
-		old := base.GetField(field.Name)
-		if old == nil {
-			d2ir.OverlayMap(base, &d2ir.Map{Fields: []*d2ir.Field{field}})
-			continue
-		}
-		copy := field.Copy(base).(*d2ir.Field)
-		if copy.Primary() != nil {
-			after := sequencePrimaryRange(field)
-			before, known := positions[old]
-			if !known && old.Primary() != nil {
-				before = sequencePrimaryRange(old)
-			}
-			if old.Primary() != nil && before.Path == after.Path && after.Before(before) {
-				copy.Primary_ = nil
-			} else {
-				positions[old] = after
-			}
-		}
-		if old.Map() != nil && field.Map() != nil {
-			sequenceOverlayMap(old.Map(), field.Map(), positions)
-			copy.Composite = nil
-		}
-		d2ir.OverlayMap(base, &d2ir.Map{Fields: []*d2ir.Field{copy}})
+// An imported reference has no local ScopeMap; a reusable map's reference
+// points back to vars. Record its owning frame before moving the actor.
+func (c *compiler) recordMaterializedScope(ref d2ir.Reference, group []d2ast.String) {
+	m := ref.Context().ScopeMap
+	if m != nil && !d2ir.IsVar(m) {
+		return
 	}
-	// Distinct messages in separate groups remain distinct even if both are
-	// declared within maps for the same actor.
-	for _, edge := range overlay.Edges {
-		base.Edges = append(base.Edges, edge.Copy(base).(*d2ir.Edge))
+	if c.sequenceRefScopes == nil {
+		c.sequenceRefScopes = make(map[d2ir.Reference][]d2ast.String)
 	}
+	c.sequenceRefScopes[ref] = group
 }
 
-func sequencePrimaryRange(field *d2ir.Field) d2ast.Range {
-	range_ := field.Primary().Value.GetRange()
-	for i := len(field.References) - 1; i >= 0; i-- {
-		ref := field.References[i]
-		key := ref.Context_.Key
-		if ref.Primary() && (key.Primary.Unbox() != nil || key.Value.ScalarBox().Unbox() != nil) {
-			range_ = key.Range
-			break
-		}
+func (c *compiler) sequenceScope(ref d2ir.Reference) ([]d2ast.String, bool) {
+	m := ref.Context().ScopeMap
+	if m == nil || d2ir.IsVar(m) {
+		group, ok := c.sequenceRefScopes[ref]
+		return group, ok
 	}
-	if imported := field.ImportAST(); imported != nil && imported.GetRange().Path != range_.Path {
-		return imported.GetRange()
-	}
-	return range_
-}
-
-func (c *compiler) sequenceScope(m *d2ir.Map) []d2ast.String {
 	path := d2ir.BoardIDA(m)
 	if len(c.sequenceScopes) != 0 {
 		if canonical, ok := c.sequenceScopes[sequencePathKey(path)]; ok {
-			return canonical
+			return canonical, true
 		}
 	}
-	return path
+	return path, true
 }
 
 func (c *compiler) compileSequenceOptions(obj *d2graph.Object, m *d2ir.Map) {
@@ -345,20 +384,7 @@ func (c *compiler) compileSequenceDiagrams(g *d2graph.Graph) {
 	}
 	edges := append([]*d2graph.Edge(nil), g.Edges...)
 	sort.SliceStable(edges, func(i, j int) bool {
-		if len(edges[i].References) == 0 || len(edges[j].References) == 0 {
-			return false
-		}
-		left, right := edges[i].References[0].Edge.Range.Start, edges[j].References[0].Edge.Range.Start
-		if edges[i].SequenceImportPosition != nil {
-			left = *edges[i].SequenceImportPosition
-		}
-		if edges[j].SequenceImportPosition != nil {
-			right = *edges[j].SequenceImportPosition
-		}
-		if left.Line != right.Line || left.Column != right.Column {
-			return left.Before(right)
-		}
-		return edges[i].References[0].Edge.Range.Before(edges[j].References[0].Edge.Range)
+		return slices.Compare(edges[i].SequenceOrder, edges[j].SequenceOrder) < 0
 	})
 	numbers := make(map[*d2graph.Object]int)
 	for _, e := range edges {

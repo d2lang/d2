@@ -84,7 +84,7 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 		return nil, nil, err
 	}
 
-	g, err := compileIRContext(opts.Context, ast, ir)
+	g, err := compileGraph(opts.Context, ast, ir, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -124,6 +124,10 @@ func compileIR(ast *d2ast.Map, m *d2ir.Map) (*d2graph.Graph, error) {
 }
 
 func compileIRContext(ctx context.Context, ast *d2ast.Map, m *d2ir.Map) (*d2graph.Graph, error) {
+	return compileGraph(ctx, ast, m, false)
+}
+
+func compileGraph(ctx context.Context, ast *d2ast.Map, m *d2ir.Map, owned bool) (*d2graph.Graph, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -131,8 +135,9 @@ func compileIRContext(ctx context.Context, ast *d2ast.Map, m *d2ir.Map) (*d2grap
 		return nil, err
 	}
 	c := &compiler{
-		err: &d2parser.ParseError{},
-		ctx: ctx,
+		err:       &d2parser.ParseError{},
+		ctx:       ctx,
+		ownedRoot: owned,
 	}
 
 	g := d2graph.NewGraph()
@@ -162,20 +167,26 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 	// Nested boards need a local class root, and CopyBase mutates its source.
 	// V2 also hoists grouped actors and rewrites their IR references. Keep
 	// ordinary single-board diagrams on the read-only path.
-	previousScopes := c.sequenceScopes
-	c.sequenceScopes = nil
-	defer func() { c.sequenceScopes = previousScopes }()
-	if !ir.Root() || hasBoardFields(ir) || len(c.sequenceDiagramMaps(ir, nil)) != 0 {
+	previousScopes, previousRefScopes := c.sequenceScopes, c.sequenceRefScopes
+	c.sequenceScopes, c.sequenceRefScopes = nil, nil
+	defer func() { c.sequenceScopes, c.sequenceRefScopes = previousScopes, previousRefScopes }()
+	owned := c.ownedRoot && g.Parent == nil
+	if !ir.Root() || hasBoardFields(ir) {
 		if err := d2ir.ReserveVariableExpansionCopy(c.ctx, ir); err != nil {
 			c.fatalErr = err
 			return g
 		}
 		ir = ir.Copy(nil).(*d2ir.Map)
-		for _, diagram := range c.sequenceDiagramMaps(ir, nil) {
-			if c.sequenceScopes == nil {
-				c.sequenceScopes = make(map[string][]d2ast.String)
-			}
-			c.preprocessSequenceDiagram(diagram)
+		owned = true
+	}
+	selected := make(map[*d2ir.Map]bool)
+	if c.sequenceDiagramMaps(ir, selected) {
+		c.sequenceScopes = make(map[string][]d2ast.String)
+		var err error
+		ir, err = d2ir.EditGraphScopes(c.ctx, ir, selected, owned, c.preprocessSequenceDiagram)
+		if err != nil {
+			c.fatalErr = err
+			return g
 		}
 	}
 	c.compileMap(g.Root, ir)
@@ -455,13 +466,16 @@ func _findFieldAST(ast *d2ast.Map, path []string) *d2ast.Map {
 }
 
 type compiler struct {
-	err             *d2parser.ParseError
-	activeClassMaps map[*d2ir.Map]struct{}
-	sequenceScopes  map[string][]d2ast.String
-	classMapsByRoot map[*d2ir.Map]map[string]*d2ir.Map
-	explicitLabels  map[*d2graph.Attributes]struct{}
-	ctx             context.Context
-	fatalErr        error
+	ownedRoot           bool
+	err                 *d2parser.ParseError
+	activeClassMaps     map[*d2ir.Map]struct{}
+	sequenceScopes      map[string][]d2ast.String
+	sequenceClassValues map[sequenceClassProperty]string
+	sequenceRefScopes   map[d2ir.Reference][]d2ast.String
+	classMapsByRoot     map[*d2ir.Map]map[string]*d2ir.Map
+	explicitLabels      map[*d2graph.Attributes]struct{}
+	ctx                 context.Context
+	fatalErr            error
 }
 
 func (c *compiler) stopped() bool {
@@ -811,9 +825,8 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 	if obj.Label.MapKey == nil {
 		obj.Label.MapKey = f.LastPrimaryKey()
 	}
-	if obj.OuterSequenceDiagram().IsSequenceDiagramV2() && f.ImportAST() != nil {
-		position := f.ImportAST().GetRange().Start
-		obj.SequenceImportPosition = &position
+	if obj.OuterSequenceDiagram().IsSequenceDiagramV2() {
+		obj.SequenceOrder, obj.SequenceDeclarationIndex = d2ir.DeclarationOrder(f)
 	}
 	for _, fr := range f.References {
 		if c.stopped() {
@@ -835,8 +848,7 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 			ScopeObj:        parent,
 			IsVar:           d2ir.IsVar(fr.Context_.ScopeMap),
 		}
-		if fr.Context_.ScopeMap != nil && !d2ir.IsVar(fr.Context_.ScopeMap) {
-			scopeObjIDA := c.sequenceScope(fr.Context_.ScopeMap)
+		if scopeObjIDA, ok := c.sequenceScope(fr); ok {
 			r.ScopeObj = obj.Graph.Root.EnsureChild(scopeObjIDA)
 		}
 		obj.References = append(obj.References, r)
@@ -1364,17 +1376,19 @@ func (c *compiler) compileEdge(obj *d2graph.Object, e *d2ir.Edge) {
 	}
 
 	edge.Label.MapKey = e.LastPrimaryKey()
+	if e.SequenceKey != nil {
+		edge.SequenceKey = e.SequenceKey
+		edge.SequenceGraphOrder = len(obj.Graph.Edges) - 1
+	}
 	if obj.IsSequenceDiagramV2() || obj.OuterSequenceDiagram().IsSequenceDiagramV2() {
-		if e.ImportAST() != nil {
-			position := e.ImportAST().GetRange().Start
-			edge.SequenceImportPosition = &position
-		}
+		edge.SequenceOrder, edge.SequenceDeclarationIndex = d2ir.DeclarationOrder(e)
 	}
 	for _, er := range e.References {
 		if c.stopped() {
 			return
 		}
 		r := d2graph.EdgeReference{
+			IsVar:           er.Context_.ScopeMap != nil && d2ir.IsVar(er.Context_.ScopeMap),
 			Edge:            er.Context_.Edge,
 			MapKey:          er.Context_.Key,
 			MapKeyEdgeIndex: er.Context_.EdgeIndex(),
@@ -1382,8 +1396,7 @@ func (c *compiler) compileEdge(obj *d2graph.Object, e *d2ir.Edge) {
 			ScopeAST:        er.Context_.ScopeAST,
 			ScopeObj:        obj,
 		}
-		if er.Context_.ScopeMap != nil && !d2ir.IsVar(er.Context_.ScopeMap) {
-			scopeObjIDA := c.sequenceScope(er.Context_.ScopeMap)
+		if scopeObjIDA, ok := c.sequenceScope(er); ok {
 			r.ScopeObj = edge.Src.Graph.Root.EnsureChild(scopeObjIDA)
 		}
 		edge.References = append(edge.References, r)

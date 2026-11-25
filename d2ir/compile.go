@@ -1924,6 +1924,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			m := ParentMap(f)
 			c.recordSpreadDeletion(m, &spreadMember{field: f.Name}, refctx.Key)
 			if !c.keepChildAfterGlobDeletion(f, refctx) {
+				m.rememberSequenceDeletion(f, refctx.order)
 				m.deleteField(f)
 			}
 			return

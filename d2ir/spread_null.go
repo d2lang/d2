@@ -25,7 +25,7 @@ func isCaptionFill(f *Field) bool {
 func (c *compiler) setFieldPrimary(f *Field, value d2ast.Scalar) {
 	order := c.assignmentOrder()
 	f.Primary_ = &Scalar{parent: f, Value: value, order: order}
-	if _, null := value.(*d2ast.Null); null && !isCaptionFill(f) {
+	if _, null := value.(*d2ast.Null); null && IsVar(ParentMap(f)) {
 		// Ordinary nulls delete their field during compilation. A null inside
 		// vars remains a value so it can shadow a variable from an outer scope.
 		c.hasTemplateNull = true
@@ -75,7 +75,13 @@ func (c *compiler) finishSpreadNulls() {
 			continue
 		}
 		m := ParentMap(f)
+		m.rememberSequenceDeletion(f, order)
 		f.templateNull = nil
+		// Resolve reserved properties at the use site. A variable named
+		// label can supply an ordinary style map as well as a frame caption.
+		if isCaptionFill(f) {
+			continue
+		}
 		// Imports may still contain an earlier spread supplied by the caller.
 		c.recordSpreadDeletionBefore(m, &spreadMember{field: f.Name}, deletion.source, &order)
 		if !c.reserveVariableCopy(deletion.source, f) {

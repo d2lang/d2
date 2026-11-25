@@ -338,3 +338,51 @@ func (c *compiler) compileBoardsFieldCopyOracle(g *d2graph.Graph, ir *d2ir.Map, 
 		}
 	}
 }
+
+func TestSequenceCopyOnlyTouchesItsScope(t *testing.T) {
+	var source strings.Builder
+	for i := range 200 {
+		fmt.Fprintf(&source, "ordinary%d: Service %d {style.fill: blue}\n", i, i)
+	}
+	source.WriteString("section: {seq: {shape: sequence-diagram; frame: {shape: edge-group; a -> b}}}")
+	ast, err := d2parser.Parse("scope.d2", strings.NewReader(source.String()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir, _, err := d2ir.Compile(ast, &d2ir.CompileOptions{MaxVariableExpansion: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := copyOracleJSON(t, ir)
+	g, err := compileIR(ast, ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Edges) != 1 || g.Edges[0].Src.AbsID() != "section.seq.a" || !reflect.DeepEqual(before, copyOracleJSON(t, ir)) {
+		t.Fatal("normalizing a nested frame changed unrelated source IR or lost its actor")
+	}
+}
+
+func TestSequenceCopiesSeparateAliasOccurrences(t *testing.T) {
+	const source = `vars: {module: {trace: {shape: sequence-diagram; frame: {shape: edge-group; a -> b}}}}
+first: ${module}
+second: ${module}`
+	ast, ir := parseCopyOracleInput(t, source)
+	g, err := compileIR(ast, ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, _, err := Compile("app.d2", strings.NewReader(source), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range []*d2graph.Graph{g, owned} {
+		seen := make(map[string]bool)
+		for _, edge := range g.Edges {
+			seen[edge.Src.AbsID()] = true
+		}
+		if len(g.Edges) != 2 || !seen["first.trace.a"] || !seen["second.trace.a"] {
+			t.Fatalf("template occurrences shared an actor: %v", seen)
+		}
+	}
+}

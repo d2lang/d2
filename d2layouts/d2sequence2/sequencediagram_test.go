@@ -459,3 +459,136 @@ c.after: Next {shape: page; height: 100}`)
 		t.Fatalf("divider at %.1f crosses a branch row (%v, %v)", divider, first.Box, second.Box)
 	}
 }
+
+func TestWideActivationKeepsMessageDirectionAndLabelSpace(t *testing.T) {
+	g := compile(t, `a; b
+a.work: {width: 600}
+b.task: {width: 420}
+a.work -> b.task: request
+b.task -> a.work: a return with a very long label anchored to the left {label.near: outside-top-left}`)
+	a, b := obj(t, g, "a.work"), obj(t, g, "b.task")
+	if a.TopLeft.X+a.Width >= b.TopLeft.X {
+		t.Fatal("wide activations overlap")
+	}
+	for _, e := range messages(g) {
+		c := d2exporter.ToConnection(e, nil)
+		p := c.GetLabelTopLeft()
+		if p.X < a.TopLeft.X+a.Width || p.X+float64(c.LabelWidth) > b.TopLeft.X {
+			t.Fatalf("caption %q does not fit between activations", c.Label)
+		}
+	}
+	finiteBounds(t, g)
+}
+
+func TestZeroGapClearsNestedFrameBoundaries(t *testing.T) {
+	g := compile(t, `a; b
+a.pre: Before {shape: page; height: 150; vertical-gap: 0}
+frame: F {shape: edge-group; inner: {shape: edge-group; a -> b: request {vertical-gap: 0}}}
+a.post: After {shape: page; height: 150}`)
+	pre, frame, inner, post := obj(t, g, "a.pre"), obj(t, g, "frame"), obj(t, g, "frame.inner"), obj(t, g, "a.post")
+	if pre.TopLeft.Y+pre.Height > frame.TopLeft.Y || frame.TopLeft.Y+frame.Height > post.TopLeft.Y {
+		t.Fatalf("frame crosses adjacent shared rows: %v %v %v", pre.Box, frame.Box, post.Box)
+	}
+	if inner.TopLeft.Y <= frame.TopLeft.Y || inner.TopLeft.Y+inner.Height >= frame.TopLeft.Y+frame.Height {
+		t.Fatal("outer frame does not contain both inner borders")
+	}
+}
+
+func TestEmptyActorGroupsGetOwnColumns(t *testing.T) {
+	g := compile(t, `first: {shape: actor-group}
+a; nested: {shape: actor-group; blank: {shape: actor-group}}; b
+a -> b`)
+	right := 0.
+	for _, id := range []string{"first", "a", "nested", "b"} {
+		o := obj(t, g, id)
+		if o.TopLeft.X <= right {
+			t.Fatalf("header %s overlaps a preceding column", id)
+		}
+		right = o.TopLeft.X + o.Width
+	}
+	for _, e := range g.Edges {
+		if d2sequence.IsLifelineEnd(e.Dst) && e.Src.Shape.Value == d2target.ShapeSequenceDiagramActorGroup {
+			t.Fatal("empty group acquired a lifeline")
+		}
+	}
+	finiteBounds(t, g)
+}
+
+func TestArrowheadCaptionsStayInFrameAndClearAdjacentRows(t *testing.T) {
+	g := compile(t, `a; b
+frame: F {shape: edge-group
+a -> b: request {label.near: outside-top-left; source-arrowhead: A long description on the source side; target-arrowhead: An equally long destination caption}
+b -> a: reply {target-arrowhead: return caption}
+a -> a: self {source-arrowhead: outgoing caption; target-arrowhead: returning caption}
+}`)
+	frame := obj(t, g, "frame")
+	for _, e := range messages(g) {
+		c := d2exporter.ToConnection(e, nil)
+		for i, caption := range []*d2target.Text{c.SrcLabel, c.DstLabel} {
+			if caption == nil {
+				continue
+			}
+			p := c.GetArrowheadLabelPosition(i == 1)
+			if !frame.Box.Contains(p) || !frame.Box.Contains(geo.NewPoint(p.X+float64(caption.LabelWidth), p.Y+float64(caption.LabelHeight))) {
+				t.Fatalf("endpoint caption %q outside frame %v", caption.Label, frame.Box)
+			}
+		}
+		if c.Label == "request" {
+			src, dst := c.GetArrowheadLabelPosition(false), c.GetArrowheadLabelPosition(true)
+			main := c.GetLabelTopLeft()
+			if src.X+float64(c.SrcLabel.LabelWidth) >= main.X || main.X+float64(c.LabelWidth) >= dst.X || src.Y <= frame.TopLeft.Y+float64(frame.LabelDimensions.Height) {
+				t.Fatal("endpoint captions overlap each other or frame title")
+			}
+		}
+	}
+	finiteBounds(t, g)
+}
+
+func TestSequenceSpreadUsesTimelineOccurrence(t *testing.T) {
+	g := compile(t, `
+shape.numbered: true
+vars: {retry: {c -> a: Retry; a.pause: Pause {shape: page}}}
+a -> b: First
+...${retry}
+b -> c: Last
+`)
+	rows := make(map[string]float64)
+	for _, e := range messages(g) {
+		rows[e.Label.Value] = e.Route[0].Y
+	}
+	_, first := rows["1. First"]
+	_, retry := rows["2. Retry"]
+	_, last := rows["3. Last"]
+	note := obj(t, g, "a.pause")
+	if !first || !retry || !last || !(rows["1. First"] < rows["2. Retry"] && rows["2. Retry"] < note.TopLeft.Y && note.TopLeft.Y+note.Height < rows["3. Last"]) {
+		t.Fatalf("expected First, Retry, Pause, Last in order, got rows %v, note %v", rows, note.Box)
+	}
+	if !(obj(t, g, "a").Center().X < obj(t, g, "b").Center().X && obj(t, g, "b").Center().X < obj(t, g, "c").Center().X) {
+		t.Fatal("a participant introduced by the spread moved ahead of an existing participant")
+	}
+}
+
+func TestFixedHeightActivationClearsLaterRows(t *testing.T) {
+	g := compile(t, `a; b
+a.outer.inner: {height: 450}
+a.outer -> a.outer.inner: start
+a.outer.inner -> b: finish
+a.note: Follow-up {shape: page}`)
+	outer, inner, note := obj(t, g, "a.outer"), obj(t, g, "a.outer.inner"), obj(t, g, "a.note")
+	if inner.Height < 450 || outer.TopLeft.Y+outer.Height <= inner.TopLeft.Y+inner.Height || note.TopLeft.Y <= outer.TopLeft.Y+outer.Height {
+		t.Fatalf("fixed nested activation crosses following note: outer %v inner %v note %v", outer.Box, inner.Box, note.Box)
+	}
+	finiteBounds(t, g)
+}
+
+func TestBranchStyleOverridesKeepNoteInDeclaringFrame(t *testing.T) {
+	g := compile(t, `a; b; c
+outer: {shape: edge-group {branched: true}
+ one: {a.note: Remember {shape: page}; a -> b: First}
+ two: {b -> c: Second; a.note.style.fill: yellow; a -> b: Third}
+}`)
+	note, second := obj(t, g, "a.note"), obj(t, g, "outer.two")
+	if note.TopLeft.Y+note.Height >= second.TopLeft.Y || note.Style.Fill == nil || note.Style.Fill.Value != "yellow" {
+		t.Fatalf("note was moved or lost its override: %v", note)
+	}
+}
