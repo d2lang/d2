@@ -160,3 +160,50 @@ func TestFusedStepsRespectAuthoredHeights(t *testing.T) {
 		})
 	}
 }
+
+func TestStepReadingDirection(t *testing.T) {
+	for _, direction := range []string{"right", "left", "up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			source := fmt.Sprintf("Workflow: {direction: %s\n A: {shape: step}\nB: {shape: step}\n C: {shape: step}\n A -> B -> C}", direction)
+			d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+			wantEdges := 2
+			if direction == "right" {
+				wantEdges = 0
+			}
+			if len(d.Connections) != wantEdges {
+				t.Fatalf("%s layout has %d connectors, want %d", direction, len(d.Connections), wantEdges)
+			}
+			for i := 2; i < len(d.Shapes); i++ {
+				a, b := d.Shapes[i-1], d.Shapes[i]
+				dx := 2*(b.Pos.X-a.Pos.X) + b.Width - a.Width
+				dy := 2*(b.Pos.Y-a.Pos.Y) + b.Height - a.Height
+				if direction == "right" && dx <= 0 || direction == "left" && dx >= 0 || direction == "up" && dy >= 0 || direction == "down" && dy <= 0 {
+					t.Errorf("step %s does not advance %s from %s", b.ID, direction, a.ID)
+				}
+			}
+		})
+	}
+}
+
+func TestFixedStepCaptionsDoNotFuseOverlappingText(t *testing.T) {
+	const template = `direction: right
+A: Validate incoming payment {shape: step; width: %d; height: 60; label.near: outside-top-center}
+B: Check settlement window {shape: step; width: %d; height: 60; label.near: outside-top-center}
+C: Release payment to merchant {shape: step; width: %d; height: 60; label.near: outside-top-center}
+A -> B -> C
+`
+	for _, width := range []int{90, 140} {
+		d := compileRoutingDiagram(t, t.Context(), fmt.Sprintf(template, width, width, width), 1, nil)
+		if len(d.Connections) != 2 {
+			t.Fatalf("got %d explicit transitions", len(d.Connections))
+		}
+		for i := 1; i < len(d.Shapes); i++ {
+			a, b := d.Shapes[i-1], d.Shapes[i]
+			right := 2*a.Pos.X + a.Width + a.LabelWidth
+			left := 2*b.Pos.X + b.Width - b.LabelWidth
+			if right > left {
+				t.Fatalf("captions for %s and %s overlap", a.ID, b.ID)
+			}
+		}
+	}
+}

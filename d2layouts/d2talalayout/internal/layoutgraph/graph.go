@@ -1452,9 +1452,8 @@ func (g *Graph) containerPadding(container *Node, considerChildren bool) Spacing
 		padding /= 4.
 	}
 
-	if container.Icon != nil && container.shapeType != imageType {
-		// we don't know if the icon will be placed at an inside position, but leave enough padding so it has that option
-		// Note: we don't know what the exact icon size will be until the final layout size so we use max
+	if container.Icon != nil && container.shapeType != imageType && !(container.Icon.PositionFixed() && container.Icon.Position.IsOutside()) {
+		// Reserve an interior position only if the icon can use one.
 		padding = float64(MaxIconSize + 2*label.PADDING)
 	}
 
@@ -1538,6 +1537,10 @@ func (g *Graph) containerPadding(container *Node, considerChildren bool) Spacing
 		}
 	}
 
+	if children := g.Containers[container]; len(children) == 1 && (container.DesiredWidth != nil || container.DesiredHeight != nil) {
+		spacing.fitAuthoredGutters(container, children[0])
+	}
+
 	return spacing
 }
 
@@ -1557,5 +1560,29 @@ func (s *Spacing) reserveCenteredTitle(container, child *Node, hasSiblings bool)
 			return
 		}
 		s.top = math.Max(child.Height+s.bottom+title.Height+2*label.PADDING, belowTitle)
+	}
+}
+
+// fitAuthoredGutters lets an isolated plain tile fit inside a requested frame
+// when the usual 60 px margin would be the only reason to grow it.
+func (s *Spacing) fitAuthoredGutters(container, child *Node) {
+	if !container.IsRectangular() || container.AspectRatio1() || container.Icon != nil ||
+		len(container.Edges) > 0 || len(container.Nears) > 0 || (container.Label != nil && !container.Label.Position.IsOutside()) {
+		return
+	}
+	if !child.IsRectangular() || child.isContainer || child.FixedTopLeft != nil || child.Icon != nil ||
+		child.IsMultiple || child.Is3D || len(child.Edges) > 0 || len(child.Nears) > 0 {
+		return
+	}
+	if l := child.Label; l != nil && (l.Position.IsOutside() || l.Position.IsBorder() || l.Width > child.Width || l.Height > child.Height) {
+		return
+	}
+	if container.DesiredWidth != nil {
+		gap := max(NodeGap, math.Floor((*container.DesiredWidth-child.Width)/2))
+		s.left, s.right = min(s.left, gap), min(s.right, gap)
+	}
+	if container.DesiredHeight != nil {
+		gap := max(NodeGap, math.Floor((*container.DesiredHeight-child.Height)/2))
+		s.top, s.bottom = min(s.top, gap), min(s.bottom, gap)
 	}
 }

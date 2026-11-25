@@ -1,10 +1,14 @@
 package grouping
 
 import (
+	"cmp"
 	"math"
+	"math/bits"
+	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
+	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/shape"
 )
 
@@ -165,9 +169,17 @@ func (s stepNetwork) paths(component []*layoutgraph.Node) ([][]*layoutgraph.Node
 	return paths, nil
 }
 
-// A fused row uses one height and its neighboring wedges must meet.
-func compatibleStepSizes(steps []*layoutgraph.Node, guard *limits.WorkGuard) (bool, error) {
-	wedge := shape.StepWedgeWidth(sequenceStepWidth(steps[0]))
+// A fused row runs right. Its members share a height, matching wedges and a
+// common upper and lower baseline for any exterior captions.
+func compatibleStepGeometry(steps []*layoutgraph.Node, guard *limits.WorkGuard) (bool, error) {
+	first := steps[0]
+	if dir := first.Graph.Direction(first.Container); dir != geo.NONE && dir != geo.Right {
+		return false, nil
+	}
+	wedge := shape.StepWedgeWidth(sequenceStepWidth(first))
+	type span struct{ left, right float64 }
+	var captions [2][]span
+	x := 0.
 	maxHeight, minAuthoredHeight := 0., math.Inf(1)
 	for _, n := range steps {
 		if err := guard.Step(); err != nil {
@@ -177,17 +189,41 @@ func compatibleStepSizes(steps []*layoutgraph.Node, guard *limits.WorkGuard) (bo
 		if n.DesiredHeight != nil {
 			minAuthoredHeight = min(minAuthoredHeight, n.Height)
 		}
-		if maxHeight > minAuthoredHeight || shape.StepWedgeWidth(sequenceStepWidth(n)) != wedge {
+		width := sequenceStepWidth(n)
+		if maxHeight > minAuthoredHeight || shape.StepWedgeWidth(width) != wedge {
 			return false, nil
+		}
+		side, left, right := n.StepCaptionSpan(width)
+		if side != geo.NONE {
+			row := 0
+			if side == geo.Bottom {
+				row = 1
+			}
+			captions[row] = append(captions[row], span{x + left, x + right})
+		}
+		x += layoutgraph.SequenceAdvance(width)
+	}
+	for _, row := range captions {
+		if len(row) < 2 {
+			continue
+		}
+		if err := guard.Add(int64(len(row)) * int64(bits.Len(uint(len(row)-1)))); err != nil {
+			return false, err
+		}
+		slices.SortFunc(row, func(a, b span) int { return cmp.Compare(a.left, b.left) })
+		for i := 1; i < len(row); i++ {
+			if err := guard.Step(); err != nil {
+				return false, err
+			}
+			if row[i].left < row[i-1].right {
+				return false, nil
+			}
 		}
 	}
 	return true, nil
 }
 
 func (s stepNetwork) orderedPath(group []*layoutgraph.Node) ([]*layoutgraph.Node, error) {
-	if ok, err := compatibleStepSizes(group, s.guard); err != nil || !ok {
-		return nil, err
-	}
 	var ends []*layoutgraph.Node
 	for _, n := range group {
 		degree := 0
@@ -234,6 +270,9 @@ func (s stepNetwork) orderedPath(group []*layoutgraph.Node) ([]*layoutgraph.Node
 			n = next
 		}
 		if len(path) == len(group) {
+			if ok, err := compatibleStepGeometry(path, s.guard); err != nil || !ok {
+				return nil, err
+			}
 			return path, nil
 		}
 	}

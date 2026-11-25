@@ -13,6 +13,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/internal/testlog"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/log"
 	"github.com/d2lang/d2/lib/shape"
 )
@@ -267,6 +268,21 @@ func TestAddSequencesDiscardsStaleRememberedMembership(t *testing.T) {
 			t.Fatalf("stale membership was retained: a=%p b=%p", a.Sequence, b.Sequence)
 		}
 	}
+
+	t.Run("reading direction changed", func(t *testing.T) {
+		run(t, func(g *layoutgraph.Graph, _, _ *layoutgraph.Node) {
+			g.Directions[nil] = geo.Bottom
+		})
+	})
+
+	t.Run("exterior captions now overlap", func(t *testing.T) {
+		run(t, func(_ *layoutgraph.Graph, a, b *layoutgraph.Node) {
+			for _, node := range []*layoutgraph.Node{a, b} {
+				node.Label = &layoutgraph.Label{Position: label.OutsideTopCenter, Width: 120, Height: 15}
+				node.Label.FixPosition()
+			}
+		})
+	})
 
 	t.Run("authored height changed", func(t *testing.T) {
 		run(t, func(_ *layoutgraph.Graph, _ *layoutgraph.Node, b *layoutgraph.Node) {

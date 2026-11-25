@@ -433,6 +433,9 @@ func routeEdgesWithResourceGuards(
 	isTreeEdge := g.TreeEdgeMap()
 	g.AddIsolatedTreeEdges(isTreeEdge)
 
+	var parentByAnnotation map[*layoutgraph.Edge]*layoutgraph.Node
+	var annotationCount map[*layoutgraph.Node]int
+	var competingAnnotations bool
 	existingPortArrowheads := make(map[*OVGNode]map[layoutgraph.Arrowhead]struct{})
 	isRouted := map[*layoutgraph.Edge]struct{}{}
 	for _, node := range g.Nodes {
@@ -447,6 +450,17 @@ func routeEdgesWithResourceGuards(
 			route, err := routeSentinelEdge(tree, ovg.Ports, ovg.Centers, existingPortArrowheads)
 			if err != nil {
 				continue
+			}
+
+			e, parent := tree.SentinelEdge, tree.SentinelNode()
+			if (e.From == parent && e.SourceArrowheadLabel != nil) || (e.To == parent && e.TargetArrowheadLabel != nil) {
+				if parentByAnnotation == nil {
+					parentByAnnotation = make(map[*layoutgraph.Edge]*layoutgraph.Node)
+					annotationCount = make(map[*layoutgraph.Node]int)
+				}
+				parentByAnnotation[e] = parent
+				annotationCount[parent]++
+				competingAnnotations = competingAnnotations || annotationCount[parent] > 1
 			}
 
 			existingRoutes = append(existingRoutes, route)
@@ -468,6 +482,25 @@ func routeEdgesWithResourceGuards(
 			}
 		}
 	}
+	// Keep a complete tree drawing as a fallback. A shared trunk cannot
+	// show multiple annotations anchored at the same port. Let the router
+	// score alternate ports for those branches while the tree stays put.
+	var treeFallback []*Route
+	if competingAnnotations && len(existingRoutes) == len(g.Edges) {
+		treeFallback = existingRoutes
+		existingRoutes = make([]*Route, 0, len(treeFallback))
+		for _, route := range treeFallback {
+			if err := ovgGuard.step(); err != nil {
+				return ovg, err
+			}
+			if annotationCount[parentByAnnotation[route.GEdge]] > 1 {
+				delete(isRouted, route.GEdge)
+			} else {
+				existingRoutes = append(existingRoutes, route)
+			}
+		}
+	}
+
 	unroutedEdges := make([]*layoutgraph.Edge, 0, len(g.Edges))
 	for _, e := range g.Edges {
 		if _, is := isRouted[e]; !is {
@@ -509,15 +542,26 @@ func routeEdgesWithResourceGuards(
 		return ovg, err
 	}
 
-	// compare responses in fixed order
+	// Compare responses in fixed order. If changed ports would hide text
+	// behind a node, leave those routes out of the comparison.
 	for _, flavor := range flavors {
-		if response, has := flavorToResponse[flavor]; has {
-			if geo.PrecisionCompare(response.Distance, leastDistance, geo.PRECISION) < 0 {
-				leastDistance = response.Distance
-				bestRoutes = response.Routes
-				bestWork = response.work
+		response, has := flavorToResponse[flavor]
+		if !has || geo.PrecisionCompare(response.Distance, leastDistance, geo.PRECISION) >= 0 {
+			continue
+		}
+		if treeFallback != nil {
+			if bestWork == nil {
+				bestRoutes, bestWork = treeFallback, response.work
+			}
+			clear, err := treeCaptionsClearNodes(ctx, response.Routes, parentByAnnotation, annotationCount, g.Nodes, nearbyNodes, response.work)
+			if err != nil {
+				return ovg, err
+			}
+			if !clear {
+				continue
 			}
 		}
+		leastDistance, bestRoutes, bestWork = response.Distance, response.Routes, response.work
 	}
 
 	if err := finalizeSelectedRoutes(ctx, g, bestRoutes, nil, bestWork, true); err != nil {
@@ -525,6 +569,40 @@ func routeEdgesWithResourceGuards(
 	}
 
 	return ovg, nil
+}
+
+// A long caption can follow the path past its first bend and land on a
+// different body. Measure the complete path before accepting new ports.
+func treeCaptionsClearNodes(ctx context.Context, routes []*Route, parentByEdge map[*layoutgraph.Edge]*layoutgraph.Node, counts map[*layoutgraph.Node]int, nodes, nearby []*layoutgraph.Node, work *routeSearchWorkGuard) (bool, error) {
+	if err := work.bind(ctx); err != nil {
+		return false, err
+	}
+	for _, route := range routes {
+		if err := work.step(); err != nil {
+			return false, err
+		}
+		e := route.GEdge
+		if counts[parentByEdge[e]] <= 1 {
+			continue
+		}
+		if err := work.add(uint64(len(route.OVGNodes))); err != nil {
+			return false, err
+		}
+		points := route.createSegmentEndpoints()
+		src := labeling.PositionArrowheadLabel(e, false, points)
+		dst := labeling.PositionArrowheadLabel(e, true, points)
+		for _, group := range [][]*layoutgraph.Node{nodes, nearby} {
+			for _, n := range group {
+				if err := work.step(); err != nil {
+					return false, err
+				}
+				if !n.IsContainer() && ((src != nil && src.Box.Overlaps(n.Box)) || (dst != nil && dst.Box.Overlaps(n.Box))) {
+					return false, nil
+				}
+			}
+		}
+	}
+	return true, nil
 }
 
 func routeAdditionalEdgesWithLimits(ctx context.Context, g *layoutgraph.Graph, edges []*layoutgraph.Edge, limits ovgBuildLimits) (*OVG, error) {

@@ -129,6 +129,50 @@ type decorationOverhang struct {
 	left, right, top, bottom float64
 }
 
+// Distinct endpoint annotations on adjacent child branches share the same
+// rank. Their projected text intervals need clearance alongside each other.
+func branchCaptionGap(a, b *layoutgraph.Tree) float64 {
+	if a.Parent != b.Parent || !b.Orientation.IsVertical() || a.SentinelEdge == nil || b.SentinelEdge == nil {
+		return 0
+	}
+	interval := func(t *layoutgraph.Tree) (float64, float64, bool) {
+		e := t.SentinelEdge
+		target := e.To == t.Node
+		annotation := e.SourceArrowheadLabel
+		if target {
+			annotation = e.TargetArrowheadLabel
+		}
+		if annotation == nil {
+			return 0, 0, false
+		}
+		// Measure the authored side of the upright terminal segment, including
+		// the rendered arrowhead and stroke clearance.
+		c := geo.Point{}
+		p := geo.Point{Y: -annotation.Height - 2*label.PADDING}
+		route := geo.Route{&p, &c}
+		if !target {
+			route[0], route[1] = route[1], route[0]
+		}
+		left := e.ArrowheadLabelTopLeft(route, target, annotation).X
+		return left, left + annotation.Width, true
+	}
+	leftA, rightA, ok := interval(a)
+	if !ok {
+		return 0
+	}
+	leftB, rightB, ok := interval(b)
+	if !ok {
+		return 0
+	}
+	extent := rightA - leftB
+	if a.SentinelEdge.ReversedForLayout != b.SentinelEdge.ReversedForLayout {
+		// The two authored traversals use opposite sides. Reserve clearance
+		// for either ordering when the component direction mirrors the fan.
+		extent = math.Max(extent, rightB-leftA)
+	}
+	return math.Max(0, extent+2*label.PADDING-(a.Node.Width+b.Node.Width)/2-siblingSpacing)
+}
+
 func treeDecorationOverhang(t *layoutgraph.Tree) decorationOverhang {
 	n := t.Node
 	hasLabel := n.Label != nil && n.Label.Position.IsOutside()
@@ -236,9 +280,12 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 	for level := len(treeLevels) - 1; level > 0; level-- {
 		// nextPosition moves along the x axis as we position each level node on this level
 		nextPosition := 0.0
-		for _, levelNode := range treeLevels[level] {
+		for i, levelNode := range treeLevels[level] {
 			if err := guard.Step(); err != nil {
 				return err
+			}
+			if i > 0 {
+				nextPosition += branchCaptionGap(treeLevels[level][i-1], levelNode)
 			}
 			nextPosition += overhangs[levelNode].left
 			if len(levelNode.Children) == 0 {

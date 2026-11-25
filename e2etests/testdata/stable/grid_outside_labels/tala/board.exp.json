@@ -311,7 +311,7 @@
         "y": 46
       },
       "width": 286,
-      "height": 164,
+      "height": 163,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -361,8 +361,8 @@
       "id": "container.color plugin.ex",
       "type": "text",
       "pos": {
-        "x": 519,
-        "y": 120
+        "x": 505,
+        "y": 106
       },
       "width": 69,
       "height": 16,
@@ -403,10 +403,10 @@
       "type": "rectangle",
       "pos": {
         "x": 445,
-        "y": 230
+        "y": 229
       },
       "width": 355,
-      "height": 162,
+      "height": 163,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -445,7 +445,7 @@
       "type": "text",
       "pos": {
         "x": 505,
-        "y": 290
+        "y": 289
       },
       "width": 96,
       "height": 18,

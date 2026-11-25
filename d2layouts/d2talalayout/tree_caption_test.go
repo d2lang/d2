@@ -137,3 +137,93 @@ Audit: {width: 200; height: 160}`, direction), 1, nil)
 		})
 	}
 }
+
+func TestTreeBranchEndCaptionsStayDistinct(t *testing.T) {
+	for _, tc := range []struct {
+		direction string
+		end       string
+	}{
+		{"down", "target"},
+		{"up", "source"},
+	} {
+		t.Run(tc.end, func(t *testing.T) {
+			d := compileRoutingDiagram(t, t.Context(), fmt.Sprintf(`direction: %s
+Intake -> Review: {%[2]s-arrowhead: Approved for settlement}
+Intake -> Audit: {%[2]s-arrowhead: Retained for compliance}
+Intake -> Archive: {%[2]s-arrowhead: Stored for reconciliation}`, tc.direction, tc.end), 1, nil)
+			var captions []*geo.Box
+			for _, edge := range d.Connections {
+				isTarget := tc.end == "target"
+				text := edge.SrcLabel
+				if isTarget {
+					text = edge.DstLabel
+				}
+				if text == nil {
+					t.Fatalf("missing %s caption on %s", tc.end, edge.ID)
+				}
+				box := geo.NewBox(edge.GetArrowheadLabelPosition(isTarget), float64(text.LabelWidth), float64(text.LabelHeight))
+				for _, other := range captions {
+					if box.Overlaps(*other) {
+						t.Fatalf("caption on %s overlaps another branch caption", edge.ID)
+					}
+				}
+				for _, node := range d.Shapes {
+					body := geo.NewBox(geo.NewPoint(float64(node.Pos.X), float64(node.Pos.Y)), float64(node.Width), float64(node.Height))
+					if box.Overlaps(*body) {
+						t.Fatalf("caption on %s overlaps %s", edge.ID, node.ID)
+					}
+				}
+				captions = append(captions, box)
+			}
+			for _, node := range d.Shapes[1:] {
+				y := d.Shapes[0].Pos.Y
+				if tc.direction == "up" && node.Pos.Y >= y || tc.direction == "down" && node.Pos.Y <= y {
+					t.Fatalf("branch to %s runs against %s", node.ID, tc.direction)
+				}
+			}
+		})
+	}
+}
+
+func TestPinnedTreeJoinPlacesSourcesUpstream(t *testing.T) {
+	for _, direction := range []string{"right", "left", "up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			shapes := hierarchyGeometry(t, fmt.Sprintf(`direction: %s
+Publish: {left: 400; top: 400}
+Verify -> Publish
+Approve -> Publish
+Archive -> Publish`, direction))
+			root := shapes["Publish"]
+			if root.Pos.X != 400 || root.Pos.Y != 400 {
+				t.Fatalf("fixed destination moved to %v", root.Pos)
+			}
+			for _, id := range []string{"Verify", "Approve", "Archive"} {
+				n := shapes[id]
+				if direction == "right" && n.Pos.X+n.Width > root.Pos.X ||
+					direction == "left" && n.Pos.X < root.Pos.X+root.Width ||
+					direction == "down" && n.Pos.Y+n.Height > root.Pos.Y ||
+					direction == "up" && n.Pos.Y < root.Pos.Y+root.Height {
+					t.Errorf("%s is downstream of the fixed destination in direction %s", id, direction)
+				}
+			}
+		})
+	}
+}
+
+func TestAnnotatedTreeKeepsCaptionOutsideSource(t *testing.T) {
+	const source = `direction: down
+Hub -> Review: {source-arrowhead: Reconciled domestic payments}
+Hub -> Audit: {source-arrowhead: Confirmed authorization window}
+Hub -> Archive: {source-arrowhead: Records scheduled for archival}
+Hub -> Export: {source-arrowhead: Outside institutional approval}
+Hub -> Send: {source-arrowhead: Deferred pending verification}`
+	d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	hub := d.Shapes[0]
+	body := geo.NewBox(geo.NewPoint(float64(hub.Pos.X), float64(hub.Pos.Y)), float64(hub.Width), float64(hub.Height))
+	for _, edge := range d.Connections {
+		caption := geo.NewBox(edge.GetArrowheadLabelPosition(false), float64(edge.SrcLabel.LabelWidth), float64(edge.SrcLabel.LabelHeight))
+		if caption.Overlaps(*body) {
+			t.Fatalf("%s source caption covers Hub", edge.ID)
+		}
+	}
+}

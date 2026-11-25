@@ -859,6 +859,23 @@ func placeTree(ctx context.Context, g *layoutgraph.Graph, placementTree *layoutg
 		}
 
 		direction := g.Direction(container)
+		if direction != geo.NONE && isIsolatedTree && placementTree.Node.FixedTopLeft != nil {
+			// The orientation places the neighbors relative to the fixed root.
+			// An incoming branch therefore sits upstream of the root.
+			incoming := len(placementTree.Children) > 0
+			for _, child := range placementTree.Children {
+				if err := guard.Step(); err != nil {
+					return bestOrientation, err
+				}
+				if treeEdgeDirection(placementTree.Node, child.SentinelEdge) != Inwards {
+					incoming = false
+					break
+				}
+			}
+			if incoming {
+				direction = direction.GetOpposite()
+			}
+		}
 		for _, orientation := range order {
 			if err := guard.Step(); err != nil {
 				return bestOrientation, err

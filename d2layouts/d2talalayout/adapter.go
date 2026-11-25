@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -373,6 +374,16 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		talaEdge.D2ID = new(edgeID)
 		talaEdge.Style = cloneStyle(e.Style)
 		minWidth, minHeight, _ := talaEdge.LabelMinDimensions(e.LabelDimensions.Width, e.LabelDimensions.Height)
+		if a, b := talaEdge.From, talaEdge.To; a.IsSequenceStep() && b.IsSequenceStep() {
+			as, al, ar := a.StepCaptionSpan(a.Width)
+			bs, bl, br := b.StepCaptionSpan(b.Width)
+			if as != geo.NONE && as == bs {
+				// Explicit steps can be placed in either order on the same row.
+				// Reserve the opposing caption overhangs across the connecting gap.
+				gap := max(ar-a.Width-bl, br-b.Width-al) + label.PADDING
+				minWidth = max(minWidth, int64(math.Ceil(gap)))
+			}
+		}
 		if minWidth > maxResultCoordinate || minHeight > maxResultCoordinate {
 			return bindings, fmt.Errorf("D2 edge %q minimum dimensions exceed supported limit %d", e.AbsID(), maxResultCoordinate)
 		}

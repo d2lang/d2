@@ -6,6 +6,7 @@ import (
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
 )
 
@@ -113,6 +114,26 @@ func (s *Sequence) PlaceVessel() {
 		topLeft.Y = math.Min(topLeft.Y, node.TopLeft.Y)
 	}
 	s.Vessel.TopLeft = topLeft
+}
+
+// StepCaptionSpan projects an upper or lower caption onto a horizontal
+// step row. The interval is relative to the left edge of the proposed body.
+func (node *Node) StepCaptionSpan(bodyWidth float64) (side geo.Orientation, left, right float64) {
+	l := node.Label
+	if l == nil {
+		return geo.NONE, 0, 0
+	}
+	switch l.Position {
+	case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight:
+		side = geo.Top
+	case label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight:
+		side = geo.Bottom
+	default:
+		return geo.NONE, 0, 0
+	}
+	body := geo.Box{TopLeft: &geo.Point{}, Width: bodyWidth, Height: node.Height}
+	left = l.Position.GetPointOnBox(&body, label.PADDING, l.Width, l.Height).X
+	return side, left, left + l.Width
 }
 
 // SequenceAdvance is the horizontal distance from one step's top-left to

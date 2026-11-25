@@ -115,3 +115,27 @@ func TestCompoundSquareCentersTitleUsingItsFittedSide(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthoredFrameFitsOnePlainTile(t *testing.T) {
+	for _, tc := range []struct{ w, h, wantW, wantH int }{
+		{180, 130, 180, 130}, {120, 80, 140, 100}, {240, 210, 240, 210},
+	} {
+		source := fmt.Sprintf("Panel: Checkout {width: %d; height: %d; label.near: outside-top-center\nWorker: Ready {width: 100; height: 60}}", tc.w, tc.h)
+		d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+		p, n := d.Shapes[0], d.Shapes[1]
+		if p.Width != tc.wantW || p.Height != tc.wantH || n.Width != 100 || n.Height != 60 {
+			t.Fatalf("request %d × %d produced frame %d × %d, tile %d × %d", tc.w, tc.h, p.Width, p.Height, n.Width, n.Height)
+		}
+	}
+}
+
+func TestExteriorFrameIconLeavesInnerMarginsAvailable(t *testing.T) {
+	for _, pos := range []string{"outside-top-center", "outside-left-center", "outside-bottom-right", "outside-right-top"} {
+		source := fmt.Sprintf("Region: Edge services {icon: \"https://example.org/icon.svg\"; icon.near: %s\nworker: Ingest {width: 120; height: 60}}", pos)
+		d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+		p, n := d.Shapes[0], d.Shapes[1]
+		if p.Width != 240 || p.Height != 180 || n.Pos.X-p.Pos.X != 60 || n.Pos.Y-p.Pos.Y != 60 {
+			t.Fatalf("%s frame %d × %d, child offset %d,%d", pos, p.Width, p.Height, n.Pos.X-p.Pos.X, n.Pos.Y-p.Pos.Y)
+		}
+	}
+}
