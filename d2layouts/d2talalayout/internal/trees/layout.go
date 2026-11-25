@@ -295,7 +295,8 @@ func handleTreeSubgraph(g *layoutgraph.Graph, rootSentinel, container *layoutgra
 	if !(len(rootSentinel.Edges) == 0 && len(roots) > 1) {
 		return rootSentinel, roots, nil
 	}
-	if rootSentinel.IsContainer() {
+	// A fixed junction must stay in the placement graph when its branches are restored.
+	if rootSentinel.IsContainer() || rootSentinel.FixedTopLeft != nil {
 		return rootSentinel, roots, nil
 	}
 
