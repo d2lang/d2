@@ -512,7 +512,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, defined, idToShape, false, theme, true, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -910,10 +910,10 @@ func crossingMaskID(boardHash string, edge int) string {
 
 // These masks affect only individual connection strokes. The existing mask
 // for labels remains on the paths inside, preserving its partial opacities.
-func writeCrossingMasks(buf *bytes.Buffer, boardHash string, crossings [][]d2target.ConnectionGap, left, top, width, height int) {
+func writeConnectionMasks(buf *bytes.Buffer, boardHash string, crossings [][]d2target.ConnectionGap, labelGaps map[int][]d2target.SequenceLabelGap, left, top, width, height int) {
 	bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", width), svg.IntAttr("height", height)}
 	for i, gaps := range crossings {
-		if len(gaps) == 0 {
+		if len(gaps) == 0 && len(labelGaps[i]) == 0 {
 			continue
 		}
 		attrs := []svg.Attribute{svg.Attr("id", crossingMaskID(boardHash, i)), svg.Attr("maskUnits", "userSpaceOnUse")}
@@ -921,6 +921,13 @@ func writeCrossingMasks(buf *bytes.Buffer, boardHash string, crossings [][]d2tar
 		buf.WriteString(svg.EmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
 		for _, g := range gaps {
 			buf.WriteString(svg.EmptyElement("circle", svg.FloatAttr("cx", g.Center.X), svg.FloatAttr("cy", g.Center.Y), svg.FloatAttr("r", g.Radius), svg.Attr("fill", "black")))
+		}
+		for _, g := range labelGaps[i] {
+			attrs := []svg.Attribute{svg.FloatAttr("x", g.TopLeft.X), svg.FloatAttr("y", g.TopLeft.Y), svg.FloatAttr("width", g.Width), svg.FloatAttr("height", g.Height), svg.Attr("fill", "black")}
+			if g.Opacity != 1 {
+				attrs = append(attrs, svg.FloatAttr("opacity", g.Opacity))
+			}
+			buf.WriteString(svg.EmptyElement("rect", attrs...))
 		}
 		buf.WriteString(svg.CloseElement("mask"))
 	}
@@ -1040,7 +1047,7 @@ func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
 		svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", c.X, c.Y, c.Width, c.Height)), svg.Attr("overflow", "hidden")))
 }
 
-func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, maskCaption bool, markdown *markdownRenderer) (labelMask string, _ error) {
 	if c := connection.MotionClip; c != nil {
 		openMotionViewport(writer, c)
 		defer writer.buf.WriteString("</svg>")
@@ -1113,7 +1120,8 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		labelTL = connection.GetLabelTopLeft()
 		labelTL.X = math.Round(labelTL.X)
 		labelTL.Y = math.Round(labelTL.Y)
-
+	}
+	if labelTL != nil && maskCaption {
 		maskTL := labelTL.Copy()
 		width := connection.LabelWidth
 		height := connection.LabelHeight
@@ -1843,7 +1851,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		fmt.Fprint(writer, el.Render())
 
 	// TODO should standardize "" to rectangle
-	case d2target.ShapeRectangle, d2target.ShapeSequenceDiagram, d2target.ShapeHierarchy, "":
+	case d2target.ShapeRectangle, d2target.ShapeSequenceDiagram, d2target.ShapeSequenceDiagramV2, d2target.ShapeSequenceDiagramEdgeGroup, d2target.ShapeSequenceDiagramActorGroup, d2target.ShapeSequenceDiagramActor, d2target.ShapeHierarchy, "":
 		if !sketch && targetShape.DrawingOutline() {
 			body := d2themes.NewThemableElement("rect", inlineTheme)
 			body.X, body.Y, body.Width, body.Height = tl.X, tl.Y, width, height
@@ -2080,12 +2088,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		if targetShape.Language == "markdown" && labelPosition == label.Unset {
 			labelPosition = label.InsideMiddleCenter
 		}
-		var box *geo.Box
-		if labelPosition.IsOutside() || labelPosition.IsBorder() {
-			box = targetShape.OuterLabelBox(s.GetBox())
-		} else {
-			box = s.GetInnerBox()
-		}
+		box := targetShape.LabelBox(labelPosition, s)
 		labelTL := targetShape.LabelTopLeft(labelPosition, box)
 		if labelPosition.IsBorder() {
 			if sketch {
@@ -2994,6 +2997,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		definePaint(shape.Fill)
 		definePaint(shape.Stroke)
 		definePaint(shape.Color)
+		definePaint(shape.LabelFill)
 	}
 	for _, connection := range diagram.Connections {
 		definePaint(connection.Fill)
@@ -3027,15 +3031,16 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	lightTheme := d2themescatalog.Find(themeID)
 	lightTheme.ApplyOverrides(opts.ThemeOverrides)
 	inlineTheme := &lightTheme
-	strokeVisible := d2themes.PaintVisibleIn(lightTheme)
+	paintVisible := d2themes.PaintVisibleIn(lightTheme)
 	if darkThemeID != nil {
 		darkTheme := d2themescatalog.Find(*darkThemeID)
 		darkTheme.ApplyOverrides(opts.DarkThemeOverrides)
-		strokeVisible = d2themes.PaintVisibleIn(lightTheme, darkTheme)
+		paintVisible = d2themes.PaintVisibleIn(lightTheme, darkTheme)
 		// Let the responsive stylesheet select the user's palette.
 		inlineTheme = nil
 	}
-	crossings := d2target.ConnectionCrossings(diagram.Connections, idToShape, sketch, strokeVisible)
+	crossings := d2target.ConnectionCrossings(diagram.Connections, idToShape, sketch, paintVisible)
+	lifelineGaps := diagram.SequenceLifelineLabelGaps(sketch, paintVisible)
 
 	sortObjects(allObjects)
 
@@ -3046,10 +3051,10 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	for _, obj := range allObjects {
 		if c, is := obj.(indexedConnection); is {
 			maskID := ""
-			if len(crossings[c.index]) != 0 {
+			if len(crossings[c.index]) != 0 || len(lifelineGaps[c.index]) != 0 {
 				maskID = crossingMaskID(isolatedDiagramHash, c.index)
 			}
-			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
+			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, defined, idToShape, sketch, inlineTheme, c.LabelMasksStroke(paintVisible), markdown)
 			if err != nil {
 				return nil, err
 			}
@@ -3166,7 +3171,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		buf.WriteString(svg.CloseElement("mask"))
 	}
 
-	writeCrossingMasks(buf, isolatedDiagramHash, crossings, left, top, w, h)
+	writeConnectionMasks(buf, isolatedDiagramHash, crossings, lifelineGaps, left, top, w, h)
 
 	// Validate the theme before expanding the background, preserving error order.
 	var themeStylesheet string

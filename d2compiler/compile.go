@@ -84,7 +84,7 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 		return nil, nil, err
 	}
 
-	g, err := compileIRContext(opts.Context, ast, ir)
+	g, err := compileGraph(opts.Context, ast, ir, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -124,6 +124,10 @@ func compileIR(ast *d2ast.Map, m *d2ir.Map) (*d2graph.Graph, error) {
 }
 
 func compileIRContext(ctx context.Context, ast *d2ast.Map, m *d2ir.Map) (*d2graph.Graph, error) {
+	return compileGraph(ctx, ast, m, false)
+}
+
+func compileGraph(ctx context.Context, ast *d2ast.Map, m *d2ir.Map, owned bool) (*d2graph.Graph, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -131,8 +135,9 @@ func compileIRContext(ctx context.Context, ast *d2ast.Map, m *d2ir.Map) (*d2grap
 		return nil, err
 	}
 	c := &compiler{
-		err: &d2parser.ParseError{},
-		ctx: ctx,
+		err:       &d2parser.ParseError{},
+		ctx:       ctx,
+		ownedRoot: owned,
 	}
 
 	g := d2graph.NewGraph()
@@ -159,20 +164,36 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 	if c.stopped() {
 		return g
 	}
-	// Graph compilation reads the IR. Nested boards still need an independent
-	// root for class lookup, and boards with children need a copy because the
-	// folder comparison below uses CopyBase, which also modifies its source.
+	// Nested boards need a local class root, and CopyBase mutates its source.
+	// V2 also hoists grouped actors and rewrites their IR references. Keep
+	// ordinary single-board diagrams on the read-only path.
+	previousScopes, previousRefScopes := c.sequenceScopes, c.sequenceRefScopes
+	c.sequenceScopes, c.sequenceRefScopes = nil, nil
+	defer func() { c.sequenceScopes, c.sequenceRefScopes = previousScopes, previousRefScopes }()
+	owned := c.ownedRoot && g.Parent == nil
 	if !ir.Root() || hasBoardFields(ir) {
 		if err := d2ir.ReserveVariableExpansionCopy(c.ctx, ir); err != nil {
 			c.fatalErr = err
 			return g
 		}
 		ir = ir.Copy(nil).(*d2ir.Map)
+		owned = true
+	}
+	selected := make(map[*d2ir.Map]bool)
+	if c.sequenceDiagramMaps(ir, selected) {
+		c.sequenceScopes = make(map[string][]d2ast.String)
+		var err error
+		ir, err = d2ir.EditGraphScopes(c.ctx, ir, selected, owned, c.preprocessSequenceDiagram)
+		if err != nil {
+			c.fatalErr = err
+			return g
+		}
 	}
 	c.compileMap(g.Root, ir)
 	if c.stopped() {
 		return g
 	}
+	c.compileSequenceDiagrams(g)
 	c.validateGridDimensions(g)
 	if c.stopped() {
 		return g
@@ -445,12 +466,16 @@ func _findFieldAST(ast *d2ast.Map, path []string) *d2ast.Map {
 }
 
 type compiler struct {
-	err             *d2parser.ParseError
-	activeClassMaps map[*d2ir.Map]struct{}
-	classMapsByRoot map[*d2ir.Map]map[string]*d2ir.Map
-	explicitLabels  map[*d2graph.Attributes]struct{}
-	ctx             context.Context
-	fatalErr        error
+	ownedRoot           bool
+	err                 *d2parser.ParseError
+	activeClassMaps     map[*d2ir.Map]struct{}
+	sequenceScopes      map[string][]d2ast.String
+	sequenceClassValues map[sequenceClassProperty]string
+	sequenceRefScopes   map[d2ir.Reference][]d2ast.String
+	classMapsByRoot     map[*d2ir.Map]map[string]*d2ir.Map
+	explicitLabels      map[*d2graph.Attributes]struct{}
+	ctx                 context.Context
+	fatalErr            error
 }
 
 func (c *compiler) stopped() bool {
@@ -479,6 +504,29 @@ func (c *compiler) errorf(n d2ast.Node, f string, v ...interface{}) {
 }
 
 func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
+	// Classes can supply the shape and its options independently. Apply the
+	// collected options in class order once the object's final shape is known.
+	var shapeOptions []*d2ir.Field
+	c.compileMapFields(obj, m, &shapeOptions)
+	if obj.LabelFill != nil && obj.Shape.Value != d2target.ShapeSequenceDiagramEdgeGroup {
+		c.errorf(obj.LabelFill.MapKey, "label.style.fill is only supported on sequence diagram edge-groups")
+	}
+	if obj.IsSequenceDiagramV2() || (obj.Shape.Value == d2target.ShapeSequenceDiagramEdgeGroup && len(shapeOptions) > 0) {
+		obj.Sequence = &d2graph.SequenceOptions{}
+	}
+	for _, shape := range shapeOptions {
+		if c.stopped() {
+			return
+		}
+		if obj.Sequence == nil || shape.Map() == nil {
+			c.errorf(shape.LastRef().Context().Key, "reserved field shape does not accept composite")
+			continue
+		}
+		c.compileSequenceOptions(obj, shape.Map())
+	}
+}
+
+func (c *compiler) compileMapFields(obj *d2graph.Object, m *d2ir.Map, shapeOptions *[]*d2ir.Field) {
 	if c.stopped() {
 		return
 	}
@@ -514,7 +562,7 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 						c.endClass(classMap)
 						return
 					}
-					c.compileMap(obj, classMap)
+					c.compileMapFields(obj, classMap, shapeOptions)
 					c.endClass(classMap)
 				}
 			} else {
@@ -538,10 +586,12 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 			}
 		}
 	}
-	shape := m.GetField(d2ast.FlatUnquotedString("shape"))
-	if shape != nil {
+	if shape := m.GetField(d2ast.FlatUnquotedString("shape")); shape != nil {
 		if shape.Composite != nil {
-			c.errorf(shape.LastPrimaryKey(), "reserved field shape does not accept composite")
+			*shapeOptions = append(*shapeOptions, shape)
+			if shape.Primary() != nil {
+				c.compileShape(&obj.Attributes, shape)
+			}
 		} else {
 			c.compileField(obj, shape)
 		}
@@ -738,7 +788,7 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 		}
 		return
 	} else if isReserved {
-		c.compileReserved(&obj.Attributes, f)
+		c.compileReserved(&obj.Attributes, f, obj)
 		return
 	} else if f.Name.ScalarString() == "style" && f.Name.IsUnquoted() {
 		if f.Map() == nil || len(f.Map().Fields) == 0 {
@@ -775,6 +825,9 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 	if obj.Label.MapKey == nil {
 		obj.Label.MapKey = f.LastPrimaryKey()
 	}
+	if obj.OuterSequenceDiagram().IsSequenceDiagramV2() {
+		obj.SequenceOrder, obj.SequenceDeclarationIndex = d2ir.DeclarationOrder(f)
+	}
 	for _, fr := range f.References {
 		if c.stopped() {
 			return
@@ -795,8 +848,7 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 			ScopeObj:        parent,
 			IsVar:           d2ir.IsVar(fr.Context_.ScopeMap),
 		}
-		if fr.Context_.ScopeMap != nil && !d2ir.IsVar(fr.Context_.ScopeMap) {
-			scopeObjIDA := d2ir.BoardIDA(fr.Context_.ScopeMap)
+		if scopeObjIDA, ok := c.sequenceScope(fr); ok {
 			r.ScopeObj = obj.Graph.Root.EnsureChild(scopeObjIDA)
 		}
 		obj.References = append(obj.References, r)
@@ -849,7 +901,7 @@ func (c *compiler) hasExplicitLabel(attrs *d2graph.Attributes) bool {
 	return ok
 }
 
-func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
+func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field, obj *d2graph.Object) {
 	if c.stopped() {
 		return
 	}
@@ -858,6 +910,14 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 		for _, f := range f.Map().Fields {
 			if c.stopped() {
 				return
+			}
+			if name.ScalarString() == "label" && f.Name.IsUnquoted() && f.Name.ScalarString() == "style" {
+				if obj == nil {
+					c.errorf(f.LastRef().AST(), "label.style.fill is only supported on sequence diagram edge-groups")
+				} else {
+					c.compileFrameLabelStyle(obj, f)
+				}
+				continue
 			}
 			if f.Name.ScalarString() == "near" && f.Name.IsUnquoted() {
 				if f.Primary() == nil {
@@ -914,7 +974,47 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 	}
 }
 
-func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
+func (c *compiler) compileFrameLabelStyle(obj *d2graph.Object, style *d2ir.Field) {
+	m := style.Map()
+	if style.Primary() != nil || m == nil || len(m.Fields) != 1 || len(m.Edges) != 0 {
+		c.errorf(style.LastRef().AST(), "label.style expects a fill color")
+		return
+	}
+	fill := m.GetField(d2ast.FlatUnquotedString("fill"))
+	if fill == nil || fill.Primary() == nil || fill.Composite != nil {
+		c.errorf(style.LastRef().AST(), "label.style expects a fill color")
+		return
+	}
+	if _, ok := fill.Primary().Value.(*d2ast.Null); ok {
+		obj.LabelFill = nil
+		return
+	}
+	var labelStyle d2graph.Style
+	c.compileStyleField(&labelStyle, fill)
+	obj.LabelFill = labelStyle.Fill
+}
+
+func (c *compiler) compileShape(attrs *d2graph.Attributes, f *d2ir.Field) {
+	scalar := f.Primary().Value
+	shapeVal := strings.ToLower(scalar.ScalarString())
+	_, isArrowhead := d2target.Arrowheads[shapeVal]
+	if !d2target.IsShape(shapeVal) && !isArrowhead {
+		c.errorf(scalar, "unknown shape %q", scalar.ScalarString())
+		return
+	}
+	attrs.Shape.Value = shapeVal
+	if shapeVal == d2target.ShapeCode {
+		// Explicit code shape is plaintext.
+		attrs.Language = d2target.ShapeText
+	}
+	attrs.Shape.MapKey = f.LastPrimaryKey()
+}
+
+func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field, obj *d2graph.Object) {
+	if f.Name.ScalarString() == "shape" && f.Composite != nil {
+		c.errorf(f.LastRef().AST(), "shape options can only be used on sequence-diagram objects")
+		return
+	}
 	if strings.EqualFold(f.Name.ScalarString(), "elk-layer-constraint") {
 		c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
 		return
@@ -950,7 +1050,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 					}
 				}
 			case "label", "icon", "tooltip":
-				c.compilePosition(attrs, f)
+				c.compilePosition(attrs, f, obj)
 			default:
 				c.errorf(f.LastPrimaryKey(), "reserved field %v does not accept composite", f.Name.ScalarString())
 			}
@@ -963,21 +1063,9 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 	switch f.Name.ScalarString() {
 	case "label":
 		c.compileLabel(attrs, f)
-		c.compilePosition(attrs, f)
+		c.compilePosition(attrs, f, obj)
 	case "shape":
-		shapeVal := strings.ToLower(scalar.ScalarString())
-		in := d2target.IsShape(shapeVal)
-		_, isArrowhead := d2target.Arrowheads[shapeVal]
-		if !in && !isArrowhead {
-			c.errorf(scalar, "unknown shape %q", scalar.ScalarString())
-			return
-		}
-		attrs.Shape.Value = shapeVal
-		if strings.EqualFold(attrs.Shape.Value, d2target.ShapeCode) {
-			// Explicit code shape is plaintext.
-			attrs.Language = d2target.ShapeText
-		}
-		attrs.Shape.MapKey = f.LastPrimaryKey()
+		c.compileShape(attrs, f)
 	case "icon":
 		iconURL, err := url.Parse(scalar.ScalarString())
 		if err != nil {
@@ -985,7 +1073,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			return
 		}
 		attrs.Icon = iconURL
-		c.compilePosition(attrs, f)
+		c.compilePosition(attrs, f, obj)
 		if f.Map() != nil {
 			for _, ff := range f.Map().Fields {
 				if c.stopped() {
@@ -1029,7 +1117,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			}
 		}
 
-		c.compilePosition(attrs, f)
+		c.compilePosition(attrs, f, obj)
 	case "width":
 		_, err := strconv.Atoi(scalar.ScalarString())
 		if err != nil {
@@ -1288,11 +1376,19 @@ func (c *compiler) compileEdge(obj *d2graph.Object, e *d2ir.Edge) {
 	}
 
 	edge.Label.MapKey = e.LastPrimaryKey()
+	if e.SequenceKey != nil {
+		edge.SequenceKey = e.SequenceKey
+		edge.SequenceGraphOrder = len(obj.Graph.Edges) - 1
+	}
+	if obj.IsSequenceDiagramV2() || obj.OuterSequenceDiagram().IsSequenceDiagramV2() {
+		edge.SequenceOrder, edge.SequenceDeclarationIndex = d2ir.DeclarationOrder(e)
+	}
 	for _, er := range e.References {
 		if c.stopped() {
 			return
 		}
 		r := d2graph.EdgeReference{
+			IsVar:           er.Context_.ScopeMap != nil && d2ir.IsVar(er.Context_.ScopeMap),
 			Edge:            er.Context_.Edge,
 			MapKey:          er.Context_.Key,
 			MapKeyEdgeIndex: er.Context_.EdgeIndex(),
@@ -1300,8 +1396,7 @@ func (c *compiler) compileEdge(obj *d2graph.Object, e *d2ir.Edge) {
 			ScopeAST:        er.Context_.ScopeAST,
 			ScopeObj:        obj,
 		}
-		if er.Context_.ScopeMap != nil && !d2ir.IsVar(er.Context_.ScopeMap) {
-			scopeObjIDA := d2ir.BoardIDA(er.Context_.ScopeMap)
+		if scopeObjIDA, ok := c.sequenceScope(er); ok {
 			r.ScopeObj = edge.Src.Graph.Root.EnsureChild(scopeObjIDA)
 		}
 		edge.References = append(edge.References, r)
@@ -1373,7 +1468,7 @@ func (c *compiler) compileEdgeField(edge *d2graph.Edge, f *d2ir.Field) {
 	}
 	_, isReserved := d2ast.SimpleReservedKeywords[keyword]
 	if isReserved {
-		c.compileReserved(&edge.Attributes, f)
+		c.compileReserved(&edge.Attributes, f, nil)
 		return
 	} else if f.Name.ScalarString() == "style" {
 		if f.Map() == nil {
@@ -1418,7 +1513,7 @@ func (c *compiler) compileArrowheads(edge *d2graph.Edge, f *d2ir.Field) {
 			_, isReserved := d2ast.SimpleReservedKeywords[keyword]
 			isReserved = isReserved && f2.Name.IsUnquoted()
 			if isReserved {
-				c.compileReserved(attrs, f2)
+				c.compileReserved(attrs, f2, nil)
 				continue
 			} else if f2.Name.ScalarString() == "style" && f2.Name.IsUnquoted() {
 				if f2.Map() == nil {
@@ -1454,6 +1549,9 @@ func (c *compiler) compileClass(obj *d2graph.Object) {
 	for _, f := range obj.ChildrenArray {
 		if c.stopped() {
 			return
+		}
+		if sequenceStructuredTimelineItem(obj, f) {
+			continue
 		}
 		visibility := "public"
 		name := f.IDVal
@@ -1499,22 +1597,7 @@ func (c *compiler) compileClass(obj *d2graph.Object) {
 		}
 	}
 
-	for _, ch := range obj.ChildrenArray {
-		if c.stopped() {
-			return
-		}
-		for i := 0; i < len(obj.Graph.Objects); i++ {
-			if c.stopped() {
-				return
-			}
-			if obj.Graph.Objects[i] == ch {
-				obj.Graph.Objects = append(obj.Graph.Objects[:i], obj.Graph.Objects[i+1:]...)
-				i--
-			}
-		}
-	}
-	obj.Children = nil
-	obj.ChildrenArray = nil
+	c.removeStructuredMembers(obj)
 }
 
 func (c *compiler) compileSQLTable(obj *d2graph.Object) {
@@ -1525,6 +1608,9 @@ func (c *compiler) compileSQLTable(obj *d2graph.Object) {
 	for _, col := range obj.ChildrenArray {
 		if c.stopped() {
 			return
+		}
+		if sequenceStructuredTimelineItem(obj, col) {
+			continue
 		}
 		typ := col.Label.Value
 		// A column without an explicit label defaults it to its ID, which is not a type.
@@ -1539,22 +1625,36 @@ func (c *compiler) compileSQLTable(obj *d2graph.Object) {
 		obj.SQLTable.Columns = append(obj.SQLTable.Columns, d2Col)
 	}
 
-	for _, ch := range obj.ChildrenArray {
+	c.removeStructuredMembers(obj)
+}
+
+// Explicit shapes under structured v2 actors are timeline items. Unshaped
+// children retain the normal class-member and SQL-column syntax.
+func sequenceStructuredTimelineItem(actor, child *d2graph.Object) bool {
+	return actor.IsSequenceDiagramActor() && child.Shape.Value != ""
+}
+
+func (c *compiler) removeStructuredMembers(obj *d2graph.Object) {
+	members := make(map[*d2graph.Object]bool)
+	var timeline []*d2graph.Object
+	for _, child := range obj.ChildrenArray {
 		if c.stopped() {
 			return
 		}
-		for i := 0; i < len(obj.Graph.Objects); i++ {
-			if c.stopped() {
-				return
-			}
-			if obj.Graph.Objects[i] == ch {
-				obj.Graph.Objects = append(obj.Graph.Objects[:i], obj.Graph.Objects[i+1:]...)
-				i--
-			}
+		if sequenceStructuredTimelineItem(obj, child) {
+			timeline = append(timeline, child)
+		} else {
+			members[child] = true
+			delete(obj.Children, strings.ToLower(child.ID))
 		}
 	}
-	obj.Children = nil
-	obj.ChildrenArray = nil
+	obj.Graph.Objects = slices.DeleteFunc(obj.Graph.Objects, func(child *d2graph.Object) bool {
+		return members[child]
+	})
+	obj.ChildrenArray = timeline
+	if len(timeline) == 0 {
+		obj.Children = nil
+	}
 }
 
 func (c *compiler) validateKeys(obj *d2graph.Object, m *d2ir.Map) {
@@ -2062,7 +2162,9 @@ func (c *compiler) setDefaultShapes(g *d2graph.Graph) {
 			return
 		}
 		if obj.Shape.Value == "" {
-			if obj.OuterSequenceDiagram() != nil {
+			if obj.IsSequenceDiagramSpan() {
+				continue
+			} else if obj.OuterSequenceDiagram() != nil {
 				obj.Shape.Value = d2target.ShapeRectangle
 			} else if obj.Language == "latex" {
 				obj.Shape.Value = d2target.ShapeText

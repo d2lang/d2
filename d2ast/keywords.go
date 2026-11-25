@@ -36,6 +36,7 @@ var ReservedKeywordHolders = map[string]struct{}{
 
 // CompositeReservedKeywords are reserved keywords that can hold composites
 var CompositeReservedKeywords = map[string]struct{}{
+	"shape":            {},
 	"source-arrowhead": {},
 	"target-arrowhead": {},
 	"classes":          {},

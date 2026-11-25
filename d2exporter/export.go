@@ -10,6 +10,7 @@ import (
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/d2sequence"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2target"
@@ -22,6 +23,9 @@ import (
 func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily) (*d2target.Diagram, error) {
 	diagram := d2target.NewDiagram()
 	applyStyles(&diagram.Root, g.Root)
+	if g.Root.IsSequenceDiagramV2() {
+		diagram.Root.SequenceRole = "container"
+	}
 	if g.Root.Label.MapKey == nil {
 		diagram.Root.Label = g.Name
 	} else {
@@ -215,8 +219,62 @@ func applyStyles(shape *d2target.Shape, obj *d2graph.Object) {
 }
 
 func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
+	if obj.IsSequenceDiagramActorRepeat() {
+		// Resolve the appearance against the original participant so defaults
+		// derived from its theme, nesting, or structured content stay identical.
+		actor := obj.SequenceDiagramActor()
+		repeated := toShape(actor, g)
+		repeated.ID = obj.AbsID()
+		repeated.Pos = d2target.NewPoint(int(obj.TopLeft.X), int(obj.TopLeft.Y))
+		repeated.Width, repeated.Height = int(obj.Width), int(obj.Height)
+		repeated.ZIndex, repeated.Level = obj.ZIndex, int(obj.Level())
+		repeated.SequenceRole = "repeat"
+		return repeated
+	}
+	if obj.IsSequenceDiagramActor() {
+		// Repeated headers are visual copies, not content that turns the actor
+		// into a themed container (for example, a dashed C4 boundary).
+		appearance := *obj
+		appearance.Children = make(map[string]*d2graph.Object, len(obj.Children))
+		appearance.ChildrenArray = nil
+		for key, child := range obj.Children {
+			if !child.IsSequenceDiagramActorRepeat() {
+				appearance.Children[key] = child
+			}
+		}
+		for _, child := range obj.ChildrenArray {
+			if !child.IsSequenceDiagramActorRepeat() {
+				appearance.ChildrenArray = append(appearance.ChildrenArray, child)
+			}
+		}
+		obj = &appearance
+	}
 	shape := d2target.BaseShape()
 	shape.SetType(obj.Shape.Value)
+	// Sequence v2 containers use ordinary rectangle geometry in every renderer.
+	switch obj.Shape.Value {
+	case d2target.ShapeSequenceDiagramV2, d2target.ShapeSequenceDiagramEdgeGroup, d2target.ShapeSequenceDiagramActorGroup:
+		shape.SetType(d2target.ShapeRectangle)
+	}
+	if obj.IsSequenceDiagramV2() {
+		shape.SequenceRole = "container"
+	} else if obj.OuterSequenceDiagram().IsSequenceDiagramV2() {
+		switch {
+		case obj.IsSequenceDiagramBranch():
+			shape.SetType(d2target.ShapeText)
+			shape.SequenceRole = "branch"
+		case obj.IsSequenceDiagramActorGroup(), obj.IsSequenceDiagramGroup():
+			shape.SequenceRole = "group"
+		case obj.IsSequenceDiagramActor():
+			shape.SequenceRole = "actor"
+		case obj.IsSequenceDiagramSpan():
+			shape.SequenceRole = "span"
+		case obj.IsSequenceDiagramNote():
+			shape.SequenceRole = "note"
+		default:
+			shape.SequenceRole = "event"
+		}
+	}
 	shape.ID = obj.AbsID()
 	shape.Classes = obj.Classes
 	shape.ZIndex = obj.ZIndex
@@ -267,6 +325,12 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 			shape.ContentAspectRatio = go2.Pointer(*obj.ContentAspectRatio)
 		}
 	}
+	if obj.IsSequenceDiagramBranch() {
+		shape.StrokeWidth = 0
+		if obj.Style.Fill == nil {
+			shape.Fill = "transparent"
+		}
+	}
 	shape.Label = text.Text
 	shape.LabelWidth = text.Dimensions.Width
 
@@ -275,6 +339,9 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 		shape.LabelPosition = *obj.LabelPosition
 		if obj.IsSequenceDiagramGroup() {
 			shape.LabelFill = shape.Fill
+			if obj.LabelFill != nil {
+				shape.LabelFill = obj.LabelFill.Value
+			}
 		}
 	}
 
@@ -346,6 +413,16 @@ func toPrettyLink(g *d2graph.Graph, link string) string {
 // ToConnection builds the render-target representation of a routed edge.
 func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection {
 	connection := d2target.BaseConnection()
+	if scope := edge.Src.OuterSequenceDiagram(); scope.IsSequenceDiagramV2() {
+		switch {
+		case edge.Dst.IsSequenceDiagramBranch() && edge.Dst.Parent == edge.Src:
+			connection.SequenceRole = "divider"
+		case d2sequence.IsLifelineEnd(edge.Dst):
+			connection.SequenceRole = "lifeline"
+		case edge.Dst.OuterSequenceDiagram() == scope:
+			connection.SequenceRole = "message"
+		}
+	}
 	connection.ID = edge.AbsID()
 	connection.Classes = edge.Classes
 	connection.ZIndex = edge.ZIndex

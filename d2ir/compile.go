@@ -1589,8 +1589,14 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		}
 
 		fa, err := node.Map().ensureFieldIndexed(propKeyPath, propRefCtx, false, c)
-		if err != nil || len(fa) == 0 {
+		if err != nil {
 			return false
+		}
+		if len(fa) == 0 {
+			if value == "*" {
+				return false
+			}
+			return c.matchDefaultSequenceOption(node.Map(), propRefCtx)
 		}
 
 		for _, f := range fa {
@@ -1658,7 +1664,6 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 				},
 			}
 			return c._ampersandFilter(f, refctx)
-
 		case "label":
 			f := &Field{}
 			n := refctx.ScopeMap.Parent()
@@ -1750,6 +1755,9 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 
 			return dstPath == filterValue
 		default:
+			if c.matchDefaultSequenceOption(refctx.ScopeMap, refctx) {
+				return true
+			}
 			parent := refctx.ScopeMap.Parent()
 			if field, ok := parent.(*Field); ok {
 				propName := refctx.Key.Key.Last().ScalarString()
@@ -1766,6 +1774,26 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		}
 	}
 	return true
+}
+
+func (c *compiler) matchDefaultSequenceOption(m *Map, refctx *RefContext) bool {
+	path := refctx.Key.Key.Path
+	if len(path) != 2 || !path[0].Unbox().IsUnquoted() || !strings.EqualFold(path[0].ScalarString(), "shape") {
+		return false
+	}
+	optionShape := d2target.ShapeSequenceDiagramV2
+	switch strings.ToLower(path[1].ScalarString()) {
+	case "branched":
+		optionShape = d2target.ShapeSequenceDiagramEdgeGroup
+	case "numbered", "mirrored":
+	default:
+		return false
+	}
+	shape := m.getFieldIndexed(path[0].Unbox())
+	if shape != nil && shape.Primary() != nil && strings.EqualFold(shape.Primary().Value.ScalarString(), optionShape) {
+		return c._ampersandFilter(&Field{Primary_: &Scalar{Value: &d2ast.Boolean{Value: false}}}, refctx)
+	}
+	return false
 }
 
 // handles filters that are not based on fields
@@ -1890,10 +1918,13 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 	if len(refctx.Key.Edges) == 0 && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
 		// For vars, if we delete the field, it may just resolve to an outer scope var of the same name
 		// Instead we keep it around, so that resolveSubstitutions can find it
-		if !IsVar(ParentMap(f)) {
+		// A caption fill can be inherited from a class after IR resolution.
+		// Keep an explicit null to clear that inherited color.
+		if !IsVar(ParentMap(f)) && !isCaptionFill(f) {
 			m := ParentMap(f)
 			c.recordSpreadDeletion(m, &spreadMember{field: f.Name}, refctx.Key)
 			if !c.keepChildAfterGlobDeletion(f, refctx) {
+				m.rememberSequenceDeletion(f, refctx.order)
 				m.deleteField(f)
 			}
 			return

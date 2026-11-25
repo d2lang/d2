@@ -17,6 +17,8 @@
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
 - renders: add native isometric SVG, PNG, GIF, PDF, and PPTX exports with `--isometric`, source configuration, and Go/JavaScript options
 
+- sequence diagrams: add opt-in `shape: sequence-diagram` with explicit participant and message groups, branched frames, shared timeline rows, message label placement, frame caption fills, span labels, actor repetition, and message numbering. See the [v2 guide](../../../docs/sequence-diagrams.md).
+
 #### Improvements 🧹
 
 - Grids with one specified axis choose more evenly sized rows or columns. For common integral cell sizes the partition search finds the minimum total deviation from the average track length.

@@ -189,8 +189,9 @@ type Map struct {
 	Fields            []*Field `json:"fields"`
 	Edges             []*Edge  `json:"edges"`
 
-	globs          []*globContext
-	pendingSpreads []*Field
+	sequenceDeletes *sequenceDeletion
+	globs           []*globContext
+	pendingSpreads  []*Field
 
 	// Fields and Edges retain source order. These indexes are derived lookup
 	// accelerators only; they never determine iteration order.
@@ -568,6 +569,11 @@ func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrde
 		}
 		currM := m
 		for currM != nil {
+			// A field in an edge's attribute map cannot be an endpoint of
+			// an outer edge, even when they share an indexed assignment.
+			if _, insideEdge := currM.parent.(*Edge); insideEdge {
+				break
+			}
 			for i := len(currM.Edges) - 1; i >= 0; i-- {
 				edge := currM.Edges[i]
 				for _, er := range edge.References {
@@ -852,6 +858,9 @@ func (eid *EdgeID) resolve(m *Map) (_ *EdgeID, _ *Map, common []d2ast.String, _ 
 }
 
 type Edge struct {
+	// SequenceKey retains the scoped, indexed source address through sequence actor hoisting.
+	SequenceKey *d2ast.Key `json:"-"`
+
 	// *Map
 	parent    Node
 	importAST d2ast.Node
@@ -1367,6 +1376,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 						continue
 					}
 					if f.Map() == nil {
+						if !create {
+							continue
+						}
 						f.Composite = &Map{
 							parent: f,
 						}
@@ -1402,6 +1414,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 						continue
 					}
 					if f.Map() == nil {
+						if !create {
+							continue
+						}
 						f.Composite = &Map{
 							parent: f,
 						}
@@ -1469,6 +1484,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			return d2parser.Errorf(kp.Path[i].Unbox(), "cannot index into array")
 		}
 		if f.Map() == nil {
+			if !create {
+				return nil
+			}
 			f.Composite = &Map{
 				parent: f,
 			}
@@ -2070,21 +2088,19 @@ func (f *Field) AST() d2ast.Node {
 	return k
 }
 
+func (eid *EdgeID) AST() *d2ast.Edge {
+	edge := &d2ast.Edge{Src: d2ast.MakeKeyPathString(eid.SrcPath), Dst: d2ast.MakeKeyPathString(eid.DstPath)}
+	if eid.SrcArrow {
+		edge.SrcArrow = "<"
+	}
+	if eid.DstArrow {
+		edge.DstArrow = ">"
+	}
+	return edge
+}
+
 func (e *Edge) AST() d2ast.Node {
-	astEdge := &d2ast.Edge{}
-
-	astEdge.Src = d2ast.MakeKeyPathString(e.ID.SrcPath)
-	if e.ID.SrcArrow {
-		astEdge.SrcArrow = "<"
-	}
-	astEdge.Dst = d2ast.MakeKeyPathString(e.ID.DstPath)
-	if e.ID.DstArrow {
-		astEdge.DstArrow = ">"
-	}
-
-	k := &d2ast.Key{
-		Edges: []*d2ast.Edge{astEdge},
-	}
+	k := &d2ast.Key{Edges: []*d2ast.Edge{e.ID.AST()}}
 
 	if e.Primary_ != nil {
 		k.Primary = d2ast.MakeValueBox(e.Primary_.AST().(d2ast.Value)).ScalarBox()

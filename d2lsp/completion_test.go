@@ -14,6 +14,147 @@ func TestGetCompletionItems(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			name: "sequence options across reopened maps",
+			text: "a.shape: sequence-diagram\na: {\n  shape.\n}",
+			line: 2, column: len("  shape."), want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "frame caption across reopened maps",
+			text: "a.b.shape: edge-group\na: {b: {\n  label.style.\n}}",
+			line: 2, column: len("  label.style."), want: []CompletionItem{{Label: "fill", Kind: StyleCompletion, Detail: "frame caption background", InsertText: "fill: "}},
+		},
+		{
+			name: "ordinary shape does not accept branched",
+			text: "a.shape: rectangle\na.shape.branched:",
+			line: 1, column: len("a.shape.branched:"),
+		},
+		{
+			name: "quoted frame caption",
+			text: "\"payment.result\": {shape: edge-group}\n\"payment.result\".label.",
+			line: 1, column: len("\"payment.result\".label."), want: frameLabelCompletions(),
+		},
+		{
+			name: "message inside edge-group has ordinary label",
+			text: "result: {shape: edge-group\n  a -> b: {\n    label.\n  }\n}",
+			line: 2, column: len("    label."), want: getLabelCompletions(),
+		},
+		{
+			name: "edge-group dotted caption",
+			text: "result: {shape: edge-group}\nresult.label.",
+			line: 1, column: len("result.label."), want: frameLabelCompletions(),
+		},
+		{
+			name: "edge-group local caption",
+			text: "result: {\n  shape: edge-group\n  label.\n}",
+			line: 2, column: len("  label."), want: frameLabelCompletions(),
+		},
+		{
+			name: "edge-group block caption",
+			text: "result: {shape: edge-group; label: {\n  \n}}",
+			line: 1, column: 2, want: frameLabelCompletions(),
+		},
+		{
+			name: "edge-group caption paint only",
+			text: "result.shape: edge-group\nresult.label.style.",
+			line: 1, column: len("result.label.style."), want: []CompletionItem{{Label: "fill", Kind: StyleCompletion, Detail: "frame caption background", InsertText: "fill: "}},
+		},
+		{
+			name: "ordinary caption has position only",
+			text: "result.shape: rectangle\nresult.label.",
+			line: 1, column: len("result.label."), want: getLabelCompletions(),
+		},
+		{
+			name: "ordinary caption has no caption styles",
+			text: "result.shape: rectangle\nresult.label.style.",
+			line: 1, column: len("result.label.style."),
+		},
+		{
+			name: "edge-group block",
+			text: "result: {shape: edge-group {\n  \n}}",
+			line: 1, column: 2, want: getBranchOptionCompletions(),
+		},
+		{
+			name: "edge-group option value",
+			text: "result: {shape: edge-group {\n  branched: \n}}",
+			line: 1, column: len("  branched: "), want: getBooleanCompletions(),
+		},
+		{
+			name: "edge-group dotted option",
+			text: "result.shape: edge-group\nresult.shape.",
+			line: 1, column: len("result.shape."), want: getBranchOptionCompletions(),
+		},
+		{
+			name: "edge-group dotted value",
+			text: "result.shape: edge-group\nresult.shape.branched: ",
+			line: 1, column: len("result.shape.branched: "), want: getBooleanCompletions(),
+		},
+		{
+			name: "branched is only valid on edge-groups",
+			text: "shape: sequence-diagram {\n  branched: \n}",
+			line: 1, column: len("  branched: "),
+		},
+		{
+			name: "sequence option block",
+			text: "a.shape: sequence-diagram {\n  \n}",
+			line: 1, column: 2,
+			want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "sequence option boolean",
+			text: "shape: sequence-diagram {\n  numbered: \n}",
+			line: 1, column: len("  numbered: "),
+			want: getBooleanCompletions(),
+		},
+		{
+			name: "dotted sequence option",
+			text: "a.shape: sequence-diagram\na.shape.",
+			line: 1, column: len("a.shape."),
+			want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "ordinary shape has no dotted options",
+			text: "a.shape: rectangle\na.shape.",
+			line: 1, column: len("a.shape."),
+		},
+		{
+			name: "dotted sequence option from nested declaration",
+			text: "a: {b.shape: sequence-diagram {mirrored: true}}\na.b.shape.",
+			line: 1, column: len("a.b.shape."),
+			want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "dotted sequence option after nested override",
+			text: "a.shape: sequence-diagram\na: {shape: rectangle}\na.shape.",
+			line: 2, column: len("a.shape."),
+		},
+		{
+			name: "dotted sequence option inside shape filter",
+			text: "*: {\n  &shape: sequence-diagram\n  shape.\n}",
+			line: 2, column: len("  shape."),
+			want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "negated sequence shape filter",
+			text: "*: {\n  !&shape: sequence-diagram\n  shape.\n}",
+			line: 2, column: len("  shape."),
+		},
+		{
+			name:   "dotted sequence option boolean",
+			text:   "a.shape.mirrored:",
+			column: len("a.shape.mirrored:"),
+			want:   getBooleanCompletions(),
+		},
+		{
+			name:   "ordinary variable named mirrored",
+			text:   "vars.mirrored:",
+			column: len("vars.mirrored:"),
+		},
+		{
+			name: "legacy sequence shape has no option block",
+			text: "shape: sequence_diagram {\n  \n}",
+			line: 1, column: 2,
+		},
+		{
 			name:   "style dot suggestions",
 			text:   "a.style.",
 			line:   0,

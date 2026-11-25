@@ -205,6 +205,7 @@ type Object struct {
 
 	*geo.Box      `json:"box,omitempty"`
 	LabelPosition *string `json:"labelPosition,omitempty"`
+	LabelFill     *Scalar `json:"labelFill,omitempty"`
 	IconPosition  *string `json:"iconPosition,omitempty"`
 
 	ContentAspectRatio *float64 `json:"contentAspectRatio,omitempty"`
@@ -240,7 +241,19 @@ func (obj *Object) MarkLayoutFontSize() {
 	}
 }
 
+type SequenceOptions struct {
+	Branched bool `json:"branched,omitempty"`
+	Mirrored bool `json:"mirrored,omitempty"`
+	Numbered bool `json:"numbered,omitempty"`
+}
+
 type Attributes struct {
+	Sequence *SequenceOptions `json:"sequence,omitempty"`
+	// SequenceOrder orders v2 timeline items at their import or spread occurrence.
+	SequenceOrder []uint64 `json:"sequenceOrder,omitempty"`
+	// SequenceDeclarationIndex identifies the reference that introduced this timeline item.
+	SequenceDeclarationIndex int `json:"sequenceDeclarationIndex,omitempty"`
+
 	Label           Scalar                  `json:"label"`
 	LabelDimensions d2target.TextDimensions `json:"labelDimensions"`
 
@@ -826,7 +839,7 @@ func (obj *Object) HasEdge(mk *d2ast.Key) (*Edge, bool) {
 func ResolveUnderscoreKey(ida []string, obj *Object) (resolvedObj *Object, resolvedIDA []string, _ error) {
 	if len(ida) > 0 && !obj.IsSequenceDiagram() {
 		objSD := obj.OuterSequenceDiagram()
-		if objSD != nil {
+		if objSD != nil && !objSD.IsSequenceDiagramV2() {
 			referencesActor := false
 			for _, c := range objSD.ChildrenArray {
 				if c.ID == ida[0] {
@@ -928,7 +941,7 @@ func (obj *Object) ensureChildEdge(ida []d2ast.String) *Object {
 // intermediate nodes.
 func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
 	seq := obj.OuterSequenceDiagram()
-	if seq != nil {
+	if seq != nil && !seq.IsSequenceDiagramV2() && len(ida) > 0 {
 		for _, c := range seq.ChildrenArray {
 			if c.ID == ida[0].ScalarString() {
 				if obj.ID == ida[0].ScalarString() {
@@ -1266,6 +1279,12 @@ func (obj *Object) IsConstantNear() bool {
 }
 
 type Edge struct {
+	// SequenceKey is the v2 source address before participant hoisting and graph indexing.
+	SequenceKey *d2ast.Key `json:"-"`
+	// SequenceGraphOrder is the insertion order that assigns graph edge indexes,
+	// before the diagram's edges are sorted by their source locations.
+	SequenceGraphOrder int `json:"-"`
+
 	Index int `json:"index"`
 
 	SrcTableColumnIndex *int `json:"srcTableColumnIndex,omitempty"`
@@ -1292,7 +1311,8 @@ type Edge struct {
 }
 
 type EdgeReference struct {
-	Edge *d2ast.Edge `json:"-"`
+	IsVar bool        `json:"-"`
+	Edge  *d2ast.Edge `json:"-"`
 
 	MapKey          *d2ast.Key `json:"-"`
 	MapKeyEdgeIndex int        `json:"map_key_edge_index"`

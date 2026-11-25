@@ -18,6 +18,9 @@ const DefaultMaxVariableExpansion int64 = 65_536
 type variableExpansionBudget struct {
 	limit int64
 	used  int64
+	// A history shared by boards or templates only incurs expansion work
+	// when graph compilation actually visits an entry more than once.
+	sequenceDeletesSeen map[*sequenceDeletion]struct{}
 }
 
 type variableExpansionLimitError struct {

@@ -31,9 +31,7 @@ type sequenceMessage struct {
 }
 
 func planSequenceTrace(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph) *sequenceTrace {
-	if prevGraph == nil || nextGraph == nil || prevGraph.Root.IsSequenceDiagram() != nextGraph.Root.IsSequenceDiagram() || !slices.ContainsFunc(nextGraph.Edges, func(e *d2graph.Edge) bool {
-		return e.ZIndex == d2sequence.MESSAGE_Z_INDEX && e.Src.OuterSequenceDiagram() != nil
-	}) {
+	if prevGraph == nil || nextGraph == nil || prevGraph.Root.IsSequenceDiagram() != nextGraph.Root.IsSequenceDiagram() || !slices.ContainsFunc(next.Connections, sequenceTraceMessage) {
 		return nil
 	}
 	// An unrelated style or structural change should use its own transition.
@@ -63,7 +61,8 @@ func planSequenceTrace(prev, next *d2target.Diagram, prevGraph, nextGraph *d2gra
 			return nil
 		}
 		// A bar can be introduced by the first message to that activation.
-		if s.ZIndex == d2sequence.SPAN_Z_INDEX && s.Type == d2target.ShapeRectangle && s.Label == "" {
+		isSpan := s.SequenceRole == "span" || s.SequenceRole == "" && s.ZIndex == d2sequence.SPAN_Z_INDEX && s.Type == d2target.ShapeRectangle
+		if isSpan && s.Label == "" {
 			if old == nil {
 				m.spans[s.ID] = 0
 				continue
@@ -77,7 +76,8 @@ func planSequenceTrace(prev, next *d2target.Diagram, prevGraph, nextGraph *d2gra
 		}
 		// A long first request can widen the gap before a previously idle
 		// participant. Its lifeline travels with it before the message leaves.
-		if old != nil && o.Parent.IsSequenceDiagram() {
+		isActor := s.SequenceRole == "actor" || s.SequenceRole == "" && o.Parent.IsSequenceDiagram()
+		if old != nil && isActor {
 			a := *old
 			a.Pos.X = s.Pos.X
 			if reflect.DeepEqual(a, *s) {
@@ -124,7 +124,7 @@ func planSequenceTrace(prev, next *d2target.Diagram, prevGraph, nextGraph *d2gra
 			m.lines[e.ID] = old
 			continue
 		}
-		if g.ZIndex != d2sequence.MESSAGE_Z_INDEX || g.Dst.OuterSequenceDiagram() != g.Src.OuterSequenceDiagram() || e.Opacity <= 0 {
+		if !sequenceTraceMessage(*e) || g.Dst.OuterSequenceDiagram() != g.Src.OuterSequenceDiagram() || e.Opacity <= 0 {
 			return nil
 		}
 		if old != nil {
@@ -147,14 +147,44 @@ func planSequenceTrace(prev, next *d2target.Diagram, prevGraph, nextGraph *d2gra
 	if len(m.spans) > 0 || len(m.lines) > 0 || len(m.actors) > 0 {
 		m.prepare = .42
 	}
-	// A batch of messages follows the visual reading order of the sequence.
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].target.Route[0].Y < ordered[j].target.Route[0].Y })
-	for i, msg := range ordered {
-		msg.wire.measureDashes(msg.target, next.Shapes, &m.dashWidths)
-		msg.wire.start = m.prepare + (1-m.prepare)*float64(i)/float64(len(ordered))
-		msg.wire.end = m.prepare + (1-m.prepare)*float64(i+1)/float64(len(ordered))
-	}
+	m.schedule(ordered, graphEdges, next.Shapes)
 	return m
+}
+
+// V2 messages on one timeline row depart together. Use the start of a
+// self-call: its return is a later row, even when the next gap is zero.
+func (m *sequenceTrace) schedule(messages []*sequenceMessage, edges map[string]*d2graph.Edge, shapes []d2target.Shape) {
+	sort.SliceStable(messages, func(i, j int) bool { return messages[i].target.Route[0].Y < messages[j].target.Route[0].Y })
+	type row struct {
+		diagram *d2graph.Object
+		y       float64
+	}
+	rowSlots := make(map[row]int)
+	slots := make([]int, len(messages))
+	slotCount := 0
+	for i, msg := range messages {
+		if msg.target.SequenceRole == "message" {
+			r := row{edges[msg.target.ID].Src.OuterSequenceDiagram(), msg.target.Route[0].Y}
+			if slot, ok := rowSlots[r]; ok {
+				slots[i] = slot
+				continue
+			}
+			rowSlots[r] = slotCount
+		}
+		slots[i] = slotCount
+		slotCount++
+	}
+	for i, msg := range messages {
+		msg.wire.measureDashes(msg.target, shapes, &m.dashWidths)
+		msg.wire.start = m.prepare + (1-m.prepare)*float64(slots[i])/float64(slotCount)
+		msg.wire.end = m.prepare + (1-m.prepare)*float64(slots[i]+1)/float64(slotCount)
+	}
+}
+
+// V2 exports the semantic role independently of draw order. Legacy sequence
+// boards identify their message edges by paint index.
+func sequenceTraceMessage(e d2target.Connection) bool {
+	return e.SequenceRole == "message" || e.SequenceRole == "" && e.ZIndex == d2sequence.MESSAGE_Z_INDEX
 }
 
 func newSequenceMessage(e *d2target.Connection) *sequenceMessage {

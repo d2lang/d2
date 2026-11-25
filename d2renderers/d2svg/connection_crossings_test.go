@@ -2,6 +2,7 @@ package d2svg_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
@@ -200,5 +201,26 @@ func TestNeighboringSketchGapsFitHandDrawnStrokes(t *testing.T) {
 				t.Errorf("sketch %t, length %v: got %d gaps, want %d", sketch, length, got, want)
 			}
 		}
+	}
+}
+
+func TestTransparentSequenceCaptionLeavesWireVisible(t *testing.T) {
+	c := *d2target.BaseConnection()
+	c.ID, c.Stroke, c.SequenceRole = "message", "black", "message"
+	c.Route = []*geo.Point{{X: 0, Y: 50}, {X: 120, Y: 50}}
+	c.Text = d2target.Text{Label: "Unseen", Color: "transparent", FontSize: 16, LabelWidth: 60, LabelHeight: 20}
+	c.LabelPosition = "OUTSIDE_TOP_CENTER"
+	d := d2target.NewDiagram()
+	d.Connections = []d2target.Connection{c}
+	output, err := d2svg.Render(d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Find("mask rect").Length() > 1 || !strings.Contains(doc.Find("text").Text(), "Unseen") {
+		t.Fatal("transparent caption must retain its text without cutting the wire")
 	}
 }

@@ -229,3 +229,27 @@ func TestHiddenIconAndTooltipLeaveNoConnectionMask(t *testing.T) {
 		t.Fatalf("visible icon lost its authored mask: %v, %v", mask, err)
 	}
 }
+
+func TestTransparentSequenceCaptionLeavesWireVisible(t *testing.T) {
+	diagram := validDiagram()
+	c := &diagram.Connections[0]
+	c.SequenceRole = "message"
+	c.Text = d2target.Text{Label: "Unseen", Color: "transparent", FontSize: 16, LabelWidth: 60, LabelHeight: 20}
+	c.LabelPosition = "OUTSIDE_TOP_CENTER"
+	c.Fill = ""
+	b := builder{diagram: diagram, ctx: t.Context()}
+	box := d2scene.Box{Width: 200, Height: 150}
+	mask, err := b.buildConnectionMask(box)
+	if err != nil || mask != nil {
+		t.Fatalf("transparent caption left a stroke mask: %v, %v", mask, err)
+	}
+	c.Icon = &url.URL{Path: "icon.svg"}
+	mask, err = b.buildConnectionMask(box)
+	if err != nil || mask == nil || len(mask.Root.Children) != 2 {
+		t.Fatalf("expected one hole for the visible icon: %v, %v", mask, err)
+	}
+	hole := mask.Root.Children[1].Primitive.(d2scene.Rect).Box
+	if hole.Width != d2target.DEFAULT_ICON_SIZE+4 || hole.X != c.GetIconPosition().X-2 {
+		t.Fatalf("icon mask includes the transparent caption: %+v", hole)
+	}
+}

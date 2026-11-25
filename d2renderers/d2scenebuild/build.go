@@ -679,7 +679,9 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		return nil, err
 	}
 	b.connectionMask = connectionMask
-	crossings := d2target.ConnectionCrossings(b.diagram.Connections, b.idToShape, b.options.Sketch, d2themes.PaintVisibleIn(b.theme))
+	paintVisible := d2themes.PaintVisibleIn(b.theme)
+	crossings := d2target.ConnectionCrossings(b.diagram.Connections, b.idToShape, b.options.Sketch, paintVisible)
+	lifelineGaps := b.diagram.SequenceLifelineLabelGaps(b.options.Sketch, paintVisible)
 
 	objects := make([]diagramObject, 0, len(b.diagram.Shapes)+len(b.diagram.Connections))
 	for i, targetShape := range b.diagram.Shapes {
@@ -718,8 +720,8 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			node, err = b.buildShape(*object.shape)
 		} else {
 			clip = object.connection.MotionClip
-			gaps := crossings[object.order-len(b.diagram.Shapes)]
-			node, err = b.buildConnection(*object.connection, crossingMask(viewBox, gaps))
+			i := object.order - len(b.diagram.Shapes)
+			node, err = b.buildConnection(*object.connection, connectionStrokeMask(viewBox, crossings[i], lifelineGaps[i]))
 		}
 		if err != nil {
 			return nil, err

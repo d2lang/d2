@@ -12,6 +12,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2grid"
 	"github.com/d2lang/d2/d2layouts/d2near"
 	"github.com/d2lang/d2/d2layouts/d2sequence"
+	d2sequence2 "github.com/d2lang/d2/d2layouts/d2sequence2"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/log"
 )
@@ -306,7 +307,11 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 
 		case SequenceDiagram:
 			log.Debug(ctx, "layout sequence", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", graphShapes{g}))
-			err = d2sequence.Layout(ctx, g, coreLayout)
+			if g.Root.IsSequenceDiagramV2() {
+				err = d2sequence2.Layout(ctx, g)
+			} else {
+				err = d2sequence.Layout(ctx, g, coreLayout)
+			}
 			if err != nil {
 				return err
 			}

@@ -1,0 +1,31 @@
+shape: sequence-diagram {
+  mirrored: true
+  numbered: true
+}
+horizontal-gap: 90
+vertical-gap: 65
+
+client: Client {shape: person}
+backend: Backend {
+  shape: actor-group
+  api: API
+  db: Database {shape: cylinder}
+}
+
+client.start: Ready {shape: page; vertical-gap: 0}
+backend.api.start: Listening {shape: page}
+client -> backend.api.work: GET /items {label.near: outside-top-center}
+backend.api.work: Lookup {label.near: top-left}
+backend.api.work -> backend.db: Read
+
+result: Outcome {
+  shape: edge-group {branched: true}
+  style.fill: "#e5eef7"
+  label.style.fill: "#c4dbef"
+  hit: Found {
+    backend.api.work -> client: 200 OK
+  }
+  miss: Missing {
+    backend.api.work -> client: 404 Not found
+  }
+}

@@ -107,6 +107,24 @@ func parseCopyOracleInput(t *testing.T, source string) (*d2ast.Map, *d2ir.Map) {
 	return ast, ir
 }
 
+func TestSequenceV2PreservesInputIR(t *testing.T) {
+	ast, ir := parseCopyOracleInput(t, `classes: {seq: {shape: sequence-diagram}}
+service: {class: seq; checkout: {shape: edge-group; client -> api.work}}`)
+	before := copyOracleJSON(t, ir)
+	for range 2 {
+		g, err := compileIR(ast, ir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(g.Edges) != 1 || g.Edges[0].Src.AbsID() != "service.client" {
+			t.Fatal("grouped message did not resolve to the same participant")
+		}
+		if string(before) != string(copyOracleJSON(t, ir)) {
+			t.Fatal("v2 group normalization mutated the input IR")
+		}
+	}
+}
+
 func TestCompileRootIROwnership(t *testing.T) {
 	const source = `vars: {d2-config: {theme-id: 100; pad: 42}}
 classes: {red: {style.fill: red}}
@@ -317,6 +335,101 @@ func (c *compiler) compileBoardsFieldCopyOracle(g *d2graph.Graph, ir *d2ir.Map, 
 			g.Scenarios = append(g.Scenarios, g2)
 		case "steps":
 			g.Steps = append(g.Steps, g2)
+		}
+	}
+}
+
+func TestSequenceCopyOnlyTouchesItsScope(t *testing.T) {
+	var source strings.Builder
+	for i := range 200 {
+		fmt.Fprintf(&source, "ordinary%d: Service %d {style.fill: blue}\n", i, i)
+	}
+	source.WriteString("section: {seq: {shape: sequence-diagram; frame: {shape: edge-group; a -> b}}}")
+	ast, err := d2parser.Parse("scope.d2", strings.NewReader(source.String()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir, _, err := d2ir.Compile(ast, &d2ir.CompileOptions{MaxVariableExpansion: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := copyOracleJSON(t, ir)
+	g, err := compileIR(ast, ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Edges) != 1 || g.Edges[0].Src.AbsID() != "section.seq.a" || !reflect.DeepEqual(before, copyOracleJSON(t, ir)) {
+		t.Fatal("normalizing a nested frame changed unrelated source IR or lost its actor")
+	}
+}
+
+func TestSequenceCopiesSeparateAliasOccurrences(t *testing.T) {
+	const source = `vars: {module: {trace: {shape: sequence-diagram; frame: {shape: edge-group; a -> b}}}}
+first: ${module}
+second: ${module}`
+	ast, ir := parseCopyOracleInput(t, source)
+	g, err := compileIR(ast, ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, _, err := Compile("app.d2", strings.NewReader(source), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range []*d2graph.Graph{g, owned} {
+		seen := make(map[string]bool)
+		for _, edge := range g.Edges {
+			seen[edge.Src.AbsID()] = true
+		}
+		if len(g.Edges) != 2 || !seen["first.trace.a"] || !seen["second.trace.a"] {
+			t.Fatalf("template occurrences shared an actor: %v", seen)
+		}
+	}
+}
+
+func TestOrdinaryBoardCopiesWithNulls(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, diagram string
+		scenarios     int
+		nestedNulls   bool
+	}{
+		{"ordinary", "", 50, false},
+		{"independent_sequence_layer", "layers: {trace: {seq: {shape: sequence-diagram; a -> b}}}", 50, false},
+		{"inherited_sequence", "seq: {shape: sequence-diagram; a -> b}", 16, true},
+		{"variable_sequence", "vars: {kind: sequence-diagram}; seq: {shape: ${kind}; a -> b}", 16, true},
+	} {
+		for _, distinct := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/distinct=%t", tc.name, distinct), func(t *testing.T) {
+				var source strings.Builder
+				source.WriteString("visible\n")
+				if tc.nestedNulls {
+					source.WriteString("ordinary: {\n")
+				}
+				for i := range 180 {
+					key := "unused"
+					if distinct {
+						key += fmt.Sprint(i)
+					}
+					fmt.Fprintf(&source, "%s: null\n", key)
+				}
+				if tc.nestedNulls {
+					source.WriteString("}\n")
+				}
+				fmt.Fprintln(&source, tc.diagram)
+				source.WriteString("scenarios: {\n")
+				for i := range tc.scenarios {
+					fmt.Fprintf(&source, "s%d: {}\n", i)
+				}
+				source.WriteString("}")
+				g, _, err := Compile("nulls.d2", strings.NewReader(source.String()), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(g.Scenarios) != tc.scenarios {
+					t.Fatalf("got %d scenarios, want %d", len(g.Scenarios), tc.scenarios)
+				}
+			})
 		}
 	}
 }

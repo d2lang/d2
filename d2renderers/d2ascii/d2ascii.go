@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/d2lang/d2/d2renderers/d2ascii/asciicanvas"
@@ -13,7 +14,9 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2ascii/asciishapes"
 	"github.com/d2lang/d2/d2renderers/d2ascii/charset"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/log"
 )
 
@@ -264,8 +267,27 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 
 	a.canvas = asciicanvas.New(w+padding+1, h+padding+1)
 
+	// Lifelines are behind frame borders, actors and activations. Their
+	// routes already contain the gaps for notes and repeated headers.
+	for _, conn := range diagram.Connections {
+		if conn.SequenceRole == "lifeline" && conn.Opacity > 0 && len(conn.Route) == 2 {
+			x, start := a.calibrateXY(conn.Route[0].X+float64(xOffset), conn.Route[0].Y+float64(yOffset))
+			_, end := a.calibrateXY(conn.Route[1].X+float64(xOffset), conn.Route[1].Y+float64(yOffset))
+			for y := int(start); y <= int(end); y++ {
+				a.canvas.Set(int(x), y, a.chars.Vertical())
+			}
+		}
+	}
 	log.Debug(ctx, "processing shapes", slog.Int("count", len(diagram.Shapes)), slog.Int("xOffset", xOffset), slog.Int("yOffset", yOffset))
 	for i, shape := range diagram.Shapes {
+		if shape.SequenceRole == "branch" || (shape.SequenceRole != "" && shape.Opacity == 0) {
+			continue
+		}
+		// The text grid draws the frame caption at its layout anchor after the
+		// routes. The generic rectangle centers it on top of the first guard.
+		if shape.SequenceRole == "group" {
+			shape.Label = ""
+		}
 		log.Debug(ctx, "processing shape", slog.Int("index", i), slog.String("id", shape.ID), slog.String("type", shape.Type), slog.Float64("x", float64(shape.Pos.X)), slog.Float64("y", float64(shape.Pos.Y)), slog.Float64("width", float64(shape.Width)), slog.Float64("height", float64(shape.Height)))
 
 		originalX, originalY := shape.Pos.X, shape.Pos.Y
@@ -367,39 +389,105 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 			asciishapes.DrawRect(shapeCtx, drawX, drawY, drawWidth, drawHeight, shape.Label, shape.LabelPosition, symbol, preserveHeight)
 		}
 	}
-	for _, conn := range diagram.Connections {
-		adjustedRoute := make([]*geo.Point, len(conn.Route))
-		for i, r := range conn.Route {
-			adjustedRoute[i] = &geo.Point{
-				X: r.X + float64(xOffset),
-				Y: r.Y + float64(yOffset),
+	// Paint arrowless guides before messages, then place sequence captions on
+	// top so spaces and punctuation remain legible where a lifeline crosses.
+	for _, arrows := range []bool{false, true} {
+		for _, conn := range diagram.Connections {
+			hasArrow := conn.DstArrow != d2target.NoArrowhead || conn.SrcArrow != d2target.NoArrowhead
+			if hasArrow != arrows || conn.SequenceRole == "lifeline" || conn.SequenceRole != "" && conn.Opacity == 0 {
+				continue
 			}
-		}
-
-		tempConn := conn
-		tempConn.Route = adjustedRoute
-
-		if conn.DstArrow == d2target.NoArrowhead && conn.SrcArrow == d2target.NoArrowhead {
-			asciiroute.DrawRoute(a, tempConn)
+			route := make([]*geo.Point, len(conn.Route))
+			for i, point := range conn.Route {
+				route[i] = geo.NewPoint(point.X+float64(xOffset), point.Y+float64(yOffset))
+			}
+			conn.Route = route
+			if conn.SequenceRole == "divider" && len(route) == 2 {
+				// The endpoints describe a frame-wide separator. Snapping it
+				// to the small guard shape would collapse its width.
+				left, y := a.calibrateXY(route[0].X, route[0].Y)
+				right, _ := a.calibrateXY(route[1].X, route[1].Y)
+				for x := int(left) + 1; x < int(right); x += 2 {
+					a.canvas.Set(x, int(y), a.chars.Hyphen())
+				}
+				continue
+			}
+			if conn.SequenceRole == "message" {
+				conn.Label = ""
+			}
+			asciiroute.DrawRoute(a, conn)
 		}
 	}
-	for _, conn := range diagram.Connections {
-		if conn.DstArrow != d2target.NoArrowhead || conn.SrcArrow != d2target.NoArrowhead {
-			adjustedRoute := make([]*geo.Point, len(conn.Route))
-			for i, r := range conn.Route {
-				adjustedRoute[i] = &geo.Point{
-					X: r.X + float64(xOffset),
-					Y: r.Y + float64(yOffset),
-				}
+	for _, s := range diagram.Shapes {
+		if (s.SequenceRole == "branch" || s.SequenceRole == "group") && s.Opacity > 0 && s.Label != "" && color.PaintVisibleThroughout(s.GetFontColor()) {
+			pos := label.FromString(s.LabelPosition)
+			at := s.LabelTopLeft(pos, s.LabelBox(pos, s.Geometry()))
+			if at == nil {
+				continue
 			}
-
-			tempConn := conn
-			tempConn.Route = adjustedRoute
-
-			asciiroute.DrawRoute(a, tempConn)
+			x, y := a.sequenceCaptionCell(s.Text, at, xOffset, yOffset)
+			if strings.HasPrefix(s.LabelPosition, "INSIDE_TOP_") {
+				_, border := a.calibrateXY(0, float64(s.Pos.Y+yOffset))
+				y = max(y, int(border)+1)
+			}
+			if strings.HasSuffix(s.LabelPosition, "_LEFT") {
+				x = int(math.Ceil((at.X + float64(xOffset)) / a.FW * a.SCALE))
+			}
+			a.canvas.DrawLabel(x, y, s.Label)
+		}
+	}
+	for _, c := range diagram.Connections {
+		if c.SequenceRole != "message" || c.Opacity == 0 || c.Label == "" || !color.PaintVisibleThroughout(c.GetFontColor()) || len(c.Route) < 2 {
+			continue
+		}
+		at := c.GetLabelTopLeft()
+		if at == nil {
+			continue
+		}
+		x, y := a.sequenceCaptionCell(c.Text, at, xOffset, yOffset)
+		// Preserve the chosen side of the wire even when the text and wire
+		// round into the same terminal row. This also handles self-calls.
+		first, last := c.Route[0].Y, c.Route[len(c.Route)-1].Y
+		_, top := a.calibrateXY(0, min(first, last)+float64(yOffset))
+		_, bottom := a.calibrateXY(0, max(first, last)+float64(yOffset))
+		if at.Y+float64(c.LabelHeight) <= min(first, last) {
+			y = min(y, int(top)-strings.Count(c.Label, "\n")-1)
+		} else if at.Y >= max(first, last) {
+			y = max(y, int(bottom)+1)
+		}
+		// Keep arrowheads if the monospaced label is longer than its
+		// proportional counterpart and cannot fit along the shaft.
+		if a.sequenceCaptionOverlapsArrow(x, y, c.Label) {
+			a.canvas.DrawLabelAbove(x, y, c.Label)
+		} else {
+			a.canvas.DrawLabel(x, y, c.Label)
 		}
 	}
 	return a.canvas.ToByteArray(a.chars), nil
+}
+
+// Center the terminal glyphs in the same measured text box as the graphical
+// exports. A fixed-width cell and a proportional SVG glyph have different widths.
+func (a *ASCIIartist) sequenceCaptionCell(text d2target.Text, topLeft *geo.Point, xOffset, yOffset int) (int, int) {
+	x, y := a.calibrateXY(topLeft.X+float64(xOffset)+float64(text.LabelWidth)/2, topLeft.Y+float64(yOffset)+float64(text.LabelHeight)/2)
+	lines := strings.Split(text.Label, "\n")
+	width := 0
+	for _, line := range lines {
+		width = max(width, utf8.RuneCountInString(line))
+	}
+	return int(x) - width/2, int(y) - len(lines)/2
+}
+
+func (a *ASCIIartist) sequenceCaptionOverlapsArrow(x, y int, text string) bool {
+	for i, line := range strings.Split(text, "\n") {
+		for j := range utf8.RuneCountInString(line) {
+			switch a.canvas.Get(x+j, y+i) {
+			case a.chars.ArrowLeft(), a.chars.ArrowRight(), a.chars.ArrowUp(), a.chars.ArrowDown():
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (a *ASCIIartist) calibrateXY(x, y float64) (float64, float64) {

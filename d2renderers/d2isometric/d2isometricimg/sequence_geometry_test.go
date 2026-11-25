@@ -129,3 +129,84 @@ func TestDeepThreeDeeActivationsRemainBelowMessages(t *testing.T) {
 		}
 	}
 }
+
+func TestBranchCaptionInterruptsOnlyItsCrossingLifeline(t *testing.T) {
+	diagram := sourcePanelFixture(t, "sequence_v2/branched_shared_rows/dagre/board.exp.json")
+	for i := range diagram.Connections {
+		if c := &diagram.Connections[i]; c.SequenceRole == "lifeline" {
+			c.Stroke, c.StrokeDash = "#53cf21", 0
+		}
+	}
+	for _, tc := range []struct {
+		name, color string
+		opacity     float64
+		wantAlpha   uint8
+	}{{"opaque", "#141414", 1, 0}, {"fading", "#141414", .5, 128}, {"clear ink", "transparent", 1, 255}} {
+		t.Run(tc.name, func(t *testing.T) {
+			for i := range diagram.Shapes {
+				if s := &diagram.Shapes[i]; s.Label == "[Missing]" {
+					s.Color, s.Opacity = tc.color, tc.opacity
+				}
+			}
+			scene, err := d2isometric.BuildScene(diagram, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var caption labelSurface
+			for _, n := range scene.Nodes {
+				if n.Label == "[Missing]" {
+					top := n.Position.Y - n.Size.Y/2 + (nativeCanonicalHeight(n, scene.PixelScale)+.0015)*hierarchyNodeRelief(n)
+					caption = nativeNodeLabelSurface(n, nativeFaceSource(n, n.Fill), top)
+					break
+				}
+			}
+			if caption.width == 0 {
+				t.Fatal("fixture lost its branch caption")
+			}
+			render, err := newNativeScene(context.Background(), scene, 320, 320)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ink := nativePaint("#53cf21", "")
+			alphaAt := func(x, z float64) uint8 {
+				for _, tri := range render.triangles {
+					c := tri.Material.Color
+					if c.R != ink.R || c.G != ink.G || c.B != ink.B {
+						continue
+					}
+					a, b := solidTestBounds([]Triangle{tri})
+					if a.X < x && x < b.X && a.Z < z && z < b.Z {
+						return c.A
+					}
+				}
+				return 0
+			}
+			center := captionProjection(caption.center)
+			wireOffset := captionProjection(nv(0, nativeSequenceLifelineY, 0))
+			z := center.z - wireOffset.z
+			seen := make(map[string]bool)
+			for _, edge := range scene.Edges {
+				if edge.SequenceRole != "lifeline" || len(edge.Points) != 2 || edge.Points[0].Z >= z || edge.Points[1].Z <= z {
+					continue
+				}
+				x := edge.Points[0].X
+				want := uint8(255)
+				if edge.Source == "client" {
+					want = tc.wantAlpha
+					for _, beside := range []float64{z - caption.depth/2 - .04, z + caption.depth/2 + .04} {
+						if got := alphaAt(x, beside); got != 255 {
+							t.Errorf("lifeline failed to resume beside caption: alpha %d", got)
+						}
+					}
+				}
+				if got := alphaAt(x, z); got != want {
+					t.Errorf("%s lifeline at [Missing]: got alpha %d, want %d", edge.Source, got, want)
+				}
+				seen[edge.Source] = true
+			}
+			if !seen["client"] || !seen["api"] {
+				t.Fatal("fixture did not exercise both lifelines")
+			}
+		})
+	}
+}

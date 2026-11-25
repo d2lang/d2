@@ -51,12 +51,19 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		ast, _ = d2parser.Parse("", strings.NewReader(getTextUntilPosition(text, line, column, utf16Pos)), parseOpts)
 	}
 
-	keyword := getKeywordContext(text, ast, line, column, utf16Pos)
+	keyword := completionScope{root: ast}.keywordContext(text, ast, line, column, utf16Pos)
 	switch keyword {
 	case "style", "style.":
 		return getStyleCompletions(), nil
 	case "shape", "shape:":
 		return getShapeCompletions(), nil
+	case "sequence-diagram.shape.":
+		return getSequenceOptionCompletions(), nil
+	case "edge-group.shape.":
+		return getBranchOptionCompletions(), nil
+	case "sequence-diagram.shape.numbered:", "sequence-diagram.shape.mirrored:", "edge-group.shape.branched:",
+		"shape.numbered:", "shape.mirrored:", "shape.branched:":
+		return getBooleanCompletions(), nil
 	case "shadow", "3d", "multiple", "animated", "bold", "italic", "underline", "filled", "double-border",
 		"shadow:", "3d:", "multiple:", "animated:", "bold:", "italic:", "underline:", "filled:", "double-border:",
 		"style.shadow:", "style.3d:", "style.multiple:", "style.animated:", "style.bold:", "style.italic:", "style.underline:", "style.filled:", "style.double-border:":
@@ -81,6 +88,10 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		return getArrowheadCompletions(), nil
 	case "source-arrowhead.shape:", "target-arrowhead.shape:":
 		return getArrowheadShapeCompletions(), nil
+	case "edge-group.label.":
+		return frameLabelCompletions(), nil
+	case "edge-group.label.style.":
+		return []CompletionItem{{Label: "fill", Kind: StyleCompletion, Detail: "frame caption background", InsertText: "fill: "}}, nil
 	case "label", "label.":
 		return getLabelCompletions(), nil
 	case "icon", "icon:":
@@ -117,7 +128,17 @@ func getTextUntilPosition(text string, line, column int, utf16Pos bool) string {
 	return result
 }
 
-func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos bool) string {
+// Shape declarations can live in a different block from the property being edited.
+type completionScope struct {
+	root *d2ast.Map
+	path []*d2ast.StringBox
+}
+
+func (s completionScope) qualified(path []*d2ast.StringBox) []*d2ast.StringBox {
+	return append(s.path[:len(s.path):len(s.path)], path...)
+}
+
+func (s completionScope) keywordContext(text string, m *d2ast.Map, line, column int, utf16Pos bool) string {
 	if m == nil {
 		return ""
 	}
@@ -141,10 +162,11 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		}
 		if key != nil && len(key.Path) > 0 {
 			firstKey := key.Path[0].Unbox()
-			if !firstKey.IsUnquoted() {
+			if firstKey.IsUnquoted() {
+				firstPart = firstKey.ScalarString()
+			} else if len(key.Path) == 1 && n.MapKey.Value.Map == nil {
 				continue
 			}
-			firstPart = firstKey.ScalarString()
 
 			pathLen := len(key.Path)
 			if pathLen > 1 {
@@ -158,7 +180,15 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 					keyRange := n.MapKey.Range
 					lineText := lines[keyRange.End.Line]
 					dotColumn := columnByteOffset(lineText, column, utf16Pos)
-					if isHolderLast && isAfterDot(lineText, dotColumn) {
+					if isHolderLast && keyRange.End.Line == line && isAfterDot(lineText, dotColumn) {
+						if lastPart == "shape" {
+							return s.shapeOptionsContext(key.Path, "")
+						}
+						if len(n.MapKey.Edges) == 0 {
+							if caption := s.captionContext(key); caption != "" {
+								return caption
+							}
+						}
 						return lastPart + "."
 					}
 				}
@@ -178,7 +208,30 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 		// Check nested map
 		if n.MapKey.Value.Map != nil && isPositionInMap(line, column, n.MapKey.Value.Map) {
-			if nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos); nested != "" {
+			child := completionScope{root: n.MapKey.Value.Map}
+			if len(n.MapKey.Edges) == 0 && key != nil {
+				child = completionScope{root: s.root, path: s.qualified(key.Path)}
+			}
+			if key != nil && len(key.Path) > 0 && key.Last().Unbox().IsUnquoted() && strings.EqualFold(key.Last().Unbox().ScalarString(), "shape") {
+				prefix := s.shapeOptionsContext(key.Path, "")
+				if prefix == "" {
+					return ""
+				}
+				nested := child.keywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
+				return prefix + strings.ToLower(nested)
+			}
+			nested := child.keywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
+			if len(n.MapKey.Edges) == 0 && key != nil {
+				if caption := s.captionContext(key); caption != "" {
+					switch nested {
+					case "":
+						return caption
+					case "style", "style.":
+						return caption + "style."
+					}
+				}
+			}
+			if nested != "" {
 				if isHolder {
 					// If we got a direct key completion from inside a holder's map,
 					// prefix it with the holder's name
@@ -215,6 +268,14 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 		if isAfterColon(lineText, lineColumn) {
 			if key != nil && len(key.Path) > 1 {
+				parent := key.Path[len(key.Path)-2].Unbox()
+				if parent.IsUnquoted() && strings.EqualFold(parent.ScalarString(), "shape") {
+					prefix := s.shapeOptionsContext(key.Path[:len(key.Path)-1], "shape.")
+					if prefix == "" {
+						return ""
+					}
+					return prefix + strings.ToLower(lastPart) + ":"
+				}
 				if isHolder && (firstPart == "source-arrowhead" || firstPart == "target-arrowhead") {
 					return firstPart + "." + lastPart + ":"
 				}
@@ -228,11 +289,88 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		}
 
 		if isAfterDot(lineText, lineColumn) && isHolder {
+			if firstPart == "shape" {
+				return s.shapeOptionsContext(key.Path, "")
+			}
+			if len(n.MapKey.Edges) == 0 && key != nil {
+				if caption := s.captionContext(key); caption != "" {
+					return caption
+				}
+			}
 			return firstPart
 		}
 	}
 
 	return ""
+}
+
+// Look up the shape belonging to the label, including declarations split
+// between a dotted path and nested maps. Only frame captions expose a fill.
+func (s completionScope) captionContext(key *d2ast.KeyPath) string {
+	i := len(key.Path) - 1
+	option := "label."
+	if i >= 0 && key.Path[i].Unbox().IsUnquoted() && key.Path[i].ScalarString() == "style" {
+		i--
+		option = "label.style."
+	}
+	if i < 0 || !key.Path[i].Unbox().IsUnquoted() || key.Path[i].ScalarString() != "label" {
+		return ""
+	}
+	// Append to a copy so the incomplete AST key still names the label.
+	path := append(key.Path[:i:i], d2ast.MakeKeyPath([]string{"shape"}).Path[0])
+	if shape := declaredShape(s.root, s.qualified(path)); shape != nil && strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramEdgeGroup) {
+		return "edge-group." + option
+	}
+	return option
+}
+
+// Only suggest sequence options after a dot when the local shape declaration
+// identifies a sequence diagram. The cursor may be at an incomplete key.
+func (s completionScope) shapeOptionsContext(path []*d2ast.StringBox, unspecified string) string {
+	shape := declaredShape(s.root, s.qualified(path))
+	if shape == nil {
+		return unspecified
+	}
+	switch strings.ToLower(shape.ScalarString()) {
+	case d2target.ShapeSequenceDiagramV2:
+		return "sequence-diagram.shape."
+	case d2target.ShapeSequenceDiagramEdgeGroup:
+		return "edge-group.shape."
+	}
+	return ""
+}
+
+// A declaration for a.b.shape may be split across maps or dotted keys.
+func declaredShape(m *d2ast.Map, path []*d2ast.StringBox) d2ast.Scalar {
+	for i := len(m.Nodes) - 1; i >= 0; i-- {
+		k := m.Nodes[i].MapKey
+		if k == nil || len(k.Edges) != 0 || k.NotAmpersand || k.Key == nil {
+			continue
+		}
+		n := len(k.Key.Path)
+		if n == 0 || n > len(path) || !k.Key.Equals(&d2ast.KeyPath{Path: path[:n]}) {
+			continue
+		}
+		if n < len(path) {
+			if k.Value.Map != nil {
+				if shape := declaredShape(k.Value.Map, path[n:]); shape != nil {
+					return shape
+				}
+			}
+			continue
+		}
+		if !k.Key.Last().Unbox().IsUnquoted() {
+			continue
+		}
+		shape := k.Primary.Unbox()
+		if shape == nil {
+			shape = k.Value.ScalarBox().Unbox()
+		}
+		if shape != nil {
+			return shape
+		}
+	}
+	return nil
 }
 
 func columnByteOffset(text string, column int, utf16Pos bool) int {
@@ -303,6 +441,17 @@ func getShapeCompletions() []CompletionItem {
 		items = append(items, item)
 	}
 	return items
+}
+
+func getBranchOptionCompletions() []CompletionItem {
+	return []CompletionItem{{Label: "branched", Kind: KeywordCompletion, Detail: "Divide an edge-group into named branches", InsertText: "branched: "}}
+}
+
+func getSequenceOptionCompletions() []CompletionItem {
+	return []CompletionItem{
+		{Label: "numbered", Kind: KeywordCompletion, Detail: "Number sequence messages", InsertText: "numbered: "},
+		{Label: "mirrored", Kind: KeywordCompletion, Detail: "Repeat actors at the bottom of the sequence", InsertText: "mirrored: "},
+	}
 }
 
 func getValueCompletions(property string) []CompletionItem {
@@ -417,6 +566,10 @@ func getTextTransformCompletions() []CompletionItem {
 		items = append(items, item)
 	}
 	return items
+}
+
+func frameLabelCompletions() []CompletionItem {
+	return append(getLabelCompletions(), CompletionItem{Label: "style.fill", Kind: StyleCompletion, Detail: "frame caption background", InsertText: "style.fill: "})
 }
 
 func getLabelCompletions() []CompletionItem {

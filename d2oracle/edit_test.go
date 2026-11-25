@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/d2lang/util-go/assert"
 	"github.com/d2lang/util-go/diff"
@@ -2862,6 +2863,153 @@ scenarios: {
 			}
 			et.run(t)
 		})
+	}
+}
+
+func TestEditSequenceShapeOption(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		text      string
+		boardPath []string
+		key       string
+		value     *string // nil deletes the option
+		exp       string
+	}{
+		{
+			name:  "new",
+			text:  "shape: sequence-diagram\nnumbered -> mirrored",
+			key:   "shape.numbered",
+			value: go2.Pointer("true"),
+			exp:   "shape: sequence-diagram\nnumbered -> mirrored\nshape.numbered: true\n",
+		},
+		{
+			name:  "in_block",
+			text:  "s: {shape: sequence-diagram {numbered: true; mirrored: true}}",
+			key:   "s.shape.mirrored",
+			value: go2.Pointer("false"),
+			exp:   "s: {shape: sequence-diagram {numbered: true; mirrored: false}}\n",
+		},
+		{
+			name:  "from_variable",
+			text:  "vars: {v: {shape: sequence-diagram {mirrored: true}}}\ns: ${v}",
+			key:   "s.shape.mirrored",
+			value: go2.Pointer("false"),
+			exp:   "vars: {v: {shape: sequence-diagram {mirrored: true}}}\ns: ${v}\ns.shape.mirrored: false\n",
+		},
+		{
+			name:      "on_board",
+			text:      "shape: sequence-diagram {numbered: true}\nscenarios: {demo: {}}",
+			boardPath: []string{"demo"},
+			key:       "shape.numbered",
+			value:     go2.Pointer("false"),
+			exp:       "shape: sequence-diagram {numbered: true}\n\nscenarios: {demo: {shape.numbered: false}}\n",
+		},
+		{
+			name:      "delete_board_override",
+			text:      "s.shape: sequence-diagram {numbered: true}\nscenarios: {demo: {s.shape.numbered: false}}",
+			boardPath: []string{"demo"},
+			key:       "s.shape.numbered",
+			exp:       "s.shape: sequence-diagram {numbered: true}\n\nscenarios: {demo}\n",
+		},
+		{
+			name: "preserves_names_and_sibling",
+			text: "vars: {numbered: chapter}\nshape: sequence-diagram {numbered: true; mirrored: true}\nnumbered -> mirrored: ${numbered}",
+			key:  "shape.numbered",
+			exp:  "vars: {numbered: chapter}\nshape: sequence-diagram {mirrored: true}\nnumbered -> mirrored: ${numbered}\n",
+		},
+		{
+			name: "dotted_and_block",
+			text: "s: {shape: sequence-diagram {mirrored: true}}\ns.shape.mirrored: false",
+			key:  "s.shape.mirrored",
+			exp:  "s: {shape: sequence-diagram}\n",
+		},
+		{
+			name: "from_class",
+			text: "classes: {trace: {shape: sequence-diagram {numbered: true}}}\na.class: trace\nb.class: trace",
+			key:  "a.shape.numbered",
+			exp:  "classes: {trace: {shape: sequence-diagram {numbered: true}}}\na.class: trace\nb.class: trace\na.shape.numbered: false\n",
+		},
+		{
+			name: "from_import",
+			text: "...@trace",
+			key:  "s.shape.mirrored",
+			exp:  "...@trace\ns.shape.mirrored: false\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := fstest.MapFS{"trace.d2": {Data: []byte("s.shape: sequence-diagram {mirrored: true}")}}
+			g, _, err := d2compiler.Compile("root.d2", strings.NewReader(tc.text), &d2compiler.CompileOptions{FS: fs})
+			assert.Success(t, err)
+			if tc.value == nil {
+				g, err = d2oracle.Delete(g, tc.boardPath, tc.key)
+			} else {
+				g, err = d2oracle.Set(g, tc.boardPath, tc.key, nil, tc.value)
+			}
+			assert.Success(t, err)
+			if got := d2format.Format(g.AST); got != tc.exp {
+				t.Fatalf("expected:\n%s\ngot:\n%s", tc.exp, got)
+			}
+		})
+	}
+}
+
+func TestEditFrameAndCaptionFills(t *testing.T) {
+	t.Parallel()
+	for _, caption := range []string{"label.style.fill: red", "label.style: {fill: red}", "label: Outcome {style: {fill: red}}"} {
+		for _, property := range []string{"style.fill", "label.style.fill"} {
+			t.Run(caption+"/"+property, func(t *testing.T) {
+				src := "shape: sequence-diagram\nf: Outcome {shape: edge-group; a -> b; " + caption + "; style: {fill: blue}}"
+				g, _, err := d2compiler.Compile("main.d2", strings.NewReader(src), nil)
+				assert.Success(t, err)
+				g, err = d2oracle.Set(g, nil, "f."+property, nil, go2.Pointer("yellow"))
+				assert.Success(t, err)
+				f, _ := g.Root.HasChild([]string{"f"})
+				if property == "label.style.fill" {
+					if f.LabelFill.Value != "yellow" || f.Style.Fill.Value != "blue" || strings.Contains(d2format.Format(g.AST), "red") {
+						t.Fatal("caption fill did not update in place")
+					}
+				} else if f.Style.Fill.Value != "yellow" || f.LabelFill.Value != "red" || strings.Contains(d2format.Format(g.AST), "blue") {
+					t.Fatal("frame fill did not update in place")
+				}
+				g, err = d2oracle.Delete(g, nil, "f."+property)
+				assert.Success(t, err)
+				f, _ = g.Root.HasChild([]string{"f"})
+				deleted, sibling, wantSibling := f.LabelFill, f.Style.Fill, "blue"
+				if property == "style.fill" {
+					deleted, sibling, wantSibling = f.Style.Fill, f.LabelFill, "red"
+				}
+				if deleted != nil || sibling == nil || sibling.Value != wantSibling || f.Label.Value != "Outcome" {
+					t.Fatalf("deleting %s changed the wrong property:\n%s", property, d2format.Format(g.AST))
+				}
+			})
+		}
+	}
+}
+
+func TestDeleteInheritedFrameCaptionFill(t *testing.T) {
+	t.Parallel()
+	const group = "f: {shape: edge-group; a -> b; style.fill: blue}"
+	for _, src := range []string{
+		"classes: {box: {label.style.fill: red}}\n" + group + "\nf.class: box",
+		"vars: {box: {label.style.fill: red}}\n" + group + "\nf: ${box}",
+		"*: {&shape: edge-group; label.style.fill: red}\n" + group,
+		"...@trace",
+	} {
+		fs := fstest.MapFS{"trace.d2": {Data: []byte(group + "\nf.label.style.fill: red")}}
+		g, _, err := d2compiler.Compile("root.d2", strings.NewReader("shape: sequence-diagram\n"+src), &d2compiler.CompileOptions{FS: fs})
+		assert.Success(t, err)
+		f, _ := g.Root.HasChild([]string{"f"})
+		if f.LabelFill == nil || f.LabelFill.Value != "red" {
+			t.Fatal("expected inherited caption fill")
+		}
+		before := d2format.Format(g.AST)
+		g, err = d2oracle.Delete(g, nil, "f.label.style.fill")
+		assert.Success(t, err)
+		f, _ = g.Root.HasChild([]string{"f"})
+		if f.LabelFill != nil || f.Style.Fill.Value != "blue" || d2format.Format(g.AST) != before+"f.label.style.fill: null\n" {
+			t.Fatalf("expected a local reset of the inherited caption fill:\n%s", d2format.Format(g.AST))
+		}
 	}
 }
 

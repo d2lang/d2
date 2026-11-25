@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
@@ -151,5 +152,87 @@ func TestSequenceFallbackOnReflow(t *testing.T) {
 steps: {reply: {b -> a: That extraordinarily long response forces the previous message to move}}`, d2talalayout.ContinueBoard)
 	if planSequenceTrace(d, d.Steps[0], g, g.Steps[0]) != nil {
 		t.Fatal("prior message moved; expected existing fallback")
+	}
+}
+
+func TestSequenceV2TracesMessagesAndKeepsBranchDivider(t *testing.T) {
+	config := strings.Replace(sequenceStepsConfig, "sequence_diagram", "sequence-diagram", 1)
+	d, g := compileContinuity(t, config+`a; b
+frame: Outcome {shape: edge-group {branched: true}
+  yes: {a -> b: Yes {style.opacity: 0; label.near: outside-top-center}}
+  no: {b -> a: No {style.opacity: 0; label.near: outside-top-center}}
+}
+steps: {
+  reveal: {
+    frame.yes.(a -> b)[0].style.opacity: 1
+    frame.no.(b -> a)[0].style.opacity: 1
+  }
+  append: {a -> b.work: Work}
+}`, d2talalayout.ContinueBoard)
+	reveal := d.Steps[0]
+	trace := planSequenceTrace(d, reveal, g, g.Steps[0])
+	if trace == nil || len(trace.messages) != 2 || !reveal.LayoutContinuity {
+		t.Fatalf("expected both branch messages to trace")
+	}
+	var divider *d2target.Connection
+	for i := range d.Connections {
+		if d.Connections[i].SequenceRole == "divider" {
+			divider = &d.Connections[i]
+			break
+		}
+	}
+	if divider == nil {
+		t.Fatal("test requires a branch divider")
+	}
+	observed := make(map[string]bool)
+	for _, f := range reveal.TweenFrames {
+		if i := slices.IndexFunc(f.Connections, func(e d2target.Connection) bool { return e.ID == divider.ID }); i < 0 || !reflect.DeepEqual(f.Connections[i], *divider) {
+			t.Fatal("tracing a branch message changed its divider")
+		}
+		for _, e := range f.Connections {
+			if e.MotionLabel == nil {
+				continue
+			}
+			final := trace.messages[e.ID].target
+			point := final.GetLabelTopLeft()
+			if float64(e.MotionLabel.Y+final.LabelHeight) > final.Route[0].Y || e.MotionLabel.Y != int(math.Round(point.Y)) {
+				t.Fatalf("moving message %q lost its above-arrow label", e.Label)
+			}
+			observed[e.Label] = true
+		}
+	}
+	if !observed["Yes"] || !observed["No"] {
+		t.Fatal("expected both guards to retain their traced message")
+	}
+	// A v2 activation is identified by its role even when the default
+	// rectangle has no explicit shape type.
+	appended := d.Steps[1]
+	trace = planSequenceTrace(reveal, appended, g.Steps[0], g.Steps[1])
+	if trace == nil || len(trace.messages) != 1 {
+		t.Fatal("new activation did not animate with its first message")
+	}
+	if h, ok := trace.spans["b.work"]; !ok || h != 0 {
+		t.Fatal("new activation must start from zero height")
+	}
+}
+
+func TestSequenceV2TracesSharedRowsTogether(t *testing.T) {
+	config := strings.Replace(sequenceStepsConfig, "sequence_diagram", "sequence-diagram", 1)
+	d, g := compileContinuity(t, config+`a; b; c
+a -> b: Send {style.opacity: 0; vertical-gap: 0}
+c -> c: Log {style.opacity: 0; vertical-gap: 0}
+b -> a: Reply {style.opacity: 0}
+steps: {exchange: {(* -> *)[*].style.opacity: 1}}`, d2talalayout.ContinueBoard)
+	trace := planSequenceTrace(d, d.Steps[0], g, g.Steps[0])
+	if trace == nil || len(trace.messages) != 3 {
+		t.Fatal("expected all three messages in the trace")
+	}
+	wires := make(map[string]*boardTrace)
+	for _, msg := range trace.messages {
+		wires[msg.target.Label] = msg.wire
+	}
+	send, log, reply := wires["Send"], wires["Log"], wires["Reply"]
+	if send.start != log.start || send.end != log.end || reply.start != log.end || reply.end != 1 {
+		t.Fatal("the shared sends must animate together and finish before the reply")
 	}
 }

@@ -104,6 +104,13 @@ func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool, c *c
 // their slots, while fields first mentioned by later keys or edge endpoints go
 // in the spread's order. Apply the same rule inside overlapping containers.
 func mergeMap(m, overlay *Map, indexed bool, site *spreadSite, at int) {
+	if overlay.sequenceDeletes != nil {
+		var occurrence *fieldOrder
+		if site != nil {
+			occurrence = &site.fieldOrder
+		}
+		m.sequenceDeletes = combineSequenceDeletions(m.sequenceDeletes, overlay.sequenceDeletes, occurrence)
+	}
 	var spread map[*Field]bool
 	var insert []*Field
 	if site != nil {
@@ -286,5 +293,43 @@ func overlayEdge(be, oe *Edge, indexed bool, site *spreadSite) {
 		be.References = insertEarlierRefs(be.References, refs, site)
 	} else {
 		be.References = append(be.References, refs...)
+	}
+}
+
+// OverlaySequenceActor moves an actor out of a v2 message frame. Its attributes
+// may already have declarations in the diagram or another frame. Unlike a
+// normal overlay, traversal order says nothing about which declaration wins.
+func OverlaySequenceActor(dst *Map, field *Field) {
+	old := dst.GetField(field.Name)
+	if old == nil {
+		dst.appendField(field.Copy(dst).(*Field))
+		return
+	}
+	primary := old.Primary_
+	oldRefCount := len(old.References)
+	keepPrimary := field.Primary_ != nil && primary != nil && field.Primary_.order.before(primary.order)
+	if old.Map() != nil && field.Map() != nil {
+		for _, child := range field.Map().Fields {
+			OverlaySequenceActor(old.Map(), child)
+		}
+		// Edges from distinct message groups remain distinct, even when both
+		// originated inside declarations for the same actor.
+		for _, e := range field.Map().Edges {
+			old.Map().appendEdge(e.Copy(old.Map()).(*Edge))
+		}
+	}
+	if old.Map() != nil && field.Map() != nil || old.Composite != nil && field.compositeOrder.before(old.compositeOrder) {
+		// Overlapping maps were merged above; a later array also keeps its value.
+		scalarOnly := *field
+		scalarOnly.Composite = nil
+		field = &scalarOnly
+	}
+	overlayField(old, field, false)
+	if keepPrimary {
+		old.Primary_ = primary
+		// The graph editor and diagnostics use the last primary reference.
+		// Keep it attached to the winning assignment even though the earlier
+		// frame was merged last.
+		old.References = slices.Concat(old.References[oldRefCount:], old.References[:oldRefCount])
 	}
 }
