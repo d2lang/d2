@@ -25,6 +25,7 @@ EdgeChain   = keyPath spaces FirstArrow EdgeTargets .
 EdgeGroup   = "(" spaces keyPath spaces Arrow EdgeTargets spaces ")"
               [ spaces "[" spaces EdgeIndex spaces "]" ] [ spaces "." spaces keyPath ] .
 EdgeTargets = spaces keyPath { spaces Arrow spaces keyPath } .
+// Numeric indices must fit the reference implementation's nonnegative int range.
 EdgeIndex   = "*" | decimalDigit { decimalDigit } .
 
 FirstArrow       = "<" ArrowTail | "-" { EdgeContinuation } ( "-" ArrowTail | ">" | "*" ) .

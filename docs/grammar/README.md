@@ -8,6 +8,8 @@ For a particular release, use the reference in that release's source tree when a
 Implementations should follow the productions together with the accompanying
 scanner rules. The compatibility notes record places where the baseline parser
 accepts additional spellings, loses information, or disagrees with the formatter.
+They distinguish the behavior at that revision from the runtime corrections
+tracked in [D2 #3043](https://github.com/d2lang/d2/pull/3043).
 
 ## Reading the grammar
 

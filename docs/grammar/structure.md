@@ -30,7 +30,8 @@ An assignment without a colon takes a map value. A colon requires a value on the
 logical line. When a scalar is followed by a map on that line, preserve both
 parts. The same rule applies to a connection label and its properties.
 
-Arrays accept values, including nested maps and arrays. A comma is an ordinary
+Arrays preserve their elements in order, including nested maps and arrays.
+`[suspend; unsuspend]` contains two suspension values. A comma is an ordinary
 character in an unquoted string, so `[red, blue]` has one element. A line
 comment can follow an entry on the same line. A block comment starts where a
 new entry could occur, and another entry may follow its closing triple quote
@@ -42,8 +43,16 @@ The four conventional arrows are `--`, `->`, `<-` and `<->`. An undirected
 connection requires at least two hyphens. A chain such as
 `a -> b -> c` produces two connections, with `b` as the shared endpoint.
 Parentheses allow an index, a property path, or both to follow a chain.
-A preceding path scopes the group, as in `svc.(a -> b)[*]`. Decimal indices
-start at zero. A star in brackets selects all matching indices.
+A group must contain a connection and end with `)`. For example, `(a -> b); c`
+is a connection followed by a separate key. `()` and `(a)` are invalid. A
+preceding path scopes the group, as in `svc.(a -> b)[*]`.
+
+An index is either `*` for all matching connections or a nonnegative integer
+written with consecutive ASCII digits. Horizontal space may surround the index
+inside the brackets. `[ 12 ]` selects index 12. `[1 2]`, `[-1]`, `[٣]`, and
+an unclosed bracket are errors. The Go syntax tree stores indices as `int`, so
+the largest accepted index is 2³¹−1 on a 32-bit build or 2⁶³−1 on a 64-bit
+build. Reject values beyond that bound when targeting the Go implementation.
 
 Read the source key before reading the arrow. A hyphen in an unquoted key
 only starts an arrow when the immediately following character is `-`, `>` or
@@ -78,13 +87,17 @@ and integer fractions with an unsigned, nonzero denominator. For example,
 unquoted string. Quoted `"true"` and `'1/2'` stay strings.
 
 Unquoted and double-quoted values may contain a substitution whose path uses
-ordinary key segments, such as `${theme.colors.primary}`. At the start of a
+one or more key segments, such as `${theme.colors.primary}`. `${}` and a dollar
+without a braced path are errors. At the start of a
 value, `@` introduces an import. Consume the longest run of dots and slashes
 immediately after `@` as the path prefix. In `@../theme.d2.colors`, the leading
 `../` is a filesystem prefix, `theme` identifies the file, and `colors`
 is a selection within it. The parser removes the optional unquoted `.d2`
-suffix when the first two segments are unquoted. Quote a filename containing
-a literal dot, as in `@"my.theme".colors`.
+suffix when the first two segments are unquoted. `@theme.d2` imports the whole
+file. `@theme.d2.d2`, `@"theme".d2`, and `@theme."d2"` select the member named
+`d2` in that same file. A formatter must preserve that selection. Quote a
+filename containing a literal dot, as in `@"my.theme".colors`. An import needs
+a filename after its optional prefix, so `@` and `@../` are incomplete.
 
 At the start of a map or array entry, `...` immediately followed by `@` or
 `$` introduces a spread. For example, `...@theme` is a whole entry, and
@@ -94,22 +107,24 @@ particular context are determined during compilation.
 
 ## Reference parser compatibility
 
-The Go parser accepts some inputs outside the structural productions and
-has a few special cases when building the tree for a syntactically valid
-input.
+At the [baseline revision](README.md), the parser accepts `a.` as `a` and
+allows a quoted scope without the separating dot, as in `"svc"(a -> b)[0]`.
+These spellings are outside the reference and remain outside the runtime
+changes tracked in [D2 #3043](https://github.com/d2lang/d2/pull/3043).
 
-| Input | Go parser behavior |
+The following examples record baseline behavior addressed by that runtime PR.
+
+| Input | Baseline behavior |
 | --- | --- |
-| `a.` | Produces the same key path as `a`. |
-| `"build" - server` | The baseline parser accepts a single hyphen after the quoted source as an undirected connection. Write `"build" -- server` for the specified form. |
-| `(a -> b` at end of file | Returns a connection despite the missing closing parenthesis. |
-| `(a -> b); c` | Treats `)` before a semicolon as part of the bare destination and reports an unclosed group. Put `c` on the next line, or write `(a -> "b"); c`. |
-| `(a -> b)[0].call(): ok` | Applies the same parenthesis lookahead while reading the property path after the group. Quote the segment as `(a -> b)[0]."call()": ok`. |
-| `"svc"(a -> b)[0]` | Accepts the quoted scope without a separating dot. |
+| `"build" - server` | Accepts one hyphen following a quoted source as an undirected connection. |
+| `(a -> b` or `(x)` | Accepts an unterminated group at end of file or drops a group containing no connection. |
+| `(a -> b); c` | Takes `)` before a semicolon as part of the bare destination and reports an unclosed group. |
+| `(a -> b)[0].call(): ok` | Applies the endpoint's parenthesis lookahead to the property path. Quoting `"call()"` preserves the property. |
 | `x: @` or `x: ${}` | Produces an import or substitution with an empty path. |
-| `(a -> b)[1 2]` | Reads index 12. A non-ASCII decimal digit may be accepted and decoded as zero. |
-| `x: [suspend; unsuspend]` | Recognizes both scalar spellings and omits them from the array tree. |
-| `x: true${flag}` | Classifies the first text segment as a boolean, dropping the substitution. An initial numeric or null text segment can similarly determine the scalar type. |
+| `(a -> b)[1 2]`, `(a -> b)[٣]`, or `(a -> b)[` | Reads 12, reads zero, or drops the unclosed selector. An overflowing decimal can be clamped to the largest `int`. |
+| `x: [suspend; unsuspend]` | Omits both suspension values from the array tree. |
+| `x: true${flag}` | Classifies the first text segment as a boolean and drops the substitution. A numeric or null prefix can also determine the scalar type. |
+| `x: @theme.d2.d2` | Parses the selection of `d2` but formats it as `@theme.d2`, which imports the whole file on reparse. |
 
 The reference implementation permits up to 128 nested maps and arrays,
 excluding the implicit file map, and up to 518 UTF-8 bytes per decoded key

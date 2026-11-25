@@ -337,6 +337,24 @@
     ]
   },
   {
+    "name": "import-member-named-d2",
+    "source": "x: @theme.d2.d2",
+    "nodes": [
+      {
+        "map_key": {
+          "value": {
+            "import": {
+              "path": [
+                {"unquoted_string": {"value": [{"string": "theme"}]}},
+                {"unquoted_string": {"value": [{"string": "d2"}]}}
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
     "name": "interpolation",
     "source": "label: \"Hi ${user.name}!\"",
     "nodes": [

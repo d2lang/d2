@@ -16,21 +16,26 @@ import (
 
 func TestGrammarConformance(t *testing.T) {
 	grammar := grammartest.Load(t)
-	t.Run("edge-chain-production", func(t *testing.T) {
-		// Start at EdgeChain so a match through File's keyPath alternative cannot mask an invalid arrow.
-		edgeGrammar := maps.Clone(grammar)
-		edgeGrammar["File"] = grammar["EdgeChain"]
+	t.Run("edge-productions", func(t *testing.T) {
+		// Check each production directly so an alternative through File cannot mask a mismatch.
 		for _, tc := range []struct {
-			source string
-			want   bool
+			rule, source string
+			want         bool
 		}{
-			{"build-server", false},
-			{`"build" - server`, false},
-			{"build--server", true},
-			{"build->server", true},
+			{"EdgeChain", "build-server", false},
+			{"EdgeChain", `"build" - server`, false},
+			{"EdgeChain", "build--server", true},
+			{"EdgeChain", "build->server", true},
+			{"EdgeGroup", "(a -> b)[ 12 ]", true},
+			{"EdgeGroup", "(a -> b", false},
+			{"EdgeGroup", "(a)", false},
+			{"EdgeGroup", "(a -> b)[1 2]", false},
+			{"EdgeGroup", "(a -> b)[٣]", false},
 		} {
-			if got := grammartest.Recognizes(t, edgeGrammar, tc.source); got != tc.want {
-				t.Errorf("EdgeChain recognition of %q = %t, want %t", tc.source, got, tc.want)
+			fromRule := maps.Clone(grammar)
+			fromRule["File"] = grammar[tc.rule]
+			if got := grammartest.Recognizes(t, fromRule, tc.source); got != tc.want {
+				t.Errorf("%s recognition of %q = %t, want %t", tc.rule, tc.source, got, tc.want)
 			}
 		}
 	})
