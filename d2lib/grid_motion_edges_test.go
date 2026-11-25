@@ -182,6 +182,73 @@ steps: {swap: {
 	}
 }
 
+func TestGridMotionSQLAcrossSeparatedRows(t *testing.T) {
+	for _, engine := range []string{"dagre", "tala"} {
+		t.Run(engine, func(t *testing.T) {
+			const source = `vars: {d2-config: {animate-interval: 1s; animate-duration: 600ms}}
+grid-rows: 2
+grid-columns: 2
+a: {shape: sql_table; id: int; name: text}
+x
+y
+b: {shape: sql_table; key: int; other: text}
+b.key -> a.name
+steps: {swap: {
+  a: null; x: null; y: null; b: null
+  x
+  a: {shape: sql_table; id: int; name: text}
+  b: {shape: sql_table; key: int; other: text}
+  y
+  b.key -> a.name
+}}`
+			opts := dagreCompileOptions(new(int))
+			if engine == "tala" {
+				opts.Layout = &engine
+				opts.LayoutResolver = func(string) (d2graph.LayoutGraph, error) { return d2talalayout.DefaultLayout, nil }
+				opts.RouterResolver = func(string) (d2graph.RouteEdges, error) { return d2talalayout.RouteEdges, nil }
+			}
+			board, _, err := Compile(log.WithDefault(t.Context()), source, opts, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			crossed := false
+			for i, f := range board.Steps[0].TweenFrames {
+				a, b := shapeByID(t, f, "a"), shapeByID(t, f, "b")
+				if a.Pos.Y+a.Height >= b.Pos.Y || len(f.Connections) != 1 {
+					t.Fatalf("frame %d: wire count %d between %v and %v", i, len(f.Connections), a.Pos, b.Pos)
+				}
+				r := f.Connections[0].Route
+				for _, check := range []struct {
+					s    d2target.Shape
+					port *geo.Point
+					row  float64
+				}{{b, r[0], 1.5 / 3}, {a, r[len(r)-1], 2.5 / 3}} {
+					s, p := check.s, check.port
+					onFace := min(math.Abs(p.X-float64(s.Pos.X)), math.Abs(p.X-float64(s.Pos.X+s.Width))) <= 1
+					if !onFace || math.Abs(p.Y-float64(s.Pos.Y)-check.row*float64(s.Height)) > 1 {
+						t.Fatalf("frame %d: port %v left its row on %s", i, p, s.ID)
+					}
+				}
+				if a.Pos.X+a.Width <= b.Pos.X || b.Pos.X+b.Width <= a.Pos.X {
+					continue
+				}
+				crossed = true
+				for _, s := range []d2target.Shape{a, b} {
+					box := geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height))
+					for j := 1; j < len(r); j++ {
+						if box.Intersects(*geo.NewSegment(r[j-1], r[j]), -.75) {
+							t.Fatalf("frame %d: segment %v..%v enters %s", i, r[j-1], r[j], s.ID)
+						}
+					}
+				}
+			}
+			if !crossed {
+				t.Fatal("fixture never swapped columns")
+			}
+		})
+	}
+}
+
 func TestGridMotionEdgeLifecycle(t *testing.T) {
 	a, b, c := gridEdgeTestShape("a", 0, 0), gridEdgeTestShape("b", 100, 0), gridEdgeTestShape("c", 0, 100)
 	old := gridEdgeTestConnection("old", "a", "b", geo.NewPoint(40, 20), geo.NewPoint(100, 20))

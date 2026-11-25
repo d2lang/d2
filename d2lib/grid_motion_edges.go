@@ -265,6 +265,41 @@ func straightGridPorts(src, dst *d2target.Shape, srcRow, dstRow float64) (start,
 	return start, end
 }
 
+// While the horizontal projections overlap, a row port can still reach a
+// table in a different row through the clear strip between their boxes.
+func gridRowCrossingRoute(src, dst *d2target.Shape, srcRow, dstRow float64) []*geo.Point {
+	if srcRow < 0 && dstRow < 0 || src.Pos.X+src.Width < dst.Pos.X || dst.Pos.X+dst.Width < src.Pos.X {
+		return nil
+	}
+	gapTop := min(src.Pos.Y+src.Height, dst.Pos.Y+dst.Height)
+	gapBottom := max(src.Pos.Y, dst.Pos.Y)
+	if gapTop >= gapBottom {
+		return nil
+	}
+	midY := float64(gapTop+gapBottom) / 2
+	lead := min(12., float64(gapBottom-gapTop)/2)
+	leg := func(s *d2target.Shape, row, side float64) []*geo.Point {
+		c := gridEdgeCenter(s)
+		if row < 0 {
+			port := gridEdgeBorder(s, 0, midY-c.Y)
+			return []*geo.Point{port, geo.NewPoint(port.X, midY)}
+		}
+		port := geo.NewPoint(c.X+side*float64(s.Width)/2, float64(s.Pos.Y)+row*float64(s.Height))
+		x := port.X + side*lead
+		return []*geo.Point{port, geo.NewPoint(x, port.Y), geo.NewPoint(x, midY)}
+	}
+	side := 1.
+	if gridEdgeCenter(src).X > gridEdgeCenter(dst).X {
+		side = -1
+	}
+	first, last := leg(src, srcRow, side), leg(dst, dstRow, -side)
+	slices.Reverse(last)
+	if first[len(first)-1].Equals(last[0]) {
+		last = last[1:]
+	}
+	return append(first, last...)
+}
+
 func gridEdgeCenter(s *d2target.Shape) geo.Point {
 	return geo.Point{X: float64(s.Pos.X) + float64(s.Width)/2, Y: float64(s.Pos.Y) + float64(s.Height)/2}
 }
@@ -310,18 +345,28 @@ func (pair *gridEdgePair) route(e *d2target.Connection, src, dst *d2target.Shape
 		e.IsCurve, e.Route = old.edge.IsCurve, old.edge.Route
 		return true
 	}
-	if old.straight && next.straight && (old.srcRow >= 0) == (next.srcRow >= 0) && (old.dstRow >= 0) == (next.dstRow >= 0) {
+	samePorts := (old.srcRow >= 0) == (next.srcRow >= 0) && (old.dstRow >= 0) == (next.dstRow >= 0)
+	straight := old.straight && next.straight && samePorts
+	switches := old.edge != next.edge && old.switchesRowFace(next)
+	if straight || switches && samePorts {
 		srcRow := old.srcRow + (next.srcRow-old.srcRow)*t
 		dstRow := old.dstRow + (next.dstRow-old.dstRow)*t
-		start, end := straightGridPorts(src, dst, srcRow, dstRow)
-		if start == nil {
+		if straight {
+			if start, end := straightGridPorts(src, dst, srcRow, dstRow); start != nil {
+				e.Route, e.IsCurve = []*geo.Point{start, end}, false
+				return true
+			}
+		}
+		if crossing := gridRowCrossingRoute(src, dst, srcRow, dstRow); crossing != nil {
+			e.Route, e.IsCurve = crossing, false
+			return true
+		}
+		if straight {
 			return false
 		}
-		e.Route, e.IsCurve = []*geo.Point{start, end}, false
-		return true
 	}
 	var mapRowX func(float64) float64
-	if old.edge != next.edge && old.switchesRowFace(next) {
+	if switches {
 		before := gridEdgeCenter(old.dst).X - gridEdgeCenter(old.src).X
 		after := gridEdgeCenter(next.dst).X - gridEdgeCenter(next.src).X
 		useBefore := t < .5
