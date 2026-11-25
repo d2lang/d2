@@ -17,6 +17,8 @@
 
 #### Improvements 🧹
 
+- Parser authors can use the [D2 syntax reference](https://github.com/d2lang/d2/tree/master/docs/grammar) and its shared conformance cases to check their implementations.
+
 - Grids with one specified axis choose more evenly sized rows or columns. For common integral cell sizes the partition search finds the minimum total deviation from the average track length.
 
 - Standalone installs check the archive against a SHA-256 verified during release review. Use `--verify-provenance` to also check the signed build provenance locally. [#315](https://github.com/d2lang/d2/issues/315)

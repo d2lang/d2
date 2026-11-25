@@ -179,6 +179,9 @@ D2 supports SVG, PNG, GIF, PDF, and PPTX exports.
 
 ## Language tooling
 
+The [D2 syntax reference](./docs/grammar) includes the grammar and shared parser
+conformance cases.
+
 D2 is designed with language tooling in mind. D2's parser can parse multiple errors from a
 broken program, has an autoformatter, syntax highlighting, and we have plans for LSP's and
 more. Good language tooling is necessary for creating and maintaining large diagrams.

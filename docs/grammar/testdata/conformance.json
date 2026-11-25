@@ -1,0 +1,610 @@
+[
+  {"name": "empty", "source": "", "nodes": []},
+  {
+    "name": "separators",
+    "source": ";; a; b\r\nc",
+    "nodes": [
+      {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]}}},
+      {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "b"}]}}]}}},
+      {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "c"}]}}]}}}
+    ]
+  },
+  {
+    "name": "path-and-value",
+    "source": "a.b: a.b",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {
+            "path": [
+              {"unquoted_string": {"value": [{"string": "a"}]}},
+              {"unquoted_string": {"value": [{"string": "b"}]}}
+            ]
+          },
+          "value": {"unquoted_string": {"value": [{"string": "a.b"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "escaped-period",
+    "source": "a\\.b: c",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "a.b"}]}}]},
+          "value": {"unquoted_string": {"value": [{"string": "c"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "quoted-key-segment",
+    "source": "\"a.b\".c",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {
+            "path": [
+              {"double_quoted_string": {"value": [{"string": "a.b"}]}},
+              {"unquoted_string": {"value": [{"string": "c"}]}}
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "unicode-and-internal-space",
+    "source": "東京 office: São Paulo",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "東京 office"}]}}]},
+          "value": {"unquoted_string": {"value": [{"string": "São Paulo"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "punctuation-in-value",
+    "source": "api: service: a -> b",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "api"}]}}]},
+          "value": {"unquoted_string": {"value": [{"string": "service: a -> b"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "label-and-map",
+    "source": "server: Public API {worker; shape: rectangle}",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "server"}]}}]},
+          "primary": {"unquoted_string": {"value": [{"string": "Public API"}]}},
+          "value": {
+            "map": {
+              "nodes": [
+                {
+                  "map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "worker"}]}}]}}
+                },
+                {
+                  "map_key": {
+                    "key": {"path": [{"unquoted_string": {"value": [{"string": "shape"}]}}]},
+                    "value": {"unquoted_string": {"value": [{"string": "rectangle"}]}}
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "map-without-colon",
+    "source": "group {child}",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "group"}]}}]},
+          "value": {
+            "map": {
+              "nodes": [
+                {
+                  "map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "child"}]}}]}}
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "edge-chain",
+    "source": "a -> b <- c <-> d -- e: links",
+    "nodes": [
+      {
+        "map_key": {
+          "edges": [
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]},
+              "src_arrow": "",
+              "dst_arrow": ">",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "b"}]}}]}
+            },
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "b"}]}}]},
+              "src_arrow": "<",
+              "dst_arrow": "",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "c"}]}}]}
+            },
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "c"}]}}]},
+              "src_arrow": "<",
+              "dst_arrow": ">",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "d"}]}}]}
+            },
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "d"}]}}]},
+              "src_arrow": "",
+              "dst_arrow": "",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "e"}]}}]}
+            }
+          ],
+          "value": {"unquoted_string": {"value": [{"string": "links"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "edge-line-continuation",
+    "source": "a -> \\\n  b",
+    "nodes": [
+      {
+        "map_key": {
+          "edges": [
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]},
+              "src_arrow": "",
+              "dst_arrow": ">",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "b"}]}}]}
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "indexed-edge",
+    "source": "group.(a -> b)[2].style.stroke: blue",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "group"}]}}]},
+          "edges": [
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]},
+              "src_arrow": "",
+              "dst_arrow": ">",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "b"}]}}]}
+            }
+          ],
+          "edge_index": {"int": 2, "glob": false},
+          "edge_key": {
+            "path": [
+              {"unquoted_string": {"value": [{"string": "style"}]}},
+              {"unquoted_string": {"value": [{"string": "stroke"}]}}
+            ]
+          },
+          "value": {"unquoted_string": {"value": [{"string": "blue"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "wildcard-edge-index",
+    "source": "(a -> b)[*].label: all",
+    "nodes": [
+      {
+        "map_key": {
+          "edges": [
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]},
+              "src_arrow": "",
+              "dst_arrow": ">",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "b"}]}}]}
+            }
+          ],
+          "edge_index": {"glob": true},
+          "edge_key": {"path": [{"unquoted_string": {"value": [{"string": "label"}]}}]},
+          "value": {"unquoted_string": {"value": [{"string": "all"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "nested-array",
+    "source": "items: [one; [two; three]; {key: four}]",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "items"}]}}]},
+          "value": {
+            "array": {
+              "nodes": [
+                {"unquoted_string": {"value": [{"string": "one"}]}},
+                {
+                  "array": {
+                    "nodes": [
+                      {"unquoted_string": {"value": [{"string": "two"}]}},
+                      {"unquoted_string": {"value": [{"string": "three"}]}}
+                    ]
+                  }
+                },
+                {
+                  "map": {
+                    "nodes": [
+                      {
+                        "map_key": {
+                          "key": {"path": [{"unquoted_string": {"value": [{"string": "key"}]}}]},
+                          "value": {"unquoted_string": {"value": [{"string": "four"}]}}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "typed-and-quoted-values",
+    "source": "truth: TRUE; amount: 1.5; gone: null; stop: suspend; resume: unsuspend; name: \"false\"",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "truth"}]}}]},
+          "value": {"boolean": {"value": true}}
+        }
+      },
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "amount"}]}}]},
+          "value": {"number": {"raw": "1.5", "value": "3/2"}}
+        }
+      },
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "gone"}]}}]},
+          "value": {"null": {}}
+        }
+      },
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "stop"}]}}]},
+          "value": {"suspension": {"value": true}}
+        }
+      },
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "resume"}]}}]},
+          "value": {"suspension": {"value": false}}
+        }
+      },
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "name"}]}}]},
+          "value": {"double_quoted_string": {"value": [{"string": "false"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "imports",
+    "source": "a: @../shapes.d2.box\n...@./theme.d2",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]},
+          "value": {
+            "import": {
+              "spread": false,
+              "pre": "../",
+              "path": [
+                {"unquoted_string": {"value": [{"string": "shapes"}]}},
+                {"unquoted_string": {"value": [{"string": "box"}]}}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "import": {
+          "spread": true,
+          "pre": "./",
+          "path": [{"unquoted_string": {"value": [{"string": "theme"}]}}]
+        }
+      }
+    ]
+  },
+  {
+    "name": "interpolation",
+    "source": "label: \"Hi ${user.name}!\"",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "label"}]}}]},
+          "value": {
+            "double_quoted_string": {
+              "value": [
+                {"string": "Hi "},
+                {
+                  "substitution": {
+                    "spread": false,
+                    "path": [
+                      {"unquoted_string": {"value": [{"string": "user"}]}},
+                      {"unquoted_string": {"value": [{"string": "name"}]}}
+                    ]
+                  }
+                },
+                {"string": "!"}
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "unquoted-and-literal-substitution",
+    "source": "x: ${v}; y: '${v}'",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "x"}]}}]},
+          "value": {
+            "unquoted_string": {
+              "value": [
+                {
+                  "substitution": {
+                    "spread": false,
+                    "path": [{"unquoted_string": {"value": [{"string": "v"}]}}]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "y"}]}}]},
+          "value": {"single_quoted_string": {"value": "${v}"}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "spread-in-map-and-array",
+    "source": "...${group}\nitems: [...${list}; ...@more.d2]",
+    "nodes": [
+      {
+        "substitution": {"spread": true, "path": [{"unquoted_string": {"value": [{"string": "group"}]}}]}
+      },
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "items"}]}}]},
+          "value": {
+            "array": {
+              "nodes": [
+                {
+                  "substitution": {
+                    "spread": true,
+                    "path": [{"unquoted_string": {"value": [{"string": "list"}]}}]
+                  }
+                },
+                {
+                  "import": {
+                    "spread": true,
+                    "pre": "",
+                    "path": [{"unquoted_string": {"value": [{"string": "more"}]}}]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "comments",
+    "source": "# header\na # inline\n\n\"\"\" block \"\"\"",
+    "nodes": [
+      {"comment": {"value": "header"}},
+      {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]}}},
+      {"comment": {"value": "inline"}},
+      {"block_comment": {"value": "block"}}
+    ]
+  },
+  {
+    "name": "block-default-tag",
+    "source": "x: ||\n  see |here|\n||",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "x"}]}}]},
+          "value": {"block_string": {"tag": "md", "value": "see |here|", "quote": "|"}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "block-custom-fence",
+    "source": "code: |`ts\n  a | b\n`|",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "code"}]}}]},
+          "value": {"block_string": {"tag": "ts", "value": "a | b", "quote": "`"}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "glob-and-filters",
+    "source": "api*.style: {&shape: circle; !&label: old}",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {
+            "path": [
+              {"unquoted_string": {"value": [{"string": "api*"}], "pattern": ["api", "*"]}},
+              {"unquoted_string": {"value": [{"string": "style"}]}}
+            ]
+          },
+          "value": {
+            "map": {
+              "nodes": [
+                {
+                  "map_key": {
+                    "key": {"path": [{"unquoted_string": {"value": [{"string": "shape"}]}}]},
+                    "ampersand": true,
+                    "value": {"unquoted_string": {"value": [{"string": "circle"}]}}
+                  }
+                },
+                {
+                  "map_key": {
+                    "key": {"path": [{"unquoted_string": {"value": [{"string": "label"}]}}]},
+                    "not_ampersand": true,
+                    "value": {"unquoted_string": {"value": [{"string": "old"}]}}
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "quoted-star",
+    "source": "\"*\".shape: circle",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {
+            "path": [
+              {"double_quoted_string": {"value": [{"string": "*"}]}},
+              {"unquoted_string": {"value": [{"string": "shape"}]}}
+            ]
+          },
+          "value": {"unquoted_string": {"value": [{"string": "circle"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "single-quote-doubling",
+    "source": "note: 'Ada''s book'",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "note"}]}}]},
+          "value": {"single_quoted_string": {"value": "Ada's book"}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "escaped-delimiters",
+    "source": "hash\\#key: x\\;y\\{z\\}",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "hash#key"}]}}]},
+          "value": {"unquoted_string": {"value": [{"string": "x;y{z}"}]}}
+        }
+      }
+    ]
+  },
+  {
+    "name": "hyphenated-key-and-long-arrow",
+    "source": "a - b; a ---> b",
+    "nodes": [
+      {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "a - b"}]}}]}}},
+      {
+        "map_key": {
+          "edges": [
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]},
+              "src_arrow": "",
+              "dst_arrow": ">",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "b"}]}}]}
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "fraction-and-text",
+    "source": "parts: [1/2; 1/0; \"1/2\"]",
+    "nodes": [
+      {
+        "map_key": {
+          "key": {"path": [{"unquoted_string": {"value": [{"string": "parts"}]}}]},
+          "value": {
+            "array": {
+              "nodes": [
+                {"number": {"raw": "1/2", "value": "1/2"}},
+                {"unquoted_string": {"value": [{"string": "1/0"}]}},
+                {"double_quoted_string": {"value": [{"string": "1/2"}]}}
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "block-comment-and-entry",
+    "source": "\"\"\" note \"\"\"a",
+    "nodes": [
+      {"block_comment": {"value": "note"}},
+      {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]}}}
+    ]
+  },
+  {"name": "newline-after-colon", "source": "a:\n  b", "reject": true},
+  {"name": "unexpected-map-close", "source": "}", "reject": true},
+  {"name": "unterminated-map", "source": "a: {b", "reject": true},
+  {"name": "unterminated-array", "source": "a: [b", "reject": true},
+  {"name": "unterminated-double-quote", "source": "a: \"b", "reject": true},
+  {"name": "unterminated-single-quote", "source": "a: 'b", "reject": true},
+  {
+    "name": "unterminated-block",
+    "source": "a: ||\ntext\n|",
+    "reject": true,
+    "lexicalConstraint": "blockString"
+  },
+  {"name": "unterminated-block-comment", "source": "\"\"\" note", "reject": true},
+  {"name": "missing-edge-endpoint", "source": "a ->", "reject": true},
+  {"name": "non-numeric-edge-index", "source": "(a -> b)[one].label: x", "reject": true},
+  {"name": "unterminated-substitution", "source": "label: ${user.name", "reject": true},
+  {"name": "standalone-import", "source": "@file", "reject": true},
+  {
+    "name": "spread-import-as-key-value",
+    "source": "a: ...@file",
+    "reject": true,
+    "lexicalConstraint": "unquotedValue"
+  }
+]

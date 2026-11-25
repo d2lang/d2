@@ -1,0 +1,38 @@
+// A file is an implicit map. Braces delimit nested maps.
+File     = MapBody .
+Map      = "{" MapBody "}" .
+MapBody  = Padding [ MapEntry spaces { Boundary Padding MapEntry spaces } [ Boundary Padding ] ] .
+Array    = "[" Padding [ ArrayEntry spaces { Boundary Padding ArrayEntry spaces } [ Boundary Padding ] ] "]" .
+
+// A line comment includes the remainder of its line. A block comment can
+// precede an entry without a separator. After an entry it needs a boundary.
+Padding  = { horizontalSpace | newline | ";" | lineComment | blockComment } .
+Boundary = newline | ";" | lineComment .
+spaces   = { horizontalSpace } .
+
+MapEntry   = Spread | [ Filter spaces ] EntryKey [ spaces Assignment ] .
+ArrayEntry = Spread | Value .
+Filter     = "&" | "!&" .
+
+EntryKey    = keyPath | EdgeChain | [ keyPath spaces "." spaces ] EdgeGroup .
+keyPath     = keyString { spaces "." spaces keyString } .
+Assignment  = Map | ":" spaces ( Scalar [ spaces Map ] | Map | Array | Import ) .
+Value       = Scalar | Map | Array | Import .
+Scalar      = valueString .
+
+// The key scanner determines where an unquoted endpoint stops. See structure.md.
+EdgeChain   = keyPath spaces FirstArrow EdgeTargets .
+EdgeGroup   = "(" spaces keyPath spaces Arrow EdgeTargets spaces ")"
+              [ spaces "[" spaces EdgeIndex spaces "]" ] [ spaces "." spaces keyPath ] .
+EdgeTargets = spaces keyPath { spaces Arrow spaces keyPath } .
+EdgeIndex   = "*" | decimalDigit { decimalDigit } .
+
+FirstArrow       = ( "-" | "<" ) ArrowTail .
+Arrow            = FirstArrow | "*" ArrowTail .
+ArrowTail        = { "-" | EdgeContinuation } [ ">" | "*" ] .
+EdgeContinuation = "\\" spaces newline spaces .
+
+// The prefix and its sigil must touch. Paths use the same key quoting as entries.
+Spread       = "..." ( Import | substitution ) .
+Import       = "@" { "." | "/" } spaces keyPath .
+substitution = "$" spaces "{" spaces keyPath spaces "}" .
