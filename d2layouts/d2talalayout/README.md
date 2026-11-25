@@ -18,6 +18,13 @@ The adapter exposes local, in-process entry points:
 - `Layout` runs every configured seed locally with bounded concurrency, waits
   for every attempt, and selects the best result deterministically.
 - `RouteEdges` routes selected D2 edges.
+- `ContinueBoard` can keep familiar boxes and routes fixed when a scenario or
+  step adds or removes a leaf with one connection. The CLI and JavaScript
+  compiler enable this for TALA. Go callers can register it in
+  `d2lib.CompileOptions.LayoutContinuations` under `"tala"`. Each scenario
+  follows its parent, each step follows the preceding step, and each layer
+  starts a new layout. If a new leaf has no clear port or the drawing needs a
+  wider rearrangement, the board uses its ordinary TALA layout.
 - `Options.Seeds` controls deterministic layout attempts. Diagram data
   under `tala-seeds` takes precedence, seeds are de-duplicated in first-seen
   order, and one layout is capped at 16 attempts. Inputs are capped at 64 raw

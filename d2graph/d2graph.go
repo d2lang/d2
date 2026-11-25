@@ -170,6 +170,11 @@ func (g *Graph) IDA() []string {
 	return parts
 }
 
+// LayoutContinuation may refine a completed layout relative to its preceding
+// board. It may change current geometry only and reports whether the boards
+// share coordinates for playback. Both graphs are local to one compilation.
+type LayoutContinuation func(ctx context.Context, previous, current *Graph) (bool, error)
+
 type LayoutGraph func(context.Context, *Graph) error
 type RouteEdges func(context.Context, *Graph, []*Edge) error
 

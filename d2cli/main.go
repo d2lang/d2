@@ -22,6 +22,8 @@ import (
 	"github.com/d2lang/util-go/xmain"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2renderers/d2animate"
@@ -519,6 +521,8 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		FS:              fs,
 		LayoutReuse:     true,
 		AnimateDuration: animateDurationFlag,
+
+		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
 	}
 
 	// With no SVG interval override, compilation reads the interval from d2-config.

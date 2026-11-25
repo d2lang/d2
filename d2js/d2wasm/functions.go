@@ -275,6 +275,8 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		LayoutReuse:     true,
 		AnimateTweens:   animateTweens,
 		AnimateDuration: input.Opts.AnimateDuration,
+
+		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
 	}
 
 	inputPath := DEFAULT_INPUT_PATH
@@ -494,6 +496,7 @@ func render(input RenderRequest) ([]byte, error) {
 		diagram.TweenFrames = nil
 		diagram.TweenFrameEndsMS = nil
 		diagram.GridMotion = false
+		diagram.LayoutContinuity = false
 		diagram.TweenDurationMS = 0
 	}
 

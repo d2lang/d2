@@ -147,6 +147,10 @@ type Diagram struct {
 	TweenFrameEndsMS []int `json:"tweenFrameEndsMS,omitempty"`
 	// GridMotion keeps a common coordinate system for raster playback as cells reflow.
 	GridMotion bool `json:"gridMotion,omitempty"`
+	// LayoutContinuity means the board shares layout coordinates with its
+	// parent scenario base or the preceding step. Independent layers start
+	// their own coordinate system.
+	LayoutContinuity bool `json:"layoutContinuity,omitempty"`
 }
 
 type Legend struct {

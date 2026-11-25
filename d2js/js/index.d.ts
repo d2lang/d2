@@ -141,6 +141,7 @@ export interface Diagram {
   /** Exclusive millisecond end offsets for nonuniform samples. Omitted for uniform timing. */
   tweenFrameEndsMS?: number[];
   gridMotion?: boolean;
+  layoutContinuity?: boolean;
   tweenDurationMS?: number;
 }
 
