@@ -22,9 +22,9 @@ type boardReveal struct {
 }
 
 type boardBirth struct {
-	pivot      geo.Point
-	rebound    float64
-	start, end float64
+	pivot               geo.Point
+	rebound             float64
+	start, contact, end float64
 }
 
 type boardTrace struct {
@@ -32,6 +32,7 @@ type boardTrace struct {
 	backwards  bool
 	points     []*geo.Point // walked from the familiar end
 	lengths    []float64    // cumulative polyline length at each point
+	minDraw    float64      // length needed to paint a partial route and its marker
 }
 
 func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardReveal {
@@ -118,7 +119,6 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 				port = e.Route[0]
 			}
 			birth.pivot = *port
-			birth.start = float64(level-1) + .50
 			birth.end = float64(level)
 		}
 		m.nodes[id] = birth
@@ -148,11 +148,23 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 				return nil
 			}
 		}
-		m.wires[e.ID] = &boardTrace{start, end, backwards, points, lengths}
+		srcWidth, _ := e.SrcArrow.Dimensions(e.RenderedStrokeWidth())
+		dstWidth, _ := e.DstArrow.Dimensions(e.RenderedStrokeWidth())
+		m.wires[e.ID] = &boardTrace{
+			start: start, end: end, backwards: backwards, points: points, lengths: lengths,
+			minDraw: max(srcWidth, dstWidth, 2*e.RenderedStrokeWidth()),
+		}
 		m.end = max(m.end, end)
 	}
 	if m.end == 0 {
 		return nil
+	}
+	for id, birth := range m.nodes {
+		if e := arrival[id]; e != nil {
+			wire := m.wires[e.ID]
+			birth.start, birth.contact = wire.pickup(), wire.end
+			m.nodes[id] = birth
+		}
 	}
 	// Only grow past the authored box after reserving the extra space.
 	// Large edits still get the damped arrival within the ordinary footprint.
@@ -166,6 +178,48 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 		}
 	}
 	return m
+}
+
+// Start opening the node over the last six pixels of the incoming stroke.
+// On short routes keep the first 90% of the trace to the wire itself. Search
+// the eased arc length once, including any slowdown through a final bend.
+func (w *boardTrace) pickup() float64 {
+	length := w.lengths[len(w.lengths)-1]
+	target := max(length-6, .90*length, w.minDraw)
+	if target >= length {
+		return w.end // The marker first fits on the complete wire.
+	}
+	lo, hi := 0., 1.
+	for range 20 {
+		mid := (lo + hi) / 2
+		if w.travel(mid)*length < target {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return w.start + (w.end-w.start)*hi
+}
+
+func (b boardBirth) progress(now float64) float64 {
+	if b.contact == 0 {
+		return gridPhase(now, b.start, b.end)
+	}
+	// At contact the body is already opening, even when a short route or a
+	// sparse sample schedule puts the first visible wire and node on one frame.
+	const atContact = .24
+	if now < b.start {
+		return 0
+	}
+	if now < b.contact {
+		overlap := b.contact - b.start
+		u := (now - b.start) / overlap
+		// Match the opening speed on both sides of contact. A shorter
+		// overlap on a long wire can otherwise make the node brake abruptly.
+		endSlope := (1 - atContact) * overlap / (b.end - b.contact)
+		return u * (atContact + (1-u)*(atContact-endSlope))
+	}
+	return atContact + (1-atContact)*gridPhase(now, b.contact, b.end)
 }
 
 func (w *boardTrace) travel(t float64) float64 {
@@ -304,7 +358,7 @@ func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 	for i := range frame.Shapes {
 		s := &frame.Shapes[i]
 		if birth, ok := m.nodes[s.ID]; ok && now < birth.end {
-			ratio := gridPhase(now, birth.start, birth.end)
+			ratio := birth.progress(now)
 			scale, alpha := birth.pop(ratio)
 			x := birth.pivot.X + (float64(s.Pos.X)-birth.pivot.X)*scale
 			y := birth.pivot.Y + (float64(s.Pos.Y)-birth.pivot.Y)*scale
@@ -333,9 +387,7 @@ func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 			if t < 1 {
 				revealed := lengthFraction * wire.lengths[len(wire.lengths)-1]
 				// Do not let a full-size marker overwhelm a tiny first segment.
-				w1, _ := e.SrcArrow.Dimensions(e.RenderedStrokeWidth())
-				w2, _ := e.DstArrow.Dimensions(e.RenderedStrokeWidth())
-				if revealed < max(w1, w2, 2*e.RenderedStrokeWidth()) {
+				if revealed < wire.minDraw {
 					continue
 				}
 			}

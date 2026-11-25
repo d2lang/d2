@@ -32,15 +32,15 @@ The adapter exposes local, in-process entry points:
   Go callers can register `ContinueBoard` under `"tala"` in
   `d2lib.CompileOptions.LayoutContinuations`.
 - In animated exports, a positive `animate-duration` can draw new connections
-  along their routes and grow each new node from the port where its first
-  connection arrives. A new node can briefly grow past its final size when
-  there is room around it. A rectangular container can begin tracing its
-  outline as its contents settle, slowing through the corners. When one
-  identifiable service or intact team changes parents, its external connections
-  can fade while it accelerates and settles into its new position. These
-  effects use cumulative steps that share layout coordinates. Complex edits
-  can keep the ordinary transition. Set `animate-duration: 0` for an
-  immediate change between boards.
+  along their routes. A connected node starts opening from its port as the
+  incoming stroke covers its last few pixels. A new node can briefly grow
+  past its final size when there is room around it. A rectangular container
+  can begin tracing its outline as its contents settle, slowing through the
+  corners. When one identifiable service or intact team changes parents, its
+  external connections can fade while it accelerates and settles into its new
+  position. These effects use cumulative steps that share layout coordinates.
+  Complex edits can keep the ordinary transition. Set `animate-duration: 0`
+  for an immediate change between boards.
 - `Options.Seeds` controls deterministic layout attempts. Diagram data
   under `tala-seeds` takes precedence, seeds are de-duplicated in first-seen
   order, and one layout is capped at 16 attempts. Inputs are capped at 64 raw

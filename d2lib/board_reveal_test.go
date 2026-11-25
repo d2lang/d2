@@ -19,7 +19,7 @@ direction: right
 gateway -> queue
 steps: {
   worker: {queue -> worker}
-  logger: {logger -> worker}
+  logger: {logger -> worker; logger.style.opacity: 0.45}
 }`
 	board, _ := compileContinuity(t, src, d2talalayout.ContinueBoard)
 	prev := board
@@ -33,49 +33,78 @@ steps: {
 			t.Errorf("%s: first sample is not the preceding board", id)
 		}
 		end := next.Connections[len(next.Connections)-1]
-		start, tip := 0, len(end.Route)-1
+		anchor := end.Route[0]
 		if end.Src == id {
-			start, tip = tip, start
+			anchor = end.Route[len(end.Route)-1]
 		}
 		familiar := shapeByID(t, prev, "gateway")
-		final := shapeByID(t, next, id)
 		lastLength := 0.
-		traced, popped := false, false
 		for _, sample := range next.TweenFrames[1:] {
 			if !reflect.DeepEqual(familiar, shapeByID(t, sample, "gateway")) {
 				t.Fatalf("%s: familiar node changed", id)
 			}
-			n := shapeByID(t, sample, id)
 			ei := slices.IndexFunc(sample.Connections, func(e d2target.Connection) bool { return e.ID == end.ID })
 			if ei < 0 {
 				continue
 			}
 			e := sample.Connections[ei]
-			origin, front := e.Route[0], e.Route[len(e.Route)-1]
-			if tip == 0 {
-				origin, front = front, origin
+			origin := e.Route[0]
+			if end.Src == id {
+				origin = e.Route[len(e.Route)-1]
 			}
-			if *origin != *end.Route[start] || e.SrcArrow != end.SrcArrow || e.DstArrow != end.DstArrow {
+			if *origin != *anchor || e.SrcArrow != end.SrcArrow || e.DstArrow != end.DstArrow {
 				t.Fatalf("%s: changed anchor or arrow direction", id)
 			}
-			length := 0.
-			for j := 1; j < len(e.Route); j++ {
-				length += math.Hypot(e.Route[j].X-e.Route[j-1].X, e.Route[j].Y-e.Route[j-1].Y)
-			}
+			length := geo.Route(e.Route).Length()
 			if length < lastLength {
 				t.Fatalf("%s: trace retracted", id)
 			}
 			lastLength = length
-			traced = traced || *front != *end.Route[tip] && n.Opacity == 0
-			popped = popped || n.Opacity > 0 && n.Width < final.Width && *front == *end.Route[tip]
 		}
-		if !traced || !popped {
-			t.Fatalf("%s: trace before a docked pop = %t/%t", id, traced, popped)
-		}
+		requireArrivalOverlap(t, next, end, id)
 		prev = next
 	}
 	if err := d2target.ValidateRenderTarget(board); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Check the native samples a viewer sees, including when the new node is at
+// the source end of the authored route. Measure distance along the route so a
+// bend that passes near the port cannot trigger the pop halfway through.
+func requireArrivalOverlap(t *testing.T, step *d2target.Diagram, wire d2target.Connection, id string) {
+	t.Helper()
+	final := shapeByID(t, step, id)
+	length := geo.Route(wire.Route).Length()
+	inFlight, overlap, docked := false, false, false
+	for i, f := range step.TweenFrames[1:] {
+		node := shapeByID(t, f, id)
+		gap := length
+		for _, e := range f.Connections {
+			if e.ID == wire.ID {
+				gap -= geo.Route(e.Route).Length()
+				break
+			}
+		}
+		ms := step.TweenFrameEndsMS[i]
+		opacity := node.Opacity / final.Opacity
+		if gap > 8 && opacity > .02 {
+			t.Fatalf("%s at %dms: visible with %.2fpx of route left", id, ms, gap)
+		}
+		if gap <= .5 && opacity < .1 {
+			t.Fatalf("%s at %dms: tip is within half a pixel of the port, but node is only %.0f%% opaque", id, ms, 100*opacity)
+		}
+		inFlight = inFlight || gap > 8 && gap < length && opacity == 0
+		overlap = overlap || gap > .01 && opacity >= .1 && node.Width > final.Width/3
+		if gap <= 1e-8 && !docked {
+			if opacity < .5 || node.Width <= final.Width*2/5 {
+				t.Fatalf("%s at %dms: arrow reached port with node %.0f%% opaque and %d/%dpx wide", id, ms, 100*opacity, node.Width, final.Width)
+			}
+			docked = true
+		}
+	}
+	if !inFlight || !overlap || !docked {
+		t.Fatalf("%s: saw approach=%t, visible opening during approach=%t, contact=%t", id, inFlight, overlap, docked)
 	}
 }
 
@@ -159,6 +188,8 @@ steps: {
 	if !early || !late {
 		t.Fatal("the two wires did not reveal in succession")
 	}
+	requireArrivalOverlap(t, step, continuityWire(t, step, "intake.worker", "audit.log"), "audit.log")
+	requireArrivalOverlap(t, step, continuityWire(t, step, "audit.log", "audit.reports"), "audit.reports")
 	if err := d2target.ValidateRenderTarget(d); err != nil {
 		t.Fatal(err)
 	}
@@ -223,6 +254,57 @@ steps: {more: {a -> b; b.tooltip: "New object tip"; b.link: "https://example.com
 	}
 }
 
+func TestBoardRevealShorterThanArrowhead(t *testing.T) {
+	prev, g := compileContinuity(t, "direction: right\nqueue\nsteps: {send: {queue -> ship}}", d2talalayout.ContinueBoard)
+	next := prev.Steps[0]
+	wire := &next.Connections[0]
+	ship := gridEdgeShapeMap(next.Shapes)["ship"]
+	// Put Shipping just four pixels beyond Queue, leaving too little shaft
+	// to paint an intermediate arrow without its marker covering the origin.
+	origin, port := wire.Route[0], wire.Route[len(wire.Route)-1]
+	x := origin.X + 4
+	ship.Pos.X += int(math.Round(x - port.X))
+	wire.Route = []*geo.Point{origin, geo.NewPoint(x, origin.Y)}
+	m := planBoardReveal(prev, next, g.Steps[0])
+	if m == nil {
+		t.Fatal("missing short-route reveal")
+	}
+	for i := 0; i <= 48; i++ {
+		frame := *next
+		frame.Shapes = slices.Clone(next.Shapes)
+		m.apply(&frame, float64(i)/48)
+		node := shapeByID(t, &frame, "ship")
+		if len(frame.Connections) == 0 {
+			if node.Opacity > 0 {
+				t.Fatalf("sample %d: node became visible before its incoming wire", i)
+			}
+			continue
+		}
+		if node.Opacity < ship.Opacity/2 || node.Width >= ship.Width {
+			t.Fatalf("sample %d: first wire arrived with node opacity %.2f and width %d/%d", i, node.Opacity, node.Width, ship.Width)
+		}
+		return
+	}
+	t.Fatal("short wire never appeared")
+}
+
+func TestBoardArrivalMaintainsGrowthSpeedAtContact(t *testing.T) {
+	// A long wire spends little time in the final six pixels. Its node
+	// still needs to keep opening smoothly as the tip docks.
+	b := boardBirth{start: .48, contact: .5, end: 1, rebound: .04}
+	scale := func(now float64) float64 {
+		value, _ := b.pop(b.progress(now))
+		return value
+	}
+	const dt = .000001
+	at := scale(b.contact)
+	in := (at - scale(b.contact-dt)) / dt
+	out := (scale(b.contact+dt) - at) / dt
+	if in <= 0 || out <= 0 || math.Abs(in-out) > .01*max(in, out) {
+		t.Fatalf("node growth rate changed at contact: %.4f -> %.4f", in, out)
+	}
+}
+
 func TestBoardRevealEasesToThePortThenRebounds(t *testing.T) {
 	const src = `vars: {d2-config: {animate-interval: 1400ms; animate-duration: 800ms}}
 direction: right
@@ -243,7 +325,8 @@ steps: {ship: {ship: Shipping; queue -> ship}}`
 		return &frame
 	}
 	wire := continuityWire(t, next, "queue", "ship")
-	half := continuityWire(t, apply(.25), "queue", "ship")
+	trace := m.wires[wire.ID]
+	half := continuityWire(t, apply((trace.start+trace.end)/(2*m.end)), "queue", "ship")
 	start, port := wire.Route[0], wire.Route[1]
 	if len(wire.Route) != 2 || *half.Route[0] != *start {
 		t.Fatal("expected a straight route anchored at the dispatch queue")
@@ -253,11 +336,13 @@ steps: {ship: {ship: Shipping; queue -> ship}}`
 	if math.Abs(fraction-.6875) > 1e-6 {
 		t.Fatalf("at half the trace time, tip has traveled %.3f of the route", fraction)
 	}
-	if s := shapeByID(t, apply(.49), "ship"); s.Opacity != 0 {
-		t.Fatal("the node appeared before the stroke arrived")
-	}
 	body := shapeByID(t, next, "ship")
-	peak := shapeByID(t, apply(.5+.5*.59), "ship")
+	peak := body
+	for _, f := range next.TweenFrames[1:] {
+		if s := shapeByID(t, f, "ship"); s.Width > peak.Width {
+			peak = s
+		}
+	}
 	if float64(body.Pos.X) != port.X || peak.Pos.X != body.Pos.X || math.Abs(float64(peak.Pos.Y)+float64(peak.Height)/2-port.Y) > 1 {
 		t.Fatal("the overshoot moved the port away from the arriving wire")
 	}
