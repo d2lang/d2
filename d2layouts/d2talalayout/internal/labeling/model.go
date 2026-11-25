@@ -83,14 +83,21 @@ var containerLabelPositionOrder = []label.Position{
 // before placement begins.
 func Initialize(graph *layoutgraph.Graph) {
 	for _, node := range graph.Nodes {
-		setDefaultLabelPlacement(node)
-		if node.Icon != nil && node.Icon.Position != label.Unset {
-			node.Icon.FixPosition()
+		initializeNodePositions(node)
+		// Step runs are already collapsed. Their members return to the graph
+		// before the final label pass, and must keep the same authored positions.
+		if seq := graph.Sequences[node]; seq != nil {
+			for _, member := range seq.Nodes {
+				initializeNodePositions(member)
+			}
 		}
 	}
 }
 
-func setDefaultLabelPlacement(node *layoutgraph.Node) {
+func initializeNodePositions(node *layoutgraph.Node) {
+	if node.Icon != nil && node.Icon.Position != label.Unset {
+		node.Icon.FixPosition()
+	}
 	if node.Label == nil {
 		return
 	}
@@ -105,7 +112,7 @@ func compareLabelPositions(node *layoutgraph.Node, first, second label.Position)
 	score := func(position label.Position) int {
 		score := -1
 		for index, tier := range []nodeshape.LabelTier{nodeshape.Good, nodeshape.OK, nodeshape.Unideal, nodeshape.Bad} {
-			if _, found := node.Shape.LabelPositionPreferences(tier)[position]; found {
+			if node.Shape.LabelPositionPreferences(tier).Has(position) {
 				score = index + 1
 			}
 		}
@@ -139,7 +146,7 @@ func labelPositionPreferenceTranches(node *layoutgraph.Node) [][]label.Position 
 		allowed := node.Shape.LabelPositionPreferences(tier)
 		var tranche []label.Position
 		for _, position := range baseOrder {
-			if _, found := allowed[position]; found {
+			if allowed.Has(position) {
 				tranche = append(tranche, position)
 			}
 		}

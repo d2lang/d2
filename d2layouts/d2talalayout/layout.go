@@ -11,6 +11,8 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/engine"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placement"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/routing"
 )
 
 const (
@@ -155,12 +157,15 @@ func runLocalSeed(
 		}
 	}()
 
-	laidOut, err := runSeed(ctx, input, seed)
+	orientation := placement.OrientationTrial{}
+	laidOut, err := runSeed(placement.WithOrientationTrial(ctx, &orientation), input, seed)
 	if err != nil {
 		attempt.err = err
 		return attempt
 	}
 	attempt.result, attempt.err = evaluateSeedResult(ctx, input, laidOut)
+	attempt.result.horizontalSource = orientation.SourceEligible
+	attempt.result.directionEligible = orientation.DirectionEligible
 	return attempt
 }
 
@@ -211,6 +216,7 @@ func coordinateLocalSeeds(ctx context.Context, seeds []int64, concurrency int, r
 		if bestIndex < 0 || comparison < 0 || (comparison == 0 && attempt.index > bestIndex) {
 			bestIndex = attempt.index
 			best = attempt.result
+			best.seed = attempt.seed
 		}
 	}
 
@@ -272,6 +278,10 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 	if err != nil {
 		return err
 	}
+	best, err = considerPlacementAxes(workCtx, input, best)
+	if err != nil {
+		return err
+	}
 	ordinary := best
 	best, err = considerSeedCandidate(workCtx, best, func() (seedResult, error) {
 		candidate, err := engine.CompoundCandidate(workCtx, best.graph)
@@ -286,6 +296,7 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 	if err != nil {
 		return err
 	}
+	refineRoutes := supportsRouteRefinements(graph)
 	if best.graph != ordinary.graph {
 		selected := best
 		best, err = refineSeedResult(workCtx, selected, func() (seedResult, error) {
@@ -295,6 +306,48 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 			}
 			return evaluateSeedResult(workCtx, input, candidate)
 		})
+		if err != nil {
+			return err
+		}
+	} else {
+		// A fresh compact trial cannot reproduce a selected rigid-container
+		// arrangement and its preserved interior routes.
+		best, err = considerCompactHierarchy(workCtx, input, best)
+		if err != nil {
+			return err
+		}
+		if refineRoutes {
+			best, err = considerLoopClearance(workCtx, input, best)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if err := orderEquivalentBranchSlots(workCtx, graph, best); err != nil {
+		return err
+	}
+	if refineRoutes {
+		if err := refineSelectedRoutes(workCtx, best.graph); err != nil {
+			return err
+		}
+	}
+	if graph.IsWholeLayout() {
+		tightenPinnedNear(graph, best)
+		clearPinnedFrameNeighbor(graph, best.graph)
+		clearIsolatedFrameDecoration(graph, best.graph)
+		clearCrowdedCaptions(graph, best.graph)
+		clearStepConnectorDecorations(graph, best.graph)
+		if refineRoutes && hasCompetingTreeCaptions(best.graph) && supportsTreeCaptionComparison(graph) {
+			if err := routing.RefineCrowdedTreeFace(workCtx, best.graph); err != nil {
+				return err
+			}
+			clearPackedTreeTile(graph, best.graph)
+		}
+		best, err = considerHandoffs(workCtx, graph, input, best)
+		if err != nil {
+			return err
+		}
+		best, err = considerCenteredBranches(workCtx, graph, input, best)
 		if err != nil {
 			return err
 		}

@@ -2,10 +2,15 @@
 .PHONY: all
 all: fmt build test
 
+.PHONY: check
+check: fmt
+	prefix "$@" bun run test:types
+
 .PHONY: fmt
 fmt: node_modules
-	prefix "$@" ../../ci/sub/bin/fmt.sh
-	prefix "$@" rm -f yarn.lock
+	# Bun already installed the dependencies. Select the shared formatting jobs
+	# by their own names, including when the root Makefile prefixes this job.
+	unset JOBNAME; ../../ci/sub/bin/fmt.sh '^(mdtocsubst|go\.mod|gofmt|prettier|d2fmt)$$'
 
 .PHONY: build
 build: fmt

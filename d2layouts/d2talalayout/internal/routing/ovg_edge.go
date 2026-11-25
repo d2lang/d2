@@ -9,6 +9,9 @@ type OVGEdge struct {
 	To   *OVGNode
 
 	Distance float64
+	// index is the edge's position in its OVG's Edges, which only grows. Edges
+	// built outside OVG.Connect keep 0; users verify Edges[index] == edge.
+	index int32
 }
 
 func NewOVGEdge(from, to *OVGNode) *OVGEdge {

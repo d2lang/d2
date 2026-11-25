@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/d2lang/d2/d2renderers/internal/fontface"
+	"github.com/d2lang/d2/internal/bundledfont"
 )
 
 type bundledFaceSpec struct {
@@ -37,6 +38,8 @@ func registerBundledFontFaces() error {
 		if err := fontface.RegisterBundledFace(data, spec.digest); err != nil {
 			return fmt.Errorf("register bundled font %s/%s: %w", spec.font.Family, spec.font.Style, err)
 		}
+		bundledfont.Register(data)
+		registerFullWoffEncoding(FontEncodings.Get(spec.font))
 	}
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/internal/testlog"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/log"
 	"github.com/d2lang/d2/lib/shape"
 )
@@ -185,9 +186,14 @@ func TestSequenceDefiningEdgesMidContainerTraversalCancellation(t *testing.T) {
 	nodesBefore := captureExactTestSlice(graph.Nodes)
 	containersMap := reflect.ValueOf(graph.Containers).Pointer()
 
+	result, _, _ := newStepSequenceGraph()
+	if err := AddSequences(t.Context(), result, rand.New(rand.NewSource(1))); err != nil {
+		t.Fatal(err)
+	}
+	Cleanup(result)
 	edges, err := SequenceDefiningEdges(
 		&cancelWhenStackContains{Context: context.Background(), function: "containerRDFSOrderContext"},
-		graph,
+		graph, result,
 	)
 	if edges != nil {
 		t.Fatalf("sequence edge result = %v, want nil after cancellation", edges)
@@ -267,6 +273,37 @@ func TestAddSequencesDiscardsStaleRememberedMembership(t *testing.T) {
 			t.Fatalf("stale membership was retained: a=%p b=%p", a.Sequence, b.Sequence)
 		}
 	}
+
+	t.Run("later sibling now covers the right caption", func(t *testing.T) {
+		run(t, func(_ *layoutgraph.Graph, a, b *layoutgraph.Node) {
+			a.Width, b.Width = 120, 120
+			a.Label = &layoutgraph.Label{Text: "Middle", Position: label.OutsideRightMiddle, Width: 48, Height: 21}
+			a.StepPaint = &layoutgraph.StepPaint{Order: 1, Opaque: true}
+			b.StepPaint = &layoutgraph.StepPaint{Order: 2, Opaque: true}
+		})
+	})
+
+	t.Run("reading direction changed", func(t *testing.T) {
+		run(t, func(g *layoutgraph.Graph, _, _ *layoutgraph.Node) {
+			g.Directions[nil] = geo.Bottom
+		})
+	})
+
+	t.Run("exterior captions now overlap", func(t *testing.T) {
+		run(t, func(_ *layoutgraph.Graph, a, b *layoutgraph.Node) {
+			for _, node := range []*layoutgraph.Node{a, b} {
+				node.Label = &layoutgraph.Label{Position: label.OutsideTopCenter, Width: 120, Height: 15}
+				node.Label.FixPosition()
+			}
+		})
+	})
+
+	t.Run("authored height changed", func(t *testing.T) {
+		run(t, func(_ *layoutgraph.Graph, _ *layoutgraph.Node, b *layoutgraph.Node) {
+			b.Height = 20
+			b.DesiredHeight = new(b.Height)
+		})
+	})
 
 	t.Run("shape changed", func(t *testing.T) {
 		run(t, func(_ *layoutgraph.Graph, _ *layoutgraph.Node, b *layoutgraph.Node) {

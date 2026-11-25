@@ -1,5 +1,7 @@
 package graphjson
 
+import "github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
+
 // SerializedLabel is the fixture representation of label geometry.
 type SerializedLabel struct {
 	Text     string
@@ -70,6 +72,8 @@ type SerializedNode struct {
 	Is3D           bool             `json:"is3D,omitempty"`
 	IsMultiple     bool             `json:"isMultiple,omitempty"`
 	ForceHierarchy bool             `json:"forceHierarchy,omitempty"`
+
+	StepPaint *layoutgraph.StepPaint `json:"stepPaint,omitempty"`
 }
 
 // SerializedEdge is the fixture representation of one layout edge.
@@ -91,8 +95,10 @@ type SerializedEdge struct {
 	ToTableColumnIndex   *int               `json:"toTableColumnIndex,omitempty"`
 	Style                SerializedStyle    `json:"style,omitempty"`
 
-	SourceArrowhead string `json:"sourceArrowhead"`
-	TargetArrowhead string `json:"targetArrowhead"`
+	ReversedForLayout bool   `json:"reversedForLayout,omitempty"`
+	KeepExplicit      bool   `json:"keepExplicit,omitempty"`
+	SourceArrowhead   string `json:"sourceArrowhead"`
+	TargetArrowhead   string `json:"targetArrowhead"`
 
 	SourceArrowheadLabel *SerializedLabel `json:"sourceArrowheadLabel,omitempty"`
 	TargetArrowheadLabel *SerializedLabel `json:"targetArrowheadLabel,omitempty"`

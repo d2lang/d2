@@ -97,12 +97,26 @@ func TestRouteStageGraphBoundingBoxMatchesLegacyAndConsumesAggregate(t *testing.
 	if *gotTopLeft != *wantTopLeft || *gotBottomRight != *wantBottomRight {
 		t.Fatalf("guarded bounds = %v, %v; want legacy %v, %v", gotTopLeft, gotBottomRight, wantTopLeft, wantBottomRight)
 	}
-	used := guard.used
-	if used <= uint64(len(g.Nodes)*len(g.Nodes)) {
-		t.Fatalf("guarded bounds charged %d units, want outside-label extremity and route scans", used)
+	// Bounds visit each node once and scan the set once for label extrema.
+	// With all nodes at the root, the origin lookup checks the first owner
+	// and then every potential fixed origin. The edge charges its record,
+	// one geometry scan, two center-label scans and three per endpoint label.
+	nodeUnits := 2*len(g.Nodes) + 1 + len(g.Nodes)
+	edgeUnits := 1 + (1+2+3+3)*len(edge.Points)
+	required := uint64(nodeUnits + edgeUnits)
+	if guard.used != required {
+		t.Fatalf("guarded bounds charged %d units, want %d", guard.used, required)
 	}
 
-	limited, err := newRouteWorkGuard(context.Background(), "EdgeRouting", used-1)
+	exact, err := newRouteWorkGuard(context.Background(), "EdgeRouting", required)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := routeStageGraphBoundingBox(g, exact); err != nil || exact.used != required {
+		t.Fatalf("exact budget charged %d units, want %d; error: %v", exact.used, required, err)
+	}
+
+	limited, err := newRouteWorkGuard(context.Background(), "EdgeRouting", required-1)
 	if err != nil {
 		t.Fatal(err)
 	}

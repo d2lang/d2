@@ -141,6 +141,34 @@ func TestAppendixPaintsConnectionTooltipAndMarkdownLinkTitle(t *testing.T) {
 	}
 }
 
+func TestFoldClipsAndFadesPositionedTooltipAndLinkBadge(t *testing.T) {
+	diagram := appendixTestDiagram()
+	cell := &diagram.Shapes[1]
+	cell.Opacity = .25
+	cell.MotionClip = &d2target.MotionClip{Point: cell.Pos, Width: 90, Height: 30}
+	cell.TooltipPosition = "top-left"
+	document, err := Build(context.Background(), diagram, Options{
+		Appendix: true, LinkBudget: LinkBudget{MaxRegions: 2, MaxStringBytes: 4096},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"second:positioned-tooltip", "appendix:shape:1:link"} {
+		found := false
+		for _, layer := range document.Root.Children {
+			if layer.Clip != nil && len(layer.Children) == 1 && layer.Children[0].ID == id {
+				found = true
+				if layer.Children[0].Opacity != cell.Opacity {
+					t.Errorf("%s opacity = %v", id, layer.Children[0].Opacity)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("missing clipped decoration %s", id)
+		}
+	}
+}
+
 func TestAppendixAndPositionedTooltipShareSortedMetadataLayer(t *testing.T) {
 	t.Parallel()
 	diagram := appendixTestDiagram()

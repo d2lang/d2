@@ -2,6 +2,7 @@ package asciishapes
 
 import (
 	"fmt"
+	"unicode/utf8"
 )
 
 func abs[T ~int](x T) T {
@@ -50,7 +51,7 @@ func DrawHeader(ctx *Context, x1, y1, x2, wC int, label string) int {
 		}
 	}
 
-	labelX := x1 + (wC-len(label))/2
+	labelX := x1 + (wC-utf8.RuneCountInString(label))/2
 	ctx.Canvas.DrawLabel(labelX, y1, label)
 
 	currentY := headerY2 + 1
@@ -83,11 +84,13 @@ func DrawFieldWithType(ctx *Context, x1, x2, y, wC int, name, fieldType string) 
 	ctx.Canvas.DrawLabel(x1+1, y, name)
 
 	if fieldType != "" {
-		maxTypeWidth := wC - len(name) - 4
-		if len(fieldType) > maxTypeWidth && maxTypeWidth > 3 {
-			fieldType = fieldType[:maxTypeWidth-3] + "..."
+		maxTypeWidth := wC - utf8.RuneCountInString(name) - 4
+		if utf8.RuneCountInString(fieldType) > maxTypeWidth && maxTypeWidth > 3 {
+			// Truncate on rune boundaries so multi-byte characters
+			// are never split mid-character.
+			fieldType = string([]rune(fieldType)[:maxTypeWidth-3]) + "..."
 		}
-		typeX := x2 - len(fieldType) - 1
+		typeX := x2 - utf8.RuneCountInString(fieldType) - 1
 		ctx.Canvas.DrawLabel(typeX, y, fieldType)
 	}
 }

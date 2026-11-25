@@ -38,6 +38,20 @@ func (gs *GraphState) UpdateWithWorkGuard(g *Graph, guard *limits.WorkGuard) err
 	return gs.updateContext(g, guard)
 }
 
+// ChargeTopologySnapshot charges guard exactly what a topology snapshot
+// (NewGraphStateSnapshot with CaptureTopology, then UpdateWithWorkGuard)
+// charges, with the same limits, errors and cancellation checks, but captures
+// nothing, and reports whether the snapshot would track node. It is for a
+// caller whose operation provably leaves the graph unchanged, so the rollback
+// point would only ever be restored onto identical values.
+func ChargeTopologySnapshot(g *Graph, guard *limits.WorkGuard, node *Node) (tracked bool, err error) {
+	state := &GraphState{captureTopology: true, chargeOnly: true}
+	if err := state.updateContext(g, guard); err != nil {
+		return false, err
+	}
+	return state.TracksNode(node), nil
+}
+
 // OwnedNodes returns every node whose state is owned by g, including graph
 // nodes temporarily removed by tree or sequence preprocessing. It charges the
 // same work units in the same traversal order as the former hierarchy code.
@@ -62,6 +76,15 @@ func (gs *GraphState) OwnedNodes(g *Graph, guard *limits.WorkGuard) (map[*Node]s
 
 func Validate(ctx context.Context, operation string, g *Graph) error {
 	return validateEngineGraph(ctx, operation, g)
+}
+
+// ForcesHierarchy reports whether the diagram explicitly requests layered placement
+// inside container. A nil container denotes the diagram root.
+func (g *Graph) ForcesHierarchy(container *Node) bool {
+	if container == nil {
+		return g.IsRootHierarchy
+	}
+	return container.ForceHierarchy
 }
 
 func (g *Graph) HasFixedNode() bool {
@@ -109,6 +132,61 @@ func (spacing Spacing) Left() float64 {
 
 func (spacing Spacing) Right() float64 {
 	return spacing.right
+}
+
+// DetachPlacementNears keeps proximity hints across independent placement
+// scopes out of the local search. Restore them when packing the completed
+// components. The returned function can also be called on an error path.
+func (nodes Nodes) DetachPlacementNears(ctx context.Context) (func(), error) {
+	guard, err := limits.NewWorkGuard(ctx, "DetachPlacementNears", limits.MaxEngineWorkUnits)
+	if err != nil {
+		return nil, err
+	}
+	type hint struct{ node, near *Node }
+	var detached []hint
+	collect := func(node *Node) error {
+		if err := guard.Step(); err != nil {
+			return err
+		}
+		for near := range node.Nears {
+			if err := guard.Step(); err != nil {
+				return err
+			}
+			if node.Hierarchy != near.Hierarchy || node.OwningContainer() != near.OwningContainer() {
+				detached = append(detached, hint{node, near})
+			}
+		}
+		return nil
+	}
+	for _, node := range nodes {
+		if err := collect(node); err != nil {
+			return nil, err
+		}
+		// The optimizer also gathers near hints from members of a vessel.
+		var members Nodes
+		if cluster := node.Graph.Clusters[node]; cluster != nil {
+			members = cluster.Nodes
+		} else if sequence := node.Graph.Sequences[node]; sequence != nil {
+			members = sequence.Nodes
+		}
+		for _, member := range members {
+			if err := collect(member); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := guard.Finish(); err != nil {
+		return nil, err
+	}
+	for _, h := range detached {
+		delete(h.node.Nears, h.near)
+	}
+	return func() {
+		for _, h := range detached {
+			h.node.Nears[h.near] = struct{}{}
+		}
+		detached = nil
+	}, nil
 }
 
 func (nodes Nodes) SetGraphReference(g *Graph) {

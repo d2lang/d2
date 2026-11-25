@@ -11,6 +11,13 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
+// moveNodeScores are the pure placement scores computed for the graph's
+// current geometry.
+type moveNodeScores struct {
+	valid, hasEdgeLength, hasSymmetry  bool
+	edgeLength, crossingCost, symmetry float64
+}
+
 // moveNodeToBest chooses the candidate with the lowest placement cost using
 // the compaction stage's shared work guard.
 func moveNodeToBest(ctx context.Context, graph *layoutgraph.Graph, node *layoutgraph.Node, points []*geo.Point, edgeAbductions []*layoutgraph.EdgeAbduction, includeSizes bool, guard *limits.OptimizationWorkGuard) (bool, error) {
@@ -35,6 +42,13 @@ func moveNodeToBest(ctx context.Context, graph *layoutgraph.Graph, node *layoutg
 		fixedOrigin.Y = math.Round(fixedOrigin.Y / graph.CellSize)
 	}
 
+	// Candidate lists end with the current position, which is usually also
+	// the last generated candidate. optimizerMoveNodeAbs leaves the graph
+	// untouched when the node is already exactly at the point, so when the
+	// previous iteration computed scores and this one moves nothing, the
+	// geometry is the one those pure scores were computed for and they are
+	// reused. Every work charge and comparison still runs.
+	var previous moveNodeScores
 	for _, point := range points {
 		if err := guard.Step(); err != nil {
 			return false, err
@@ -44,6 +58,7 @@ func moveNodeToBest(ctx context.Context, graph *layoutgraph.Graph, node *layoutg
 		}
 		x, y := point.X, point.Y
 		if fixedOrigin != nil && (x < fixedOrigin.X || y < fixedOrigin.Y) {
+			previous.valid = false
 			continue
 		}
 		canMove := x == currentX && y == currentY
@@ -54,32 +69,44 @@ func moveNodeToBest(ctx context.Context, graph *layoutgraph.Graph, node *layoutg
 			}
 		}
 		if !canMove {
+			previous.valid = false
 			continue
 		}
+		unmoved := node.TopLeft != nil && node.TopLeft.X == x && node.TopLeft.Y == y
 		if err := optimizerMoveNodeAbs(node, x, y, guard); err != nil {
 			return false, err
 		}
 		if err := chargeOptimizerScoring(node, edgeAbductions, includeSizes, guard); err != nil {
 			return false, err
 		}
-		edgeLength, err := placementcost.NodeEdgeLength(ctx, node, placementcost.EdgeLengthOptions{EdgeAbductions: edgeAbductions, IncludeNodeSizes: includeSizes, EnforceMinimumGap: false, PenalizeDirection: true})
-		if err != nil {
-			return false, err
+		if !previous.valid || !unmoved {
+			previous = moveNodeScores{valid: true}
 		}
+		if !previous.hasEdgeLength {
+			previous.edgeLength, err = placementcost.NodeEdgeLength(ctx, node, placementcost.EdgeLengthOptions{EdgeAbductions: edgeAbductions, IncludeNodeSizes: includeSizes, EnforceMinimumGap: false, PenalizeDirection: true})
+			if err != nil {
+				return false, err
+			}
+			previous.hasEdgeLength = true
+		}
+		edgeLength := previous.edgeLength
 		if includeSizes {
 			if !math.IsInf(leastDistance, 1) && geo.PrecisionCompare(edgeLength-symmetryCost, leastDistance, geo.PRECISION) == 1 {
 				continue
 			}
-			crossingCost, err := placementcost.ColumnCrossingCost(ctx, node, edgeAbductions)
-			if err != nil {
-				return false, err
+			if !previous.hasSymmetry {
+				previous.crossingCost, err = placementcost.ColumnCrossingCost(ctx, node, edgeAbductions)
+				if err != nil {
+					return false, err
+				}
+				previous.symmetry, err = placementcost.NodeSymmetry(ctx, node, edgeAbductions)
+				if err != nil {
+					return false, err
+				}
+				previous.hasSymmetry = true
 			}
-			symmetry, err := placementcost.NodeSymmetry(ctx, node, edgeAbductions)
-			if err != nil {
-				return false, err
-			}
-			edgeLength += crossingCost
-			edgeLength -= symmetry * symmetryCost
+			edgeLength += previous.crossingCost
+			edgeLength -= previous.symmetry * symmetryCost
 		}
 		switch geo.PrecisionCompare(edgeLength, leastDistance, geo.PRECISION) {
 		case -1:

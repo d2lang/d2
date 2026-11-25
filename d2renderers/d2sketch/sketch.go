@@ -45,34 +45,62 @@ func baseOptions(strokeWidth float64) *rough.Options {
 // fill. This gives it a subtle streaky effect that subtly looks hand-drawn but
 // not distractingly so.
 func DefineFillPatterns(buf *bytes.Buffer, diagramHash string) {
-	source := buf.String()
-	fmt.Fprint(buf, "<defs>")
-
-	defineFillPattern(buf, source, diagramHash, "bright", "rgba(0, 0, 0, 0.1)")
-	defineFillPattern(buf, source, diagramHash, "normal", "rgba(0, 0, 0, 0.16)")
-	defineFillPattern(buf, source, diagramHash, "dark", "rgba(0, 0, 0, 0.32)")
-	defineFillPattern(buf, source, diagramHash, "darker", "rgba(255, 255, 255, 0.24)")
-
-	fmt.Fprint(buf, "</defs>")
+	defineFillPatterns(buf, diagramHash, false)
 }
 
-func defineFillPattern(buf *bytes.Buffer, source, diagramHash string, luminanceCategory, fill string) {
-	trigger := fmt.Sprintf(`url(#streaks-%s-%s)`, luminanceCategory, diagramHash)
-	if strings.Contains(source, trigger) {
-		fmt.Fprintf(buf, patternassets.StreaksSVG(), luminanceCategory, diagramHash, fill)
+// DefineSharedFillPatterns reuses the path between inks. Use DefineFillPatterns
+// when a custom stylesheet can target the path inside each pattern.
+func DefineSharedFillPatterns(buf *bytes.Buffer, diagramHash string) {
+	defineFillPatterns(buf, diagramHash, true)
+}
+
+func defineFillPatterns(buf *bytes.Buffer, diagramHash string, share bool) {
+	// All four inks use the same geometry. Keep the geometry in defs so a
+	// theme switch can select a different ink without storing another path.
+	type shade struct{ id, ink string }
+	var used []shade
+	for _, p := range [...]shade{
+		{"bright", "rgba(0, 0, 0, 0.1)"},
+		{"normal", "rgba(0, 0, 0, 0.16)"},
+		{"dark", "rgba(0, 0, 0, 0.32)"},
+		{"darker", "rgba(255, 255, 255, 0.24)"},
+	} {
+		p.id = "streaks-" + p.id + "-" + diagramHash
+		if bytes.Contains(buf.Bytes(), []byte("url(#"+p.id+")")) {
+			used = append(used, p)
+		}
 	}
+	if len(used) == 0 {
+		return
+	}
+	buf.WriteString("<defs>")
+	pathID := "streak-path-" + diagramHash
+	share = share && len(used) > 1
+	if share {
+		buf.WriteString(svg.EmptyElement("path", svg.Attr("id", pathID), svg.Attr("d", patternassets.StreakPathData()), svg.Attr("fill-rule", "evenodd"), svg.Attr("clip-rule", "evenodd")))
+	}
+	for _, pattern := range used {
+		buf.WriteString(svg.OpenElement("pattern", svg.Attr("id", pattern.id), svg.Attr("patternUnits", "userSpaceOnUse"), svg.IntAttr("width", 100), svg.IntAttr("height", 100)))
+		if !share {
+			buf.WriteString(svg.EmptyElement("path", svg.Attr("d", patternassets.StreakPathData()), svg.Attr("fill", pattern.ink), svg.Attr("fill-rule", "evenodd"), svg.Attr("clip-rule", "evenodd")))
+		} else {
+			buf.WriteString(svg.EmptyElement("use", append(svg.HrefAttributes("#"+pathID), svg.Attr("fill", pattern.ink))...))
+		}
+		buf.WriteString("</pattern>")
+	}
+	buf.WriteString("</defs>")
 }
 
 func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 	g := newGenerator()
-	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, 0, 0)
 	pathEl := d2themes.NewThemableElement("path", nil)
 	pathEl.SetTranslate(float64(shape.Pos.X), float64(shape.Pos.Y))
-	pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+	pathEl.Fill, pathEl.Stroke = paint, stroke
 	pathEl.FillPattern = shape.FillPattern
 	pathEl.ClassName = "shape"
 	pathEl.Style = shape.CSSStyle()
@@ -95,7 +123,7 @@ func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 		sketchOEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
-	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, pathEl.Fill).Render()
+	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, TexturePaint(shape, pathEl.Fill)).Render()
 	if err != nil {
 		return "", err
 	}
@@ -106,23 +134,23 @@ func Rect(shape d2target.Shape, diagramHash string) (string, error) {
 
 func DoubleRect(shape d2target.Shape, diagramHash string) (string, error) {
 	g := newGenerator()
-	pathsBigRect, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+	pathsBigRect, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
 	pathsSmallRect, err := computeRoughPathData(g, g.Rectangle(0, 0,
 		float64(shape.Width-d2target.INNER_BORDER_OFFSET*2),
 		float64(shape.Height-d2target.INNER_BORDER_OFFSET*2),
-		baseOptions(float64(shape.StrokeWidth))))
+		baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
 
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, 0, 0)
 
 	pathEl := d2themes.NewThemableElement("path", nil)
 	pathEl.SetTranslate(float64(shape.Pos.X), float64(shape.Pos.Y))
-	pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+	pathEl.Fill, pathEl.Stroke = paint, stroke
 	pathEl.FillPattern = shape.FillPattern
 	pathEl.ClassName = "shape"
 	pathEl.Style = shape.CSSStyle()
@@ -162,7 +190,7 @@ func DoubleRect(shape d2target.Shape, diagramHash string) (string, error) {
 		sketchOEl.SetMaskID(svg.LiteralID(diagramHash))
 	}
 
-	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, shape.Fill).Render()
+	renderedSO, err := d2themes.NewThemableSketchOverlay(sketchOEl, TexturePaint(shape, shape.Fill)).Render()
 	if err != nil {
 		return "", err
 	}
@@ -175,14 +203,14 @@ func Oval(shape d2target.Shape, diagramHash string) (string, error) {
 	g := newGenerator()
 	paths, err := computeRoughPathData(g, g.Ellipse(
 		float64(shape.Width/2), float64(shape.Height/2),
-		float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+		float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, 0, 0)
 	pathEl := d2themes.NewThemableElement("path", nil)
 	pathEl.SetTranslate(float64(shape.Pos.X), float64(shape.Pos.Y))
-	pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+	pathEl.Fill, pathEl.Stroke = paint, stroke
 	pathEl.FillPattern = shape.FillPattern
 	pathEl.ClassName = "shape"
 	pathEl.Style = shape.CSSStyle()
@@ -207,7 +235,7 @@ func Oval(shape d2target.Shape, diagramHash string) (string, error) {
 
 	renderedSO, err := d2themes.NewThemableSketchOverlay(
 		soElement,
-		pathEl.Fill,
+		TexturePaint(shape, pathEl.Fill),
 	).Render()
 	if err != nil {
 		return "", err
@@ -221,7 +249,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 	g := newGenerator()
 	pathsBigCircle, err := computeRoughPathData(g, g.Ellipse(
 		float64(shape.Width/2), float64(shape.Height/2),
-		float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+		float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -229,16 +257,16 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 		float64(shape.Width/2), float64(shape.Height/2),
 		float64(shape.Width-d2target.INNER_BORDER_OFFSET*2),
 		float64(shape.Height-d2target.INNER_BORDER_OFFSET*2),
-		baseOptions(float64(shape.StrokeWidth))))
+		baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
 
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, 0, 0)
 
 	pathEl := d2themes.NewThemableElement("path", nil)
 	pathEl.SetTranslate(float64(shape.Pos.X), float64(shape.Pos.Y))
-	pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+	pathEl.Fill, pathEl.Stroke = paint, stroke
 	pathEl.FillPattern = shape.FillPattern
 	pathEl.ClassName = "shape"
 	pathEl.Style = shape.CSSStyle()
@@ -279,7 +307,7 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 
 	renderedSO, err := d2themes.NewThemableSketchOverlay(
 		soElement,
-		shape.Fill,
+		TexturePaint(shape, shape.Fill),
 	).Render()
 	if err != nil {
 		return "", err
@@ -291,15 +319,15 @@ func DoubleOval(shape d2target.Shape, diagramHash string) (string, error) {
 
 // TODO need to personalize this per shape like we do in Terrastruct app
 func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, error) {
-	output := ""
+	output, paint, stroke := pencilSVGPaint(shape, diagramHash, shape.Pos.X, shape.Pos.Y)
 	for _, path := range paths {
 		g := newGenerator()
-		sketchPaths, err := computeRoughPathData(g, g.Path(path, baseOptions(float64(shape.StrokeWidth))))
+		sketchPaths, err := computeRoughPathData(g, g.Path(path, baseOptions(shape.RenderedStrokeWidth())))
 		if err != nil {
 			return "", err
 		}
 		pathEl := d2themes.NewThemableElement("path", nil)
-		pathEl.Fill, pathEl.Stroke = d2themes.ShapeTheme(shape)
+		pathEl.Fill, pathEl.Stroke = paint, stroke
 		pathEl.FillPattern = shape.FillPattern
 		pathEl.ClassName = "shape"
 		pathEl.Style = shape.CSSStyle()
@@ -323,7 +351,7 @@ func Paths(shape d2target.Shape, diagramHash string, paths []string) (string, er
 			soElement.D = p
 			renderedSO, err := d2themes.NewThemableSketchOverlay(
 				soElement,
-				pathEl.Fill,
+				TexturePaint(shape, pathEl.Fill),
 			).Render()
 			if err != nil {
 				return "", err
@@ -437,7 +465,7 @@ func ConnectionWithAttributes(connection d2target.Connection, path string, attri
 func Table(shape d2target.Shape) (string, error) {
 	output := ""
 	g := newGenerator()
-	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -457,7 +485,7 @@ func Table(shape d2target.Shape) (string, error) {
 		float64(shape.Width),
 		float64(shape.Height),
 	)
-	rowHeight := box.Height / float64(1+len(shape.SQLTable.Columns))
+	rowHeight := shape.SQLRowHeight()
 	headerBox := geo.NewBox(box.TopLeft, box.Width, rowHeight)
 
 	paths, err = computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), rowHeight, baseOptions(1)))
@@ -501,7 +529,14 @@ func Table(shape d2target.Shape) (string, error) {
 
 	rowBox := geo.NewBox(box.TopLeft.Copy(), box.Width, rowHeight)
 	rowBox.TopLeft.Y += headerBox.Height
-	for _, f := range shape.Columns {
+	for index, f := range shape.Columns {
+		visible := shape.SQLRowVisibleHeight(rowBox.TopLeft.Y, rowHeight)
+		if shape.RowReveal != nil && visible <= 0 {
+			break
+		}
+		if visible < rowHeight {
+			output += svg.OpenClippedViewport(rowBox.TopLeft.X, rowBox.TopLeft.Y, rowBox.Width, visible, rowBox.TopLeft.Y+(rowHeight-visible))
+		}
 		nameTL := label.InsideMiddleLeft.GetPointOnBox(
 			rowBox,
 			d2target.NamePadding,
@@ -535,8 +570,11 @@ func Table(shape d2target.Shape) (string, error) {
 		textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx;letter-spacing:2px", "end", float64(shape.FontSize))
 		textEl.SetText(f.ConstraintAbbr())
 		output += textEl.Render()
-
-		rowBox.TopLeft.Y += rowHeight
+		if visible < rowHeight {
+			output += "</svg>"
+		}
+		y, _, last := shape.SQLRowDivider(index, rowBox.TopLeft.Y+rowHeight, 0)
+		rowBox.TopLeft.Y = y
 
 		paths, err = computeRoughPathData(g, g.Line(
 			rowBox.TopLeft.X, rowBox.TopLeft.Y,
@@ -551,6 +589,9 @@ func Table(shape d2target.Shape) (string, error) {
 		for _, p := range paths {
 			pathEl.D = p
 			output += pathEl.Render()
+		}
+		if last {
+			break
 		}
 	}
 
@@ -570,7 +611,7 @@ func Table(shape d2target.Shape) (string, error) {
 func Class(shape d2target.Shape) (string, error) {
 	output := ""
 	g := newGenerator()
-	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(float64(shape.StrokeWidth))))
+	paths, err := computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), float64(shape.Height), baseOptions(shape.RenderedStrokeWidth())))
 	if err != nil {
 		return "", err
 	}
@@ -770,15 +811,15 @@ func extractPathData(roughPaths []roughPath) ([]string, error) {
 	return paths, nil
 }
 
-func arrowOptions(stroke string, strokeWidth int, seed float64) *rough.Options {
+func arrowOptions(stroke string, strokeWidth, seed float64) *rough.Options {
 	return &rough.Options{
-		StrokeWidth: rough.Float64(float64(strokeWidth)),
+		StrokeWidth: rough.Float64(strokeWidth),
 		Stroke:      rough.String(stroke),
 		Seed:        rough.Float64(seed),
 	}
 }
 
-func solidArrowOptions(stroke, fill string, strokeWidth int, fillWeight, seed float64) *rough.Options {
+func solidArrowOptions(stroke, fill string, strokeWidth, fillWeight, seed float64) *rough.Options {
 	o := arrowOptions(stroke, strokeWidth, seed)
 	o.Fill = rough.String(fill)
 	o.FillStyle = rough.String("solid")
@@ -788,7 +829,7 @@ func solidArrowOptions(stroke, fill string, strokeWidth int, fillWeight, seed fl
 	return o
 }
 
-func arrowheadDrawable(g *rough.Generator, arrowhead d2target.Arrowhead, stroke string, strokeWidth int) (arrow rough.Drawable, extra *rough.Drawable, ok bool) {
+func arrowheadDrawable(g *rough.Generator, arrowhead d2target.Arrowhead, stroke string, strokeWidth float64) (arrow rough.Drawable, extra *rough.Drawable, ok bool) {
 	// Note: selected each seed that looks the good for consistent renders
 	switch arrowhead {
 	case d2target.ArrowArrowhead:
@@ -829,29 +870,48 @@ func arrowheadDrawable(g *rough.Generator, arrowhead d2target.Arrowhead, stroke 
 	return arrow, extra, true
 }
 
+// ArrowheadPlacement positions a sketch arrowhead's local geometry in diagram
+// coordinates. Gradient paints use the same placement as the rendered paths.
+func ArrowheadPlacement(connection d2target.Connection, isTarget bool, adjustment *geo.Point) (anchor geo.Point, degrees float64) {
+	if isTarget {
+		last := len(connection.Route) - 1
+		segment := geo.NewSegment(connection.Route[last-1], connection.Route[last])
+		return geo.Point{X: segment.End.X + adjustment.X, Y: segment.End.Y + adjustment.Y}, segment.ToVector().Degrees()
+	}
+	segment := geo.NewSegment(connection.Route[0], connection.Route[1])
+	return geo.Point{X: segment.Start.X + adjustment.X, Y: segment.Start.Y + adjustment.Y}, segment.ToVector().Reverse().Degrees()
+}
+
 func Arrowheads(connection d2target.Connection, srcAdj, dstAdj *geo.Point) (string, error) {
-	arrowPaths := []string{}
+	return ArrowheadsWithPaint(connection, srcAdj, dstAdj, connection.Stroke, connection.Stroke)
+}
 
-	if connection.SrcArrow != d2target.NoArrowhead {
+// ArrowheadsWithPaint accepts a paint for each endpoint in its local coordinates.
+func ArrowheadsWithPaint(connection d2target.Connection, srcAdj, dstAdj *geo.Point, srcStroke, dstStroke string) (string, error) {
+	var arrowPaths []string
+	for _, end := range []struct {
+		arrow      d2target.Arrowhead
+		adjustment *geo.Point
+		stroke     string
+		isTarget   bool
+	}{
+		{connection.SrcArrow, srcAdj, srcStroke, false},
+		{connection.DstArrow, dstAdj, dstStroke, true},
+	} {
+		if end.arrow == d2target.NoArrowhead {
+			continue
+		}
 		g := newGenerator()
-		arrow, extra, ok := arrowheadDrawable(g, connection.SrcArrow, connection.Stroke, connection.StrokeWidth)
+		arrow, extra, ok := arrowheadDrawable(g, end.arrow, end.stroke, connection.RenderedStrokeWidth())
 		if !ok {
 			return "", nil
 		}
-
-		startingSegment := geo.NewSegment(connection.Route[0], connection.Route[1])
-		startingVector := startingSegment.ToVector().Reverse()
-		angle := startingVector.Degrees()
-
-		transform := fmt.Sprintf("translate(%f %f) rotate(%v)",
-			startingSegment.Start.X+srcAdj.X, startingSegment.Start.Y+srcAdj.Y, angle,
-		)
-
+		anchor, angle := ArrowheadPlacement(connection, end.isTarget, end.adjustment)
+		transform := fmt.Sprintf("translate(%f %f) rotate(%v)", anchor.X, anchor.Y, angle)
 		roughPaths := computeRoughPaths(g, arrow)
 		if extra != nil {
 			roughPaths = append(roughPaths, computeRoughPaths(g, *extra)...)
 		}
-
 		pathEl := d2themes.NewThemableElement("path", nil)
 		pathEl.ClassName = "connection"
 		pathEl.AddAttributes(svg.Attr("transform", transform))
@@ -863,39 +923,5 @@ func Arrowheads(connection d2target.Connection, srcAdj, dstAdj *geo.Point) (stri
 			arrowPaths = append(arrowPaths, pathEl.Render())
 		}
 	}
-
-	if connection.DstArrow != d2target.NoArrowhead {
-		g := newGenerator()
-		arrow, extra, ok := arrowheadDrawable(g, connection.DstArrow, connection.Stroke, connection.StrokeWidth)
-		if !ok {
-			return "", nil
-		}
-
-		length := len(connection.Route)
-		endingSegment := geo.NewSegment(connection.Route[length-2], connection.Route[length-1])
-		endingVector := endingSegment.ToVector()
-		angle := endingVector.Degrees()
-
-		transform := fmt.Sprintf("translate(%f %f) rotate(%v)",
-			endingSegment.End.X+dstAdj.X, endingSegment.End.Y+dstAdj.Y, angle,
-		)
-
-		roughPaths := computeRoughPaths(g, arrow)
-		if extra != nil {
-			roughPaths = append(roughPaths, computeRoughPaths(g, *extra)...)
-		}
-
-		pathEl := d2themes.NewThemableElement("path", nil)
-		pathEl.ClassName = "connection"
-		pathEl.AddAttributes(svg.Attr("transform", transform))
-		for _, rp := range roughPaths {
-			pathEl.D = rp.Attrs.D
-			pathEl.Fill = rp.Style.Fill
-			pathEl.Stroke = rp.Style.Stroke
-			pathEl.Style = rp.StyleCSS()
-			arrowPaths = append(arrowPaths, pathEl.Render())
-		}
-	}
-
 	return strings.Join(arrowPaths, " "), nil
 }

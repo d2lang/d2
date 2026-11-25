@@ -113,25 +113,26 @@ func (b *builder) validateLatexImportOptions(object string) error {
 }
 
 func (b *builder) latexCurrentColor(raw, description string) (color.NRGBA, error) {
-	if raw == "" {
-		return color.NRGBA{A: 255}, nil
-	}
 	paint, err := b.paint(raw, description)
 	if err != nil {
 		return color.NRGBA{}, err
 	}
-	if paint == nil {
-		// Invalid CSS colors such as color:none do not override the initial black.
+	switch p := paint.(type) {
+	case nil:
+		// SVG currentColor defaults to black.
 		return color.NRGBA{A: 255}, nil
+	case d2scene.SolidPaint:
+		return p.Color, nil
+	case d2scene.LinearGradient:
+		return p.Stops[0].Color, nil
+	case d2scene.RadialGradient:
+		return p.Stops[0].Color, nil
+	default:
+		return color.NRGBA{}, fmt.Errorf("scene: unsupported %s paint %T", description, p)
 	}
-	solid, ok := paint.(d2scene.SolidPaint)
-	if !ok {
-		return color.NRGBA{}, fmt.Errorf("scene: %s must resolve to a solid color", description)
-	}
-	return solid.Color, nil
 }
 
-func (b *builder) buildLatexLabelNode(object, nodeID, formula, rawColor string, topLeft *geo.Point) (*d2scene.Node, error) {
+func (b *builder) buildLatexLabelNode(object, nodeID, formula, rawColor string, topLeft *geo.Point, scale float64) (*d2scene.Node, error) {
 	if topLeft == nil || !finite(topLeft.X) || !finite(topLeft.Y) {
 		return nil, invalidField(object, "labelPosition", nil, "must resolve to a finite LaTeX label origin")
 	}
@@ -139,11 +140,14 @@ func (b *builder) buildLatexLabelNode(object, nodeID, formula, rawColor string, 
 	if err != nil {
 		return nil, err
 	}
+	if scale == 0 {
+		scale = 1
+	}
 	node := d2scene.NewNode(d2scene.Image{
 		Asset: asset.id,
 		Box: d2scene.Box{
 			X: topLeft.X, Y: topLeft.Y,
-			Width: asset.width, Height: asset.height,
+			Width: asset.width * scale, Height: asset.height * scale,
 		},
 		Aspect: defaultImageAspect,
 	})
@@ -163,8 +167,5 @@ func latexShapeLabelTopLeft(targetShape d2target.Shape) *geo.Point {
 	if position.IsOutside() {
 		box = geometry.GetBox()
 	}
-	return position.GetPointOnBox(
-		box, label.PADDING,
-		float64(targetShape.LabelWidth), float64(targetShape.LabelHeight),
-	)
+	return targetShape.LabelTopLeft(position, box)
 }

@@ -119,7 +119,7 @@ func (counts directionCounts) transformsTo(direction geo.Orientation) directionT
 	return transforms
 }
 
-func containerEdgeDirections(graph *layoutgraph.Graph, container *layoutgraph.Node) directionCounts {
+func containerEdgeDirections(graph *layoutgraph.Graph, container *layoutgraph.Node) (directionCounts, map[*layoutgraph.Edge]struct{}) {
 	counted := make(map[*layoutgraph.Edge]struct{})
 	var counts directionCounts
 	for _, node := range graph.Containers[container] {
@@ -134,7 +134,34 @@ func containerEdgeDirections(graph *layoutgraph.Graph, container *layoutgraph.No
 			counts.add(edgeDirectionCounts(edge))
 		}
 	}
-	return counts
+	return counts, counted
+}
+
+func distinctEdgeDirections(ctx context.Context, edges map[*layoutgraph.Edge]struct{}) (directionCounts, error) {
+	var counts directionCounts
+	guard, err := limits.NewWorkGuard(ctx, "DistinctEdgeDirections", limits.MaxEngineEdges)
+	if err != nil {
+		return counts, err
+	}
+	seen := make(map[[2]*layoutgraph.Node]struct{})
+	for edge := range edges {
+		if err := guard.Step(); err != nil {
+			return counts, err
+		}
+		from, to, directed := edge.DirectedEndpoints()
+		if !directed {
+			continue
+		}
+		if !edge.IsInvisible {
+			pair := [2]*layoutgraph.Node{from, to}
+			if _, exists := seen[pair]; exists {
+				continue
+			}
+			seen[pair] = struct{}{}
+		}
+		counts.add(edgeDirectionCounts(edge))
+	}
+	return counts, guard.Finish()
 }
 
 func hasFixedDescendant(node *layoutgraph.Node) bool {
@@ -285,7 +312,28 @@ func direct(ctx context.Context, graph *layoutgraph.Graph, nodes layoutgraph.Nod
 			return nil
 		}
 	}
-	transforms := containerEdgeDirections(graph, container).transformsTo(graph.Direction(container))
+	direction := graph.Direction(container)
+	trial, _ := ctx.Value(orientationTrialKey{}).(*OrientationTrial)
+	counts, counted := containerEdgeDirections(graph, container)
+	transforms := counts.transformsTo(direction)
+	// A connected tree cannot contain parallel returns. An uncontested axis
+	// gives the same vote whichever way the relationships are counted.
+	if trial != nil && (trial.DistinctDirections || !trial.DirectionEligible) && direction != geo.NONE && len(counted) >= len(nodes) &&
+		(direction.IsHorizontal() && counts.left > 0 && counts.right > 0 ||
+			direction.IsVertical() && counts.top > 0 && counts.bottom > 0) {
+		distinct, err := distinctEdgeDirections(ctx, counted)
+		if err != nil {
+			return err
+		}
+		alternative := distinct.transformsTo(direction)
+		if direction.IsHorizontal() && alternative.mirrorX != transforms.mirrorX ||
+			direction.IsVertical() && alternative.mirrorY != transforms.mirrorY {
+			trial.DirectionEligible = true
+			if trial.DistinctDirections {
+				transforms = alternative
+			}
+		}
+	}
 	if !transforms.mirrorX && !transforms.mirrorY {
 		return nil
 	}

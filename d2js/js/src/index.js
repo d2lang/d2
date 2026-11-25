@@ -1,12 +1,18 @@
-import { createWorker, loadFile } from "./platform.js";
+import { createWorker, isNode, loadFile } from "./platform.js";
+
+function compileRequest(input, options) {
+  return typeof input === "string"
+    ? { fs: { index: input }, options }
+    : { ...input, options: { ...options, ...input.options } };
+}
 
 export class D2 {
-  constructor() {
+  constructor(options = {}) {
     this.nextRequestId = 0;
     this.pendingRequests = new Map();
     this.disposed = false;
     this.disposePromise = null;
-    this.ready = this.init();
+    this.ready = this.init(options.workerURL);
   }
 
   rejectPendingRequests(error) {
@@ -16,7 +22,7 @@ export class D2 {
     this.pendingRequests.clear();
   }
 
-  setupMessageHandler(isNode = typeof window === "undefined") {
+  setupMessageHandler(isNodeWorker = isNode) {
     return new Promise((resolve, reject) => {
       let isReady = false;
 
@@ -28,7 +34,7 @@ export class D2 {
         if (!isReady) reject(workerError);
         this.rejectPendingRequests(workerError);
         console.error(
-          `Worker${isNode ? " (node)" : ""} encountered an error:`,
+          `Worker${isNodeWorker ? " (node)" : ""} encountered an error:`,
           workerError.message
         );
       };
@@ -62,7 +68,7 @@ export class D2 {
         }
       };
 
-      if (isNode) {
+      if (isNodeWorker) {
         this.worker.on("message", handleMessage);
         this.worker.on("error", handleWorkerError);
       } else {
@@ -72,24 +78,25 @@ export class D2 {
     });
   }
 
-  async init() {
-    this.worker = await createWorker();
-
-    const isNode = typeof window === "undefined";
-    const wasmExecContent = isNode ? await loadFile("./wasm_exec.js") : null;
-    const wasmBinary = await loadFile("./d2.wasm");
-
-    const messageHandler = this.setupMessageHandler();
-
-    this.worker.postMessage({
-      type: "init",
-      data: {
-        wasm: wasmBinary,
-        wasmExecContent: isNode ? wasmExecContent.toString() : null,
-      },
-    });
-
-    return messageHandler;
+  async init(workerURL) {
+    const { worker, releaseURL } = await createWorker(workerURL);
+    this.worker = worker;
+    try {
+      const wasmExecContent = isNode ? await loadFile("./wasm_exec.js") : null;
+      const wasm = await loadFile("./d2.wasm");
+      const ready = this.setupMessageHandler();
+      worker.postMessage({
+        type: "init",
+        data: {
+          wasm,
+          wasmExecContent: isNode ? wasmExecContent.toString() : null,
+        },
+      });
+      return await ready;
+    } finally {
+      // The browser may still be loading the module when new Worker() returns.
+      releaseURL?.();
+    }
   }
 
   async sendMessage(type, data) {
@@ -112,12 +119,16 @@ export class D2 {
     });
   }
 
+  async format(source) {
+    return this.sendMessage("format", source);
+  }
+
   async compile(input, options = {}) {
-    const request =
-      typeof input === "string"
-        ? { fs: { index: input }, options }
-        : { ...input, options: { ...options, ...input.options } };
-    return this.sendMessage("compile", request);
+    return this.sendMessage("compile", compileRequest(input, options));
+  }
+
+  async renderSVG(input, options = {}) {
+    return this.sendMessage("renderSVG", compileRequest(input, options));
   }
 
   async render(diagram, options = {}) {

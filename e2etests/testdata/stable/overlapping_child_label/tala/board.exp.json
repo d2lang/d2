@@ -149,7 +149,7 @@
         "y": 260
       },
       "width": 270,
-      "height": 319,
+      "height": 301,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -203,7 +203,7 @@
       ],
       "pos": {
         "x": 365,
-        "y": 413
+        "y": 395
       },
       "width": 107,
       "height": 92,
@@ -263,7 +263,7 @@
         "y": 260
       },
       "width": 261,
-      "height": 350,
+      "height": 332,
       "opacity": 1,
       "strokeDash": 0,
       "strokeWidth": 2,
@@ -376,7 +376,7 @@
         "x": 0,
         "y": 0
       },
-      "width": 629,
+      "width": 611,
       "height": 240,
       "opacity": 1,
       "strokeDash": 0,
@@ -430,7 +430,7 @@
         "icon"
       ],
       "pos": {
-        "x": 153,
+        "x": 135,
         "y": 74
       },
       "width": 132,

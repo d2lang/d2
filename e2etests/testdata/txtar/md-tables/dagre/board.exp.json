@@ -941,6 +941,9 @@
       "zIndex": 0
     }
   ],
+  "explicitDefaultStrokeWidths": {
+    "financial": true
+  },
   "root": {
     "id": "",
     "type": "",

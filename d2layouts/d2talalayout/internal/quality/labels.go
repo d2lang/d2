@@ -65,8 +65,6 @@ func scoreExistingLabelPlacements(g *layoutgraph.Graph, guard *limits.WorkGuard)
 				Width:   iconSize,
 				Height:  iconSize,
 			}
-			placedBoxes = append(placedBoxes, iconBox)
-
 			nodeOverlaps, err := nodeOverlapCount(iconBox, g.Nodes, 0, guard)
 			if err != nil {
 				return 0, err
@@ -79,7 +77,8 @@ func scoreExistingLabelPlacements(g *layoutgraph.Graph, guard *limits.WorkGuard)
 			if err != nil {
 				return 0, err
 			}
-			totalScore += scoreNodeLabelOverlaps(nodeOverlaps, edgeOverlaps, labelOverlaps-1)
+			totalScore += scoreNodeLabelOverlaps(nodeOverlaps, edgeOverlaps, labelOverlaps)
+			placedBoxes = append(placedBoxes, iconBox)
 		}
 
 		if node.Label == nil {
@@ -229,7 +228,7 @@ func scoreExistingLabelPlacements(g *layoutgraph.Graph, guard *limits.WorkGuard)
 			return 0, err
 		}
 
-		totalScore += scoreEdgeLabelOverlaps(
+		totalScore += labeling.ScoreEdgeLabelOverlaps(
 			edgeLabelBox.Width*edgeLabelBox.Height,
 			ancestorOverlapArea+nonAncestorOverlapArea,
 			0,
@@ -400,19 +399,6 @@ func closedIntervalsOverlap(firstStart, firstEnd, secondStart, secondEnd float64
 
 func scoreNodeLabelOverlaps(nodeOverlaps, edgeOverlaps, labelOverlaps int) float64 {
 	return float64(nodeOverlaps + edgeOverlaps + 2*labelOverlaps)
-}
-
-func scoreEdgeLabelOverlaps(
-	labelArea, nodeOverlapArea float64,
-	nodeOverlapCount, edgeOverlapCount, almostLabelOverlapCount, labelOverlapCount, sharedSegmentOverlapCount int,
-) float64 {
-	score := nodeOverlapArea / labelArea * 2
-	score += float64(labelOverlapCount) * 10
-	score += float64(almostLabelOverlapCount)
-	score += float64(nodeOverlapCount) * 2
-	score += float64(edgeOverlapCount) * 2
-	score += float64(sharedSegmentOverlapCount)
-	return score
 }
 
 func findSharedSegments(edges []*layoutgraph.Edge, guard *limits.WorkGuard) ([]*geo.Segment, error) {

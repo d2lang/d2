@@ -48,12 +48,12 @@ func TestSiftingDoesNotIncreaseCrossings(t *testing.T) {
 		for _, node := range queue {
 			siblings := nodeToSiblings[node]
 			segments := scratch.crossLevelSegments(siblings, true, true)
-			before := countCrossings(segments)
+			before := scratch.countCrossings(segments)
 			sawCrossing = sawCrossing || before > 0
 			if err := sifting(node, siblings, byLevel, improveIfEqual, &scratch); err != nil {
 				t.Fatal(err)
 			}
-			after := countCrossings(scratch.crossLevelSegments(siblings, true, true))
+			after := scratch.countCrossings(scratch.crossLevelSegments(siblings, true, true))
 			if after > before {
 				t.Fatalf("sifting node %s increased crossings from %d to %d", node.graphNode.DebugID(), before, after)
 			}
@@ -62,4 +62,41 @@ func TestSiftingDoesNotIncreaseCrossings(t *testing.T) {
 			t.Fatal("sifting fixture did not exercise a crossing")
 		}
 	}
+}
+
+func TestSiftingRetainsShorterOrderAtEqualCrossings(t *testing.T) {
+	graph := flowRuleGraph(7, [][2]int{
+		{0, 2}, {0, 3}, {0, 4}, {1, 2}, {1, 4}, {2, 6}, {3, 5}, {3, 6}, {4, 5},
+	})
+	levels := []int{0, 0, 1, 1, 1, 2, 2}
+	h := layoutgraph.NewHierarchy()
+	for i, node := range graph.Nodes {
+		node.Hierarchy = h
+		h.Levels()[node] = levels[i]
+	}
+	nodes := createPlacementNodes(graph, graph.Nodes, nil)
+	connectPlacementNodes(graph, nodes)
+	rows := groupPlacementNodesByLevel(nodes)
+	initializeRanks(rows)
+	minimizeHierarchyCrossings(rows)
+	var scratch crossingScratch
+	score := func() (int64, float64) {
+		var crossings int64
+		var length float64
+		for level := 0; level < len(rows)-1; level++ {
+			segments := scratch.crossLevelSegments(rows[level], false, true)
+			crossings += scratch.countCrossings(segments)
+			length += addLengths(segments)
+		}
+		return crossings, length
+	}
+	beforeCrossings, beforeLength := score()
+	if err := globalSifting(rows); err != nil {
+		t.Fatal(err)
+	}
+	afterCrossings, afterLength := score()
+	if beforeCrossings != 2 || afterCrossings != beforeCrossings || afterLength > beforeLength+crossingComparisonPrecision {
+		t.Fatalf("score went from (%d crossings, %.5f) to (%d crossings, %.5f)", beforeCrossings, beforeLength, afterCrossings, afterLength)
+	}
+	t.Logf("sifting: (%d crossings, %.5f) to (%d crossings, %.5f)", beforeCrossings, beforeLength, afterCrossings, afterLength)
 }

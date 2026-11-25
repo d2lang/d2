@@ -38,6 +38,43 @@ func TestPNGFixtures(t *testing.T) {
 	}
 }
 
+func TestLatexGradientFontColor(t *testing.T) {
+	t.Parallel()
+
+	const diagram = `x: |latex
+  x + \textcolor{red}{y}
+| {
+  shape: rectangle
+  style.stroke: black
+  style.font-color: "%s"
+}
+x -> y: |latex
+  z
+| {style.font-color: "%s"}
+`
+	inputs := t.TempDir()
+	writeFile(t, inputs, "gradient.d2", fmt.Sprintf(diagram, "linear-gradient(to right, #008855 25%, blue)", "radial-gradient(circle, #993366, white)"))
+	writeFile(t, inputs, "solid.d2", fmt.Sprintf(diagram, "#008855", "#993366"))
+	gradient := filepath.Join(inputs, "gradient.d2")
+
+	t.Run("SVG", func(t *testing.T) {
+		svg := runRasterCLI(t, t.TempDir(), gradient, "labels.svg")
+		for _, attr := range []string{` color="#008855"`, ` color="#993366"`, ` fill="red"`} {
+			if !bytes.Contains(svg, []byte(attr)) {
+				t.Errorf("LaTeX label missing SVG attribute %s", attr)
+			}
+		}
+	})
+	t.Run("PNG", func(t *testing.T) {
+		dir := t.TempDir()
+		want := runRasterCLI(t, dir, filepath.Join(inputs, "solid.d2"), "solid.png")
+		got := runRasterCLI(t, dir, gradient, "gradient.png")
+		if report, err := compareRasterImage(want, got, "solid font colors", "gradient font colors", "", "latex-gradient"); err != nil {
+			t.Fatalf("LaTeX gradient labels differ from their first stops: %v; report: %s", err, report)
+		}
+	})
+}
+
 func TestGIFFixtures(t *testing.T) {
 	t.Parallel()
 

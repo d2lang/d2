@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -405,20 +406,7 @@ func TestInlineRemoteCompressedSVG(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			match := imageRegex.FindSubmatch(out)
-			if len(match) != 2 {
-				t.Fatalf("expected bundled image href, got %s", out)
-			}
-			const prefix = `data:image/svg+xml;base64,`
-			href := string(match[1])
-			if !strings.HasPrefix(href, prefix) {
-				t.Fatalf("expected normalized SVG data URI, got %s", href)
-			}
-			decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(href, prefix))
-			if err != nil {
-				t.Fatal(err)
-			}
-			tassert.Equal(t, rawSVG, decoded)
+			assertBundledImage(t, out, "image/svg+xml", rawSVG)
 		})
 	}
 }
@@ -480,13 +468,12 @@ func TestInlineRemoteContentTypeIsSafeAndCanonical(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantHref := "data:" + tc.wantType + ";base64," + base64.StdEncoding.EncodeToString(tc.body)
-			assertBundledImageHref(t, out, wantHref)
+			assertBundledImage(t, out, tc.wantType, tc.body)
 		})
 	}
 }
 
-func assertBundledImageHref(t *testing.T, source []byte, wantHref string) {
+func assertBundledImage(t *testing.T, source []byte, wantType string, want []byte) {
 	t.Helper()
 
 	decoder := xml.NewDecoder(bytes.NewReader(source))
@@ -508,13 +495,27 @@ func assertBundledImageHref(t *testing.T, source []byte, wantHref string) {
 			if strings.HasPrefix(strings.ToLower(attr.Name.Local), "on") {
 				t.Fatalf("bundled image contains event handler %q: %s", attr.Name.Local, source)
 			}
-			if attr.Name.Local == "href" && attr.Value == wantHref {
-				found = true
+			if attr.Name.Local != "href" {
+				continue
 			}
+			metadata, payload, _ := strings.Cut(attr.Value, ",")
+			var decoded []byte
+			switch metadata {
+			case "data:" + wantType + ";base64":
+				decoded, err = base64.StdEncoding.DecodeString(payload)
+			case "data:" + wantType:
+				var raw string
+				raw, err = url.PathUnescape(payload)
+				decoded = []byte(raw)
+			}
+			if err != nil || !bytes.Equal(decoded, want) {
+				t.Fatalf("unexpected image data URI: %q (%v)", attr.Value, err)
+			}
+			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("bundled SVG does not contain href %q: %s", wantHref, source)
+		t.Fatalf("bundled SVG does not contain an image href: %s", source)
 	}
 }
 

@@ -9,42 +9,34 @@ type shapeCylinder struct {
 	shapeSquare
 }
 
-func (s shapeCylinder) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeCylinder) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.InsideMiddleCenter:  {},
-			label.OutsideBottomCenter: {},
-		}
+		return 1<<label.OutsideTopCenter |
+			1<<label.InsideMiddleCenter |
+			1<<label.OutsideBottomCenter
 	case OK:
-		return map[label.Position]struct{}{
-			label.InsideTopCenter:    {},
-			label.InsideBottomCenter: {},
-			label.InsideMiddleLeft:   {},
-			label.OutsideTopRight:    {},
-			label.OutsideBottomRight: {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideRightMiddle: {},
-			label.OutsideTopLeft:     {},
-			label.OutsideBottomLeft:  {},
-			label.InsideTopLeft:      {},
-			label.InsideBottomLeft:   {},
-			label.InsideMiddleRight:  {},
-			label.InsideTopRight:     {},
-			label.InsideBottomRight:  {},
-		}
+		return 1<<label.InsideTopCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.InsideMiddleLeft |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideBottomRight |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideTopLeft |
+			1<<label.OutsideBottomLeft |
+			1<<label.InsideTopLeft |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.InsideTopRight |
+			1<<label.InsideBottomRight
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideLeftTop:     {},
-			label.OutsideRightTop:    {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
-	case Bad:
-		return map[label.Position]struct{}{}
+		return 1<<label.OutsideLeftTop |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightBottom
 	}
-	return map[label.Position]struct{}{}
+	return 0
 }
 
 func (s shapeCylinder) SnapPointPercentages() [][]*geo.RelativePoint {

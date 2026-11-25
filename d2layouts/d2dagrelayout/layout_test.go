@@ -15,6 +15,22 @@ import (
 	"github.com/d2lang/util-go/go2"
 )
 
+func TestDagreSpacingData(t *testing.T) {
+	for _, raw := range []any{0, "0", int64(0), float64(0)} {
+		got, err := diagramSpacing(map[string]any{"dagre-edgesep": raw}, "dagre-edgesep", 20)
+		if err != nil || got != 0 {
+			t.Errorf("diagramSpacing(%#v) = %d, %v; want zero", raw, got, err)
+		}
+	}
+	for _, raw := range []any{"-1", 1.5, "many", nil, "18446744073709551616", []any{"40"}} {
+		g := d2graph.NewGraph()
+		g.Data = map[string]any{"dagre-nodesep": raw}
+		if err := DefaultLayout(context.Background(), g); err == nil || !strings.Contains(err.Error(), "dagre-nodesep") {
+			t.Errorf("DefaultLayout with %#v: got %v, want a dagre-nodesep error", raw, err)
+		}
+	}
+}
+
 func TestLayoutRejectsDenseGraphBeforeDagre(t *testing.T) {
 	t.Parallel()
 	g := d2graph.NewGraph()
@@ -248,7 +264,9 @@ a.e -> f
 	if err != nil {
 		t.Fatal(err)
 	}
-	index := newCrossRankIndex(g)
+	ix := newObjectIndex(g)
+	ix.closeOver()
+	index := newCrossRankIndex(ix)
 	objects := append([]*d2graph.Object{g.Root}, g.Objects...)
 	for _, obj := range objects {
 		var wantEdges []*d2graph.Edge
@@ -257,12 +275,16 @@ a.e -> f
 				wantEdges = append(wantEdges, edge)
 			}
 		}
-		gotEdges := index.incident[obj]
+		k, ok := ix.lookup(obj)
+		if !ok {
+			t.Fatalf("%s has no index", obj.AbsID())
+		}
+		gotEdges := index.incident(k)
 		if len(gotEdges) != len(wantEdges) {
 			t.Fatalf("incident edge count for %s = %d, want %d", obj.AbsID(), len(gotEdges), len(wantEdges))
 		}
 		for edgeIndex := range wantEdges {
-			if gotEdges[edgeIndex] != wantEdges[edgeIndex] {
+			if g.Edges[gotEdges[edgeIndex]] != wantEdges[edgeIndex] {
 				t.Fatalf("incident edge %d for %s is out of order", edgeIndex, obj.AbsID())
 			}
 		}

@@ -15,7 +15,6 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
 
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/d2/lib/shape"
 )
 
 // Map pools for reducing allocations in hot paths
@@ -44,30 +43,45 @@ func returnPortMap(m map[geo.Point]bool) {
 edge is already in some route or if it intersects with other routes.
 */
 type ovgEdgeRouter struct {
-	flavor            RouteGenerationFlavor
-	graph             *layoutgraph.Graph
-	ovg               *OVG
-	edges             []*layoutgraph.Edge
-	routes            []*Route
-	routedEdges       []*layoutgraph.Edge
-	positionedLabels  []labeling.PositionedArrowheadLabel
+	flavor           RouteGenerationFlavor
+	graph            *layoutgraph.Graph
+	ovg              *OVG
+	edges            []*layoutgraph.Edge
+	routes           []*Route
+	routedEdges      []*layoutgraph.Edge
+	positionedLabels []labeling.PositionedArrowheadLabel
+	// Routes through each point: by point class (classSlot holds 1+ the
+	// index into classRoutes, 0 for none) for points of OVG nodes, else in
+	// pointToRoute. See route_search_index.go.
+	classes           *ovgPointClasses
+	classSlot         []int32
+	classRoutes       [][]*Route
 	pointToRoute      map[geo.Point][]*Route
+	edgeFlags         []uint8
 	turnCost          float64
 	crossingCost      float64
 	nonCenterPortCost float64
 	edgeSet           *ovgEdgeSet
+	crossings         *ovgCrossingIndex
 	hasNearbyEdge     map[*OVGEdge]struct{}
 	overlappingRoutes map[*OVGEdge][]*Route
 	fixedOverlaps     map[*layoutgraph.Node]struct{}
 	fixedOverlapsSet  bool
+	// Search state, indexed by OVGNode.Index. The slices are carved from
+	// scratch (pooled across routing calls, see route_search_scratch.go)
+	// exactly where they used to be allocated, so their lengths, and every
+	// decision and charge that depends on them, are unchanged.
 	verticalHops      []*OVGNode
 	horizontalHops    []*OVGNode
 	nodeContext       []*searchNodeContext
 	nodeContextValues []searchNodeContext
-	searchQueue       priorityQueue
+	touchedNodes      []int
+	routeDirections   map[*Route]routeDirectionIndex
+	scratch           *routeSearchScratch
 	// Usually, edge routing occurs before label placement. When the router is used
 	// independently, labels are already placed and the edges should move out of the way.
 	considerNodeLabels bool
+	labelBoxes         *routeLabelBoxes
 	work               *routeSearchWorkGuard
 }
 
@@ -99,22 +113,22 @@ func (router *ovgEdgeRouter) bindWork(ctx context.Context) error {
 	return router.work.bind(ctx)
 }
 
-func newOVGEdgeRouterWithWorkLimit(
-	ctx context.Context,
-	flavor RouteGenerationFlavor,
+// newSharingOVGEdgeRouter consumes one flavor's guard and shares the OVG
+// indexes with other flavors when shared is supplied.
+func newSharingOVGEdgeRouter(
+	guard *routeSearchWorkGuard,
 	ovg *OVG,
 	g *layoutgraph.Graph,
 	existingRoutes []*Route,
 	edges []*layoutgraph.Edge,
-	workLimit uint64,
+	shared *ovgRouterShared,
 ) (_ *ovgEdgeRouter, err error) {
-	guard, err := newRouteSearchWorkGuard(ctx, flavor, workLimit)
-	if err != nil {
-		return nil, err
-	}
+	flavor := guard.flavor
 	defer func() {
 		if err != nil {
-			_ = guard.finish()
+			if chargeErr := guard.finish(); chargeErr != nil {
+				err = chargeErr
+			}
 		}
 	}()
 	if err := guard.add(uint64(len(edges))); err != nil {
@@ -171,6 +185,15 @@ func newOVGEdgeRouterWithWorkLimit(
 		overlappingRoutes: make(map[*OVGEdge][]*Route),
 		work:              guard,
 	}
+
+	router.crossings, err = newSharedOVGCrossingIndex(ovg, shared, guard)
+	if err != nil {
+		return nil, err
+	}
+	router.edgeFlags = make([]uint8, len(router.crossings.edges))
+	router.classes = pointClassesFor(ovg, shared)
+	router.classSlot = make([]int32, len(router.classes.classOf))
+	router.routeDirections = make(map[*Route]routeDirectionIndex)
 
 	for _, route := range existingRoutes {
 		if err := guard.step(); err != nil {
@@ -357,7 +380,7 @@ func (router *ovgEdgeRouter) generateRoutes(ctx context.Context, straightLineFal
 	}
 	resp.work = router.work
 	defer func() {
-		if err := router.work.finish(); resp.Err == nil && err != nil {
+		if err := router.work.finish(); err != nil {
 			resp.Err = err
 			resp.Routes = nil
 		}
@@ -375,7 +398,7 @@ func (router *ovgEdgeRouter) generateRoutes(ctx context.Context, straightLineFal
 
 		ovgNodes, distance, err = router.slingshot(ctx, edge)
 		if err != nil {
-			if straightLineFallback {
+			if straightLineFallback && !errors.Is(err, errRouteStageWorkLimit) && !isContextTermination(err) {
 				ovgNodes, distance, err = router.routeLine(ctx, edge)
 			}
 			if err != nil {
@@ -385,7 +408,7 @@ func (router *ovgEdgeRouter) generateRoutes(ctx context.Context, straightLineFal
 		}
 		if len(ovgNodes) <= 1 {
 			ovgNodes, distance, err = router.search(ctx, edge)
-			if isContextTermination(err) {
+			if isContextTermination(err) || errors.Is(err, errRouteStageWorkLimit) {
 				resp.Err = err
 				return resp
 			}
@@ -481,7 +504,7 @@ func (router *ovgEdgeRouter) usedPorts(
 			return nil, nil, nil, nil, nil, nil, err
 		}
 		// we might process the same route, but since it's just assigning to maps, it's fine
-		for _, route := range router.pointToRoute[*node.Point] {
+		for _, route := range router.routesAtNode(node) {
 			if err := router.work.step(); err != nil {
 				return nil, nil, nil, nil, nil, nil, err
 			}
@@ -567,54 +590,24 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 	target := g.Centers[gTarget]
 	var routePoints [2]*geo.Point
 
-	// Preallocate needed data structures with appropriate capacity
-	nodeCount := len(router.ovg.Nodes)
-	// Account zeroing the three node-indexed arrays before allocating them.
-	if err := router.work.reserveProduct(uint64(nodeCount), 3); err != nil {
-		return nil, 0, err
-	}
-
 	// Get maps from pool to reduce allocations
 	fromFacingPorts := borrowPortMap()
 	defer returnPortMap(fromFacingPorts)
 	toFacingPorts := borrowPortMap()
 	defer returnPortMap(toFacingPorts)
 
-	// Arrays for tracking state during path finding
-	if cap(router.verticalHops) < nodeCount {
-		router.verticalHops = make([]*OVGNode, nodeCount)
-	} else {
-		router.verticalHops = router.verticalHops[:nodeCount]
-		clear(router.verticalHops)
-	}
-	if cap(router.horizontalHops) < nodeCount {
-		router.horizontalHops = make([]*OVGNode, nodeCount)
-	} else {
-		router.horizontalHops = router.horizontalHops[:nodeCount]
-		clear(router.horizontalHops)
-	}
-	if cap(router.nodeContext) < nodeCount {
-		router.nodeContext = make([]*searchNodeContext, nodeCount)
-	} else {
-		router.nodeContext = router.nodeContext[:nodeCount]
-		clear(router.nodeContext)
-	}
-	if cap(router.nodeContextValues) < nodeCount {
-		router.nodeContextValues = make([]searchNodeContext, nodeCount)
-	} else {
-		router.nodeContextValues = router.nodeContextValues[:nodeCount]
-	}
-	verticalHops := router.verticalHops
-	horizontalHops := router.horizontalHops
-	nodeContext := router.nodeContext
-
 	// Pre-allocate slices for temp storage with reasonable capacity
 	occupiedEdges := make([]*layoutgraph.Edge, 0, 32)
 	overlappingEdges := make([]*layoutgraph.Edge, 0, 32)
-	nodeLabelBoxes := make([]*layoutgraph.Node, 0, 32)
 
-	// Fill nodeLabelBoxes if we need to consider node labels
+	// When node labels are obstacles, every labelled node other than the
+	// edge's endpoints contributes one label box. The boxes and their
+	// per-edge intersections are cached on the router (see routeLabelBoxes).
+	nodeLabelBoxCount := 0
 	if router.considerNodeLabels {
+		if router.labelBoxes == nil {
+			router.labelBoxes = newRouteLabelBoxes(originalGraph.Nodes, g.Edges)
+		}
 		for _, n := range originalGraph.Nodes {
 			if err := router.work.step(); err != nil {
 				return nil, 0, err
@@ -623,17 +616,7 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 				continue
 			}
 			if n.Label != nil && n.Label.Text != "" {
-				fakeLabelNode := &layoutgraph.Node{
-					Box: geo.Box{
-						TopLeft: n.LabelTopLeft(n.Label.Position, n.Label.Width, n.Label.Height),
-						Width:   n.Label.Width,
-						Height:  n.Label.Height,
-					},
-					D2ID:  new(n.Label.Text),
-					Graph: originalGraph,
-				}
-				fakeLabelNode.SetShape(shape.SQUARE_TYPE)
-				nodeLabelBoxes = append(nodeLabelBoxes, fakeLabelNode)
+				nodeLabelBoxCount++
 			}
 		}
 	}
@@ -656,6 +639,27 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 	if quickRoute != nil {
 		return quickRoute, distance, nil
 	}
+
+	// Quick routes need no search scratch. For the next search, clear only
+	// states reached by the previous edge on this visibility graph.
+	nodeCount := len(g.Nodes)
+	if len(router.nodeContext) != nodeCount {
+		if err := router.work.reserveProduct(uint64(nodeCount), 4); err != nil {
+			return nil, 0, err
+		}
+		router.carveSearchState(nodeCount)
+	} else {
+		if err := router.work.reserveProduct(uint64(len(router.touchedNodes)), 3); err != nil {
+			return nil, 0, err
+		}
+		for _, i := range router.touchedNodes {
+			router.verticalHops[i] = nil
+			router.horizontalHops[i] = nil
+			router.nodeContext[i] = nil
+		}
+	}
+	router.touchedNodes = router.touchedNodes[:0]
+	verticalHops, horizontalHops, nodeContext := router.verticalHops, router.horizontalHops, router.nodeContext
 
 	var nonAncestors layoutgraph.Nodes
 	if gEdge.SourceArrowheadLabel != nil || gEdge.TargetArrowheadLabel != nil {
@@ -828,11 +832,12 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 		horizontalDistance: math.Inf(1),
 	}
 	nodeContext[source.Index] = sourceContext
+	router.touchedNodes = append(router.touchedNodes, source.Index)
 
 	// Priority queue storage is reusable because a flavor routes its edges
 	// sequentially.
-	router.searchQueue.reset()
-	pq := &router.searchQueue
+	pq := &router.searchScratch().queue
+	pq.reset()
 
 	// Each node can be visited twice -- once from each direction. Seed the
 	// vertical state first to make the equal-cost source preference explicit.
@@ -884,7 +889,7 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 		// Reset occupiedEdges array for reuse
 		occupiedEdges = occupiedEdges[:0]
 		if (leastDistanceNode != source) && (leastDistanceNode != target) {
-			pointRoutes := router.pointToRoute[*leastDistanceNode.Point]
+			pointRoutes := router.routesAtNode(leastDistanceNode)
 			for _, route := range pointRoutes {
 				if err := router.work.step(); err != nil {
 					return nil, 0, err
@@ -906,6 +911,19 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 			adjacentNode := leastDistanceNode.Adjacent(e)
 			if adjacentNode == lastNode {
 				continue
+			}
+
+			// Every traversal cost is nonnegative. An arrival that already
+			// costs at least as much as this neighbor's best arrival on the
+			// same axis cannot improve it, even before checking penalties.
+			if known := nodeContext[adjacentNode.Index]; known != nil {
+				best := known.verticalDistance
+				if adjacentNode.Y == leastDistanceNode.Y {
+					best = known.horizontalDistance
+				}
+				if leastDistance >= best {
+					continue
+				}
 			}
 
 			// Prevent exiting source port node at weird angles
@@ -1097,42 +1115,35 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 				overlappingEdges = overlappingEdges[:0]
 				isProhibitedSharing := false
 
-				if (leastDistanceNode != source) && (leastDistanceNode != target) {
-					routesOnEdge := router.overlappingRoutes[e]
-					for _, route := range routesOnEdge {
-						if err := router.work.reserveProduct(uint64(len(route.OVGNodes))+1, 2); err != nil {
+				if leastDistanceNode != source && leastDistanceNode != target {
+					routes := router.overlappingRoutesOf(e)
+					for _, route := range routes {
+						if err := router.work.step(); err != nil {
 							return nil, 0, err
 						}
 						overlappingEdges = append(overlappingEdges, route.GEdge)
-						if gEdge.IsDirected() && route.isOpposingColinear(leastDistanceNode, adjacentNode) {
-							isProhibitedSharing = true
-							break
-						}
-						if adjacentNode.IsTunnel {
-							// A tunnel route cannot overlap an entirely other route
-							if route.isEntireColinear(adjacentNode, leastDistanceNode) || route.isEntireColinear(leastDistanceNode, adjacentNode) {
-								isProhibitedSharing = true
-								break
-							}
-						}
 					}
-				}
-
-				if !isProhibitedSharing {
 					canOverlap, err := edgeCanOverlapEdgesGuarded(gEdge, overlappingEdges, sourceClusterNodes, targetClusterNodes, router.work)
 					if err != nil {
 						return nil, 0, err
 					}
-					isProhibitedSharing = len(overlappingEdges) > 0 && !canOverlap
+					// Only a shareable edge needs the more expensive geometric checks.
+					isProhibitedSharing = !canOverlap
+					if canOverlap {
+						isProhibitedSharing, err = router.routesBlockTraversal(routes, leastDistanceNode, adjacentNode, gEdge.IsDirected())
+						if err != nil {
+							return nil, 0, err
+						}
+					}
 				}
 
 				isAdjacentNodeOnRoute := false
 				if !isProhibitedSharing && (leastDistanceNode != source) && (leastDistanceNode != target) {
-					isAdjacentNodeOnRoute = len(router.pointToRoute[*adjacentNode.Point]) > 0
+					isAdjacentNodeOnRoute = len(router.routesAtNode(adjacentNode)) > 0
 				}
 
 				if !isProhibitedSharing && !isOnNodeOfRoute && !isAdjacentNodeOnRoute && (leastDistanceNode != source) {
-					if _, has := router.hasNearbyEdge[e]; has {
+					if router.isNearbyEdge(e) {
 						isProhibitedSharing = true
 					}
 				}
@@ -1161,10 +1172,10 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 						//       |
 						//       |
 						//       +
-						isCrossing, err = router.edgeSet.intersectsWithGuarded(e, router.work)
-						if err != nil {
+						if err := router.work.step(); err != nil {
 							return nil, 0, err
 						}
+						isCrossing = router.crossings.isCrossed(e)
 					}
 
 					if isCrossing {
@@ -1184,13 +1195,16 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 				}
 			}
 
-			// Check intersection with node label boxes
-			for _, labelBox := range nodeLabelBoxes {
-				if err := router.work.step(); err != nil {
+			// Check intersection with node label boxes: one step per box and one
+			// turn cost per intersected box, added one at a time as before.
+			if nodeLabelBoxCount > 0 {
+				if err := router.work.stepN(nodeLabelBoxCount); err != nil {
 					return nil, 0, err
 				}
-				if segmentIntersectsBox(e.From.Point, e.To.Point, &labelBox.Box) {
-					nextDistance += router.turnCost
+				for _, hit := range router.labelBoxes.hitsFor(e) {
+					if n := router.labelBoxes.nodes[hit]; n != gSource && n != gTarget {
+						nextDistance += router.turnCost
+					}
 				}
 			}
 
@@ -1296,6 +1310,7 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 					horizontalDistance: math.Inf(1),
 				}
 				nodeContext[adjacentNode.Index] = adjacentContext
+				router.touchedNodes = append(router.touchedNodes, adjacentNode.Index)
 			}
 
 			// Horizontal path
@@ -1370,6 +1385,32 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 	return nil, 0, fmt.Errorf("path not found for '%s'. Queue is empty", gEdge.DebugID())
 }
 
+func (router *ovgEdgeRouter) routesBlockTraversal(routes []*Route, from, to *OVGNode, directed bool) (bool, error) {
+	if !directed && !to.IsTunnel {
+		return false, nil
+	}
+	for _, route := range routes {
+		if err := router.work.step(); err != nil {
+			return false, err
+		}
+		if directed && route.GEdge.IsDirected() {
+			opposing, err := router.hasOpposingSegment(route, from, to)
+			if err != nil || opposing {
+				return opposing, err
+			}
+		}
+		if to.IsTunnel {
+			if err := router.work.add(uint64(len(route.OVGNodes))); err != nil {
+				return false, err
+			}
+			if route.isEntireColinear(from, to) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // If two non-diagonal nodes are below (MinRouteNodeClearance+1) * 2 from each other and connected, there won't be a direct path, and it'll take a roundabout path which can block other paths.
 // To alleviate this, we directly connect fromFacingPort to toFacingPort, no need to search
 func (router *ovgEdgeRouter) quickRoute(ctx context.Context, gEdge *layoutgraph.Edge, overlap bool, fromOrientation geo.Orientation) ([]*OVGNode, float64, error) {
@@ -1385,7 +1426,9 @@ func (router *ovgEdgeRouter) quickRoute(ctx context.Context, gEdge *layoutgraph.
 	gTarget := gEdge.To
 	source := g.Centers[gSource]
 	target := g.Centers[gTarget]
-	if !overlap && !fromOrientation.IsDiagonal() && gSource.DistanceTo(gTarget, true) < 2*(layoutgraph.MinRouteNodeClearance+1) && (gSource.DistanceTo(gTarget, true) > layoutgraph.MinArrowheadClearance) {
+	// The shortcut considers every facing port. A column-bound SQL edge
+	// must use the specified row even when another port is directly across.
+	if !gEdge.HasTableColumn() && !overlap && !fromOrientation.IsDiagonal() && gSource.DistanceTo(gTarget, true) < 2*(layoutgraph.MinRouteNodeClearance+1) && (gSource.DistanceTo(gTarget, true) > layoutgraph.MinArrowheadClearance) {
 		edges := make([]*layoutgraph.Edge, 0)
 		for _, route := range router.routes {
 			if err := router.work.add(uint64(len(route.OVGNodes)) + 1); err != nil {
@@ -1393,6 +1436,8 @@ func (router *ovgEdgeRouter) quickRoute(ctx context.Context, gEdge *layoutgraph.
 			}
 			edge := layoutgraph.NewEdge(route.GEdge.From, route.GEdge.To)
 			edge.Points = route.createSegmentEndpoints()
+			edge.ReversedForLayout = route.GEdge.ReversedForLayout
+			edge.Style.StrokeWidth = route.GEdge.Style.StrokeWidth
 			edge.SourceArrowhead = route.GEdge.SourceArrowhead
 			edge.TargetArrowhead = route.GEdge.TargetArrowhead
 			edge.SourceArrowheadLabel = route.GEdge.SourceArrowheadLabel
@@ -1636,11 +1681,11 @@ func (router *ovgEdgeRouter) findOverlappingRoutes(start, end *OVGNode) ([]*Rout
 		if err := router.work.step(); err != nil {
 			return nil, err
 		}
-		for _, rf := range router.pointToRoute[*overlapping.From.Point] {
+		for _, rf := range router.routesAtNode(overlapping.From) {
 			if err := router.work.step(); err != nil {
 				return nil, err
 			}
-			for _, rt := range router.pointToRoute[*overlapping.To.Point] {
+			for _, rt := range router.routesAtNode(overlapping.To) {
 				if err := router.work.step(); err != nil {
 					return nil, err
 				}
@@ -1697,13 +1742,20 @@ func (router *ovgEdgeRouter) addRoute(route *Route) error {
 			return err
 		}
 		start := route.OVGNodes[i]
-		router.pointToRoute[*start.Point] = append(router.pointToRoute[*start.Point], route)
+		router.addRouteAtPoint(*start.Point, route)
 
 		if i > 0 && i < len(route.OVGNodes)-2 {
 			// only keep edges of the OVG path, ignore edges from port to center
 			end := route.OVGNodes[i+1]
-			if err := router.edgeSet.addGuarded(NewOVGEdge(start, end), router.work); err != nil {
+			segment := NewOVGEdge(start, end)
+			before := len(router.edgeSet.edges)
+			if err := router.edgeSet.addGuarded(segment, router.work); err != nil {
 				return err
+			}
+			if before < len(router.edgeSet.edges) {
+				if err := router.crossings.add(segment, router.work); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -1715,65 +1767,26 @@ func (router *ovgEdgeRouter) addRoute(route *Route) error {
 			}
 			routeNode := route.OVGNodes[i]
 			nextRouteNode := route.OVGNodes[i+1]
+			axis, a, b := routeNode.Y, routeNode.X, nextRouteNode.X
+			lines := router.crossings.horizontal
 			if routeNode.X == nextRouteNode.X {
-				// vertical
-				routeTop, routeBottom := routeNode.Y, nextRouteNode.Y
-				if routeBottom < routeTop {
-					routeTop, routeBottom = routeBottom, routeTop
+				axis, a, b = routeNode.X, routeNode.Y, nextRouteNode.Y
+				lines = router.crossings.vertical
+			}
+			// Keep the same fractional-coordinate proximity test at the range boundaries.
+			first := math.Nextafter(axis-pathNodeProximityFloor, math.Inf(-1))
+			last := math.Nextafter(axis+pathNodeProximityFloor, math.Inf(1))
+			err := lines.visit(first, last, min(a, b), max(a, b), router.work, func(coordinate float64, interval gridInterval) {
+				if math.Abs(coordinate-axis) > pathNodeProximityFloor {
+					return
 				}
-				// Route coordinates may be fractional, so scan the indexed axes rather
-				// than iterating integer coordinates around routeNode.X.
-				for x, ovgEdges := range router.ovg.VerticalEdges {
-					if err := router.work.step(); err != nil {
-						return err
-					}
-					if math.Abs(x-routeNode.X) > pathNodeProximityFloor {
-						continue
-					}
-					for _, ovgEdge := range ovgEdges {
-						if err := router.work.step(); err != nil {
-							return err
-						}
-						edgeTop, edgeBottom := ovgEdge.From.Y, ovgEdge.To.Y
-						if edgeBottom < edgeTop {
-							edgeTop, edgeBottom = edgeBottom, edgeTop
-						}
-						if !(edgeBottom < routeTop || routeBottom < edgeTop) {
-							router.hasNearbyEdge[ovgEdge] = struct{}{}
-							if x == routeNode.X {
-								router.overlappingRoutes[ovgEdge] = append(router.overlappingRoutes[ovgEdge], route)
-							}
-						}
-					}
+				router.markNearbyEdge(interval.edge)
+				if coordinate == axis {
+					router.addOverlappingRoute(interval.edge, route)
 				}
-			} else {
-				routeLeft, routeRight := routeNode.X, nextRouteNode.X
-				if routeRight < routeLeft {
-					routeLeft, routeRight = routeRight, routeLeft
-				}
-				for y, ovgEdges := range router.ovg.HorizontalEdges {
-					if err := router.work.step(); err != nil {
-						return err
-					}
-					if math.Abs(y-routeNode.Y) > pathNodeProximityFloor {
-						continue
-					}
-					for _, ovgEdge := range ovgEdges {
-						if err := router.work.step(); err != nil {
-							return err
-						}
-						edgeLeft, edgeRight := ovgEdge.From.X, ovgEdge.To.X
-						if edgeRight < edgeLeft {
-							edgeLeft, edgeRight = edgeRight, edgeLeft
-						}
-						if !(edgeRight < routeLeft || routeRight < edgeLeft) {
-							router.hasNearbyEdge[ovgEdge] = struct{}{}
-							if y == routeNode.Y {
-								router.overlappingRoutes[ovgEdge] = append(router.overlappingRoutes[ovgEdge], route)
-							}
-						}
-					}
-				}
+			})
+			if err != nil {
+				return err
 			}
 		}
 	}

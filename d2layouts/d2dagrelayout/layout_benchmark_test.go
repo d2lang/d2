@@ -57,17 +57,17 @@ func benchmarkCrossRankSource(nodes int) string {
 	return out.String()
 }
 
-func prepareBenchmarkGraph(b *testing.B, input string, ruler *textmeasure.Ruler) *d2graph.Graph {
-	b.Helper()
+func prepareBenchmarkGraph(tb testing.TB, input string, ruler *textmeasure.Ruler) *d2graph.Graph {
+	tb.Helper()
 	g, _, err := d2compiler.Compile("index.d2", strings.NewReader(input), nil)
 	if err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := g.ApplyTheme(d2themescatalog.NeutralDefault.ID); err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
 	return g
 }
@@ -122,7 +122,9 @@ func BenchmarkAdjustCrossRankSpacing(b *testing.B) {
 					edge.Route = []*geo.Point{edge.Src.Center(), edge.Dst.Center()}
 				}
 				b.StartTimer()
-				adjustCrossRankSpacing(g, MIN_RANK_SEP, true)
+				ix := newObjectIndex(g)
+				ix.closeOver()
+				adjustCrossRankSpacing(g, ix, MIN_RANK_SEP, true)
 				benchmarkGraphSink = g
 			}
 		})

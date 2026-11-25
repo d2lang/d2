@@ -19,7 +19,7 @@ const markdownCardPaperDepth = .035
 func nativePlainMarkdownCard(n d2isometric.Node) bool {
 	s := n.Metadata.Original
 	return nativeMarkdownCard(n) && nativePaint(n.Fill, "transparent").A == 0 && !n.StrokeExplicit &&
-		n.StrokeWidth == 2 && n.StrokeDash == 0 && s.BorderRadius == 0 &&
+		!n.Metadata.ExplicitDefaultStrokeWidth && n.RenderedStrokeWidth() == d2target.DEFAULT_SHAPE_STROKE_WIDTH && n.StrokeDash == 0 && s.BorderRadius == 0 &&
 		s.FillPattern == "" && !s.DoubleBorder && !s.Multiple && !s.ThreeDee
 }
 
@@ -30,14 +30,17 @@ func nativeMarkdownCardInset(n d2isometric.Node) float64 {
 // The default transparent Markdown face becomes paper. Nontransparent source
 // paints and authored linework retain their values; only the presentation copy
 // changes, leaving the rich document and its compiled placement untouched.
-func nativeMarkdownCardPaint(n d2isometric.Node) d2isometric.Node {
+func (b *meshBuilder) markdownCardPaint(n d2isometric.Node) d2isometric.Node {
 	if nativePaint(n.Fill, "transparent").A == 0 {
-		n.Fill = "#fffdf6"
+		n.Fill = b.palettePaper
+		if n.Fill == "" {
+			n.Fill = "#fffdf6"
+		}
 	}
 	n.FillExplicit = true
 	if !n.StrokeExplicit && (n.Metadata.Original.Stroke == "" || nativeToken(n.Metadata.Original.Stroke)) {
 		n.Stroke = "#304552"
-		if n.StrokeWidth == 2 {
+		if !n.Metadata.ExplicitDefaultStrokeWidth && n.RenderedStrokeWidth() == d2target.DEFAULT_SHAPE_STROKE_WIDTH {
 			n.StrokeWidth = 1
 		}
 		n.StrokeExplicit = true
@@ -62,7 +65,7 @@ func (b *meshBuilder) markdownCard(n d2isometric.Node, tint string) {
 		}()
 	}
 
-	paint := nativeMarkdownCardPaint(n)
+	paint := b.markdownCardPaint(n)
 	// Decorative borders and modifiers use the canonical source face rather
 	// than dropping a pattern, rounding, second outline or multiple offset.
 	if !nativePlainMarkdownCard(n) {
@@ -93,6 +96,6 @@ func (b *meshBuilder) markdownCardSlab(n d2isometric.Node, x0, z0, x1, z1, botto
 	ink.Type, ink.Fill, ink.Stroke, ink.StrokeWidth = d2target.ShapeRectangle, fill, stroke, 1
 	ink.StrokeExplicit = true
 	ink.Metadata.Original.Type, ink.Metadata.Original.Fill, ink.Metadata.Original.Stroke = ink.Type, fill, stroke
-	ink.Metadata.Original.StrokeWidth, ink.Metadata.Original.Label = 1, ""
+	ink.Metadata.Original.StrokeWidth, ink.Metadata.Original.StrokeWidthOffset, ink.Metadata.Original.Label = 1, 0, ""
 	b.classicInkEdges(ink, b.triangles[first:])
 }

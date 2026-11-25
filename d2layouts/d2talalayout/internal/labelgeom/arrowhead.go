@@ -16,8 +16,12 @@ func ArrowheadTopLeft(
 	isTarget bool,
 	sourceArrowhead, targetArrowhead string,
 	width, height float64,
+	strokeWidth *int,
 ) *geo.Point {
 	connection := d2target.BaseConnection()
+	if strokeWidth != nil {
+		connection.StrokeWidth = *strokeWidth
+	}
 	connection.Route = route
 	connection.SrcArrow = d2target.Arrowhead(sourceArrowhead)
 	connection.DstArrow = d2target.Arrowhead(targetArrowhead)

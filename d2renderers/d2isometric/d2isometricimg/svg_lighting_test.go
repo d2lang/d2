@@ -184,10 +184,46 @@ func TestSVGShadowUnionsEqualOpacityAndKeepsNearestCaster(t *testing.T) {
 		t.Fatal(w.err)
 	}
 	svg := w.buf.String()
-	if strings.Count(svg, `<path `) != 1 || !strings.Contains(svg, `opacity="0.055216"`) {
-		t.Fatalf("nearest half-strength caster should produce one union at .11*128/255: %s", svg)
+	if strings.Count(svg, `<path `) != 1 || !strings.Contains(svg, `opacity="0.501961"`) || strings.Count(svg, `<feGaussianBlur `) != 1 {
+		t.Fatalf("elevated half-strength caster should produce one far silhouette at 128/255: %s", svg)
 	}
 	if strings.Contains(svg, `<image`) || strings.Contains(svg, `data:image`) {
 		t.Fatal("vector shadow unexpectedly contains a bitmap")
+	}
+}
+
+func TestSVGTextureFilterSharing(t *testing.T) {
+	w := &nativeSVGWriter{ctx: context.Background()}
+	slope := [3]float64{.2, .4, .6}
+	intercept := [3]float64{.02, .04, .06}
+	w.textureLight(1, slope, intercept)
+	slope[2] = math.Nextafter(slope[2], 1)
+	if id := w.textureLight(2, slope, intercept); id != 1 {
+		t.Fatalf("same serialized lighting got filter %d", id)
+	}
+	intercept[1] += .1
+	if id := w.textureLight(3, slope, intercept); id != 3 {
+		t.Fatalf("different green intercept reused filter %d", id)
+	}
+	if got := strings.Count(w.buf.String(), "<filter "); got != 2 {
+		t.Fatalf("wrote %d filter definitions", got)
+	}
+}
+
+func TestSVGRepeatedLightingStopsUseOneDefinition(t *testing.T) {
+	w := &nativeSVGWriter{ctx: context.Background()}
+	g := svgLightingGradient{end: svgPoint{x: 1}, valid: true, stops: []svgGradientStop{{0, nv(0, 0, 0)}, {1, nv(1, 1, 1)}}}
+	writeSVGLightingGradient(w, g, "first")
+	g.end.x = 10
+	if paint := writeSVGLightingGradient(w, g, "second"); paint != "url(#second)" {
+		t.Fatalf("second paint = %q", paint)
+	}
+	before := w.buf.String()
+	if strings.Count(before, "<stop ") != 2 || !strings.Contains(before, `x2="10" y2="0" xlink:href="#first"/>`) {
+		t.Fatalf("expected shared stops and independent gradient coordinates: %s", before)
+	}
+	g.stops[1].color = nv(.001, .001, .001)
+	if paint := writeSVGLightingGradient(w, g, "solid"); paint != "#000000" || before != w.buf.String() {
+		t.Fatalf("uniform gradient paint = %q, output = %s", paint, w.buf.String())
 	}
 }

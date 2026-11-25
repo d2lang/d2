@@ -12,19 +12,17 @@ import (
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
-	"github.com/alecthomas/chroma/v2/styles"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
+	"github.com/d2lang/d2/d2renderers/internal/codestyle"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
 const (
-	lightCodeStyle             = "github"
-	darkCodeStyle              = "catppuccin-mocha"
 	maxCodeSourceBytes         = 1 << 20
 	maxCodeSourceRunes         = 100_000
 	maxCodeRawTokens           = 100_000
@@ -101,11 +99,11 @@ func (b *builder) buildCodeShape(targetShape d2target.Shape, stroke *d2scene.Str
 }
 
 func (b *builder) activeCodeStyle(object string) (*chroma.Style, error) {
-	styleName := lightCodeStyle
+	styleName := codestyle.Light
 	if b.theme.IsDark() {
-		styleName = darkCodeStyle
+		styleName = codestyle.Dark
 	}
-	codeStyle := styles.Get(styleName)
+	codeStyle := codestyle.Get(styleName)
 	if codeStyle == nil {
 		return nil, fmt.Errorf("scene: %s code snippet style %q not found", object, styleName)
 	}

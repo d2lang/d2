@@ -4,175 +4,61 @@ package d2fonts
 
 import (
 	"embed"
-	_ "embed"
-	"fmt"
+	"encoding/base64"
 	"strings"
 
-	"github.com/d2lang/d2/lib/compression"
 	"github.com/d2lang/d2/lib/syncmap"
 )
 
-// Compressed font data for WASM builds
-
-//go:embed encoded/SourceSansPro-Regular.txt.br
-var sourceSansProRegularBr []byte
-
-//go:embed encoded/SourceSansPro-Bold.txt.br
-var sourceSansProBoldBr []byte
-
-//go:embed encoded/SourceSansPro-Semibold.txt.br
-var sourceSansProSemiboldBr []byte
-
-//go:embed encoded/SourceSansPro-Italic.txt.br
-var sourceSansProItalicBr []byte
-
-//go:embed encoded/SourceCodePro-Regular.txt.br
-var sourceCodeProRegularBr []byte
-
-//go:embed encoded/SourceCodePro-Bold.txt.br
-var sourceCodeProBoldBr []byte
-
-//go:embed encoded/SourceCodePro-Semibold.txt.br
-var sourceCodeProSemiboldBr []byte
-
-//go:embed encoded/SourceCodePro-Italic.txt.br
-var sourceCodeProItalicBr []byte
-
-//go:embed encoded/FuzzyBubbles-Regular.txt.br
-var fuzzyBubblesRegularBr []byte
-
-//go:embed encoded/FuzzyBubbles-Bold.txt.br
-var fuzzyBubblesBoldBr []byte
-
-//go:embed ttf/*
+//go:embed ttf/*.ttf
 var fontFacesFS embed.FS
 
 func init() {
+	FontFaces = syncmap.New[Font, []byte]()
 	FontEncodings = syncmap.New[Font, string]()
 
-	// Decompress and register SourceSansPro fonts
-	if str, err := compression.DecompressBrotli(sourceSansProRegularBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress SourceSansPro-Regular: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: SourceSansPro, Style: FONT_STYLE_REGULAR}, str)
+	for _, face := range []struct {
+		filename string
+		family   FontFamily
+		style    FontStyle
+		woff     string
+	}{
+		{"SourceSansPro-Regular.ttf", SourceSansPro, FONT_STYLE_REGULAR, ""},
+		{"SourceSansPro-Bold.ttf", SourceSansPro, FONT_STYLE_BOLD, ""},
+		{"SourceSansPro-Semibold.ttf", SourceSansPro, FONT_STYLE_SEMIBOLD, sourceSansProSemiboldBase64},
+		{"SourceSansPro-Italic.ttf", SourceSansPro, FONT_STYLE_ITALIC, ""},
+		{"SourceCodePro-Regular.ttf", SourceCodePro, FONT_STYLE_REGULAR, ""},
+		{"SourceCodePro-Bold.ttf", SourceCodePro, FONT_STYLE_BOLD, sourceCodeProBoldBase64},
+		{"SourceCodePro-Semibold.ttf", SourceCodePro, FONT_STYLE_SEMIBOLD, sourceCodeProSemiboldBase64},
+		{"SourceCodePro-Italic.ttf", SourceCodePro, FONT_STYLE_ITALIC, sourceCodeProItalicBase64},
+		{"FuzzyBubbles-Regular.ttf", HandDrawn, FONT_STYLE_REGULAR, ""},
+		{"FuzzyBubbles-Bold.ttf", HandDrawn, FONT_STYLE_BOLD, ""},
+	} {
+		ttf, err := fontFacesFS.ReadFile("ttf/" + face.filename)
+		if err != nil {
+			panic(err)
+		}
+		uri := strings.TrimSuffix(face.woff, "\n")
+		if uri == "" {
+			// These six SVG encodings use the original TTF bytes with the historical WOFF media type.
+			uri = "data:application/font-woff;base64," + base64.StdEncoding.EncodeToString(ttf)
+		}
+		font := Font{Family: face.family, Style: face.style}
+		FontFaces.Set(font, ttf)
+		FontEncodings.Set(font, uri)
 	}
 
-	if str, err := compression.DecompressBrotli(sourceSansProBoldBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress SourceSansPro-Bold: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: SourceSansPro, Style: FONT_STYLE_BOLD}, str)
-	}
-
-	if str, err := compression.DecompressBrotli(sourceSansProSemiboldBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress SourceSansPro-Semibold: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: SourceSansPro, Style: FONT_STYLE_SEMIBOLD}, str)
-	}
-
-	if str, err := compression.DecompressBrotli(sourceSansProItalicBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress SourceSansPro-Italic: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: SourceSansPro, Style: FONT_STYLE_ITALIC}, str)
-	}
-
-	// Decompress and register SourceCodePro fonts
-	if str, err := compression.DecompressBrotli(sourceCodeProRegularBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress SourceCodePro-Regular: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: SourceCodePro, Style: FONT_STYLE_REGULAR}, str)
-	}
-
-	if str, err := compression.DecompressBrotli(sourceCodeProBoldBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress SourceCodePro-Bold: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: SourceCodePro, Style: FONT_STYLE_BOLD}, str)
-	}
-
-	if str, err := compression.DecompressBrotli(sourceCodeProSemiboldBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress SourceCodePro-Semibold: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: SourceCodePro, Style: FONT_STYLE_SEMIBOLD}, str)
-	}
-
-	if str, err := compression.DecompressBrotli(sourceCodeProItalicBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress SourceCodePro-Italic: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: SourceCodePro, Style: FONT_STYLE_ITALIC}, str)
-	}
-
-	// Decompress and register FuzzyBubbles fonts
-	if str, err := compression.DecompressBrotli(fuzzyBubblesRegularBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress FuzzyBubbles-Regular: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: HandDrawn, Style: FONT_STYLE_REGULAR}, str)
-		// HandDrawn has no italic, so reuse regular
-		FontEncodings.Set(Font{Family: HandDrawn, Style: FONT_STYLE_ITALIC}, str)
-	}
-
-	if str, err := compression.DecompressBrotli(fuzzyBubblesBoldBr); err != nil {
-		panic(fmt.Sprintf("Failed to decompress FuzzyBubbles-Bold: %v", err))
-	} else {
-		FontEncodings.Set(Font{Family: HandDrawn, Style: FONT_STYLE_BOLD}, str)
-		// HandDrawn has no semibold, so reuse bold
-		FontEncodings.Set(Font{Family: HandDrawn, Style: FONT_STYLE_SEMIBOLD}, str)
-	}
-
-	// Trim trailing newlines
-	trimEncodings()
-
-	// Initialize FontFaces with TTF files
-	if err := initializeFontFaces(fontFacesFS); err != nil {
-		panic(fmt.Sprintf("Failed to initialize font faces: %v", err))
+	// HandDrawn uses its regular and bold faces for italic and semibold.
+	for _, pair := range []struct{ alias, source FontStyle }{
+		{FONT_STYLE_ITALIC, FONT_STYLE_REGULAR},
+		{FONT_STYLE_SEMIBOLD, FONT_STYLE_BOLD},
+	} {
+		alias := Font{Family: HandDrawn, Style: pair.alias}
+		source := Font{Family: HandDrawn, Style: pair.source}
+		FontFaces.Set(alias, FontFaces.Get(source))
+		FontEncodings.Set(alias, FontEncodings.Get(source))
 	}
 	if err := registerBundledFontFaces(); err != nil {
-		panic(fmt.Sprintf("Failed to register bundled font faces: %v", err))
+		panic(err)
 	}
-}
-
-// trimEncodings removes trailing newlines from all font encodings
-func trimEncodings() {
-	FontEncodings.Range(func(k Font, v string) bool {
-		FontEncodings.Set(k, strings.TrimSuffix(v, "\n"))
-		return true
-	})
-}
-
-// initializeFontFaces loads TTF font files into FontFaces
-func initializeFontFaces(fontFacesFS embed.FS) error {
-	FontFaces = syncmap.New[Font, []byte]()
-
-	// SourceSansPro fonts
-	fontFiles := []struct {
-		file   string
-		family FontFamily
-		style  FontStyle
-	}{
-		{"ttf/SourceSansPro-Regular.ttf", SourceSansPro, FONT_STYLE_REGULAR},
-		{"ttf/SourceSansPro-Bold.ttf", SourceSansPro, FONT_STYLE_BOLD},
-		{"ttf/SourceSansPro-Semibold.ttf", SourceSansPro, FONT_STYLE_SEMIBOLD},
-		{"ttf/SourceSansPro-Italic.ttf", SourceSansPro, FONT_STYLE_ITALIC},
-		{"ttf/SourceCodePro-Regular.ttf", SourceCodePro, FONT_STYLE_REGULAR},
-		{"ttf/SourceCodePro-Bold.ttf", SourceCodePro, FONT_STYLE_BOLD},
-		{"ttf/SourceCodePro-Semibold.ttf", SourceCodePro, FONT_STYLE_SEMIBOLD},
-		{"ttf/SourceCodePro-Italic.ttf", SourceCodePro, FONT_STYLE_ITALIC},
-		{"ttf/FuzzyBubbles-Regular.ttf", HandDrawn, FONT_STYLE_REGULAR},
-		{"ttf/FuzzyBubbles-Bold.ttf", HandDrawn, FONT_STYLE_BOLD},
-	}
-
-	for _, font := range fontFiles {
-		b, err := fontFacesFS.ReadFile(font.file)
-		if err != nil {
-			return fmt.Errorf("failed to read %s: %w", font.file, err)
-		}
-		FontFaces.Set(Font{Family: font.family, Style: font.style}, b)
-	}
-
-	// HandDrawn font duplicates for missing styles
-	fuzzyRegular := FontFaces.Get(Font{Family: HandDrawn, Style: FONT_STYLE_REGULAR})
-	FontFaces.Set(Font{Family: HandDrawn, Style: FONT_STYLE_ITALIC}, fuzzyRegular)
-
-	fuzzyBold := FontFaces.Get(Font{Family: HandDrawn, Style: FONT_STYLE_BOLD})
-	FontFaces.Set(Font{Family: HandDrawn, Style: FONT_STYLE_SEMIBOLD}, fuzzyBold)
-
-	return nil
 }

@@ -72,7 +72,9 @@ func (b *builder) compileLinkRegions() error {
 		if err := b.addAppendixItem(fmt.Sprintf("shape[%d] %q", index, targetShape.ID), "tooltip", targetShape.Tooltip); err != nil {
 			return err
 		}
-		if err := b.addAppendixItem(fmt.Sprintf("shape[%d] %q", index, targetShape.ID), "prettyLink", targetShape.PrettyLink); err != nil {
+		// appendixIconNumbers numbers a link badge for every shape Link, so list
+		// every one, falling back to the Link when PrettyLink is empty.
+		if err := b.addAppendixItem(fmt.Sprintf("shape[%d] %q", index, targetShape.ID), "prettyLink", targetShape.AppendixLinkText()); err != nil {
 			return err
 		}
 	}
@@ -113,7 +115,7 @@ func (b *builder) shapeLinkRegion(object string, targetShape d2target.Shape) (d2
 		return d2scene.LinkRegion{}, err
 	}
 	urlValue, target := linkDestination(targetShape.Link)
-	strokeWidth := float64(targetShape.StrokeWidth)
+	strokeWidth := targetShape.RenderedStrokeWidth()
 	region := d2scene.LinkRegion{
 		// PDF/PPTX annotations expand a shape by its full stroke width on every
 		// side.

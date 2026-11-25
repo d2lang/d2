@@ -39,6 +39,28 @@ func TestCalculateTooltipBoundsUsesDiagramFonts(t *testing.T) {
 	}
 }
 
+func TestOutsideIconBoundsFollowShapeType(t *testing.T) {
+	const x, y, w, h = 100, 75, 96, 96
+	for _, tc := range []struct {
+		shape string
+		left  int
+	}{
+		{ShapeImage, x},
+		{ShapeRectangle, x - 5 - 48}, // 5 px gap and a 48 px icon
+	} {
+		t.Run(tc.shape, func(t *testing.T) {
+			d := Diagram{Shapes: []Shape{{
+				Type: tc.shape, Pos: Point{x, y}, Width: w, Height: h,
+				Icon: &url.URL{Path: "photo.svg"}, IconPosition: "OUTSIDE_LEFT_MIDDLE",
+			}}}
+			tl, br := d.BoundingBox()
+			if tl != (Point{tc.left, y}) || br != (Point{x + w, y + h}) {
+				t.Fatalf("bounds = %v ... %v", tl, br)
+			}
+		})
+	}
+}
+
 func TestHashIDStableAcrossURLFieldOrder(t *testing.T) {
 	icon := &url.URL{
 		Scheme:      "https",
@@ -90,5 +112,37 @@ func TestHashIDStableAcrossURLFieldOrder(t *testing.T) {
 	const want = "d2-887368360"
 	if got != want {
 		t.Fatalf("HashID = %q, want %q", got, want)
+	}
+}
+
+func TestBorderDecorationBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		s      Shape
+		tl, br Point
+	}{
+		{
+			"border icon", Shape{Type: ShapeRectangle, Width: 120, Height: 120,
+				Icon: &url.URL{Path: "tile.svg"}, IconPosition: "BORDER_TOP_CENTER"},
+			Point{0, -30}, Point{120, 120},
+		},
+		{
+			"3D border label", Shape{Type: ShapeRectangle, Width: 120, Height: 100, ThreeDee: true,
+				Text: Text{Label: "right caption", LabelWidth: 121, LabelHeight: 19}, LabelPosition: "BORDER_RIGHT_MIDDLE"},
+			Point{0, -15}, Point{196, 100},
+		},
+		{
+			"multiple border label", Shape{Type: ShapeRectangle, Width: 120, Height: 100, Multiple: true,
+				Text: Text{Label: "top caption", LabelWidth: 70, LabelHeight: 19}, LabelPosition: "BORDER_TOP_CENTER"},
+			Point{0, -20}, Point{130, 100},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Diagram{Shapes: []Shape{tc.s}}
+			tl, br := d.BoundingBox()
+			if tl != tc.tl || br != tc.br {
+				t.Fatalf("bounds %v..%v, want %v..%v", tl, br, tc.tl, tc.br)
+			}
+		})
 	}
 }

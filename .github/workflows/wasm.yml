@@ -1,0 +1,36 @@
+name: WASM tests
+on:
+  schedule:
+    - cron: "37 8 * * *"
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+
+jobs:
+  wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Include release tags for the D2 version embedded in the package.
+          fetch-depth: 0
+          filter: blob:none
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ./go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install TinyGo and Binaryen
+        run: ./ci/install-wasm-tools.sh
+      - name: Test Go packages under WebAssembly
+        run: ./ci/test-wasm.sh
+      - name: Build and test the D2.js package
+        run: ./d2js/js/make.sh all
+        env:
+          # The ordinary CI job checks formatting for changed files.
+          GIT_BASE: HEAD

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 )
 
@@ -77,6 +78,7 @@ func svgOrderPaintUnitsWithLimits(ctx context.Context, units []*svgPaintUnit, li
 	}
 	edges := make([][]int, len(units))
 	seen := make([]int, len(units))
+	scratch := &svgOrderScratch{}
 	for i, box := range boxes {
 		if err := budget.spend(1); err != nil {
 			return stats, err
@@ -96,7 +98,7 @@ func svgOrderPaintUnitsWithLimits(ctx context.Context, units []*svgPaintUnit, li
 				if !box.box.overlaps(boxes[j].box) {
 					continue
 				}
-				relation, err := svgOrderRelation(trees[i], trees[j], units[i].first, units[j].first, budget)
+				relation, err := svgOrderRelation(trees[i], trees[j], units[i].first, units[j].first, budget, scratch)
 				if err != nil {
 					return err
 				}
@@ -224,17 +226,20 @@ func svgNewOrderTree(polygons []svgOrderPolygon, budget *svgVisibilityBudget) (*
 			return 0, err
 		}
 		x := box.maxX-box.minX >= box.maxY-box.minY
-		sort.Slice(tree.indices[start:end], func(i, j int) bool {
-			ai, bi := tree.indices[start+i], tree.indices[start+j]
-			a, b := polygons[ai].box, polygons[bi].box
+		// Indices are distinct, so this is a total order.
+		slices.SortFunc(tree.indices[start:end], func(ai, bi int) int {
+			a, b := &polygons[ai].box, &polygons[bi].box
 			av, bv := a.minY+a.maxY, b.minY+b.maxY
 			if x {
 				av, bv = a.minX+a.maxX, b.minX+b.maxX
 			}
-			if av == bv {
-				return ai < bi
+			switch {
+			case av < bv:
+				return -1
+			case av > bv:
+				return 1
 			}
-			return av < bv
+			return ai - bi
 		})
 		middle := (start + end) / 2
 		left, err := build(start, middle)
@@ -292,7 +297,15 @@ func (tree *svgOrderTree) visit(box svgBox, budget *svgVisibilityBudget, fn func
 	}
 	return walk(0)
 }
-func svgOrderRelation(a, b *svgOrderTree, sourceA, sourceB int, budget *svgVisibilityBudget) (int, error) {
+
+// svgOrderScratch holds the buffers reused by every polygon comparison of one
+// paint-order pass.
+type svgOrderScratch struct {
+	dist  []float64
+	chain [2][]svgPoint
+}
+
+func svgOrderRelation(a, b *svgOrderTree, sourceA, sourceB int, budget *svgVisibilityBudget, scratch *svgOrderScratch) (int, error) {
 	swapped := len(a.polygons) > len(b.polygons)
 	if swapped {
 		a, b = b, a
@@ -301,7 +314,7 @@ func svgOrderRelation(a, b *svgOrderTree, sourceA, sourceB int, budget *svgVisib
 	relation := 0
 	for _, left := range a.polygons {
 		stop, err := b.visit(left.box, budget, func(right svgOrderPolygon) (bool, error) {
-			next, err := svgOrderPolygonRelation(left, right, sourceA, sourceB, budget)
+			next, err := svgOrderPolygonRelation(left, right, sourceA, sourceB, budget, scratch)
 			relation |= next
 			return relation == 3, err
 		})
@@ -317,22 +330,44 @@ func svgOrderRelation(a, b *svgOrderTree, sourceA, sourceB int, budget *svgVisib
 	}
 	return relation, nil
 }
-func svgOrderPolygonRelation(left, right svgOrderPolygon, sourceA, sourceB int, budget *svgVisibilityBudget) (int, error) {
+func svgOrderPolygonRelation(left, right svgOrderPolygon, sourceA, sourceB int, budget *svgVisibilityBudget, scratch *svgOrderScratch) (int, error) {
 	overlap := left.points
 	winding := 1.
 	if svgPolygonArea(right.points) < 0 {
 		winding = -1
 	}
+	// Clip left to each edge of right, as svgSplitPolygon does, keeping only
+	// the inside in reused buffers.
+	which := 0
 	for i, p := range right.points {
 		if err := budget.spend(len(overlap) + 1); err != nil {
 			return 0, err
 		}
 		q := right.points[(i+1)%len(right.points)]
-		distance := svgEdgeDistance(p, q)
-		overlap, _ = svgSplitPolygon(overlap, func(v svgPoint) float64 { return winding * distance(v) })
+		ex, ey := q.x-p.x, q.y-p.y
+		if cap(scratch.dist) < len(overlap) {
+			scratch.dist = make([]float64, max(2*len(overlap), 32))
+		}
+		dist := scratch.dist[:len(overlap)]
+		positive, negative := false, false
+		for j, v := range overlap {
+			d := winding * svgEdgeSide(ex, ey, p, v)
+			dist[j] = d
+			positive, negative = positive || d > 0, negative || d < 0
+		}
+		if !negative {
+			continue
+		}
+		if !positive {
+			return 0, nil
+		}
+		inside := svgSplitInside(overlap, dist, scratch.chain[which][:0])
+		scratch.chain[which] = inside[:0]
+		overlap, _ = svgValidFragmentOwned(inside)
 		if len(overlap) == 0 {
 			return 0, nil
 		}
+		which ^= 1
 	}
 	low, high, magnitude := math.Inf(1), math.Inf(-1), 1.
 	for _, p := range overlap {

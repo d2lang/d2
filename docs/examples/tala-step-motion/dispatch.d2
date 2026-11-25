@@ -1,0 +1,16 @@
+vars: {d2-config: {layout-engine: tala; animate-interval: 1600ms; animate-duration: 800ms}}
+direction: right
+order: Order service
+queue: Dispatch queue
+order -> queue
+
+steps: {
+  ship: {
+    ship: Shipping {style.fill: "#FFECBC"; style.stroke: "#9B640B"}
+    queue -> ship: {style.stroke: "#805D0C"}
+  }
+  receipt: {
+    receipt: Receipt
+    receipt <- ship
+  }
+}

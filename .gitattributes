@@ -5,3 +5,5 @@ go.sum linguist-generated
 d2renderers/d2svg/github-markdown.css linguist-vendored
 # Preserve Markdown hard line breaks in the upstream Spyre fixture.
 e2etests/testdata/files/spyre_encoder.d2 whitespace=-blank-at-eol
+# GitHub attests the exact bytes of each release checksum manifest.
+ci/release/checksums/*.txt text eol=lf

@@ -5,6 +5,7 @@ import (
 	"context"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -13,7 +14,8 @@ import (
 
 func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, guard *limits.WorkGuard) (map[*layoutgraph.Node][]*layoutgraph.Tree, error) {
 	containerNodes := g.Containers[container]
-	nodeToTree := make(map[*layoutgraph.Node]*layoutgraph.Tree)
+	nodeToTree := make(map[*layoutgraph.Node]*layoutgraph.Tree, len(containerNodes))
+	var tables []*layoutgraph.Node
 	for _, node := range containerNodes {
 		if err := guard.Step(); err != nil {
 			return nil, err
@@ -22,14 +24,9 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 			return nil, treePreprocessBadState("tree container contains a nil node")
 		}
 		if node.IsTable() {
-			return nil, nil
+			tables = append(tables, node)
 		}
 		nodeToTree[node] = layoutgraph.NewTree(node)
-	}
-	// TODO: Compare this adjacency matrix with repeated ConnectionTo lookups.
-	edgeBetween, err := buildTreeAdjacencyMatrix(g, guard)
-	if err != nil {
-		return nil, err
 	}
 
 	// Terminal node: tree never reaches here, but roots can connect to graph here
@@ -38,6 +35,27 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 	sentinelToTreeRoots := make(map[*layoutgraph.Node][]*layoutgraph.Tree)
 	sentinelToArrowheads := make(map[*layoutgraph.Node]map[layoutgraph.Arrowhead]struct{})
 
+	// Column ports use the regular placement path. A table in another
+	// component of this container does not constrain a disconnected tree.
+	inScope := func(node *layoutgraph.Node) bool { return nodeToTree[node] != nil }
+	for _, table := range tables {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if isTerminal[table] {
+			continue
+		}
+		connected, err := table.ReachableNodesContext(inScope, false, true, false, nil, guard)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range connected {
+			if err := guard.Step(); err != nil {
+				return nil, err
+			}
+			isTerminal[node] = true
+		}
+	}
 	// mark all containers as terminal so they aren't in trees
 	for container := range g.Containers {
 		if err := guard.Step(); err != nil {
@@ -109,10 +127,7 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 			if tree == nil {
 				return nil, treePreprocessBadState("fringe node %d has no tree record", fn.ID)
 			}
-			tree.SentinelEdge = edgeBetween(fn, sentinelNode)
-			if tree.SentinelEdge == nil {
-				return nil, treePreprocessBadState("fringe node %d has no graph sentinel edge", fn.ID)
-			}
+			tree.SentinelEdge = fn.Edges[0]
 
 			if _, exists := sentinelToTreeRoots[sentinelNode]; !exists {
 				sentinelToTreeRoots[sentinelNode] = make([]*layoutgraph.Tree, 0)
@@ -226,9 +241,25 @@ func extractTrees(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*layoutgra
 		return nil, err
 	}
 	containerOrder = append(containerOrder, nil)
+	// Check the endpoints once even when there are no leaves and no
+	// adjacency lookup is needed. Extraction only removes edges.
+	for _, edge := range g.Edges {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if edge == nil || edge.From == nil || edge.To == nil {
+			return nil, treePreprocessBadState("tree preprocessing encountered an edge with missing endpoints")
+		}
+	}
+
 	for _, container := range containerOrder {
 		if err := guard.Step(); err != nil {
 			return nil, err
+		}
+		// A tree sentinel would make the entire connected component ineligible
+		// for the layered placement requested on this container.
+		if g.ForcesHierarchy(container) {
+			continue
 		}
 		containerTrees, err := extractTreesInContainer(g, container, guard)
 		if err != nil {
@@ -254,7 +285,20 @@ func handleTreeSubgraph(g *layoutgraph.Graph, rootSentinel, container *layoutgra
 	if !(len(rootSentinel.Edges) == 0 && len(roots) > 1) {
 		return rootSentinel, roots, nil
 	}
-	if rootSentinel.IsContainer() {
+	// A fixed junction must stay in the placement graph when its branches are restored.
+	if rootSentinel.IsContainer() || rootSentinel.FixedTopLeft != nil {
+		return rootSentinel, roots, nil
+	}
+	// Keep the movable end of a near relationship available when its peer
+	// has a fixed position and cannot follow a reconstructed branch.
+	nearFixedNode := false
+	for near := range rootSentinel.Nears {
+		if err := guard.Step(); err != nil {
+			return nil, nil, err
+		}
+		nearFixedNode = nearFixedNode || near.FixedTopLeft != nil
+	}
+	if nearFixedNode {
 		return rootSentinel, roots, nil
 	}
 
@@ -805,6 +849,23 @@ func placeTree(ctx context.Context, g *layoutgraph.Graph, placementTree *layoutg
 		}
 
 		direction := g.Direction(container)
+		if direction != geo.NONE && isIsolatedTree && placementTree.Node.FixedTopLeft != nil {
+			// The orientation places the neighbors relative to the fixed root.
+			// An incoming branch therefore sits upstream of the root.
+			incoming := len(placementTree.Children) > 0
+			for _, child := range placementTree.Children {
+				if err := guard.Step(); err != nil {
+					return bestOrientation, err
+				}
+				if treeEdgeDirection(placementTree.Node, child.SentinelEdge) != Inwards {
+					incoming = false
+					break
+				}
+			}
+			if incoming {
+				direction = direction.GetOpposite()
+			}
+		}
 		for _, orientation := range order {
 			if err := guard.Step(); err != nil {
 				return bestOrientation, err
@@ -984,6 +1045,23 @@ func placeTreesWithWorkLimit(ctx context.Context, g *layoutgraph.Graph, containe
 	}
 	guard.SetLimit(workLimit)
 
+	// Without a tree root among g.Nodes, placeTrees only charges its two node
+	// scans and changes nothing, so a rollback could only restore identical
+	// values: the snapshot is charged exactly but not taken.
+	if !hasTreeRootSentinel(g) {
+		tracked, err := layoutgraph.ChargeTopologySnapshot(g, guard, container)
+		if err != nil {
+			return err
+		}
+		if container != nil && !tracked {
+			return treePreprocessBadState("cannot place trees into an unknown container")
+		}
+		if err := placeTrees(ctx, g, container, guard); err != nil {
+			return err
+		}
+		return guard.Finish()
+	}
+
 	state := layoutgraph.NewGraphStateSnapshot(layoutgraph.GraphStateSnapshotOptions{
 		CaptureTopology:   true,
 		CaptureEdgeRoutes: true,
@@ -1014,8 +1092,53 @@ func placeTreesWithWorkLimit(ctx context.Context, g *layoutgraph.Graph, containe
 	return nil
 }
 
+// hasTreeRootSentinel reports whether any g.Nodes entry keys g.Trees, the
+// only case in which placeTrees builds placement trees or detaches roots.
+func hasTreeRootSentinel(g *layoutgraph.Graph) bool {
+	if len(g.Trees) == 0 {
+		return false
+	}
+	for _, node := range g.Nodes {
+		if _, has := g.Trees[node]; has {
+			return true
+		}
+	}
+	return false
+}
+
 func Place(ctx context.Context, g *layoutgraph.Graph, container *layoutgraph.Node) error {
 	return placeTreesWithWorkLimit(ctx, g, container, limits.MaxPlaceTreesWorkUnits)
+}
+
+// sortedTreeDirections returns the directions of an isolated tree's roots in
+// a fixed order (Outwards, Inwards, Bidirectional, then any other by name).
+// buildPlacementTrees creates the placement trees in this order, and the
+// order decides which tree undirected roots merge with on ties and how the
+// trees are laid out: in map order the layout varied from run to run (in the
+// original too).
+func sortedTreeDirections(byDirection map[TreeEdgeDirection][]*layoutgraph.Tree) []TreeEdgeDirection {
+	rank := func(direction TreeEdgeDirection) int {
+		switch direction {
+		case Outwards:
+			return 0
+		case Inwards:
+			return 1
+		case Bidirectional:
+			return 2
+		}
+		return 3
+	}
+	directions := make([]TreeEdgeDirection, 0, len(byDirection))
+	for direction := range byDirection {
+		directions = append(directions, direction)
+	}
+	slices.SortFunc(directions, func(a, b TreeEdgeDirection) int {
+		if c := cmp.Compare(rank(a), rank(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(string(a), string(b))
+	})
+	return directions
 }
 
 func buildPlacementTrees(g *layoutgraph.Graph, guard *limits.WorkGuard) ([]*layoutgraph.Tree, error) {
@@ -1043,7 +1166,8 @@ func buildPlacementTrees(g *layoutgraph.Graph, guard *limits.WorkGuard) ([]*layo
 			}
 			undirected := byDirection[Undirected]
 			delete(byDirection, Undirected)
-			for _, matchingRoots := range byDirection {
+			for _, direction := range sortedTreeDirections(byDirection) {
+				matchingRoots := byDirection[direction]
 				arrowheadSentinels := make(map[layoutgraph.Arrowhead]*layoutgraph.Tree)
 
 				for _, root := range matchingRoots {

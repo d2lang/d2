@@ -94,3 +94,12 @@ func TestTableShapeColumns(t *testing.T) {
 		t.Fatalf("column count = %d, want 4", NumColumns(got))
 	}
 }
+
+func TestStepPortsFollowWedgeAtThreshold(t *testing.T) {
+	box := geo.Box{TopLeft: geo.NewPoint(0, 0), Width: shape.STEP_WEDGE_WIDTH, Height: 60}
+	step, _, _ := New(shape.STEP_TYPE, &box)
+	ports := step.SnapPointPercentages()
+	if ports[0][1].XPercentage != 0.25 || ports[1][1].XPercentage != 0.5 {
+		t.Fatalf("top and left midpoint ports = %v, %v", ports[0][1], ports[1][1])
+	}
+}

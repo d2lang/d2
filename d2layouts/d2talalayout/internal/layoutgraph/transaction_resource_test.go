@@ -209,8 +209,9 @@ func TestTransactionSupportsSparseMaximumNodeCount(t *testing.T) {
 	txn, err := g.newTransactionContext(context.Background(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, txn)
-	require.Empty(t, txn.PriorGraphState.existingOverlaps)
-	require.Empty(t, txn.PriorGraphState.existingExactOverlaps)
+	near, exact := txn.PriorGraphState.existingOverlaps.maps()
+	require.Empty(t, near)
+	require.Empty(t, exact)
 }
 
 func TestTransactionDeduplicatesClusterAndSequenceMembership(t *testing.T) {
@@ -225,7 +226,7 @@ func TestTransactionDeduplicatesClusterAndSequenceMembership(t *testing.T) {
 
 	txn, err := g.newTransactionContext(context.Background(), nil)
 	require.NoError(t, err)
-	require.Len(t, txn.PriorGraphState.nodeGeometry, 4_000)
+	require.Equal(t, 4_000, txn.PriorGraphState.slots.size())
 }
 
 func TestTransactionConstructorPreservesCancellationIdentity(t *testing.T) {

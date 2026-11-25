@@ -113,6 +113,75 @@ func TestRenderIsometricModeAndDocumentOptions(t *testing.T) {
 	}
 }
 
+func TestIsometricAuthoredDefaultWidthIsolatesInlineResources(t *testing.T) {
+	d := isometricAPIDiagram()
+	d.Shapes[0].Stroke = "N1"
+	opts := &RenderOpts{Salt: go2.Pointer("shared")}
+	render := func() []byte {
+		t.Helper()
+		out, err := RenderIsometric(context.Background(), d, opts, &d2isometricimg.Options{Width: 160, Height: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	flat, err := d.HashID(opts.Salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := render()
+	d.ExplicitDefaultStrokeWidths = map[string]bool{"database": false, "unknown": true}
+	if !bytes.Equal(original, render()) {
+		t.Fatal("marks outside the rendered shapes changed the SVG")
+	}
+	d.ExplicitDefaultStrokeWidths["database"] = true
+	if markedFlat, err := d.HashID(opts.Salt); err != nil || flat != markedFlat {
+		t.Fatalf("flat diagram hash changed: %s / %s (%v)", flat, markedFlat, err)
+	}
+	ids := isometricSVGID.FindAllSubmatch(original, -1)
+	if len(ids) == 0 {
+		t.Fatal("fixture has no SVG resources")
+	}
+	marked := render()
+	for _, id := range ids {
+		if bytes.Contains(marked, id[0]) {
+			t.Fatalf("authoring the width reused resource %s", id[1])
+		}
+	}
+}
+
+func TestIsometricGradientCoversPaddedViewport(t *testing.T) {
+	d := isometricAPIDiagram()
+	d.Root.Fill = "linear-gradient(90deg, rgba(255,0,0,0.5), blue)"
+	for _, pad := range []int64{17, 0, -10} {
+		data, err := RenderIsometric(context.Background(), d, &RenderOpts{Pad: &pad}, &d2isometricimg.Options{Width: 160, Height: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Background struct {
+				X      int64 `xml:"x,attr"`
+				Y      int64 `xml:"y,attr"`
+				Width  int64 `xml:"width,attr"`
+				Height int64 `xml:"height,attr"`
+				Base   struct {
+					Fill string `xml:"fill,attr"`
+				} `xml:"rect"`
+				Gradient struct {
+					ID string `xml:"id,attr"`
+				} `xml:"defs>linearGradient"`
+			} `xml:"svg>svg"`
+		}
+		if err := xml.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		bg := doc.Background
+		if bg.X != -pad || bg.Y != -pad || bg.Width != 160+2*pad || bg.Height != 100+2*pad || bg.Base.Fill == "" || bg.Gradient.ID == "" {
+			t.Errorf("pad %d: unexpected gradient viewport or backing: %+v", pad, bg)
+		}
+	}
+}
+
 func TestRenderIsometricRejectsIncompatibleModes(t *testing.T) {
 	for _, test := range []struct {
 		name string

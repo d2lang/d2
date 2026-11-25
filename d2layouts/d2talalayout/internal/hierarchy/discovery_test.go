@@ -21,7 +21,7 @@ func TestBuildPropagatesRankErrors(t *testing.T) {
 	edge := graph.Connect(source, target)
 	edge.TargetArrowhead = layoutgraph.TriangleArrowhead
 
-	hierarchy, err := build(t.Context(), graph, true, Candidates(graph), nil)
+	hierarchy, err := new(Discovery).build(t.Context(), graph, true, Candidates(graph), nil)
 	if hierarchy != nil {
 		t.Fatalf("hierarchy = %v; want nil after rank failure", hierarchy)
 	}
@@ -160,7 +160,7 @@ func TestBuildHierarchy(t *testing.T) {
 	connect(n8, n6)
 
 	ctx := log.With(context.Background(), testlog.New(t))
-	hierarchy, err := build(ctx, g, false, Candidates(g), nil)
+	hierarchy, err := new(Discovery).build(ctx, g, false, Candidates(g), nil)
 	if err != nil {
 		t.Fatalf("Got an error while building node hierarchy %v", err)
 	}
@@ -175,7 +175,7 @@ func TestBuildHierarchy(t *testing.T) {
 	assert.Equal(t, 3, hierarchy.Levels()[n6])
 
 	assertNoHierarchy := func() {
-		hierarchy, err := build(ctx, g, false, Candidates(g), nil)
+		hierarchy, err := new(Discovery).build(ctx, g, false, Candidates(g), nil)
 		assert.NoError(t, err)
 		assert.Nil(t, hierarchy)
 	}
@@ -240,7 +240,7 @@ func TestCountHierarchyEdgeDirections(t *testing.T) {
 	connect(n8, n6)
 
 	ctx := log.With(context.Background(), testlog.New(t))
-	hierarchy, _ := build(ctx, g, false, Candidates(g), nil)
+	hierarchy, _ := new(Discovery).build(ctx, g, false, Candidates(g), nil)
 	forward, backwardOrNeutral := countEdgeDirection(hierarchy, g)
 	assert.Equal(t, 10, forward)
 	assert.Equal(t, 0, backwardOrNeutral)
@@ -285,7 +285,7 @@ func TestIsValidHierarchy(t *testing.T) {
 		n6: 3,
 		n7: 3,
 	})
-	assert.Equal(t, false, isValid(hierarchy, g, nil, 0, 0))
+	assert.Equal(t, false, new(Discovery).isValid(hierarchy, g, nil, 0, 0))
 
 	// too wide
 	hierarchy.LevelCount = 3
@@ -298,7 +298,7 @@ func TestIsValidHierarchy(t *testing.T) {
 		n6: 1,
 		n7: 1,
 	})
-	assert.Equal(t, false, isValid(hierarchy, g, nil, 0, 0))
+	assert.Equal(t, false, new(Discovery).isValid(hierarchy, g, nil, 0, 0))
 
 	// too tall
 	hierarchy.LevelCount = 6
@@ -311,7 +311,7 @@ func TestIsValidHierarchy(t *testing.T) {
 		n6: 4,
 		n7: 5,
 	})
-	assert.Equal(t, false, isValid(hierarchy, g, nil, 0, 0))
+	assert.Equal(t, false, new(Discovery).isValid(hierarchy, g, nil, 0, 0))
 
 	// all forward edges
 	for _, e := range g.Edges {
@@ -328,7 +328,7 @@ func TestIsValidHierarchy(t *testing.T) {
 		n6: 2,
 		n7: 2,
 	})
-	assert.Equal(t, true, isValid(hierarchy, g, nil, 1, 2))
+	assert.Equal(t, true, new(Discovery).isValid(hierarchy, g, nil, 1, 2))
 
 	hierarchy.LevelCount = 2
 	hierarchy.ReplaceLevels(map[*layoutgraph.Node]int{
@@ -340,7 +340,7 @@ func TestIsValidHierarchy(t *testing.T) {
 		n6: 1,
 		n7: 1,
 	})
-	assert.Equal(t, false, isValid(hierarchy, g, nil, 1, 2))
+	assert.Equal(t, false, new(Discovery).isValid(hierarchy, g, nil, 1, 2))
 }
 
 func TestAssignNodeHierarchyInsideContainers(t *testing.T) {

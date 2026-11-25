@@ -12,6 +12,8 @@ set -eu
 # - ./ci/sub/lib/flag.sh
 # - ./ci/sub/lib/release.sh
 # - ./ci/release/checksum.sh
+# - ./ci/release/checksums/*.txt
+# - ./ci/release/verifier.sh
 # - ./ci/release/_install.sh
 #
 # The last of which implements the installation logic.
@@ -680,20 +682,26 @@ fetch_release_asset() {
   ASSET_NAME=$3
   ASSET_URL=$4
   DESTINATION=$5
+  STAGED_ARCHIVE=$6
+  EXPECTED_SHA256=${7-}
 
   if [ -n "${DRY_RUN-}" ]; then
-    sh_c "download $ASSET_NAME and verify its GitHub SHA-256 digest when available"
+    if [ -n "$EXPECTED_SHA256" ]; then
+      log "would verify $ASSET_NAME against the SHA-256 pinned in this installer"
+    else
+      log "would check the GitHub SHA-256 digest for $ASSET_NAME when available"
+    fi
     return
   fi
 
-  EXPECTED_SHA256=$(release_asset_sha256 "$REPOSITORY" "$RELEASE_VERSION" "$ASSET_NAME")
+  if [ -z "$EXPECTED_SHA256" ]; then
+    EXPECTED_SHA256=$(release_asset_sha256 "$REPOSITORY" "$RELEASE_VERSION" "$ASSET_NAME")
+  fi
   if [ -z "$EXPECTED_SHA256" ]; then
     warn "GitHub does not provide a SHA-256 digest for $ASSET_NAME; continuing without checksum verification for compatibility with legacy releases"
-    fetch_gh "$ASSET_URL" "$DESTINATION" 'application/octet-stream'
-    return
-  fi
-  if [ -e "$DESTINATION" ]; then
-    if verify_sha256 "$DESTINATION" "$EXPECTED_SHA256"; then
+  elif [ -e "$DESTINATION" ]; then
+    cp "$DESTINATION" "$STAGED_ARCHIVE"
+    if verify_sha256 "$STAGED_ARCHIVE" "$EXPECTED_SHA256"; then
       log "reusing verified $DESTINATION"
       return
     fi
@@ -701,8 +709,92 @@ fetch_release_asset() {
     rm -f "$DESTINATION"
   fi
   fetch_gh "$ASSET_URL" "$DESTINATION" 'application/octet-stream'
-  verify_sha256 "$DESTINATION" "$EXPECTED_SHA256"
-  log "verified $ASSET_NAME ($EXPECTED_SHA256)"
+  cp "$DESTINATION" "$STAGED_ARCHIVE"
+  if [ -n "$EXPECTED_SHA256" ]; then
+    verify_sha256 "$STAGED_ARCHIVE" "$EXPECTED_SHA256"
+    log "verified $ASSET_NAME ($EXPECTED_SHA256)"
+  fi
+}
+#!/bin/sh
+
+# Print a verifier executable, using the caller's private temporary directory
+# for a one-install copy when a compatible GitHub CLI is unavailable.
+installer_gh() (
+  # gh 2.102.0 fixed exact workflow and case-sensitive ref matching
+  # (GHSA-wjmr-j3rp-mh2g and GHSA-4mq3-hpgx-9cx8).
+  if gh --version 2>/dev/null | awk '
+    NR == 1 && $1 == "gh" && $2 == "version" && $3 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ {
+      split($3, v, ".")
+      supported = v[1] > 2 || (v[1] == 2 && v[2] >= 102)
+    }
+    END { exit !supported }
+  ' && gh attestation verify --bundle /dev/null --source-ref test --signer-workflow test --help >/dev/null 2>&1; then
+    command -v gh
+    return
+  fi
+
+  version=2.105.0
+  # The verifier must run on this host even when OS/ARCH select a different D2 archive.
+  host_os=$(uname -s) || return 1
+  host_arch=$(uname -m) || return 1
+  case "$host_os" in
+    Linux) host_os=linux ;;
+    Darwin) host_os=macos ;;
+    MSYS*|MINGW*|CYGWIN*) host_os=windows ;;
+  esac
+  case "$host_arch" in
+    x86_64|amd64) host_arch=amd64 ;;
+    aarch64|arm64) host_arch=arm64 ;;
+  esac
+  # From cli/cli's immutable release and gh_2.105.0_checksums.txt. Pin the
+  # archive here so it is authenticated before any of its code can run.
+  case "$host_os-$host_arch" in
+    linux-amd64)   digest=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f ;;
+    linux-arm64)   digest=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02 ;;
+    macos-amd64)   digest=23602cbccbbdc6285a8520745b714cb927ce2ca621779373c2a20cd8e33fda66 ;;
+    macos-arm64)   digest=2a5d03103ae444927383b93d9ffd65579a26e2eb900ce1cf11f55258d5319ded ;;
+    windows-amd64) digest=8813a72c899900afaa10e3fec8fbc64b908c89dbfe837e95ed2fa500fc140627 ;;
+    windows-arm64) digest=5282a09c7757210c6e2dfb11a56b11e14e646df9b3b6a49f155465f5f881c3b7 ;;
+    *) echo >&2 "No pinned GitHub CLI for $host_os-$host_arch. Install gh 2.102.0 or later."; return 1 ;;
+  esac
+
+  executable=gh
+  case "$host_os" in
+    linux)   archive="gh_${version}_linux_${host_arch}.tar.gz"; member="${archive%.tar.gz}/bin/gh" ;;
+    macos)   archive="gh_${version}_macOS_${host_arch}.zip"; member="${archive%.zip}/bin/gh" ;;
+    windows) archive="gh_${version}_windows_${host_arch}.zip"; member=bin/gh.exe; executable=gh.exe ;;
+  esac
+
+  echo >&2 "Downloading GitHub CLI $version to verify D2 release provenance"
+  curl -qfsSL --proto '=https' --proto-redir '=https' -o "$1/$archive" \
+    "https://github.com/cli/cli/releases/download/v$version/$archive" || return 1
+  verify_sha256 "$1/$archive" "$digest" || return 1
+
+  if [ "$host_os" = linux ]; then
+    tar -xzOf "$1/$archive" "$member"
+  elif command -v unzip >/dev/null 2>&1; then
+    unzip -p "$1/$archive" "$member"
+  else
+    bsdtar -xOf "$1/$archive" "$member"
+  fi >"$1/$executable" || return 1
+  chmod 700 "$1/$executable" || return 1
+  printf '%s\n' "$1/$executable"
+)
+release_checksums() {
+  cat <<'D2_RELEASE_CHECKSUMS'
+0ea49e35f17c3ac00ffa5d0a1fa571f5c344cd38127dbaa4bf6158fcd0c7bfb0  d2-v0.8.2-linux-amd64.tar.gz
+bf1585cebf8496690668dc135dfd469068e3ae3eb38cecdc1f7d7835cdbc1228  d2-v0.8.2-linux-arm64.tar.gz
+6c7b7a09278b131664cbc5e715dac0ee849c3f785ffc9dfaab2df6b1f91bf8ed  d2-v0.8.2-macos-amd64.tar.gz
+73ddb07c636bd5c5723e4bf8569a90b7329ea35dc32af2155650e1f572e823b2  d2-v0.8.2-macos-arm64.tar.gz
+2c223b56ce5f5984c235b88b1e0e996126ba7c8a37476ad9b47d7d6db9475f18  d2-v0.8.2-windows-amd64.tar.gz
+2aa25e88883300230b6af6c16f6ebd653b7e0660b1258ff740cace476887bb2e  d2-v0.8.2-windows-arm64.tar.gz
+5669ddc46b99e942cc96078f4a4e36d5e62103348f4c05179ede27802fdd87a9  d2-v0.9.0-linux-amd64.tar.gz
+ac2c028697199479acb321db1e3d68caee9f2ba492ed73caa3cd13f3829bf913  d2-v0.9.0-linux-arm64.tar.gz
+cad39576a480d6bb02ea142fef1726647914b0d2da51ccc9b30b660a2b1babf0  d2-v0.9.0-macos-amd64.tar.gz
+eaf6c0c143e56dd9fa97bfb6df25ea9c1ebce40245f056a0768cf1a6c15d3064  d2-v0.9.0-macos-arm64.tar.gz
+5f63b643de8f5a6dfb922d172e1b5496e4caf47497c33c4427cf1127f28c340f  d2-v0.9.0-windows-amd64.tar.gz
+dd05cab459410c287d7ca3eb9cf78145a071742ee8e1b81a0122f84f471883e1  d2-v0.9.0-windows-arm64.tar.gz
+D2_RELEASE_CHECKSUMS
 }
 #!/bin/sh
 set -eu
@@ -710,6 +802,9 @@ set -eu
 
 if [ -z "${D2_RELEASE_CHECKSUM-}" ]; then
   . "$(dirname "$0")/checksum.sh"
+fi
+if ! command -v installer_gh >/dev/null 2>&1; then
+  . "$(dirname "$0")/verifier.sh"
 fi
 
 help() {
@@ -720,7 +815,7 @@ help() {
 
   cat <<EOF
 usage: $arg0 [-d|--dry-run] [--version vX.X.X] [--method detect] [--prefix path]
-  [--force] [--uninstall] [-x|--trace]
+  [--verify-provenance] [--force] [--uninstall] [-x|--trace]
 
 install.sh automates the installation of D2 onto your system. It currently only supports
 the installation of standalone releases from GitHub and via Homebrew on macOS. See the
@@ -739,6 +834,11 @@ Flags:
   Pass to have install.sh install the given version instead of the latest version.
   warn: The version may not be obeyed with package manager installations. Use
         --method=standalone to enforce the version.
+
+--verify-provenance
+  Select a standalone install and independently verify the signed build provenance on
+  this machine, even when the archive's verified SHA-256 is embedded in this installer.
+  Requires a release with signed provenance (v0.8.2 or later).
 
 --method [detect | standalone | homebrew ]
   Pass to control the method by which to install. Right now we only support standalone
@@ -768,16 +868,15 @@ Flags:
   https://github.com/terrastruct/TALA/releases
 
 --force:
-  Force installation over the existing version even if they match. It will attempt a
-  uninstall first before installing the new version. The installed release tree
-  will be deleted from \$PREFIX/lib/d2/d2-<VERSION> but the release archive in
-  ~/.cache/d2/release will remain.
+  Reinstall even if the versions match. The installer stages the verified replacement
+  before switching the executable. Downloaded archives remain in the release cache.
 
 --uninstall:
   Uninstall the installed version of d2. The --method and --prefix flags must be the same
   as for installation. i.e if you used --method standalone you must again use --method
   standalone for uninstallation. With detect, the install script will try to use the OS
-  package manager to uninstall instead.
+  package manager to uninstall instead. Use --version, --force, and --verify-provenance
+  only when installing.
 
 -x, --trace:
   Run script with set -x.
@@ -796,6 +895,7 @@ EOF
 }
 
 main() {
+  install_only_flag=
   while flag_parse "$@"; do
     case "$FLAG" in
       h|help)
@@ -809,6 +909,12 @@ main() {
       version)
         flag_nonemptyarg && shift "$FLAGSHIFT"
         VERSION=$FLAGARG
+        install_only_flag=--version
+        ;;
+      verify-provenance)
+        flag_noarg && shift "$FLAGSHIFT"
+        VERIFY_PROVENANCE=1
+        install_only_flag=--verify-provenance
         ;;
       tala)
         shift "$FLAGSHIFT"
@@ -825,6 +931,7 @@ main() {
       force)
         flag_noarg && shift "$FLAGSHIFT"
         FORCE=1
+        install_only_flag=--force
         ;;
       uninstall)
         flag_noarg && shift "$FLAGSHIFT"
@@ -846,6 +953,10 @@ main() {
     flag_errusage "no arguments are accepted"
   fi
 
+  if [ -n "${UNINSTALL-}" ] && [ -n "$install_only_flag" ]; then
+    flag_errusage "$install_only_flag cannot be used with --uninstall"
+  fi
+
   if [ -n "${TALA_REQUEST-}" ]; then
     flag_errusage "--tala is no longer supported; this installer installs only D2.
 For releases with bundled TALA, omit --tala and verify availability with d2 layout.
@@ -860,6 +971,15 @@ For older releases, install the legacy plugin separately: https://github.com/ter
   mkdir -p "$CACHE_DIR"
   METHOD=${METHOD:-detect}
   INSTALL_DIR=$PREFIX/lib/d2
+  standalone_binary=$PREFIX/bin/d2
+  if [ "$OS" = windows ]; then standalone_binary=$standalone_binary.exe; fi
+
+  if [ -z "${UNINSTALL-}" ] && [ -n "${VERIFY_PROVENANCE-}" ]; then
+    case "$METHOD" in
+      detect) METHOD=standalone ;;
+      homebrew) flag_errusage "--verify-provenance requires a standalone installation" ;;
+    esac
+  fi
 
   case $METHOD in
     detect)
@@ -969,35 +1089,98 @@ install_post_warn() {
 
 install_d2_standalone() {
   VERSION=${VERSION:-latest}
+  requested_version=$VERSION
   header "installing d2-$VERSION"
 
   ensure_version
 
-  if command -v d2 >/dev/null; then
-    INSTALLED_VERSION="$(d2 --version)"
-    if [ ! "${FORCE-}" -a "$VERSION" = "$INSTALLED_VERSION" ]; then
-      log "skipping installation as d2 $VERSION is already installed."
-      return 0
-    fi
-    log "uninstalling d2 $INSTALLED_VERSION to install $VERSION"
-    if ! uninstall_d2_standalone; then
-      warn "failed to uninstall d2 $INSTALLED_VERSION"
-    fi
+  # These published tags predate archive attestations. Missing evidence for any
+  # other tag is an error, including when GitHub resolves "latest" to an old tag.
+  legacy_release=
+  case "$VERSION" in
+    v0.0.1[23]|v0.1.[0-6]|v0.2.[0-6]|v0.3.0|v0.4.[0-2]|v0.5.[01]|v0.6.[0-9]|v0.7.[01])
+      if [ "$requested_version" = latest ] || [ "$REPO" != d2lang/d2 ] || [ -n "${VERIFY_PROVENANCE-}" ]; then
+        echoerr "refusing to install $REPO $VERSION without signed build provenance"
+        return 1
+      fi
+      legacy_release=1
+      ;;
+  esac
+
+  if [ -z "${FORCE-}" ] && [ -x "$standalone_binary" ] && [ -f "$standalone_binary" ] &&
+    [ "$("$standalone_binary" --version)" = "$VERSION" ]; then
+    log "skipping installation as d2 $VERSION is already installed in $PREFIX."
+    return 0
   fi
+  read_standalone_install
 
   ARCHIVE="d2-$VERSION-$OS-$ARCH.tar.gz"
   log "installing standalone release $ARCHIVE from github"
 
-  ensure_version
   asset_url="https://github.com/$REPO/releases/download/$VERSION/$ARCHIVE"
+  # Verify and extract the same private copy, even when another install updates the cache.
+  stage=$(mktempd)
+  staged_archive=$stage/$ARCHIVE
+  pinned_digest=$(release_checksums | awk -v name="$ARCHIVE" '$2 == name { print $1 }')
   fetch_release_asset \
-    "$REPO" "$VERSION" "$ARCHIVE" "$asset_url" "$CACHE_DIR/$ARCHIVE"
+    "$REPO" "$VERSION" "$ARCHIVE" "$asset_url" "$CACHE_DIR/$ARCHIVE" "$staged_archive" "$pinned_digest"
+  if [ -n "$legacy_release" ]; then
+    warn "$VERSION predates signed D2 archive provenance"
+  elif [ -z "$pinned_digest" ] || [ -n "${VERIFY_PROVENANCE-}" ]; then
+    if [ -n "${DRY_RUN-}" ]; then
+      log "would verify signed build provenance for $ARCHIVE before installation"
+    else
+      verify_archive_provenance "$stage" "$staged_archive"
+    fi
+  fi
 
-  ensure_prefix_sh_c
-  "$sh_c" mkdir -p "'$INSTALL_DIR'"
-  "$sh_c" tar -C "$INSTALL_DIR" -xzf "$CACHE_DIR/$ARCHIVE"
-  "$sh_c" sh -c "'cd \"$INSTALL_DIR/d2-$VERSION\" && make install PREFIX=\"$PREFIX\"'"
+  if [ -n "${DRY_RUN-}" ]; then
+    log "would stage d2-$VERSION and replace the executable under $PREFIX"
+    return
+  fi
+  tar -C "$stage" -xzf "$staged_archive"
+  mkdir "$stage/prefix"
+  # Older archive recipes require a prefix without spaces. The private prefix
+  # is a sibling of the extracted tree, including when TMPDIR contains spaces.
+  (cd "$stage/d2-$VERSION" && make install PREFIX=../prefix)
+  # Publication and uninstall own these two paths. A newer release recipe
+  # which installs additional files requires an installer that can manage them.
+  extra=$(cd "$stage/prefix" && find . ! -type d ! -path "./bin/${standalone_binary##*/}" ! -path './share/man/man1/d2.1' -print)
+  if [ -n "$extra" ]; then
+    echoerr "Release $VERSION installs additional files. Update install.sh to install it:"
+    printf '%s\n' "$extra" >&2
+    return 1
+  fi
+  update_standalone_prefix install
 }
+
+verify_archive_provenance() (
+  stage=$1
+  archive_path=$2
+  # The first two attested releases predate the downloadable release sidecar.
+  case "$VERSION" in
+    v0.8.2) bundle_url=https://github.com/d2lang/d2/attestations/42650843/download ;;
+    v0.9.0) bundle_url=https://github.com/d2lang/d2/attestations/45830930/download ;;
+    *) bundle_url="https://github.com/$REPO/releases/download/$VERSION/d2-$VERSION-provenance.sigstore.json" ;;
+  esac
+  log "verifying signed D2 build provenance for $ARCHIVE"
+  curl -qfsSL --proto '=https' --proto-redir '=https' -o "$stage/provenance.json" "$bundle_url"
+  verifier=$(installer_gh "$stage")
+
+  # A single signed statement covers all platforms. Bind the digest to the
+  # selected filename and pin D2's permanent repository ID for offline verification.
+  GH_HOST=github.com "$verifier" attestation verify "$archive_path" \
+    --bundle "$stage/provenance.json" --repo d2lang/d2 \
+    --signer-workflow d2lang/d2/.github/workflows/release-archives.yml \
+    --source-ref "refs/tags/$VERSION" --predicate-type https://slsa.dev/provenance/v1 \
+    --format json --jq '.[].verificationResult | select(.signature.certificate.sourceRepositoryIdentifier == "533087958") | .statement.subject[] | [.digest.sha256, .name] | @tsv' \
+    >"$stage/subjects"
+  archive_digest=$(sha256_file "$archive_path")
+  if ! grep -Fxq "$(printf '%s\t%s' "$archive_digest" "$ARCHIVE")" "$stage/subjects"; then
+    echoerr "signed D2 provenance does not match the file name and SHA-256 of $ARCHIVE"
+    return 1
+  fi
+)
 
 install_d2_brew() {
   header "installing d2 with homebrew"
@@ -1006,17 +1189,34 @@ install_d2_brew() {
 }
 
 uninstall() {
-  if ! command -v d2 >/dev/null; then
+  INSTALLED_VERSION=
+  if [ "$METHOD" = standalone ]; then
+    read_standalone_install
+  elif command -v d2 >/dev/null; then
+    INSTALLED_VERSION=$(d2 --version)
+  fi
+  if [ -z "$INSTALLED_VERSION" ]; then
     warn "no version of d2 installed"
     return 0
   fi
 
-  INSTALLED_VERSION="$(d2 --version)"
   header "uninstalling d2-$INSTALLED_VERSION"
   case $METHOD in
     standalone) uninstall_d2_standalone ;;
     homebrew) uninstall_d2_brew ;;
   esac
+}
+
+read_standalone_install() {
+  INSTALLED_VERSION=
+  expected_binary=
+  if [ -f "$standalone_binary" ]; then
+    # Snapshot first so a concurrent rename cannot pair an old version with a new checksum.
+    expected_binary=$(cksum < "$standalone_binary")
+    if [ -x "$standalone_binary" ]; then
+      INSTALLED_VERSION=$("$standalone_binary" --version) || INSTALLED_VERSION=
+    fi
+  fi
 }
 
 uninstall_d2_standalone() {
@@ -1028,10 +1228,114 @@ uninstall_d2_standalone() {
     return 1
   fi
 
-  ensure_prefix_sh_c
-  "$sh_c" sh -c "'cd \"$INSTALL_DIR/d2-$INSTALLED_VERSION\" && make uninstall PREFIX=\"$PREFIX\"'"
-  "$sh_c" rm -rf "$INSTALL_DIR/d2-$INSTALLED_VERSION"
+  if [ -n "${DRY_RUN-}" ]; then
+    log "would uninstall d2-$INSTALLED_VERSION from $PREFIX"
+    return
+  fi
+  update_standalone_prefix uninstall
 }
+
+# Only the final changes to the selected prefix may need elevation. Pass paths
+# as arguments to the child shell, including when the shared helper uses sudo.
+update_standalone_prefix() (
+  ensure_prefix_sh_c
+  action=$1
+  export action PREFIX OS INSTALLED_VERSION expected_binary
+  export stage="${stage-}" VERSION="${VERSION-}"
+  "$sh_c" 'sh -s -- "$action" "$PREFIX" "$OS" "$INSTALLED_VERSION" "$stage" "$VERSION" "$expected_binary"' <<'PUBLISH'
+set -eu
+action=$1 prefix=$2 os=$3 previous=$4 stage=$5 version=$6 expected_binary=$7
+case "$prefix" in /*|[A-Za-z]:/*) ;; *) prefix=$PWD/$prefix ;; esac
+lib=$prefix/lib/d2
+lock=$lib/.install-lock
+case "$previous" in
+  *[!A-Za-z0-9.-]*)
+    if [ "$action" = uninstall ]; then echo >&2 "Invalid installed D2 version: $previous"; exit 1; fi
+    previous= ;; # A source build on PATH may have no managed release tree.
+esac
+mkdir -p "$lib"
+# Set permissions at creation. Git Bash can create the directory but fail a
+# subsequent chmod from mkdir -m, leaving a lock behind on a fresh install.
+if ! (umask 077 && mkdir "$lock"); then
+  if [ -d "$lock" ]; then
+    echo >&2 "Cannot update $prefix while $lock exists"
+    echo >&2 "Wait for the other installer to finish. If it was interrupted, inspect the lock directory for a saved release tree before removing it."
+  fi
+  exit 1
+fi
+
+binary=d2
+if [ "$os" = windows ]; then binary=d2.exe; fi
+bin=$prefix/bin/$binary
+man=$prefix/share/man/man1/d2.1
+tree=$lib/d2-$version
+bin_tmp= man_tmp=
+finish() {
+  status=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  # Renaming the executable is the commit point. Before it, restore the
+  # release tree and manpage if their replacements were already published.
+  if [ -f "$lock/publishing" ] && [ -f "$bin_tmp/$binary" ]; then
+    if [ ! -d "$lock/new" ]; then rm -rf "$tree"; fi
+    if [ -e "$lock/old" ] || [ -L "$lock/old" ]; then mv "$lock/old" "$tree"; fi
+    if [ ! -e "$man_tmp/new" ]; then
+      if [ -e "$man_tmp/old" ] || [ -L "$man_tmp/old" ]; then
+        mv -f "$man_tmp/old" "$man"
+      else
+        rm -f "$man"
+      fi
+    fi
+  fi
+  for scratch in "$bin_tmp" "$man_tmp" "$lock"; do
+    if [ -n "$scratch" ]; then rm -rf "$scratch" || echo >&2 "Could not remove $scratch"; fi
+  done
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 1' HUP INT TERM
+
+current_binary=
+if [ -f "$bin" ]; then current_binary=$(cksum < "$bin"); fi
+if [ "$current_binary" != "$expected_binary" ]; then
+  echo >&2 "The D2 executable in $prefix changed during this operation. Rerun the installer."
+  exit 1
+fi
+
+if [ "$action" = uninstall ]; then
+  if [ ! -d "$lib/d2-$previous" ]; then
+    echo >&2 "Missing standalone release directory $lib/d2-$previous"
+    exit 1
+  fi
+  rm -f "$man" "$bin"
+  rm -rf "$lib/d2-$previous"
+  exit
+fi
+
+# Each incoming file is on its destination filesystem, even if bin, man and
+# lib are separate mounts. A failed rename leaves the existing executable intact.
+mkdir -p "${bin%/*}" "${man%/*}"
+if [ -d "$bin" ] || [ -d "$man" ]; then
+  echo >&2 "Expected a file at $bin and $man"
+  exit 1
+fi
+bin_tmp=$(mktemp -d "${bin%/*}/.d2-install.XXXXXXXX")
+man_tmp=$(mktemp -d "${man%/*}/.d2-install.XXXXXXXX")
+install -m 755 "$stage/prefix/bin/$binary" "$bin_tmp/$binary"
+install -m 644 "$stage/prefix/share/man/man1/d2.1" "$man_tmp/new"
+cp -R "$stage/d2-$version" "$lock/new"
+if [ -e "$man" ] || [ -L "$man" ]; then cp -pP "$man" "$man_tmp/old"; fi
+
+touch "$lock/publishing"
+if [ -e "$tree" ] || [ -L "$tree" ]; then mv "$tree" "$lock/old"; fi
+mv "$lock/new" "$tree"
+mv -f "$man_tmp/new" "$man"
+mv -f "$bin_tmp/$binary" "$bin"
+if [ -n "$previous" ] && [ "$previous" != "$version" ]; then
+  rm -rf "$lib/d2-$previous" || echo >&2 "Installed d2-$version; could not remove $lib/d2-$previous"
+fi
+PUBLISH
+)
 
 uninstall_d2_brew() {
   sh_c brew remove d2
@@ -1050,25 +1354,36 @@ cache_dir() {
 ensure_version() {
   if [ "$VERSION" = latest ]; then
     log "fetching latest version of $REPO"
-    redirect_url=$(curl -fsSLI -o /dev/null -w "%{url_effective}" "https://github.com/$REPO/releases/latest")
-    if [ $? -ne 0 ]; then
-      warn "redirect method failed, falling back to API"
-      release_info_url="https://api.github.com/repos/$REPO/releases/latest"
-      release_info=$(mktempd)/release-info.json
-      DRY_RUN= fetch_gh "$release_info_url" "$release_info" 'application/json'
-      VERSION=$(cat "$release_info" | grep -m1 tag_name | sed 's/^.*: "\(.*\)",$/\1/g')
-      log "detected latest version via API: $VERSION"
+    release_url="https://github.com/$REPO/releases"
+    tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+    if redirect_url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$release_url/latest") &&
+      [ "$redirect_url" = "$release_url/tag/${redirect_url##*/}" ] &&
+      printf '%s\n' "${redirect_url##*/}" | grep -Eq "$tag_pattern"; then
+      VERSION=${redirect_url##*/}
     else
-      # Extract version from redirected URL
-      VERSION="${redirect_url##*/}"
-      log "detected latest version: $VERSION"
+      warn "could not resolve the latest release via redirect, trying the GitHub API"
+      api_url="https://api.github.com/repos/$REPO/releases/latest"
+      if ! release_info=$(DRY_RUN= curl_gh -sS -H "'Accept: application/vnd.github+json'" "$api_url"); then
+        echoerr "could not fetch the latest release from $api_url"
+        return 1
+      fi
+      VERSION=$(printf '%s\n' "$release_info" | sed -nE 's/^.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]*)".*$/\1/p')
+      if ! printf '%s\n' "$VERSION" | grep -Eq "$tag_pattern"; then
+        echoerr "the GitHub API returned no valid release tag for $REPO"
+        return 1
+      fi
     fi
+    log "detected latest version: $VERSION"
   fi
-  
+
   # Ensure VERSION has 'v' prefix
   case "$VERSION" in
     v*) ;;
     *) VERSION="v$VERSION" ;;
+  esac
+  # The release tag is used in paths, shell commands, and the expected signing identity.
+  case "$VERSION" in
+    *[!A-Za-z0-9.-]*) echoerr "invalid release version"; return 1 ;;
   esac
 }
 

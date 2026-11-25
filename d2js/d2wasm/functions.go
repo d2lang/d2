@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -169,12 +170,16 @@ func GetELKGraph(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid fs input: %s", err.Error()), Code: 400}
 	}
 
-	g, _, err := d2compiler.Compile(inputPath, strings.NewReader(input.FS[inputPath]), &d2compiler.CompileOptions{
+	g, config, err := d2compiler.Compile(inputPath, strings.NewReader(input.FS[inputPath]), &d2compiler.CompileOptions{
 		UTF16Pos: true,
 		FS:       fs,
 	})
 	if err != nil {
 		return nil, &WASMError{Message: err.Error(), Code: 400}
+	}
+
+	if config != nil {
+		g.Data = config.Data
 	}
 
 	ruler, err := textmeasure.NewRuler()
@@ -193,7 +198,57 @@ func GetELKGraph(args []js.Value) (interface{}, error) {
 	return elk, nil
 }
 
+func Format(args []js.Value) (interface{}, error) {
+	if len(args) == 0 || args[0].Type() != js.TypeString {
+		return nil, &WASMError{Message: "format expects a D2 source string", Code: 400}
+	}
+	m, err := d2parser.Parse(DEFAULT_INPUT_PATH, strings.NewReader(args[0].String()), &d2parser.ParseOptions{UTF16Pos: true})
+	if err != nil {
+		return nil, &WASMError{Message: err.Error(), Code: 400}
+	}
+	return d2format.Format(m), nil
+}
+
 func Compile(args []js.Value) (interface{}, error) {
+	input, err := parseCompileRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	// Two-phase callers can request an animated target later in render().
+	result, err := input.compile(go2.Pointer(input.Opts.ASCII == nil || !*input.Opts.ASCII))
+	if err != nil {
+		return nil, err
+	}
+	result.FS[result.InputPath] = d2format.Format(result.Graph.AST)
+	return *result, nil
+}
+
+func RenderSVG(args []js.Value) (interface{}, error) {
+	input, err := parseCompileRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	if input.Opts.ASCII != nil && *input.Opts.ASCII {
+		return nil, &WASMError{Message: "renderSVG does not support ASCII output", Code: 400}
+	}
+	var animateTweens *bool
+	if input.Opts.Target == nil || (*input.Opts.Target != "*" && !strings.HasSuffix(*input.Opts.Target, ".*")) {
+		animateTweens = go2.Pointer(false)
+	} else if input.Opts.AnimateInterval != nil {
+		animateTweens = go2.Pointer(*input.Opts.AnimateInterval > 0)
+	}
+	result, err := input.compile(animateTweens)
+	if err != nil {
+		return nil, err
+	}
+	out, err := render(RenderRequest{Diagram: &result.Diagram, Opts: &result.RenderOptions})
+	if err != nil {
+		return nil, err
+	}
+	return string(out), nil
+}
+
+func parseCompileRequest(args []js.Value) (*CompileRequest, error) {
 	if len(args) < 1 {
 		return nil, &WASMError{Message: "missing JSON argument", Code: 400}
 	}
@@ -201,14 +256,37 @@ func Compile(args []js.Value) (interface{}, error) {
 	if err := json.Unmarshal([]byte(args[0].String()), &input); err != nil {
 		return nil, &WASMError{Message: "invalid JSON input", Code: 400}
 	}
+	if input.Opts == nil {
+		input.Opts = &CompileOptions{}
+	}
+	if err := validateAnimateInterval(input.Opts.AnimateInterval); err != nil {
+		return nil, err
+	}
+	if duration := input.Opts.AnimateDuration; duration != nil && (*duration < 0 || *duration > d2target.MaxTweenDurationMS) {
+		return nil, &WASMError{Message: fmt.Sprintf("animateDuration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS), Code: 400}
+	}
+	return &input, nil
+}
 
+func validateAnimateInterval(interval *int64) error {
+	if interval != nil && (*interval < 0 || *interval > math.MaxInt) {
+		return &WASMError{Message: "animateInterval must be non-negative and fit in the supported range", Code: 400}
+	}
+	return nil
+}
+
+func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, error) {
 	if input.FS == nil {
 		return nil, &WASMError{Message: "missing 'fs' field in input JSON", Code: 400}
 	}
 
 	compileOpts := &d2lib.CompileOptions{
-		UTF16Pos:    true,
-		LayoutReuse: true,
+		UTF16Pos:        true,
+		LayoutReuse:     true,
+		AnimateTweens:   animateTweens,
+		AnimateDuration: input.Opts.AnimateDuration,
+
+		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
 	}
 
 	inputPath := DEFAULT_INPUT_PATH
@@ -306,6 +384,12 @@ func Compile(args []js.Value) (interface{}, error) {
 	if input.Opts != nil && input.Opts.DarkThemeID != nil {
 		renderOpts.DarkThemeID = input.Opts.DarkThemeID
 	}
+	if input.Opts != nil && input.Opts.ThemeOverrides != nil {
+		renderOpts.ThemeOverrides = input.Opts.ThemeOverrides
+	}
+	if input.Opts != nil && input.Opts.DarkThemeOverrides != nil {
+		renderOpts.DarkThemeOverrides = input.Opts.DarkThemeOverrides
+	}
 	if input.Opts != nil && input.Opts.Scale != nil {
 		renderOpts.Scale = input.Opts.Scale
 	}
@@ -320,9 +404,7 @@ func Compile(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: err.Error(), Code: 500}
 	}
 
-	input.FS[inputPath] = d2format.Format(g.AST)
-
-	return CompileResponse{
+	return &CompileResponse{
 		FS:        input.FS,
 		InputPath: inputPath,
 		Diagram:   *diagram,
@@ -337,9 +419,9 @@ func Compile(args []js.Value) (interface{}, error) {
 			Pad:                renderOpts.Pad,
 			Center:             renderOpts.Center,
 			Scale:              renderOpts.Scale,
-			ForceAppendix:      input.Opts.ForceAppendix,
+			ForceAppendix:      diagram.Config.ResolveForceAppendix(input.Opts.ForceAppendix),
 			Target:             input.Opts.Target,
-			AnimateInterval:    input.Opts.AnimateInterval,
+			AnimateInterval:    diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval),
 			Salt:               input.Opts.Salt,
 			NoXMLTag:           input.Opts.NoXMLTag,
 			ASCII:              input.Opts.ASCII,
@@ -357,6 +439,10 @@ func Render(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: "invalid JSON input", Code: 400}
 	}
 
+	return render(input)
+}
+
+func render(input RenderRequest) ([]byte, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
 	}
@@ -364,11 +450,25 @@ func Render(args []js.Value) (interface{}, error) {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid diagram: %s", err.Error()), Code: 400}
 	}
 
-	animateInterval := 0
-	if input.Opts != nil && input.Opts.AnimateInterval != nil && *input.Opts.AnimateInterval > 0 {
-		animateInterval = int(*input.Opts.AnimateInterval)
+	if input.Opts == nil {
+		input.Opts = &RenderOptions{}
 	}
-	forceAppendix := input.Opts != nil && input.Opts.ForceAppendix != nil && *input.Opts.ForceAppendix
+	animateInterval := 0
+	if interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval); interval != nil {
+		if err := validateAnimateInterval(interval); err != nil {
+			return nil, err
+		}
+		animateInterval = int(*interval)
+	}
+	appendixOption := input.Diagram.Config.ResolveForceAppendix(input.Opts.ForceAppendix)
+	forceAppendix := appendixOption != nil && *appendixOption
+	scale := input.Opts.Scale
+	if scale == nil && input.Diagram.Config != nil {
+		scale = input.Diagram.Config.Scale
+	}
+	if scale != nil && *scale == -1 {
+		scale = nil
+	}
 
 	var boardPath []string
 	noChildren := true
@@ -403,20 +503,17 @@ func Render(args []js.Value) (interface{}, error) {
 		diagram.Layers = nil
 		diagram.Scenarios = nil
 		diagram.Steps = nil
+		diagram.TweenFrames = nil
+		diagram.TweenFrameEndsMS = nil
+		diagram.GridMotion = false
+		diagram.LayoutContinuity = false
+		diagram.TweenDurationMS = 0
 	}
 
-	renderOpts := &d2svg.RenderOpts{}
+	renderOpts := &d2svg.RenderOpts{Scale: scale}
 
 	if input.Opts != nil && input.Opts.Salt != nil {
 		renderOpts.Salt = input.Opts.Salt
-	}
-
-	if animateInterval > 0 {
-		masterID, err := diagram.HashID(renderOpts.Salt)
-		if err != nil {
-			return nil, &WASMError{Message: fmt.Sprintf("cannot process animate interval: %s", err.Error()), Code: 500}
-		}
-		renderOpts.MasterID = masterID
 	}
 
 	ruler, err := textmeasure.NewRuler()
@@ -448,9 +545,6 @@ func Render(args []js.Value) (interface{}, error) {
 	if input.Opts != nil && input.Opts.DarkThemeOverrides != nil {
 		renderOpts.DarkThemeOverrides = input.Opts.DarkThemeOverrides
 	}
-	if input.Opts != nil && input.Opts.Scale != nil {
-		renderOpts.Scale = input.Opts.Scale
-	}
 	if input.Opts != nil && input.Opts.NoXMLTag != nil {
 		renderOpts.NoXMLTag = input.Opts.NoXMLTag
 	}
@@ -462,7 +556,7 @@ func Render(args []js.Value) (interface{}, error) {
 		if animateInterval > 0 {
 			return nil, &WASMError{Message: "isometric rendering does not yet support multi-board SVG animation", Code: 400}
 		}
-		if input.Opts.ForceAppendix != nil && *input.Opts.ForceAppendix {
+		if forceAppendix {
 			return nil, &WASMError{Message: "isometric rendering does not yet support an SVG appendix", Code: 400}
 		}
 	}
@@ -477,10 +571,7 @@ func Render(args []js.Value) (interface{}, error) {
 
 		ctx := log.WithDefault(context.Background())
 		artist := d2ascii.NewASCIIartist()
-		asciiOpts := &d2ascii.RenderOpts{}
-		if input.Opts.Scale != nil {
-			asciiOpts.Scale = input.Opts.Scale
-		}
+		asciiOpts := &d2ascii.RenderOpts{Scale: scale}
 		// Set charset based on ASCII mode (default to "extended"/Unicode)
 		var charsetType charset.Type
 		asciiMode := "extended" // Default
@@ -502,31 +593,46 @@ func Render(args []js.Value) (interface{}, error) {
 		return out, nil
 	}
 
-	if animateInterval > 0 && forceAppendix {
-		return nil, &WASMError{Message: "forceAppendix is not supported for animated SVGs", Code: 400}
+	if animateInterval == 0 {
+		return renderSingleBoard(renderOpts, forceAppendix, ruler, diagram)
 	}
-
-	var boards [][]byte
-	if noChildren {
-		var board []byte
-		board, err = renderSingleBoard(renderOpts, forceAppendix, ruler, diagram)
-		boards = [][]byte{board}
-	} else {
-		boards, err = renderBoards(renderOpts, forceAppendix, ruler, diagram)
-	}
-	if err != nil {
-		return nil, &WASMError{Message: fmt.Sprintf("render failed: %s", err.Error()), Code: 500}
-	}
-
-	var out []byte
-	if len(boards) > 0 {
-		out = boards[0]
-		if animateInterval > 0 {
-			out, err = d2animate.Wrap(diagram, boards, *renderOpts, animateInterval)
-			if err != nil {
-				return nil, &WASMError{Message: fmt.Sprintf("animation failed: %s", err.Error()), Code: 500}
-			}
+	// An animated subtree includes its first board's incoming transition.
+	// Late sketch needs the original playback order to find its predecessor.
+	config := input.Diagram.Config
+	if !noChildren && renderOpts.Sketch != nil && *renderOpts.Sketch && config != nil &&
+		(config.Sketch == nil || !*config.Sketch) && config.AnimateDuration != nil && *config.AnimateDuration > 0 {
+		if err := d2lib.PrepareSketchTransitions(context.Background(), input.Diagram, *config.AnimateDuration); err != nil {
+			return nil, &WASMError{Message: fmt.Sprintf("cannot prepare sketch animation: %s", err), Code: 400}
 		}
+	}
+	masterID, err := diagram.HashID(renderOpts.Salt)
+	if err != nil {
+		return nil, &WASMError{Message: fmt.Sprintf("cannot process animate interval: %s", err.Error()), Code: 500}
+	}
+	renderOpts.MasterID = masterID
+	frames, err := d2animate.Timeline(diagram, animateInterval)
+	if err != nil {
+		return nil, &WASMError{Message: fmt.Sprintf("invalid timeline: %s", err), Code: 400}
+	}
+	if len(frames) == 0 {
+		if !noChildren {
+			return []byte(nil), nil
+		}
+		// An explicitly selected empty board still has its own background.
+		frames = []d2animate.Frame{{Diagram: diagram, DurationMS: animateInterval}}
+	}
+	boards := make([][]byte, len(frames))
+	durations := make([]int, len(frames))
+	for i, frame := range frames {
+		boards[i], err = renderSingleBoard(renderOpts, forceAppendix, ruler, frame.Diagram)
+		if err != nil {
+			return nil, err
+		}
+		durations[i] = frame.DurationMS
+	}
+	out, err := d2animate.WrapTimed(diagram, boards, *renderOpts, durations)
+	if err != nil {
+		return nil, &WASMError{Message: fmt.Sprintf("animation failed: %s", err), Code: 500}
 	}
 	return out, nil
 }
@@ -537,43 +643,9 @@ func renderSingleBoard(opts *d2svg.RenderOpts, forceAppendix bool, ruler *textme
 		return nil, &WASMError{Message: fmt.Sprintf("render failed: %s", err.Error()), Code: 500}
 	}
 	if forceAppendix {
-		out = appendix.Append(diagram, opts, ruler, out)
+		return appendix.AppendRendered(diagram, opts, ruler, out)
 	}
 	return out, nil
-}
-
-func renderBoards(opts *d2svg.RenderOpts, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram) ([][]byte, error) {
-	var boards [][]byte
-	for _, dl := range diagram.Layers {
-		childrenBoards, err := renderBoards(opts, forceAppendix, ruler, dl)
-		if err != nil {
-			return nil, err
-		}
-		boards = append(boards, childrenBoards...)
-	}
-	for _, dl := range diagram.Scenarios {
-		childrenBoards, err := renderBoards(opts, forceAppendix, ruler, dl)
-		if err != nil {
-			return nil, err
-		}
-		boards = append(boards, childrenBoards...)
-	}
-	for _, dl := range diagram.Steps {
-		childrenBoards, err := renderBoards(opts, forceAppendix, ruler, dl)
-		if err != nil {
-			return nil, err
-		}
-		boards = append(boards, childrenBoards...)
-	}
-
-	if !diagram.IsFolderOnly {
-		out, err := renderSingleBoard(opts, forceAppendix, ruler, diagram)
-		if err != nil {
-			return boards, err
-		}
-		boards = append([][]byte{out}, boards...)
-	}
-	return boards, nil
 }
 
 func GetBoardAtPosition(args []js.Value) (interface{}, error) {

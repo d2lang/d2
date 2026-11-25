@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeHexagon struct {
@@ -14,12 +13,9 @@ type shapeHexagon struct {
 
 func NewHexagon(box *geo.Box) Shape {
 	shape := shapeHexagon{
-		baseShape: &baseShape{
-			Type: HEXAGON_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(HEXAGON_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -35,8 +31,13 @@ func (s shapeHexagon) GetInnerBox() *geo.Box {
 }
 
 func hexagonPath(box *geo.Box) *svg.SvgPathContext {
+	return hexagonOutline(box, svg.NewSVGPathContext)
+}
+
+// hexagonOutline draws the outline of hexagonPath into a path made by newPath.
+func hexagonOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
 	halfYFactor := 43.6 / 87.3
-	pc := svg.NewSVGPathContext(box.TopLeft, box.Width, box.Height)
+	pc := newPath(box.TopLeft, box.Width, box.Height)
 	pc.StartAt(pc.Absolute(0.25, 0))
 	pc.L(false, 0, halfYFactor)
 	pc.L(false, 0.25, 1)
@@ -49,6 +50,10 @@ func hexagonPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeHexagon) Perimeter() []geo.Intersectable {
 	return hexagonPath(s.Box).Path
+}
+
+func (s shapeHexagon) traceBorder(t *borderTracer) {
+	hexagonOutline(s.Box, t.newPath)
 }
 
 func (s shapeHexagon) GetSVGPathData() []string {

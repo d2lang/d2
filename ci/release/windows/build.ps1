@@ -10,7 +10,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $OutputDirectory,
 
-    [switch] $AllowFixtureNotices
+    [switch] $AllowFixtureNotices,
+    [switch] $CurrentUser
 )
 
 Set-StrictMode -Version Latest
@@ -41,14 +42,15 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
 }
 $wixVersion = (& wix --version | Out-String).Trim()
 $wixSemVer = ($wixVersion -split '[+-]', 2)[0]
-if ($wixSemVer -cne '7.0.0') {
-    throw "WiX version is '$wixVersion', expected 7.0.0"
+if ($wixSemVer -cne '7.0.1') {
+    throw "WiX version is '$wixVersion', expected 7.0.1"
 }
 if ($env:WIX7_EULA_ACCEPTED -cne 'true') {
     throw 'WiX 7 requires explicit acceptance of the wix7 EULA. Set WIX7_EULA_ACCEPTED=true only after the repository owner verifies the OSMF terms and accepts the EULA.'
 }
 
-$workingDirectory = Join-Path $env:RUNNER_TEMP "windows-msi-$Version"
+$suffix = if ($CurrentUser) { '-user' } else { '' }
+$workingDirectory = Join-Path $env:RUNNER_TEMP "windows-msi-$Version$suffix"
 $archiveDirectory = Join-Path $workingDirectory 'archive'
 $wixDirectory = Join-Path $workingDirectory 'wix'
 $extractDirectory = Join-Path $workingDirectory 'installed'
@@ -100,7 +102,7 @@ if (-not (Test-Path -LiteralPath $noticesPath -PathType Leaf)) {
     }
 }
 
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'd2.wxs') -Destination $wixDirectory
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "d2$suffix.wxs") -Destination (Join-Path $wixDirectory 'd2.wxs')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'd2.ico') -Destination $wixDirectory
 Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $wixDirectory 'd2.exe')
 Copy-Item -LiteralPath $noticesPath -Destination (Join-Path $wixDirectory 'THIRD_PARTY_NOTICES.txt')
@@ -135,6 +137,12 @@ $expectedProperties = @{
     ProductName = 'D2'
     Manufacturer = 'D2'
     UpgradeCode = '{AC84FEE7-EB67-4F5D-A08D-ADEF69538690}'
+}
+if ($CurrentUser) {
+    $expectedProperties.ProductName = 'D2 (current user)'
+    $expectedProperties.UpgradeCode = '{B4061DE9-46B6-443A-966C-D4F6A9F1F7BF}'
+} else {
+    $expectedProperties.ALLUSERS = '1'
 }
 foreach ($property in $expectedProperties.Keys) {
     $actual = Get-MsiProperty -Database $database -Name $property
@@ -177,7 +185,7 @@ if ($LASTEXITCODE -ne 0 -or $versionOutput -cne $Version) {
 }
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-$outputPath = Join-Path $OutputDirectory "d2-$Version-windows-amd64.msi"
+$outputPath = Join-Path $OutputDirectory "d2-$Version-windows-amd64$suffix.msi"
 Copy-Item -LiteralPath $msiPath -Destination $outputPath -Force
 
 $outputHash = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()

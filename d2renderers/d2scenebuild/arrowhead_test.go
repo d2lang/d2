@@ -103,6 +103,39 @@ func TestBuildSupportsEveryArrowheadAtBothEndpoints(t *testing.T) {
 	}
 }
 
+func TestFractionalStrokeWidthMatchesShapeRouteAndArrowhead(t *testing.T) {
+	diagram := validDiagram()
+	diagram.Shapes[1].StrokeWidthOffset = .25
+	conn := &diagram.Connections[0]
+	conn.StrokeWidthOffset = .5
+	conn.DstArrow = d2target.UnfilledTriangleArrowhead
+	conn.StrokeDash = 3
+
+	doc, err := Build(context.Background(), diagram, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape := findSceneNode(t, doc.Root, "b").Children[0].Primitive.(d2scene.Rect)
+	shaft := findSceneNode(t, doc.Root, "a-b:path").Primitive.(d2scene.Path)
+	head := findSceneNode(t, doc.Root, "a-b:dst-arrowhead")
+	marker := head.Primitive.(d2scene.Path)
+	if shape.Stroke.Width != 2.25 || shaft.Stroke.Width != 2.5 || marker.Stroke.Width != 2.5 || shaft.Stroke.Dashes[0] != 7.5 {
+		t.Fatalf("fractional shape, shaft, marker and dash widths = %g, %g, %g, %g", shape.Stroke.Width, shaft.Stroke.Width, marker.Stroke.Width, shaft.Stroke.Dashes[0])
+	}
+	// The shaft stops short of the shape, and the marker tip meets its border.
+	end := shaft.Commands[len(shaft.Commands)-1].P1.X
+	if want := 80 - (2.25+2.5)/2 - 2.5; end != want {
+		t.Errorf("shaft endpoint = %g, want %g", end, want)
+	}
+	width, height := conn.DstArrow.Dimensions(2.5)
+	if want := d2scene.Translate(end-width+1.5*2.5, 10-height/2); head.Transform != want {
+		t.Errorf("marker transform = %+v, want %+v", head.Transform, want)
+	}
+	if tip := marker.Commands[1].P1; tip != (d2scene.Point{X: width - 2.5/2, Y: height / 2}) {
+		t.Errorf("marker tip = %+v for %g × %g arrowhead", tip, width, height)
+	}
+}
+
 func TestBuildLineArrowheadCommands(t *testing.T) {
 	connection := buildArrowheadConnection(t, d2target.LineArrowhead)
 	width, height := d2target.LineArrowhead.Dimensions(2)

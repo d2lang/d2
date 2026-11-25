@@ -26,6 +26,11 @@ func pruneThemeCSSWithClasses(stylesheet string, used map[string]bool, sources .
 		used = make(map[string]bool)
 	}
 	used["stroke-B2"] = true
+	if !UsesDefaultStylesheet() {
+		// Historically these unscoped selectors were exposed alongside a
+		// caller-supplied base stylesheet, even on diagrams without code.
+		used["md"], used["light-code"], used["dark-code"] = true, true, true
+	}
 	for _, source := range sources {
 		decoder := xml.NewDecoder(strings.NewReader(source))
 		for {
@@ -59,7 +64,7 @@ func pruneThemeCSSWithClasses(stylesheet string, used map[string]bool, sources .
 				}
 				if attr.Name.Local == "class" {
 					for _, class := range strings.Fields(attr.Value) {
-						if isPaletteClass(class) {
+						if isThemeClass(class) {
 							used[class] = true
 						}
 					}
@@ -98,7 +103,7 @@ func pruneThemeRules(stylesheet string, used map[string]bool) string {
 			continue
 		}
 		scan = end + 1
-		if !isPaletteClass(class) || used[class] {
+		if used[class] {
 			continue
 		}
 		for start > copied && themeRuleWhitespace(stylesheet[start-1]) {
@@ -126,6 +131,10 @@ func themeRuleSelector(stylesheet string, open int) (start int, class string, ok
 		return 0, "", false
 	}
 	class = stylesheet[start:open]
+	switch class {
+	case "md", "light-code", "dark-code":
+		return start - 1, class, true
+	}
 	value := ""
 	if strings.HasPrefix(class, "sketch-overlay-") {
 		value = class[len("sketch-overlay-"):]
@@ -159,7 +168,7 @@ func themeRuleSelector(stylesheet string, open int) (start int, class string, ok
 			return 0, "", false
 		}
 	}
-	return start, class, true
+	return start, class, isPaletteClass(class)
 }
 
 func themeRuleWord(c byte) bool {
@@ -168,6 +177,10 @@ func themeRuleWord(c byte) bool {
 
 func themeRuleWhitespace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'
+}
+
+func isThemeClass(class string) bool {
+	return class == "md" || class == "light-code" || class == "dark-code" || isPaletteClass(class)
 }
 
 func isPaletteClass(class string) bool {

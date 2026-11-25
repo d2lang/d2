@@ -51,3 +51,11 @@ func validXMLRune(r rune) bool {
 func SVGID(text string) string {
 	return strings.TrimRight(base32.StdEncoding.EncodeToString([]byte(text)), "=")
 }
+
+// UnderlineClips returns complementary CSS clip-path values for the underlined
+// and plain portions of one text line. fill-box anchors the cut to the actual
+// font's glyph run, including when the label uses a fallback font.
+func UnderlineClips(progress float64) (decorated, plain string) {
+	return "inset(-100% " + FormatFloat((1-progress)*100) + "% -100% -100%) fill-box",
+		"inset(-100% -100% -100% " + FormatFloat(progress*100) + "%) fill-box"
+}

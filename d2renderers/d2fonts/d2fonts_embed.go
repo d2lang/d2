@@ -4,7 +4,7 @@ package d2fonts
 
 import (
 	"embed"
-	_ "embed"
+	"encoding/base64"
 	"strings"
 
 	"github.com/d2lang/d2/lib/syncmap"
@@ -16,23 +16,11 @@ var sourceSansProRegularBase64 string
 //go:embed encoded/SourceSansPro-Bold.txt
 var sourceSansProBoldBase64 string
 
-//go:embed encoded/SourceSansPro-Semibold.txt
-var sourceSansProSemiboldBase64 string
-
 //go:embed encoded/SourceSansPro-Italic.txt
 var sourceSansProItalicBase64 string
 
 //go:embed encoded/SourceCodePro-Regular.txt
 var sourceCodeProRegularBase64 string
-
-//go:embed encoded/SourceCodePro-Bold.txt
-var sourceCodeProBoldBase64 string
-
-//go:embed encoded/SourceCodePro-Semibold.txt
-var sourceCodeProSemiboldBase64 string
-
-//go:embed encoded/SourceCodePro-Italic.txt
-var sourceCodeProItalicBase64 string
 
 //go:embed encoded/FuzzyBubbles-Regular.txt
 var fuzzyBubblesRegularBase64 string
@@ -40,7 +28,11 @@ var fuzzyBubblesRegularBase64 string
 //go:embed encoded/FuzzyBubbles-Bold.txt
 var fuzzyBubblesBoldBase64 string
 
-//go:embed ttf/*
+// These four SVG encodings contain WOFF data. The other encodings already
+// contain the full TTF, so each native binary only needs one copy of those faces.
+//
+//go:embed ttf/SourceSansPro-Semibold.ttf ttf/SourceCodePro-Bold.ttf
+//go:embed ttf/SourceCodePro-Semibold.ttf ttf/SourceCodePro-Italic.ttf
 var fontFacesFS embed.FS
 
 func init() {
@@ -134,7 +126,7 @@ func init() {
 
 	FontFaces = syncmap.New[Font, []byte]()
 
-	b, err := fontFacesFS.ReadFile("ttf/SourceSansPro-Regular.ttf")
+	b, err := decodeEmbeddedTTF(sourceSansProRegularBase64)
 	if err != nil {
 		panic(err)
 	}
@@ -143,7 +135,7 @@ func init() {
 		Style:  FONT_STYLE_REGULAR,
 	}, b)
 
-	b, err = fontFacesFS.ReadFile("ttf/SourceCodePro-Regular.ttf")
+	b, err = decodeEmbeddedTTF(sourceCodeProRegularBase64)
 	if err != nil {
 		panic(err)
 	}
@@ -179,7 +171,7 @@ func init() {
 		Style:  FONT_STYLE_ITALIC,
 	}, b)
 
-	b, err = fontFacesFS.ReadFile("ttf/SourceSansPro-Bold.ttf")
+	b, err = decodeEmbeddedTTF(sourceSansProBoldBase64)
 	if err != nil {
 		panic(err)
 	}
@@ -197,7 +189,7 @@ func init() {
 		Style:  FONT_STYLE_SEMIBOLD,
 	}, b)
 
-	b, err = fontFacesFS.ReadFile("ttf/SourceSansPro-Italic.ttf")
+	b, err = decodeEmbeddedTTF(sourceSansProItalicBase64)
 	if err != nil {
 		panic(err)
 	}
@@ -206,7 +198,7 @@ func init() {
 		Style:  FONT_STYLE_ITALIC,
 	}, b)
 
-	b, err = fontFacesFS.ReadFile("ttf/FuzzyBubbles-Regular.ttf")
+	b, err = decodeEmbeddedTTF(fuzzyBubblesRegularBase64)
 	if err != nil {
 		panic(err)
 	}
@@ -219,7 +211,7 @@ func init() {
 		Style:  FONT_STYLE_ITALIC,
 	}, b)
 
-	b, err = fontFacesFS.ReadFile("ttf/FuzzyBubbles-Bold.ttf")
+	b, err = decodeEmbeddedTTF(fuzzyBubblesBoldBase64)
 	if err != nil {
 		panic(err)
 	}
@@ -235,4 +227,8 @@ func init() {
 	if err := registerBundledFontFaces(); err != nil {
 		panic(err)
 	}
+}
+
+func decodeEmbeddedTTF(dataURI string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(strings.TrimPrefix(dataURI, "data:application/font-woff;base64,"))
 }

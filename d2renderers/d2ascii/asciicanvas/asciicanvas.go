@@ -2,6 +2,7 @@ package asciicanvas
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -9,7 +10,13 @@ import (
 )
 
 type Canvas struct {
-	grid [][]string
+	grid        [][]string
+	labelsAbove map[int][]edgeLabel
+}
+
+type edgeLabel struct {
+	x    int
+	text string
 }
 
 func New(width, height int) *Canvas {
@@ -57,8 +64,13 @@ func (c *Canvas) DrawLabel(x, y int, label string) {
 	}
 	lines := strings.Split(label, "\n")
 	for lineIdx, line := range lines {
-		for i, ch := range line {
-			c.Set(x+i, y+lineIdx, string(ch))
+		// NOTE: range over a string yields byte indexes, not rune indexes.
+		// Use a rune counter so multi-byte characters (e.g. Vietnamese)
+		// occupy exactly one column each.
+		col := 0
+		for _, ch := range line {
+			c.Set(x+col, y+lineIdx, string(ch))
+			col++
 		}
 	}
 }
@@ -73,20 +85,67 @@ func (c *Canvas) ContainsAlphaNumeric(x, y int) bool {
 	return false
 }
 
+// DrawLabelAbove reserves output rows above an edge. Inserting them during
+// serialization preserves the grid coordinates used to draw other routes.
+func (c *Canvas) DrawLabelAbove(x, y int, text string) {
+	if c.labelsAbove == nil {
+		c.labelsAbove = make(map[int][]edgeLabel)
+	}
+	c.labelsAbove[y] = append(c.labelsAbove[y], edgeLabel{x: x, text: text})
+}
+
+func (c *Canvas) rowsWithLabels(chars charset.Set) ([][]string, map[int]bool) {
+	if len(c.labelsAbove) == 0 {
+		return c.grid, nil
+	}
+	vertical := chars.Vertical()
+	labelRows := make(map[int]bool)
+	rows := make([][]string, 0, len(c.grid))
+	for y, row := range c.grid {
+		if labels := c.labelsAbove[y]; len(labels) > 0 {
+			// Continue vertical strokes through the extra rows.
+			guides := make([]string, len(row))
+			for x, cell := range row {
+				guides[x] = " "
+				if cell == vertical || (cell != " " && c.Get(x, y-1) == vertical) {
+					guides[x] = vertical
+				}
+			}
+			for _, label := range labels {
+				for _, line := range strings.Split(label.text, "\n") {
+					caption := slices.Clone(guides)
+					x := label.x
+					for _, ch := range line {
+						if x >= 0 && x < len(caption) {
+							caption[x] = string(ch)
+						}
+						x++
+					}
+					labelRows[len(rows)] = true
+					rows = append(rows, caption)
+				}
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows, labelRows
+}
+
 func (c *Canvas) ToByteArray(chars charset.Set) []byte {
+	grid, labelRows := c.rowsWithLabels(chars)
 	var buf bytes.Buffer
 	startRow := 0
-	endRow := len(c.grid) - 1
+	endRow := len(grid) - 1
 
-	for i, row := range c.grid {
+	for i, row := range grid {
 		if strings.TrimSpace(strings.Join(row, "")) != "" {
 			startRow = i
 			break
 		}
 	}
 
-	for i := len(c.grid) - 1; i >= 0; i-- {
-		if strings.TrimSpace(strings.Join(c.grid[i], "")) != "" {
+	for i := len(grid) - 1; i >= 0; i-- {
+		if strings.TrimSpace(strings.Join(grid[i], "")) != "" {
 			endRow = i
 			break
 		}
@@ -94,12 +153,12 @@ func (c *Canvas) ToByteArray(chars charset.Set) []byte {
 
 	startCol := 0
 	endCol := 0
-	if len(c.grid) > 0 {
+	if len(grid) > 0 {
 		// Find leftmost column with content
-		for col := 0; col < len(c.grid[0]); col++ {
+		for col := 0; col < len(grid[0]); col++ {
 			hasContent := false
 			for row := startRow; row <= endRow; row++ {
-				if col < len(c.grid[row]) && c.grid[row][col] != " " {
+				if col < len(grid[row]) && grid[row][col] != " " {
 					hasContent = true
 					break
 				}
@@ -111,10 +170,10 @@ func (c *Canvas) ToByteArray(chars charset.Set) []byte {
 		}
 
 		// Find rightmost column with content
-		for col := len(c.grid[0]) - 1; col >= 0; col-- {
+		for col := len(grid[0]) - 1; col >= 0; col-- {
 			hasContent := false
 			for row := startRow; row <= endRow; row++ {
-				if col < len(c.grid[row]) && c.grid[row][col] != " " {
+				if col < len(grid[row]) && grid[row][col] != " " {
 					hasContent = true
 					break
 				}
@@ -129,7 +188,7 @@ func (c *Canvas) ToByteArray(chars charset.Set) []byte {
 	var prevRouteColumns []int
 	var prevRouteType rune
 	for i := startRow; i <= endRow; i++ {
-		rowData := c.grid[i]
+		rowData := grid[i]
 		if startCol < len(rowData) {
 			rowData = rowData[startCol:]
 		}
@@ -140,7 +199,8 @@ func (c *Canvas) ToByteArray(chars charset.Set) []byte {
 
 		var routeColumns []int
 		var routeType rune
-		isOnlyRouteChars := true
+		// Preserve label lines even when they contain only spaces or route glyphs.
+		isOnlyRouteChars := !labelRows[i]
 
 		verticalChar := []rune(chars.Vertical())[0]
 		horizontalChar := []rune(chars.Horizontal())[0]

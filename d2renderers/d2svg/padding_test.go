@@ -50,7 +50,10 @@ func TestRenderValidatesPaddingDimensions(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pad := tc.pad
-			out, err := d2svg.Render(diagram, &d2svg.RenderOpts{Pad: &pad})
+			// A visible root stroke expands the outer viewport beyond the crop.
+			cropped := *diagram
+			cropped.Root.StrokeWidth = 0
+			out, err := d2svg.Render(&cropped, &d2svg.RenderOpts{Pad: &pad})
 			if err != nil {
 				t.Fatalf("Render() error = %v", err)
 			}

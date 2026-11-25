@@ -203,6 +203,22 @@ func TestRichOpacityBudgetsAndCancellation(t *testing.T) {
 	}
 }
 
+func TestRichBudgetIncludesBothStrikeEndpoints(t *testing.T) {
+	s := d2target.Shape{Text: d2target.Text{Label: "old", Language: "markdown", MarkdownStrike: &d2target.MarkdownStrikeTransition{From: "~~old~~", Progress: .5}}}
+	p, err := newRichLabelPainter(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.sourceBytes = maxRichSourceBytes - len(s.Label)
+	if _, err := p.texture(s, richTestStyle()); err == nil || !strings.Contains(err.Error(), "aggregate source") {
+		t.Fatalf("expected combined endpoints to exceed the aggregate budget, got %v", err)
+	}
+	s.MarkdownStrike.From = strings.Repeat("x", maxRichLabelBytes)
+	if _, _, err := richSourceSize(s); err == nil {
+		t.Fatal("expected combined endpoints to exceed the per-label budget")
+	}
+}
+
 func TestRichSurfaceFittingDoesNotEnlargeSourceText(t *testing.T) {
 	doc := d2scene.NewDocument(d2scene.Box{Width: 100, Height: 20}, d2scene.NewNode(nil))
 	style := richTestStyle()

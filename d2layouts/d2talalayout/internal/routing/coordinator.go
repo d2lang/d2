@@ -210,19 +210,43 @@ func finalizeSelectedRoutes(
 	work *routeSearchWorkGuard,
 	reorderParallelEdges bool,
 ) (err error) {
+	updates, err := prepareSelectedRoutes(ctx, g, routes, selectedEdges, work, reorderParallelEdges)
+	if err != nil {
+		return err
+	}
+	applyRouteUpdates(updates)
+	return nil
+}
+
+func applyRouteUpdates(updates []selectedRouteUpdate) {
+	for _, update := range updates {
+		update.edge.Points = update.points
+	}
+}
+
+func prepareSelectedRoutes(
+	ctx context.Context,
+	g *layoutgraph.Graph,
+	routes []*Route,
+	selectedEdges map[*layoutgraph.Edge]struct{},
+	work *routeSearchWorkGuard,
+	reorderParallelEdges bool,
+) (updates []selectedRouteUpdate, err error) {
 	if work == nil {
-		return invariant.New("selected edge-routing flavor has no work guard")
+		return nil, invariant.New("selected edge-routing flavor has no work guard")
 	}
 	if g == nil {
-		return invariant.New("selected edge-routing flavor has no graph")
+		return nil, invariant.New("selected edge-routing flavor has no graph")
 	}
 	if err := work.bind(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	finished := false
 	defer func() {
 		if !finished {
-			_ = work.finish()
+			if chargeErr := work.finish(); chargeErr != nil {
+				err = chargeErr
+			}
 		}
 	}()
 	if selectedEdges != nil {
@@ -230,59 +254,59 @@ func finalizeSelectedRoutes(
 		found := make(map[*layoutgraph.Edge]struct{}, len(selectedEdges))
 		for _, route := range routes {
 			if err := work.step(); err != nil {
-				return err
+				return nil, err
 			}
 			if route == nil {
-				return invariant.New("selected edge-routing flavor produced a nil route")
+				return nil, invariant.New("selected edge-routing flavor produced a nil route")
 			}
 			if _, selected := selectedEdges[route.GEdge]; !selected {
 				continue
 			}
 			if _, duplicate := found[route.GEdge]; duplicate {
-				return invariant.New("selected edge-routing flavor produced duplicate routes for an edge")
+				return nil, invariant.New("selected edge-routing flavor produced duplicate routes for an edge")
 			}
 			found[route.GEdge] = struct{}{}
 			selectedRoutes = append(selectedRoutes, route)
 		}
 		if len(found) != len(selectedEdges) {
-			return invariant.New("selected edge-routing flavor omitted a requested edge")
+			return nil, invariant.New("selected edge-routing flavor omitted a requested edge")
 		}
 		routes = selectedRoutes
 	}
 
 	for _, route := range routes {
 		if err := work.step(); err != nil {
-			return err
+			return nil, err
 		}
 		if route == nil || route.GEdge == nil || route.GEdge.From == nil || route.GEdge.To == nil || len(route.OVGNodes) < 2 {
-			return invariant.New("selected edge-routing flavor produced an invalid route")
+			return nil, invariant.New("selected edge-routing flavor produced an invalid route")
 		}
 		for _, node := range route.OVGNodes {
 			if err := work.step(); err != nil {
-				return err
+				return nil, err
 			}
 			if node == nil || node.Point == nil {
-				return invariant.New("selected edge-routing flavor produced an invalid route node")
+				return nil, invariant.New("selected edge-routing flavor produced an invalid route node")
 			}
 		}
 	}
 
 	if reorderParallelEdges {
 		if err := reorderSelectedRoutes(g, routes, work); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if err := work.add(uint64(len(routes))); err != nil {
-		return err
+		return nil, err
 	}
-	updates := make([]selectedRouteUpdate, 0, len(routes))
+	updates = make([]selectedRouteUpdate, 0, len(routes))
 	for _, route := range routes {
 		if err := work.step(); err != nil {
-			return err
+			return nil, err
 		}
 		if err := work.add(uint64(len(route.OVGNodes))); err != nil {
-			return err
+			return nil, err
 		}
 		updates = append(updates, selectedRouteUpdate{
 			edge:   route.GEdge,
@@ -290,16 +314,11 @@ func finalizeSelectedRoutes(
 		})
 	}
 	if err := work.finish(); err != nil {
-		return err
+		return nil, err
 	}
 
-	// The commit contains no fallible work. A route-search error or cancellation
-	// above therefore leaves every graph edge byte-for-byte unchanged.
-	for _, update := range updates {
-		update.edge.Points = update.points
-	}
 	finished = true
-	return nil
+	return updates, nil
 }
 
 func reorderSelectedRoutes(g *layoutgraph.Graph, routes []*Route, work *routeSearchWorkGuard) error {
@@ -433,6 +452,8 @@ func routeEdgesWithResourceGuards(
 	isTreeEdge := g.TreeEdgeMap()
 	g.AddIsolatedTreeEdges(isTreeEdge)
 
+	var parentByAnnotation map[*layoutgraph.Edge]*layoutgraph.Node
+	var annotationCount map[*layoutgraph.Node]int
 	existingPortArrowheads := make(map[*OVGNode]map[layoutgraph.Arrowhead]struct{})
 	isRouted := map[*layoutgraph.Edge]struct{}{}
 	for _, node := range g.Nodes {
@@ -449,6 +470,16 @@ func routeEdgesWithResourceGuards(
 				continue
 			}
 
+			e, parent := tree.SentinelEdge, tree.SentinelNode()
+			if (e.From == parent && e.SourceArrowheadLabel != nil) || (e.To == parent && e.TargetArrowheadLabel != nil) {
+				if parentByAnnotation == nil {
+					parentByAnnotation = make(map[*layoutgraph.Edge]*layoutgraph.Node)
+					annotationCount = make(map[*layoutgraph.Node]int)
+				}
+				parentByAnnotation[e] = parent
+				annotationCount[parent]++
+			}
+
 			existingRoutes = append(existingRoutes, route)
 			fromPort := route.OVGNodes[1]
 			toPort := route.OVGNodes[len(route.OVGNodes)-2]
@@ -463,11 +494,42 @@ func routeEdgesWithResourceGuards(
 			isRouted[tree.SentinelEdge] = struct{}{}
 		} else {
 			for _, routedEdge := range loops.Route(node) {
-				existingRoutes = append(existingRoutes, makeLoopRoute(routedEdge, ovg))
+				existingRoutes = append(existingRoutes, makeLoopRoute(routedEdge, routedEdge.Points, ovg))
 				isRouted[routedEdge] = struct{}{}
 			}
 		}
 	}
+	// Keep a complete tree drawing as a fallback. A shared trunk cannot
+	// show multiple annotations anchored at the same port. Let the router
+	// score alternate ports for those branches while the tree stays put.
+	var treeFallback []*Route
+	competingAnnotations := false
+	for parent, count := range annotationCount {
+		if err := ovgGuard.step(); err != nil {
+			return ovg, err
+		}
+		// Giving each caption its own port is impossible at this junction.
+		if count > len(ovg.Ports[parent]) {
+			delete(annotationCount, parent)
+		} else if count > 1 {
+			competingAnnotations = true
+		}
+	}
+	if competingAnnotations && len(existingRoutes) == len(g.Edges) {
+		treeFallback = existingRoutes
+		existingRoutes = make([]*Route, 0, len(treeFallback))
+		for _, route := range treeFallback {
+			if err := ovgGuard.step(); err != nil {
+				return ovg, err
+			}
+			if annotationCount[parentByAnnotation[route.GEdge]] > 1 {
+				delete(isRouted, route.GEdge)
+			} else {
+				existingRoutes = append(existingRoutes, route)
+			}
+		}
+	}
+
 	unroutedEdges := make([]*layoutgraph.Edge, 0, len(g.Edges))
 	for _, e := range g.Edges {
 		if _, is := isRouted[e]; !is {
@@ -485,9 +547,27 @@ func routeEdgesWithResourceGuards(
 		flavors = []RouteGenerationFlavor{TopDownLeftRight}
 	}
 	routers := make([]*ovgEdgeRouter, 0, len(flavors))
-	for _, flavor := range flavors {
-		router, err := newOVGEdgeRouterWithWorkLimit(ctx, flavor, ovg, g, existingRoutes, unroutedEdges, searchWorkLimit)
+	var shared ovgRouterShared
+	var fallback []selectedRouteUpdate
+	for i, flavor := range flavors {
+		work, err := newRouteSearchWorkGuard(ctx, flavor, searchWorkLimit)
 		if err != nil {
+			return ovg, err
+		}
+		if i == 0 && treeFallback != nil {
+			// Sentinel edges have one route per parent-child pair, and loops
+			// never exchange routes. Their original endpoints can be prepared
+			// without reordering or mutating any route used by the workers.
+			fallback, err = prepareSelectedRoutes(ctx, g, treeFallback, nil, work, false)
+			if err != nil {
+				return ovg, err
+			}
+		}
+		router, err := newSharingOVGEdgeRouter(work, ovg, g, existingRoutes, unroutedEdges, &shared)
+		if err != nil {
+			if fallback != nil && errors.Is(err, errRouteSearchWorkLimit) {
+				continue
+			}
 			return ovg, err
 		}
 		routers = append(routers, router)
@@ -496,32 +576,179 @@ func routeEdgesWithResourceGuards(
 	if err != nil {
 		return ovg, err
 	}
+	// Every worker has returned normally; the routers do not search again.
+	releaseRouterScratch(routers)
 
 	var bestRoutes []*Route
 	var bestWork *routeSearchWorkGuard
 	leastDistance := math.Inf(1)
 
-	flavorToResponse, err := successfulRouteFlavorResponses(responses)
-	if err != nil {
-		return ovg, err
+	if fallback != nil {
+		// Only the individual search limit can abandon an optional trial.
+		// Keep aggregate, cancellation, and other failures for the normal
+		// response selection below.
+		responses = slices.DeleteFunc(responses, func(response GenerateRouteResponse) bool {
+			return errors.Is(response.Err, errRouteSearchWorkLimit)
+		})
 	}
-
-	// compare responses in fixed order
-	for _, flavor := range flavors {
-		if response, has := flavorToResponse[flavor]; has {
-			if geo.PrecisionCompare(response.Distance, leastDistance, geo.PRECISION) < 0 {
-				leastDistance = response.Distance
-				bestRoutes = response.Routes
-				bestWork = response.work
-			}
+	var flavorToResponse map[RouteGenerationFlavor]GenerateRouteResponse
+	if len(responses) > 0 || fallback == nil {
+		flavorToResponse, err = successfulRouteFlavorResponses(responses)
+		if err != nil {
+			return ovg, err
 		}
 	}
 
-	if err := finalizeSelectedRoutes(ctx, g, bestRoutes, nil, bestWork, true); err != nil {
-		return ovg, err
+	// Compare responses in fixed order. If changed ports would hide text
+	// behind a node, leave those routes out of the comparison.
+	for _, flavor := range flavors {
+		response, has := flavorToResponse[flavor]
+		if !has || geo.PrecisionCompare(response.Distance, leastDistance, geo.PRECISION) >= 0 {
+			continue
+		}
+		if fallback != nil {
+			clear, err := treeCaptionsClearNodes(ctx, response.Routes, parentByAnnotation, annotationCount, g.Nodes, nearbyNodes, response.work)
+			if chargeErr := response.work.finish(); chargeErr != nil {
+				return ovg, chargeErr
+			}
+			if err != nil && !errors.Is(err, errRouteSearchWorkLimit) {
+				return ovg, err
+			}
+			if !clear {
+				continue
+			}
+		}
+		leastDistance, bestRoutes, bestWork = response.Distance, response.Routes, response.work
 	}
 
+	if bestWork != nil && fallback != nil && len(parentByAnnotation) == 2 {
+		hide, err := obscuresOpposingTreeCaptions(ctx, treeFallback, bestRoutes, parentByAnnotation, annotationCount, g.Nodes, nearbyNodes, bestWork)
+		if chargeErr := bestWork.finish(); chargeErr != nil {
+			return ovg, chargeErr
+		}
+		if err != nil && !errors.Is(err, errRouteSearchWorkLimit) {
+			return ovg, err
+		}
+		if hide || err != nil {
+			bestWork = nil
+		}
+	}
+	if bestWork != nil || fallback == nil {
+		err := finalizeSelectedRoutes(ctx, g, bestRoutes, nil, bestWork, true)
+		if err == nil || fallback == nil || !errors.Is(err, errRouteSearchWorkLimit) {
+			return ovg, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return ovg, err
+	}
+	applyRouteUpdates(fallback)
+
 	return ovg, nil
+}
+
+// A shared port can display two captions on opposite sides of its trunk when
+// one edge was authored in reverse. Keep that port if separating the branches
+// would make the two captions overlap, and the shared routes clear all bodies.
+func obscuresOpposingTreeCaptions(ctx context.Context, ready, selected []*Route, parents map[*layoutgraph.Edge]*layoutgraph.Node, counts map[*layoutgraph.Node]int, nodes, nearby []*layoutgraph.Node, work *routeSearchWorkGuard) (bool, error) {
+	reversed := 0
+	for e, parent := range parents {
+		if len(parent.Edges) < 3 || e.Label != nil || (e.From == parent && e.TargetArrowheadLabel != nil) || (e.To == parent && e.SourceArrowheadLabel != nil) {
+			return false, nil
+		}
+		if e.ReversedForLayout {
+			reversed++
+		}
+	}
+	if reversed != 1 {
+		return false, nil
+	}
+	for pass, routes := range [][]*Route{selected, ready} {
+		var first *labeling.PositionedArrowheadLabel
+		var firstPort *geo.Point
+		for _, r := range routes {
+			if err := work.step(); err != nil {
+				return false, err
+			}
+			e := r.GEdge
+			parent := parents[e]
+			if parent == nil {
+				continue
+			}
+			if err := work.add(uint64(len(r.OVGNodes))); err != nil {
+				return false, err
+			}
+			points := r.createSegmentEndpoints()
+			// Straightening and segment balancing can still move doglegs and
+			// centered ports. Only compare two off-center, one-bend exits.
+			if pass == 0 && len(points) != 3 {
+				return false, nil
+			}
+			target := e.To == parent
+			caption := labeling.PositionArrowheadLabel(e, target, points)
+			if caption == nil || caption.Width <= 0 || caption.Height <= 0 {
+				return false, nil
+			}
+			port := points[0]
+			if target {
+				port = points[len(points)-1]
+			}
+			if first == nil {
+				first, firstPort = caption, port
+				continue
+			}
+			overlap := first.Box.Overlaps(caption.Box)
+			if pass == 0 {
+				center := parent.Center()
+				straddle := func(a, b, mid float64) bool { return min(a, b) < mid-1 && max(a, b) > mid+1 }
+				sameFace := port.X == firstPort.X && straddle(port.Y, firstPort.Y, center.Y) ||
+					port.Y == firstPort.Y && straddle(port.X, firstPort.X, center.X)
+				if !sameFace || !overlap {
+					return false, nil
+				}
+				break
+			}
+			if overlap || !port.Equals(firstPort) {
+				return false, nil
+			}
+			return treeCaptionsClearNodes(ctx, ready, parents, counts, nodes, nearby, work)
+		}
+	}
+	return false, nil
+}
+
+// A long caption can follow the path past its first bend and land on a
+// different body. Measure the complete path before accepting new ports.
+func treeCaptionsClearNodes(ctx context.Context, routes []*Route, parentByEdge map[*layoutgraph.Edge]*layoutgraph.Node, counts map[*layoutgraph.Node]int, nodes, nearby []*layoutgraph.Node, work *routeSearchWorkGuard) (bool, error) {
+	if err := work.bind(ctx); err != nil {
+		return false, err
+	}
+	for _, route := range routes {
+		if err := work.step(); err != nil {
+			return false, err
+		}
+		e := route.GEdge
+		if counts[parentByEdge[e]] <= 1 {
+			continue
+		}
+		if err := work.add(uint64(len(route.OVGNodes))); err != nil {
+			return false, err
+		}
+		points := route.createSegmentEndpoints()
+		src := labeling.PositionArrowheadLabel(e, false, points)
+		dst := labeling.PositionArrowheadLabel(e, true, points)
+		for _, group := range [][]*layoutgraph.Node{nodes, nearby} {
+			for _, n := range group {
+				if err := work.step(); err != nil {
+					return false, err
+				}
+				if !n.IsContainer() && ((src != nil && src.Box.Overlaps(n.Box)) || (dst != nil && dst.Box.Overlaps(n.Box))) {
+					return false, nil
+				}
+			}
+		}
+	}
+	return true, nil
 }
 
 func routeAdditionalEdgesWithLimits(ctx context.Context, g *layoutgraph.Graph, edges []*layoutgraph.Edge, limits ovgBuildLimits) (*OVG, error) {
@@ -546,7 +773,48 @@ func routeAdditionalEdgesWithResourceLimits(
 	}
 	guard := ovg.buildGuard
 
+	// Seed loops with distinct attachments. A search from a node back to
+	// itself can return a single point.
+	searchEdges := edges
 	existingRoutes := make([]*Route, 0)
+	if slices.ContainsFunc(edges, (*layoutgraph.Edge).IsLoop) {
+		searchEdges = make([]*layoutgraph.Edge, 0, len(edges))
+		planned := make(map[*layoutgraph.Node]bool)
+		for _, e := range edges {
+			if err := guard.step(); err != nil {
+				return ovg, err
+			}
+			if !e.IsLoop() {
+				searchEdges = append(searchEdges, e)
+				continue
+			}
+			if !planned[e.From] {
+				// The plan sorts the incident edges and the occupied bands once
+				// per node and inspects each retained loop's existing path.
+				for range 2 {
+					if err := guard.reserveSortWork(len(e.From.Edges)); err != nil {
+						return ovg, err
+					}
+				}
+				for _, incident := range e.From.Edges {
+					units := 1
+					if _, moving := newEdges[incident]; !moving && incident.IsLoop() {
+						units += len(incident.Points)
+					}
+					if err := guard.reserveWork(uint64(units)); err != nil {
+						return ovg, err
+					}
+				}
+				loops.RouteSelected(e.From, newEdges)
+				planned[e.From] = true
+			}
+			points := e.Points
+			if len(points) < 2 {
+				return ovg, fmt.Errorf("loop %d missing from its endpoint's incident edges", e.IDValue())
+			}
+			existingRoutes = append(existingRoutes, makeLoopRoute(e, points, ovg))
+		}
+	}
 	for _, e := range g.Edges {
 		if err := guard.step(); err != nil {
 			return ovg, err
@@ -614,6 +882,9 @@ func routeAdditionalEdgesWithResourceLimits(
 			existingRoutes = append(existingRoutes, route)
 		}
 	}
+	if err := guard.flushStage(); err != nil {
+		return ovg, err
+	}
 
 	// cache these ahead of time
 	g.CrossingCost()
@@ -625,8 +896,13 @@ func routeAdditionalEdgesWithResourceLimits(
 		flavors = []RouteGenerationFlavor{TopDownLeftRight}
 	}
 	routers := make([]*ovgEdgeRouter, 0, len(flavors))
+	var shared ovgRouterShared
 	for _, flavor := range flavors {
-		router, err := newOVGEdgeRouterWithWorkLimit(ctx, flavor, ovg, g, existingRoutes, edges, searchWorkLimit)
+		work, err := newRouteSearchWorkGuard(ctx, flavor, searchWorkLimit)
+		if err != nil {
+			return ovg, err
+		}
+		router, err := newSharingOVGEdgeRouter(work, ovg, g, existingRoutes, searchEdges, &shared)
 		if err != nil {
 			return ovg, err
 		}
@@ -637,6 +913,8 @@ func routeAdditionalEdgesWithResourceLimits(
 	if err != nil {
 		return ovg, err
 	}
+	// Every worker has returned normally; the routers do not search again.
+	releaseRouterScratch(routers)
 
 	var bestRoutes []*Route
 	var bestWork *routeSearchWorkGuard
@@ -1209,6 +1487,9 @@ func edgeCanOverlapEdges(edge *layoutgraph.Edge, otherEdges []*layoutgraph.Edge,
 	if len(otherEdges) == 0 {
 		return true
 	}
+	if edge.IsDirected() {
+		return directedEdgesCanOverlap(edge, otherEdges)
+	}
 	if edge.TargetArrowheadLabel != nil || edge.SourceArrowheadLabel != nil {
 		return false
 	}
@@ -1253,28 +1534,6 @@ func edgeCanOverlapEdges(edge *layoutgraph.Edge, otherEdges []*layoutgraph.Edge,
 
 	// TODO find a better solution for edge routing with labels. Shared edges with
 	// labels require special handling unless they belong to clusters.
-
-	// if directed edges share a source or target, they can share an edge
-	allMatchingDirected := edge.IsDirected()
-	if allMatchingDirected {
-		for _, otherEdge := range otherEdges {
-			if !otherEdge.IsDirected() {
-				allMatchingDirected = false
-				break
-			}
-			if !(edge.To == otherEdge.To || edge.From == otherEdge.From) {
-				allMatchingDirected = false
-				break
-			}
-			if edge.TargetArrowhead != otherEdge.TargetArrowhead || edge.SourceArrowhead != otherEdge.SourceArrowhead {
-				allMatchingDirected = false
-				break
-			}
-		}
-	}
-	if allMatchingDirected {
-		return true
-	}
 
 	// bidirectional / undirected edges can overlap as long as source/target arrowheads match and
 	// if they are part of the same cluster or if all edges share a node
@@ -1325,6 +1584,22 @@ func edgeCanOverlapEdges(edge *layoutgraph.Edge, otherEdges []*layoutgraph.Edge,
 		}
 	}
 	return hasSharedNode
+}
+
+// Directed edges may share a segment when their styles, arrowheads and
+// corresponding source or target agree. Each existing edge is examined once.
+func directedEdgesCanOverlap(edge *layoutgraph.Edge, others []*layoutgraph.Edge) bool {
+	if edge.TargetArrowheadLabel != nil || edge.SourceArrowheadLabel != nil {
+		return false
+	}
+	for _, other := range others {
+		if !other.IsDirected() || (edge.From != other.From && edge.To != other.To) ||
+			edge.SourceArrowhead != other.SourceArrowhead || edge.TargetArrowhead != other.TargetArrowhead ||
+			other.SourceArrowheadLabel != nil || other.TargetArrowheadLabel != nil || !edge.EquivalentStyles(other) {
+			return false
+		}
+	}
+	return true
 }
 
 func isVerticalOrHorizontalOverlap(start, end, otherStart, otherEnd *geo.Point) bool {

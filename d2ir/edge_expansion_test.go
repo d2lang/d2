@@ -97,6 +97,24 @@ func TestEdgeSelectorGlobExpansionBoundary(t *testing.T) {
 	}
 }
 
+func TestRecursiveEdgeSelectorBudgets(t *testing.T) {
+	t.Parallel()
+
+	const edges = "a -> b\na -> c\n"
+	const directed = "(*** -> ***)[*].style.bold: true\n"
+	const undirected = "(*** -- ***)[*].style.bold: true\n"
+	ctx := context.Background()
+	if _, err := compileEdgeExpansion(t, edges+directed, 1, ctx); err == nil || !strings.Contains(err.Error(), "limit of 1 endpoint pairs") {
+		t.Fatalf("distinct pairs: %v", err)
+	}
+	if _, err := compileEdgeExpansionWithWork(t, edges+undirected, 1, 1, ctx); err == nil || !strings.Contains(err.Error(), "work limit of 1 endpoint-pair examinations") {
+		t.Fatalf("examining nonmatching edges: %v", err)
+	}
+	if _, err := compileEdgeExpansion(t, "a -> b\nb <- a\n"+directed, 1, ctx); err != nil {
+		t.Fatalf("parallel edges on one endpoint pair: %v", err)
+	}
+}
+
 func TestEdgeSelectorGlobExpansionDoesNotRechargeUniqueFanout(t *testing.T) {
 	t.Parallel()
 

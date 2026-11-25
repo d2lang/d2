@@ -43,13 +43,20 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 	}
 
 	diagram.Shapes = make([]d2target.Shape, len(g.Objects))
-	for i := range g.Objects {
-		diagram.Shapes[i] = toShape(g.Objects[i], g)
+	for i, obj := range g.Objects {
+		s := toShape(obj, g)
+		diagram.Shapes[i] = s
+		if obj.Style.StrokeWidth != nil && s.StrokeWidth == d2target.DEFAULT_SHAPE_STROKE_WIDTH {
+			if diagram.ExplicitDefaultStrokeWidths == nil {
+				diagram.ExplicitDefaultStrokeWidths = make(map[string]bool)
+			}
+			diagram.ExplicitDefaultStrokeWidths[s.ID] = true
+		}
 	}
 
 	diagram.Connections = make([]d2target.Connection, len(g.Edges))
 	for i := range g.Edges {
-		diagram.Connections[i] = toConnection(g.Edges[i], g.Theme)
+		diagram.Connections[i] = ToConnection(g.Edges[i], g.Theme)
 	}
 
 	if g.Legend != nil {
@@ -67,7 +74,7 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 		if len(g.Legend.Edges) > 0 {
 			legend.Connections = make([]d2target.Connection, len(g.Legend.Edges))
 			for i, edge := range g.Legend.Edges {
-				legend.Connections[i] = toConnection(edge, g.Theme)
+				legend.Connections[i] = ToConnection(edge, g.Theme)
 			}
 		}
 
@@ -169,6 +176,7 @@ func applyStyles(shape *d2target.Shape, obj *d2graph.Object) {
 	}
 	if obj.Style.StrokeWidth != nil {
 		shape.StrokeWidth, _ = strconv.Atoi(obj.Style.StrokeWidth.Value)
+		shape.StrokeWidthOffset = obj.Style.StrokeWidth.TweenOffset
 	}
 	if obj.Style.Shadow != nil {
 		shape.Shadow, _ = strconv.ParseBool(obj.Style.Shadow.Value)
@@ -335,7 +343,8 @@ func toPrettyLink(g *d2graph.Graph, link string) string {
 	return link
 }
 
-func toConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection {
+// ToConnection builds the render-target representation of a routed edge.
+func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection {
 	connection := d2target.BaseConnection()
 	connection.ID = edge.AbsID()
 	connection.Classes = edge.Classes
@@ -399,6 +408,7 @@ func toConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 
 	if edge.Style.StrokeWidth != nil {
 		connection.StrokeWidth, _ = strconv.Atoi(edge.Style.StrokeWidth.Value)
+		connection.StrokeWidthOffset = edge.Style.StrokeWidth.TweenOffset
 	}
 
 	if edge.Style.Fill != nil {

@@ -105,6 +105,37 @@ func TestResourceDataURIContext(t *testing.T) {
 	}
 }
 
+func TestCompactSVGDataURIRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		percent       bool
+	}{
+		{"mostly ASCII", strings.Repeat("M100,200L300,400", 6000) + "日本語&lt; &amp; +%#'\"", true},
+		{"mostly non-ASCII", strings.Repeat("日本語", 1000), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			raw := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><desc>` + tc.content + `</desc></svg>`)
+			resolver := newTestResolver(t, Options{})
+			resource, err := resolver.Resolve(ctx, dataURI("image/svg+xml", raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			uri, err := resource.CompactDataURIContext(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.HasPrefix(uri, []byte("data:image/svg+xml,")) != tc.percent || bytes.ContainsAny(uri, "<>\"'&# \t\n") {
+				t.Fatalf("unexpected encoding at start of %q", uri[:60])
+			}
+			resolved, err := resolver.Resolve(ctx, string(uri))
+			if err != nil || !bytes.Equal(resolved.data, raw) {
+				t.Fatalf("round trip changed SVG content: %v", err)
+			}
+		})
+	}
+}
+
 func TestResolverClosesOnlyOwnedHTTPTransport(t *testing.T) {
 	owned, err := New(Options{Limits: generousLimits()})
 	if err != nil {
@@ -509,6 +540,32 @@ func TestSharedCacheSkipsInlineDataButRetainsLocalResources(t *testing.T) {
 	if localSecond != localFirst || len(cache.entries) != 1 {
 		t.Fatalf("local shared cache = same %v entries %d, want true/1", localSecond == localFirst, len(cache.entries))
 	}
+}
+
+func TestDataOnlyResolver(t *testing.T) {
+	if _, err := NewDataOnly(Limits{}); err == nil {
+		t.Fatal("accepted missing limits")
+	}
+	limits := generousLimits()
+	limits.MaxAssets = 1
+	resolver, err := NewDataOnly(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := resolver.Resolve(ctx, "icon.png"); !errors.Is(err, localfile.ErrDenied) {
+		t.Fatalf("local path error = %v, want localfile.ErrDenied", err)
+	}
+	if _, err := resolver.Resolve(ctx, "https://example.invalid/icon.png"); err == nil || !strings.Contains(err.Error(), "requires a data URI") {
+		t.Fatalf("HTTP URL error = %v, want a data URI error", err)
+	}
+	uri := dataURI("image/png", encodePNG(t, 2, 3))
+	first := mustResolve(t, resolver, uri)
+	if again := mustResolve(t, resolver, uri); again != first {
+		t.Fatal("repeated data URI did not reuse its resource")
+	}
+	_, err = resolver.Resolve(ctx, dataURI("image/png", encodePNG(t, 3, 2)))
+	assertLimitError(t, err, "assets")
 }
 
 func TestResolverLimits(t *testing.T) {

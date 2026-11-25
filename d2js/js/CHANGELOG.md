@@ -5,6 +5,15 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Release the embedded browser worker's blob URL after startup, including when startup fails.
+- Add `d2.format(source)` to format a D2 file without compiling or rendering it.
+- Add `d2.renderSVG(source, options)` to compile D2 source or a multi-file project directly to SVG.
+- Fix passing custom TrueType font bytes as a `Uint8Array` in compile options.
+- Support calling `new D2()` from a dedicated browser worker and loading a self-hosted worker script with `new D2({ workerURL })`.
+- Support `forceAppendix` with `animateInterval` to show each board's numbered tooltips and links in its animation frame.
+- Fix WebAssembly startup in Safari 27.2 workers. `D2.ready` now reports the startup error if Go exits before registering the API.
+- Build the browser and Node WebAssembly module with TinyGo, reducing the Brotli-compressed WASM payload by about 40%.
+
 ## [0.1.34]
 ### September 7, 2026
 

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 102 102"><svg class="d2-358067632 d2-svg" width="102" height="102" viewBox="-1 -1 102 102"><rect x="-1" y="-1" width="102" height="102" rx="0" fill="#FFFFFF" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[]]></style><style type="text/css"><![CDATA[.shape {
+<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 102 102"><svg class="d2-358067632 d2-svg" width="102" height="102" viewBox="-1 -1 102 102"><rect x="-1" y="-1" width="102" height="102" rx="0" fill="#FFFFFF" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[.shape {
   shape-rendering: geometricPrecision;
   stroke-linejoin: round;
 }
@@ -14,7 +14,4 @@
 		.d2-358067632 .fill-N7{fill:#FFFFFF;}
 		.d2-358067632 .fill-B6{fill:#F7F8FE;}
 		.d2-358067632 .stroke-B1{stroke:#0D32B2;}
-		.d2-358067632 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}.md{--color-fg-default:#0A0F25;--color-fg-muted:#676C7E;--color-fg-subtle:#9499AB;--color-canvas-default:#FFFFFF;--color-canvas-subtle:#EEF1F8;--color-border-default:#0D32B2;--color-border-muted:#0D32B2;--color-neutral-muted:#EEF1F8;--color-accent-fg:#0D32B2;--color-accent-emphasis:#0D32B2;--color-attention-subtle:#676C7E;--color-danger-fg:red;}.light-code{display: block}.dark-code{display: none}]]></style><g class="YQ=="><g class="shape" ><rect x="0" y="0" width="100" height="100" stroke="#0D32B2" fill="#F7F8FE" class=" stroke-B1 fill-B6" style="stroke-width:2;" /></g></g><mask id="d2-358067632" maskUnits="userSpaceOnUse" x="-1" y="-1" width="102" height="102">
-<rect x="-1" y="-1" width="102" height="102" fill="white"></rect>
-
-</mask></svg></svg>
+		.d2-358067632 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><g class="YQ=="><g class="shape" ><rect x="0" y="0" width="100" height="100" stroke="#0D32B2" fill="#F7F8FE" class=" stroke-B1 fill-B6" style="stroke-width:2;" /></g></g></svg></svg>

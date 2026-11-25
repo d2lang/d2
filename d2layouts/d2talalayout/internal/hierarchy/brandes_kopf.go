@@ -14,7 +14,7 @@ import (
 
 // The routines below implement ideas described in:
 // - "Fast and Simple Horizontal Coordinate Assignment" by Ulrik Brandes and Boris Kopf
-// - the authors' erratum to that paper
+// - the 2020 erratum by Brandes, Walter and Zink (https://arxiv.org/abs/2008.01252)
 // - "Node and Label Placement in a Layered Layout Algorithm" by John Julian Carstens
 // 	- The code is based on the pseudo-code available in (page 28, section 3.2.1 The approach of Brandes and Kopf)
 //
@@ -39,7 +39,7 @@ type alignmentDirection struct {
 	horizontal geo.Orientation
 }
 
-func alignHierarchy(ctx context.Context, g *layoutgraph.Graph, byLevel map[int][]*placementNode) error {
+func (p Placement) alignHierarchy(ctx context.Context, byLevel map[int][]*placementNode) error {
 	guard, err := limits.NewWorkGuard(ctx, "AlignHierarchy", limits.MaxEngineWorkUnits)
 	if err != nil {
 		return err
@@ -51,10 +51,7 @@ func alignHierarchy(ctx context.Context, g *layoutgraph.Graph, byLevel map[int][
 
 	alignments := []*alignmentDirection{TL, TR, BL, BR}
 
-	conflicts, err := markConflicts(ctx, byLevel)
-	if err != nil {
-		return err
-	}
+	var conflicts map[*placementNode]map[*placementNode]struct{}
 	minX := map[*alignmentDirection]float64{}
 	maxX := map[*alignmentDirection]float64{}
 	minWidth := math.Inf(1)
@@ -66,9 +63,15 @@ func alignHierarchy(ctx context.Context, g *layoutgraph.Graph, byLevel map[int][
 		}
 		minX[d] = math.Inf(1)
 		maxX[d] = math.Inf(-1)
-		alignmentNodes, err := createAlignmentNodes(ctx, byLevel, d.vertical, d.horizontal)
+		alignmentNodes, err := p.createAlignmentNodes(ctx, byLevel, d.vertical, d.horizontal)
 		if err != nil {
 			return err
+		}
+		if d == TL {
+			conflicts, err = markConflicts(ctx, alignmentNodes)
+			if err != nil {
+				return err
+			}
 		}
 		if err := verticalAlignment(ctx, alignmentNodes, conflicts, d.horizontal); err != nil {
 			return err
@@ -129,35 +132,73 @@ func alignHierarchy(ctx context.Context, g *layoutgraph.Graph, byLevel map[int][
 	for _, update := range updates {
 		update.node.TopLeft.X = update.x
 	}
-	return syncContainers(g, guard)
-}
-
-// Reposition and resize containers based on the position of the aligned children.
-// This routine goes from most to least nested container.
-func syncContainers(g *layoutgraph.Graph, guard *limits.WorkGuard) error {
-	var containers []*layoutgraph.Node
-	queue := make([]*layoutgraph.Node, 0, len(g.Nodes))
-	queue = append(queue, g.Nodes...)
-	for len(queue) > 0 {
-		if err := guard.Step(); err != nil {
+	for level := 0; level < len(byLevel); level++ {
+		if err := fitSiblingContainers(byLevel[level], guard); err != nil {
 			return err
 		}
-		node := queue[0]
-		if node.IsContainer() {
-			containers = append(containers, node)
-			queue = append(queue, g.Containers[node]...)
-		}
-		queue = queue[1:]
-	}
-
-	// most nested containers are the last ones added to the list
-	for i := len(containers) - 1; i > -1; i-- {
-		if err := guard.Step(); err != nil {
-			return err
-		}
-		containers[i].WrapChildren()
 	}
 	return guard.Finish()
+}
+
+// A wrapped container can extend past the space reserved for its leaves, for
+// example because of its label or minimum width. Fit from the inside out and
+// open only the gaps whose final rectangles need more space.
+func fitSiblingContainers(row []*placementNode, guard *limits.WorkGuard) error {
+	hasContainer := false
+	for _, node := range row {
+		if err := guard.Step(); err != nil {
+			return err
+		}
+		if node.isContainer {
+			hasContainer = true
+			if err := fitSiblingContainers(node.children, guard); err != nil {
+				return err
+			}
+			node.graphNode.WrapChildren()
+		}
+	}
+	if !hasContainer || len(row) < 2 {
+		return nil
+	}
+
+	shifts := make([]float64, len(row))
+	for i := 1; i < len(row); i++ {
+		if err := guard.Step(); err != nil {
+			return err
+		}
+		prev, curr := row[i-1], row[i]
+		gap := siblingSpacing
+		if prev.isDummy || curr.isDummy {
+			gap = siblingDummySpacing
+		}
+		minX := prev.graphNode.TopLeft.X + shifts[i-1] + prev.graphNode.Width + gap
+		shifts[i] = math.Max(0, math.Ceil(minX-curr.graphNode.TopLeft.X))
+	}
+	// The first sibling stayed in place. When the last moved too, share
+	// that expansion between the sides so the row keeps its center.
+	centerShift := math.Round(shifts[len(row)-1] / 2)
+	for i, node := range row {
+		dx := shifts[i] - centerShift
+		if dx != 0 {
+			if err := translatePlacementSubtree(node, dx, guard); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func translatePlacementSubtree(node *placementNode, dx float64, guard *limits.WorkGuard) error {
+	if err := guard.Step(); err != nil {
+		return err
+	}
+	node.graphNode.Translate(dx, 0)
+	for _, child := range node.children {
+		if err := translatePlacementSubtree(child, dx, guard); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func median(numbers []float64) float64 {
@@ -220,7 +261,7 @@ func newAlignmentNode(pn *placementNode) *alignmentNode {
 }
 
 // Given layered nodes, creates a slice of alignment nodes sorted in the desired direction
-func createAlignmentNodes(ctx context.Context, byLevel map[int][]*placementNode, vertical, horizontal geo.Orientation) ([]*alignmentNode, error) {
+func (p Placement) createAlignmentNodes(ctx context.Context, byLevel map[int][]*placementNode, vertical, horizontal geo.Orientation) ([]*alignmentNode, error) {
 	guard, err := limits.NewWorkGuard(ctx, "CreateAlignmentNodes", limits.MaxEngineWorkUnits)
 	if err != nil {
 		return nil, err
@@ -231,7 +272,7 @@ func createAlignmentNodes(ctx context.Context, byLevel map[int][]*placementNode,
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
-		leaves, err := leafNodesContext(byLevel[l], guard)
+		leaves, err := leafNodesContext(byLevel[l], !p.CompactSpacing, guard)
 		if err != nil {
 			return nil, err
 		}
@@ -286,7 +327,7 @@ func absInt(a int) int {
 	return a
 }
 
-func leafNodesContext(nodes []*placementNode, guard *limits.WorkGuard) ([]*alignmentNode, error) {
+func leafNodesContext(nodes []*placementNode, padOutside bool, guard *limits.WorkGuard) ([]*alignmentNode, error) {
 	var leaves []*alignmentNode
 	for i := 0; i < len(nodes); i++ {
 		if err := guard.Step(); err != nil {
@@ -299,7 +340,7 @@ func leafNodesContext(nodes []*placementNode, guard *limits.WorkGuard) ([]*align
 		}
 		// Instead of picking a single 'middle' child, distribute container edges
 		// among children whose rank is closest to the other endpoint's rank.
-		descendants, err := leafNodesContext(node.children, guard) // recursively collect leaf descendants
+		descendants, err := leafNodesContext(node.children, true, guard)
 		if err != nil {
 			return nil, err
 		}
@@ -326,6 +367,7 @@ func leafNodesContext(nodes []*placementNode, guard *limits.WorkGuard) ([]*align
 			if err := guard.Step(); err != nil {
 				return nil, err
 			}
+			delete(node.aboves, above)
 			delete(above.belows, node)
 			bestChild, err := pickChildForEdge(above, descendants)
 			if err != nil {
@@ -340,6 +382,7 @@ func leafNodesContext(nodes []*placementNode, guard *limits.WorkGuard) ([]*align
 			if err := guard.Step(); err != nil {
 				return nil, err
 			}
+			delete(node.belows, below)
 			delete(below.aboves, node)
 			bestChild, err := pickChildForEdge(below, descendants)
 			if err != nil {
@@ -355,6 +398,9 @@ func leafNodesContext(nodes []*placementNode, guard *limits.WorkGuard) ([]*align
 	// we need to consider the container padding to properly align the nodes
 	// the first container child has the left pad and the last one has the right pad
 	// this applied recursively (as this function is recursive) because we can have containers inside containers
+	if !padOutside || len(leaves) == 0 {
+		return leaves, nil
+	}
 	leftNode, rightNode := leaves[0], leaves[len(leaves)-1]
 	leftNode.leftPad += leftNode.containerPadding().Left()
 	rightNode.rightPad += rightNode.containerPadding().Right()
@@ -437,7 +483,7 @@ func medianNeighborsContext(
 	}
 
 	sort.Slice(neighbors, func(i, j int) bool {
-		return neighbors[i].graphNode.TopLeft.X < neighbors[j].graphNode.TopLeft.X
+		return neighbors[i].rank < neighbors[j].rank
 	})
 
 	mid := float64(len(neighbors)+1) / 2.0
@@ -456,80 +502,60 @@ func medianNeighborsContext(
 	}
 }
 
-func allAbove(pn *placementNode) []*placementNode {
-	var result []*placementNode
-	for above := range pn.aboves {
-		result = append(result, above)
-	}
-	return result
-}
-
-func markConflicts(ctx context.Context, byLevel map[int][]*placementNode) (map[*placementNode]map[*placementNode]struct{}, error) {
+// An inner segment joins the two dummy nodes of a long edge. A non-inner
+// segment conflicts if its upper endpoint is on the wrong side of any inner
+// segment. Inspect the same flattened, rewired leaves used by alignment.
+func markConflicts(ctx context.Context, topLeft []*alignmentNode) (map[*placementNode]map[*placementNode]struct{}, error) {
 	guard, err := limits.NewWorkGuard(ctx, "MarkHierarchyConflicts", limits.MaxEngineWorkUnits)
 	if err != nil {
 		return nil, err
 	}
 	conflicts := make(map[*placementNode]map[*placementNode]struct{})
-	addConflict := func(n1, n2 *placementNode) {
-		if _, exists := conflicts[n1]; !exists {
-			conflicts[n1] = make(map[*placementNode]struct{})
+	add := func(a, b *placementNode) {
+		if conflicts[a] == nil {
+			conflicts[a] = make(map[*placementNode]struct{})
 		}
-		conflicts[n1][n2] = struct{}{}
+		conflicts[a][b] = struct{}{}
 	}
-
-	// skip the first and last level because there are no dummy nodes in them
-	for level := 1; level < len(byLevel)-1; level++ {
-		if err := guard.Step(); err != nil {
-			return nil, err
-		}
-		nextLevel := level + 1
-		k0 := 0
-		l := 0
-		for l1, pn := range byLevel[nextLevel] {
+	// The forward sweep tracks the rightmost upper endpoint to our left.
+	// The reverse sweep tracks the leftmost upper endpoint to our right.
+	for _, forward := range []bool{true, false} {
+		level := -1
+		var bound int
+		for i := range topLeft {
 			if err := guard.Step(); err != nil {
 				return nil, err
 			}
-			var k1 int
-			if l1 == len(byLevel[nextLevel])-1 {
-				last := len(byLevel[level]) - 1
-				k1 = byLevel[level][last].rank
-			} else if pn.isDummy {
-				for _, above := range allAbove(pn) {
-					if err := guard.Step(); err != nil {
-						return nil, err
-					}
-					// dummy nodes have only one edge above and one below
-					if !above.isDummy {
-						continue
-					}
-					k1 = above.rank
-				}
-			} else {
-				continue
+			j := i
+			if !forward {
+				j = len(topLeft) - 1 - i
 			}
-			for ; l <= l1; l++ {
+			n := topLeft[j].placementNode
+			if n.level != level {
+				level = n.level
+				bound = math.MaxInt
+				if forward {
+					bound = math.MinInt
+				}
+			}
+			for above := range n.aboves {
 				if err := guard.Step(); err != nil {
 					return nil, err
 				}
-				n := byLevel[nextLevel][l]
-				for above := range n.aboves {
-					if err := guard.Step(); err != nil {
-						return nil, err
+				if n.isDummy && above.isDummy {
+					if forward {
+						bound = max(bound, above.rank)
+					} else {
+						bound = min(bound, above.rank)
 					}
-					if above.rank < k0 || above.rank > k1 {
-						addConflict(n, above)
-						addConflict(above, n)
-					}
+				} else if (forward && above.rank < bound) || (!forward && above.rank > bound) {
+					add(n, above)
+					add(above, n)
 				}
 			}
-			k0 = k1
 		}
 	}
-
-	if err := guard.Finish(); err != nil {
-		return nil, err
-	}
-	return conflicts, nil
+	return conflicts, guard.Finish()
 }
 
 func verticalAlignment(ctx context.Context, nodes []*alignmentNode, conflicts map[*placementNode]map[*placementNode]struct{}, horizontal geo.Orientation) error {
@@ -612,14 +638,48 @@ func horizontalCompaction(ctx context.Context, nodes []*alignmentNode, horizonta
 			}
 		}
 	}
+	// Neighboring blocks in different classes constrain the shift of one
+	// class relative to the other. Propagate only after block positions are
+	// final, in sink traversal order (Brandes et al., 2020, Alg. 3b).
+	boundaries := make(map[*alignmentNode][]*alignmentNode)
 	for _, n := range nodes {
 		if err := guard.Step(); err != nil {
 			return err
 		}
 		n.x = n.root.x
-		if n.root == n && !math.IsInf(n.sink.shift, 0) {
-			n.x += n.sink.shift
+		if n.prevSibling != nil && n.root.sink != n.prevSibling.root.sink {
+			boundaries[n.root.sink] = append(boundaries[n.root.sink], n)
 		}
+	}
+	for _, sink := range nodes {
+		if err := guard.Step(); err != nil {
+			return err
+		}
+		if sink.root.sink != sink {
+			continue
+		}
+		if math.IsInf(sink.shift, 0) {
+			sink.shift = 0
+		}
+		for _, n := range boundaries[sink] {
+			if err := guard.Step(); err != nil {
+				return err
+			}
+			prev, current := n.prevSibling.root, n.root
+			gap := alignmentGap(n.prevSibling, n, horizontalDirection)
+			offset := sink.shift + current.x - prev.x
+			if horizontalDirection == geo.Left {
+				prev.sink.shift = math.Min(prev.sink.shift, offset-prev.blockSize-gap)
+			} else {
+				prev.sink.shift = math.Max(prev.sink.shift, offset+current.blockSize+gap)
+			}
+		}
+	}
+	for _, n := range nodes {
+		if err := guard.Step(); err != nil {
+			return err
+		}
+		n.x += n.root.sink.shift
 	}
 	return guard.Finish()
 }
@@ -645,14 +705,8 @@ func placeBlock(root *alignmentNode, horizontal geo.Orientation, guard *limits.W
 			if root.sink == root {
 				root.sink = prevRoot.sink
 			}
-			delta := distanceFromPreviousRoot(prevRoot, root, horizontal)
-			if root.sink != prevRoot.sink {
-				if horizontal == geo.Left {
-					prevRoot.sink.shift = math.Min(prevRoot.sink.shift, root.x-prevRoot.x-prevRoot.blockSize-delta)
-				} else {
-					prevRoot.sink.shift = math.Max(prevRoot.sink.shift, root.x-prevRoot.x+root.blockSize+delta)
-				}
-			} else {
+			if root.sink == prevRoot.sink {
+				delta := alignmentGap(n.prevSibling, n, horizontal)
 				if horizontal == geo.Left {
 					root.x = math.Max(root.x, prevRoot.x+prevRoot.blockSize+delta)
 				} else {
@@ -676,15 +730,15 @@ For the last node of a container, the pad is added to the right.
 The recursiveness of the pad (containers inside containers) is considered when creating the node.
 This function only combines poadding in the given direction.
 */
-func distanceFromPreviousRoot(previous, current *alignmentNode, horizontal geo.Orientation) float64 {
+func alignmentGap(previous, current *alignmentNode, horizontal geo.Orientation) float64 {
 	pad := siblingSpacing
-	if current.isDummy || (current.prevSibling != nil && current.prevSibling.isDummy) {
+	if current.isDummy || previous.isDummy {
 		pad = siblingDummySpacing
 	}
 	if horizontal == geo.Left {
-		pad += previous.rightPad + current.leftPad
+		pad += previous.root.rightPad + current.root.leftPad
 	} else {
-		pad += previous.leftPad + current.rightPad
+		pad += previous.root.leftPad + current.root.rightPad
 	}
 	return pad
 }

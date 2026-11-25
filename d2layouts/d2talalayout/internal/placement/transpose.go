@@ -223,24 +223,33 @@ func transpose(ctx context.Context, g *layoutgraph.Graph, node *layoutgraph.Node
 	}
 	bestRotations := -1
 
-	txn, err := g.NewRequestTransaction(ctx, layoutgraph.TransactionOptions{AffectContainers: true})
+	txn, err := g.NewRequestTransaction(ctx, layoutgraph.TransactionOptions{AffectContainers: true, StableStructure: true})
 	if err != nil {
 		return false, err
+	}
+	// The transaction never leaves this call.
+	defer txn.Release()
+
+	// One operation serves every trial: Commit runs it synchronously, and
+	// rotations is set before each AddOp and not changed until the Commit
+	// that runs it has returned.
+	rotations := 0
+	rotate := func() error {
+		for _, n := range transposeNodes {
+			rotateAround(n, g, centerNode, rotations, edgeAbductions != nil)
+			if n.IsClusterVessel() {
+				if _, err := optimizeCluster(ctx, g.Clusters[n], true); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
 
 	// Rotate all around
 	for i := 0; i < 3; i++ {
-		txn.AddOp(func() error {
-			for _, n := range transposeNodes {
-				rotateAround(n, g, centerNode, i+1, edgeAbductions != nil)
-				if n.IsClusterVessel() {
-					if _, err := optimizeCluster(ctx, g.Clusters[n], true); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		})
+		rotations = i + 1
+		txn.AddOp(rotate)
 
 		if err := txn.Commit(ctx); err == nil {
 			length, scoreErr := calcLength()
@@ -262,17 +271,8 @@ func transpose(ctx context.Context, g *layoutgraph.Graph, node *layoutgraph.Node
 	}
 
 	if bestRotations != -1 {
-		txn.AddOp(func() error {
-			for _, n := range transposeNodes {
-				rotateAround(n, g, centerNode, bestRotations, edgeAbductions != nil)
-				if n.IsClusterVessel() {
-					if _, err := optimizeCluster(ctx, g.Clusters[n], true); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		})
+		rotations = bestRotations
+		txn.AddOp(rotate)
 		if err := txn.Commit(ctx); err != nil {
 			return false, err
 		}

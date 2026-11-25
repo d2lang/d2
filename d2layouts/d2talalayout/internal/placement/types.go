@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -49,7 +50,9 @@ func snapshotNodePositionsContext(ctx context.Context, location string, nodes []
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[*layoutgraph.Node]struct{})
+	// Nodes already recorded: found by scanning snapshots while there are
+	// few, then in a set holding every recorded node.
+	var seen map[*layoutgraph.Node]struct{}
 	snapshots := make([]nodePositionSnapshot, 0, len(nodes))
 	type pendingNode struct {
 		node  *layoutgraph.Node
@@ -60,16 +63,32 @@ func snapshotNodePositionsContext(ctx context.Context, location string, nodes []
 		if node == nil {
 			return nil
 		}
-		if _, ok := seen[node]; ok {
-			return nil
+		if seen != nil {
+			if _, ok := seen[node]; ok {
+				return nil
+			}
+		} else {
+			for i := range snapshots {
+				if snapshots[i].node == node {
+					return nil
+				}
+			}
 		}
-		if len(seen) >= limits.MaxEngineNodes {
+		if len(snapshots) >= limits.MaxEngineNodes {
 			return fmt.Errorf("TALA %s unique node count exceeds limit %d", location, limits.MaxEngineNodes)
 		}
 		if err := guard.Step(); err != nil {
 			return err
 		}
-		seen[node] = struct{}{}
+		if seen == nil && len(snapshots) == smallNodeSetScan {
+			seen = make(map[*layoutgraph.Node]struct{}, 2*smallNodeSetScan)
+			for i := range snapshots {
+				seen[snapshots[i].node] = struct{}{}
+			}
+		}
+		if seen != nil {
+			seen[node] = struct{}{}
+		}
 		snapshots = append(snapshots, nodePositionSnapshot{node: node, topLeft: snapshotPointer(node.TopLeft)})
 		queue = append(queue, pendingNode{node: node, graph: graph})
 		return nil
@@ -115,6 +134,24 @@ func snapshotNodePositionsContext(ctx context.Context, location string, nodes []
 		return nil, err
 	}
 	return snapshots, nil
+}
+
+// smallNodeSetScan is the size up to which node sets are kept as a list
+// that is scanned instead of a map.
+const smallNodeSetScan = 32
+
+// sortSliceExact sorts s exactly as sort.Slice(s, func(i, j int) bool {
+// return less(s[i], s[j]) }) does: slices.SortFunc runs the same pattern-
+// defeating quicksort (both are generated from one template) and consults
+// its comparison only as cmp(a, b) < 0, so every comparison, swap and the
+// resulting order are the same; it just avoids sort.Slice's reflection.
+func sortSliceExact[T any](s []T, less func(a, b T) bool) {
+	slices.SortFunc(s, func(a, b T) int {
+		if less(a, b) {
+			return -1
+		}
+		return 1
+	})
 }
 
 func nonNilEquals(first, second *geo.Point) bool {

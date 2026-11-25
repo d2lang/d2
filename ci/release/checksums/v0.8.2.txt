@@ -1,0 +1,6 @@
+0ea49e35f17c3ac00ffa5d0a1fa571f5c344cd38127dbaa4bf6158fcd0c7bfb0  d2-v0.8.2-linux-amd64.tar.gz
+bf1585cebf8496690668dc135dfd469068e3ae3eb38cecdc1f7d7835cdbc1228  d2-v0.8.2-linux-arm64.tar.gz
+6c7b7a09278b131664cbc5e715dac0ee849c3f785ffc9dfaab2df6b1f91bf8ed  d2-v0.8.2-macos-amd64.tar.gz
+73ddb07c636bd5c5723e4bf8569a90b7329ea35dc32af2155650e1f572e823b2  d2-v0.8.2-macos-arm64.tar.gz
+2c223b56ce5f5984c235b88b1e0e996126ba7c8a37476ad9b47d7d6db9475f18  d2-v0.8.2-windows-amd64.tar.gz
+2aa25e88883300230b6af6c16f6ebd653b7e0660b1258ff740cace476887bb2e  d2-v0.8.2-windows-arm64.tar.gz

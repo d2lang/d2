@@ -4,9 +4,6 @@ package scenepaint
 import (
 	"fmt"
 	"image/color"
-	"math"
-	"strconv"
-	"strings"
 
 	"github.com/mazznoer/csscolorparser"
 
@@ -31,13 +28,10 @@ func Gradient(raw string) (d2scene.Paint, error) {
 		if err != nil {
 			return nil, fmt.Errorf("stop %d color %q: %w", i, stop.Color, err)
 		}
-		offset, err := gradientStopOffset(stop.Position, i, len(gradient.ColorStops))
+		offset, err := stop.Offset(i, len(gradient.ColorStops), previous)
 		if err != nil {
 			return nil, fmt.Errorf("stop %d position %q: %w", i, stop.Position, err)
 		}
-		// SVG clamps stop offsets into [0,1] and prevents later stops from
-		// moving behind an earlier one.
-		offset = math.Max(previous, math.Max(0, math.Min(1, offset)))
 		previous = offset
 		r, g, blue, a := parsed.RGBA255()
 		stops[i] = d2scene.GradientStop{Offset: offset, Color: color.NRGBA{R: r, G: g, B: blue, A: a}}
@@ -45,7 +39,7 @@ func Gradient(raw string) (d2scene.Paint, error) {
 
 	switch gradient.Type {
 	case "linear":
-		x1, y1, x2, y2, err := linearGradientVector(gradient.Direction)
+		x1, y1, x2, y2, err := libcolor.LinearGradientVector(gradient.Direction)
 		if err != nil {
 			return nil, err
 		}
@@ -62,66 +56,4 @@ func Gradient(raw string) (d2scene.Paint, error) {
 	default:
 		return nil, fmt.Errorf("unsupported gradient type %q", gradient.Type)
 	}
-}
-
-func gradientStopOffset(position string, index, total int) (float64, error) {
-	if position == "" {
-		if total == 1 {
-			return 0, nil
-		}
-		return float64(index) / float64(total-1), nil
-	}
-	position = strings.TrimSpace(position)
-	divisor := 1.0
-	if strings.HasSuffix(position, "%") {
-		position = strings.TrimSpace(strings.TrimSuffix(position, "%"))
-		divisor = 100
-	}
-	value, err := strconv.ParseFloat(position, 64)
-	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0, fmt.Errorf("must be a finite number or percentage")
-	}
-	return value / divisor, nil
-}
-
-func linearGradientVector(direction string) (x1, y1, x2, y2 float64, err error) {
-	x1, y1, x2, y2 = 0, 0, 0, 1
-	direction = strings.TrimSpace(direction)
-	if strings.HasPrefix(direction, "to ") {
-		x1, y1, x2, y2 = .5, .5, .5, .5
-		xSet, ySet := false, false
-		for _, part := range strings.Fields(strings.TrimSpace(strings.TrimPrefix(direction, "to "))) {
-			switch part {
-			case "left":
-				x1, x2, xSet = 1, 0, true
-			case "right":
-				x1, x2, xSet = 0, 1, true
-			case "top":
-				y1, y2, ySet = 1, 0, true
-			case "bottom":
-				y1, y2, ySet = 0, 1, true
-			default:
-				return 0, 0, 0, 0, fmt.Errorf("unsupported linear-gradient direction %q", direction)
-			}
-		}
-		if !xSet {
-			x1, x2 = .5, .5
-		}
-		if !ySet {
-			y1, y2 = .5, .5
-		}
-		return x1, y1, x2, y2, nil
-	}
-	if strings.HasSuffix(direction, "deg") {
-		degrees, parseErr := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(direction, "deg")), 64)
-		if parseErr != nil || math.IsNaN(degrees) || math.IsInf(degrees, 0) {
-			return 0, 0, 0, 0, fmt.Errorf("invalid linear-gradient angle %q", direction)
-		}
-		radians := (90 - degrees) * math.Pi / 180
-		return .5, .5, .5 + .5*math.Cos(radians), .5 + .5*math.Sin(radians), nil
-	}
-	if direction != "" {
-		return 0, 0, 0, 0, fmt.Errorf("unsupported linear-gradient direction %q", direction)
-	}
-	return x1, y1, x2, y2, nil
 }

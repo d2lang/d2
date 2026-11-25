@@ -5,16 +5,19 @@ import (
 	"errors"
 	"html"
 	"io/fs"
+	"math"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/d2lang/util-go/go2"
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -31,17 +34,27 @@ type globContext struct {
 }
 
 type compiler struct {
-	err                *d2parser.ParseError
-	ctx                context.Context
-	contextErr         error
-	expansionErr       error
-	globExpansionErr   error
-	halted             bool
-	variableExpansion  *variableExpansionBudget
-	globExpansion      *globExpansionBudget
-	edgeExpansion      *edgeExpansionBudget
-	edgeExpansionWork  *edgeExpansionWorkBudget
-	edgeExpansionPairs map[edgeExpansionPair]struct{}
+	arrayAccess         []*arrayAccessCheck
+	fieldArrayAccess    map[*Field][]*arrayAccessCheck
+	hasTemplateNull     bool
+	spreadNulls         []spreadNull
+	hasMapSpread        bool
+	hasEdgePropertyGlob bool
+	spreadRuleCopies    map[spreadRuleScope]*globContext
+	fieldOrder          uint64
+	err                 *d2parser.ParseError
+	ctx                 context.Context
+	contextErr          error
+	expansionErr        error
+	globExpansionErr    error
+	halted              bool
+	variableExpansion   *variableExpansionBudget
+	tweenExpansion      *variableExpansionBudget
+	retainTweenBindings bool
+	globExpansion       *globExpansionBudget
+	edgeExpansion       *edgeExpansionBudget
+	edgeExpansionWork   *edgeExpansionWorkBudget
+	edgeExpansionPairs  map[edgeExpansionPair]struct{}
 
 	fs      fs.FS
 	imports []string
@@ -65,6 +78,7 @@ type compiler struct {
 	// Used to check whether ampersands are allowed in the current map.
 	mapRefContextStack   []*RefContext
 	lazyGlobBeingApplied bool
+	replayingSpreadGlobs bool
 
 	// Lazy field globs are evaluated against newly created fields through a
 	// deterministic worklist. This avoids rescanning the entire IR after each
@@ -79,6 +93,11 @@ type compiler struct {
 }
 
 type CompileOptions struct {
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of step transitions. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// Context stops parsing and compilation when canceled. A nil Context is
 	// treated as context.Background().
 	Context  context.Context
@@ -98,7 +117,9 @@ type CompileOptions struct {
 	// edge globs, including lazy replays. Zero uses DefaultMaxEdgeExpansionWork.
 	MaxEdgeExpansionWork int64
 	// FS resolves imports. Nil disables imports. The lib/localfile package
-	// provides rooted and explicit unrestricted host-filesystem policies.
+	// provides rooted and explicit unrestricted host-filesystem policies. A filesystem
+	// may implement ResolveImportPath(parent, name string) string to use its own
+	// path syntax. Other filesystems receive slash-separated io/fs paths.
 	FS fs.FS
 }
 
@@ -109,6 +130,9 @@ func (c *compiler) errorf(n d2ast.Node, f string, v ...interface{}) {
 func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if opts == nil {
 		opts = &CompileOptions{}
+	}
+	if opts.AnimateDuration != nil && (*opts.AnimateDuration < 0 || *opts.AnimateDuration > d2target.MaxTweenDurationMS) {
+		return nil, nil, errors.New("animate-duration must be between 0 and 600000 milliseconds")
 	}
 	ctx := opts.Context
 	if ctx == nil {
@@ -134,13 +158,14 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	c := &compiler{
-		err:               &d2parser.ParseError{},
-		ctx:               ctx,
-		fs:                opts.FS,
-		variableExpansion: variableExpansion,
-		globExpansion:     globExpansion,
-		edgeExpansion:     edgeExpansion,
-		edgeExpansionWork: edgeExpansionWork,
+		err:                 &d2parser.ParseError{},
+		ctx:                 ctx,
+		retainTweenBindings: (opts.AnimateTweens == nil || *opts.AnimateTweens) && (opts.AnimateDuration == nil || *opts.AnimateDuration > 0),
+		fs:                  opts.FS,
+		variableExpansion:   variableExpansion,
+		globExpansion:       globExpansion,
+		edgeExpansion:       edgeExpansion,
+		edgeExpansionWork:   edgeExpansionWork,
 
 		seenImports:             make(map[string]struct{}),
 		parsedImports:           make(map[string]*d2ast.Map),
@@ -166,7 +191,13 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if err := c.compileLimitError(); err != nil {
 		return nil, nil, err
 	}
+	// Imports are attached now. For an ordinary diagram, two indexed lookups
+	// keep endpoint substitution on its usual path without saving expressions.
+	c.retainTweenBindings = c.retainTweenBindings &&
+		(opts.AnimateDuration != nil || mayResolveTiming(m, "animate-duration")) &&
+		(opts.AnimateTweens != nil || mayResolveTiming(m, "animate-interval"))
 	c.compileSubstitutions(m, nil)
+	c.retainTweenBindings = false
 	if c.contextErr != nil {
 		return nil, nil, c.contextErr
 	}
@@ -187,6 +218,9 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	m.removeSuspendedFields()
+	if c.err.Empty() && !c.stopped() {
+		c.compileTweens(m, opts)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -264,7 +298,17 @@ func (c *compiler) overlayClasses(m *Map) {
 }
 
 func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
+	outerNulls := c.spreadNulls
+	outerChecks, outerFields := c.arrayAccess, c.fieldArrayAccess
+	c.spreadNulls, c.arrayAccess, c.fieldArrayAccess = nil, nil, nil
 	c.compileSubstitutionsWalk(m, varsStack, make(map[Node]struct{}), nil)
+	c.finishSpreadNulls()
+	for _, check := range c.arrayAccess {
+		if !check.reopened {
+			c.errorf(check.ref.String, "cannot index into array")
+		}
+	}
+	c.spreadNulls, c.arrayAccess, c.fieldArrayAccess = outerNulls, outerChecks, outerFields
 }
 
 func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[Node]struct{}, source d2ast.Node) {
@@ -356,6 +400,24 @@ func (c *compiler) visitSubstitutionNode(node Node, source d2ast.Node, seen map[
 	return true
 }
 
+// ParseAnimateInterval returns the source interval in milliseconds. A bare
+// integer uses milliseconds, matching the CLI flag.
+func ParseAnimateInterval(value string) (int64, bool) {
+	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
+		value += "ms"
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration < 0 || duration%time.Millisecond != 0 {
+		return 0, false
+	}
+	// ParseDuration truncates below a nanosecond. Only an actual zero
+	// should turn an animation off.
+	if duration == 0 && strings.ContainsAny(value, "123456789") {
+		return 0, false
+	}
+	return duration.Milliseconds(), true
+}
+
 func (c *compiler) validateConfigs(configs *Field) {
 	if configs == nil || configs.Map() == nil {
 		return
@@ -378,9 +440,30 @@ func (c *compiler) validateConfigs(configs *Field) {
 		}
 
 		switch f.Name.ScalarString() {
-		case "sketch", "isometric", "center":
+		case "animate-duration":
+			board := ParentMap(ParentMap(configs))
+			if !board.Root() {
+				global := RootMap(board).getFieldIndexed(d2ast.FlatUnquotedString("vars"), configs.Name, f.Name)
+				if global == nil || global.LastRef().AST() != f.LastRef().AST() {
+					c.errorf(f.LastRef().AST(), `"animate-duration" can only be set in the diagram's root vars.d2-config`)
+					continue
+				}
+			}
+			if duration, ok := ParseAnimateInterval(val); !ok || duration > d2target.MaxTweenDurationMS || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected "animate-duration" between 0ms and 10m in whole milliseconds, got %q`, val)
+			}
+		case "animate-interval":
+			if _, ok := ParseAnimateInterval(val); !ok || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected a non-negative whole number of milliseconds or a duration in whole milliseconds for "animate-interval", got %q`, val)
+			}
+		case "scale":
+			scale, err := strconv.ParseFloat(val, 64)
+			if err != nil || math.IsNaN(scale) || math.IsInf(scale, 0) || (scale <= 0 && scale != -1) || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `expected a finite positive scale or -1 for automatic sizing, got %q`, val)
+			}
+		case "sketch", "isometric", "center", "force-appendix":
 			_, err := strconv.ParseBool(val)
-			if err != nil {
+			if err != nil || (f.Name.ScalarString() == "force-appendix" && f.Composite != nil) {
 				c.errorf(f.LastRef().AST(), `expected a boolean for "%s", got "%s"`, f.Name.ScalarString(), val)
 				continue
 			}
@@ -412,9 +495,46 @@ func (c *compiler) validateConfigs(configs *Field) {
 	}
 }
 
+// A whole-value substitution may be resolved after an overlapping spread
+// has supplied children. Merge at the assignment's position so later children
+// survive, while an untouched alias can continue sharing its source map.
+func (c *compiler) applyCompositeSubstitution(f *Field, value Composite, order fieldOrder, sub *d2ast.Substitution) {
+	site := &spreadSite{fieldOrder: order, compiler: c, source: f}
+	if _, array := value.(*Array); array && site.applyArrayReset(f) {
+		return
+	}
+	if value.Map() != nil {
+		c.noteMapOpening(f, order)
+	}
+	if f.Map() != nil && value.Map() != nil {
+		if order.before(f.mapReset) {
+			return
+		}
+		if !c.reserveVariableCopy(sub, value) {
+			return
+		}
+		if f.Map().Parent() != f {
+			if !c.reserveVariableCopy(sub, f.Map()) {
+				return
+			}
+			f.setComposite(f.copyAliasMap(f))
+		}
+		mergeMap(f.Map(), value.Map(), true, site, site.insertionIndex(f.Map()))
+	} else if !order.before(f.compositeOrder) {
+		f.setComposite(value)
+	}
+	if !order.before(f.compositeOrder) {
+		f.compositeOrder = order
+	}
+}
+
 func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedField bool) {
 	if c.stopped() {
 		return false
+	}
+	markdownOuterStart := -1
+	if c.retainTweenBindings {
+		markdownOuterStart = c.saveTweenBinding(node, varsStack)
 	}
 	var subbed bool
 	var resolvedField *Field
@@ -486,7 +606,10 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 							if !c.reserveVariableCopy(box.Substitution, resolvedField.Map()) {
 								return
 							}
-							expandSubstitutionIndexed(m, resolvedField.Map(), n)
+							expandSubstitution(m, resolvedField.Map(), n, true, c)
+							if c.stopped() {
+								return
+							}
 						}
 						// Remove the placeholder field
 						for i, f2 := range m.Fields {
@@ -497,20 +620,26 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 							}
 						}
 
-						if removedField && len(m.globs) > 0 && !c.lazyGlobBeingApplied {
+						if removedField && !c.lazyGlobBeingApplied {
+							globs := m.globs
+							if c.hasEdgePropertyGlob && m.shouldReplayEdgeProperties(resolvedField.Map()) {
+								globs = c.edgePropertyGlobsForSpread(m, box.Substitution)
+							}
 							origGlobStack := c.globContextStack
-							c.globContextStack = append(c.globContextStack, m.globs)
-							for _, gctx := range m.globs {
+							c.globContextStack = append(c.globContextStack, globs)
+							for _, gctx := range globs {
 								old := c.lazyGlobBeingApplied
-								c.lazyGlobBeingApplied = true
+								priorReplay := c.replayingSpreadGlobs
+								c.lazyGlobBeingApplied, c.replayingSpreadGlobs = true, true
 								c.compileKey(gctx.refctx)
-								c.lazyGlobBeingApplied = old
+								c.lazyGlobBeingApplied, c.replayingSpreadGlobs = old, priorReplay
 							}
 							c.globContextStack = origGlobStack
 						}
 
 					}
 				}
+				useOrder := node.Primary().order
 				if resolvedField.Primary() == nil {
 					if resolvedField.Composite == nil {
 						c.errorf(node.LastRef().AST(), `cannot substitute variable without value: "%s"`, strings.Join(box.Substitution.IDA(), "."))
@@ -532,6 +661,7 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 							return
 						}
 						node.Primary().Value = resolvedField.Primary().Value
+						node.Primary().TweenOffset = resolvedField.Primary().TweenOffset
 					} else {
 						s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
 						subbed = true
@@ -540,13 +670,25 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				if resolvedField.Composite != nil {
 					switch n := node.(type) {
 					case *Field:
-						n.Composite = resolvedField.Composite
+						if !box.Substitution.Spread {
+							c.applyCompositeSubstitution(n, resolvedField.Composite, useOrder, box.Substitution)
+						}
 					case *Edge:
 						if resolvedField.Composite.Map() == nil {
 							c.errorf(node.LastRef().AST(), `cannot substitute array variable "%s" to an edge`, strings.Join(box.Substitution.IDA(), "."))
 							return
 						}
-						n.Map_ = resolvedField.Composite.Map()
+						m := resolvedField.Map()
+						if !c.reserveVariableCopy(box.Substitution, m) {
+							return
+						}
+						if n.Map_ == nil {
+							n.Map_ = m.Copy(n).(*Map)
+							n.Map_.nestDeclarationOrder(&useOrder)
+						} else {
+							site := &spreadSite{fieldOrder: useOrder, compiler: c, source: n}
+							mergeMap(n.Map_, m, true, site, site.insertionIndex(n.Map_))
+						}
 					}
 				}
 			}
@@ -581,6 +723,9 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 					return
 				}
 				s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
+				if len(s.Value) == 1 {
+					node.Primary().TweenOffset = resolvedField.Primary().TweenOffset
+				}
 				subbed = true
 			}
 		}
@@ -596,31 +741,49 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 		}
 		variables := make(map[string]string)
 		seen := make(map[Node]struct{})
-		for _, vars := range varsStack {
-			c.collectVariables(vars, variables, seen, node.LastRef().AST())
+		var outer map[string]string
+		for i, vars := range varsStack {
+			dest := variables
+			if markdownOuterStart >= 0 && i >= markdownOuterStart {
+				if outer == nil {
+					outer = make(map[string]string)
+				}
+				dest = outer
+			}
+			c.collectVariables(vars, dest, seen, node.LastRef().AST())
+		}
+		if outer != nil {
+			// A sampled fragment may leave its module. Remember the lexical
+			// values during the ordinary import pass, collecting each scope once.
+			node.Primary().binding.markdownOuter = outer
+			for name, value := range outer {
+				variables[name] = value
+			}
 		}
 		if c.stopped() {
 			return
 		}
-		preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, s.Value, variables, c.variableExpansion.remaining())
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				c.contextErr = err
-				c.halted = true
-				return
-			}
-			c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
-			c.halted = true
-			return
-		}
-		if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
-			return
-		}
-
-		// Update the block string value
-		s.Value = preprocessedValue
+		s.Value = c.replaceMarkdownVariables(node, s.Value, variables)
 	}
 	return removedField
+}
+
+func (c *compiler) replaceMarkdownVariables(node Node, value string, variables map[string]string) string {
+	preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, value, variables, c.variableExpansion.remaining())
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			c.contextErr = err
+			c.halted = true
+			return value
+		}
+		c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
+		c.halted = true
+		return value
+	}
+	if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
+		return value
+	}
+	return preprocessedValue
 }
 
 func interpolationBytes(values []d2ast.InterpolationBox) int64 {
@@ -911,7 +1074,7 @@ func (c *compiler) overlay(base *Map, f *Field) {
 		return
 	}
 	overlayMapIndexed(base, f.Map())
-	f.Composite = base
+	f.setComposite(base)
 }
 
 func (g *globContext) copy() *globContext {
@@ -1042,6 +1205,7 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 			})
 		case n.Substitution != nil:
 			// placeholder field to be resolved at the end
+			c.hasMapSpread = true
 			if len(c.globRefContextStack) > 0 {
 				if !c.reserveGlobGeneratedFieldWork(dst, n.Substitution) || !c.reserveGlobField(n.Substitution) {
 					return
@@ -1062,6 +1226,9 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 					},
 				}},
 			}
+			f.declaration = c.assignmentOrder()
+			f.Primary_.order = f.declaration
+			f.References[0].order = f.declaration
 			dst.appendField(f)
 		case n.Import != nil:
 			// Spread import
@@ -1122,7 +1289,7 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 				if impnf.Primary_ != nil {
 					dstf := ParentField(dst)
 					if dstf != nil {
-						dstf.Primary_ = impnf.Primary_
+						dstf.Primary_ = impnf.Primary_.Copy(dstf).(*Scalar)
 					}
 				}
 			}
@@ -1168,7 +1335,16 @@ func (c *compiler) compileKey(refctx *RefContext) {
 			return
 		}
 	}
+	if refctx.order.sequence == 0 {
+		refctx.order = c.assignmentOrder()
+	}
 	if refctx.Key.HasGlob() {
+		// Replaying a property may first create its style map. Finish that
+		// write before evaluating the next deferred selector in source order.
+		if stack := c.globRefContextStack; c.replayingSpreadGlobs && len(stack) != 0 &&
+			replaysEdgeProperties(stack[len(stack)-1].Key) && replaysEdgeProperties(refctx.Key) {
+			return
+		}
 		for _, refctx2 := range c.globRefContextStack {
 			if refctx.Equal(refctx2) {
 				// Break the infinite loop.
@@ -1179,7 +1355,11 @@ func (c *compiler) compileKey(refctx *RefContext) {
 		defer func() {
 			c.globRefContextStack = c.globRefContextStack[:len(c.globRefContextStack)-1]
 		}()
-		c.ensureGlobContext(refctx)
+		g := c.ensureGlobContext(refctx)
+		if !c.lazyGlobBeingApplied && replaysEdgeProperties(refctx.Key) {
+			refctx.ScopeMap.addEdgeRule(g)
+			c.hasEdgePropertyGlob = true
+		}
 	}
 	oldVersion := refctx.ScopeMap.structureVersion
 	if len(refctx.Key.Edges) == 0 {
@@ -1723,11 +1903,15 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		}
 	}
 
-	if len(refctx.Key.Edges) == 0 && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
+	if (len(refctx.Key.Edges) == 0 || refctx.Key.EdgeKey != nil) && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
 		// For vars, if we delete the field, it may just resolve to an outer scope var of the same name
 		// Instead we keep it around, so that resolveSubstitutions can find it
 		if !IsVar(ParentMap(f)) {
-			ParentMap(f).DeleteField(f.Name.ScalarString())
+			m := ParentMap(f)
+			c.recordSpreadDeletion(m, &spreadMember{field: f.Name}, refctx.Key)
+			if !c.keepChildAfterGlobDeletion(f, refctx) {
+				m.deleteField(f)
+			}
 			return
 		}
 	}
@@ -1747,10 +1931,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		if c.ignoreLazyGlob(f) {
 			return
 		}
-		f.Primary_ = &Scalar{
-			parent: f,
-			Value:  refctx.Key.Primary.Unbox(),
-		}
+		c.setFieldPrimary(f, refctx.Key.Primary.Unbox())
 	}
 
 	if refctx.Key.Value.Array != nil {
@@ -1762,7 +1943,10 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			return
 		}
 		f.Composite = a
+		f.compositeOrder = c.assignmentOrder()
+		f.mapReset = f.compositeOrder
 	} else if refctx.Key.Value.Map != nil {
+		f.compositeOrder = c.assignmentOrder()
 		scopeAST := refctx.Key.Value.Map
 		if f.Map() == nil {
 			f.Composite = &Map{
@@ -1817,6 +2001,15 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			return
 		}
 		n.(Importable).SetImportAST(refctx.Key.Value.Import)
+		// A field import supplies defaults. Existing fields are restored
+		// below; earlier variable spreads have not materialized theirs yet.
+		var fallback fieldOrder
+		switch n := n.(type) {
+		case *Field:
+			n.nestDeclarationOrder(&fallback)
+		case *Map:
+			n.nestDeclarationOrder(&fallback)
+		}
 		var existingEdges []*Edge
 		if f.Map() != nil {
 			existingEdges = f.Map().Edges
@@ -1835,10 +2028,12 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 					return
 				}
 				beforeFields, beforeEdges := structureCounts(f.Map())
-				f.Composite = n.Composite.Copy(f).(Composite)
+				f.setComposite(n.Composite.Copy(f).(Composite))
+				f.compositeOrder = n.compositeOrder
 				markStructureCountDelta(ParentMap(f), beforeFields, beforeEdges, f.Map())
 			}
 		case *Map:
+			f.compositeOrder = fallback
 			f.Composite = &Map{
 				parent: f,
 			}
@@ -1901,10 +2096,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		if c.ignoreLazyGlob(f) {
 			return
 		}
-		f.Primary_ = &Scalar{
-			parent: f,
-			Value:  refctx.Key.Value.ScalarBox().Unbox(),
-		}
+		c.setFieldPrimary(f, refctx.Key.Value.ScalarBox().Unbox())
 		// If the link is a board, we need to transform it into an absolute path.
 		if f.Name.ScalarString() == "link" && f.Name.IsUnquoted() {
 			c.compileLink(f, refctx)
@@ -1916,6 +2108,11 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 // if already set by a non glob key.
 func (c *compiler) ignoreLazyGlob(n Node) bool {
 	if c.lazyGlobBeingApplied && n.Primary() != nil {
+		// A match that only became visible when a spread was expanded
+		// would have been evaluated in source order in an inline map.
+		if c.replayingSpreadGlobs && len(c.globRefContextStack) > 0 {
+			return !n.Primary().order.before(c.globRefContextStack[0].order)
+		}
 		lastPrimaryRef := n.LastPrimaryRef()
 		if lastPrimaryRef != nil && !lastPrimaryRef.DueToLazyGlob() {
 			return true
@@ -2090,11 +2287,20 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 		return
 	}
 	eida := NewEdgeIDs(refctx.Key)
+	// A null selector with a property suffix clears only that edge field.
+	clearing := refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil
+	deleteEdge := clearing && refctx.Key.EdgeKey == nil
 	for i, eid := range eida {
 		if c.stopped() {
 			return
 		}
-		if !eid.Glob && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
+		if clearing && eid.Glob && refctx.Key.EdgeKey != nil {
+			// A pending spread can add matching parallel edges after this
+			// selector has already processed the ones currently in scope.
+			c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
+		}
+		if !eid.Glob && deleteEdge {
+			c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
 			refctx.ScopeMap.DeleteEdge(eid)
 			continue
 		}
@@ -2103,10 +2309,12 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 		refctx.Edge = refctx.Key.Edges[i]
 
 		var ea []*Edge
-		if eid.Index != nil || eid.Glob {
+		if eid.Index != nil || eid.Glob || clearing {
 			ea = refctx.ScopeMap.getEdgesForCompile(eid, refctx, c)
 			if len(ea) == 0 {
-				if !eid.Glob {
+				if clearing && !eid.Glob {
+					c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
+				} else if !eid.Glob {
 					c.errorf(refctx.Edge, "indexed edge does not exist")
 				}
 				continue
@@ -2115,7 +2323,8 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 				if c.stopped() {
 					return
 				}
-				if refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil {
+				if deleteEdge {
+					c.recordSpreadDeletion(ParentMap(e), &spreadMember{edge: e.ID}, refctx.Key)
 					refctx.ScopeMap.DeleteEdge(e.ID)
 					continue
 				}
@@ -2252,6 +2461,7 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 						return
 					}
 					e.Primary_ = &Scalar{
+						order:  c.assignmentOrder(),
 						parent: e,
 						Value:  refctx.Key.Primary.Unbox(),
 					}
@@ -2273,6 +2483,7 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 						return
 					}
 					e.Primary_ = &Scalar{
+						order:  c.assignmentOrder(),
 						parent: e,
 						Value:  refctx.Key.Value.ScalarBox().Unbox(),
 					}

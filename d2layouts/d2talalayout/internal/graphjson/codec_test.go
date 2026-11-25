@@ -42,6 +42,8 @@ func TestGraphJSONPreservesArrowheadLabelEndpoints(t *testing.T) {
 	to := graph.AddNode(layoutgraph.NewNode(2, 10, 10))
 	edge := graph.Connect(from, to)
 	edge.Label = &layoutgraph.Label{Text: "edge", Position: label.UnlockedMiddle, Width: 20, Height: 10}
+	edge.ReversedForLayout = true
+	edge.KeepExplicit = true
 	edge.SourceArrowheadLabel = &layoutgraph.Label{Text: "source"}
 	edge.TargetArrowheadLabel = &layoutgraph.Label{Text: "target"}
 
@@ -67,7 +69,7 @@ func TestGraphJSONPreservesArrowheadLabelEndpoints(t *testing.T) {
 	if err := Unmarshal(t.Context(), data, &roundTrip); err != nil {
 		t.Fatal(err)
 	}
-	if roundTrip.Edges[0].SourceArrowheadLabel.Text != "source" || roundTrip.Edges[0].TargetArrowheadLabel.Text != "target" {
+	if !roundTrip.Edges[0].KeepExplicit || !roundTrip.Edges[0].ReversedForLayout || roundTrip.Edges[0].SourceArrowheadLabel.Text != "source" || roundTrip.Edges[0].TargetArrowheadLabel.Text != "target" {
 		t.Fatal("arrowhead labels changed endpoints during round trip")
 	}
 	if roundTrip.Edges[0].Label == nil || roundTrip.Edges[0].Label.Position != label.UnlockedMiddle {
@@ -1124,5 +1126,31 @@ func TestGraphCopyPreservesUnsetTreeSentinelReference(t *testing.T) {
 	}
 	if copiedTree.SentinelEdge.ID != 0 || copy.Edges[1].ID != 0 {
 		t.Fatalf("copy changed public unset edge IDs: %d, %d", copiedTree.SentinelEdge.ID, copy.Edges[1].ID)
+	}
+}
+
+func TestStepPaintIsOwnedAcrossCodecAndClone(t *testing.T) {
+	g := layoutgraph.NewGraph()
+	n := g.AddNode(layoutgraph.NewNode(1, 120, 65))
+	n.StepPaint = &layoutgraph.StepPaint{Order: 2, ZIndex: 1, Opaque: true}
+	raw, err := Serialize(t.Context(), g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored layoutgraph.Graph
+	if err := Deserialize(t.Context(), raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+	cloned, err := layoutgraph.Clone(t.Context(), g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []*layoutgraph.StepPaint{raw.Nodes[0].StepPaint, restored.Nodes[0].StepPaint, cloned.Nodes[0].StepPaint} {
+		if p == nil || *p != *n.StepPaint || p == n.StepPaint {
+			t.Fatal("step paint was lost or shared across copies")
+		}
+	}
+	if raw.Nodes[0].StepPaint == restored.Nodes[0].StepPaint {
+		t.Fatal("deserialization retained the input pointer")
 	}
 }

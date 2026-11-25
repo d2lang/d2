@@ -134,6 +134,7 @@ func legendConnectionIconTarget(index int, connection d2target.Connection) d2tar
 	icon.DstArrow = connection.DstArrow
 	icon.StrokeDash = connection.StrokeDash
 	icon.StrokeWidth = connection.StrokeWidth
+	icon.StrokeWidthOffset = connection.StrokeWidthOffset
 	icon.Stroke = connection.Stroke
 	icon.Fill = connection.Fill
 	icon.BorderRadius = connection.BorderRadius
@@ -625,7 +626,7 @@ func (b *builder) buildLegendConnectionIcon(index int, connection d2target.Conne
 			b.connectionMask = connectionMask
 			b.idToShape = idToShape
 		}()
-		return b.buildConnection(target)
+		return b.buildConnection(target, nil)
 	}()
 	if err != nil {
 		return nil, fmt.Errorf("scene: %s: %w", legendConnectionObject(index, connection.ID), err)

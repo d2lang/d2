@@ -2,6 +2,5 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-GOOS=js GOARCH=wasm ./ci/test.sh \
-  -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+CI=1 tinygo test -target=wasm -stack-size=1MB -no-debug -timeout=30m \
   ./d2js/d2wasm ./d2layouts/d2elklayout "$@"

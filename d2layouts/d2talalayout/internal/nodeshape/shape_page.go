@@ -8,41 +8,33 @@ type shapePage struct {
 	shapeSquare
 }
 
-func (s shapePage) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapePage) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideMiddleCenter:  {},
-			label.InsideBottomCenter:  {},
-			label.OutsideBottomCenter: {},
-		}
+		return 1<<label.InsideMiddleCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.OutsideBottomCenter
 	case OK:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:      {},
-			label.InsideMiddleLeft:   {},
-			label.InsideMiddleRight:  {},
-			label.InsideBottomLeft:   {},
-			label.InsideBottomRight:  {},
-			label.OutsideTopLeft:     {},
-			label.OutsideTopCenter:   {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-		}
+		return 1<<label.InsideTopLeft |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight |
+			1<<label.OutsideTopLeft |
+			1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.OutsideTopRight:    {},
-			label.InsideTopCenter:    {},
-			label.OutsideRightBottom: {},
-			label.OutsideRightMiddle: {},
-			label.OutsideLeftTop:     {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideLeftBottom:  {},
-		}
+		return 1<<label.OutsideTopRight |
+			1<<label.InsideTopCenter |
+			1<<label.OutsideRightBottom |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideLeftBottom
 	case Bad:
-		return map[label.Position]struct{}{
-			label.InsideTopRight:  {},
-			label.OutsideRightTop: {},
-		}
+		return 1<<label.InsideTopRight |
+			1<<label.OutsideRightTop
 	}
-	return map[label.Position]struct{}{}
+	return 0
 }

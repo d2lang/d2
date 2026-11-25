@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"math"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,13 +58,29 @@ type Graph struct {
 	Scenarios []*Graph `json:"scenarios,omitempty"`
 	Steps     []*Graph `json:"steps,omitempty"`
 
+	// TweenFrames are the sampled incoming transition, in playback order. Each
+	// frame belongs to this board and shares its navigation identity.
+	TweenFrames     []*Graph `json:"-"`
+	TweenDurationMS int      `json:"-"`
+
 	Theme *d2themes.Theme `json:"theme,omitempty"`
 
 	// Object.Level uses the location of a nested graph
 	RootLevel int `json:"rootLevel,omitempty"`
 
+	// IsPartialLayout marks a layout input whose surrounding objects or edges
+	// were removed for a nested layout. RootLevel can still be zero when an
+	// extraction includes its top-level container.
+	IsPartialLayout bool `json:"isPartialLayout,omitempty"`
+
 	// Data embedded from source configuration variables, including layout options.
 	Data map[string]interface{} `json:"data,omitempty"`
+}
+
+// IsWholeLayout reports whether all surrounding objects and edges are present.
+// Older serialized subgraphs record their nesting only in RootLevel.
+func (g *Graph) IsWholeLayout() bool {
+	return g.RootLevel == 0 && !g.IsPartialLayout
 }
 
 type Legend struct {
@@ -92,6 +109,10 @@ func (g *Graph) RootBoard() *Graph {
 func (g *Graph) IDA() []string {
 	if g == nil {
 		return nil
+	}
+
+	if g.Parent != nil && slices.Contains(g.Parent.TweenFrames, g) {
+		return g.Parent.IDA()
 	}
 
 	var parts []string
@@ -149,6 +170,11 @@ func (g *Graph) IDA() []string {
 	return parts
 }
 
+// LayoutContinuation may refine a completed layout relative to its preceding
+// board. It may change current geometry only and reports whether the boards
+// share coordinates for playback. Both graphs are local to one compilation.
+type LayoutContinuation func(ctx context.Context, previous, current *Graph) (bool, error)
+
 type LayoutGraph func(context.Context, *Graph) error
 type RouteEdges func(context.Context, *Graph, []*Edge) error
 
@@ -157,6 +183,9 @@ type RouteEdges func(context.Context, *Graph, []*Edge) error
 type Scalar struct {
 	Value  string     `json:"value"`
 	MapKey *d2ast.Key `json:"-"`
+	// TweenOffset retains subpixel paint for a sampled stroke width while
+	// keeping Value integral for geometry and layout.
+	TweenOffset float64 `json:"tweenOffset,omitempty"`
 }
 
 // TODO maybe rename to Shape
@@ -179,6 +208,7 @@ type Object struct {
 	IconPosition  *string `json:"iconPosition,omitempty"`
 
 	ContentAspectRatio *float64 `json:"contentAspectRatio,omitempty"`
+	ELKLayerConstraint string   `json:"elkLayerConstraint,omitempty"`
 
 	Class    *d2target.Class    `json:"class,omitempty"`
 	SQLTable *d2target.SQLTable `json:"sql_table,omitempty"`
@@ -189,6 +219,25 @@ type Object struct {
 	Attributes `json:"attributes"`
 
 	ZIndex int `json:"zIndex"`
+	// Retain the scalar identity and its value so a later author edit, even
+	// replacing it with a new scalar of the same size, takes precedence.
+	layoutFont      *Scalar
+	layoutFontValue string
+}
+
+// HasLayoutFontSize reports whether the current font was assigned by layout.
+func (obj *Object) HasLayoutFontSize() bool {
+	f := obj.Style.FontSize
+	return f != nil && f.MapKey == nil && obj.layoutFont == f && obj.layoutFontValue == f.Value
+}
+
+// MarkLayoutFontSize records the font after layout has committed the object.
+func (obj *Object) MarkLayoutFontSize() {
+	obj.layoutFont = obj.Style.FontSize
+	obj.layoutFontValue = ""
+	if obj.layoutFont != nil {
+		obj.layoutFontValue = obj.layoutFont.Value
+	}
 }
 
 type Attributes struct {
@@ -217,8 +266,10 @@ type Attributes struct {
 	Direction  Scalar   `json:"direction"`
 	Constraint []string `json:"constraint"`
 
-	GridRows      *Scalar `json:"gridRows,omitempty"`
-	GridColumns   *Scalar `json:"gridColumns,omitempty"`
+	GridRows    *Scalar `json:"gridRows,omitempty"`
+	GridColumns *Scalar `json:"gridColumns,omitempty"`
+	// GridRowsFirst records declaration order in the merged map when both axes exist.
+	GridRowsFirst *bool   `json:"gridRowsFirst,omitempty"`
 	GridGap       *Scalar `json:"gridGap,omitempty"`
 	VerticalGap   *Scalar `json:"verticalGap,omitempty"`
 	HorizontalGap *Scalar `json:"horizontalGap,omitempty"`
@@ -1134,7 +1185,10 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 	s := shape.NewShape(shapeType, geo.NewBox(geo.NewPoint(0, 0), contentWidth, contentHeight))
 
 	var fitWidth, fitHeight float64
-	if shapeType == shape.PERSON_TYPE {
+	gridContainer := obj.IsGridDiagram() && len(obj.ChildrenArray) > 0
+	if gridContainer {
+		fitWidth, fitHeight = shape.GridDimensionsToFit(s, contentWidth, contentHeight, paddingX, paddingY)
+	} else if shapeType == shape.PERSON_TYPE {
 		fitWidth = contentWidth + paddingX
 		fitHeight = contentHeight + paddingY
 	} else {
@@ -1157,9 +1211,15 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 		obj.Height = fitHeight
 	}
 
-	if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" {
+	// A grid must reserve enough space for its children even when an authored
+	// dimension is smaller than the shape needed to enclose them.
+	if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" || gridContainer {
 		obj.Width = math.Max(float64(desiredWidth), fitWidth)
 		obj.Height = math.Max(float64(desiredHeight), fitHeight)
+	}
+
+	if gridContainer && shapeType == shape.C4_PERSON_TYPE {
+		obj.Width, obj.Height = shape.FitC4PersonBody(obj.Width, obj.Height, contentHeight+paddingY)
 	}
 
 	if s.AspectRatio1() {
@@ -1292,26 +1352,80 @@ func (e *Edge) Move(dx, dy float64) {
 	}
 }
 
+// AbsID returns "<common>(<src> <arrow> <dst>)[<index>]": the ID paths
+// (AbsIDArray) of the endpoints joined with ".", without the leading IDs they
+// share (compared with strings.EqualFold, spelled as in the source; each
+// path keeps at least its last ID), which form <common>, each followed by ".".
 func (e *Edge) AbsID() string {
-	srcIDA := e.Src.AbsIDArray()
-	dstIDA := e.Dst.AbsIDArray()
+	// The paths live on the stack unless an endpoint is deeply nested.
+	var srcBuf, dstBuf [16]string
+	srcIDA := appendAbsIDArray(srcBuf[:0], e.Src)
+	dstIDA := appendAbsIDArray(dstBuf[:0], e.Dst)
 
-	var commonIDA []string
-	for len(srcIDA) > 1 && len(dstIDA) > 1 {
-		if !strings.EqualFold(srcIDA[0], dstIDA[0]) {
+	common := 0
+	for len(srcIDA)-common > 1 && len(dstIDA)-common > 1 {
+		if !strings.EqualFold(srcIDA[common], dstIDA[common]) {
 			break
 		}
-		commonIDA = append(commonIDA, srcIDA[0])
-		srcIDA = srcIDA[1:]
-		dstIDA = dstIDA[1:]
+		common++
 	}
+	arrow := e.ArrowString()
+	var indexBuf [20]byte
+	index := strconv.AppendInt(indexBuf[:0], int64(e.Index), 10)
 
-	commonKey := ""
-	if len(commonIDA) > 0 {
-		commonKey = strings.Join(commonIDA, ".") + "."
+	size := len(arrow) + len(index) + 5
+	for _, id := range srcIDA {
+		size += len(id) + 1
 	}
+	for _, id := range dstIDA[common:] {
+		size += len(id) + 1
+	}
+	var b strings.Builder
+	b.Grow(size)
+	for _, id := range srcIDA[:common] {
+		b.WriteString(id)
+		b.WriteByte('.')
+	}
+	b.WriteByte('(')
+	for i, id := range srcIDA[common:] {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(id)
+	}
+	b.WriteByte(' ')
+	b.WriteString(arrow)
+	b.WriteByte(' ')
+	for i, id := range dstIDA[common:] {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(id)
+	}
+	b.WriteString(")[")
+	b.Write(index)
+	b.WriteByte(']')
+	return b.String()
+}
 
-	return fmt.Sprintf("%s(%s %s %s)[%d]", commonKey, strings.Join(srcIDA, "."), e.ArrowString(), strings.Join(dstIDA, "."), e.Index)
+// appendAbsIDArray appends obj.AbsIDArray() to ids.
+func appendAbsIDArray(ids []string, obj *Object) []string {
+	depth := 0
+	for o := obj; o.Parent != nil; o = o.Parent {
+		depth++
+		if depth > 1<<16 {
+			// A cycle of parents: fail as AbsIDArray does.
+			return append(ids, obj.AbsIDArray()...)
+		}
+	}
+	n := len(ids)
+	ids = slices.Grow(ids, depth)[:n+depth]
+	i := n + depth
+	for o := obj; o.Parent != nil; o = o.Parent {
+		i--
+		ids[i] = o.ID
+	}
+	return ids
 }
 
 func (obj *Object) Connect(srcID, dstID []d2ast.String, srcArrow, dstArrow bool, label string) (*Edge, error) {
@@ -1346,11 +1460,7 @@ func (obj *Object) Connect(srcID, dstID []d2ast.String, srcArrow, dstArrow bool,
 }
 
 func addSQLTableColumnIndices(e *Edge, srcID, dstID []d2ast.String, obj, src, dst *Object) {
-	if src.Shape.Value == d2target.ShapeSQLTable {
-		if src == dst {
-			// Ignore edge to column inside table.
-			return
-		}
+	if src.Shape.Value == d2target.ShapeSQLTable && src.SQLTable != nil {
 		objAbsID := obj.AbsIDArray()
 		srcAbsID := src.AbsIDArray()
 		if len(objAbsID)+len(srcID) > len(srcAbsID) {
@@ -1364,7 +1474,7 @@ func addSQLTableColumnIndices(e *Edge, srcID, dstID []d2ast.String, obj, src, ds
 			}
 		}
 	}
-	if dst.Shape.Value == d2target.ShapeSQLTable {
+	if dst.Shape.Value == d2target.ShapeSQLTable && dst.SQLTable != nil {
 		objAbsID := obj.AbsIDArray()
 		dstAbsID := dst.AbsIDArray()
 		if len(objAbsID)+len(dstID) > len(dstAbsID) {
@@ -1767,21 +1877,11 @@ func (g *Graph) Texts() []*d2target.MText {
 		}
 	}
 
-	for _, board := range g.Layers {
-		for _, t := range board.Texts() {
-			texts = appendTextDedup(texts, t)
-		}
-	}
-
-	for _, board := range g.Scenarios {
-		for _, t := range board.Texts() {
-			texts = appendTextDedup(texts, t)
-		}
-	}
-
-	for _, board := range g.Steps {
-		for _, t := range board.Texts() {
-			texts = appendTextDedup(texts, t)
+	for _, group := range [][]*Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
+		for _, board := range group {
+			for _, t := range board.Texts() {
+				texts = appendTextDedup(texts, t)
+			}
 		}
 	}
 

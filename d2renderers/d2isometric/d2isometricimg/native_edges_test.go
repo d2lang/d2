@@ -84,6 +84,78 @@ func TestClassicInkSelectsPhysicalCubeEdges(t *testing.T) {
 	}
 }
 
+func TestClassicInkCreaseWeight(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		for _, explicit := range []bool{false, true} {
+			n := classicInkTestNode()
+			n.StrokeExplicit = false
+			n.StrokeWidth = d2target.DEFAULT_SHAPE_STROKE_WIDTH
+			n.Metadata.ExplicitDefaultStrokeWidth = explicit
+			b := classicInkTestCube(open)
+			b.classicInkEdges(n, b.triangles)
+			if b.err != nil {
+				t.Fatal(b.err)
+			}
+			// On the front wall, the upper rim turns into the top face and the
+			// lower rim meets the background. Measure both in the camera plane.
+			camera := nativeCameraAxes()
+			normal := nunit(ncross(camera.direction, nv(1, 0, 0)))
+			const radius = .01
+			for _, y := range []float64{-1, 1} {
+				mid := nv(0, y, 1)
+				camera.width, camera.height, camera.scale = 256, 256, 32/radius
+				camera.centerX, camera.centerY = ndot(mid, camera.right), ndot(mid, camera.up)
+				r, err := newRaster(b.ctx, 128, 128, b.triangles, color.NRGBA{255, 255, 255, 255}, &camera, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, fraction := range []float64{-.83, -.55, .55, .83, 1.2} {
+					p := r.camera.project(nadd(mid, nmul(normal, fraction*radius)))
+					pixel := r.pixels.RGBAAt(int(p.x), int(p.y))
+					ink := pixel == (color.RGBA{169, 35, 94, 255})
+					width := 1.
+					if y == 1 && !explicit {
+						width = 2. / 3.
+					}
+					if ink != (math.Abs(fraction) < width) {
+						t.Errorf("open=%v explicit=%v y=%g offset=%g: ink=%v, pixel=%v", open, explicit, y, fraction, ink, pixel)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestClassicInkAuthoredStylesKeepFullWeight(t *testing.T) {
+	n := classicInkTestNode()
+	n.StrokeExplicit = false
+	n.StrokeWidth = d2target.DEFAULT_SHAPE_STROKE_WIDTH
+	b := classicInkTestCube(false)
+	for _, tc := range []struct {
+		name  string
+		style func(*d2isometric.Node)
+	}{
+		{"color", func(n *d2isometric.Node) { n.StrokeExplicit = true }},
+		{"width", func(n *d2isometric.Node) { n.StrokeWidth = 3 }},
+		{"dashes", func(n *d2isometric.Node) { n.StrokeDash = 2 }},
+		{"double border", func(n *d2isometric.Node) { n.Metadata.Original.DoubleBorder = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			styled := n
+			tc.style(&styled)
+			segments, err := classicInkSegments(b.ctx, styled, b.triangles)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, segment := range segments {
+				if segment.crease {
+					t.Fatal("an authored edge was thinned")
+				}
+			}
+		})
+	}
+}
+
 func TestClassicInkPreservesDecorativeTopBorders(t *testing.T) {
 	n := classicInkTestNode()
 	n.Metadata.Original.DoubleBorder = true

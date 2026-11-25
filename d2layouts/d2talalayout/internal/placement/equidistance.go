@@ -37,14 +37,20 @@ func Equidistance(ctx context.Context, g *layoutgraph.Graph) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// Only positions change while nodes are tried (transactions move nodes
+	// and re-wrap containers, rollbacks restore them), so the session
+	// re-evaluates only the terms a move can change; its results are those of
+	// placementcost.EdgeLength.
+	scores := placementcost.NewEdgeLengthSession(g, placementcost.EdgeLengthOptions{EdgeAbductions: nil, IncludeNodeSizes: true, EnforceMinimumGap: false, PenalizeDirection: true})
+	defer scores.Close()
 	movedHorizontally := false
 	movedVertically := false
 	for _, n := range g.Nodes {
-		movedHorizontally2, err := equidistanceNodeGuarded(ctx, n, g, true, reachabilityGuard)
+		movedHorizontally2, err := equidistanceNodeGuarded(ctx, n, g, true, reachabilityGuard, scores)
 		if err != nil {
 			return false, err
 		}
-		movedVertically2, err := equidistanceNodeGuarded(ctx, n, g, false, reachabilityGuard)
+		movedVertically2, err := equidistanceNodeGuarded(ctx, n, g, false, reachabilityGuard, scores)
 		if err != nil {
 			return false, err
 		}
@@ -60,7 +66,7 @@ func Equidistance(ctx context.Context, g *layoutgraph.Graph) (bool, error) {
 		movedAgain := false
 		for i := 0; i < 5; i++ {
 			for _, n := range g.Nodes {
-				m, err := equidistanceNodeGuarded(ctx, n, g, true, reachabilityGuard)
+				m, err := equidistanceNodeGuarded(ctx, n, g, true, reachabilityGuard, scores)
 				if err != nil {
 					return false, err
 				}
@@ -78,7 +84,7 @@ func Equidistance(ctx context.Context, g *layoutgraph.Graph) (bool, error) {
 		movedAgain := false
 		for i := 0; i < 5; i++ {
 			for _, n := range g.Nodes {
-				m, err := equidistanceNodeGuarded(ctx, n, g, false, reachabilityGuard)
+				m, err := equidistanceNodeGuarded(ctx, n, g, false, reachabilityGuard, scores)
 				if err != nil {
 					return false, err
 				}
@@ -100,7 +106,7 @@ func Equidistance(ctx context.Context, g *layoutgraph.Graph) (bool, error) {
 	return movedHorizontally || movedVertically, nil
 }
 
-func equidistanceNodeGuarded(ctx context.Context, n *layoutgraph.Node, g *layoutgraph.Graph, isHorizontal bool, reachabilityGuard *limits.WorkGuard) (bool, error) {
+func equidistanceNodeGuarded(ctx context.Context, n *layoutgraph.Node, g *layoutgraph.Graph, isHorizontal bool, reachabilityGuard *limits.WorkGuard, scores *placementcost.EdgeLengthSession) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -308,11 +314,6 @@ func equidistanceNodeGuarded(ctx context.Context, n *layoutgraph.Node, g *layout
 		}
 	}
 
-	originalLength, err := placementcost.EdgeLength(ctx, g, placementcost.EdgeLengthOptions{EdgeAbductions: nil, IncludeNodeSizes: true, EnforceMinimumGap: false, PenalizeDirection: true})
-	if err != nil {
-		return false, err
-	}
-
 	diffX := 0.
 	diffY := 0.
 	if isHorizontal {
@@ -323,10 +324,18 @@ func equidistanceNodeGuarded(ctx context.Context, n *layoutgraph.Node, g *layout
 		diffY = y - n.TopLeft.Y
 	}
 
+	if diffX == 0 && diffY == 0 {
+		return false, ctx.Err()
+	}
+	originalLength, err := scores.EdgeLengthBase(ctx)
+	if err != nil {
+		return false, err
+	}
 	txn, err := g.NewRequestTransaction(ctx, layoutgraph.TransactionOptions{AffectContainers: true})
 	if err != nil {
 		return false, err
 	}
+	defer txn.Release()
 
 	rolledBack := false
 	var soloMoveLength float64
@@ -344,7 +353,7 @@ func equidistanceNodeGuarded(ctx context.Context, n *layoutgraph.Node, g *layout
 		rolledBack = true
 	}
 	if !rolledBack {
-		newLength, err := placementcost.EdgeLength(ctx, g, placementcost.EdgeLengthOptions{EdgeAbductions: nil, IncludeNodeSizes: true, EnforceMinimumGap: false, PenalizeDirection: true})
+		newLength, err := scores.EdgeLength(ctx)
 		if err != nil {
 			txn.Rollback()
 			return false, err
@@ -373,7 +382,7 @@ func equidistanceNodeGuarded(ctx context.Context, n *layoutgraph.Node, g *layout
 			rolledBack = true
 		}
 		if !rolledBack {
-			newLength, err := placementcost.EdgeLength(ctx, g, placementcost.EdgeLengthOptions{EdgeAbductions: nil, IncludeNodeSizes: true, EnforceMinimumGap: false, PenalizeDirection: true})
+			newLength, err := scores.EdgeLength(ctx)
 			if err != nil {
 				txn.Rollback()
 				return false, err

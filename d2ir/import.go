@@ -3,7 +3,6 @@ package d2ir
 import (
 	"errors"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/d2lang/d2/d2ast"
@@ -24,15 +23,7 @@ func (c *compiler) pushImportStack(imp *d2ast.Import) (string, bool) {
 		c.errorf(imp, "imports must specify a path to import")
 		return "", false
 	}
-	if len(c.importStack) > 0 {
-		if path.Ext(impPath) != ".d2" {
-			impPath += ".d2"
-		}
-
-		if !filepath.IsAbs(impPath) {
-			impPath = path.Join(path.Dir(c.importStack[len(c.importStack)-1]), impPath)
-		}
-	}
+	impPath = c.resolveImportPath(impPath)
 
 	if len(c.importStack) > 0 && len(c.importStack)-1 >= MaxImportDepth {
 		c.errorf(imp, "maximum import depth of %d exceeded", MaxImportDepth)
@@ -48,6 +39,27 @@ func (c *compiler) pushImportStack(imp *d2ast.Import) (string, bool) {
 
 	c.importStack = append(c.importStack, impPath)
 	return impPath, true
+}
+
+func (c *compiler) resolveImportPath(name string) string {
+	if len(c.importStack) == 0 {
+		return name
+	}
+	if path.Ext(name) != ".d2" {
+		name += ".d2"
+	}
+	parent := c.importStack[len(c.importStack)-1]
+	if resolver, ok := c.fs.(interface {
+		ResolveImportPath(parent, name string) string
+	}); ok {
+		return resolver.ResolveImportPath(parent, name)
+	}
+	// fs.FS names are slash-separated on every platform. A backslash can
+	// be part of a virtual directory name.
+	if path.IsAbs(name) {
+		return name
+	}
+	return path.Join(path.Dir(parent), name)
 }
 
 func (c *compiler) popImportStack() {
@@ -114,13 +126,18 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 					return nil, false
 				}
 				field := cloneImportField(selected)
+				order := c.nextFieldOrder()
+				field.nestDeclarationOrder(&order)
 				nilScopeMap(field)
 				return field, true
 			}
 			if !c.reserveVariableCopy(imp, template.ir) {
 				return nil, false
 			}
-			return c.selectImport(cloneImportMap(template.ir), imp)
+			ir := cloneImportMap(template.ir)
+			order := c.nextFieldOrder()
+			ir.nestDeclarationOrder(&order)
+			return c.selectImport(ir, imp)
 		}
 	}
 
@@ -194,15 +211,7 @@ func (c *compiler) peekImport(imp *d2ast.Import) (*Map, bool) {
 		return nil, false
 	}
 
-	if len(c.importStack) > 0 {
-		if path.Ext(impPath) != ".d2" {
-			impPath += ".d2"
-		}
-
-		if !filepath.IsAbs(impPath) {
-			impPath = path.Join(path.Dir(c.importStack[len(c.importStack)-1]), impPath)
-		}
-	}
+	impPath = c.resolveImportPath(impPath)
 
 	// Use a separate parse error to avoid polluting the main one
 	localErr := &d2parser.ParseError{}

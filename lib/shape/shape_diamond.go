@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeDiamond struct {
@@ -14,12 +13,9 @@ type shapeDiamond struct {
 
 func NewDiamond(box *geo.Box) Shape {
 	shape := shapeDiamond{
-		baseShape: &baseShape{
-			Type: DIAMOND_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(DIAMOND_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -35,7 +31,12 @@ func (s shapeDiamond) GetInnerBox() *geo.Box {
 }
 
 func diamondPath(box *geo.Box) *svg.SvgPathContext {
-	pc := svg.NewSVGPathContext(box.TopLeft, box.Width/77, box.Height/76.9)
+	return diamondOutline(box, svg.NewSVGPathContext)
+}
+
+// diamondOutline draws the outline of diamondPath into a path made by newPath.
+func diamondOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
+	pc := newPath(box.TopLeft, box.Width/77, box.Height/76.9)
 	pc.StartAt(pc.Absolute(38.5, 76.9))
 	pc.C(true, -0.3, 0, -0.5, -0.1, -0.7, -0.3)
 	pc.L(false, 0.3, 39.2)
@@ -52,6 +53,10 @@ func diamondPath(box *geo.Box) *svg.SvgPathContext {
 
 func (s shapeDiamond) Perimeter() []geo.Intersectable {
 	return diamondPath(s.Box).Path
+}
+
+func (s shapeDiamond) traceBorder(t *borderTracer) {
+	diamondOutline(s.Box, t.newPath)
 }
 
 func (s shapeDiamond) GetSVGPathData() []string {

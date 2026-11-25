@@ -23,6 +23,11 @@ import (
 
 type CompileOptions struct {
 	UTF16Pos bool
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of step transitions. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
 	// automatic copies they induce. Zero uses the secure compiler default.
 	MaxVariableExpansion int64
@@ -53,6 +58,10 @@ type CompileOptions struct {
 	// ELK configuration for the duration of Compile. It is disabled by default
 	// so custom resolvers retain their existing per-board behavior.
 	LayoutReuse bool
+
+	// LayoutContinuations supplies optional refinements for related boards,
+	// keyed by lowercase layout engine name. Independent layers start fresh.
+	LayoutContinuations map[string]d2graph.LayoutContinuation
 
 	Layout *string
 
@@ -95,6 +104,8 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 	g, config, err := d2compiler.Compile(compileOpts.InputPath, strings.NewReader(input), &d2compiler.CompileOptions{
 		Context:              ctx,
 		UTF16Pos:             compileOpts.UTF16Pos,
+		AnimateTweens:        compileOpts.AnimateTweens,
+		AnimateDuration:      compileOpts.AnimateDuration,
 		MaxVariableExpansion: compileOpts.MaxVariableExpansion,
 		MaxGlobExpansion:     compileOpts.MaxGlobExpansion,
 		MaxEdgeExpansion:     compileOpts.MaxEdgeExpansion,
@@ -122,6 +133,18 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 	}
 
 	d, err := compile(ctx, g, compileOpts, renderOpts)
+	if err == nil && config != nil && config.AnimateDuration != nil && *config.AnimateDuration > 0 {
+		animated := config.AnimateInterval != nil && *config.AnimateInterval > 0
+		if compileOpts.AnimateTweens != nil {
+			animated = *compileOpts.AnimateTweens
+		}
+		if animated {
+			structural := !*renderOpts.Isometric && compileOpts.Layout != nil && strings.EqualFold(*compileOpts.Layout, "tala")
+			if err := sampleBoardTransitions(ctx, d, g, int(*config.AnimateDuration), d2target.MaxRenderTargetBoards, *renderOpts.Sketch, structural); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	if d != nil {
 		if config == nil {
 			config = &d2target.Config{}
@@ -143,7 +166,7 @@ func applyGraphData(g *d2graph.Graph, data map[string]interface{}) {
 		return
 	}
 	g.Data = cloneGraphData(data)
-	for _, boards := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps} {
+	for _, boards := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
 		for _, board := range boards {
 			applyGraphData(board, data)
 		}
@@ -177,17 +200,33 @@ func cloneGraphDataValue(value interface{}) interface{} {
 }
 
 func compile(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts) (*d2target.Diagram, error) {
-	d, _, err := compileBoard(ctx, g, compileOpts, renderOpts, nil, false)
+	d, _, err := compileBoard(ctx, g, compileOpts, renderOpts, nil, nil, false)
 	return d, err
 }
 
-func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts, reuse *layoutGeometry, captureForCaller bool) (*d2target.Diagram, *layoutGeometry, error) {
+func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts, previous *d2graph.Graph, reuse *layoutGeometry, captureForCaller bool) (*d2target.Diagram, *layoutGeometry, error) {
+	var frames []*d2target.Diagram
+	transitionContinuous := true
+	for _, sample := range g.TweenFrames {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		frame, geometry, err := compileBoard(ctx, sample, compileOpts, renderOpts, previous, reuse, true)
+		if err != nil {
+			return nil, nil, err
+		}
+		frames = append(frames, frame)
+		transitionContinuous = transitionContinuous && frame.LayoutContinuity
+		previous, reuse = sample, geometry
+	}
+
 	err := g.ApplyTheme(*renderOpts.ThemeID)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	var geometry *layoutGeometry
+	var continuity bool
 	if len(g.Objects) > 0 {
 		err := g.SetDimensions(compileOpts.MeasuredTexts, compileOpts.Ruler, compileOpts.FontFamily, compileOpts.MonoFontFamily)
 		if err != nil {
@@ -225,6 +264,14 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 				return nil, nil, err
 			}
 		}
+		if previous != nil && compileOpts.Layout != nil && len(compileOpts.LayoutContinuations) != 0 {
+			if adjust := compileOpts.LayoutContinuations[strings.ToLower(*compileOpts.Layout)]; adjust != nil {
+				continuity, err = adjust(ctx, previous, g)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+		}
 		if reusable && (captureForCaller || len(g.Scenarios) > 0 || len(g.Steps) > 0) {
 			geometry = captureLayoutGeometry(g, signature)
 		}
@@ -235,30 +282,36 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 		return nil, nil, err
 	}
 
+	// The endpoint is related to its authored predecessor only if every
+	// sampled hop, including the final hop to the endpoint, kept that frame.
+	d.LayoutContinuity = continuity && transitionContinuous
+	d.TweenFrames = frames
+	d.TweenDurationMS = g.TweenDurationMS
+
 	for _, l := range g.Layers {
 		// Layers are independent boards rather than overlays of their parent, so
 		// retain their existing always-layout behavior.
-		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, nil, false)
+		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, nil, nil, false)
 		if err != nil {
 			return nil, nil, err
 		}
 		d.Layers = append(d.Layers, ld)
 	}
 	for _, l := range g.Scenarios {
-		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, geometry, false)
+		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, g, geometry, false)
 		if err != nil {
 			return nil, nil, err
 		}
 		d.Scenarios = append(d.Scenarios, ld)
 	}
-	previous := geometry
+	previous, reuse = g, geometry
 	for i, l := range g.Steps {
-		ld, stepGeometry, err := compileBoard(ctx, l, compileOpts, renderOpts, previous, i+1 < len(g.Steps))
+		ld, stepGeometry, err := compileBoard(ctx, l, compileOpts, renderOpts, previous, reuse, i+1 < len(g.Steps))
 		if err != nil {
 			return nil, nil, err
 		}
 		d.Steps = append(d.Steps, ld)
-		previous = stepGeometry
+		previous, reuse = l, stepGeometry
 	}
 	return d, geometry, nil
 }
@@ -311,6 +364,9 @@ func applyConfigs(config *d2target.Config, compileOpts *CompileOptions, renderOp
 	}
 	if renderOpts.Pad == nil {
 		renderOpts.Pad = config.Pad
+	}
+	if renderOpts.Scale == nil {
+		renderOpts.Scale = config.Scale
 	}
 	if renderOpts.Center == nil {
 		renderOpts.Center = config.Center

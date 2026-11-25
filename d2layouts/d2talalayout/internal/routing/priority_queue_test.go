@@ -135,7 +135,7 @@ func TestPriorityQueueGuardFailureDoesNotMutate(t *testing.T) {
 		if entry != nil {
 			t.Fatalf("pop entry = %p; want nil", entry)
 		}
-		if len(queue.items) != 2 || queue.items[0] != first || queue.items[1] != second || first.index != 0 || second.index != 1 {
+		if len(queue.items) != 2 || queue.items[0].entry != first || queue.items[1].entry != second || first.index != 0 || second.index != 1 {
 			t.Fatalf("pop mutated queue: %+v", queue.items)
 		}
 	})
@@ -151,7 +151,7 @@ func TestPriorityQueueGuardFailureDoesNotMutate(t *testing.T) {
 		if !errors.Is(err, errRejected) {
 			t.Fatalf("decrease error = %v; want %v", err, errRejected)
 		}
-		if entry.priority != 2 || entry.index != 0 || len(queue.items) != 1 || queue.items[0] != entry {
+		if entry.priority != 2 || entry.index != 0 || len(queue.items) != 1 || queue.items[0].entry != entry || queue.items[0].priority != 2 {
 			t.Fatalf("decrease mutated queue: entry=%+v items=%+v", entry, queue.items)
 		}
 	})

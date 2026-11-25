@@ -2,15 +2,108 @@ package routing
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"slices"
-	"sort"
 
 	"github.com/d2lang/d2/lib/geo"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/hierarchy"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 )
+
+// Keep the placement hierarchy's original lanes when their grid is affordable.
+// Wide hierarchies spanning multiple containers can fill most of the drawing
+// with extra intersections. In those hierarchies, only linked siblings need a
+// shared set of lanes. Both kinds of lanes feed the same visibility graph.
+func routingHierarchies(g *layoutgraph.Graph, guard *ovgBuildGuard) (map[*layoutgraph.Node]*layoutgraph.Hierarchy, error) {
+	membership := make(map[*layoutgraph.Node]*layoutgraph.Hierarchy)
+	whole := make(map[*layoutgraph.Hierarchy]bool)
+	needsLocalLanes := false
+	for _, node := range g.Nodes {
+		if err := guard.step(); err != nil {
+			return nil, err
+		}
+		h := node.Hierarchy
+		if h == nil {
+			continue
+		}
+		keep, seen := whole[h]
+		if !seen {
+			var err error
+			keep, err = keepHierarchyLanes(h, node.Container, len(g.Edges), guard)
+			if err != nil {
+				return nil, err
+			}
+			whole[h] = keep
+			needsLocalLanes = needsLocalLanes || !keep
+		}
+		if keep {
+			membership[node] = h
+		}
+	}
+	if !needsLocalLanes {
+		return membership, guard.check()
+	}
+	type scope struct {
+		hierarchy *layoutgraph.Hierarchy
+		container *layoutgraph.Node
+	}
+	groups := make(map[scope]*layoutgraph.Hierarchy)
+	for _, edge := range g.Edges {
+		if err := guard.step(); err != nil {
+			return nil, err
+		}
+		from, to := edge.From, edge.To
+		if edge.IsLoop() || from.Hierarchy == nil || whole[from.Hierarchy] || from.Hierarchy != to.Hierarchy || from.Container != to.Container {
+			continue
+		}
+		key := scope{from.Hierarchy, from.Container}
+		if groups[key] == nil {
+			groups[key] = layoutgraph.NewHierarchy()
+		}
+	}
+	for _, node := range g.Nodes {
+		if err := guard.step(); err != nil {
+			return nil, err
+		}
+		if group := groups[scope{node.Hierarchy, node.Container}]; group != nil {
+			group.Levels()[node] = node.HierarchyLevel()
+			membership[node] = group
+		}
+	}
+	return membership, guard.check()
+}
+
+func keepHierarchyLanes(h *layoutgraph.Hierarchy, container *layoutgraph.Node, edgeCount int, guard *ovgBuildGuard) (bool, error) {
+	left, top := math.Inf(1), math.Inf(1)
+	right, bottom := math.Inf(-1), math.Inf(-1)
+	oneContainer := true
+	for n := range h.Levels() {
+		if err := guard.step(); err != nil {
+			return false, err
+		}
+		if n == nil || n.TopLeft == nil {
+			return false, fmt.Errorf("TALA routing hierarchy contains a node without a position")
+		}
+		oneContainer = oneContainer && n.Container == container
+		left, top = min(left, n.TopLeft.X), min(top, n.TopLeft.Y)
+		right, bottom = max(right, n.TopLeft.X+n.Width), max(bottom, n.TopLeft.Y+n.Height)
+	}
+	if oneContainer {
+		return true, nil
+	}
+
+	// Estimate the footprint at the spacing used by addHierarchyLevelNodes,
+	// then one heap insertion per arrival direction (horizontal or vertical)
+	// per point and arrow. The search guard charges the actual work.
+	columns := 1 + math.Ceil((right-left)/ovgPadding)
+	rows := 1 + math.Ceil((bottom-top)/ovgPadding)
+	points := columns * rows
+	heapLevels := 1 + math.Ceil(math.Log2(points))
+	estimatedSearchWork := 2 * points * heapLevels * float64(edgeCount)
+	return estimatedSearchWork <= float64(maxRouteSearchWorkUnits), nil
+}
 
 func newOVGForHierarchy(g *layoutgraph.Graph, h *layoutgraph.Hierarchy, guard *ovgBuildGuard) (*OVG, error) {
 	if err := guard.check(); err != nil {
@@ -53,8 +146,19 @@ func newOVGForHierarchy(g *layoutgraph.Graph, h *layoutgraph.Hierarchy, guard *o
 		return nil, err
 	}
 
-	// if the current direction is Left or Top, we need to mirror for the OVG creation, then mirror back at the very end
-	switch nodes[0].ContainerDirection() {
+	// Descendants inherit the containing block's rank. Only the blocks that
+	// were placed in ranks determine the flow, including the SQL table rule.
+	var placementRoots []*layoutgraph.Node
+	for _, node := range nodes {
+		if err := guard.step(); err != nil {
+			return nil, err
+		}
+		if _, nested := levels[node.Container]; !nested {
+			placementRoots = append(placementRoots, node)
+		}
+	}
+	// Mirror leftward and upward flows before building the routing graph.
+	switch placementRoots[0].ContainerDirection() {
 	case geo.Left:
 		if err := guard.reserveHierarchyTransform(ovg, len(nodes)); err != nil {
 			return nil, err
@@ -112,7 +216,7 @@ func newOVGForHierarchy(g *layoutgraph.Graph, h *layoutgraph.Hierarchy, guard *o
 	if err := guard.reserveWork(uint64(len(nodes))); err != nil {
 		return nil, err
 	}
-	isHorizontalHierarchy := hierarchy.IsHorizontal(nodes)
+	isHorizontalHierarchy := hierarchy.IsHorizontal(placementRoots)
 	if isHorizontalHierarchy {
 		if err := guard.reserveHierarchyTransform(ovg, len(ovg.NodesInsideBoundingBox)); err != nil {
 			return nil, err
@@ -160,16 +264,31 @@ func (ovg *OVG) addHierarchyLevelNodes(g *layoutgraph.Graph, hierarchy *layoutgr
 		}
 		levelToNodes[level] = append(levelToNodes[level], n)
 	}
-	for level := 0; level < len(levelToNodes); level++ {
+	// A container can own only some of the original placement levels.
+	levels := make([]int, 0, len(levelToNodes))
+	for level := range levelToNodes {
 		if err := guard.step(); err != nil {
 			return err
 		}
-		if err := guard.reserveSortWork(len(levelToNodes[level])); err != nil {
+		levels = append(levels, level)
+	}
+	if err := guard.reserveSortWork(len(levels)); err != nil {
+		return err
+	}
+	slices.Sort(levels)
+	rows := make([][]*layoutgraph.Node, 0, len(levels))
+	for _, level := range levels {
+		nodes := levelToNodes[level]
+		if err := guard.reserveSortWork(len(nodes)); err != nil {
 			return err
 		}
-		sort.Slice(levelToNodes[level], func(i, j int) bool {
-			return levelToNodes[level][i].TopLeft.X < levelToNodes[level][j].TopLeft.X
+		slices.SortFunc(nodes, func(a, b *layoutgraph.Node) int {
+			if c := cmp.Compare(a.TopLeft.X, b.TopLeft.X); c != 0 {
+				return c
+			}
+			return cmp.Compare(a.ID, b.ID)
 		})
+		rows = append(rows, nodes)
 	}
 	tl, br, err := guard.ovgBoundingBox(ovg)
 	if err != nil {
@@ -183,15 +302,15 @@ func (ovg *OVG) addHierarchyLevelNodes(g *layoutgraph.Graph, hierarchy *layoutgr
 	// Add one interval to leave at least one OVG node after the last node.
 	br.X = tl.X + width + ovgPadding
 	ys := make(map[float64]struct{})
-	for level := 1; level < len(levelToNodes); level++ {
+	for level := 1; level < len(rows); level++ {
 		if err := guard.step(); err != nil {
 			return err
 		}
-		levelYs, err := ovg.addBoundaryNodesAboveLevelNodes(levelToNodes[level-1], levelToNodes[level], tl.X, br.X, guard)
+		levelYs, err := ovg.addBoundaryNodesAboveLevelNodes(rows[level-1], rows[level], hierarchy.Levels(), tl.X, br.X, guard)
 		if err != nil {
 			return err
 		}
-		if err := ovg.addPortAlignedNodes(levelToNodes[level-1], levelToNodes[level], levelYs, guard); err != nil {
+		if err := ovg.addPortAlignedNodes(rows[level-1], rows[level], levelYs, guard); err != nil {
 			return err
 		}
 		for _, y := range levelYs {
@@ -199,7 +318,7 @@ func (ovg *OVG) addHierarchyLevelNodes(g *layoutgraph.Graph, hierarchy *layoutgr
 		}
 	}
 
-	xs, err := ovg.addLevelNodes(levelToNodes, tl.X, br.X, guard)
+	xs, err := ovg.addLevelNodes(rows, tl.X, br.X, guard)
 	if err != nil {
 		return err
 	}
@@ -230,7 +349,7 @@ func (ovg *OVG) addHierarchyLevelNodes(g *layoutgraph.Graph, hierarchy *layoutgr
 // .                  *              *
 // .                  │              │
 // .                  └──*───────*───┘
-func (ovg *OVG) addBoundaryNodesAboveLevelNodes(nodesAbove, nodesBelow []*layoutgraph.Node, leftX, rightX float64, guard *ovgBuildGuard) ([]float64, error) {
+func (ovg *OVG) addBoundaryNodesAboveLevelNodes(nodesAbove, nodesBelow []*layoutgraph.Node, levels map[*layoutgraph.Node]int, leftX, rightX float64, guard *ovgBuildGuard) ([]float64, error) {
 	if err := guard.check(); err != nil {
 		return nil, err
 	}
@@ -247,11 +366,12 @@ func (ovg *OVG) addBoundaryNodesAboveLevelNodes(nodesAbove, nodesBelow []*layout
 				return nil, err
 			}
 			adj := node.Adjacent(e)
-			if e.IsLoop() || adj.Hierarchy == nil {
+			level, local := levels[adj]
+			if e.IsLoop() || !local {
 				// hierarchical nodes can be connected to nodes outside the hierarchy
 				continue
 			}
-			if adj.HierarchyLevel() < node.HierarchyLevel() {
+			if level < levels[node] {
 				nEdgesAbove++
 			}
 		}
@@ -348,7 +468,7 @@ func (ovg *OVG) addPortAlignedNodes(nodesAbove, nodesBelow []*layoutgraph.Node, 
 // . +  *              │    +    *              * +
 // .    │              │         │              │
 // .    └──*───────*───┘         └──*───────*───┘
-func (ovg *OVG) addLevelNodes(levelToNodes map[int][]*layoutgraph.Node, minXBound, maxXBound float64, guard *ovgBuildGuard) (map[float64]struct{}, error) {
+func (ovg *OVG) addLevelNodes(levelToNodes [][]*layoutgraph.Node, minXBound, maxXBound float64, guard *ovgBuildGuard) (map[float64]struct{}, error) {
 	if err := guard.check(); err != nil {
 		return nil, err
 	}

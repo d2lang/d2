@@ -1,5 +1,7 @@
 let nodeModules = null;
 
+export const isNode = true;
+
 // Injected at runtime by the node bundle banners in build.js.
 const moduleDir = __D2_NODE_MODULE_DIR__;
 
@@ -20,7 +22,7 @@ export async function loadFile(path) {
   const { join } = modules.path;
 
   try {
-    return await readFile(join(moduleDir, path));
+    return await readFile(join(moduleDir, "../wasm", path));
   } catch (err) {
     if (err.code === "ENOENT") {
       return await readFile(join(moduleDir, "../../../wasm", path.replace("./", "")));
@@ -34,5 +36,5 @@ export async function createWorker() {
   const { Worker } = modules.worker;
   const { join } = modules.path;
   const workerPath = join(moduleDir, "worker.js");
-  return new Worker(workerPath);
+  return { worker: new Worker(workerPath) };
 }

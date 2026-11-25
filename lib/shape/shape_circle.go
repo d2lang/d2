@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapeCircle struct {
@@ -13,12 +12,9 @@ type shapeCircle struct {
 
 func NewCircle(box *geo.Box) Shape {
 	shape := shapeCircle{
-		baseShape: &baseShape{
-			Type: CIRCLE_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(CIRCLE_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 

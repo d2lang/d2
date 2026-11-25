@@ -3,7 +3,6 @@ package d2isometricimg
 import (
 	"fmt"
 	"image"
-	"image/draw"
 	"math"
 
 	"github.com/d2lang/d2/d2renderers/d2isometric"
@@ -248,8 +247,11 @@ func (b *meshBuilder) nativeFaceLayer(s d2target.Shape, layer nativeFaceLayer) (
 		b.err = fmt.Errorf("native shape face raster: %w", err)
 		return nil, labelSurface{}
 	}
-	tex := image.NewRGBA(frame.Bounds())
-	draw.Draw(tex, tex.Bounds(), frame, frame.Bounds().Min, draw.Src)
+	tex, err := nativePremultiply(b.ctx, frame)
+	if err != nil {
+		b.err = err
+		return nil, labelSurface{}
+	}
 	if err := retainNativeVectorSurface(b.ctx, tex, doc); err != nil {
 		b.err = err
 		return nil, labelSurface{}
@@ -276,12 +278,12 @@ func (b *meshBuilder) nativeFaceLayer(s d2target.Shape, layer nativeFaceLayer) (
 // same source box and two-pixel label padding as D2's border-label mask.
 func (b *meshBuilder) nativeFaceBorderAperture(tex *image.RGBA, area labelSurface, s d2target.Shape) {
 	position := label.FromString(s.LabelPosition)
-	if s.Label == "" || !position.IsBorder() || s.StrokeWidth <= 0 {
+	if s.Label == "" || !position.IsBorder() || s.RenderedStrokeWidth() <= 0 {
 		return
 	}
 	box := geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height))
 	p := position.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
-	stroke := float64(s.StrokeWidth)
+	stroke := s.RenderedStrokeWidth()
 	x, y, w, h := 0., 0., 0., 0.
 	switch position {
 	case label.BorderTopLeft, label.BorderTopCenter, label.BorderTopRight:
@@ -423,7 +425,19 @@ func (b *meshBuilder) canonicalNodeContent(n d2isometric.Node, s d2target.Shape,
 			surface = insideLabel
 		}
 	}
+	first := len(b.triangles)
 	b.shapeLabel(n.Metadata.Original, surface, ink, n.Opacity, "node")
+	if len(b.triangles) > first && label.FromString(n.Metadata.Original.LabelPosition).IsOutside() && b.options.links != nil && (n.Link != "" || n.Tooltip != "") {
+		// Keep the print area clickable, independently of its distance from
+		// the body. Relief and outside clearance transform these corners
+		// along with any inline links emitted by shapeLabel.
+		if !b.options.vector {
+			b.addSurfaceLink(n.Link, n.Tooltip, surface)
+		}
+		for _, t := range b.triangles[first:] {
+			t.Material.outsideCaption = true
+		}
+	}
 }
 
 func nativeNodeIconSurface(n d2isometric.Node, s d2target.Shape, y float64) labelSurface {
@@ -457,7 +471,9 @@ func (b *meshBuilder) clearOutsideCaption(n d2isometric.Node, first int, relief 
 	case label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight:
 		dz = height * horizontal / (direction.Y * direction.Z)
 	case label.OutsideRightTop, label.OutsideRightMiddle, label.OutsideRightBottom:
-		dx = height * horizontal / (direction.Y * direction.X)
+		// Project the right wall's foot onto the caption plane along the
+		// camera ray. Only its X displacement crosses a right-side label.
+		dx = (height - b.nodeSupportDrop*relief) * direction.X / direction.Y
 	default:
 		return
 	}

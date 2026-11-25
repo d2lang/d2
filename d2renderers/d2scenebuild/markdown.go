@@ -13,6 +13,7 @@ import (
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2scene"
+	"github.com/d2lang/d2/d2renderers/d2sketch"
 	"github.com/d2lang/d2/d2target"
 	libcolor "github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
@@ -49,10 +50,9 @@ func (b *builder) buildShapeMarkdown(targetShape d2target.Shape) ([]*d2scene.Nod
 	}
 	node, err := b.buildMarkdownLabel(
 		fmt.Sprintf("shape %q", targetShape.ID), targetShape.ID+":markdown",
-		targetShape.Label, targetShape.FontFamily, targetShape.FontSize,
-		targetShape.LabelWidth, targetShape.LabelHeight,
-		targetShape.GetFontColor(), targetShape.Fill,
-		targetShape.Link != "", targetShape.Underline, topLeft,
+		targetShape.Text,
+		targetShape.GetFontColor(), d2sketch.MarkdownBackground(targetShape, b.options.Sketch),
+		targetShape.Link != "", topLeft,
 	)
 	if err != nil {
 		return nil, err
@@ -63,10 +63,9 @@ func (b *builder) buildShapeMarkdown(targetShape d2target.Shape) ([]*d2scene.Nod
 func (b *builder) buildConnectionMarkdown(connection d2target.Connection, topLeft *geo.Point) (*d2scene.Node, error) {
 	return b.buildMarkdownLabel(
 		fmt.Sprintf("connection %q", connection.ID), connection.ID+":markdown",
-		connection.Label, connection.FontFamily, connection.FontSize,
-		connection.LabelWidth, connection.LabelHeight,
+		connection.Text,
 		connection.GetFontColor(), connection.Fill,
-		connection.Link != "", connection.Underline, topLeft,
+		connection.Link != "", topLeft,
 	)
 }
 
@@ -95,14 +94,13 @@ func markdownShapeLabelTopLeft(targetShape d2target.Shape) *geo.Point {
 	} else {
 		box = geometry.GetInnerBox()
 	}
-	return position.GetPointOnBox(box, label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
+	return targetShape.LabelTopLeft(position, box)
 }
 
 func (b *builder) buildMarkdownLabel(
-	object, id, source, fontName string,
-	fontSize, width, height int,
+	object, id string, text d2target.Text,
 	foreground, background string,
-	disableLinks, underline bool,
+	disableLinks bool,
 	topLeft *geo.Point,
 ) (*d2scene.Node, error) {
 	if err := b.ctx.Err(); err != nil {
@@ -111,19 +109,28 @@ func (b *builder) buildMarkdownLabel(
 	root := d2scene.NewNode(nil)
 	root.ID = id
 	root.Transform = d2scene.Translate(topLeft.X, topLeft.Y)
-	primary, mono := b.markdownFontFamilies(fontName)
+	width, height := text.LabelWidth, text.LabelHeight
+	primary, mono := b.markdownFontFamilies(text.FontFamily)
 	ruler, err := b.markdownLayoutRuler()
 	if err != nil {
 		return nil, fmt.Errorf("scene: %s Markdown ruler: %w", object, err)
 	}
-	layoutFontSize := fontSize
+	layoutFontSize := text.FontSize
 	if layoutFontSize <= 0 {
 		// Zero-sized empty Markdown labels may carry a zero font size in frozen
 		// targets. Still parse and validate their source with D2's
 		// normal body size before discarding their non-painting viewport.
 		layoutFontSize = d2fonts.FONT_SIZE_M
 	}
-	layout, err := textmeasure.LayoutMarkdown(source, ruler, &primary, &mono, layoutFontSize)
+	var layout *textmeasure.MarkdownLayout
+	if strike := text.MarkdownStrike; strike != nil {
+		if len(strike.From) > maxMarkdownSourceBytes {
+			return nil, invalidField(object, "markdownStrike.from", len(strike.From), "Markdown source exceeds limit")
+		}
+		layout, err = textmeasure.LayoutMarkdownStrikeFrame(strike.From, text.Label, strike.Progress, ruler, &primary, &mono, layoutFontSize)
+	} else {
+		layout, err = textmeasure.LayoutMarkdown(text.Label, ruler, &primary, &mono, layoutFontSize)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("scene: %s Markdown layout: %w", object, err)
 	}
@@ -164,7 +171,7 @@ func (b *builder) buildMarkdownLabel(
 				return nil, err
 			}
 		}
-		node, linkBox, err := b.buildMarkdownPrimitive(id, index, primitive, primary, mono, paints, underline)
+		node, linkBox, err := b.buildMarkdownPrimitive(id, index, primitive, primary, mono, paints, text.Underline, layout.RunUnderlineProgress(primitive, text.UnderlineProgress))
 		if err != nil {
 			return nil, fmt.Errorf("scene: %s Markdown primitive %d: %w", object, index, err)
 		}
@@ -242,7 +249,7 @@ func (b *builder) buildMarkdownPrimitive(
 	primitive textmeasure.MarkdownPrimitive,
 	primary, mono d2fonts.FontFamily,
 	paints map[textmeasure.MarkdownColorRole]d2scene.Paint,
-	underline bool,
+	underline bool, underlineProgress *float64,
 ) (*d2scene.Node, d2scene.Bounds, error) {
 	fill := paints[primitive.FillRole]
 	strokePaint := paints[primitive.StrokeRole]
@@ -303,7 +310,7 @@ func (b *builder) buildMarkdownPrimitive(
 		run := d2scene.TextRun{
 			Text: primitive.Text, Origin: d2scene.Point{X: primitive.X, Y: primitive.Y},
 			Anchor: d2scene.AnchorStart, Font: fontValue, Fill: fill, Stroke: textStroke,
-			Underline: underline, Strike: primitive.Decoration == textmeasure.MarkdownTextDecorationLineThrough,
+			Underline: underline, UnderlineProgress: copyUnderlineProgress(underlineProgress), Strike: primitive.Decoration == textmeasure.MarkdownTextDecorationLineThrough,
 			Ink: ink,
 		}
 		node := d2scene.NewNode(run)

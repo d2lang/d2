@@ -166,6 +166,16 @@ func (r *Resource) BytesContext(ctx context.Context) ([]byte, error) {
 // private backing bytes directly, avoiding the full owned copy required by
 // BytesContext for callers that only need a self-contained representation.
 func (r *Resource) DataURIContext(ctx context.Context) ([]byte, error) {
+	return r.dataURI(ctx, false)
+}
+
+// CompactDataURIContext returns a self-contained image href for SVG output.
+// For SVG XML, it uses percent encoding when that is shorter than base64.
+func (r *Resource) CompactDataURIContext(ctx context.Context) ([]byte, error) {
+	return r.dataURI(ctx, true)
+}
+
+func (r *Resource) dataURI(ctx context.Context, compact bool) ([]byte, error) {
 	if r == nil {
 		return nil, errors.New("imageasset: nil resource")
 	}
@@ -185,6 +195,11 @@ func (r *Resource) DataURIContext(ctx context.Context) ([]byte, error) {
 	maxInt := uint64(^uint(0) >> 1)
 	if totalBytes < 0 || uint64(totalBytes) > maxInt {
 		return nil, errors.New("imageasset: data URI is not representable")
+	}
+	if compact && r.kind == KindSVG {
+		if uri, err := compactSVGDataURI(ctx, r.data, totalBytes); uri != nil || err != nil {
+			return uri, err
+		}
 	}
 	result := make([]byte, int(totalBytes))
 	copy(result, prefix)
@@ -209,6 +224,57 @@ func (r *Resource) DataURIContext(ctx context.Context) ([]byte, error) {
 		return nil, errors.New("imageasset: data URI size preflight mismatch")
 	}
 	return result, nil
+}
+
+// Only URI characters safe inside an XML attribute can be copied literally.
+// In particular escape fragments, percent signs, XML syntax and whitespace.
+func imageURIByte(c byte) bool {
+	if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+		return true
+	}
+	switch c {
+	case '-', '.', '_', '~', '!', '$', '(', ')', '*', '+', ',', ';', '=', ':', '@', '/':
+		return true
+	}
+	return false
+}
+
+// Stop counting as soon as base64 is as small. Use exactly one output buffer.
+func compactSVGDataURI(ctx context.Context, data []byte, base64Bytes int64) ([]byte, error) {
+	const prefix = "data:image/svg+xml,"
+	size := int64(len(prefix)) + int64(len(data))
+	for i, c := range data {
+		if i%(32<<10) == 0 {
+			if err := checkContext(ctx); err != nil {
+				return nil, err
+			}
+		}
+		if !imageURIByte(c) {
+			if size >= base64Bytes-2 {
+				return nil, nil
+			}
+			size += 2
+		}
+	}
+	const hex = "0123456789ABCDEF"
+	uri := make([]byte, 0, int(size))
+	uri = append(uri, prefix...)
+	for i, c := range data {
+		if i%(32<<10) == 0 {
+			if err := checkContext(ctx); err != nil {
+				return nil, err
+			}
+		}
+		if imageURIByte(c) {
+			uri = append(uri, c)
+		} else {
+			uri = append(uri, '%', hex[c>>4], hex[c&15])
+		}
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	return uri, nil
 }
 
 // Cache is optional. Implementations must be safe for concurrent use. Only
@@ -334,6 +400,8 @@ type Resolver struct {
 	cache             Cache
 	cachePrefix       string
 	limits            Limits
+	// Only New installs local-file and HTTP loading. A data-only resolver has no external I/O.
+	loadExternal func(context.Context, sourceSpec) (loadedSource, error)
 
 	mu                     sync.Mutex
 	assetCount             int
@@ -345,7 +413,8 @@ type Resolver struct {
 }
 
 func New(options Options) (*Resolver, error) {
-	if err := options.Limits.Validate(); err != nil {
+	r, err := NewDataOnly(options.Limits)
+	if err != nil {
 		return nil, err
 	}
 	if options.Cache != nil && options.CacheNamespace == "" {
@@ -395,17 +464,27 @@ func New(options Options) (*Resolver, error) {
 		namespaceHash := sha256.Sum256([]byte(options.CacheNamespace + "\x00network-policy:" + networkNamespace))
 		cachePrefix = fmt.Sprintf("namespace:%x:", namespaceHash)
 	}
+	r.loadExternal = r.loadExternalSource
+	r.baseDir = baseDir
+	r.localFiles = options.LocalFiles
+	r.client = client
+	r.ownsHTTPTransport = ownsHTTPTransport
+	r.cache = options.Cache
+	r.cachePrefix = cachePrefix
+	return r, nil
+}
+
+// NewDataOnly creates a resolver that accepts only embedded data URIs.
+// It applies the same per-resource and cumulative limits as New.
+func NewDataOnly(limits Limits) (*Resolver, error) {
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
 	return &Resolver{
-		baseDir:           baseDir,
-		localFiles:        options.LocalFiles,
-		client:            client,
-		ownsHTTPTransport: ownsHTTPTransport,
-		cache:             options.Cache,
-		cachePrefix:       cachePrefix,
-		limits:            options.Limits,
-		resolvedSources:   make(map[string]*Resource),
-		inflight:          make(map[string]*resolveCall),
-		resolveSlots:      make(chan struct{}, maxConcurrentResolutions),
+		limits:          limits,
+		resolvedSources: make(map[string]*Resource),
+		inflight:        make(map[string]*resolveCall),
+		resolveSlots:    make(chan struct{}, maxConcurrentResolutions),
 	}, nil
 }
 
@@ -420,22 +499,9 @@ func (r *Resolver) CloseIdleConnections() {
 }
 
 func boundedDefaultTransport(base http.RoundTripper) *http.Transport {
-	if transport, ok := base.(*http.Transport); ok {
-		clone := transport.Clone()
-		clone.MaxResponseHeaderBytes = maxResponseHeaderBytes
-		return clone
-	}
-	// http.DefaultTransport is exported and may legally be replaced. Retain the
-	// standard library's safe defaults instead of asserting its concrete type.
-	return &http.Transport{
-		Proxy:                  http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:      true,
-		MaxIdleConns:           100,
-		IdleConnTimeout:        90 * time.Second,
-		TLSHandshakeTimeout:    10 * time.Second,
-		ExpectContinueTimeout:  1 * time.Second,
-		MaxResponseHeaderBytes: maxResponseHeaderBytes,
-	}
+	transport := netpolicy.CloneDefaultTransport(base)
+	transport.MaxResponseHeaderBytes = maxResponseHeaderBytes
+	return transport
 }
 
 func (r *Resolver) assetCountSnapshot() int {

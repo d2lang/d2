@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // A texture's sampled linear RGB modulates diffuse light. Specular light and
@@ -31,6 +32,28 @@ func svgTextureLighting(camera rasterCamera, t Triangle) (slope, intercept [3]fl
 	slope[0], slope[1], slope[2] = slope[0]*illumination.X*factor, slope[1]*illumination.Y*factor, slope[2]*illumination.Z*factor
 	intercept = [3]float64{spec.X + p.emission.X, spec.Y + p.emission.Y, spec.Z + p.emission.Z}
 	return slope, intercept
+}
+
+// The transfer function depends on the light and material, while the
+// transform and clip belong to each individual face.
+func (w *nativeSVGWriter) textureLight(id int, slope, intercept [3]float64) int {
+	// Compare at SVG precision. Equivalent normals can differ by floating-point
+	// roundoff across architectures.
+	var key [6]string
+	for i := range slope {
+		key[2*i], key[2*i+1] = svgNumber(slope[i]), svgNumber(intercept[i])
+	}
+	if shared, ok := w.textureLights[key]; ok {
+		return shared
+	}
+	if w.textureLights == nil {
+		w.textureLights = make(map[[6]string]int)
+	}
+	if len(w.textureLights) < 8192 {
+		w.textureLights[key] = id
+	}
+	w.write(`<defs><filter id="light-%d" color-interpolation-filters="linearRGB"><feComponentTransfer><feFuncR type="linear" slope="%s" intercept="%s"/><feFuncG type="linear" slope="%s" intercept="%s"/><feFuncB type="linear" slope="%s" intercept="%s"/></feComponentTransfer></filter></defs>`, id, key[0], key[1], key[2], key[3], key[4], key[5])
+	return id
 }
 
 func svgTriangleNormal(t Triangle, i int) Vec {
@@ -186,11 +209,35 @@ func writeSVGLightingGradient(w *nativeSVGWriter, gradient svgLightingGradient, 
 		c := gradient.stops[0].color
 		return svgColor(c.X, c.Y, c.Z)
 	}
-	w.write(`<linearGradient id="%s" gradientUnits="userSpaceOnUse" color-interpolation="sRGB" x1="%s" y1="%s" x2="%s" y2="%s">`, id, svgNumber(gradient.start.x), svgNumber(gradient.start.y), svgNumber(gradient.end.x), svgNumber(gradient.end.y))
+	var stops strings.Builder
+	first := gradient.stops[0].color
+	solid := svgColor(first.X, first.Y, first.Z)
+	uniform := true
 	for _, stop := range gradient.stops {
-		w.write(`<stop offset="%s" stop-color="%s"/>`, svgNumber(stop.offset), svgColor(stop.color.X, stop.color.Y, stop.color.Z))
+		color := svgColor(stop.color.X, stop.color.Y, stop.color.Z)
+		if color != solid {
+			uniform = false
+		}
+		fmt.Fprintf(&stops, `<stop offset="%s" stop-color="%s"/>`, svgNumber(stop.offset), color)
 	}
-	w.write(`</linearGradient>`)
+	if uniform {
+		return solid
+	}
+	key := stops.String()
+	w.write(`<linearGradient id="%s" gradientUnits="userSpaceOnUse" color-interpolation="sRGB" x1="%s" y1="%s" x2="%s" y2="%s"`, id, svgNumber(gradient.start.x), svgNumber(gradient.start.y), svgNumber(gradient.end.x), svgNumber(gradient.end.y))
+	// Each gradient retains its own coordinates. SVG inherits only the stop list.
+	if shared := w.lightingStops[key]; shared != "" {
+		w.write(` xlink:href="#%s"/>`, shared)
+	} else {
+		if w.lightingStops == nil {
+			w.lightingStops = make(map[string]string)
+		}
+		// Keep auxiliary memory bounded when every ramp has different colors.
+		if len(w.lightingStops) < 8192 {
+			w.lightingStops[key] = id
+		}
+		w.write(`>%s</linearGradient>`, key)
+	}
 	return "url(#" + id + ")"
 }
 
@@ -251,23 +298,21 @@ func svgCasterOpacity(t Triangle) uint8 {
 }
 
 func svgGroundCaster(t Triangle, ground, receiver float64, camera rasterCamera, light Vec) []svgPoint {
-	var vertices []Vec
-	for i, vertex := range t.V {
-		a, b := vertex.Position, t.V[(i+1)%3].Position
-		if a.Y >= receiver {
-			vertices = append(vertices, a)
-		}
-		if (a.Y < receiver) != (b.Y < receiver) {
-			vertices = append(vertices, nlerp(a, b, (receiver-a.Y)/(b.Y-a.Y)))
-		}
-	}
-	var points []svgPoint
-	for _, vertex := range vertices {
-		p := nsub(vertex, nmul(light, (vertex.Y-(ground+rasterShadowNormalOffset))/light.Y))
+	// Height is affine over the projected face. On a given light ray it
+	// orders blockers by depth and lets us intersect the face with a layer
+	// without changing the light direction or texture coordinates.
+	points := make([]svgPoint, 0, 3)
+	for _, v := range t.V {
+		p := nsub(v.Position, nmul(light, (v.Position.Y-(ground+rasterShadowNormalOffset))/light.Y))
 		p.Y = ground
 		q := camera.project(p)
-		points = append(points, svgProjectedPoint(q.x, q.y, ndot(vertex, light)))
+		point := svgProjectedPoint(q.x, q.y, 0)
+		// Preserve exact world height for inclusive layer clipping. Rounding a
+		// horizontal cap up by even one bit can remove its entire silhouette.
+		point.z = v.Position.Y
+		points = append(points, point)
 	}
+	points, _ = svgSplitPolygon(points, func(p svgPoint) float64 { return p.z - receiver })
 	return points
 }
 
@@ -279,10 +324,9 @@ func writeSVGGroundShadow(w *nativeSVGWriter, scene *nativeScene) {
 	triangles := rasterGroundTriangles(scene.triangles, ground, scene.camera.direction)
 	lightCamera := rasterFit(triangles, light, 2048, 2048, 1.08)
 	bias := math.Max(.012, 2/lightCamera.scale)
-	receiver := ground + rasterShadowNormalOffset + bias*light.Y
+	receiver := ground + rasterShadowNormalOffset + bias*lightCamera.direction.Y
 	var faces []svgVisibilityFace
-	var sources []int
-	var opacities []uint8
+	maxHeight := math.Inf(-1)
 	for i, triangle := range triangles {
 		if i%512 == 0 {
 			if w.err = w.ctx.Err(); w.err != nil {
@@ -299,36 +343,81 @@ func writeSVGGroundShadow(w *nativeSVGWriter, scene *nativeScene) {
 		}
 		texture := triangle.ShadowFillAlpha == nil && triangle.Material != nil && triangle.Material.Texture != nil
 		faces = append(faces, svgVisibilityFace{points: points, opaque: !texture, order: -i})
-		sources, opacities = append(sources, i), append(opacities, opacity)
+		for _, p := range points {
+			maxHeight = max(maxHeight, p.z)
+		}
 	}
 	if len(faces) == 0 {
 		return
 	}
+	// Project the light-space Gaussian onto the receiver and then into the
+	// view. The same penumbra remains correctly foreshortened at any zoom.
+	right := nsub(lightCamera.right, nmul(light, lightCamera.right.Y/light.Y))
+	up := nsub(lightCamera.up, nmul(light, lightCamera.up.Y/light.Y))
+	xScale := math.Hypot(ndot(right, scene.camera.right), ndot(up, scene.camera.right)) * scene.camera.scale
+	yScale := math.Hypot(ndot(right, scene.camera.up), ndot(up, scene.camera.up)) * scene.camera.scale
+	silhouette := -1
+	for index, layer := range groundShadowLayers {
+		ceiling := ground + rasterShadowNormalOffset + layer.height
+		if ceiling < maxHeight {
+			// Each successive layer retains a subset of the preceding casters.
+			// An entire scene below the ceiling can reuse its exact silhouette.
+			silhouette = -1
+			next := faces[:0]
+			maxHeight = math.Inf(-1)
+			for i, face := range faces {
+				if i%512 == 0 {
+					if w.err = w.ctx.Err(); w.err != nil {
+						return
+					}
+				}
+				face.points, _ = svgSplitPolygon(face.points, func(p svgPoint) float64 { return ceiling - p.z })
+				if len(face.points) == 0 {
+					continue
+				}
+				next = append(next, face)
+				for _, p := range face.points {
+					maxHeight = max(maxHeight, p.z)
+				}
+			}
+			faces = next
+			if len(faces) == 0 {
+				return
+			}
+		}
+		if silhouette < 0 {
+			silhouette = index
+			w.write(`<defs><g id="ground-casters-%d">`, silhouette)
+			writeSVGGroundCasters(w, scene, triangles, faces, ground, light, silhouette)
+			if w.err != nil {
+				return
+			}
+			w.write(`</g></defs>`)
+		}
+		sigma := math.Max(layer.sigma, math.Sqrt(2.0/3)/lightCamera.scale)
+		w.write(`<defs><filter id="ground-softness-%d" filterUnits="userSpaceOnUse" x="0" y="0" width="%d" height="%d" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="%s %s"/></filter></defs>`, index, scene.width, scene.height, svgNumber(sigma*xScale), svgNumber(sigma*yScale))
+		w.write(`<use xlink:href="#ground-casters-%d" filter="url(#ground-softness-%d)" opacity="%s"/>`, silhouette, index, svgNumber(layer.opacity))
+	}
+}
+
+func writeSVGGroundCasters(w *nativeSVGWriter, scene *nativeScene, triangles []Triangle, faces []svgVisibilityFace, ground float64, light Vec, layer int) {
 	visible, err := svgVisibleFaces(w.ctx, faces)
 	if err != nil {
 		w.err = fmt.Errorf("native SVG ground shadow: %w", err)
 		return
 	}
-	// Native PCF has a three-sample footprint in both light-camera axes. A
-	// single vector blur approximates its softness without triangle seams or
-	// shadow bitmaps; its radius follows output density and light-camera fit.
-	right := nsub(lightCamera.right, nmul(light, lightCamera.right.Y/light.Y))
-	up := nsub(lightCamera.up, nmul(light, lightCamera.up.Y/light.Y))
-	scale := scene.camera.scale / lightCamera.scale * math.Sqrt(2.0/3)
-	sx := math.Hypot(ndot(right, scene.camera.right), ndot(up, scene.camera.right)) * scale
-	sy := math.Hypot(ndot(right, scene.camera.up), ndot(up, scene.camera.up)) * scale
-	w.write(`<defs><filter id="ground-softness" filterUnits="userSpaceOnUse" x="0" y="0" width="%d" height="%d" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="%s %s"/></filter></defs><g filter="url(#ground-softness)">`, scene.width, scene.height, svgNumber(sx), svgNumber(sy))
 	merged := make(map[uint8][][]svgPoint)
 	textured := make(map[uint8][]int)
 	for i, polygons := range visible {
 		if len(polygons) == 0 {
 			continue
 		}
-		t := triangles[sources[i]]
-		if t.ShadowFillAlpha == nil && t.Material != nil && t.Material.Texture != nil {
-			textured[opacities[i]] = append(textured[opacities[i]], i)
+		t := triangles[-faces[i].order]
+		alpha := svgCasterOpacity(t)
+		if !faces[i].opaque {
+			textured[alpha] = append(textured[alpha], i)
 		} else {
-			merged[opacities[i]] = append(merged[opacities[i]], polygons...)
+			merged[alpha] = append(merged[alpha], polygons...)
 		}
 	}
 	for alpha := 1; alpha <= 255; alpha++ {
@@ -340,9 +429,9 @@ func writeSVGGroundShadow(w *nativeSVGWriter, scene *nativeScene) {
 		// opaque printed cap overlaps its sidewalls in light space; fading
 		// them separately produces a dark ring around a pale hollow center.
 		// Retained vector alpha still cuts genuine holes in image artwork.
-		w.write(`<g opacity="%s">`, svgNumber(.11*float64(alpha)/255))
+		w.write(`<g opacity="%s">`, svgNumber(float64(alpha)/255))
 		if len(polygons) != 0 {
-			w.write(`<path d="%s" fill="#243754"/>`, svgPolygonPath(polygons))
+			w.write(`<path d="%s" fill="#243754"/>`, svgFillPath(polygons))
 		}
 		sort.SliceStable(textures, func(a, b int) bool {
 			depth := func(i int) float64 {
@@ -355,9 +444,9 @@ func writeSVGGroundShadow(w *nativeSVGWriter, scene *nativeScene) {
 			return depth(textures[a]) < depth(textures[b])
 		})
 		for _, i := range textures {
-			t := triangles[sources[i]]
+			t := triangles[-faces[i].order]
 			if t.Material.Vector == nil {
-				w.err = fmt.Errorf("native SVG shadow surface %d has no retained vector source", sources[i])
+				w.err = fmt.Errorf("native SVG shadow surface %d has no retained vector source", -faces[i].order)
 				return
 			}
 			surfaceID := w.surfaceDefinition(t.Material.Vector)
@@ -376,10 +465,13 @@ func writeSVGGroundShadow(w *nativeSVGWriter, scene *nativeScene) {
 				w.err = err
 				return
 			}
-			w.write(`<defs><clipPath id="shadow-clip-%d"><path d="%s"/></clipPath><filter id="shadow-ink-%d" color-interpolation-filters="sRGB"><feColorMatrix values="0 0 0 0 0.14117647 0 0 0 0 0.21568627 0 0 0 0 0.32941176 0 0 0 1 0"/></filter></defs>`, i, svgPolygonPath(visible[i]), i)
-			w.write(`<g clip-path="url(#shadow-clip-%d)"><g transform="matrix(%s %s %s %s %s %s)" filter="url(#shadow-ink-%d)"><use xlink:href="#%s"/></g></g>`, i, svgNumber(affine[0]), svgNumber(affine[1]), svgNumber(affine[2]), svgNumber(affine[3]), svgNumber(affine[4]), svgNumber(affine[5]), i, surfaceID)
+			if !w.shadowInk {
+				w.write(`<defs><filter id="shadow-ink" color-interpolation-filters="sRGB"><feColorMatrix values="0 0 0 0 0.14117647 0 0 0 0 0.21568627 0 0 0 0 0.32941176 0 0 0 1 0"/></filter></defs>`)
+				w.shadowInk = true
+			}
+			w.write(`<defs><clipPath id="shadow-clip-%d-%d"><path d="%s"/></clipPath></defs>`, layer, i, svgFillPath(visible[i]))
+			w.write(`<g clip-path="url(#shadow-clip-%d-%d)"><g transform="matrix(%s %s %s %s %s %s)" filter="url(#shadow-ink)"><use xlink:href="#%s"/></g></g>`, layer, i, svgNumber(affine[0]), svgNumber(affine[1]), svgNumber(affine[2]), svgNumber(affine[3]), svgNumber(affine[4]), svgNumber(affine[5]), surfaceID)
 		}
 		w.write(`</g>`)
 	}
-	w.write(`</g>`)
 }

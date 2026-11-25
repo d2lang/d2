@@ -23,6 +23,22 @@ func Prescale(graph *layoutgraph.Graph) {
 	}
 }
 
+// ReservePortLengths applies measured demand on the unconstrained side of
+// ordinary rectangles. The normal prescale pass preserves their font size.
+func ReservePortLengths(graph *layoutgraph.Graph, lengths map[layoutgraph.EntityID]float64) {
+	for _, n := range graph.Nodes {
+		length, ok := lengths[n.ID]
+		if !ok {
+			continue
+		}
+		if n.DesiredHeight != nil && n.DesiredWidth == nil {
+			n.Width = math.Max(n.Width, length)
+		} else if n.DesiredWidth != nil && n.DesiredHeight == nil {
+			n.Height = math.Max(n.Height, length)
+		}
+	}
+}
+
 func scaleBasedOnEdges(node *layoutgraph.Node) {
 	if node.FixedTopLeft != nil || node.DesiredWidth != nil || node.DesiredHeight != nil || node.IsTable() || node.IsClass() || len(node.Edges) == 0 {
 		return
@@ -40,11 +56,10 @@ func scaleBasedOnEdges(node *layoutgraph.Node) {
 		totalEdges += count
 		maxEdgesToAdjacent = max(maxEdgesToAdjacent, count)
 	}
-	sidesForEdges := 4.0
-	if len(edgeCounts) < 4 {
-		sidesForEdges = float64(len(edgeCounts))
+	edgesPerSide := maxEdgesToAdjacent
+	if sides := min(4, len(edgeCounts)); sides > 0 {
+		edgesPerSide = max(edgesPerSide, (totalEdges+sides-1)/sides)
 	}
-	edgesPerSide := max(maxEdgesToAdjacent, int(math.Ceil(float64(totalEdges)/sidesForEdges)))
 	if edgesPerSide == 1 {
 		return
 	}
@@ -173,6 +188,12 @@ func Place(ctx context.Context, graph *layoutgraph.Graph, seed int64) error {
 }
 
 func NormalizeGaps(ctx context.Context, graph *layoutgraph.Graph) (bool, error) {
+	return normalizeGaps(ctx, graph, true)
+}
+
+// normalizeGaps is NormalizeGaps; replayNoops false runs every no-op
+// transaction for real, which tests use as the reference.
+func normalizeGaps(ctx context.Context, graph *layoutgraph.Graph, replayNoops bool) (bool, error) {
 	ctx, guard, err := layoutgraph.EnsureTransactionWorkGuard(ctx, "GapNormalizationTransactions")
 	if err != nil {
 		return false, err
@@ -194,11 +215,15 @@ func NormalizeGaps(ctx context.Context, graph *layoutgraph.Graph) (bool, error) 
 			rollback.restore()
 		}
 	}()
+	// Every pass below uses txn and nothing else changes the graph between
+	// passes, so the no-op replay state carries over (see gapNoopReplay).
+	noops := &gapNoopReplay{guard: guard, disabled: !replayNoops}
 	bidirectional := func(nodes layoutgraph.Nodes, axis layoutAxis) (bool, error) {
 		forward, err := gapNormalization(ctx, nodes, txn, graph, gapNormalizationOptions{
 			axis:      axis,
 			direction: forwardDirection,
 			costTxn:   txn,
+			noops:     noops,
 		})
 		if err != nil {
 			return false, err
@@ -207,6 +232,7 @@ func NormalizeGaps(ctx context.Context, graph *layoutgraph.Graph) (bool, error) 
 			axis:      axis,
 			direction: backwardDirection,
 			costTxn:   txn,
+			noops:     noops,
 		})
 		return forward || backward, err
 	}
@@ -254,6 +280,7 @@ func Align(ctx context.Context, graph *layoutgraph.Graph) error {
 	if err != nil {
 		return err
 	}
+	defer txn.Release()
 	for range 100 {
 		changed, err := alignAxes(ctx, graph, txn)
 		if err != nil {

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"image"
-	"image/draw"
 	"math"
 	"net/url"
 	"strings"
@@ -81,11 +80,11 @@ func newSurfaceIconPainter(ctx context.Context, count int, assets *d2scenebuild.
 	}
 	if p.resolver == nil {
 		var err error
-		p.resolver, err = imageasset.New(imageasset.Options{Limits: imageasset.Limits{
+		p.resolver, err = imageasset.NewDataOnly(imageasset.Limits{
 			MaxFetchedBytes: 12 << 20, MaxEncodedBytes: 8 << 20, MaxDecompressedBytes: 8 << 20, MaxSVGBytes: int64(p.limits.MaxBytes),
 			MaxDecodedWidth: 8192, MaxDecodedHeight: 8192, MaxDecodedPixels: 8 << 20,
 			MaxAssets: maxSurfaceIcons, MaxCumulativeEncodedBytes: maxSurfaceIconBytes, MaxCumulativeDecodedBytes: maxSurfaceIconDecoded,
-		}})
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -185,13 +184,9 @@ func (p *surfaceIconPainter) texture(source *url.URL, width, depth float64, bord
 	if err != nil {
 		return nil, fmt.Errorf("isometric surface icon rasterization: %w", err)
 	}
-	tex := image.NewRGBA(frame.Bounds())
-	// Copy by rows so cancellation also bounds the alpha conversion pass.
-	for y := 0; y < h; y++ {
-		if err := p.ctx.Err(); err != nil {
-			return nil, err
-		}
-		draw.Draw(tex, image.Rect(0, y, w, y+1), frame, image.Pt(0, y), draw.Src)
+	tex, err := nativePremultiply(p.ctx, frame)
+	if err != nil {
+		return nil, err
 	}
 	p.pixels += pixels
 	p.textures[key] = tex

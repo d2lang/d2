@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labelgeom"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
@@ -170,8 +169,8 @@ func TestCompoundCandidatePreservesInteriorBusNestedAndLoopRoutes(t *testing.T) 
 				l = original.TargetArrowheadLabel
 			}
 			if l != nil {
-				a := labelgeom.ArrowheadTopLeft(original.Points, target, string(original.SourceArrowhead), string(original.TargetArrowhead), l.Width, l.Height)
-				b := labelgeom.ArrowheadTopLeft(moved.Points, target, string(moved.SourceArrowhead), string(moved.TargetArrowhead), l.Width, l.Height)
+				a := original.ArrowheadLabelTopLeft(original.Points, target, l)
+				b := moved.ArrowheadLabelTopLeft(moved.Points, target, l)
 				requireCompoundTranslatedPoint(t, a, b, delta)
 			}
 		}

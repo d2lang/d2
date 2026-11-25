@@ -7,6 +7,7 @@ on:
       - .github/workflows/ci.yml
       - .github/workflows/windows-msi.yml
       - ci/release/**
+      - '!ci/release/changelogs/**'
       - d2layouts/d2talalayout/**
       - ci/sub
       - install.sh
@@ -28,6 +29,7 @@ jobs:
     if: github.event_name == 'push'
     permissions:
       actions: read
+      attestations: read
       contents: read
     uses: ./.github/workflows/ci.yml
 
@@ -46,7 +48,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           submodules: true
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: ./go.mod
           cache: true
@@ -117,7 +119,7 @@ jobs:
               --epoch "$(git show -s --format=%ct HEAD)"
 
       - name: Upload immutable release archives
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-archives
           path: |
@@ -128,7 +130,7 @@ jobs:
           retention-days: 30
 
       - name: Upload release SBOM
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-sbom
           path: ${{ runner.temp }}/d2.spdx.json
@@ -168,7 +170,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-archives
           path: ${{ runner.temp }}/release-archives
@@ -248,19 +250,34 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-archives
           path: ${{ runner.temp }}/release-archives
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-sbom
           path: ${{ runner.temp }}/release-sbom
 
       - name: Attest archive build provenance
+        id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ runner.temp }}/release-archives/*.tar.gz
+
+      - name: Stage the archive provenance bundle
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: cp "$BUNDLE" "$RUNNER_TEMP/d2-$VERSION-provenance.sigstore.json"
+
+      - name: Upload archive provenance bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-provenance
+          path: ${{ runner.temp }}/d2-${{ needs.build.outputs.version }}-provenance.sigstore.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Attest archive SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -285,18 +302,37 @@ jobs:
         with:
           ref: ${{ needs.build.outputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-archives
           path: ${{ runner.temp }}/release-archives
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-msi
           path: ${{ runner.temp }}/windows-msi
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-sbom
           path: ${{ runner.temp }}/release-sbom
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-provenance
+          path: ${{ runner.temp }}/release-provenance
+      - name: Verify the bundle and archives before publishing
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          . ./ci/release/checksum.sh
+          . ./ci/release/verifier.sh
+          verifier=$(installer_gh "$(mktemp -d)")
+          bundle="$RUNNER_TEMP/release-provenance/d2-$VERSION-provenance.sigstore.json"
+          for archive in "$RUNNER_TEMP"/release-archives/*.tar.gz; do
+            "$verifier" attestation verify "$archive" --bundle "$bundle" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-archives.yml" \
+              --source-ref "refs/tags/$VERSION" --source-digest "$COMMIT"
+          done
       - name: Attach verified artifacts to draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -307,4 +343,5 @@ jobs:
             --repository "$GITHUB_REPOSITORY" --version "$VERSION" --commit "$RELEASE_COMMIT" \
             --archives "$RUNNER_TEMP/release-archives" \
             --msi "$RUNNER_TEMP/windows-msi/d2-$VERSION-windows-amd64.msi" \
-            --sbom "$RUNNER_TEMP/release-sbom/d2.spdx.json"
+            --sbom "$RUNNER_TEMP/release-sbom/d2.spdx.json" \
+            --provenance "$RUNNER_TEMP/release-provenance/d2-$VERSION-provenance.sigstore.json"

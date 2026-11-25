@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 type shapePerson struct {
@@ -14,12 +13,9 @@ type shapePerson struct {
 
 func NewPerson(box *geo.Box) Shape {
 	shape := shapePerson{
-		baseShape: &baseShape{
-			Type: PERSON_TYPE,
-			Box:  box,
-		},
+		baseShape: newShapeBase(PERSON_TYPE, box),
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 
@@ -39,7 +35,12 @@ func (s shapePerson) GetInnerBox() *geo.Box {
 }
 
 func personPath(box *geo.Box) *svg.SvgPathContext {
-	pc := svg.NewSVGPathContext(box.TopLeft, box.Width/68.3, box.Height/77.4)
+	return personOutline(box, svg.NewSVGPathContext)
+}
+
+// personOutline draws the outline of personPath into a path made by newPath.
+func personOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, float64) P) P {
+	pc := newPath(box.TopLeft, box.Width/68.3, box.Height/77.4)
 
 	// Bottom side
 	pc.StartAt(pc.Absolute(68.3, 77.4))
@@ -65,6 +66,10 @@ func personPath(box *geo.Box) *svg.SvgPathContext {
 func (s shapePerson) Perimeter() []geo.Intersectable {
 	return personPath(s.Box).Path
 
+}
+
+func (s shapePerson) traceBorder(t *borderTracer) {
+	personOutline(s.Box, t.newPath)
 }
 
 func (s shapePerson) GetSVGPathData() []string {

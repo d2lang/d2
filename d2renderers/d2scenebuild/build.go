@@ -5,6 +5,7 @@ package d2scenebuild
 import (
 	"context"
 	"fmt"
+	"image"
 	"math"
 	"sort"
 	"strings"
@@ -33,6 +34,10 @@ type AssetOptions struct {
 	Resolver        *imageasset.Resolver
 	SVGImportLimits d2svgimport.Limits
 	SVGImportBudget SVGImportBudget
+
+	// When supplied, Build records the image sources for which this board used
+	// the built-in placeholder. Supply a fresh map for each board preview.
+	UnavailableImages map[string]struct{}
 }
 
 // SVGImportBudget is a document-wide ceiling on parse and emitted-scene work
@@ -92,6 +97,8 @@ type SketchBudget struct {
 // dimensions, while the raster device scale is supplied to d2raster
 // separately.
 type Options struct {
+	// MinimumBounds is the unpadded world-space viewport shared by animation frames.
+	MinimumBounds  *image.Rectangle
 	Pad            *int64
 	Scale          *float64
 	Center         *bool
@@ -429,10 +436,10 @@ func (b *builder) preflightConnection(connection d2target.Connection) error {
 		if !finite(point.Y) {
 			return invalidField(object, field+".y", point.Y, "must be finite")
 		}
-		if err := validateRouteCoordinate(object, field+".x", point.X, connection.StrokeWidth); err != nil {
+		if err := validateRouteCoordinate(object, field+".x", point.X, connection.RenderedStrokeWidth()); err != nil {
 			return err
 		}
-		if err := validateRouteCoordinate(object, field+".y", point.Y, connection.StrokeWidth); err != nil {
+		if err := validateRouteCoordinate(object, field+".y", point.Y, connection.RenderedStrokeWidth()); err != nil {
 			return err
 		}
 		if i > 0 {
@@ -552,6 +559,13 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	}
 	// Legend placement uses the unfiltered diagram bounds. visualBoundingBox
 	// removes appendix-only metadata because scenes do not paint those icons.
+	if bounds := b.options.MinimumBounds; bounds != nil {
+		tl.X, tl.Y = min(tl.X, bounds.Min.X), min(tl.Y, bounds.Min.Y)
+		br.X, br.Y = max(br.X, bounds.Max.X), max(br.Y, bounds.Max.Y)
+		// Keep the legend and appendix anchored to the shared diagram as cells move.
+		diagramTL.X, diagramTL.Y = min(diagramTL.X, bounds.Min.X), min(diagramTL.Y, bounds.Min.Y)
+		diagramBR.X, diagramBR.Y = max(diagramBR.X, bounds.Max.X), max(diagramBR.Y, bounds.Max.Y)
+	}
 	legendLayout, err := b.measureLegend(diagramTL, diagramBR)
 	if err != nil {
 		return nil, err
@@ -573,11 +587,11 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	rootStroke, err := b.stroke(b.diagram.Root.Stroke, b.diagram.Root.StrokeWidth, b.diagram.Root.StrokeDash, d2scene.CapButt, d2scene.JoinMiter, "root stroke")
+	rootStroke, err := b.stroke(b.diagram.Root.Stroke, b.diagram.Root.RenderedStrokeWidth(), b.diagram.Root.StrokeDash, d2scene.CapButt, d2scene.JoinMiter, "root stroke")
 	if err != nil {
 		return nil, err
 	}
-	strokePadding := int(math.Ceil(float64(b.diagram.Root.StrokeWidth) / 2))
+	strokePadding := int(math.Ceil(b.diagram.Root.RenderedStrokeWidth() / 2))
 	backgroundLeft, backgroundTop, backgroundWidth, backgroundHeight, ok := expandDimensions(left, top, width, height, strokePadding)
 	if !ok {
 		return nil, invalidPaddingError(pad)
@@ -659,13 +673,13 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		root.Children = append(root.Children, overlay)
 	}
 
-	connectionMask, err := b.buildConnectionMask(d2scene.Box{
-		X: float64(left), Y: float64(top), Width: float64(width), Height: float64(height),
-	})
+	viewBox := d2scene.Box{X: float64(left), Y: float64(top), Width: float64(width), Height: float64(height)}
+	connectionMask, err := b.buildConnectionMask(viewBox)
 	if err != nil {
 		return nil, err
 	}
 	b.connectionMask = connectionMask
+	crossings := d2target.ConnectionCrossings(b.diagram.Connections, b.idToShape, b.options.Sketch, d2themes.PaintVisibleIn(b.theme))
 
 	objects := make([]diagramObject, 0, len(b.diagram.Shapes)+len(b.diagram.Connections))
 	for i, targetShape := range b.diagram.Shapes {
@@ -698,15 +712,19 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			return nil, err
 		}
 		var node *d2scene.Node
+		var clip *d2target.MotionClip
 		if object.shape != nil {
+			clip = object.shape.MotionClip
 			node, err = b.buildShape(*object.shape)
 		} else {
-			node, err = b.buildConnection(*object.connection)
+			clip = object.connection.MotionClip
+			gaps := crossings[object.order-len(b.diagram.Shapes)]
+			node, err = b.buildConnection(*object.connection, crossingMask(viewBox, gaps))
 		}
 		if err != nil {
 			return nil, err
 		}
-		renderedObjects[index] = node
+		renderedObjects[index] = clipMotionNode(node, clip)
 		if object.shape != nil {
 			positionedTooltips[index], err = b.buildPositionedTooltip(*object.shape)
 			if err != nil {
@@ -744,9 +762,6 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			return nil, err
 		}
 		if object.shape != nil {
-			if positionedTooltips[index] != nil {
-				metadataNodes = append(metadataNodes, positionedTooltips[index])
-			}
 			icons, err := b.buildAppendixIcons(
 				appendixLayout, *object.shape, object.order,
 				tooltipNumbers[object.order], linkNumbers[object.order],
@@ -754,7 +769,14 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			if err != nil {
 				return nil, err
 			}
-			metadataNodes = append(metadataNodes, icons...)
+			if tooltip := positionedTooltips[index]; tooltip != nil {
+				tooltip.Opacity = object.shape.Opacity
+				metadataNodes = append(metadataNodes, clipMotionNode(tooltip, object.shape.MotionClip))
+			}
+			for _, icon := range icons {
+				icon.Opacity = object.shape.Opacity
+				metadataNodes = append(metadataNodes, clipMotionNode(icon, object.shape.MotionClip))
+			}
 		}
 	}
 	// Paint positioned tooltips and appendix badges above every ordinary object,
@@ -801,11 +823,6 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	if b.options.Scale != nil {
 		logicalScale = *b.options.Scale
 	}
-	if appendixLayout != nil {
-		// SVG exports with appendix items use the expanded viewbox dimensions
-		// for their outer width and height, without applying the requested scale.
-		logicalScale = 1
-	}
 	scaledWidth := logicalScale * float64(width)
 	scaledHeight := logicalScale * float64(height)
 	if !finite(scaledWidth) || !finite(scaledHeight) || scaledWidth <= 0 || scaledHeight <= 0 {
@@ -814,6 +831,16 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	document.LogicalWidth = math.Ceil(scaledWidth)
 	document.LogicalHeight = math.Ceil(scaledHeight)
 	return document, nil
+}
+
+func clipMotionNode(node *d2scene.Node, c *d2target.MotionClip) *d2scene.Node {
+	if c == nil {
+		return node
+	}
+	wrapper := d2scene.NewNode(nil)
+	wrapper.Clip = boxClip(d2scene.Box{X: float64(c.X), Y: float64(c.Y), Width: float64(c.Width), Height: float64(c.Height)})
+	wrapper.Children = []*d2scene.Node{node}
+	return wrapper
 }
 
 type diagramObject struct {
@@ -831,7 +858,7 @@ func (b *builder) buildShape(targetShape d2target.Shape) (*d2scene.Node, error) 
 	if err != nil {
 		return nil, err
 	}
-	stroke, err := b.stroke(strokeValue, targetShape.StrokeWidth, targetShape.StrokeDash, d2scene.CapButt, d2scene.JoinRound, fmt.Sprintf("shape %q stroke", targetShape.ID))
+	stroke, err := b.stroke(strokeValue, targetShape.RenderedStrokeWidth(), targetShape.StrokeDash, d2scene.CapButt, d2scene.JoinRound, fmt.Sprintf("shape %q stroke", targetShape.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -972,7 +999,7 @@ func (b *builder) buildShapeText(targetShape d2target.Shape) ([]*d2scene.Node, e
 		topLeft := latexShapeLabelTopLeft(targetShape)
 		node, err := b.buildLatexLabelNode(
 			fmt.Sprintf("shape %q", targetShape.ID), targetShape.ID+":label:0",
-			targetShape.Label, targetShape.Stroke, topLeft,
+			targetShape.Label, targetShape.GetFontColor(), topLeft, targetShape.MotionScale,
 		)
 		if err != nil {
 			return nil, err
@@ -1012,31 +1039,24 @@ func (b *builder) buildShapeText(targetShape d2target.Shape) ([]*d2scene.Node, e
 			baseline += float64(i) * lineAdvance
 		}
 		run := d2scene.TextRun{
-			Text:      line,
-			Origin:    d2scene.Point{X: topLeft.X + float64(targetShape.LabelWidth)/2, Y: baseline},
-			Anchor:    d2scene.AnchorMiddle,
-			Font:      font,
-			Fill:      fill,
-			Underline: targetShape.Underline,
-			Ink:       d2scene.NewBounds(topLeft.X, topLeft.Y+float64(i)*lineAdvance, topLeft.X+float64(targetShape.LabelWidth), topLeft.Y+float64(i+1)*lineAdvance),
+			Text:              line,
+			Origin:            d2scene.Point{X: topLeft.X + float64(targetShape.LabelWidth)/2, Y: baseline},
+			Anchor:            d2scene.AnchorMiddle,
+			Font:              font,
+			Fill:              fill,
+			Underline:         targetShape.Underline,
+			UnderlineProgress: copyUnderlineProgress(targetShape.UnderlineProgress),
+			Ink:               d2scene.NewBounds(topLeft.X, topLeft.Y+float64(i)*lineAdvance, topLeft.X+float64(targetShape.LabelWidth), topLeft.Y+float64(i+1)*lineAdvance),
 		}
 		textNode := d2scene.NewNode(run)
 		textNode.ID = fmt.Sprintf("%s:label:%d", targetShape.ID, i)
 		nodes = append(nodes, textNode)
 	}
-	return nodes, nil
+	return appendPlainStrikes(nodes, targetShape.Text, topLeft, fill), nil
 }
 
 func targetGeometry(targetShape d2target.Shape) shape.Shape {
-	shapeType := d2target.DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type]
-	geometry := shape.NewShape(shapeType, geo.NewBox(
-		geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)),
-		float64(targetShape.Width), float64(targetShape.Height),
-	))
-	if targetShape.Type == d2target.ShapeCloud && targetShape.ContentAspectRatio != nil {
-		geometry.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
-	}
-	return geometry
+	return targetShape.Geometry()
 }
 
 func scenePath(commands []svg.PathCommand, fill d2scene.Paint, stroke *d2scene.Stroke) (d2scene.Path, error) {
@@ -1130,6 +1150,9 @@ func invalidField(object, field string, value any, requirement string) error {
 }
 
 func validateShapeNumbers(object string, targetShape d2target.Shape) error {
+	if p := targetShape.OutlineProgress; p != nil && !(*p >= 0 && *p <= 1) {
+		return fmt.Errorf("scene: %s outlineProgress must be finite and within [0,1]", object)
+	}
 	for _, field := range []struct {
 		name  string
 		value int
@@ -1144,10 +1167,13 @@ func validateShapeNumbers(object string, targetShape d2target.Shape) error {
 			return invalidField(object, field.name, field.value, "must be non-negative")
 		}
 	}
+	if !d2target.ValidStrokeWidthOffset(targetShape.StrokeWidth, targetShape.StrokeWidthOffset) {
+		return invalidField(object, "strokeWidthOffset", targetShape.StrokeWidthOffset, "must be subpixel and keep stroke width in range")
+	}
 	if err := validateOpacity(object, targetShape.Opacity); err != nil {
 		return err
 	}
-	if err := validateDash(object, targetShape.StrokeDash, targetShape.StrokeWidth); err != nil {
+	if err := validateDash(object, targetShape.StrokeDash, targetShape.RenderedStrokeWidth()); err != nil {
 		return err
 	}
 	if targetShape.ContentAspectRatio != nil && (!finite(*targetShape.ContentAspectRatio) || *targetShape.ContentAspectRatio <= 0) {
@@ -1163,10 +1189,13 @@ func validateConnectionNumbers(object string, connection d2target.Connection) er
 	if connection.StrokeWidth < 0 {
 		return invalidField(object, "strokeWidth", connection.StrokeWidth, "must be non-negative")
 	}
+	if !d2target.ValidStrokeWidthOffset(connection.StrokeWidth, connection.StrokeWidthOffset) {
+		return invalidField(object, "strokeWidthOffset", connection.StrokeWidthOffset, "must be subpixel and keep stroke width in range")
+	}
 	if err := validateOpacity(object, connection.Opacity); err != nil {
 		return err
 	}
-	if err := validateDash(object, connection.StrokeDash, connection.StrokeWidth); err != nil {
+	if err := validateDash(object, connection.StrokeDash, connection.RenderedStrokeWidth()); err != nil {
 		return err
 	}
 	if !finite(connection.BorderRadius) || connection.BorderRadius < 0 {
@@ -1201,12 +1230,12 @@ func validateOpacity(object string, opacity float64) error {
 	return nil
 }
 
-func validateDash(object string, dash float64, strokeWidth int) error {
+func validateDash(object string, dash, strokeWidth float64) error {
 	if !finite(dash) || dash < 0 {
 		return invalidField(object, "strokeDash", dash, "must be finite and non-negative")
 	}
 	if dash > 0 && strokeWidth > 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(strokeWidth), dash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(strokeWidth, dash)
 		if !finite(dashSize) || !finite(gapSize) || dashSize < 0 || gapSize < 0 {
 			return invalidField(object, "strokeDash", dash, "must produce finite non-negative dash lengths with strokeWidth")
 		}
@@ -1230,7 +1259,8 @@ func validateTextNumbers(object, prefix string, text d2target.Text) error {
 func validateShapeIntegerBounds(object string, targetShape d2target.Shape) error {
 	maxInt := int64(^uint(0) >> 1)
 	minInt := -maxInt - 1
-	halfStroke := int64(targetShape.StrokeWidth/2 + targetShape.StrokeWidth%2)
+	extent := d2target.StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
+	halfStroke := int64(extent/2 + extent%2)
 	for _, axis := range []struct {
 		name      string
 		position  int
@@ -1253,10 +1283,10 @@ func validateShapeIntegerBounds(object string, targetShape d2target.Shape) error
 	return nil
 }
 
-func validateRouteCoordinate(object, field string, coordinate float64, strokeWidth int) error {
+func validateRouteCoordinate(object, field string, coordinate, strokeWidth float64) error {
 	maxInt := int64(^uint(0) >> 1)
 	minInt := -maxInt - 1
-	halfStroke := math.Ceil(float64(strokeWidth) / 2)
+	halfStroke := math.Ceil(strokeWidth / 2)
 	// BoundingBox floors/ceils route coordinates and converts them to int.
 	// Strict comparisons avoid the rounded float64 representation of MaxInt.
 	if math.Floor(coordinate)-halfStroke <= float64(minInt) || math.Ceil(coordinate)+halfStroke >= float64(maxInt) {
@@ -1347,7 +1377,7 @@ func expandDimensions(left, top, width, height, amount int) (int, int, int, int,
 	return int(left64), int(top64), int(width64), int(height64), true
 }
 
-func (b *builder) stroke(raw string, width int, dash float64, cap d2scene.LineCap, join d2scene.LineJoin, description string) (*d2scene.Stroke, error) {
+func (b *builder) stroke(raw string, width, dash float64, cap d2scene.LineCap, join d2scene.LineJoin, description string) (*d2scene.Stroke, error) {
 	paint, err := b.paint(raw, description)
 	if err != nil {
 		return nil, err
@@ -1355,9 +1385,9 @@ func (b *builder) stroke(raw string, width int, dash float64, cap d2scene.LineCa
 	if paint == nil || width <= 0 {
 		return nil, nil
 	}
-	stroke := &d2scene.Stroke{Paint: paint, Width: float64(width), Cap: cap, Join: join, MiterLimit: 4}
+	stroke := &d2scene.Stroke{Paint: paint, Width: width, Cap: cap, Join: join, MiterLimit: 4}
 	if dash != 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(width), dash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(width, dash)
 		stroke.Dashes = []float64{dashSize, gapSize}
 	}
 	return stroke, nil

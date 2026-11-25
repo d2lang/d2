@@ -2,7 +2,6 @@ package shape
 
 import (
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/util-go/go2"
 )
 
 // Text is basically a rectangle
@@ -13,13 +12,10 @@ type shapeText struct {
 func NewText(box *geo.Box) Shape {
 	shape := shapeText{
 		shapeSquare: shapeSquare{
-			baseShape: &baseShape{
-				Type: TEXT_TYPE,
-				Box:  box,
-			},
+			baseShape: newShapeBase(TEXT_TYPE, box),
 		},
 	}
-	shape.FullShape = go2.Pointer(Shape(shape))
+	*shape.FullShape = shape
 	return shape
 }
 

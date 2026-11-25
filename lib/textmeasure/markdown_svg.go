@@ -11,7 +11,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/rivo/uniseg"
-	goldmarkHTML "github.com/yuin/goldmark/renderer/html"
+	goldmarkHTML "github.com/yuin/goldmark/v2/renderer/html"
 	"golang.org/x/net/html"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
@@ -130,7 +130,8 @@ type MarkdownSVGOptions struct {
 	// this when a Markdown label is already wrapped by a shape/connection link.
 	DisableLinks bool
 	// Underline applies D2's style.underline to every Markdown text primitive.
-	Underline bool
+	Underline         bool
+	UnderlineProgress *float64
 }
 
 // LayoutMarkdown parses Markdown once, measures it with D2's existing box
@@ -282,29 +283,48 @@ func (l *MarkdownLayout) SVG(opts MarkdownSVGOptions) string {
 			if fill == "" {
 				fill = "currentColor"
 			}
-			fmt.Fprintf(&out, `<text x="%s" y="%s"%s fill="%s" font-size="%s" xml:space="preserve"`,
-				mdFloat(primitive.X), mdFloat(primitive.Y), classAttr, svg.EscapeText(fill), mdFloat(primitive.FontSize))
-			decoration := string(primitive.Decoration)
-			if opts.Underline {
-				if decoration == "" {
-					decoration = "underline"
-				} else {
-					decoration = "underline " + decoration
+			writeText := func(underline bool, clip string) {
+				fmt.Fprintf(&out, `<text x="%s" y="%s"%s fill="%s" font-size="%s" xml:space="preserve"`,
+					mdFloat(primitive.X), mdFloat(primitive.Y), classAttr, svg.EscapeText(fill), mdFloat(primitive.FontSize))
+				if clip != "" {
+					if underline {
+						out.WriteString(` aria-hidden="true"`)
+						clip += ";user-select:none"
+					}
+					fmt.Fprintf(&out, ` style="clip-path:%s"`, clip)
 				}
+				decoration := string(primitive.Decoration)
+				if underline {
+					if decoration == "" {
+						decoration = "underline"
+					} else {
+						decoration = "underline " + decoration
+					}
+				}
+				if decoration != "" {
+					fmt.Fprintf(&out, ` text-decoration="%s"`, svg.EscapeText(decoration))
+				}
+				if primitive.SyntheticBold {
+					out.WriteString(` font-weight="bold"`)
+				}
+				if primitive.SyntheticItalic {
+					out.WriteString(` font-style="italic"`)
+				}
+				if primitive.TextLength {
+					fmt.Fprintf(&out, ` textLength="%s" lengthAdjust="spacingAndGlyphs"`, mdFloat(primitive.Width))
+				}
+				fmt.Fprintf(&out, `>%s</text>`, svg.EscapeText(primitive.Text))
 			}
-			if decoration != "" {
-				fmt.Fprintf(&out, ` text-decoration="%s"`, svg.EscapeText(decoration))
+			switch p := l.RunUnderlineProgress(primitive, opts.UnderlineProgress); {
+			case p == nil:
+				writeText(opts.Underline, "")
+			case *p <= 0 || *p >= 1:
+				writeText(*p >= 1, "")
+			default:
+				decorated, plain := svg.UnderlineClips(*p)
+				writeText(true, decorated)
+				writeText(false, plain)
 			}
-			if primitive.SyntheticBold {
-				out.WriteString(` font-weight="bold"`)
-			}
-			if primitive.SyntheticItalic {
-				out.WriteString(` font-style="italic"`)
-			}
-			if primitive.TextLength {
-				fmt.Fprintf(&out, ` textLength="%s" lengthAdjust="spacingAndGlyphs"`, mdFloat(primitive.Width))
-			}
-			fmt.Fprintf(&out, `>%s</text>`, svg.EscapeText(primitive.Text))
 		}
 		if link != "" && !opts.DisableLinks {
 			out.WriteString(`</a>`)
@@ -312,6 +332,17 @@ func (l *MarkdownLayout) SVG(opts MarkdownSVGOptions) string {
 	}
 	out.WriteString(`</g>`)
 	return out.String()
+}
+
+// RunUnderlineProgress advances one pen across the label rather than starting
+// an independent underline at the beginning of every word or styled run.
+func (l *MarkdownLayout) RunUnderlineProgress(run MarkdownPrimitive, progress *float64) *float64 {
+	if progress == nil || *progress <= 0 || *progress >= 1 || run.Kind != MarkdownTextPrimitive || run.Width <= 0 {
+		return progress
+	}
+	tip := *progress * float64(l.Width)
+	visible := min(1, max(0, (tip-run.X)/run.Width))
+	return &visible
 }
 
 // SafeMarkdownLink returns link when it is safe to expose as interactive
@@ -336,7 +367,7 @@ func IsDangerousLink(link string) bool {
 		// in one pass, and a URL with an already-valid scheme settles immediately.
 		return true
 	}
-	return goldmarkHTML.IsDangerousURL([]byte(normalized))
+	return goldmarkHTML.IsDangerousURL(normalized)
 }
 
 const maxLinkNormalizationPasses = 8
@@ -802,7 +833,7 @@ func (p *markdownPainter) paintInlineNodes(nodes []*html.Node, x, y float64, ctx
 					span = MarkdownPrimitive{
 						Kind: MarkdownRectPrimitive, X: cursorX,
 						Y: markdownSnap(lineY + lineHeight/2), Height: 1,
-						FillRole: token.ctx.decorationRole,
+						FillRole: token.ctx.decorationRole, Decoration: MarkdownTextDecorationLineThrough,
 					}
 				}
 				span.Width = cursorX + token.width - span.X

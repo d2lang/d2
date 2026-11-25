@@ -1,4 +1,17 @@
+export interface D2Options {
+  /** Browser module worker script URL. Defaults to the embedded worker. */
+  workerURL?: string | { readonly href: string };
+}
+
 export class D2 {
+  constructor(options?: D2Options);
+
+  /** Formats one D2 source file without resolving imports or running layout. */
+  format(source: string): Promise<string>;
+
+  /** Compiles and renders SVG in one worker call. Rejects if the effective options set ascii to true. */
+  renderSVG(input: string | CompileRequest, options?: CompileOptions): Promise<string>;
+
   /** Options in input.options take precedence over the second argument. */
   compile(
     input: string | CompileRequest,
@@ -7,12 +20,39 @@ export class D2 {
 
   render(diagram: Diagram, options?: RenderOptions): Promise<string>;
 
+  /** Encodes D2 source for the Playground's script query parameter. */
+  encode(source: string): Promise<string>;
+
+  /** Restores D2 source from the value of the Playground's script query parameter. */
+  decode(encoded: string): Promise<string>;
+
   /** Terminates the backing worker and rejects any pending operations. */
   dispose(): Promise<void>;
 }
 
+export interface ThemeOverrides {
+  n1?: string | null;
+  n2?: string | null;
+  n3?: string | null;
+  n4?: string | null;
+  n5?: string | null;
+  n6?: string | null;
+  n7?: string | null;
+  b1?: string | null;
+  b2?: string | null;
+  b3?: string | null;
+  b4?: string | null;
+  b5?: string | null;
+  b6?: string | null;
+  aa2?: string | null;
+  aa4?: string | null;
+  aa5?: string | null;
+  ab4?: string | null;
+  ab5?: string | null;
+}
+
 export interface RenderOptions {
-  /** Enable sketch mode [default: false] */
+  /** Enable sketch mode, including pencil shading for animated solid fills [default: false]. */
   sketch?: boolean;
   /** Enable native isometric SVG rendering, preserving the compiled layout [default: false]. Icons and images must use embedded data URLs. Cannot be combined with sketch, ASCII, darkThemeID, forceAppendix, or animateInterval. */
   isometric?: boolean;
@@ -20,17 +60,21 @@ export interface RenderOptions {
   themeID?: number;
   /** Theme ID to use when client is in dark mode */
   darkThemeID?: number;
+  /** Replace color codes for theme */
+  themeOverrides?: ThemeOverrides | null;
+  /** Replace color codes for dark theme */
+  darkThemeOverrides?: ThemeOverrides | null;
   /** Center the SVG in the containing viewbox [default: false] */
   center?: boolean;
   /** Pixels padded around the rendered diagram [default: 100] */
   pad?: number;
-  /** Scale the output. E.g., 0.5 to halve the default size. The default will render SVG's that will fit to screen. Setting to 1 turns off SVG fitting to screen. */
+  /** Overrides vars.d2-config.scale. A positive multiplier sets the SVG dimensions. Use -1 to fit the screen (default). */
   scale?: number;
-  /** Adds an appendix for tooltips and links [default: false] */
+  /** Adds a numbered SVG appendix for tooltips and links. Overrides vars.d2-config.force-appendix, including false. */
   forceAppendix?: boolean;
-  /** Target board/s to render. If target ends with '', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. target: 'layers.x.*' to render layer 'x' with all of its children. Pass '' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board outputs are currently only supported for animated SVGs and so animateInterval must be set to a value greater than 0 when targeting multiple boards. */
+  /** Board to render (default: root). Use '*' for all boards or 'layers.x.*' for a board and its children. Multi-board SVG requires a positive animation interval. */
   target?: string;
-  /** If given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds). */
+  /** Minimum milliseconds to display each board in an animated SVG. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
   animateInterval?: number;
   /** Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output. */
   salt?: string;
@@ -43,6 +87,8 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
+  /** Transition duration in milliseconds (0–600000, default 0). Animates numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps. Underlines, Markdown strikethroughs, and sketch fill shading can also animate between boards. Overrides vars.d2-config.animate-duration at compile time. */
+  animateDuration?: number;
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";
   /** A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used. */
@@ -75,7 +121,7 @@ export interface CompileResponse {
 }
 
 export interface Diagram {
-  config?: RenderOptions;
+  config?: RenderOptions & Pick<CompileOptions, "animateDuration">;
   name: string;
   /**
    * See docs on the same field in d2graph to understand what it means.
@@ -90,6 +136,13 @@ export interface Diagram {
   layers?: (Diagram | undefined)[];
   scenarios?: (Diagram | undefined)[];
   steps?: (Diagram | undefined)[];
+  /** Samples of this board's incoming transition. */
+  tweenFrames?: Diagram[];
+  /** Exclusive millisecond end offsets for nonuniform samples. Omitted for uniform timing. */
+  tweenFrameEndsMS?: number[];
+  gridMotion?: boolean;
+  layoutContinuity?: boolean;
+  tweenDurationMS?: number;
 }
 
 export interface Legend {
@@ -100,6 +153,15 @@ export interface Legend {
 export type Shape = (Class | SQLTable | Text) & ShapeBase;
 
 export interface ShapeBase {
+  motionClip?: MotionClip;
+  motionLabelTopLeft?: Point;
+  /** Authored body bounds for an anchored label during a node entrance. */
+  motionLabelBox?: MotionClip;
+  /** Authored table height while appended rows drop into place. */
+  rowReveal?: { fullHeight: number };
+  /** Length fraction of a rectangular container outline in an incoming step sample. */
+  outlineProgress?: number;
+  motionScale?: number;
   id: string;
   type: string;
   classes?: string[];
@@ -109,9 +171,12 @@ export interface ShapeBase {
   opacity: number /* float64 */;
   strokeDash: number /* float64 */;
   strokeWidth: number /* int */;
+  /** Add to strokeWidth for the visible width of a sampled frame. */
+  strokeWidthOffset?: number;
   borderRadius: number /* int */;
   fill: string;
   fillPattern?: string;
+  sketchFillTransition?: { from: string; to: string; progress: number };
   stroke: string;
   animated: boolean;
   shadow: boolean;
@@ -143,6 +208,11 @@ export interface ShapeBase {
 export interface Point {
   x: number /* int */;
   y: number /* int */;
+}
+
+export interface MotionClip extends Point {
+  width: number;
+  height: number;
 }
 
 export interface Class {
@@ -182,12 +252,17 @@ export interface Text {
   italic: boolean;
   bold: boolean;
   underline: boolean;
+  underlineProgress?: number;
+  markdownStrike?: { from: string; progress: number; plainRanges?: [number, number][] };
   labelWidth: number /* int */;
   labelHeight: number /* int */;
   labelFill?: string;
 }
 
 export interface Connection extends Text {
+  motionClip?: MotionClip;
+  motionLabel?: Point & { opacity: number };
+  motionDashOffset?: number;
   id: string;
   classes?: string[];
   src: string;
@@ -199,6 +274,8 @@ export interface Connection extends Text {
   opacity: number /* float64 */;
   strokeDash: number /* float64 */;
   strokeWidth: number /* int */;
+  /** Add to strokeWidth for the visible width of a sampled frame. */
+  strokeWidthOffset?: number;
   stroke: string;
   fill?: string;
   borderRadius?: number /* float64 */;
@@ -322,6 +399,8 @@ export interface EdgeReference {
 
 export interface Scalar {
   value: string;
+  /** Fractional part retained when a sampled numeric value is rounded. */
+  tweenOffset?: number;
 }
 
 export interface Style {

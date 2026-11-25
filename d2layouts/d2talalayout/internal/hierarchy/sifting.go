@@ -93,7 +93,7 @@ func buildNodeToSiblings(nodes []*placementNode, byLevel map[int][]*placementNod
 
 func sifting(node *placementNode, siblings []*placementNode, byLevel map[int][]*placementNode, improveIfEqualCrossings bool, scratch *crossingScratch) error {
 	segments := scratch.crossLevelSegments(siblings, true, true)
-	bestCrossings := countCrossings(segments)
+	bestCrossings := scratch.countCrossings(segments)
 	bestLength := addLengths(segments)
 	bestI := -1
 
@@ -116,7 +116,7 @@ func sifting(node *placementNode, siblings []*placementNode, byLevel map[int][]*
 			siblings[i+1], siblings[i] = siblings[i], siblings[i+1]
 			computeLevelRanks(byLevel[node.level])
 			segments := scratch.crossLevelSegments(siblings, true, true)
-			crossings := countCrossings(segments)
+			crossings := scratch.countCrossings(segments)
 			length := addLengths(segments)
 			if improved(crossings, bestCrossings, length, bestLength, improveIfEqualCrossings) {
 				bestCrossings = crossings
@@ -137,7 +137,7 @@ func sifting(node *placementNode, siblings []*placementNode, byLevel map[int][]*
 		siblings[i-1], siblings[i] = siblings[i], siblings[i-1]
 		computeLevelRanks(byLevel[node.level])
 		segments := scratch.crossLevelSegments(siblings, true, true)
-		crossings := countCrossings(segments)
+		crossings := scratch.countCrossings(segments)
 		length := addLengths(segments)
 		if improved(crossings, bestCrossings, length, bestLength, improveIfEqualCrossings) {
 			bestCrossings = crossings
@@ -162,8 +162,11 @@ func sifting(node *placementNode, siblings []*placementNode, byLevel map[int][]*
 }
 
 func improved(crossings, bestCrossings int64, length, bestLength float64, improveIfEqualCrossings bool) bool {
-	if !improveIfEqualCrossings {
-		return crossings < bestCrossings || (crossings == bestCrossings && geo.PrecisionCompare(length, bestLength, geo.PRECISION) == -1)
+	if crossings != bestCrossings {
+		return crossings < bestCrossings
 	}
-	return crossings <= bestCrossings || (crossings == bestCrossings && geo.PrecisionCompare(length, bestLength, geo.PRECISION) < 1)
+	if improveIfEqualCrossings {
+		return length <= bestLength
+	}
+	return geo.PrecisionCompare(length, bestLength, geo.PRECISION) < 0
 }

@@ -160,8 +160,8 @@ func nativeSequenceCaptionData(edge d2isometric.Edge, scale float64) ([]nativeSe
 }
 
 func (b *meshBuilder) reserveSequenceEdge(edge d2isometric.Edge, points []Vec, placer *routeCaptionPlacer) {
-	if edge.StrokeWidth > 0 {
-		placer.AvoidRoute(points, float64(edge.StrokeWidth)*b.scale/2)
+	if nativeRouteVisible(edge) {
+		placer.AvoidRoute(points, edge.RenderedStrokeWidth()*b.scale/2)
 	}
 	captions, icon := nativeSequenceCaptionData(edge, b.scale)
 	for _, caption := range captions {
@@ -179,13 +179,13 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 	tint := nativeSequenceTint(edge)
 	mat := nativeMaterial(tint, 1, 0, edge.Opacity)
 	mat.Unlit = true
-	radius := float64(edge.StrokeWidth) * b.scale / 2
+	radius := edge.RenderedStrokeWidth() * b.scale / 2
 	lengths := routeLengths(points)
 	total := lengths[len(lengths)-1]
 	first := len(b.triangles)
 	if radius > 0 && total > 0 {
 		wire := points
-		start, end := nativeArrowClearance(edge.SourceArrow, edge.StrokeWidth)/total, 1-nativeArrowClearance(edge.TargetArrow, edge.StrokeWidth)/total
+		start, end := nativeArrowClearance(edge.SourceArrow, edge.RenderedStrokeWidth())/total, 1-nativeArrowClearance(edge.TargetArrow, edge.RenderedStrokeWidth())/total
 		if start > 0 || end < 1 {
 			wire = nativeRouteSection(points, lengths, start, end)
 		}
@@ -196,10 +196,10 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 			wireLengths := routeLengths(wire)
 			if len(wireLengths) > 1 {
 				length := wireLengths[len(wireLengths)-1]
-				dash, gap := svg.GetStrokeDashAttributes(float64(edge.StrokeWidth), dashStyle)
+				dash, gap := svg.GetStrokeDashAttributes(edge.RenderedStrokeWidth(), dashStyle)
 				dash, gap = dash*b.scale, gap*b.scale
 				if !captionFinite(dash, gap) || dash <= 0 || gap <= 0 {
-					dash, gap = float64(edge.StrokeWidth)*dashStyle*b.scale, float64(edge.StrokeWidth)*dashStyle*b.scale
+					dash, gap = edge.RenderedStrokeWidth()*dashStyle*b.scale, edge.RenderedStrokeWidth()*dashStyle*b.scale
 				}
 				if !captionFinite(dash, gap) || dash <= 0 || gap <= 0 || length/(dash+gap) > 50000 {
 					b.err = fmt.Errorf("isometric sequence dashes exceed geometry budget")
@@ -224,8 +224,8 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 		}
 	}
 	markerStart := len(b.triangles)
-	b.arrowWithOpacity(string(edge.SourceArrow), points[0], nsub(points[0], points[1]), mat, edge.StrokeWidth, edge.Opacity)
-	b.arrowWithOpacity(string(edge.TargetArrow), points[len(points)-1], nsub(points[len(points)-1], points[len(points)-2]), mat, edge.StrokeWidth, edge.Opacity)
+	b.arrowWithOpacity(string(edge.SourceArrow), points[0], nsub(points[0], points[1]), mat, edge.RenderedStrokeWidth(), edge.Opacity)
+	b.arrowWithOpacity(string(edge.TargetArrow), points[len(points)-1], nsub(points[len(points)-1], points[len(points)-2]), mat, edge.RenderedStrokeWidth(), edge.Opacity)
 	for i := markerStart; i < len(b.triangles); i++ {
 		for j := range b.triangles[i].V {
 			b.triangles[i].V[j].Position.Y = nativeSequenceEdgeY(edge)
@@ -257,7 +257,7 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 		b.shapeIcon(d2target.Shape{ID: edge.ID, Icon: edge.Metadata.Original.Icon}, icon, edge.Opacity, "edge", edge.Metadata.Original.IconBorderRadius)
 		b.addSurfaceLink(edge.Link, edge.Tooltip, icon)
 	}
-	if edge.Metadata.Original.Animated && edge.StrokeWidth > 0 && mat.Color.A > 0 {
+	if edge.Metadata.Original.Animated && edge.RenderedStrokeWidth() > 0 && mat.Color.A > 0 {
 		packet := nativeMaterial("#e9f8ff", .2, .15, float64(mat.Color.A)/255)
 		packet.Emissive = nativePaint(tint, "#263c4e")
 		forward, reverse := edge.TargetArrow != "" && edge.TargetArrow != "none", edge.SourceArrow != "" && edge.SourceArrow != "none"

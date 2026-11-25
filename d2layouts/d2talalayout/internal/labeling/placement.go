@@ -49,6 +49,19 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 
 	var placedFakeNodes []*layoutgraph.Node
 
+	// Reserve fixed captions up front so a movable label can see them
+	// independently of the order in which their owners are visited.
+	for _, node := range g.Nodes {
+		if err := checkCanceled(); err != nil {
+			return err
+		}
+		if !node.IsInvisible && node.Label != nil && node.Label.PositionFixed() {
+			placedFakeNodes = append(placedFakeNodes, nodeCaptionObstacle(g, node))
+		}
+	}
+
+	fixedCaptionCount := len(placedFakeNodes)
+
 	// add all arrowhead labels to placedFakeNodes
 	for _, e := range g.Edges {
 		if err := checkCanceled(); err != nil {
@@ -157,23 +170,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 					}
 					fakeIconNode.SetShape(shape.SQUARE_TYPE)
 
-					nodeset := siblingsAndChildren
-
-					if node.Label != nil && node.Label.PositionFixed() {
-						fixedLabelNode := &layoutgraph.Node{
-							Box: geo.Box{
-								TopLeft: node.LabelTopLeft(node.Label.Position, node.Label.Width, node.Label.Height),
-								Width:   node.Label.Width,
-								Height:  node.Label.Height,
-							},
-							D2ID:  new(node.Label.Text),
-							Graph: g,
-						}
-						fixedLabelNode.SetShape(shape.SQUARE_TYPE)
-						nodeset = append(nodeset, fixedLabelNode)
-					}
-
-					nodeOverlaps, err := nodeOverlapCount(fakeIconNode, nodeset, 0, guard)
+					nodeOverlaps, err := nodeOverlapCount(fakeIconNode, siblingsAndChildren, 0, guard)
 					if err != nil {
 						return err
 					}
@@ -290,7 +287,19 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 				if err != nil {
 					return err
 				}
-				labelOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes, label.PADDING, guard)
+				// A fixed caption's preferred padding can touch another caption
+				// without covering it. Within a frame, compare their actual text
+				// before the tiebreaker evaluates the space around each caption.
+				fixed := 0
+				if node.Container != nil && node.HasWideCaptionWithFixedIcon() {
+					fixed = fixedCaptionCount
+				}
+				fixedOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes[:fixed], 0, guard)
+				if err != nil {
+					return err
+				}
+				labelOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes[fixed:], label.PADDING, guard)
+				labelOverlaps += fixedOverlaps
 				if err != nil {
 					return err
 				}
@@ -432,25 +441,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 		sortedEdges = append(sortedEdges, e)
 	}
 
-	sortedEdges, err = sortLabelPlacementEdges(sortedEdges, guard)
-	if err != nil {
-		return err
-	}
-
-	for _, edge := range sortedEdges {
-		if err := checkCanceled(); err != nil {
-			return err
-		}
-		fakeNode, position, percentage, err := findBestEdgeLabelPosition(edge, g, placedFakeNodes, sharedSegmentFakeNodes, guard)
-		if err != nil {
-			return err
-		}
-		placedFakeNodes = append(placedFakeNodes, fakeNode)
-		edge.Label.Position = position
-		edge.LabelPercentage = percentage
-	}
-
-	return guard.check()
+	return placeMovableEdgeLabels(g, sortedEdges, placedFakeNodes, sharedSegmentFakeNodes, guard)
 }
 
 // PlaceNewEdges chooses label positions only for edges, preserving all
@@ -589,21 +580,9 @@ func placeNewEdges(ctx context.Context, g *layoutgraph.Graph, edges []*layoutgra
 			placedFakeNodes = append(placedFakeNodes, fakeIconNode)
 		}
 
-		if node.Label == nil || node.Label.PositionFixed() {
-			continue
+		if node.Label != nil && !node.IsInvisible {
+			placedFakeNodes = append(placedFakeNodes, nodeCaptionObstacle(g, node))
 		}
-
-		fakeLabelNode := &layoutgraph.Node{
-			Box: geo.Box{
-				TopLeft: node.LabelTopLeft(node.Label.Position, node.Label.Width, node.Label.Height),
-				Width:   node.Label.Width,
-				Height:  node.Label.Height,
-			},
-			D2ID:  new(node.Label.Text),
-			Graph: g,
-		}
-		fakeLabelNode.SetShape(shape.SQUARE_TYPE)
-		placedFakeNodes = append(placedFakeNodes, fakeLabelNode)
 	}
 
 	// we want to find the best edge label position, avoiding overlapping with other nodes, edges, labels and shared edge segments
@@ -664,32 +643,15 @@ func placeNewEdges(ctx context.Context, g *layoutgraph.Graph, edges []*layoutgra
 		sortedEdges = append(sortedEdges, e)
 	}
 
-	sortedEdges, err = sortLabelPlacementEdges(sortedEdges, guard)
-	if err != nil {
-		return err
-	}
-
-	for _, edge := range sortedEdges {
-		if err := checkCanceled(); err != nil {
-			return err
-		}
-		fakeNode, position, percentage, err := findBestEdgeLabelPosition(edge, g, placedFakeNodes, sharedSegmentFakeNodes, guard)
-		if err != nil {
-			return err
-		}
-		placedFakeNodes = append(placedFakeNodes, fakeNode)
-		edge.Label.Position = position
-		edge.LabelPercentage = percentage
-	}
-	return guard.check()
+	return placeMovableEdgeLabels(g, sortedEdges, placedFakeNodes, sharedSegmentFakeNodes, guard)
 }
 
-func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, placedFakeNodes, sharedSegmentFakeNodes []*layoutgraph.Node, guard *labelPlacementWorkGuard) (*layoutgraph.Node, label.Position, float64, error) {
+func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, placedFakeNodes, sharedSegmentFakeNodes []*layoutgraph.Node, alternatives *edgeLabelAlternatives, guard *labelPlacementWorkGuard) (edgeLabelPlacement, error) {
 	// we don't want to count the edge itself as overlapping, we already prefer outside labels
 	otherEdges := make([]*layoutgraph.Edge, 0, len(g.Edges))
 	for _, otherEdge := range g.Edges {
 		if err := guard.step(); err != nil {
-			return nil, label.Unset, 0, err
+			return edgeLabelPlacement{}, err
 		}
 		if otherEdge == edge {
 			continue
@@ -713,7 +675,7 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 	} else if edge.IsClusterEdge() {
 		pathShared, err := isClusterPathSharedPlacement(edge, guard)
 		if err != nil {
-			return nil, label.Unset, 0, err
+			return edgeLabelPlacement{}, err
 		}
 		if !pathShared {
 			positions = append(positions, edgeLabelPreferenceOrder...)
@@ -734,7 +696,7 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 			if edge.From.Cluster != nil {
 				orientation, clusterIndex, err := clusterLabelPlacementOrientation(edge.To, edge.From, edge.From.Cluster, guard)
 				if err != nil {
-					return nil, label.Unset, 0, err
+					return edgeLabelPlacement{}, err
 				}
 				switch orientation {
 				case geo.Right, geo.Top:
@@ -753,7 +715,7 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 			} else {
 				orientation, clusterIndex, err := clusterLabelPlacementOrientation(edge.From, edge.To, edge.To.Cluster, guard)
 				if err != nil {
-					return nil, label.Unset, 0, err
+					return edgeLabelPlacement{}, err
 				}
 				switch orientation {
 				case geo.Left, geo.Bottom:
@@ -783,15 +745,15 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 	var ancestors, nonAncestors layoutgraph.Nodes
 	for _, n := range g.Nodes {
 		if err := guard.step(); err != nil {
-			return nil, label.Unset, 0, err
+			return edgeLabelPlacement{}, err
 		}
 		fromDescendant, err := isLabelPlacementDescendantOf(edge.From, n, guard)
 		if err != nil {
-			return nil, label.Unset, 0, err
+			return edgeLabelPlacement{}, err
 		}
 		toDescendant, err := isLabelPlacementDescendantOf(edge.To, n, guard)
 		if err != nil {
-			return nil, label.Unset, 0, err
+			return edgeLabelPlacement{}, err
 		}
 		if n != edge.From && n != edge.To && (fromDescendant || toDescendant) {
 			ancestors = append(ancestors, n)
@@ -800,10 +762,7 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 		}
 	}
 
-	var bestLabelPosition label.Position
-	var bestLabelPercentage float64
-	var bestLabelFakeNode *layoutgraph.Node
-	bestScore := math.Inf(1)
+	best := edgeLabelPlacement{conflicts: math.MaxInt, score: math.Inf(1)}
 
 	checkPosition := func(labelPosition label.Position) error {
 		if err := guard.step(); err != nil {
@@ -854,11 +813,11 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 		}
 
 		// it only counts as overlapping an ancestor if it is partially overlapping
-		ancestorPartialOverlapArea, ancestorCount, err := nodeOverlapArea(fakeLabelNode, ancestors, label.PADDING, true, guard)
+		ancestorOverlaps, err := nodeOverlapArea(fakeLabelNode, ancestors, label.PADDING, true, guard)
 		if err != nil {
 			return err
 		}
-		nonAncestorOverlapArea, nonAncestorCount, err := nodeOverlapArea(fakeLabelNode, nonAncestors, label.PADDING, false, guard)
+		nodeOverlaps, err := nodeOverlapArea(fakeLabelNode, nonAncestors, label.PADDING, false, guard)
 		if err != nil {
 			return err
 		}
@@ -871,38 +830,38 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 			return err
 		}
 		edgeOverlaps := edgePaddingOverlaps + int(math.Ceil(float64(edgeExactOverlaps)*0.5))
-		almostLabelPaddingOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes, label.PADDING, guard)
+		overlaps, blocker, err := edgeLabelObstacleOverlaps(fakeLabelNode, placedFakeNodes, guard)
 		if err != nil {
 			return err
 		}
-		almostLabelExactOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes, 0, guard)
-		if err != nil {
-			return err
-		}
-		almostLabelOverlaps := almostLabelPaddingOverlaps + int(math.Ceil(float64(almostLabelExactOverlaps)*0.5))
-		labelOverlaps, err := nodeOverlapCount(fakeLabelNode, placedFakeNodes, 0, guard)
-		if err != nil {
-			return err
-		}
+		almostLabelOverlaps := overlaps.count + int(math.Ceil(float64(overlaps.exact)*0.5))
 		sharedSegmentOverlap, err := nodeOverlapCount(fakeLabelNode, sharedSegmentFakeNodes, label.PADDING, guard)
 		if err != nil {
 			return err
 		}
-		score := scoreEdgeLabelOverlaps(
+		score := ScoreEdgeLabelOverlaps(
 			fakeLabelNode.Area(),
-			ancestorPartialOverlapArea+nonAncestorOverlapArea,
-			ancestorCount+nonAncestorCount,
+			ancestorOverlaps.area+nodeOverlaps.area,
+			ancestorOverlaps.count+nodeOverlaps.count,
 			edgeOverlaps,
 			almostLabelOverlaps,
-			labelOverlaps,
+			overlaps.exact,
 			sharedSegmentOverlap,
 		)
 
-		if score < bestScore {
-			bestLabelPosition = labelPosition
-			bestLabelFakeNode = fakeLabelNode
-			bestLabelPercentage = edge.LabelPercentage
-			bestScore = score
+		conflicts := ancestorOverlaps.exact + nodeOverlaps.exact + overlaps.exact
+		candidate := edgeLabelPlacement{
+			edgeLabelLocation: edgeLabelLocation{labelPosition, edge.LabelPercentage},
+			box:               fakeLabelNode, score: score, conflicts: conflicts,
+		}
+		// Shape and text intersections obscure content. Use the ordinary routing
+		// and clearance penalties to choose between equally clear positions.
+		if conflicts < best.conflicts || (conflicts == best.conflicts && score < best.score) {
+			best = candidate
+		}
+		if alternatives != nil && ancestorOverlaps.exact+nodeOverlaps.exact == 0 && overlaps.exact == alternatives.conflicts {
+			candidate.blocker = blocker
+			alternatives.choices = append(alternatives.choices, candidate)
 		}
 		return nil
 	}
@@ -912,36 +871,36 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 	// pick the label position based on how many nodes, edges and already placed labels overlap
 	for _, labelPosition := range positions {
 		if err := guard.step(); err != nil {
-			return nil, label.Unset, 0, err
+			return edgeLabelPlacement{}, err
 		}
-		if bestScore == 0 {
+		if alternatives == nil && best.score == 0 && best.conflicts == 0 {
 			break
 		}
 		if labelPosition.IsUnlocked() {
 			if edge.LabelPercentage != 0 {
 				// if label percentage was set on the edge during layout, use it
 				if err := checkPosition(labelPosition); err != nil {
-					return nil, label.Unset, 0, err
+					return edgeLabelPlacement{}, err
 				}
 			} else {
 				if !routeLengthCalculated {
 					var err error
 					routeLength, err = routeLengthPlacement(edge, guard)
 					if err != nil {
-						return nil, label.Unset, 0, err
+						return edgeLabelPlacement{}, err
 					}
 					routeLengthCalculated = true
 				}
 				r := labelPercentageSearchRange(edge, routeLength)
 				for i := r.start; i < r.end; i += placementSearchInterval {
 					if err := guard.step(); err != nil {
-						return nil, label.Unset, 0, err
+						return edgeLabelPlacement{}, err
 					}
 					edge.LabelPercentage = i
 					if err := checkPosition(labelPosition); err != nil {
-						return nil, label.Unset, 0, err
+						return edgeLabelPlacement{}, err
 					}
-					if bestScore == 0 {
+					if alternatives == nil && best.score == 0 && best.conflicts == 0 {
 						break
 					}
 				}
@@ -949,12 +908,12 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 			}
 		} else {
 			if err := checkPosition(labelPosition); err != nil {
-				return nil, label.Unset, 0, err
+				return edgeLabelPlacement{}, err
 			}
 		}
 	}
 
-	return bestLabelFakeNode, bestLabelPosition, bestLabelPercentage, guard.check()
+	return best, guard.check()
 }
 
 func labelPercentageSearchRange(edge *layoutgraph.Edge, length float64) searchRange {
@@ -1159,12 +1118,16 @@ func findSharedSegmentsChecked(edges []*layoutgraph.Edge, checkCanceled func() e
 	return sharedSegments, nil
 }
 
-func scoreEdgeLabelOverlaps(
+// ScoreEdgeLabelOverlaps evaluates the same painted area during placement and seed selection.
+func ScoreEdgeLabelOverlaps(
 	labelArea, nodeOverlapArea float64,
 	nodeOverlapCount, edgeOverlapCount,
 	almostLabelOverlapCount, labelOverlapCount, sharedSegmentOverlapCount int,
 ) float64 {
-	score := (nodeOverlapArea / labelArea) * 2.
+	score := 0.0
+	if labelArea > 0 {
+		score = nodeOverlapArea / labelArea * 2
+	}
 	// avoid as much as possible overlapping with other labels
 	score += float64(labelOverlapCount) * 10
 	score += float64(almostLabelOverlapCount)
@@ -1262,4 +1225,15 @@ func isClusterPathSharedChecked(e *layoutgraph.Edge, checkWork func() error) (bo
 	}
 
 	return false, nil
+}
+
+func nodeCaptionObstacle(g *layoutgraph.Graph, node *layoutgraph.Node) *layoutgraph.Node {
+	l := node.Label
+	obstacle := &layoutgraph.Node{
+		Graph: g,
+		Box:   geo.Box{TopLeft: node.LabelTopLeft(l.Position, l.Width, l.Height), Width: l.Width, Height: l.Height},
+		D2ID:  new(l.Text),
+	}
+	obstacle.SetShape(shape.SQUARE_TYPE)
+	return obstacle
 }

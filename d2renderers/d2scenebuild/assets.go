@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"image/color"
 	"sort"
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -43,7 +42,7 @@ func (b *builder) preflightAssets() error {
 		if targetShape.Opacity == 0 || targetShape.Label == "" || targetShape.Language != "latex" {
 			continue
 		}
-		if _, err := b.resolveLatexAsset(fmt.Sprintf("shape %q", targetShape.ID), targetShape.Label, targetShape.Stroke); err != nil {
+		if _, err := b.resolveLatexAsset(fmt.Sprintf("shape %q", targetShape.ID), targetShape.Label, targetShape.GetFontColor()); err != nil {
 			return err
 		}
 	}
@@ -113,7 +112,7 @@ func (b *builder) resolveImageAsset(object, source string) (d2scene.AssetID, err
 			return "", ctxErr
 		}
 		if errors.Is(err, imageasset.ErrUnavailable) {
-			return b.resolveUnavailableImageAsset(source), nil
+			return b.resolveUnavailableImageAsset(source)
 		}
 		return "", fmt.Errorf("scene: %s image asset: %w", object, err)
 	}
@@ -179,75 +178,42 @@ func (b *builder) resolveImageAsset(object, source string) (d2scene.AssetID, err
 	return id, nil
 }
 
-func (b *builder) resolveUnavailableImageAsset(source string) d2scene.AssetID {
+// UnavailableImageSVG is the built-in missing-image icon shared by native
+// exports and their SVG previews.
+const UnavailableImageSVG = `<svg xmlns="http://www.w3.org/2000/svg" id="image-unavailable" width="64" height="64" viewBox="0 0 64 64">
+  <path id="image-unavailable:page" d="M7 3H42L57 18V61H7Z" fill="#f7f8fa" stroke="#7b838c" stroke-width="2" stroke-linejoin="round"/>
+  <rect id="image-unavailable:sky" x="13" y="23" width="38" height="30" fill="#b8d7f2"/>
+  <circle id="image-unavailable:sun" cx="23" cy="31" r="4" fill="#fff"/>
+  <path id="image-unavailable:hills" d="M13 49L24 37L32 45L39 39L51 49V53H13Z" fill="#55b94b"/>
+  <path id="image-unavailable:break" d="M37 54L51 40" fill="none" stroke="#f7f8fa" stroke-width="5" stroke-linecap="square"/>
+  <rect id="image-unavailable:image-outline" x="13" y="23" width="38" height="30" fill="none" stroke="#7b838c" stroke-linejoin="round"/>
+  <path id="image-unavailable:fold" d="M42 3V18H57" fill="none" stroke="#7b838c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+
+func (b *builder) resolveUnavailableImageAsset(source string) (d2scene.AssetID, error) {
 	if _, ok := b.assets[unavailableImageAssetID]; !ok {
-		b.assets[unavailableImageAssetID] = newUnavailableImageAsset()
+		// The fixed built-in icon is independent of the user's SVG import budget.
+		icon, err := d2svgimport.ImportNode(b.ctx, string(unavailableImageAssetID), []byte(UnavailableImageSVG), d2svgimport.Limits{
+			MaxBytes:              len(UnavailableImageSVG),
+			MaxDepth:              4,
+			MaxElements:           32,
+			MaxAttributes:         64,
+			MaxAttributeBytes:     len(UnavailableImageSVG),
+			MaxPathCommands:       128,
+			MaxTransformFunctions: 1,
+			MaxUseDepth:           1,
+			MaxResources:          8,
+		})
+		if err != nil {
+			return "", err
+		}
+		b.assets[unavailableImageAssetID] = d2scene.VectorAsset{ViewBox: icon.ViewBox, Root: icon.Root}
+	}
+	if missing := b.options.Assets.UnavailableImages; missing != nil {
+		missing[source] = struct{}{}
 	}
 	b.sourceAssetIDs[source] = unavailableImageAssetID
-	return unavailableImageAssetID
-}
-
-func newUnavailableImageAsset() d2scene.VectorAsset {
-	pageFill := d2scene.SolidPaint{Color: color.NRGBA{R: 0xf7, G: 0xf8, B: 0xfa, A: 0xff}}
-	outlinePaint := d2scene.SolidPaint{Color: color.NRGBA{R: 0x7b, G: 0x83, B: 0x8c, A: 0xff}}
-	outline := func(width float64) *d2scene.Stroke {
-		return &d2scene.Stroke{Paint: outlinePaint, Width: width, Cap: d2scene.CapRound, Join: d2scene.JoinRound}
-	}
-
-	page := d2scene.NewNode(d2scene.Path{
-		Commands: []d2scene.PathCommand{
-			d2scene.MoveTo(7, 3), d2scene.LineTo(42, 3), d2scene.LineTo(57, 18),
-			d2scene.LineTo(57, 61), d2scene.LineTo(7, 61), d2scene.ClosePath(),
-		},
-		Fill: pageFill, Stroke: outline(2),
-	})
-	page.ID = "image-unavailable:page"
-
-	sky := d2scene.NewNode(d2scene.Rect{
-		Box:  d2scene.Box{X: 13, Y: 23, Width: 38, Height: 30},
-		Fill: d2scene.SolidPaint{Color: color.NRGBA{R: 0xb8, G: 0xd7, B: 0xf2, A: 0xff}},
-	})
-	sky.ID = "image-unavailable:sky"
-
-	sun := d2scene.NewNode(d2scene.Ellipse{
-		Center: d2scene.Point{X: 23, Y: 31}, RadiusX: 4, RadiusY: 4,
-		Fill: d2scene.SolidPaint{Color: color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}},
-	})
-	sun.ID = "image-unavailable:sun"
-
-	hills := d2scene.NewNode(d2scene.Path{
-		Commands: []d2scene.PathCommand{
-			d2scene.MoveTo(13, 49), d2scene.LineTo(24, 37), d2scene.LineTo(32, 45),
-			d2scene.LineTo(39, 39), d2scene.LineTo(51, 49), d2scene.LineTo(51, 53),
-			d2scene.LineTo(13, 53), d2scene.ClosePath(),
-		},
-		Fill: d2scene.SolidPaint{Color: color.NRGBA{R: 0x55, G: 0xb9, B: 0x4b, A: 0xff}},
-	})
-	hills.ID = "image-unavailable:hills"
-
-	breakMark := d2scene.NewNode(d2scene.Path{
-		Commands: []d2scene.PathCommand{d2scene.MoveTo(37, 54), d2scene.LineTo(51, 40)},
-		Stroke:   &d2scene.Stroke{Paint: pageFill, Width: 5, Cap: d2scene.CapSquare, Join: d2scene.JoinRound},
-	})
-	breakMark.ID = "image-unavailable:break"
-
-	imageOutline := d2scene.NewNode(d2scene.Rect{
-		Box: d2scene.Box{X: 13, Y: 23, Width: 38, Height: 30}, Stroke: outline(1),
-	})
-	imageOutline.ID = "image-unavailable:image-outline"
-
-	fold := d2scene.NewNode(d2scene.Path{
-		Commands: []d2scene.PathCommand{
-			d2scene.MoveTo(42, 3), d2scene.LineTo(42, 18), d2scene.LineTo(57, 18),
-		},
-		Stroke: outline(2),
-	})
-	fold.ID = "image-unavailable:fold"
-
-	root := d2scene.NewNode(nil)
-	root.ID = "image-unavailable"
-	root.Children = []*d2scene.Node{page, sky, sun, hills, breakMark, imageOutline, fold}
-	return d2scene.VectorAsset{ViewBox: d2scene.Box{Width: 64, Height: 64}, Root: root}
+	return unavailableImageAssetID, nil
 }
 
 // mergeSVGImportAssets transfers the importer's owned, immutable embedded

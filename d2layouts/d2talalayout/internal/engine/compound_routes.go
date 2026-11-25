@@ -4,7 +4,6 @@ import (
 	"context"
 	"math"
 
-	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labelgeom"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -151,7 +150,7 @@ func compoundEnclosedRoute(edge *layoutgraph.Edge, guard *limits.WorkGuard) (boo
 		if err := guard.Add(int64(len(edge.Points))); err != nil {
 			return false, err
 		}
-		point := labelgeom.ArrowheadTopLeft(edge.Points, i == 1, string(edge.SourceArrowhead), string(edge.TargetArrowhead), arrowLabel.Width, arrowLabel.Height)
+		point := edge.ArrowheadLabelTopLeft(edge.Points, i == 1, arrowLabel)
 		if !inside(point, arrowLabel.Width, arrowLabel.Height) {
 			return false, nil
 		}

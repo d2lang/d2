@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/gif"
 	"image/png"
+	"io/fs"
 	"math"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,6 +32,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
+	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
@@ -37,6 +40,53 @@ import (
 	"github.com/d2lang/d2/lib/pptx"
 	"github.com/d2lang/d2/lib/xgif"
 )
+
+// An unpacked copy of icons.d2lang.com can be checked without network access.
+func TestHostedSVGIconCatalog(t *testing.T) {
+	catalog := os.Getenv("D2_ICON_CATALOG_DIR")
+	if catalog == "" {
+		t.Skip("set D2_ICON_CATALOG_DIR to a directory of SVG icons")
+	}
+	dir := t.TempDir()
+	var count int
+	err := filepath.WalkDir(catalog, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(path), ".svg") {
+			return nil
+		}
+		count++
+		name, err := filepath.Rel(catalog, path)
+		if err != nil {
+			return err
+		}
+		t.Run(filepath.ToSlash(name), func(t *testing.T) {
+			icon, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "icon.svg"), icon, 0600); err != nil {
+				t.Fatal(err)
+			}
+			const source = `x: {shape: image; icon: ./icon.svg}`
+			output, err := imageCLI(t, dir, source, "--stdout-format=png", "-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := png.Decode(bytes.NewReader(output)); err != nil {
+				t.Fatal(err)
+			}
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count == 0 {
+		t.Fatal("catalog contains no SVG files")
+	}
+}
 
 func TestPagedCLIProducesOutput(t *testing.T) {
 	tests := []struct {
@@ -333,6 +383,203 @@ func TestRenderGIFMultiBoardRetainsIndependentQuantizedFrames(t *testing.T) {
 		if got := color.NRGBAModel.Convert(animation.Image[index].At(5, 5)).(color.NRGBA); got != want {
 			t.Fatalf("multi-board frame %d color = %#v, want %#v", index, got, want)
 		}
+	}
+}
+
+func TestGIFPreservesPositionsAcrossRelatedBoards(t *testing.T) {
+	addLeaf := func(board *d2target.Diagram, x int) {
+		leaf := board.Shapes[0]
+		leaf.ID, leaf.Fill, leaf.Pos.X = "leaf", "#0000ff", x
+		board.Shapes = append(board.Shapes, leaf)
+		board.LayoutContinuity = true
+	}
+	root, child := simpleRasterDiagram(), simpleRasterDiagram()
+	addLeaf(child, -60)
+	// Independently fitted boards can have very distant world coordinates.
+	// They share the output canvas, but each family has its own viewport.
+	layer := simpleRasterDiagramWithSize(100, 20)
+	layer.Shapes[0].Fill, layer.Shapes[0].Pos.X = "#00ff00", -50000
+	next, last := simpleRasterDiagram(), simpleRasterDiagram()
+	next.Shapes[0].Pos.X, last.Shapes[0].Pos.X = 50000, 50000
+	addLeaf(last, 50040)
+	root.Layers = []*d2target.Diagram{layer}
+	root.Steps = []*d2target.Diagram{child, next, last}
+
+	data, _, err := renderGIF(t.Context(), "-", false, root,
+		d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anim, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(anim.Image) != 5 || anim.Config.Width != 100 || anim.Config.Height != 20 {
+		t.Fatalf("got %d frames on a %dx%d canvas", len(anim.Image), anim.Config.Width, anim.Config.Height)
+	}
+	redBounds := func(frame *image.Paletted) image.Rectangle {
+		var box image.Rectangle
+		for y := frame.Rect.Min.Y; y < frame.Rect.Max.Y; y++ {
+			for x := frame.Rect.Min.X; x < frame.Rect.Max.X; x++ {
+				if c := color.NRGBAModel.Convert(frame.At(x, y)).(color.NRGBA); c.R > 240 && c.G < 16 && c.B < 16 {
+					box = box.Union(image.Rect(x, y, x+1, y+1))
+				}
+			}
+		}
+		return box
+	}
+	for _, pair := range [][2]int{{0, 2}, {3, 4}} {
+		a, b := redBounds(anim.Image[pair[0]]), redBounds(anim.Image[pair[1]])
+		if a.Empty() || a != b {
+			t.Errorf("anchor moved between frames %v: %v to %v", pair, a, b)
+		}
+	}
+}
+
+func TestGIFViewportsFollowIncomingTween(t *testing.T) {
+	root, base, next := simpleRasterDiagram(), simpleRasterDiagram(), simpleRasterDiagram()
+	root.Steps = []*d2target.Diagram{base, next}
+	base.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
+	next.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
+	next.LayoutContinuity = true
+	views := gifViewports(root, []*d2target.Diagram{root, base, next})
+	if views[base] == nil || views[next] != views[base] || views[next.TweenFrames[0]] != views[base] ||
+		views[root] != nil || views[base.TweenFrames[0]] != nil {
+		t.Fatal("incoming samples must share the viewport only for the continuous transition")
+	}
+}
+
+func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		interval, duration, samples int
+		delays                      []int
+	}{
+		{"duration exceeds interval", 30, 101, 3, []int{3, 3, 3, 2, 3}},
+		// Preserve the total duration, with an endpoint delay browsers play as authored.
+		{"one millisecond hold", 102, 101, 3, []int{2, 3, 3, 3, 3, 3, 3, 2}},
+		{"sub-centisecond transition", 4, 5, 1, []int{1, 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, step := simpleRasterDiagram(), simpleRasterDiagram()
+			root.Steps = []*d2target.Diagram{step}
+			step.TweenDurationMS = tc.duration
+			step.Shapes[0].Fill = "#0000ff"
+			for i := 0; i < tc.samples; i++ {
+				sample := simpleRasterDiagram()
+				sample.Shapes[0].Fill = "#ff0000"
+				step.TweenFrames = append(step.TweenFrames, sample)
+			}
+			data, _, err := renderGIF(context.Background(), "-", false, root, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, tc.interval, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			animation, err := gif.DecodeAll(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(animation.Delay, tc.delays) {
+				t.Fatalf("GIF delays %v, want %v", animation.Delay, tc.delays)
+			}
+			endpoint := animation.Image[len(animation.Image)-1].At(5, 5)
+			if got := color.NRGBAModel.Convert(endpoint).(color.NRGBA); got != (color.NRGBA{B: 255, A: 255}) {
+				t.Fatalf("last frame has color %v, want authored blue endpoint", got)
+			}
+		})
+	}
+}
+
+func TestShortGIFPaintTransition(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: %dms; animate-interval: %dms; pad: 0}}
+swatch: "" {width: 40; height: 40; style: {stroke-width: 0; fill: red}}
+steps: {change: {swatch.style.fill: blue}}`
+	red, purple, blue := color.RGBA{255, 0, 0, 255}, color.RGBA{128, 0, 128, 255}, color.RGBA{0, 0, 255, 255}
+	for _, tc := range []struct {
+		name, target       string
+		duration, interval int
+		want               []color.RGBA
+		ticks              int
+	}{
+		{"lone midpoint", "*", 41, 50, []color.RGBA{red, purple, blue}, 10},
+		{"selected endpoints", "steps.change.*", 41, 50, []color.RGBA{red, blue}, 5},
+		{"all samples fit", "*", 101, 102, []color.RGBA{red, {170, 0, 85, 255}, {85, 0, 170, 255}, blue}, 22},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := imageCLI(t, t.TempDir(), fmt.Sprintf(source, tc.duration, tc.interval), "--target="+tc.target, "--stdout-format=gif", "-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			g, err := gif.DecodeAll(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []color.RGBA
+			ticks := 0
+			for i, img := range g.Image {
+				paint := color.RGBAModel.Convert(img.At(img.Rect.Dx()/2, img.Rect.Dy()/2)).(color.RGBA)
+				if len(got) == 0 || got[len(got)-1] != paint {
+					got = append(got, paint)
+				}
+				if g.Delay[i] < 2 {
+					t.Fatalf("frame %d lasts %dcs", i, g.Delay[i])
+				}
+				ticks += g.Delay[i]
+			}
+			if !slices.Equal(got, tc.want) || ticks != tc.ticks {
+				t.Fatalf("paints %v in %dcs; want %v in %dcs", got, ticks, tc.want, tc.ticks)
+			}
+		})
+	}
+}
+
+func TestRenderGIFDenseContinuitySamples(t *testing.T) {
+	step := simpleRasterDiagram()
+	step.LayoutContinuity = true
+	step.TweenDurationMS = 800
+	step.Shapes[0].Fill = "#0000ff"
+	for range 48 {
+		sample := simpleRasterDiagram()
+		sample.Shapes[0].Fill = "#ff0000"
+		step.TweenFrames = append(step.TweenFrames, sample)
+	}
+	data, _, err := renderGIF(t.Context(), "-", false, step, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 800, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	animation, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, delay := range animation.Delay {
+		if delay < 2 {
+			t.Fatalf("delay %dcs will play slowly in browsers", delay)
+		}
+		total += delay
+	}
+	if total != 80 || len(animation.Delay) != 40 {
+		t.Fatalf("got %d frames over %dcs", len(animation.Delay), total)
+	}
+	last := animation.Image[len(animation.Image)-1].At(5, 5)
+	if got := color.NRGBAModel.Convert(last).(color.NRGBA); got != (color.NRGBA{B: 255, A: 255}) {
+		t.Fatal("lost the authored endpoint")
+	}
+}
+
+func TestRenderGIFSingleStepShorterThanTwoTicks(t *testing.T) {
+	step := simpleRasterDiagram()
+	step.TweenDurationMS = 18
+	step.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
+	data, _, err := renderGIF(context.Background(), "-", false, step, d2svg.RenderOpts{}, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	animation, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(animation.Delay, []int{2}) {
+		t.Fatalf("selected step GIF delays %v, want its 18ms duration rounded to 2cs", animation.Delay)
 	}
 }
 
@@ -634,6 +881,111 @@ func TestFolderOnlyPNGReturnsFirstBoardPreview(t *testing.T) {
 	}
 }
 
+func TestPNGWatchPreviewEmbedsLocalImages(t *testing.T) {
+	directory := t.TempDir()
+	inputPath := filepath.Join(directory, "input.d2")
+	asset := testSolidPNG(t, color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xff})
+	if err := os.WriteFile(filepath.Join(directory, "asset.png"), asset, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assetURL, err := url.Parse("asset.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := xos.NewEnv(nil)
+	state := &xmain.State{Env: env, Log: cmdlog.NewTB(env, t), PWD: directory}
+	outputPath := filepath.Join(directory, "output.png")
+	boards, written, err := render(
+		context.Background(), state, 0,
+		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)},
+		inputPath, outputPath, false, false, nil,
+		rasterImageDiagram(assetURL), PNG, "", true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !written || len(boards) != 1 {
+		t.Fatalf("PNG written/preview count = %t/%d", written, len(boards))
+	}
+	want := "data:image/png;base64," + base64.StdEncoding.EncodeToString(asset)
+	if !bytes.Contains(boards[0], []byte(want)) || bytes.Contains(boards[0], []byte(`href="asset.png"`)) {
+		t.Fatal("PNG watch preview did not embed its local image")
+	}
+	output, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := png.Decode(bytes.NewReader(output)); err != nil {
+		t.Fatalf("PNG export: %v", err)
+	}
+}
+
+func TestPNGWatchPreviewUnavailableImage(t *testing.T) {
+	fill := color.NRGBA{R: 0xd4, G: 0x42, B: 0x31, A: 0xff}
+	asset := testSolidPNG(t, fill)
+	for _, source := range []string{"local", "remote"} {
+		t.Run(source, func(t *testing.T) {
+			dir := t.TempDir()
+			href := "missing&image.png"
+			assetPath := filepath.Join(dir, href)
+			var requests atomic.Int32
+			if source == "remote" {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if requests.Add(1) == 1 {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Type", "image/png")
+					_, _ = w.Write(asset)
+				}))
+				defer server.Close()
+				href = server.URL + "/" + href
+			}
+			icon, err := url.Parse(href)
+			if err != nil {
+				t.Fatal(err)
+			}
+			diagram := rasterImageDiagram(icon)
+			diagram.Shapes[0].Width, diagram.Shapes[0].Height = 64, 64
+			env := xos.NewEnv(nil)
+			env.Setenv("IMG_CACHE", "1")
+			state := &xmain.State{Env: env, Log: cmdlog.NewTB(env, t), PWD: dir}
+			outputPath := filepath.Join(dir, "output.png")
+			renderAndCheck := func(wantHref string, wantPixel color.NRGBA) {
+				t.Helper()
+				preview, written, err := _renderWithPNGEncoder(trustedAssetContext(), state,
+					d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, filepath.Join(dir, "input.d2"), outputPath,
+					false, false, nil, diagram, PNG, "", true, nil)
+				if err != nil || !written {
+					t.Fatalf("PNG written = %t, err = %v", written, err)
+				}
+				if !bytes.Contains(preview, []byte(`<image href="`+wantHref+`"`)) {
+					t.Fatal("watch preview did not embed the expected image")
+				}
+				pngBytes, err := os.ReadFile(outputPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertPNGPixel(t, pngBytes, 32, 56, wantPixel)
+			}
+
+			placeholder := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(d2scenebuild.UnavailableImageSVG))
+			renderAndCheck(placeholder, color.NRGBA{R: 0xb8, G: 0xd7, B: 0xf2, A: 0xff})
+			if source == "local" {
+				if err := os.WriteFile(assetPath, asset, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if n := requests.Load(); n != 1 {
+				t.Fatalf("first render fetched image %d times, want 1", n)
+			}
+			renderAndCheck("data:image/png;base64,"+base64.StdEncoding.EncodeToString(asset), fill)
+			if source == "remote" && requests.Load() != 2 {
+				t.Fatalf("two renders fetched image %d times, want 2", requests.Load())
+			}
+		})
+	}
+}
+
 func TestBundleGIFPreviewEmbedsLocalImages(t *testing.T) {
 	directory := t.TempDir()
 	inputPath := filepath.Join(directory, "input.d2")
@@ -679,7 +1031,7 @@ func TestBundleGIFPreviewUsesResolvedSnapshotAndUnescapesHref(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview, err := bundleRasterPreview(
-		context.Background(), assetOptions.Resolver,
+		context.Background(), assetOptions,
 		[]byte(`<svg><image href="asset&amp;one.png"/></svg>`),
 	)
 	if err != nil {
@@ -697,7 +1049,7 @@ func TestBundleGIFPreviewBoundsReferencesAndExpandedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	tooMany := []byte("<svg>" + strings.Repeat(`<image href="data:image/png;base64,AA=="/>`, rasterPreviewMaxImageReferences+1) + "</svg>")
-	if _, err := bundleRasterPreview(context.Background(), assetOptions.Resolver, tooMany); err == nil || !strings.Contains(err.Error(), "image references") {
+	if _, err := bundleRasterPreview(context.Background(), assetOptions, tooMany); err == nil || !strings.Contains(err.Error(), "image references") {
 		t.Fatalf("preview image-reference limit error = %v", err)
 	}
 
@@ -712,7 +1064,7 @@ func TestBundleGIFPreviewBoundsReferencesAndExpandedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	expanding := []byte("<svg>" + strings.Repeat(`<image href="asset.svg"/>`, 3_000) + "</svg>")
-	if _, err := bundleRasterPreview(context.Background(), assetOptions.Resolver, expanding); err == nil || !strings.Contains(err.Error(), "expanded output bytes") {
+	if _, err := bundleRasterPreview(context.Background(), assetOptions, expanding); err == nil || !strings.Contains(err.Error(), "expanded output bytes") {
 		t.Fatalf("preview expanded-output limit error = %v", err)
 	}
 }
@@ -800,7 +1152,7 @@ func TestGIFPixelAdmissionsAcceptBoundariesAndRejectOverflow(t *testing.T) {
 
 func TestCollectGIFBoardsBoundsFolderOnlyNodes(t *testing.T) {
 	root := &d2target.Diagram{IsFolderOnly: true}
-	root.Layers = make([]*d2target.Diagram, gifMaxBoardNodes)
+	root.Layers = make([]*d2target.Diagram, d2target.MaxRenderTargetBoards)
 	for index := range root.Layers {
 		root.Layers[index] = &d2target.Diagram{IsFolderOnly: true}
 	}

@@ -109,6 +109,8 @@ type Shape interface {
 	shape.Shape
 
 	// SnapPointPercentages returns port groups in top, left, bottom, and right order.
+	// Shapes whose ports do not depend on their box return one shared value:
+	// callers must not modify the result.
 	SnapPointPercentages() [][]*geo.RelativePoint
 	// MirroredPortIndices maps each port index to its reflected counterpart.
 	MirroredPortIndices() map[int]int
@@ -120,7 +122,16 @@ type Shape interface {
 	// shape does not expose one.
 	CenterPortIndex(orientation geo.Orientation) int
 	// LabelPositionPreferences returns the positions in a preference tier.
-	LabelPositionPreferences(tier LabelTier) map[label.Position]struct{}
+	LabelPositionPreferences(tier LabelTier) LabelSet
+}
+
+// LabelSet is a set of label positions: position p is a member when bit p is
+// set.
+type LabelSet uint64
+
+// Has reports whether position is in the set.
+func (s LabelSet) Has(position label.Position) bool {
+	return position >= 0 && position < 64 && s&(1<<position) != 0
 }
 
 // New constructs TALA's policy wrapper around a D2 shape. An empty type uses

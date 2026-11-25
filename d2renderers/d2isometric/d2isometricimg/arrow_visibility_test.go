@@ -94,7 +94,7 @@ func TestArrowVisibilityRealFixtureAndBackendParity(t *testing.T) {
 			{e.Source, e.SourceArrow, a[0], nunit(nsub(a[1], a[0]))},
 			{e.Target, e.TargetArrow, a[len(a)-1], nunit(nsub(a[len(a)-2], a[len(a)-1]))},
 		} {
-			m := raster.arrowMarker(end.kind, e.StrokeWidth)
+			m := raster.arrowMarker(end.kind, e.RenderedStrokeWidth())
 			if len(m.vertices) > 0 && arrowTestOverlap(raster, end.id, m, end.at, end.away) {
 				t.Fatalf("%s marker still covered by endpoint %s at %+v", e.ID, end.id, end.at)
 			}
@@ -140,7 +140,7 @@ func TestArrowVisibilityWalksShortBendAndKeepsTraffic(t *testing.T) {
 	b := arrowTestBuilder(t, []d2isometric.Node{n}, false)
 	p := []Vec{nv(-1, .08, 0), nv(-1.005, .08, 0), nv(-1.005, .08, -2), nv(-3, .08, -2)}
 	e := d2isometric.Edge{ID: "bent", Source: n.ID, SourceArrow: d2target.CfManyRequired, StrokeWidth: 3, Opacity: 1, Points: p}
-	m := b.arrowMarker(e.SourceArrow, e.StrokeWidth)
+	m := b.arrowMarker(e.SourceArrow, e.RenderedStrokeWidth())
 	a := arrowTestRoute(b, e, p)
 	if a[0].X != p[1].X || a[0].Z >= p[1].Z || a[0].Z <= p[2].Z {
 		t.Fatal("short terminal leg was extrapolated or bend skipped", a)
@@ -307,7 +307,7 @@ func TestFilledArrowStemsDoNotBluntTheTip(t *testing.T) {
 			if len(packets) != 1 || !reflect.DeepEqual(packets[0].points, e.Points) {
 				t.Fatal("stem clipping changed animation path")
 			}
-			clearance := nativeArrowClearance(kind, e.StrokeWidth)
+			clearance := nativeArrowClearance(kind, e.RenderedStrokeWidth())
 			if clearance <= 0 {
 				t.Fatal("filled head has no wire clearance")
 			}

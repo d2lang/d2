@@ -12,10 +12,13 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -24,7 +27,6 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svgimport"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/imageasset"
-	"github.com/d2lang/d2/lib/localfile"
 	"github.com/d2lang/d2/lib/netpolicy"
 	"github.com/d2lang/d2/lib/xgif"
 )
@@ -62,7 +64,6 @@ const (
 	// schedule, retained pixels, transient quantizer work, and encoded output
 	// independently of the one-frame renderer ceilings.
 	gifMaxFrames            = 1_800
-	gifMaxBoardNodes        = 4_096
 	gifMaxFramePixels int64 = 2 * 1024 * 1024
 	// Median-cut quantization has substantial non-cancellable scratch storage.
 	// Render and quantize one full-color frame at a time, while retaining only
@@ -152,19 +153,18 @@ const (
 	rasterMaxLinkRegions     = 4_096
 	rasterMaxLinkStringBytes = 1 * 1024 * 1024
 
-	// Measured from the checked-in icon and frozen MathJax fixtures.
-	// The largest distinct board used 202 SVG elements and 1,786 path commands;
-	// the largest formula used 122 elements and 1,943 commands. These ceilings
-	// retain user-SVG headroom while bounding the work for each import.
-	svgMaxBytes              = 64 * 1024
+	// Per-icon ceilings cover the hosted SVG catalog, including detailed paths
+	// and embedded raster thumbnails. Diagrams also share the totals below.
+	svgMaxBytes              = 256 * 1024
+	svgMaxDecodedRasterBytes = 1 << 20
 	svgMaxDepth              = 32
-	svgMaxElements           = 256
-	svgMaxAttributes         = 512
-	svgMaxAttributeBytes     = 64 * 1024
-	svgMaxPathCommands       = 4_096
-	svgMaxTransformFunctions = 128
+	svgMaxElements           = 2_048
+	svgMaxAttributes         = 4_096
+	svgMaxAttributeBytes     = 256 * 1024
+	svgMaxPathCommands       = 16_384
+	svgMaxTransformFunctions = 512
 	svgMaxUseDepth           = 8
-	svgMaxResources          = 64
+	svgMaxResources          = 512
 
 	svgDocumentMaxSourceBytes          = 1 * 1024 * 1024
 	svgDocumentMaxElements             = 4_096
@@ -254,7 +254,7 @@ func buildSceneWithAssets(ctx context.Context, diagram *d2target.Diagram, opts d
 	}
 	return buildSceneWithResourcesAndLinks(ctx, diagram, opts, assetOptions, fontOptions, d2scenebuild.LinkBudget{
 		MaxRegions: rasterMaxLinkRegions, MaxStringBytes: rasterMaxLinkStringBytes,
-	}, sceneAdmissionLimits{
+	}, sceneFrameOptions{
 		maxNodes: rasterMaxNodes, maxPathCommands: rasterMaxPathCommands,
 	})
 }
@@ -295,16 +295,17 @@ func newFontFallbackOptions(totalBoards int) (*d2scenebuild.FontFallbackOptions,
 	}, nil
 }
 
-type sceneAdmissionLimits struct {
+type sceneFrameOptions struct {
+	minimumBounds   *image.Rectangle
 	maxNodes        int
 	maxPathCommands int
 }
 
-func sceneAdmissionLimitsForFrame(options d2raster.FrameOptions) sceneAdmissionLimits {
-	return sceneAdmissionLimits{maxNodes: options.MaxNodes, maxPathCommands: options.MaxPathCommands}
+func sceneOptionsForFrame(options d2raster.FrameOptions) sceneFrameOptions {
+	return sceneFrameOptions{maxNodes: options.MaxNodes, maxPathCommands: options.MaxPathCommands}
 }
 
-func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diagram, opts d2svg.RenderOpts, assetOptions *d2scenebuild.AssetOptions, fontOptions *d2scenebuild.FontFallbackOptions, linkBudget d2scenebuild.LinkBudget, limits sceneAdmissionLimits) (*d2scene.Document, error) {
+func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diagram, opts d2svg.RenderOpts, assetOptions *d2scenebuild.AssetOptions, fontOptions *d2scenebuild.FontFallbackOptions, linkBudget d2scenebuild.LinkBudget, frameOpts sceneFrameOptions) (*d2scene.Document, error) {
 	if diagram == nil {
 		return nil, fmt.Errorf("raster export: nil diagram")
 	}
@@ -318,12 +319,13 @@ func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diag
 	sketch := opts.Sketch != nil && *opts.Sketch
 	document, err := d2scenebuild.Build(ctx, &board, d2scenebuild.Options{
 		Pad:             opts.Pad,
+		MinimumBounds:   frameOpts.minimumBounds,
 		Scale:           opts.Scale,
 		Center:          opts.Center,
 		ThemeID:         opts.ThemeID,
 		ThemeOverrides:  opts.ThemeOverrides,
-		MaxNodes:        limits.maxNodes,
-		MaxPathCommands: limits.maxPathCommands,
+		MaxNodes:        frameOpts.maxNodes,
+		MaxPathCommands: frameOpts.maxPathCommands,
 		Sketch:          sketch,
 		SketchBudget: d2scenebuild.SketchBudget{
 			MaxOperationSets: rasterMaxNodes,
@@ -395,7 +397,7 @@ type gifFrameRenderer func(context.Context, int, time.Duration, d2raster.FrameOp
 
 type gifFrameConsumer func(frameIndex int, frame image.Image) error
 
-type gifBoardPlanConsumer func(totalBoards, totalFrames int, bounds image.Rectangle) error
+type gifBoardPlanConsumer func(totalFrames int, bounds image.Rectangle) error
 
 // renderGIFBoardFrames paints and consumes one frame at a time. The consumer
 // can quantize and release each full-color image before the next render begins.
@@ -467,10 +469,7 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	var incrementalBounds image.Rectangle
 	summary, err := renderGIFWithSession(
 		ctx, inputPath, cacheImages, diagram, opts, intervalMs, session, &workspace, wantPreview,
-		func(totalBoards, totalFrames int, bounds image.Rectangle) error {
-			if totalBoards != 1 {
-				return nil
-			}
+		func(totalFrames int, bounds image.Rectangle) error {
 			encoder, encoderErr := xgif.NewOpaquePalettedAnimationEncoder(
 				ctx, bounds.Dx(), bounds.Dy(), totalFrames, intervalMs, gifMaxEncodedBytes,
 			)
@@ -525,8 +524,8 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	if len(palettedFrames) != summary.totalFrames {
 		return nil, nil, fmt.Errorf("GIF encoded frame count %d differs from render schedule %d", len(palettedFrames), summary.totalFrames)
 	}
-	encoded, err = xgif.AnimateCenteredOpaquePalettedImagesWithLimit(
-		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, intervalMs, gifMaxEncodedBytes,
+	encoded, err = xgif.AnimateTimedOpaquePalettedImages(
+		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, summary.offsets, summary.delays, gifMaxEncodedBytes,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -549,7 +548,123 @@ func newGIFRenderSession() (*d2raster.RenderSession, error) {
 type gifRenderSummary struct {
 	previewSVG          []byte
 	totalFrames         int
+	delays              []int
+	offsets             []image.Point
 	maxWidth, maxHeight int
+}
+
+// Browsers commonly display a 0cs or 1cs GIF frame for 100ms. Motion can
+// sample at 60fps and paint boundaries can be closer still. Pick the nearest
+// native sample for each 20ms tick and reserve the last two centiseconds
+// for the exact authored endpoint.
+func motionGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
+	end := frames[len(frames)-1]
+	slot := end.ElapsedMS + end.DurationMS
+	ticks := (slot + 9) / 10
+	endStart := min(end.ElapsedMS/10, ticks-2) * 10
+	if endStart < 20 {
+		end.ElapsedMS, end.DurationMS = 0, slot
+		return append(frames[:0], end)
+	}
+	tick := func(ms int) int { return (ms + 10) / 20 * 20 }
+	samples := frames[:0]
+	for _, frame := range frames[:len(frames)-1] {
+		start := tick(frame.ElapsedMS)
+		if start > endStart-20 {
+			break
+		}
+		if n := len(samples); n > 0 && tick(samples[n-1].ElapsedMS) == start {
+			previous := samples[n-1]
+			if math.Abs(float64(frame.ElapsedMS-start)) < math.Abs(float64(previous.ElapsedMS-start)) {
+				samples[n-1] = frame
+			}
+			continue
+		}
+		samples = append(samples, frame)
+	}
+	// A sparse or stationary part of the transition retains its whole hold.
+	for i := range samples {
+		start := tick(samples[i].ElapsedMS)
+		next := endStart
+		if i+1 < len(samples) {
+			next = tick(samples[i+1].ElapsedMS)
+		}
+		samples[i].ElapsedMS, samples[i].DurationMS = start, next-start
+	}
+	end.ElapsedMS, end.DurationMS = endStart, slot-endStart
+	return append(samples, end)
+}
+
+// gifBoardFrames schedules an authored step for GIF playback. Supply its
+// predecessor only when the two pictures use the same camera.
+func gifBoardFrames(scratch []d2animate.Frame, board, previous *d2target.Diagram, intervalMS int) []d2animate.Frame {
+	frames := d2animate.AppendBoardFrames(scratch[:0], board, intervalMS)
+	// The last sample can split its hold with the endpoint even at 25fps.
+	denseMotion := board.LayoutContinuity && len(frames) > 2 &&
+		slices.ContainsFunc(frames[:len(frames)-2], func(f d2animate.Frame) bool { return f.DurationMS < 20 })
+	if board.GridMotion || denseMotion {
+		return motionGIFFrames(frames)
+	}
+	if len(board.TweenFrames) > 0 {
+		return paintGIFFrames(frames, previous)
+	}
+	return frames
+}
+
+func gifStepDelay(frame d2animate.Frame) int {
+	return xgif.StepDelay(time.Duration(frame.ElapsedMS)*time.Millisecond, time.Duration(frame.DurationMS)*time.Millisecond, frame.TweenSample)
+}
+
+// Paint samples normally last around 40ms, but a short authored endpoint
+// hold can quantize to a single centisecond. Keep the original boundaries
+// wherever two centiseconds fit on both sides.
+func paintGIFFrames(frames []d2animate.Frame, previous *d2target.Diagram) []d2animate.Frame {
+	if !slices.ContainsFunc(frames, func(f d2animate.Frame) bool { return gifStepDelay(f) == 1 }) {
+		return frames
+	}
+	end := frames[len(frames)-1]
+	slot := end.ElapsedMS + end.DurationMS
+	ticks := (slot + 9) / 10
+	capacity := max(1, ticks/2)
+	frames = slices.DeleteFunc(frames, func(f d2animate.Frame) bool { return gifStepDelay(f) == 0 })
+	if capacity == 1 {
+		end.ElapsedMS, end.DurationMS = 0, slot
+		return append(frames[:0], end)
+	}
+	if len(frames) > capacity && previous != nil && sameGIFAppearance(previous, frames[0].Diagram) {
+		// Its starting picture already had a full board slot. Spend the scarce
+		// time on the intermediate paint, including on a two-sample tween.
+		frames = frames[1:]
+	}
+	if len(frames) > capacity {
+		// A selected step may have no preceding picture. Keep both ends and
+		// the intermediate samples nearest evenly spaced indices.
+		for i := range capacity {
+			index := (i*(len(frames)-1) + (capacity-1)/2) / (capacity - 1)
+			frames[i] = frames[index]
+		}
+		frames = frames[:capacity]
+	}
+	start := 0
+	for i := range frames {
+		next := slot
+		if remaining := len(frames) - i - 1; remaining > 0 {
+			native := frames[i+1].ElapsedMS / 10
+			next = 10 * max(start/10+2, min(native, ticks-2*remaining))
+		}
+		frames[i].ElapsedMS, frames[i].DurationMS = start, next-start
+		start = next
+	}
+	return frames
+}
+
+func sameGIFAppearance(a, b *d2target.Diagram) bool {
+	// Root.Label names the board in paged exports and is absent from GIF.
+	root := a.Root
+	root.Label = b.Root.Label
+	return reflect.DeepEqual(root, b.Root) && reflect.DeepEqual(a.Shapes, b.Shapes) &&
+		reflect.DeepEqual(a.Connections, b.Connections) && reflect.DeepEqual(a.Legend, b.Legend) &&
+		reflect.DeepEqual(a.FontFamily, b.FontFamily) && reflect.DeepEqual(a.MonoFontFamily, b.MonoFontFamily)
 }
 
 func renderGIFWithSession(
@@ -582,30 +697,85 @@ func renderGIFWithSession(
 	if framesPerBoard > gifMaxFrames {
 		return summary, fmt.Errorf("GIF requires %d frames per board, exceeding the %d-frame limit", framesPerBoard, gifMaxFrames)
 	}
-	boards, err := collectGIFBoards(ctx, diagram, gifMaxFrames/framesPerBoard)
+	boards, err := collectGIFBoards(ctx, diagram, gifMaxFrames)
 	if err != nil {
 		return summary, err
 	}
 	if len(boards) == 0 {
 		return summary, fmt.Errorf("GIF animation requires at least one renderable board")
 	}
-	assetOptions, err := gifSceneAssetOptions(ctx, inputPath, cacheImages, len(boards))
+	if err := d2target.ValidateRenderTarget(diagram); err != nil {
+		return summary, err
+	}
+	type gifSegment struct {
+		d2animate.Frame
+		count    int
+		viewport *gifViewport
+		bounds   image.Rectangle
+	}
+	viewports := gifViewports(diagram, boards)
+	var timeline []gifSegment
+	totalFrames := 0
+	var boardFrames []d2animate.Frame
+	for i, board := range boards {
+		var previous *d2target.Diagram
+		if i > 0 && viewports[boards[i-1]] == viewports[board] {
+			previous = boards[i-1]
+		}
+		boardFrames = gifBoardFrames(boardFrames, board, previous, intervalMs)
+		for _, segment := range boardFrames {
+			delay := gifStepDelay(segment)
+			if delay == 0 {
+				continue
+			}
+			count := 1
+			if !segment.TweenSample {
+				count, err = xgif.AnimationFrameCount(segment.DurationMS)
+				if err != nil {
+					return summary, err
+				}
+			}
+			if len(board.TweenFrames) > 0 || board.GridMotion {
+				// A short endpoint hold can otherwise be split into 1cs frames.
+				count = min(count, max(1, delay/2))
+			}
+			if count > gifMaxFrames-totalFrames {
+				return summary, fmt.Errorf("GIF animation exceeds the %d-frame limit", gifMaxFrames)
+			}
+			summary.delays = xgif.AppendFrameDelays(summary.delays, delay, count)
+			viewport := viewports[segment.Diagram]
+			if viewport != nil {
+				tl, br := segment.Diagram.BoundingBox()
+				viewport.bounds = viewport.bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
+			}
+			timeline = append(timeline, gifSegment{Frame: segment, count: count, viewport: viewport})
+			totalFrames += count
+		}
+	}
+	assetOptions, err := gifSceneAssetOptions(ctx, inputPath, cacheImages, len(timeline))
 	if err != nil {
 		return summary, err
 	}
 	defer assetOptions.Resolver.CloseIdleConnections()
-	fontOptions, err := newFontFallbackOptions(len(boards))
+	fontOptions, err := newFontFallbackOptions(len(timeline))
 	if err != nil {
 		return summary, err
 	}
-	linkBudget, err := gifLinkBudget(len(boards))
+	linkBudget, err := gifLinkBudget(len(timeline))
 	if err != nil {
 		return summary, err
 	}
-	totalFrames := len(boards) * framesPerBoard
 	summary.totalFrames = totalFrames
+	// Legends, appendix entries and root borders can expand individual scenes
+	// beyond the shared object bounds. Preserve their final world-space origins
+	// when padding frames for the encoder.
+	scale := 1.0
+	if opts.Scale != nil {
+		scale = *opts.Scale
+	}
 	renderedFrameCount := 0
-	for boardIndex, board := range boards {
+	for boardIndex, segment := range timeline {
+		board := segment.Diagram
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
@@ -619,7 +789,11 @@ func renderGIFWithSession(
 			summary.previewSVG = sourceSVG
 		}
 		frameOptions := gifFrameOptions(0, totalFrames)
-		document, err := buildSceneWithResourcesAndLinks(ctx, board, boardOpts, assetOptions, fontOptions, linkBudget, sceneAdmissionLimitsForFrame(frameOptions))
+		sceneOpts := sceneOptionsForFrame(frameOptions)
+		if segment.viewport != nil {
+			sceneOpts.minimumBounds = &segment.viewport.bounds
+		}
+		document, err := buildSceneWithResourcesAndLinks(ctx, board, boardOpts, assetOptions, fontOptions, linkBudget, sceneOpts)
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d scene: %w", boardIndex, err)
 		}
@@ -627,19 +801,32 @@ func renderGIFWithSession(
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
-		summary.maxWidth = max(summary.maxWidth, plannedBounds.Dx())
-		summary.maxHeight = max(summary.maxHeight, plannedBounds.Dy())
+		canvas := plannedBounds
+		frameBounds := plannedBounds
+		if v := segment.viewport; v != nil {
+			offset := image.Pt(
+				int(math.Round((document.ViewBox.X-float64(v.bounds.Min.X))*scale)),
+				int(math.Round((document.ViewBox.Y-float64(v.bounds.Min.Y))*scale)),
+			)
+			frameBounds = plannedBounds.Add(offset)
+			v.canvas = v.canvas.Union(frameBounds)
+			canvas = v.canvas
+		}
+		timeline[boardIndex].bounds = frameBounds
+		summary.maxWidth = max(summary.maxWidth, canvas.Dx())
+		summary.maxHeight = max(summary.maxHeight, canvas.Dy())
 		if err := validateGIFNormalizedFootprint(summary.maxWidth, summary.maxHeight, totalFrames); err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
-		if plan != nil {
-			if err := plan(len(boards), totalFrames, plannedBounds); err != nil {
+		if plan != nil && len(boards) == 1 && len(boards[0].TweenFrames) == 0 {
+			if err := plan(totalFrames, plannedBounds); err != nil {
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}
 		}
 		err = renderGIFBoardFrames(
-			ctx, 0, framesPerBoard, totalFrames,
+			ctx, 0, segment.count, totalFrames,
 			func(renderCtx context.Context, _ int, _ time.Duration, frameOptions d2raster.FrameOptions, emit func(image.Image) error) error {
+				frameOptions.Time += time.Duration(segment.ElapsedMS) * time.Millisecond
 				if workspace == nil {
 					frame, renderErr := session.Render(renderCtx, document, frameOptions)
 					if renderErr != nil {
@@ -669,11 +856,25 @@ func renderGIFWithSession(
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
 	}
+	if len(viewports) != 0 {
+		for _, segment := range timeline {
+			canvas := segment.bounds
+			if segment.viewport != nil {
+				canvas = segment.viewport.canvas
+			}
+			// Center an entire related group as a unit in the final GIF.
+			offset := image.Pt((summary.maxWidth-canvas.Dx())/2, (summary.maxHeight-canvas.Dy())/2)
+			offset = offset.Add(segment.bounds.Min.Sub(canvas.Min))
+			for range segment.count {
+				summary.offsets = append(summary.offsets, offset)
+			}
+		}
+	}
 	if renderedFrameCount != totalFrames {
 		return summary, fmt.Errorf("GIF rendered frame count %d differs from schedule %d", renderedFrameCount, totalFrames)
 	}
 	if len(summary.previewSVG) != 0 {
-		summary.previewSVG, err = bundleRasterPreview(ctx, assetOptions.Resolver, summary.previewSVG)
+		summary.previewSVG, err = bundleRasterPreview(ctx, assetOptions, summary.previewSVG)
 		if err != nil {
 			return summary, fmt.Errorf("GIF watch preview: %w", err)
 		}
@@ -737,6 +938,7 @@ func validateRenderSession(export string, session *d2raster.RenderSession) error
 }
 
 var rasterImageHrefPrefix = []byte(`<image href="`)
+var unavailableImageURI = []byte("data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(d2scenebuild.UnavailableImageSVG)))
 
 type rasterPreviewReference struct {
 	start  int
@@ -747,13 +949,12 @@ type rasterPreviewReference struct {
 type rasterPreviewResource struct {
 	resource *imageasset.Resource
 	uriBytes int
+	uri      []byte
 }
 
-// bundleRasterPreview embeds external image references from the same
-// resolver session used to build the frames. Resolver memoization is
-// important here: local files and remote responses cannot change between the
-// rendered GIF and its watch preview without adding a second I/O path.
-func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sourceSVG []byte) ([]byte, error) {
+// bundleRasterPreview embeds the scene's resolved images and any placeholders
+// recorded for the previewed board.
+func bundleRasterPreview(ctx context.Context, assets *d2scenebuild.AssetOptions, sourceSVG []byte) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -763,11 +964,12 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 	if int64(len(sourceSVG)) > rasterPreviewMaxSourceBytes {
 		return nil, fmt.Errorf("source bytes %d exceed limit %d", len(sourceSVG), rasterPreviewMaxSourceBytes)
 	}
-	if resolver == nil {
+	if assets == nil || assets.Resolver == nil {
 		return nil, fmt.Errorf("image resolver is required")
 	}
 
 	references := make([]rasterPreviewReference, 0)
+	resources := make(map[string]rasterPreviewResource)
 	searchAt := 0
 	imageCount := 0
 	for {
@@ -787,7 +989,11 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 		}
 		source := string(sourceSVG[start:end])
 		if !strings.HasPrefix(strings.ToLower(source), "data:") {
+			source = html.UnescapeString(source)
 			references = append(references, rasterPreviewReference{start: start, end: end, source: source})
+			if _, missing := assets.UnavailableImages[source]; missing {
+				resources[source] = rasterPreviewResource{uri: unavailableImageURI, uriBytes: len(unavailableImageURI)}
+			}
 		}
 		searchAt = end + 1
 	}
@@ -795,12 +1001,11 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 		return sourceSVG, nil
 	}
 
-	resources := make(map[string]rasterPreviewResource)
 	outputBytes := int64(len(sourceSVG))
 	for _, reference := range references {
 		previewResource, ok := resources[reference.source]
 		if !ok {
-			resolved, err := resolver.Resolve(ctx, html.UnescapeString(reference.source))
+			resolved, err := assets.Resolver.Resolve(ctx, reference.source)
 			if err != nil {
 				return nil, err
 			}
@@ -825,17 +1030,16 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 		return nil, fmt.Errorf("expanded output bytes %d exceed limit %d", outputBytes, rasterPreviewMaxOutputBytes)
 	}
 
-	encodedResources := make(map[string][]byte, len(resources))
 	for source, previewResource := range resources {
-		data, err := previewResource.resource.BytesContext(ctx)
+		if previewResource.uri != nil {
+			continue
+		}
+		uri, err := previewResource.resource.DataURIContext(ctx)
 		if err != nil {
 			return nil, err
 		}
-		uri, err := rasterDataURI(ctx, previewResource.resource.MIMEType(), data, previewResource.uriBytes)
-		if err != nil {
-			return nil, err
-		}
-		encodedResources[source] = uri
+		previewResource.uri = uri
+		resources[source] = previewResource
 	}
 
 	result := make([]byte, 0, int(outputBytes))
@@ -845,39 +1049,12 @@ func bundleRasterPreview(ctx context.Context, resolver *imageasset.Resolver, sou
 			return nil, err
 		}
 		result = append(result, sourceSVG[copyAt:reference.start]...)
-		result = append(result, encodedResources[reference.source]...)
+		result = append(result, resources[reference.source].uri...)
 		copyAt = reference.end
 	}
 	result = append(result, sourceSVG[copyAt:]...)
 	if int64(len(result)) != outputBytes {
 		return nil, fmt.Errorf("expanded output size %d differs from preflight size %d", len(result), outputBytes)
-	}
-	return result, nil
-}
-
-func rasterDataURI(ctx context.Context, mimeType string, data []byte, outputBytes int) ([]byte, error) {
-	prefix := []byte("data:" + mimeType + ";base64,")
-	if outputBytes != len(prefix)+base64.StdEncoding.EncodedLen(len(data)) {
-		return nil, fmt.Errorf("data URI size preflight mismatch")
-	}
-	result := make([]byte, outputBytes)
-	copy(result, prefix)
-	writeAt := len(prefix)
-	// A multiple of three lets every non-final chunk encode independently.
-	const chunkBytes = 48 * 1024
-	for readAt := 0; readAt < len(data); readAt += chunkBytes {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		end := min(readAt+chunkBytes, len(data))
-		base64.StdEncoding.Encode(result[writeAt:], data[readAt:end])
-		writeAt += base64.StdEncoding.EncodedLen(end - readAt)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if writeAt != len(result) {
-		return nil, fmt.Errorf("data URI encoded size %d differs from preflight size %d", writeAt, len(result))
 	}
 	return result, nil
 }
@@ -924,8 +1101,8 @@ func collectGIFBoards(ctx context.Context, root *d2target.Diagram, maxBoards int
 			return fmt.Errorf("GIF board tree exceeds depth %d", rasterMaxDepth)
 		}
 		visited++
-		if visited > gifMaxBoardNodes {
-			return fmt.Errorf("GIF board tree exceeds %d total nodes", gifMaxBoardNodes)
+		if visited > d2target.MaxRenderTargetBoards {
+			return fmt.Errorf("GIF board tree exceeds %d total nodes", d2target.MaxRenderTargetBoards)
 		}
 		if _, ok := active[diagram]; ok {
 			return fmt.Errorf("GIF board tree contains a cycle")
@@ -1044,7 +1221,7 @@ func newImageAssetResolver(ctx context.Context, inputPath string, cacheImages bo
 	}
 	return imageasset.New(imageasset.Options{
 		BaseDir:        baseDir,
-		LocalFiles:     localfile.Unrestricted(),
+		LocalFiles:     localFilesFromContext(ctx),
 		HTTPClient:     assetHTTPClient,
 		NetworkPolicy:  netpolicy.FromContext(ctx),
 		Cache:          cache,
@@ -1056,6 +1233,7 @@ func newImageAssetResolver(ctx context.Context, inputPath string, cacheImages bo
 func svgImportLimits() d2svgimport.Limits {
 	return d2svgimport.Limits{
 		MaxBytes:              svgMaxBytes,
+		MaxDecodedRasterBytes: svgMaxDecodedRasterBytes,
 		MaxDepth:              svgMaxDepth,
 		MaxElements:           svgMaxElements,
 		MaxAttributes:         svgMaxAttributes,

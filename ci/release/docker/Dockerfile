@@ -1,5 +1,5 @@
 # https://hub.docker.com/r/d2lang/d2
-FROM ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
+FROM ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
 
 ARG TARGETARCH
 ARG FIXUID_VERSION=0.6.0
@@ -25,12 +25,13 @@ RUN case "$TARGETARCH" in \
   && mkdir -p /etc/fixuid \
   && printf "user: debian\ngroup: debian\npaths: [/home/debian]\n" > /etc/fixuid/config.yml
 
-COPY ./d2-*-linux-$TARGETARCH.tar.gz /tmp
 ADD ./entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN mkdir -p /usr/local/lib/d2 \
-      && tar -C /usr/local/lib/d2 -xzf /tmp/d2-*-linux-"$TARGETARCH".tar.gz \
-      && /usr/local/lib/d2/d2-*/scripts/install.sh \
-      && rm -Rf /tmp/d2-*-linux-"$TARGETARCH".tar.gz
+# Keep the archive out of the image and share the release binary with the CLI on PATH.
+RUN --mount=type=bind,target=/release \
+    mkdir -p /usr/local/lib/d2 \
+    && tar -C /usr/local/lib/d2 -xzf /release/d2-*-linux-"$TARGETARCH".tar.gz \
+    && ln /usr/local/lib/d2/d2-*/bin/d2 /usr/local/bin/d2 \
+    && install -D /usr/local/lib/d2/d2-*/man/d2.1 /usr/local/share/man/man1/d2.1
 
 USER debian:debian
 

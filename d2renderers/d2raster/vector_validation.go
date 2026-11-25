@@ -467,7 +467,7 @@ func (v *retainedVectorValidator) textObjectBounds(text d2scene.TextRun, ppem fi
 			originY+fixedToFloat(glyphBounds.Max.Y),
 		))
 	}
-	if (text.Underline || text.Strike) && advance > 0 {
+	if (d2scene.UnderlineFraction(text.Underline, text.UnderlineProgress) > 0 || text.Strike) && advance > 0 {
 		// Only zero-area detection is needed here. Visible preparation derives
 		// exact decoration metrics under the real placement transform.
 		left := text.Origin.X + anchorOffset

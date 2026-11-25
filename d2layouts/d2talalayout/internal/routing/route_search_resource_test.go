@@ -94,7 +94,7 @@ func TestAddRouteWorkLimitStopsAfterRealIndexing(t *testing.T) {
 	if router.work.used <= start {
 		t.Fatalf("addRoute consumed no real work: start=%d used=%d", start, router.work.used)
 	}
-	if len(router.pointToRoute) == 0 {
+	if !router.hasPointRoutes() {
 		t.Fatal("addRoute limit fired before any route index mutation")
 	}
 }

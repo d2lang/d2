@@ -60,7 +60,7 @@ func TestRouteCaptionsAvoidComponentsAndUseOtherLegs(t *testing.T) {
 	p.Avoid(Vec{X: 4, Z: 0}, 9, 3)
 	points := []Vec{{Y: .08}, {X: 8, Y: .08}, {X: 8, Y: .08, Z: 8}}
 	s := p.Place(points, .5, 2, .4)
-	if s.center.Z-s.depth/2 <= 1.5 || math.Abs(s.angle-math.Pi/2) > 1e-12 {
+	if s.center.Z-s.depth/2 <= 1.5 || s.angle != 0 || math.Abs(s.center.X-8) <= s.width/2 {
 		t.Fatalf("did not move to a clear straight leg: %+v", s)
 	}
 	if s.width != 2 || s.depth != .4 || math.Abs(s.center.Y-.086) > 1e-12 {

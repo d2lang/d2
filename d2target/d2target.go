@@ -22,6 +22,8 @@ import (
 )
 
 const (
+	DEFAULT_SHAPE_STROKE_WIDTH = 2
+
 	DEFAULT_ICON_SIZE = 32
 	MAX_ICON_SIZE     = 64
 
@@ -44,6 +46,10 @@ const (
 var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
+	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
+	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds to interpolate step values.
+	Scale              *float64        `json:"scale,omitempty"`
+	ForceAppendix      *bool           `json:"forceAppendix,omitempty"`
 	Sketch             *bool           `json:"sketch"`
 	Isometric          *bool           `json:"isometric,omitempty"`
 	ThemeID            *int64          `json:"themeID"`
@@ -56,6 +62,23 @@ type Config struct {
 	// Data is a data structure for holding user-defined data
 	// useful for layout engines that allow users to configure within source code
 	Data map[string]interface{} `json:"data,omitempty"`
+}
+
+// ResolveAnimateInterval returns the explicit render setting, falling back to
+// the source configuration. A nil result leaves the output format's default intact.
+func (c *Config) ResolveAnimateInterval(override *int64) *int64 {
+	if override != nil || c == nil {
+		return override
+	}
+	return c.AnimateInterval
+}
+
+// ResolveForceAppendix preserves an explicit false when the source enables footnotes.
+func (c *Config) ResolveForceAppendix(override *bool) *bool {
+	if override != nil || c == nil {
+		return override
+	}
+	return c.ForceAppendix
 }
 
 type ThemeOverrides struct {
@@ -79,6 +102,17 @@ type ThemeOverrides struct {
 	AB5 *string `json:"ab5"`
 }
 
+// Limits shared by D2 source compilation and callers supplying sampled targets.
+const (
+	MaxTweenDurationMS = 600_000
+	MaxTweenFrames     = 120
+)
+
+// TweenFrameCount samples at 25 fps up to the per-transition frame limit.
+func TweenFrameCount(durationMS int) int {
+	return min(MaxTweenFrames, (durationMS+39)/40)
+}
+
 type Diagram struct {
 	Name   string  `json:"name"`
 	Config *Config `json:"config,omitempty"`
@@ -91,6 +125,10 @@ type Diagram struct {
 	Shapes      []Shape      `json:"shapes"`
 	Connections []Connection `json:"connections"`
 
+	// An explicitly chosen default width and an inherited default have the same
+	// 2D appearance. Retain their distinction for isometric crease weights.
+	ExplicitDefaultStrokeWidths map[string]bool `json:"explicitDefaultStrokeWidths,omitempty"`
+
 	Root   Shape   `json:"root"`
 	Legend *Legend `json:"legend,omitempty"`
 	// Maybe Icon can be used as a watermark in the root shape
@@ -98,12 +136,33 @@ type Diagram struct {
 	Layers    []*Diagram `json:"layers,omitempty"`
 	Scenarios []*Diagram `json:"scenarios,omitempty"`
 	Steps     []*Diagram `json:"steps,omitempty"`
+
+	// TweenFrames are samples of this board's incoming transition,
+	// starting at time zero. The board itself supplies the exact endpoint.
+	TweenFrames     []*Diagram `json:"tweenFrames,omitempty"`
+	TweenDurationMS int        `json:"tweenDurationMS,omitempty"`
+	// TweenFrameEndsMS holds exclusive sample ends for nonuniform playback.
+	// The authored endpoint takes over when the final sample ends.
+	// Omit it for uniformly spaced samples.
+	TweenFrameEndsMS []int `json:"tweenFrameEndsMS,omitempty"`
+	// GridMotion keeps a common coordinate system for raster playback as cells reflow.
+	GridMotion bool `json:"gridMotion,omitempty"`
+	// LayoutContinuity means the board shares layout coordinates with its
+	// parent scenario base or the preceding step. Independent layers start
+	// their own coordinate system.
+	LayoutContinuity bool `json:"layoutContinuity,omitempty"`
 }
 
 type Legend struct {
 	Label       string       `json:"label,omitempty"`
 	Shapes      []Shape      `json:"shapes,omitempty"`
 	Connections []Connection `json:"connections,omitempty"`
+}
+
+// renderChildren includes sampled frames for hashing, font subsetting and
+// bounding boxes. Navigation only exposes the authored boards.
+func (d *Diagram) renderChildren() [4][]*Diagram {
+	return [4][]*Diagram{d.Layers, d.Scenarios, d.Steps, d.TweenFrames}
 }
 
 func (d *Diagram) GetBoard(boardPath []string) *Diagram {
@@ -188,28 +247,23 @@ func (diagram Diagram) Bytes() ([]byte, error) {
 		base = append(base, b...)
 	}
 
-	for _, d := range diagram.Layers {
-		slices, err := d.Bytes()
-		if err != nil {
-			return nil, err
+	if diagram.TweenDurationMS != 0 {
+		base = append(base, "tween-ms:"...)
+		base = strconv.AppendInt(base, int64(diagram.TweenDurationMS), 10)
+		for _, ms := range diagram.TweenFrameEndsMS {
+			base = append(base, ',')
+			base = strconv.AppendInt(base, int64(ms), 10)
 		}
-		base = append(base, slices...)
 	}
-	for _, d := range diagram.Scenarios {
-		slices, err := d.Bytes()
-		if err != nil {
-			return nil, err
+	for _, group := range diagram.renderChildren() {
+		for _, child := range group {
+			frameBytes, err := child.Bytes()
+			if err != nil {
+				return nil, err
+			}
+			base = append(base, frameBytes...)
 		}
-		base = append(base, slices...)
 	}
-	for _, d := range diagram.Steps {
-		slices, err := d.Bytes()
-		if err != nil {
-			return nil, err
-		}
-		base = append(base, slices...)
-	}
-
 	return base, nil
 }
 
@@ -384,19 +438,11 @@ func stableHashURL(raw json.RawMessage) ([]byte, error) {
 }
 
 func (diagram Diagram) HasShape(condition func(Shape) bool) bool {
-	for _, d := range diagram.Layers {
-		if d.HasShape(condition) {
-			return true
-		}
-	}
-	for _, d := range diagram.Scenarios {
-		if d.HasShape(condition) {
-			return true
-		}
-	}
-	for _, d := range diagram.Steps {
-		if d.HasShape(condition) {
-			return true
+	for _, group := range diagram.renderChildren() {
+		for _, child := range group {
+			if child.HasShape(condition) {
+				return true
+			}
 		}
 	}
 	for _, s := range diagram.Shapes {
@@ -423,26 +469,14 @@ func (diagram Diagram) HashID(salt *string) (string, error) {
 
 func (diagram Diagram) NestedBoundingBox() (topLeft, bottomRight Point) {
 	tl, br := diagram.BoundingBox()
-	for _, d := range diagram.Layers {
-		tl2, br2 := d.NestedBoundingBox()
-		tl.X = go2.Min(tl.X, tl2.X)
-		tl.Y = go2.Min(tl.Y, tl2.Y)
-		br.X = go2.Max(br.X, br2.X)
-		br.Y = go2.Max(br.Y, br2.Y)
-	}
-	for _, d := range diagram.Scenarios {
-		tl2, br2 := d.NestedBoundingBox()
-		tl.X = go2.Min(tl.X, tl2.X)
-		tl.Y = go2.Min(tl.Y, tl2.Y)
-		br.X = go2.Max(br.X, br2.X)
-		br.Y = go2.Max(br.Y, br2.Y)
-	}
-	for _, d := range diagram.Steps {
-		tl2, br2 := d.NestedBoundingBox()
-		tl.X = go2.Min(tl.X, tl2.X)
-		tl.Y = go2.Min(tl.Y, tl2.Y)
-		br.X = go2.Max(br.X, br2.X)
-		br.Y = go2.Max(br.Y, br2.Y)
+	for _, group := range diagram.renderChildren() {
+		for _, child := range group {
+			tl2, br2 := child.NestedBoundingBox()
+			tl.X = go2.Min(tl.X, tl2.X)
+			tl.Y = go2.Min(tl.Y, tl2.Y)
+			br.X = go2.Max(br.X, br2.X)
+			br.Y = go2.Max(br.Y, br2.Y)
+		}
 	}
 	return tl, br
 }
@@ -457,16 +491,18 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 	y2 := int(math.MinInt32)
 
 	for _, targetShape := range diagram.Shapes {
-		x1 = go2.Min(x1, targetShape.Pos.X-int(math.Ceil(float64(targetShape.StrokeWidth)/2.)))
-		y1 = go2.Min(y1, targetShape.Pos.Y-int(math.Ceil(float64(targetShape.StrokeWidth)/2.)))
-		x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+int(math.Ceil(float64(targetShape.StrokeWidth)/2.)))
-		y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+int(math.Ceil(float64(targetShape.StrokeWidth)/2.)))
+		stroke := StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
+		halfStroke := stroke/2 + stroke%2
+		x1 = go2.Min(x1, targetShape.Pos.X-halfStroke)
+		y1 = go2.Min(y1, targetShape.Pos.Y-halfStroke)
+		x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+halfStroke)
+		y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+halfStroke)
 
 		if targetShape.Type == ShapeC4Person {
 			headRadius := int(float64(targetShape.Width) * 0.22)
 			headCenterY := int(float64(targetShape.Height) * 0.18)
 			headTop := targetShape.Pos.Y + headCenterY - headRadius
-			y1 = go2.Min(y1, headTop-targetShape.StrokeWidth)
+			y1 = go2.Min(y1, headTop-stroke)
 		}
 
 		if targetShape.Tooltip != "" || targetShape.Link != "" {
@@ -477,13 +513,13 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 				x2 = go2.Max(x2, tooltipMaxX)
 				y2 = go2.Max(y2, tooltipMaxY)
 			} else {
-				y1 = go2.Min(y1, targetShape.Pos.Y-targetShape.StrokeWidth-16)
-				x2 = go2.Max(x2, targetShape.Pos.X+targetShape.StrokeWidth+targetShape.Width+16)
+				y1 = go2.Min(y1, targetShape.Pos.Y-stroke-16)
+				x2 = go2.Max(x2, targetShape.Pos.X+stroke+targetShape.Width+16)
 			}
 		}
 		if targetShape.Shadow {
-			y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+int(math.Ceil(float64(targetShape.StrokeWidth)/2.))+SHADOW_SIZE_Y)
-			x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+int(math.Ceil(float64(targetShape.StrokeWidth)/2.))+SHADOW_SIZE_X)
+			y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+halfStroke+SHADOW_SIZE_Y)
+			x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+halfStroke+SHADOW_SIZE_X)
 		}
 
 		if targetShape.ThreeDee {
@@ -491,68 +527,55 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 			if targetShape.Type == ShapeHexagon {
 				offsetY /= 2
 			}
-			y1 = go2.Min(y1, targetShape.Pos.Y-offsetY-targetShape.StrokeWidth)
-			x2 = go2.Max(x2, targetShape.Pos.X+THREE_DEE_OFFSET+targetShape.Width+targetShape.StrokeWidth)
+			y1 = go2.Min(y1, targetShape.Pos.Y-offsetY-stroke)
+			x2 = go2.Max(x2, targetShape.Pos.X+THREE_DEE_OFFSET+targetShape.Width+stroke)
 		}
 		if targetShape.Multiple {
-			y1 = go2.Min(y1, targetShape.Pos.Y-MULTIPLE_OFFSET-targetShape.StrokeWidth)
-			x2 = go2.Max(x2, targetShape.Pos.X+MULTIPLE_OFFSET+targetShape.Width+targetShape.StrokeWidth)
+			y1 = go2.Min(y1, targetShape.Pos.Y-MULTIPLE_OFFSET-stroke)
+			x2 = go2.Max(x2, targetShape.Pos.X+MULTIPLE_OFFSET+targetShape.Width+stroke)
 		}
 
-		if targetShape.Icon != nil && label.FromString(targetShape.IconPosition).IsOutside() {
-			contentBox := geo.NewBox(geo.NewPoint(0, 0), float64(targetShape.Width), float64(targetShape.Height))
-			s := shape.NewShape(targetShape.Type, contentBox)
-			size := GetIconSize(s.GetInnerBox(), targetShape.IconPosition)
-
-			if strings.HasPrefix(targetShape.IconPosition, "OUTSIDE_TOP") {
-				y1 = go2.Min(y1, targetShape.Pos.Y-label.PADDING-size)
-			} else if strings.HasPrefix(targetShape.IconPosition, "OUTSIDE_BOTTOM") {
-				y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+label.PADDING+size)
-			} else if strings.HasPrefix(targetShape.IconPosition, "OUTSIDE_LEFT") {
-				x1 = go2.Min(x1, targetShape.Pos.X-label.PADDING-size)
-			} else if strings.HasPrefix(targetShape.IconPosition, "OUTSIDE_RIGHT") {
-				x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+label.PADDING+size)
+		iconPosition := label.FromString(targetShape.IconPosition)
+		if targetShape.Icon != nil && targetShape.Type != ShapeImage && (iconPosition.IsOutside() || iconPosition.IsBorder()) {
+			box := geo.NewBox(geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)), float64(targetShape.Width), float64(targetShape.Height))
+			s := shape.NewShape(DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type], box)
+			if targetShape.Type == ShapeCloud && targetShape.ContentAspectRatio != nil {
+				s.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
 			}
+			icon := targetShape.IconBounds(s)
+			x1 = min(x1, int(math.Floor(icon.TopLeft.X)))
+			y1 = min(y1, int(math.Floor(icon.TopLeft.Y)))
+			x2 = max(x2, int(math.Ceil(icon.TopLeft.X+icon.Width)))
+			y2 = max(y2, int(math.Ceil(icon.TopLeft.Y+icon.Height)))
 		}
 
 		if targetShape.Label != "" {
-			labelPosition := label.FromString(targetShape.LabelPosition)
-
-			shapeType := DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type]
-			s := shape.NewShape(shapeType,
-				geo.NewBox(
-					geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)),
-					float64(targetShape.Width),
-					float64(targetShape.Height),
-				),
-			)
-
-			labelTL := labelPosition.GetPointOnBox(s.GetBox(), label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
-			if targetShape.ThreeDee {
-				offset := THREE_DEE_OFFSET
-				if targetShape.Type == ShapeHexagon {
-					offset /= 2
-				}
-				if strings.HasPrefix(targetShape.LabelPosition, "OUTSIDE_RIGHT") {
-					labelTL.X += float64(offset)
-				}
-				if strings.HasPrefix(targetShape.LabelPosition, "OUTSIDE_TOP") {
-					labelTL.Y -= float64(offset)
-				}
+			position := label.FromString(targetShape.LabelPosition)
+			box := geo.NewBox(geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)), float64(targetShape.Width), float64(targetShape.Height))
+			if position.IsOutside() || position.IsBorder() {
+				box = targetShape.OuterLabelBox(box)
 			}
-			x1 = go2.Min(x1, int(labelTL.X))
-			y1 = go2.Min(y1, int(labelTL.Y))
-			x2 = go2.Max(x2, int(labelTL.X)+targetShape.LabelWidth)
-			y2 = go2.Max(y2, int(labelTL.Y)+targetShape.LabelHeight)
+			labelTL := targetShape.LabelTopLeft(position, box)
+			left, top := int(labelTL.X), int(labelTL.Y)
+			right, bottom := left+targetShape.LabelWidth, top+targetShape.LabelHeight
+			if position.IsBorder() {
+				left, top = int(math.Floor(labelTL.X)), int(math.Floor(labelTL.Y))
+				right = int(math.Ceil(labelTL.X + float64(targetShape.LabelWidth)))
+				bottom = int(math.Ceil(labelTL.Y + float64(targetShape.LabelHeight)))
+			}
+			x1, y1 = min(x1, left), min(y1, top)
+			x2, y2 = max(x2, right), max(y2, bottom)
 		}
 	}
 
 	for _, connection := range diagram.Connections {
+		stroke := StrokeWidthExtent(connection.StrokeWidth, connection.StrokeWidthOffset)
+		halfStroke := stroke/2 + stroke%2
 		for _, point := range connection.Route {
-			x1 = go2.Min(x1, int(math.Floor(point.X))-int(math.Ceil(float64(connection.StrokeWidth)/2.)))
-			y1 = go2.Min(y1, int(math.Floor(point.Y))-int(math.Ceil(float64(connection.StrokeWidth)/2.)))
-			x2 = go2.Max(x2, int(math.Ceil(point.X))+int(math.Ceil(float64(connection.StrokeWidth)/2.)))
-			y2 = go2.Max(y2, int(math.Ceil(point.Y))+int(math.Ceil(float64(connection.StrokeWidth)/2.)))
+			x1 = go2.Min(x1, int(math.Floor(point.X))-halfStroke)
+			y1 = go2.Min(y1, int(math.Floor(point.Y))-halfStroke)
+			x2 = go2.Max(x2, int(math.Ceil(point.X))+halfStroke)
+			y2 = go2.Max(y2, int(math.Ceil(point.Y))+halfStroke)
 		}
 
 		if connection.Label != "" {
@@ -561,6 +584,10 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 			y1 = go2.Min(y1, int(labelTL.Y))
 			x2 = go2.Max(x2, int(labelTL.X)+connection.LabelWidth)
 			y2 = go2.Max(y2, int(labelTL.Y)+connection.LabelHeight)
+		}
+		if icon := connection.GetIconPosition(); icon != nil {
+			x1, y1 = min(x1, int(math.Floor(icon.X))), min(y1, int(math.Floor(icon.Y)))
+			x2, y2 = max(x2, int(math.Ceil(icon.X))+DEFAULT_ICON_SIZE), max(y2, int(math.Ceil(icon.Y))+DEFAULT_ICON_SIZE)
 		}
 		if connection.SrcLabel != nil && connection.SrcLabel.Label != "" {
 			labelTL := connection.GetArrowheadLabelPosition(false)
@@ -682,14 +709,10 @@ func (diagram Diagram) GetNestedCorpus() string {
 
 func (diagram Diagram) appendNestedCorpus(corpus *strings.Builder) {
 	diagram.appendCorpus(corpus)
-	for _, d := range diagram.Layers {
-		d.appendNestedCorpus(corpus)
-	}
-	for _, d := range diagram.Scenarios {
-		d.appendNestedCorpus(corpus)
-	}
-	for _, d := range diagram.Steps {
-		d.appendNestedCorpus(corpus)
+	for _, group := range diagram.renderChildren() {
+		for _, child := range group {
+			child.appendNestedCorpus(corpus)
+		}
 	}
 }
 
@@ -766,11 +789,38 @@ func NewDiagram() *Diagram {
 	}
 }
 
+// MotionClip is the visible rectangle of an unfolding grid cell, in diagram coordinates.
+type MotionClip struct {
+	Point
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+// MotionBox holds reference bounds in diagram coordinates during an animation.
+type MotionBox = MotionClip
+
+// SketchFillTransition describes the pencil shading on one sampled frame.
+type SketchFillTransition struct {
+	From     string  `json:"from"`
+	To       string  `json:"to"`
+	Progress float64 `json:"progress"`
+}
+
 type Shape struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
 
 	Classes []string `json:"classes,omitempty"`
+
+	// Only intermediate grid frames carry a viewport, caption anchor or LaTeX scale.
+	MotionScale        float64     `json:"motionScale,omitempty"`
+	MotionClip         *MotionClip `json:"motionClip,omitempty"`
+	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
+	// MotionLabelBox holds the authored body bounds for a stationary inside label.
+	MotionLabelBox *MotionBox    `json:"motionLabelBox,omitempty"`
+	RowReveal      *SQLRowReveal `json:"rowReveal,omitempty"`
+	// OutlineProgress traces an incoming container frame in a transition sample.
+	OutlineProgress *float64 `json:"outlineProgress,omitempty"`
 
 	Pos    Point `json:"pos"`
 	Width  int   `json:"width"`
@@ -779,12 +829,15 @@ type Shape struct {
 	Opacity     float64 `json:"opacity"`
 	StrokeDash  float64 `json:"strokeDash"`
 	StrokeWidth int     `json:"strokeWidth"`
+	// Tween frames retain the subpixel difference from the integer layout width.
+	StrokeWidthOffset float64 `json:"strokeWidthOffset,omitempty"`
 
 	BorderRadius int `json:"borderRadius"`
 
-	Fill        string `json:"fill"`
-	FillPattern string `json:"fillPattern,omitempty"`
-	Stroke      string `json:"stroke"`
+	Fill                 string                `json:"fill"`
+	FillPattern          string                `json:"fillPattern,omitempty"`
+	SketchFillTransition *SketchFillTransition `json:"sketchFillTransition,omitempty"`
+	Stroke               string                `json:"stroke"`
 
 	Animated     bool `json:"animated"`
 	Shadow       bool `json:"shadow"`
@@ -822,6 +875,51 @@ type Shape struct {
 	NeutralAccentColor   string `json:"neutralAccentColor,omitempty"`
 }
 
+// Geometry returns the same outline and inner content box used for rendering.
+func (s *Shape) Geometry() shape.Shape {
+	return s.geometry(s.Pos, s.Width, s.Height)
+}
+
+func (s *Shape) geometry(pos Point, width, height int) shape.Shape {
+	g := shape.NewShape(DSL_SHAPE_TO_SHAPE_TYPE[s.Type], geo.NewBox(
+		geo.NewPoint(float64(pos.X), float64(pos.Y)), float64(width), float64(height)))
+	if s.Type == ShapeCloud && s.ContentAspectRatio != nil {
+		g.SetInnerBoxAspectRatio(*s.ContentAspectRatio)
+	}
+	return g
+}
+
+// LabelTopLeft resolves both ordinary captions and intermediate animation anchors.
+func (s *Shape) LabelTopLeft(position label.Position, box *geo.Box) *geo.Point {
+	if p := s.MotionLabelTopLeft; p != nil {
+		return geo.NewPoint(float64(p.X), float64(p.Y))
+	}
+	if b := s.MotionLabelBox; b != nil {
+		box = s.geometry(b.Point, b.Width, b.Height).GetInnerBox()
+	}
+	return position.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
+}
+
+func (s Shape) RenderedStrokeWidth() float64 {
+	return float64(s.StrokeWidth) + s.StrokeWidthOffset
+}
+
+// CanShadeSketchFill reports whether the shape has a single solid sketch surface.
+func (s *Shape) CanShadeSketchFill() bool {
+	if s.ThreeDee || s.Multiple || (s.FillPattern != "" && s.FillPattern != "none") {
+		return false
+	}
+	switch s.Type {
+	case ShapeText, ShapeCode, ShapeImage, ShapeClass, ShapeSQLTable:
+		return false
+	}
+	return validSketchFillPaint(s.Fill)
+}
+
+func validSketchFillPaint(paint string) bool {
+	return color.IsThemeColor(paint) || (!color.IsGradient(paint) && color.ValidColor(paint))
+}
+
 func (s Shape) GetFontColor() string {
 	if s.Type == ShapeClass || s.Type == ShapeSQLTable {
 		if !color.IsThemeColor(s.Color) {
@@ -839,10 +937,10 @@ func (s Shape) GetFontColor() string {
 func (s Shape) CSSStyle() string {
 	out := ""
 
-	out += fmt.Sprintf(`stroke-width:%d;`, s.StrokeWidth)
+	out += "stroke-width:" + svg.FormatFloat(s.RenderedStrokeWidth()) + ";"
 	if s.StrokeDash != 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(s.StrokeWidth), s.StrokeDash)
-		out += fmt.Sprintf(`stroke-dasharray:%f,%f;`, dashSize, gapSize)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(s.RenderedStrokeWidth(), s.StrokeDash)
+		out += "stroke-dasharray:" + svg.FormatFloat(dashSize) + "," + svg.FormatFloat(gapSize) + ";"
 	}
 
 	return out
@@ -867,6 +965,40 @@ func (s Shape) GetID() string {
 	return s.ID
 }
 
+// AppendixLinkText returns the text listed in a static export's appendix for
+// the shape's link, or "" when the shape has no link. Every shape with a Link
+// gets a numbered link marker, so it must also get an appendix entry: when no
+// board label could be derived for PrettyLink (e.g. a link to the parent
+// board), the link itself is listed so the marker and appendix numbers stay in
+// one sequence.
+func (s Shape) AppendixLinkText() string {
+	if s.Link == "" {
+		return ""
+	}
+	if s.PrettyLink != "" {
+		return s.PrettyLink
+	}
+	return s.Link
+}
+
+// MarkdownStrikeTransition retains the previous markup when only strikethrough spans change.
+type MarkdownStrikeTransition struct {
+	From     string  `json:"from"`
+	Progress float64 `json:"progress"`
+	// On a plain destination these are the struck ranges of its shaped line,
+	// in fractions of the total advance. Its own renderer paints the glyphs.
+	PlainRanges [][2]float64 `json:"plainRanges,omitempty"`
+}
+
+func (t *MarkdownStrikeTransition) PlainRules(left, baseline, width, fontSize float64, draw func(x, y, width, height float64)) {
+	if t == nil || t.Progress >= 1 {
+		return
+	}
+	for _, span := range t.PlainRanges {
+		draw(left+span[0]*width, baseline-.3*fontSize, (span[1]-span[0])*width*(1-t.Progress), math.Max(1, fontSize/16))
+	}
+}
+
 type Text struct {
 	Label      string `json:"label"`
 	FontSize   int    `json:"fontSize"`
@@ -877,6 +1009,9 @@ type Text struct {
 	Italic    bool `json:"italic"`
 	Bold      bool `json:"bold"`
 	Underline bool `json:"underline"`
+	// UnderlineProgress is the visible fraction of the underline on a sampled frame.
+	UnderlineProgress *float64                  `json:"underlineProgress,omitempty"`
+	MarkdownStrike    *MarkdownStrikeTransition `json:"markdownStrike,omitempty"`
 
 	LabelWidth  int    `json:"labelWidth"`
 	LabelHeight int    `json:"labelHeight"`
@@ -887,7 +1022,7 @@ func BaseShape() *Shape {
 	return &Shape{
 		Opacity:     1,
 		StrokeDash:  0,
-		StrokeWidth: 2,
+		StrokeWidth: DEFAULT_SHAPE_STROKE_WIDTH,
 		Text: Text{
 			Bold:       true,
 			FontFamily: "DEFAULT",
@@ -895,8 +1030,29 @@ func BaseShape() *Shape {
 	}
 }
 
+// MotionLabel anchors the caption and its mask while a partial route is drawn.
+type MotionLabel struct {
+	Point
+	Opacity float64 `json:"opacity"`
+}
+
+// TraceEndpoint identifies which end of an animated polyline is still being drawn.
+type TraceEndpoint string
+
+const (
+	TraceSource      TraceEndpoint = "source"
+	TraceDestination TraceEndpoint = "destination"
+)
+
 type Connection struct {
 	ID string `json:"id"`
+
+	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
+	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`
+	// MotionTip marks the free end of a partially drawn connection.
+	MotionTip TraceEndpoint `json:"motionTip,omitempty"`
+	// MotionDashOffset pins a backward trace’s dashes to its stationary end.
+	MotionDashOffset float64 `json:"motionDashOffset,omitempty"`
 
 	Classes []string `json:"classes,omitempty"`
 
@@ -908,12 +1064,14 @@ type Connection struct {
 	DstArrow Arrowhead `json:"dstArrow"`
 	DstLabel *Text     `json:"dstLabel,omitempty"`
 
-	Opacity      float64 `json:"opacity"`
-	StrokeDash   float64 `json:"strokeDash"`
-	StrokeWidth  int     `json:"strokeWidth"`
-	Stroke       string  `json:"stroke"`
-	Fill         string  `json:"fill,omitempty"`
-	BorderRadius float64 `json:"borderRadius,omitempty"`
+	Opacity     float64 `json:"opacity"`
+	StrokeDash  float64 `json:"strokeDash"`
+	StrokeWidth int     `json:"strokeWidth"`
+	// Tween frames retain the subpixel difference from the integer layout width.
+	StrokeWidthOffset float64 `json:"strokeWidthOffset,omitempty"`
+	Stroke            string  `json:"stroke"`
+	Fill              string  `json:"fill,omitempty"`
+	BorderRadius      float64 `json:"borderRadius,omitempty"`
 
 	Text
 	LabelPosition   string  `json:"labelPosition"`
@@ -952,7 +1110,7 @@ func (c *Connection) GetIconPosition() *geo.Point {
 
 	point, _ := label.FromString(c.IconPosition).GetPointOnRoute(
 		c.Route,
-		float64(c.StrokeWidth),
+		c.RenderedStrokeWidth(),
 		-1,
 		float64(DEFAULT_ICON_SIZE),
 		float64(DEFAULT_ICON_SIZE),
@@ -976,6 +1134,10 @@ func BaseConnection() *Connection {
 	}
 }
 
+func (c Connection) RenderedStrokeWidth() float64 {
+	return float64(c.StrokeWidth) + c.StrokeWidthOffset
+}
+
 func (c Connection) GetFontColor() string {
 	if c.Color != color.Empty {
 		return c.Color
@@ -986,31 +1148,38 @@ func (c Connection) GetFontColor() string {
 func (c Connection) CSSStyle() string {
 	out := ""
 
-	out += fmt.Sprintf(`stroke-width:%d;`, c.StrokeWidth)
+	out += "stroke-width:" + svg.FormatFloat(c.RenderedStrokeWidth()) + ";"
 	strokeDash := c.StrokeDash
 	if strokeDash == 0 && c.Animated {
 		strokeDash = 5
 	}
 	if strokeDash != 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(c.StrokeWidth), strokeDash)
-		out += fmt.Sprintf(`stroke-dasharray:%f,%f;`, dashSize, gapSize)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(c.RenderedStrokeWidth(), strokeDash)
+		out += "stroke-dasharray:" + svg.FormatFloat(dashSize) + "," + svg.FormatFloat(gapSize) + ";"
+
+		if c.MotionDashOffset != 0 {
+			out += "stroke-dashoffset:" + svg.FormatFloat(c.MotionDashOffset) + ";"
+		}
 
 		if c.Animated {
 			dashOffset := -10
 			if c.SrcArrow != NoArrowhead && c.DstArrow == NoArrowhead {
 				dashOffset = 10
 			}
-			out += fmt.Sprintf(`stroke-dashoffset:%f;`, float64(dashOffset)*(dashSize+gapSize))
-			out += fmt.Sprintf(`animation: dashdraw %fs linear infinite;`, gapSize*0.5)
+			out += "stroke-dashoffset:" + svg.FormatFloat(float64(dashOffset)*(dashSize+gapSize)) + ";"
+			out += "animation: dashdraw " + svg.FormatFloat(gapSize*0.5) + "s linear infinite;"
 		}
 	}
 	return out
 }
 
 func (c *Connection) GetLabelTopLeft() *geo.Point {
+	if p := c.MotionLabel; p != nil {
+		return geo.NewPoint(float64(p.X), float64(p.Y))
+	}
 	point, _ := label.FromString(c.LabelPosition).GetPointOnRoute(
 		c.Route,
-		float64(c.StrokeWidth),
+		c.RenderedStrokeWidth(),
 		c.LabelPercentage,
 		float64(c.LabelWidth),
 		float64(c.LabelHeight),
@@ -1056,7 +1225,7 @@ func (connection *Connection) GetArrowheadLabelPosition(isDst bool) *geo.Point {
 		}
 	}
 
-	strokeWidth := float64(connection.StrokeWidth)
+	strokeWidth := connection.RenderedStrokeWidth()
 
 	labelTL, _ := label.UnlockedTop.GetPointOnRoute(connection.Route, strokeWidth, position, width, height)
 
@@ -1382,10 +1551,43 @@ func init() {
 	SHAPE_TYPE_TO_DSL_SHAPE[shape.SQUARE_TYPE] = ShapeRectangle
 }
 
+// OuterLabelBox is the painted outline used to place outside and border labels.
+func (s *Shape) OuterLabelBox(box *geo.Box) *geo.Box {
+	var dx, dy int
+	if s.ThreeDee {
+		dx, dy = THREE_DEE_OFFSET, THREE_DEE_OFFSET
+		if s.Type == ShapeHexagon {
+			dy /= 2
+		}
+	} else if s.Multiple {
+		dx, dy = MULTIPLE_OFFSET, MULTIPLE_OFFSET
+	} else {
+		return box
+	}
+	return geo.NewBox(geo.NewPoint(box.TopLeft.X, box.TopLeft.Y-float64(dy)), box.Width+float64(dx), box.Height+float64(dy))
+}
+
+// IconBounds returns the rendered icon rectangle for a shape with an icon.
+func (s *Shape) IconBounds(outline shape.Shape) *geo.Box {
+	position := label.FromString(s.IconPosition)
+	var box *geo.Box
+	if position.IsOutside() {
+		box = outline.GetBox()
+	} else {
+		box = outline.GetInnerBox()
+	}
+	size := float64(GetIconSize(box, s.IconPosition))
+	return geo.NewBox(position.GetPointOnBox(box, label.PADDING, size, size), size, size)
+}
+
 func GetIconSize(box *geo.Box, position string) int {
 	iconPosition := label.FromString(position)
 
 	minDimension := int(math.Min(box.Width, box.Height))
+	// A tightly sized shape can have no usable interior for an icon.
+	if minDimension <= 0 {
+		return 0
+	}
 	halfMinDimension := int(math.Ceil(0.5 * float64(minDimension)))
 
 	var size int

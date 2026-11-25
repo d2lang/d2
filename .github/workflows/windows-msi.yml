@@ -28,7 +28,7 @@ jobs:
         with:
           ref: ${{ inputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-archives
           path: ${{ runner.temp }}/release-archives
@@ -57,21 +57,72 @@ jobs:
       - name: Install pinned WiX 7 toolset
         shell: pwsh
         run: |
-          dotnet tool install --tool-path "$env:RUNNER_TEMP\wix" wix --version 7.0.0
+          dotnet tool install --tool-path "$env:RUNNER_TEMP\wix" wix --version 7.0.1
           "$env:RUNNER_TEMP\wix" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Build and verify MSI
+      - name: Build and verify both MSIs
         shell: pwsh
         env:
           WIX7_EULA_ACCEPTED: ${{ vars.WIX7_EULA_ACCEPTED }}
         run: |
-          ./ci/release/windows/build.ps1 `
-            -Version $env:VERSION `
-            -ArchivePath "$env:RUNNER_TEMP\release-archives\d2-$env:VERSION-windows-amd64.tar.gz" `
-            -OutputDirectory "$env:RUNNER_TEMP\windows-msi"
+          $inputs = @{
+            Version = $env:VERSION
+            ArchivePath = "$env:RUNNER_TEMP\release-archives\d2-$env:VERSION-windows-amd64.tar.gz"
+            OutputDirectory = "$env:RUNNER_TEMP\windows-msi"
+          }
+          ./ci/release/windows/build.ps1 @inputs
+          ./ci/release/windows/build.ps1 @inputs -CurrentUser
+
+      - name: Verify upgrades and uninstalls for both scopes
+        shell: pwsh
+        run: |
+          # Windows Server blocks unmanaged user installs by default. Exercise desktop
+          # behavior on this disposable runner with the test account still unelevated.
+          $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer'
+          if (-not (Test-Path $policy)) { New-Item -Path $policy -Force | Out-Null }
+          New-ItemProperty -Path $policy -Name DisableMSI -PropertyType DWord -Value 0 -Force | Out-Null
+
+          # The standard account needs read access to its installers and test script.
+          $stage = New-Item -ItemType Directory -Path "$env:ProgramFiles\D2 MSI test"
+          Copy-Item -LiteralPath ./ci/release/windows/test-install.ps1 -Destination $stage
+          Copy-Item -LiteralPath ./ci/release/windows/d2.ico -Destination $stage
+          # Use a recognizable older payload and distinct MSI product codes. PR packages use version 0.0.0.
+          Set-Content -LiteralPath "$stage\d2.exe" -Value 'upgrade fixture'
+          Set-Content -LiteralPath "$stage\THIRD_PARTY_NOTICES.txt" -Value 'upgrade fixture'
+          Push-Location $stage
+          try {
+            foreach ($suffix in '', '-user') {
+              wix build -acceptEula wix7 -arch x64 -d D2Version=0.0.0 -o "previous$suffix.msi" `
+                "$env:GITHUB_WORKSPACE\ci\release\windows\d2$suffix.wxs"
+              if ($LASTEXITCODE -ne 0) { throw "Building the upgrade fixture failed" }
+              Copy-Item "$env:RUNNER_TEMP\windows-msi\d2-$env:VERSION-windows-amd64$suffix.msi" "d2$suffix.msi"
+            }
+          } finally {
+            Pop-Location
+          }
+          $password = ConvertTo-SecureString ("T1!" + [guid]::NewGuid().ToString("N")) -AsPlainText -Force
+          $user = New-LocalUser -Name 'D2MsiTest' -Password $password
+          try {
+            $users = Get-LocalGroup -SID 'S-1-5-32-545'
+            if ($user.SID -notin (Get-LocalGroupMember -Group $users).SID) {
+              Add-LocalGroupMember -Group $users -Member $user
+            }
+            $credential = [pscredential]::new("$env:COMPUTERNAME\$($user.Name)", $password)
+            $arguments = "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File `"$stage\test-install.ps1`" -Scope User -Version $env:VERSION"
+            # Give msiexec the test user's profile and temp directory.
+            $test = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments `
+              -Credential $credential -LoadUserProfile -UseNewEnvironment -WorkingDirectory $stage -Wait -PassThru `
+              -RedirectStandardOutput "$env:RUNNER_TEMP\d2-user.out" -RedirectStandardError "$env:RUNNER_TEMP\d2-user.err"
+            Get-Content -LiteralPath "$env:RUNNER_TEMP\d2-user.out", "$env:RUNNER_TEMP\d2-user.err"
+            if ($test.ExitCode -ne 0) { throw "Standard-user test exited with $($test.ExitCode)" }
+            & "$stage\test-install.ps1" -Scope Machine -Version $env:VERSION
+          } finally {
+            Remove-LocalUser -Name $user.Name
+            Remove-Item -LiteralPath $stage -Recurse -Force
+          }
 
       - name: Upload verified MSI artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-msi
           path: ${{ runner.temp }}/windows-msi/*.msi

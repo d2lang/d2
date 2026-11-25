@@ -15,6 +15,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/loops"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/packing"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placement"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/proximity"
@@ -26,7 +27,11 @@ const maxGraphSize = limits.MaxGraphSize
 
 // LayoutOptions configures one deterministic layout attempt.
 type LayoutOptions struct {
-	Seed int64
+	PortLengths             map[layoutgraph.EntityID]float64
+	Seed                    int64
+	CompactHierarchySpacing bool
+	LoopClearance           bool
+	skipDirectedSplitJoins  bool
 }
 
 type pipelineStage struct {
@@ -61,17 +66,19 @@ func newRoutingSnapshot(ctx context.Context, ovg *routing.OVG, g *layoutgraph.Gr
 }
 
 type pipeline struct {
-	graph                    *layoutgraph.Graph
-	seed                     int64
-	random                   *rand.Rand
-	hierarchyPlacementRandom *rand.Rand
-	stages                   []pipelineStage
-	storeSnapshots           bool
-	snapshots                []*routingSnapshot
-	stageDurations           []time.Duration
-	forceReroute             bool
-	edgeRoutingComplete      bool
-	alignAxesNeeded          bool
+	graph               *layoutgraph.Graph
+	seed                int64
+	random              *rand.Rand
+	hierarchyPlacement  hierarchy.Placement
+	hierarchyDiscovery  hierarchy.Discovery
+	retrySplitJoin      bool
+	stages              []pipelineStage
+	storeSnapshots      bool
+	snapshots           []*routingSnapshot
+	stageDurations      []time.Duration
+	forceReroute        bool
+	edgeRoutingComplete bool
+	alignAxesNeeded     bool
 }
 
 // defaultPipelineStages is immutable after initialization. Tests that wrap or
@@ -139,12 +146,12 @@ func (p *pipeline) shortcutEdgeRoutes(ctx context.Context) error {
 // newPipeline initializes one deterministic layout pipeline.
 func newPipeline(graph *layoutgraph.Graph, randSeed int64, storeSnapshots bool) *pipeline {
 	return &pipeline{
-		graph:                    graph,
-		seed:                     randSeed,
-		hierarchyPlacementRandom: rand.New(rand.NewSource(randSeed)),
-		random:                   rand.New(rand.NewSource(randSeed)),
-		storeSnapshots:           storeSnapshots,
-		alignAxesNeeded:          true,
+		graph:              graph,
+		seed:               randSeed,
+		hierarchyPlacement: hierarchy.Placement{Random: rand.New(rand.NewSource(randSeed))},
+		random:             rand.New(rand.NewSource(randSeed)),
+		storeSnapshots:     storeSnapshots,
+		alignAxesNeeded:    true,
 	}
 }
 
@@ -167,11 +174,11 @@ func (p *pipeline) preprocessClusters(ctx context.Context) error {
 }
 
 func (p *pipeline) preprocessHierarchies(ctx context.Context) error {
-	if err := hierarchy.Assign(ctx, p.graph, nil, hierarchy.Candidates(p.graph)); err != nil {
+	if err := p.hierarchyDiscovery.Assign(ctx, p.graph, nil, hierarchy.Candidates(p.graph)); err != nil {
 		return err
 	}
 
-	if err := hierarchy.Place(ctx, p.graph, nil, p.hierarchyPlacementRandom); err != nil {
+	if err := p.hierarchyPlacement.Place(ctx, p.graph, nil); err != nil {
 		return err
 	}
 
@@ -445,6 +452,7 @@ func (p *pipeline) runAllStages(ctx context.Context) error {
 			width := br.X - tl.X
 			height := br.Y - tl.Y
 			if (width > maxGraphSize) || (height > maxGraphSize) {
+				p.retrySplitJoin = p.hierarchyDiscovery.UsedDirectedSplitJoin
 				return invariant.Errorf("Dimensions w:%v, h:%v reached after stage %v", width, height, stage.name)
 			}
 		}
@@ -465,20 +473,35 @@ func Layout(ctx context.Context, graph *layoutgraph.Graph, options LayoutOptions
 	if graph == nil {
 		return nil, fmt.Errorf("TALA Autolayout requires a graph")
 	}
-	workspace, err := layoutgraph.Clone(ctx, graph)
+	// Container fitting, alignment, edge labels and later packing can all enlarge
+	// an automatically ranked split and rejoin beyond its discovery estimate.
+	// Retry the same seed with its ordinary placement only on an actual extent
+	// failure. A requested hierarchy and every other error keep their semantics.
+	ctx, _, err := layoutgraph.EnsureTransactionWorkGuard(ctx, "AutolayoutTransactions")
 	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return nil, fmt.Errorf("Autolayout: %w", contextErr)
+		return nil, err
+	}
+	for {
+		workspace, err := layoutgraph.Clone(ctx, graph)
+		if err != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return nil, fmt.Errorf("Autolayout: %w", contextErr)
+			}
+			return nil, err
 		}
-		return nil, err
+		attempt, err := runLayout(ctx, workspace, options, pipelineInstrumentation{}, false)
+		if err != nil {
+			if attempt != nil && attempt.retrySplitJoin && !options.skipDirectedSplitJoins && !options.CompactHierarchySpacing {
+				options.skipDirectedSplitJoins = true
+				continue
+			}
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("Autolayout: %w", err)
+		}
+		return workspace, nil
 	}
-	if _, err := runLayout(ctx, workspace, options, pipelineInstrumentation{}, false); err != nil {
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("Autolayout: %w", err)
-	}
-	return workspace, nil
 }
 
 type pipelineInstrumentation struct {
@@ -510,7 +533,18 @@ func runLayout(ctx context.Context, graph *layoutgraph.Graph, options LayoutOpti
 		workCtx, cancelWork = context.WithCancel(ctx)
 	}
 	defer cancelWork()
+	if len(options.PortLengths) > 0 {
+		placement.ReservePortLengths(graph, options.PortLengths)
+	}
 	pipeline := newPipeline(graph, options.Seed, instrumentation.storeSnapshots)
+	if options.LoopClearance {
+		if err := loops.EnableSeparateCorners(workCtx, graph); err != nil {
+			return nil, err
+		}
+		pipeline.hierarchyPlacement.ClearLoopRanks = true
+	}
+	pipeline.hierarchyPlacement.CompactSpacing = options.CompactHierarchySpacing
+	pipeline.hierarchyDiscovery.SkipDirectedSplitJoins = options.skipDirectedSplitJoins
 	if instrumentation.measureStageDurations {
 		pipeline.enableStageTiming()
 	}

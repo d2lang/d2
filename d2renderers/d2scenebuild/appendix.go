@@ -112,7 +112,7 @@ func (b *builder) preflightAppendix() error {
 			paint bool
 		}{
 			{field: "tooltip", value: targetShape.Tooltip, paint: targetShape.Tooltip != ""},
-			{field: "prettyLink", value: targetShape.PrettyLink, paint: targetShape.Link != ""},
+			{field: "prettyLink", value: targetShape.AppendixLinkText(), paint: targetShape.Link != ""},
 		} {
 			if item.paint {
 				items++
@@ -442,7 +442,7 @@ func appendixIconNumbers(diagram *d2target.Diagram) (tooltips, links []int) {
 			tooltips[index] = number
 			number++
 		}
-		if targetShape.Link != "" {
+		if targetShape.AppendixLinkText() != "" {
 			links[index] = number
 			number++
 		}

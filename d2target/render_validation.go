@@ -13,7 +13,8 @@ const (
 	// Bound raw render targets before they reach recursive hashing and
 	// multi-board rendering. Validation itself remains iterative.
 	maxRenderTargetBoardDepth = 1_024
-	maxRenderTargetBoardCount = 4_096
+	// MaxRenderTargetBoards includes authored boards and their tween samples.
+	MaxRenderTargetBoards = 16_384
 )
 
 // ValidateRenderTarget checks the invariants required by renderers which
@@ -50,6 +51,7 @@ func ValidateRenderTarget(root *Diagram) error {
 			{name: "layers", children: entry.diagram.Layers},
 			{name: "scenarios", children: entry.diagram.Scenarios},
 			{name: "steps", children: entry.diagram.Steps},
+			{name: "tweenFrames", children: entry.diagram.TweenFrames},
 		}
 		// Push in reverse so errors follow the renderer's layers, scenarios,
 		// steps traversal order without using recursive calls.
@@ -61,6 +63,9 @@ func ValidateRenderTarget(root *Diagram) error {
 				if child == nil {
 					return fmt.Errorf("render target board %s is nil", childPath)
 				}
+				if group.name == "tweenFrames" && (len(child.Layers) != 0 || len(child.Scenarios) != 0 || len(child.Steps) != 0 || len(child.TweenFrames) != 0) {
+					return fmt.Errorf("render target tween frame %s must not contain other boards", childPath)
+				}
 				childDepth := entry.depth + 1
 				if childDepth > maxRenderTargetBoardDepth {
 					return fmt.Errorf("render target board tree exceeds depth %d at %s", maxRenderTargetBoardDepth, childPath)
@@ -69,8 +74,8 @@ func ValidateRenderTarget(root *Diagram) error {
 					return fmt.Errorf("render target board %s reuses board %s", childPath, firstPath)
 				}
 				boardCount++
-				if boardCount > maxRenderTargetBoardCount {
-					return fmt.Errorf("render target board tree exceeds %d total boards", maxRenderTargetBoardCount)
+				if boardCount > MaxRenderTargetBoards {
+					return fmt.Errorf("render target board tree exceeds %d total boards", MaxRenderTargetBoards)
 				}
 				seen[child] = childPath
 				stack = append(stack, boardEntry{diagram: child, path: childPath, depth: childDepth})
@@ -82,6 +87,22 @@ func ValidateRenderTarget(root *Diagram) error {
 }
 
 func validateRenderBoard(diagram *Diagram, path string) error {
+	if len(diagram.TweenFrames) > MaxTweenFrames {
+		return fmt.Errorf("render target %s has more than %d tween frames", path, MaxTweenFrames)
+	}
+	if diagram.TweenDurationMS > MaxTweenDurationMS || diagram.TweenDurationMS < len(diagram.TweenFrames) || (len(diagram.TweenFrames) == 0 && diagram.TweenDurationMS != 0) {
+		return fmt.Errorf("render target %s has inconsistent tween duration %dms for %d frames", path, diagram.TweenDurationMS, len(diagram.TweenFrames))
+	}
+	if times := diagram.TweenFrameEndsMS; len(times) > 0 {
+		if len(times) != len(diagram.TweenFrames) {
+			return fmt.Errorf("render target %s requires one end time per tween frame", path)
+		}
+		for i, ms := range times {
+			if ms <= 0 || ms > diagram.TweenDurationMS || (i > 0 && ms <= times[i-1]) {
+				return fmt.Errorf("render target %s has invalid tween frame time %dms at index %d", path, ms, i)
+			}
+		}
+	}
 	if err := validateRenderFontFamily(diagram.FontFamily, path+".fontFamily"); err != nil {
 		return err
 	}
@@ -142,6 +163,7 @@ func validateRenderLegendConnection(connection Connection, path string) error {
 	legendConnection.DstArrow = connection.DstArrow
 	legendConnection.StrokeDash = connection.StrokeDash
 	legendConnection.StrokeWidth = connection.StrokeWidth
+	legendConnection.StrokeWidthOffset = connection.StrokeWidthOffset
 	legendConnection.BorderRadius = connection.BorderRadius
 	legendConnection.Opacity = connection.Opacity
 	if err := validateRenderConnectionNumbers(legendConnection, path); err != nil {
@@ -187,10 +209,10 @@ func validateRenderConnection(connection Connection, path string) error {
 			return fmt.Errorf("render target %s.route[%d] must contain finite coordinates", path, i)
 		}
 		pointPath := fmt.Sprintf("%s.route[%d]", path, i)
-		if err := validateRenderRouteCoordinate(pointPath, "x", point.X, connection.StrokeWidth); err != nil {
+		if err := validateRenderRouteCoordinate(pointPath, "x", point.X, connection.RenderedStrokeWidth()); err != nil {
 			return err
 		}
-		if err := validateRenderRouteCoordinate(pointPath, "y", point.Y, connection.StrokeWidth); err != nil {
+		if err := validateRenderRouteCoordinate(pointPath, "y", point.Y, connection.RenderedStrokeWidth()); err != nil {
 			return err
 		}
 		if i > 0 {
@@ -275,7 +297,42 @@ func validateRenderFontFamily(family *d2fonts.FontFamily, path string) error {
 	return nil
 }
 
+func validateMotionClip(c *MotionClip, path string) error {
+	if c != nil && (c.Width <= 0 || c.Height <= 0) {
+		return invalidRenderField(path, "motionClip", c, "must have positive dimensions")
+	}
+	return nil
+}
+
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
+	if r := targetShape.RowReveal; r != nil {
+		if targetShape.Type != ShapeSQLTable || r.FullHeight <= 0 || targetShape.Width <= 0 || r.FullHeight < targetShape.Height ||
+			len(targetShape.Columns) == 0 || targetShape.Height <= 0 || targetShape.SQLRowHeight() > float64(targetShape.Height) {
+			return invalidRenderField(path, "rowReveal", r, "must describe rows within a growing SQL table")
+		}
+	}
+	if b := targetShape.MotionLabelBox; b != nil && (b.Width <= 0 || b.Height <= 0) {
+		return invalidRenderField(path, "motionLabelBox", b, "must have positive dimensions")
+	}
+	if p := targetShape.OutlineProgress; p != nil {
+		if err := validateInkProgress(path, "outlineProgress", *p); err != nil {
+			return err
+		}
+	}
+	if t := targetShape.SketchFillTransition; t != nil {
+		if !validSketchFillPaint(t.From) || !validSketchFillPaint(t.To) {
+			return fmt.Errorf("render target %s sketchFillTransition requires solid fills", path)
+		}
+		if err := validateInkProgress(path, "sketchFillTransition.progress", t.Progress); err != nil {
+			return err
+		}
+	}
+	if !finiteRenderNumber(targetShape.MotionScale) || targetShape.MotionScale < 0 || targetShape.MotionScale > 1 {
+		return invalidRenderField(path, "motionScale", targetShape.MotionScale, "must be between zero and one")
+	}
+	if err := validateMotionClip(targetShape.MotionClip, path); err != nil {
+		return err
+	}
 	for _, field := range []struct {
 		name  string
 		value int
@@ -293,7 +350,10 @@ func validateRenderShapeNumbers(targetShape Shape, path string) error {
 	if err := validateRenderOpacity(path, targetShape.Opacity); err != nil {
 		return err
 	}
-	if err := validateRenderDash(path, targetShape.StrokeDash, targetShape.StrokeWidth); err != nil {
+	if !ValidStrokeWidthOffset(targetShape.StrokeWidth, targetShape.StrokeWidthOffset) {
+		return invalidRenderField(path, "strokeWidthOffset", targetShape.StrokeWidthOffset, "must be subpixel and keep stroke width in range")
+	}
+	if err := validateRenderDash(path, targetShape.StrokeDash, targetShape.RenderedStrokeWidth()); err != nil {
 		return err
 	}
 	if targetShape.ContentAspectRatio != nil && (!finiteRenderNumber(*targetShape.ContentAspectRatio) || *targetShape.ContentAspectRatio <= 0) {
@@ -306,13 +366,38 @@ func validateRenderShapeNumbers(targetShape Shape, path string) error {
 }
 
 func validateRenderConnectionNumbers(connection Connection, path string) error {
+	if tip := connection.MotionTip; tip != "" && (tip != TraceSource && tip != TraceDestination || connection.IsCurve) {
+		return invalidRenderField(path, "motionTip", tip, "requires the source or destination of a polyline trace")
+	}
+	if v := connection.MotionDashOffset; v != 0 && (!finiteRenderNumber(v) || connection.StrokeDash <= 0 || connection.Animated) {
+		return invalidRenderField(path, "motionDashOffset", v, "requires a finite offset on a dashed, non-animated stroke")
+	}
+	if p := connection.MotionLabel; p != nil {
+		if connection.Label == "" {
+			return invalidRenderField(path, "motionLabel", p, "requires a connection caption")
+		}
+		// Caption backgrounds can extend four pixels past the text box.
+		caption := Shape{Pos: p.Point, Width: connection.LabelWidth, Height: connection.LabelHeight, StrokeWidth: 8}
+		if err := validateRenderShapeIntegerBounds(path+".motionLabel", caption); err != nil {
+			return err
+		}
+		if err := validateRenderOpacity(path+".motionLabel", p.Opacity); err != nil {
+			return err
+		}
+	}
+	if err := validateMotionClip(connection.MotionClip, path); err != nil {
+		return err
+	}
 	if connection.StrokeWidth < 0 {
 		return invalidRenderField(path, "strokeWidth", connection.StrokeWidth, "must be non-negative")
 	}
 	if err := validateRenderOpacity(path, connection.Opacity); err != nil {
 		return err
 	}
-	if err := validateRenderDash(path, connection.StrokeDash, connection.StrokeWidth); err != nil {
+	if !ValidStrokeWidthOffset(connection.StrokeWidth, connection.StrokeWidthOffset) {
+		return invalidRenderField(path, "strokeWidthOffset", connection.StrokeWidthOffset, "must be subpixel and keep stroke width in range")
+	}
+	if err := validateRenderDash(path, connection.StrokeDash, connection.RenderedStrokeWidth()); err != nil {
 		return err
 	}
 	if !finiteRenderNumber(connection.BorderRadius) || connection.BorderRadius < 0 {
@@ -347,12 +432,26 @@ func validateRenderOpacity(path string, opacity float64) error {
 	return nil
 }
 
-func validateRenderDash(path string, dash float64, strokeWidth int) error {
+// ValidStrokeWidthOffset checks that the fractional part of an animated stroke
+// preserves a nonnegative width and an outward bound representable as an int.
+func ValidStrokeWidthOffset(width int, offset float64) bool {
+	return offset > -1 && offset < 1 && (width > 0 || width == 0 && offset >= 0) && (width < math.MaxInt || offset <= 0)
+}
+
+// StrokeWidthExtent rounds a validated stroke outward for integer layout bounds.
+func StrokeWidthExtent(width int, offset float64) int {
+	if offset > 0 {
+		return width + 1
+	}
+	return width
+}
+
+func validateRenderDash(path string, dash, strokeWidth float64) error {
 	if !finiteRenderNumber(dash) || dash < 0 {
 		return invalidRenderField(path, "strokeDash", dash, "must be finite and non-negative")
 	}
 	if dash > 0 && strokeWidth > 0 {
-		dashSize, gapSize := svg.GetStrokeDashAttributes(float64(strokeWidth), dash)
+		dashSize, gapSize := svg.GetStrokeDashAttributes(strokeWidth, dash)
 		if !finiteRenderNumber(dashSize) || !finiteRenderNumber(gapSize) || dashSize < 0 || gapSize < 0 {
 			return invalidRenderField(path, "strokeDash", dash, "must produce finite non-negative dash lengths with strokeWidth")
 		}
@@ -360,7 +459,34 @@ func validateRenderDash(path string, dash float64, strokeWidth int) error {
 	return nil
 }
 
+func validateInkProgress(path, field string, progress float64) error {
+	if !(progress >= 0 && progress <= 1) {
+		return invalidRenderField(path, field, progress, "must be finite and within [0,1]")
+	}
+	return nil
+}
+
 func validateRenderTextNumbers(path, prefix string, text Text) error {
+	if p := text.UnderlineProgress; p != nil {
+		if err := validateInkProgress(path, prefix+"underlineProgress", *p); err != nil {
+			return err
+		}
+	}
+	if t := text.MarkdownStrike; t != nil {
+		if err := validateInkProgress(path, prefix+"markdownStrike.progress", t.Progress); err != nil {
+			return err
+		}
+		if len(t.PlainRanges) > len(text.Label) {
+			return fmt.Errorf("render target %s.%smarkdownStrike has more ranges than label bytes", path, prefix)
+		}
+		last := 0.
+		for _, span := range t.PlainRanges {
+			if !(span[0] >= last && span[1] > span[0] && span[1] <= 1) {
+				return fmt.Errorf("render target %s.%smarkdownStrike.plainRanges must be ordered, nonoverlapping fractions within [0,1]", path, prefix)
+			}
+			last = span[1]
+		}
+	}
 	for _, field := range []struct {
 		name  string
 		value int
@@ -379,7 +505,8 @@ func validateRenderTextNumbers(path, prefix string, text Text) error {
 func validateRenderShapeIntegerBounds(path string, targetShape Shape) error {
 	maxInt := int64(^uint(0) >> 1)
 	minInt := -maxInt - 1
-	halfStroke := int64(targetShape.StrokeWidth/2 + targetShape.StrokeWidth%2)
+	stroke := StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
+	halfStroke := int64(stroke/2 + stroke%2)
 	for _, axis := range []struct {
 		name      string
 		position  int
@@ -402,10 +529,10 @@ func validateRenderShapeIntegerBounds(path string, targetShape Shape) error {
 	return nil
 }
 
-func validateRenderRouteCoordinate(path, field string, coordinate float64, strokeWidth int) error {
+func validateRenderRouteCoordinate(path, field string, coordinate, strokeWidth float64) error {
 	maxInt := int64(^uint(0) >> 1)
 	minInt := -maxInt - 1
-	halfStroke := math.Ceil(float64(strokeWidth) / 2)
+	halfStroke := math.Ceil(strokeWidth / 2)
 	// BoundingBox floors/ceils route coordinates and converts them to int.
 	// Strict comparisons avoid the rounded float64 representation of MaxInt.
 	if math.Floor(coordinate)-halfStroke <= float64(minInt) || math.Ceil(coordinate)+halfStroke >= float64(maxInt) {

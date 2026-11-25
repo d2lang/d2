@@ -1,9 +1,10 @@
 package placementcost
 
 import (
+	"cmp"
 	"context"
-	"fmt"
 	"math"
+	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
@@ -24,33 +25,130 @@ type EdgeLengthOptions struct {
 
 // NodesEdgeLength sums the edge-length cost rooted at each node in order.
 func NodesEdgeLength(ctx context.Context, nodes layoutgraph.Nodes, options EdgeLengthOptions) (float64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
 	}
 	result := 0.0
 	for _, node := range nodes {
-		length, err := NodeEdgeLength(ctx, node, options)
+		length, err := nodeEdgeLength(&p, node, options)
 		if err != nil {
 			return 0, err
 		}
 		result += length
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	return result, nil
 }
 
 type edgeScratch struct {
-	used             []bool
-	nRepl            []*layoutgraph.Node
-	aRepl            []*layoutgraph.Node
-	clusterOrder     []*layoutgraph.Node
-	edgeAbductions   []*layoutgraph.EdgeAbduction
-	obstructionSets  [][]*layoutgraph.Node
+	used            []bool
+	nRepl           []*layoutgraph.Node
+	aRepl           []*layoutgraph.Node
+	clusterOrder    []*layoutgraph.Node
+	edgeAbductions  []*layoutgraph.EdgeAbduction
+	obstructionSets [][]*layoutgraph.Node
+	// obstructionKeys lists the containers whose children are in
+	// obstructionSets; obstructionAdded mirrors it once it is long.
+	obstructionKeys  []*layoutgraph.Node
 	obstructionAdded map[*layoutgraph.Node]struct{}
+	// labeledEdgeCount is only used for nodes with many labeled edges;
+	// labelCounts[i] is the number of labeled incident edges whose endpoint
+	// replacements have the same IDs as edge i's (0 for unlabeled edges).
 	labeledEdgeCount map[labeledEdgePair]int
+	labelCounts      []int
+	// Ancestor chains of the endpoints of the edge being scanned.
+	nodeAncestry, adjacentAncestry []*layoutgraph.Node
+	// Sweep mode (see NewNodeEdgeLengthSweepScorer): per edge, its filtered
+	// obstacles, built on first use.
+	sweepOn    bool
+	sweepMover *layoutgraph.Node
+	sweepEdges []sweepEdgeObstacles
+	// Early exit (see NodeEdgeLengthScorer.ScoreUnlessAbove).
+	exitOn                bool
+	exitOffset, exitBound float64
 }
+
+// sweepObstacle is an obstacle of a sweep scorer's edge that passed the
+// topology filters of the obstacle scan; the box (excludes' values) is kept
+// for obstacles that cannot move during the sweep.
+type sweepObstacle struct {
+	node                *layoutgraph.Node
+	x, y, right, bottom float64
+	finite              bool
+	moving              bool
+}
+
+type sweepEdgeObstacles struct {
+	built     bool
+	obstacles []sweepObstacle
+}
+
+// sweepBuilt reports whether edge's sweep obstacles were collected.
+func (s *edgeScratch) sweepBuilt(edge int) bool {
+	return edge < len(s.sweepEdges) && s.sweepEdges[edge].built
+}
+
+// sweepObstacles returns edge's filtered obstacle sequence, building it from
+// s.obstructionSets (this edge's scan in the current evaluation) on first use.
+// The filters are the obstacle scan's own skips that do not depend on
+// geometry: nil (an ancestor of everything), ancestors of either endpoint,
+// other graphs, the endpoints, the endpoints' cluster vessels; plus a missing
+// TopLeft for obstacles that cannot move.
+func (s *edgeScratch) sweepObstacles(edge, edges int, nodeReplacement, adjacentNodeReplacement *layoutgraph.Node) []sweepObstacle {
+	if len(s.sweepEdges) < edges {
+		s.sweepEdges = slices.Grow(s.sweepEdges[:0], edges)[:edges]
+	}
+	entry := &s.sweepEdges[edge]
+	if entry.built {
+		return entry.obstacles
+	}
+	obstacles := entry.obstacles[:0]
+	for _, obstructions := range s.obstructionSets {
+		for _, obstruction := range obstructions {
+			if obstruction == nil {
+				continue
+			}
+			if nodeReplacement.IsDescendantOf(obstruction) || adjacentNodeReplacement.IsDescendantOf(obstruction) {
+				continue
+			}
+			if obstruction.Graph != nodeReplacement.Graph {
+				continue
+			}
+			if obstruction == nodeReplacement || obstruction == adjacentNodeReplacement {
+				continue
+			}
+			if obstruction.IsClusterVessel() {
+				if (nodeReplacement.Cluster != nil && nodeReplacement.Cluster.Vessel == obstruction) || (adjacentNodeReplacement.Cluster != nil && adjacentNodeReplacement.Cluster.Vessel == obstruction) {
+					continue
+				}
+			}
+			moving := obstruction.IsDescendantOf(s.sweepMover)
+			if !moving && obstruction.TopLeft == nil {
+				continue
+			}
+			obstacle := sweepObstacle{node: obstruction, moving: moving}
+			if !moving {
+				x, y := obstruction.TopLeft.X, obstruction.TopLeft.Y
+				right, bottom := x+obstruction.Width, y+obstruction.Height
+				obstacle.x, obstacle.y, obstacle.right, obstacle.bottom = x, y, right, bottom
+				obstacle.finite = (x-x)+(y-y)+(right-right)+(bottom-bottom) == 0
+			}
+			obstacles = append(obstacles, obstacle)
+		}
+	}
+	entry.built, entry.obstacles = true, obstacles
+	return obstacles
+}
+
+// Above these sizes the scratch uses maps instead of linear scans; both give
+// the same answers.
+const (
+	maxLinearObstructionKeys = 16
+	maxLinearLabeledEdges    = 64
+)
 
 type labeledEdgePair struct {
 	from layoutgraph.EntityID
@@ -61,48 +159,81 @@ var scratchPool = typedpool.New(func() *edgeScratch { return new(edgeScratch) })
 
 const maxPooledEdgeScratchEntries = 4096
 
+// retainable reports whether the scratch is small enough to pool: every
+// slice and map within maxPooledEdgeScratchEntries, and the sweep obstacles
+// of all edges together too (they were capped per edge, so one scratch could
+// keep 4096 x 4096 of them). TinyGo's sync.Pool (d2's wasm build) never
+// frees what it holds. obstructionKeys and labelCounts bound what the maps
+// that mirror them (obstructionAdded, labeledEdgeCount) have held. Entries
+// of sweepEdges beyond its length keep their obstacle storage for reuse, so
+// all of them count.
+func (s *edgeScratch) retainable() bool {
+	const limit = maxPooledEdgeScratchEntries
+	if cap(s.used) > limit || cap(s.nRepl) > limit || cap(s.aRepl) > limit ||
+		cap(s.clusterOrder) > limit || cap(s.edgeAbductions) > limit ||
+		cap(s.obstructionSets) > limit || cap(s.obstructionKeys) > limit || len(s.obstructionAdded) > limit ||
+		cap(s.labelCounts) > limit || len(s.labeledEdgeCount) > limit ||
+		cap(s.nodeAncestry) > limit || cap(s.adjacentAncestry) > limit || cap(s.sweepEdges) > limit {
+		return false
+	}
+	obstacles := 0
+	for _, edge := range s.sweepEdges[:cap(s.sweepEdges)] {
+		obstacles += cap(edge.obstacles)
+	}
+	return obstacles <= limit
+}
+
+// putEdgeScratch clears the scratch's references and pools it, or leaves a
+// scratch that is too large to the collector. clusterOrder, edgeAbductions,
+// obstructionSets and obstructionKeys are only ever filled by appending from
+// length zero, and every shortening clears what it drops, so no entry beyond
+// their length holds a reference.
 func putEdgeScratch(s *edgeScratch) {
+	if !s.retainable() {
+		return
+	}
 	clear(s.used)
 	s.used = s.used[:0]
 	clear(s.nRepl)
 	s.nRepl = s.nRepl[:0]
 	clear(s.aRepl)
 	s.aRepl = s.aRepl[:0]
-	if cap(s.clusterOrder) > maxPooledEdgeScratchEntries {
-		s.clusterOrder = nil
-	} else {
-		clear(s.clusterOrder[:cap(s.clusterOrder)])
-		s.clusterOrder = s.clusterOrder[:0]
-	}
-	if cap(s.edgeAbductions) > maxPooledEdgeScratchEntries {
-		s.edgeAbductions = nil
-	} else {
-		clear(s.edgeAbductions[:cap(s.edgeAbductions)])
-		s.edgeAbductions = s.edgeAbductions[:0]
-	}
-	if cap(s.obstructionSets) > maxPooledEdgeScratchEntries {
-		s.obstructionSets = nil
-		s.obstructionAdded = nil
-	} else {
-		clear(s.obstructionSets[:cap(s.obstructionSets)])
-		s.obstructionSets = s.obstructionSets[:0]
+	clear(s.clusterOrder)
+	s.clusterOrder = s.clusterOrder[:0]
+	clear(s.edgeAbductions)
+	s.edgeAbductions = s.edgeAbductions[:0]
+	clear(s.obstructionSets)
+	s.obstructionSets = s.obstructionSets[:0]
+	if len(s.obstructionAdded) != 0 {
 		clear(s.obstructionAdded)
 	}
-	if len(s.labeledEdgeCount) > maxPooledEdgeScratchEntries {
-		s.labeledEdgeCount = nil
-	} else {
+	clear(s.obstructionKeys)
+	s.obstructionKeys = s.obstructionKeys[:0]
+	s.labelCounts = s.labelCounts[:0]
+	if len(s.labeledEdgeCount) != 0 {
 		clear(s.labeledEdgeCount)
 	}
+	s.nodeAncestry = releaseNodeChain(s.nodeAncestry)
+	s.adjacentAncestry = releaseNodeChain(s.adjacentAncestry)
+	s.sweepOn, s.sweepMover = false, nil
+	s.exitOn = false
+	for i := range s.sweepEdges {
+		edge := &s.sweepEdges[i]
+		clear(edge.obstacles)
+		edge.obstacles = edge.obstacles[:0]
+		edge.built = false
+	}
+	s.sweepEdges = s.sweepEdges[:0]
 	scratchPool.Put(s)
 }
 
-func checkScoringSlice(ctx context.Context, length int) error {
-	for start := 0; start < length; start += scoringCancellationCheckInterval {
-		if err := scoringCancellationError(ctx, start); err != nil {
-			return err
-		}
+// releaseNodeChain empties a pooled node slice without retaining references.
+func releaseNodeChain(chain []*layoutgraph.Node) []*layoutgraph.Node {
+	if cap(chain) > maxPooledEdgeScratchEntries {
+		return nil
 	}
-	return nil
+	clear(chain[:cap(chain)])
+	return chain[:0]
 }
 
 // Helper function to calculate midpoint and check semi-diagonal for horizontal directions
@@ -127,19 +258,32 @@ func calculateVerticalMidpoint(nodeReplacement, adjacentNodeReplacement *layoutg
 
 // NodeEdgeLength evaluates the incident-edge cost rooted at node.
 func NodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options EdgeLengthOptions) (float64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	p := newScoringPoll(ctx)
+	if err := p.entry(); err != nil {
+		return 0, err
 	}
+	return nodeEdgeLengthPolled(&p, node, options)
+}
+
+// nodeEdgeLength is NodeEdgeLength within an evaluation that already polls.
+func nodeEdgeLength(p *scoringPoll, node *layoutgraph.Node, options EdgeLengthOptions) (float64, error) {
+	if err := p.check(); err != nil {
+		return 0, err
+	}
+	return nodeEdgeLengthPolled(p, node, options)
+}
+
+func nodeEdgeLengthPolled(p *scoringPoll, node *layoutgraph.Node, options EdgeLengthOptions) (float64, error) {
 	s := scratchPool.Get()
 	defer putEdgeScratch(s)
-	setup, err := prepareNodeEdgeLength(ctx, node, options, s)
+	setup, err := prepareNodeEdgeLength(p, node, options, s)
 	if err != nil {
 		return 0, err
 	}
-	return evaluateNodeEdgeLength(ctx, node, options, s, setup)
+	return evaluateNodeEdgeLength(p, node, options, s, setup)
 }
 
-func prepareNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options EdgeLengthOptions, s *edgeScratch) (edgeLengthStatic, error) {
+func prepareNodeEdgeLength(p *scoringPoll, node *layoutgraph.Node, options EdgeLengthOptions, s *edgeScratch) (edgeLengthStatic, error) {
 	includeSizes := options.IncludeNodeSizes
 	directionPenalty := options.PenalizeDirection
 
@@ -149,11 +293,16 @@ func prepareNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options 
 		for vessel := range node.Graph.Clusters {
 			s.clusterOrder = append(s.clusterOrder, vessel)
 		}
-		layoutgraph.SortNodesByID(s.clusterOrder)
+		// Same order as layoutgraph.SortNodesByID (vessels have distinct IDs,
+		// so the ascending order is unique) without sort.Slice's reflection
+		// allocation on every preparation.
+		slices.SortFunc(s.clusterOrder, func(a, b *layoutgraph.Node) int {
+			return cmp.Compare(a.IDValue(), b.IDValue())
+		})
 
 		s.edgeAbductions = s.edgeAbductions[:0]
 		for i, vessel := range s.clusterOrder {
-			if err := scoringCancellationError(ctx, i); err != nil {
+			if err := p.at(i); err != nil {
 				return edgeLengthStatic{}, err
 			}
 			cluster := node.Graph.Clusters[vessel]
@@ -170,7 +319,7 @@ func prepareNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options 
 	usedEdgeAbductions := s.used
 	// putEdgeScratch clears retained storage before pooling it; this scan keeps
 	// cancellation bounded without clearing the same memory twice.
-	if err := checkScoringSlice(ctx, len(usedEdgeAbductions)); err != nil {
+	if err := p.slice(len(usedEdgeAbductions)); err != nil {
 		return edgeLengthStatic{}, err
 	}
 
@@ -180,7 +329,7 @@ func prepareNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options 
 		s.nRepl = s.nRepl[:len(node.Edges)]
 	}
 	nodeReplacements := s.nRepl
-	if err := checkScoringSlice(ctx, len(nodeReplacements)); err != nil {
+	if err := p.slice(len(nodeReplacements)); err != nil {
 		return edgeLengthStatic{}, err
 	}
 
@@ -190,12 +339,12 @@ func prepareNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options 
 		s.aRepl = s.aRepl[:len(node.Edges)]
 	}
 	adjReplacements := s.aRepl
-	if err := checkScoringSlice(ctx, len(adjReplacements)); err != nil {
+	if err := p.slice(len(adjReplacements)); err != nil {
 		return edgeLengthStatic{}, err
 	}
 
 	for i, e := range node.Edges {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return edgeLengthStatic{}, err
 		}
 		adjacentNode := node.Adjacent(e)
@@ -205,7 +354,7 @@ func prepareNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options 
 
 		if includeSizes {
 			for j, edgeAbduction := range edgeAbductions {
-				if err := scoringCancellationError(ctx, j); err != nil {
+				if err := p.at(j); err != nil {
 					return edgeLengthStatic{}, err
 				}
 				if usedEdgeAbductions[j] {
@@ -262,7 +411,7 @@ func prepareNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options 
 
 				if includeSizes {
 					for i, e := range node.Edges {
-						if err := scoringCancellationError(ctx, i); err != nil {
+						if err := p.at(i); err != nil {
 							return edgeLengthStatic{}, err
 						}
 						nodeReplacement := nodeReplacements[i]
@@ -323,26 +472,22 @@ func prepareNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options 
 	}
 
 	// get the edges between each nodeReplacement and adjacentNodeReplacement
+	labeled := 0
 	for i, edge := range node.Edges {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return edgeLengthStatic{}, err
 		}
 		if !includeSizes || edge.Label == nil {
 			continue
 		}
-		if s.labeledEdgeCount == nil {
-			s.labeledEdgeCount = make(map[labeledEdgePair]int)
-		}
-		nodeReplacement := nodeReplacements[i]
-		adjacentNodeReplacement := adjReplacements[i]
-		pair := labeledEdgePair{from: nodeReplacement.ID, to: adjacentNodeReplacement.ID}
-		s.labeledEdgeCount[pair]++
+		labeled++
 	}
+	countLabeledEdgePairs(node, nodeReplacements, adjReplacements, labeled, s)
 
 	return edgeLengthStatic{direction: direction, directionFactor: directionFactor}, nil
 }
 
-func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options EdgeLengthOptions, s *edgeScratch, setup edgeLengthStatic) (float64, error) {
+func evaluateNodeEdgeLength(p *scoringPoll, node *layoutgraph.Node, options EdgeLengthOptions, s *edgeScratch, setup edgeLengthStatic) (float64, error) {
 	includeSizes := options.IncludeNodeSizes
 	directionPenalty := options.PenalizeDirection
 	minGapSize := 0.0
@@ -354,8 +499,22 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 	compass := directionCompass(direction)
 	totalDistance := 0.0
 	nodeContainer := node.EffectiveContainer()
+	// Graph.TurnCost takes the graph's cost lock on every call. It derives the
+	// cost from the geometry on its first use after a reset and returns that
+	// value until the next reset, so within one evaluation (nothing moves) every
+	// call returns the first call's value; the first call still happens where
+	// the evaluation first needs the cost.
+	var turnCost float64
+	turnCostRead := false
+	graphTurnCost := func() float64 {
+		if !turnCostRead {
+			turnCost = node.Graph.TurnCost()
+			turnCostRead = true
+		}
+		return turnCost
+	}
 	for i, e := range node.Edges {
-		if err := scoringCancellationError(ctx, i); err != nil {
+		if err := p.at(i); err != nil {
 			return 0, err
 		}
 		adjacentNode := node.Adjacent(e)
@@ -388,16 +547,20 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 		var nodeVal *geo.Point
 		var adjacentNodeVal *geo.Point
 
-		// Lazy calculation of centers and edge direction - only when needed
+		// Lazy calculation of centers and edge direction - only when needed.
+		// The centers are the points Center() returns, kept in this frame
+		// instead of allocated.
 		var nodeCenter, adjacentNodeCenter *geo.Point
+		var nodeCenterPoint, adjacentNodeCenterPoint geo.Point
 		var edgeDirection geo.Orientation
 		var edgeDirectionCalculated bool
 		var edgeDir geo.Orientation
 
 		getCenters := func() {
 			if nodeCenter == nil {
-				nodeCenter = nodeReplacement.Center()
-				adjacentNodeCenter = adjacentNodeReplacement.Center()
+				nodeCenterPoint = geo.Point{X: nodeReplacement.TopLeft.X + nodeReplacement.Width/2, Y: nodeReplacement.TopLeft.Y + nodeReplacement.Height/2}
+				adjacentNodeCenterPoint = geo.Point{X: adjacentNodeReplacement.TopLeft.X + adjacentNodeReplacement.Width/2, Y: adjacentNodeReplacement.TopLeft.Y + adjacentNodeReplacement.Height/2}
+				nodeCenter, adjacentNodeCenter = &nodeCenterPoint, &adjacentNodeCenterPoint
 			}
 		}
 
@@ -517,11 +680,19 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 				distance = distanceToPoint(nodeReplacement, geo.NewPoint(nodeVal.X, adjacentNodeVal.Y), includeSizes) +
 					distanceToPoint(adjacentNodeReplacement, geo.NewPoint(nodeVal.X, adjacentNodeVal.Y), includeSizes)
 				if includeSizes {
-					distance += node.Graph.TurnCost()
+					distance += graphTurnCost()
 				}
 			} else {
 				distance = placementDistance(nodeReplacement, adjacentNodeReplacement, includeSizes)
 			}
+		}
+
+		if s.exitOn && geo.PrecisionCompare(totalDistance+distance-s.exitOffset, s.exitBound, geo.PRECISION) == 1 {
+			// See NodeEdgeLengthScorer.ScoreUnlessAbove: everything this edge
+			// still adds to distance is non-negative, and so is every later
+			// contribution, so the full sum compares above too; the obstacle
+			// scan and penalties of this edge need not run.
+			return totalDistance + distance, nil
 		}
 
 		if includeSizes && node.IsContainer() && adjacentNode.IsContainer() && nodeContainer == adjacentNode.EffectiveContainer() {
@@ -529,13 +700,13 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 			// If the widths are roughly equal in size, we want alignment on either one of the sides or the center
 			if math.Min(node.Width, adjacentNode.Width) > math.Max(node.Width, adjacentNode.Width)*0.75 {
 				if (node.TopLeft.X != adjacentNode.TopLeft.X) && (node.TopLeft.X+node.Width != adjacentNode.TopLeft.X+adjacentNode.Width) && ((node.TopLeft.X+node.Width)/2 != (adjacentNode.TopLeft.X+adjacentNode.Width)/2) {
-					containerAlignmentPenalty = node.Graph.TurnCost()
+					containerAlignmentPenalty = graphTurnCost()
 				}
 			}
 
 			if math.Min(node.Height, adjacentNode.Height) > math.Max(node.Height, adjacentNode.Height)*0.75 {
 				if (node.TopLeft.Y != adjacentNode.TopLeft.Y) && (node.TopLeft.Y+node.Height != adjacentNode.TopLeft.Y+adjacentNode.Height) && ((node.TopLeft.Y+node.Height)/2 != (adjacentNode.TopLeft.Y+adjacentNode.Height)/2) {
-					containerAlignmentPenalty = node.Graph.TurnCost()
+					containerAlignmentPenalty = graphTurnCost()
 				}
 			}
 
@@ -858,60 +1029,143 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 
 			bestRouteBlocked := false
 			alternateRouteBlocked := !isSemiDiagonal
-			clear(s.obstructionSets)
-			s.obstructionSets = s.obstructionSets[:0]
-			if s.obstructionAdded == nil {
-				s.obstructionAdded = make(map[*layoutgraph.Node]struct{})
-			} else {
-				clear(s.obstructionAdded)
-			}
-			ancestor := nodeReplacement.NearestSharedAncestor(adjacentNodeReplacement)
+			// A sweep scorer that already filtered this edge's obstacles does
+			// not need the container sets again (they depend on topology only).
+			if !s.sweepOn || !s.sweepBuilt(i) {
+				clear(s.obstructionSets)
+				s.obstructionSets = s.obstructionSets[:0]
+				s.resetObstructionKeys()
+				ancestor := nodeReplacement.NearestSharedAncestor(adjacentNodeReplacement)
 
-			curr := nodeReplacement.EffectiveContainer()
-			for {
-				if _, ok := s.obstructionAdded[curr]; ok {
-					break
+				curr := nodeReplacement.EffectiveContainer()
+				for {
+					if s.hasObstructionKey(curr) {
+						break
+					}
+					s.obstructionSets = append(s.obstructionSets, node.Graph.Containers[curr])
+					s.addObstructionKey(curr)
+					if curr == nil {
+						break
+					}
+					curr = curr.EffectiveContainer()
+					if curr == ancestor {
+						break
+					}
 				}
-				s.obstructionSets = append(s.obstructionSets, node.Graph.Containers[curr])
-				s.obstructionAdded[curr] = struct{}{}
-				if curr == nil {
-					break
-				}
-				curr = curr.EffectiveContainer()
-				if curr == ancestor {
-					break
+
+				curr = adjacentNodeReplacement.EffectiveContainer()
+				for {
+					if s.hasObstructionKey(curr) {
+						break
+					}
+					s.obstructionSets = append(s.obstructionSets, node.Graph.Containers[curr])
+					s.addObstructionKey(curr)
+					if curr == nil {
+						break
+					}
+					curr = curr.EffectiveContainer()
+					if curr == ancestor {
+						break
+					}
 				}
 			}
 
-			curr = adjacentNodeReplacement.EffectiveContainer()
-			for {
-				if _, ok := s.obstructionAdded[curr]; ok {
-					break
-				}
-				s.obstructionSets = append(s.obstructionSets, node.Graph.Containers[curr])
-				s.obstructionAdded[curr] = struct{}{}
-				if curr == nil {
-					break
-				}
-				curr = curr.EffectiveContainer()
-				if curr == ancestor {
-					break
+			boundsUsable := bounds.usable
+			boundsLeft, boundsTop, boundsRight, boundsBottom := bounds.left, bounds.top, bounds.right, bounds.bottom
+			if s.sweepOn {
+				// A sweep scorer: between its evaluations only s.sweepMover and
+				// its descendants move, so this edge's obstacles that pass the
+				// filters below that depend only on topology, with the boxes of
+				// those that cannot move, were collected once, in scan order.
+				// Every check is a skip without side effects, so testing the
+				// rest (bounds.excludes, inline as below; TopLeft for movers)
+				// on that sequence finds the same obstacles in the same order.
+				obstacles := s.sweepObstacles(i, len(node.Edges), nodeReplacement, adjacentNodeReplacement)
+				for k := range obstacles {
+					if k&(scoringCancellationCheckInterval-1) == 0 {
+						if err := p.check(); err != nil {
+							return 0, err
+						}
+					}
+					obstacle := &obstacles[k]
+					obstruction := obstacle.node
+					if obstacle.moving {
+						if obstruction.TopLeft == nil {
+							continue
+						}
+						if boundsUsable {
+							x, y := obstruction.TopLeft.X, obstruction.TopLeft.Y
+							right, bottom := x+obstruction.Width, y+obstruction.Height
+							if (x-x)+(y-y)+(right-right)+(bottom-bottom) == 0 &&
+								((x < boundsLeft && right < boundsLeft) ||
+									(x > boundsRight && right > boundsRight) ||
+									(y < boundsTop && bottom < boundsTop) ||
+									(y > boundsBottom && bottom > boundsBottom)) {
+								continue
+							}
+						}
+					} else if boundsUsable && obstacle.finite &&
+						((obstacle.x < boundsLeft && obstacle.right < boundsLeft) ||
+							(obstacle.x > boundsRight && obstacle.right > boundsRight) ||
+							(obstacle.y < boundsTop && obstacle.bottom < boundsTop) ||
+							(obstacle.y > boundsBottom && obstacle.bottom > boundsBottom)) {
+						continue
+					}
+					if !bestRouteBlocked && checkBestRouteBlocked(obstruction) {
+						bestRouteBlocked = true
+					}
+					if bestRouteBlocked && !alternateRouteBlocked && checkAlternateRouteBlocked(obstruction) {
+						alternateRouteBlocked = true
+					}
+					if bestRouteBlocked && alternateRouteBlocked {
+						break
+					}
 				}
 			}
-
+			// The loop below tests bounds.excludes and IsDescendantOf inline:
+			// the same operations on the same values, without a call per
+			// obstacle (excludes is not inlinable).
+			var nodeAncestry, adjacentAncestry []*layoutgraph.Node
+			var nodeAncestryOK, adjacentAncestryOK bool
+			if !s.sweepOn {
+				nodeAncestry, nodeAncestryOK = appendScoringAncestry(s.nodeAncestry[:0], nodeReplacement)
+				adjacentAncestry, adjacentAncestryOK = appendScoringAncestry(s.adjacentAncestry[:0], adjacentNodeReplacement)
+				s.nodeAncestry, s.adjacentAncestry = nodeAncestry, adjacentAncestry
+			}
+			// reached counts the obstacles the scan reached (it stops at the
+			// one that blocks both routes); an EdgeLengthSession records it.
+			reached := 0
 			for obstructionSetIndex, obstructions := range s.obstructionSets {
-				if err := scoringCancellationError(ctx, obstructionSetIndex); err != nil {
+				if s.sweepOn {
+					break
+				}
+				if err := p.at(obstructionSetIndex); err != nil {
 					return 0, err
 				}
 				for i := 0; i < len(obstructions); i++ {
-					if err := scoringCancellationError(ctx, i); err != nil {
-						return 0, err
+					// p.at(i) for i >= 0.
+					if i&(scoringCancellationCheckInterval-1) == 0 {
+						if err := p.check(); err != nil {
+							return 0, err
+						}
 					}
 					obstruction := obstructions[i]
-					if bounds.excludes(obstruction) {
-						continue
+					reached++
+					// bounds.excludes(obstruction)
+					if boundsUsable && obstruction != nil && obstruction.TopLeft != nil {
+						x, y := obstruction.TopLeft.X, obstruction.TopLeft.Y
+						right, bottom := x+obstruction.Width, y+obstruction.Height
+						if (x-x)+(y-y)+(right-right)+(bottom-bottom) == 0 &&
+							((x < boundsLeft && right < boundsLeft) ||
+								(x > boundsRight && right > boundsRight) ||
+								(y < boundsTop && bottom < boundsTop) ||
+								(y > boundsBottom && bottom > boundsBottom)) {
+							continue
+						}
 					}
-					if nodeReplacement.IsDescendantOf(obstruction) || adjacentNodeReplacement.IsDescendantOf(obstruction) {
+					// nodeReplacement.IsDescendantOf(obstruction) || adjacentNodeReplacement.IsDescendantOf(obstruction)
+					if scoringAncestryHas(nodeAncestry, nodeAncestryOK, nodeReplacement, obstruction) ||
+						scoringAncestryHas(adjacentAncestry, adjacentAncestryOK, adjacentNodeReplacement, obstruction) {
 						continue
 					}
 					// Used during initialization, or sibling coming from subgraph that hasn't gone yet
@@ -946,29 +1200,32 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 					break
 				}
 			}
+			if p.sess != nil {
+				p.sess.recordScan(bounds, s.obstructionKeys, reached)
+			}
 			if bestRouteBlocked {
 				var passThroughCost float64
 				// Penalize deeply for obstructing cluster
 				if nodeReplacement.Cluster != nil || adjacentNodeReplacement.Cluster != nil {
-					passThroughCost = node.Graph.TurnCost() * 2
+					passThroughCost = graphTurnCost() * 2
 				} else if isDiagonal {
 					// When it's diagonal, the shortest route would've been an L shaped, so to turn it in an S-shape is only one extra turn
-					passThroughCost = node.Graph.TurnCost()
+					passThroughCost = graphTurnCost()
 				} else if isSemiDiagonal {
 					if alternateRouteBlocked {
-						passThroughCost = node.Graph.TurnCost() * 2
+						passThroughCost = graphTurnCost() * 2
 					} else {
 						// Just an L-shape
-						passThroughCost = node.Graph.TurnCost()
+						passThroughCost = graphTurnCost()
 					}
 				} else {
 					// When it's straight, takes 2 extra turns to get around the obstruction
-					passThroughCost = node.Graph.TurnCost() * 2
+					passThroughCost = graphTurnCost() * 2
 				}
 				distance += passThroughCost
 			}
 
-			badClusterArrangementPenalty := node.Graph.TurnCost()
+			badClusterArrangementPenalty := graphTurnCost()
 
 			if nodeReplacement.Cluster != nil {
 				switch nodeReplacement.Cluster.Arrangement {
@@ -1032,7 +1289,7 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 					}
 				}
 				// Reward being aligned with center when on the right side
-				cost := node.Graph.TurnCost()
+				cost := graphTurnCost()
 				switch nodeReplacement.Cluster.Arrangement {
 				case layoutgraph.Row:
 					switch thisClusterDirection {
@@ -1104,7 +1361,7 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 					}
 				}
 
-				cost := node.Graph.TurnCost()
+				cost := graphTurnCost()
 				switch adjacentNodeReplacement.Cluster.Arrangement {
 				case layoutgraph.Row:
 					switch thisClusterDirection {
@@ -1129,7 +1386,7 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 				columnIndex = *e.FromTableColumnIndex
 			}
 			for i, e2 := range adjacentNodeReplacement.Edges {
-				if err := scoringCancellationError(ctx, i); err != nil {
+				if err := p.at(i); err != nil {
 					return 0, err
 				}
 				if !e2.IsBetweenTableColumns() {
@@ -1250,18 +1507,17 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 			if e.HasLargeArrowheadLabel() {
 				edgeDir = getEdgeDirection()
 				if !edgeDir.IsHorizontal() {
-					distance += 10 * node.Graph.TurnCost()
+					distance += 10 * graphTurnCost()
 				}
 			} else if e.Label != nil {
 				if !directionPenalty || !direction.IsVertical() {
-					pair := labeledEdgePair{from: nodeReplacement.ID, to: adjacentNodeReplacement.ID}
-					count := s.labeledEdgeCount[pair]
+					count := s.labelCounts[i]
 					// with 2 vertical edges a label can go on each side without obstructing each other
 					if count > 2 {
 						edgeDir = getEdgeDirection()
 						if !edgeDir.IsHorizontal() {
 							// penalize labeled edges with many duplicates if they are not horizontal
-							distance += float64(count) * node.Graph.TurnCost()
+							distance += float64(count) * graphTurnCost()
 						}
 					}
 				}
@@ -1269,6 +1525,11 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 		}
 
 		totalDistance += distance
+		if s.exitOn && geo.PrecisionCompare(totalDistance-s.exitOffset, s.exitBound, geo.PRECISION) == 1 {
+			// See NodeEdgeLengthScorer.ScoreUnlessAbove: everything still to
+			// be added is non-negative, so the full sum compares the same.
+			return totalDistance, nil
+		}
 	}
 
 	// We don't care about getting as close as possible to all Nears, we just want to get close to one of them
@@ -1277,7 +1538,7 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 		minDistanceToNear := math.Inf(1)
 		nearIndex := 0
 		for near := range node.Nears {
-			if err := scoringCancellationError(ctx, nearIndex); err != nil {
+			if err := p.at(nearIndex); err != nil {
 				return 0, err
 			}
 			nearIndex++
@@ -1323,11 +1584,144 @@ func evaluateNodeEdgeLength(ctx context.Context, node *layoutgraph.Node, options
 		totalDistance += cost * (1. - axisScore) * float64(len(siblings)-1)
 	}
 
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("EdgeLength: %w", err)
+	if err := p.check(); err != nil {
+		return 0, err
 	}
 	if includeSizes {
 		totalDistance += flowContinuityCost(node, s)
 	}
 	return totalDistance, nil
+}
+
+// maxScoringAncestry bounds appendScoringAncestry; deeper (or cyclic) parent
+// chains are left to IsDescendantOf itself.
+const maxScoringAncestry = 4096
+
+// appendScoringAncestry appends node and the nodes IsDescendantOf visits from
+// it: its Container, else its cluster's vessel, else its sequence's vessel,
+// repeatedly. ok is false if the chain is longer than maxScoringAncestry.
+func appendScoringAncestry(chain []*layoutgraph.Node, node *layoutgraph.Node) ([]*layoutgraph.Node, bool) {
+	for depth := 0; node != nil; depth++ {
+		if depth == maxScoringAncestry {
+			return chain, false
+		}
+		chain = append(chain, node)
+		switch {
+		case node.Container != nil:
+			node = node.Container
+		case node.Cluster != nil:
+			node = node.Cluster.Vessel
+		case node.Sequence != nil:
+			node = node.Sequence.Vessel
+		default:
+			node = nil
+		}
+	}
+	return chain, true
+}
+
+// scoringAncestryHas is node.IsDescendantOf(ancestor) for chain, ok =
+// appendScoringAncestry(..., node): IsDescendantOf is true exactly when
+// ancestor is a node of the chain, or nil (the walk's end answers
+// ancestor == nil).
+func scoringAncestryHas(chain []*layoutgraph.Node, ok bool, node, ancestor *layoutgraph.Node) bool {
+	if !ok {
+		return node.IsDescendantOf(ancestor)
+	}
+	if ancestor == nil {
+		return true
+	}
+	for _, n := range chain {
+		if n == ancestor {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *edgeScratch) resetObstructionKeys() {
+	clear(s.obstructionKeys)
+	s.obstructionKeys = s.obstructionKeys[:0]
+	if s.obstructionAdded != nil {
+		clear(s.obstructionAdded)
+	}
+}
+
+// hasObstructionKey reports whether container's children were already added
+// for this edge (container may be nil, the root).
+func (s *edgeScratch) hasObstructionKey(container *layoutgraph.Node) bool {
+	if len(s.obstructionKeys) > maxLinearObstructionKeys {
+		_, ok := s.obstructionAdded[container]
+		return ok
+	}
+	for _, key := range s.obstructionKeys {
+		if key == container {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *edgeScratch) addObstructionKey(container *layoutgraph.Node) {
+	s.obstructionKeys = append(s.obstructionKeys, container)
+	if len(s.obstructionKeys) <= maxLinearObstructionKeys {
+		return
+	}
+	if s.obstructionAdded == nil {
+		s.obstructionAdded = make(map[*layoutgraph.Node]struct{}, 2*maxLinearObstructionKeys)
+	}
+	if len(s.obstructionKeys) == maxLinearObstructionKeys+1 {
+		for _, key := range s.obstructionKeys {
+			s.obstructionAdded[key] = struct{}{}
+		}
+		return
+	}
+	s.obstructionAdded[container] = struct{}{}
+}
+
+// countLabeledEdgePairs fills s.labelCounts: for each labeled incident edge
+// (counted only when sizes are included, as before), the number of labeled
+// incident edges whose endpoint replacements have the same pair of IDs.
+func countLabeledEdgePairs(node *layoutgraph.Node, nodeReplacements, adjReplacements []*layoutgraph.Node, labeled int, s *edgeScratch) {
+	if cap(s.labelCounts) < len(node.Edges) {
+		s.labelCounts = make([]int, len(node.Edges))
+	} else {
+		s.labelCounts = s.labelCounts[:len(node.Edges)]
+		clear(s.labelCounts)
+	}
+	if labeled == 0 {
+		return
+	}
+	isLabeled := func(i int) bool { return node.Edges[i].Label != nil }
+	if labeled > maxLinearLabeledEdges {
+		if s.labeledEdgeCount == nil {
+			s.labeledEdgeCount = make(map[labeledEdgePair]int)
+		} else {
+			clear(s.labeledEdgeCount)
+		}
+		for i := range node.Edges {
+			if isLabeled(i) {
+				s.labeledEdgeCount[labeledEdgePair{from: nodeReplacements[i].ID, to: adjReplacements[i].ID}]++
+			}
+		}
+		for i := range node.Edges {
+			if isLabeled(i) {
+				s.labelCounts[i] = s.labeledEdgeCount[labeledEdgePair{from: nodeReplacements[i].ID, to: adjReplacements[i].ID}]
+			}
+		}
+		return
+	}
+	for i := range node.Edges {
+		if !isLabeled(i) {
+			continue
+		}
+		from, to := nodeReplacements[i].ID, adjReplacements[i].ID
+		count := 0
+		for j := range node.Edges {
+			if isLabeled(j) && nodeReplacements[j].ID == from && adjReplacements[j].ID == to {
+				count++
+			}
+		}
+		s.labelCounts[i] = count
+	}
 }

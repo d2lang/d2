@@ -12,19 +12,21 @@ import (
 // is intentional, and an edge may cross a boundary enclosing either endpoint.
 // Curved routes and nonrectangular silhouettes require renderer geometry and are
 // deliberately not treated as invalid based only on their bounding boxes.
-func measureGeometry(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard) error {
+func measureGeometry(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard, issues *LoopInspection) error {
 	for i, node := range g.Nodes {
 		if err := guard.Step(); err != nil {
 			return err
 		}
-		if node.IsInvisible || !node.IsRectangular() {
+		rectangular := node.IsRectangular()
+		if node.IsInvisible || (!rectangular && issues == nil) {
 			continue
 		}
 		for _, other := range g.Nodes[i+1:] {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			if other.IsInvisible || !other.IsRectangular() || !boxesOverlapWithPadding(node.Box, other.Box, 0) {
+			known := rectangular && other.IsRectangular()
+			if other.IsInvisible || (!known && issues == nil) || !boxesOverlapWithPadding(node.Box, other.Box, 0) {
 				continue
 			}
 			related, err := relatedNodes(node, other, guard)
@@ -32,7 +34,10 @@ func measureGeometry(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGua
 				return err
 			}
 			if !related {
-				score.NodeOverlaps++
+				if known {
+					score.NodeOverlaps++
+				}
+				issues.add(nodeItem(node), nodeItem(other), 1, known && (len(node.LoopOffsets) != 0 || len(other.LoopOffsets) != 0))
 			}
 		}
 		for _, edge := range g.Edges {
@@ -59,7 +64,10 @@ func measureGeometry(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGua
 					continue
 				}
 				if segmentEntersBox(node.Box, edge.Points[i-1], edge.Points[i]) {
-					score.RouteObstructions++
+					if rectangular {
+						score.RouteObstructions++
+					}
+					issues.add(nodeItem(node), routeItem(edge), 1, rectangular && (edge.IsLoop() || len(node.LoopOffsets) != 0))
 					break // One obstruction per edge/node, independent of subdivision.
 				}
 			}

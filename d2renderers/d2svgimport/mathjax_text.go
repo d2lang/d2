@@ -184,8 +184,8 @@ func hasOnlyOptionalUnitAttributes(element *svgElement) bool {
 }
 
 func (i *svgImporter) validateFrozenMathJaxTextStyle(element *svgElement, style svgStyle) error {
-	_, explicitSolidFill := style.fill.(d2scene.SolidPaint)
-	if !style.display || !style.visible || (!style.fillCurrent && !explicitSolidFill) || style.fillOpacity != 1 ||
+	solidFill := style.fill != nil && style.fill.gradient == nil
+	if !style.display || !style.visible || !solidFill || style.fillOpacity != 1 ||
 		style.strokeWidth != 0 || style.fillRule != d2scene.NonZero || style.clipPathID != "" || style.opacity != 1 {
 		return i.errorf("frozen MathJax <text> fallback has unsupported inherited text paint or visibility")
 	}

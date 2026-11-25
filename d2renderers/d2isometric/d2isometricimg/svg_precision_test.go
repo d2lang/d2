@@ -27,25 +27,27 @@ func TestSVGVisibilityIgnoresProjectionFMAResiduals(t *testing.T) {
 		{points: svgVisibilityRectangle(2, 2, 6, 8, 1, 0, 0), opaque: true, order: 1},
 		{points: svgVisibilityRectangle(4, 2, 8, 8, 2, 0, 0), opaque: true, order: 2},
 	}
-	makeFaces := func(fused bool) (raw, canonical []svgVisibilityFace) {
+	// Ground-shadow intersections retain their exact world height through
+	// clipping and can reach visibility with fresh projection residuals.
+	makeFaces := func(fused bool) []svgVisibilityFace {
+		var faces []svgVisibilityFace
 		for i, face := range original {
-			p, q := face, face
-			p.points, q.points = nil, nil
+			points := make([]svgPoint, len(face.points))
 			for j, point := range face.points {
 				magnitude := math.Ldexp(1, 20+(i+j)%3)
-				x := project(point.x, magnitude, fused)
-				y := project(point.y, -magnitude, fused)
-				z := project(point.z, 1, fused)
-				p.points = append(p.points, svgPoint{x, y, z})
-				q.points = append(q.points, svgProjectedPoint(x, y, z))
+				points[j] = svgPoint{
+					project(point.x, magnitude, fused),
+					project(point.y, -magnitude, fused),
+					project(point.z, 1, fused),
+				}
 			}
-			raw, canonical = append(raw, p), append(canonical, q)
+			face.points = points
+			faces = append(faces, face)
 		}
-		return raw, canonical
+		return faces
 	}
-	rawRounded, rounded := makeFaces(false)
-	rawFused, fused := makeFaces(true)
-	if reflect.DeepEqual(rawRounded, rawFused) {
+	rounded, fused := makeFaces(false), makeFaces(true)
+	if reflect.DeepEqual(rounded, fused) {
 		t.Fatal("fixture did not produce distinct FMA projection residuals")
 	}
 	left, err := svgVisibleFaces(context.Background(), rounded)

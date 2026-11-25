@@ -37,6 +37,7 @@ type Material struct {
 	// Physical solid caps and unwrapped walls have a filled source background;
 	// their texture's antialiased perimeter is not a geometric hole.
 	svgSolidTexture bool
+	outsideCaption  bool // Paged exports give this printed surface its own link box.
 	gradient        string
 }
 
@@ -97,7 +98,7 @@ type Raster struct {
 	width, height, aa int
 	camera            rasterCamera
 	shadow            rasterShadow
-	groundShadow      rasterShadow
+	groundShadow      rasterGroundShadow
 	pixels            *image.RGBA
 	depth             []float32
 	output            *image.RGBA
@@ -192,24 +193,20 @@ func newRaster(ctx context.Context, width, height int, triangles []Triangle, bac
 	if err != nil {
 		return nil, err
 	}
-	r.groundShadow = r.shadow
-	groundTriangles := rasterGroundTriangles(triangles, r.ground, r.camera.direction)
-	if len(triangles) > 0 && &groundTriangles[0] != &triangles[0] {
-		if err := w.charge(int64(len(triangles))); err != nil {
-			return nil, err
-		}
+	if len(r.shadow.depth) > 0 {
+		groundTriangles := rasterGroundTriangles(triangles, r.ground, r.camera.direction)
+		light := r.shadow.camera
 		if len(groundCamera) > 0 && groundCamera[0] != nil {
-			r.groundShadow, err = rasterBuildShadow(&w, groundTriangles, *groundCamera[0])
-		} else {
-			r.groundShadow, err = rasterBuildShadow(&w, groundTriangles)
+			light = *groundCamera[0]
+		} else if &groundTriangles[0] != &triangles[0] {
+			light = rasterFit(groundTriangles, rasterShadowDirection(), 2048, 2048, 1.08)
 		}
+		r.groundShadow, err = buildGroundShadow(&w, groundTriangles, r.ground, light)
 		if err != nil {
 			return nil, err
 		}
-	}
-	if len(r.groundShadow.depth) > 0 {
 		var extent projectedExtent
-		extent.preparedGroundShadows(groundTriangles, nil, 0, r.ground, r.groundShadow.camera)
+		extent.preparedGroundShadows(groundTriangles, nil, 0, r.ground, light)
 		if extent.valid {
 			x0 := float64(r.camera.width)/2 + (extent.minX-r.camera.centerX)*r.camera.scale
 			x1 := float64(r.camera.width)/2 + (extent.maxX-r.camera.centerX)*r.camera.scale
@@ -676,16 +673,20 @@ const rasterShadowNormalOffset = .025
 
 func rasterShadowDirection() Vec { return Vec{X: -1, Y: 1.8, Z: 1} }
 
-func rasterShadowGround(ts []Triangle) float64 {
+func nativeMeshFloor(ts []Triangle) float64 {
 	ground := 0.
 	for _, t := range ts {
 		for _, v := range t.V {
 			ground = min(ground, v.Position.Y)
 		}
 	}
+	return ground
+}
+
+func rasterShadowGround(ts []Triangle) float64 {
 	// Keep the receiver close to the board substrate, so surface traces do
 	// not appear suspended above a distant ground plane.
-	return ground + .08
+	return nativeMeshFloor(ts) + .08
 }
 
 func rasterBuildShadow(w *rasterWork, ts []Triangle, fixedCamera ...rasterCamera) (rasterShadow, error) {
@@ -699,16 +700,19 @@ func rasterBuildShadow(w *rasterWork, ts []Triangle, fixedCamera ...rasterCamera
 	if !casters {
 		return rasterShadow{}, nil
 	}
-	shadow := rasterShadow{camera: rasterFit(ts, rasterShadowDirection(), 2048, 2048, 1.08)}
+	var camera rasterCamera
 	if len(fixedCamera) > 0 {
-		shadow.camera = fixedCamera[0]
+		camera = fixedCamera[0]
+	} else {
+		camera = rasterFit(ts, rasterShadowDirection(), 2048, 2048, 1.08)
 	}
-	shadow.depth = make([]float32, 2048*2048)
-	shadow.opacity = make([]uint8, 2048*2048)
-	for i := range shadow.depth {
-		shadow.depth[i] = float32(math.Inf(-1))
-	}
-	shadow.bias = math.Max(.012, 2/shadow.camera.scale)
+	return rasterizeShadow(w, ts, camera, math.Inf(-1), math.Inf(1))
+}
+
+// Each receiver-height band has its own light visibility. This preserves
+// authored alpha, including a texture hole exposing a caster behind it.
+func rasterizeShadow(w *rasterWork, ts []Triangle, camera rasterCamera, minY, maxY float64) (rasterShadow, error) {
+	shadow := rasterShadow{camera: camera, bias: math.Max(.012, 2/camera.scale)}
 	for i, t := range ts {
 		if i%512 == 0 {
 			if err := w.charge(0); err != nil {
@@ -718,6 +722,14 @@ func rasterBuildShadow(w *rasterWork, ts []Triangle, fixedCamera ...rasterCamera
 		if !t.CastShadow || (t.ShadowOpacity != nil && *t.ShadowOpacity <= 0) || (t.Material != nil && t.Material.Color.A == 0) {
 			continue
 		}
+		h0, h1, h2 := t.V[0].Position.Y, t.V[1].Position.Y, t.V[2].Position.Y
+		lo, hi := min(h0, h1, h2), max(h0, h1, h2)
+		if hi < minY || lo > maxY {
+			continue
+		}
+		// A face on the clipping plane is inside. Re-interpolating its
+		// constant height can round some of its samples outside the band.
+		crossesBoundary := lo < minY || hi > maxY
 		var p [3]rasterPoint
 		vertices := t.V
 		for j, v := range t.V {
@@ -732,7 +744,17 @@ func rasterBuildShadow(w *rasterWork, ts []Triangle, fixedCamera ...rasterCamera
 			vertices[1], vertices[2] = vertices[2], vertices[1]
 			a = -a
 		}
-		x0, y0, x1, y1 := rasterBounds(p, 2048, 2048)
+		x0, y0, x1, y1 := rasterBounds(p, camera.width, camera.height)
+		if x0 == x1 || y0 == y1 {
+			continue
+		}
+		if shadow.depth == nil {
+			shadow.depth = make([]float32, camera.width*camera.height)
+			shadow.opacity = make([]uint8, len(shadow.depth))
+			for j := range shadow.depth {
+				shadow.depth[j] = float32(math.Inf(-1))
+			}
+		}
 		if err := w.charge(int64(y1-y0) * 3); err != nil {
 			return shadow, err
 		}
@@ -748,6 +770,10 @@ func rasterBuildShadow(w *rasterWork, ts []Triangle, fixedCamera ...rasterCamera
 		}
 		if t.OpacityGroup != nil {
 			opacity = uint8(math.Round(float64(opacity) * t.OpacityGroup.Opacity))
+		}
+		var tex shadowAlphaTexture
+		if t.ShadowFillAlpha == nil && t.Material != nil {
+			tex = shadowTexture(t.Material.Texture)
 		}
 		for y := y0; y < y1; y++ {
 			if y%32 == 0 {
@@ -765,22 +791,29 @@ func rasterBuildShadow(w *rasterWork, ts []Triangle, fixedCamera ...rasterCamera
 				if u < 0 || v < 0 || s < 0 {
 					continue
 				}
+				if crossesBoundary {
+					height := (u*vertices[0].Position.Y + v*vertices[1].Position.Y + s*vertices[2].Position.Y) / a
+					if height < minY || height > maxY {
+						continue
+					}
+				}
 				z := float32((u*p[0].z + v*p[1].z + s*p[2].z) / a)
+				at := y*camera.width + x
+				if z <= shadow.depth[at] {
+					continue
+				}
 				sampleOpacity := opacity
-				if t.ShadowFillAlpha == nil && t.Material != nil && t.Material.Texture != nil {
+				if tex.pix != nil {
 					tx := (u*vertices[0].U + v*vertices[1].U + s*vertices[2].U) / a
 					ty := (u*vertices[0].V + v*vertices[1].V + s*vertices[2].V) / a
-					_, _, _, alpha := rasterTexture(t.Material.Texture, tx, ty)
+					alpha := tex.sample(tx, ty)
 					sampleOpacity = uint8(math.Round(float64(opacity) * alpha))
 					if sampleOpacity == 0 {
 						continue
 					}
 				}
-				at := y*2048 + x
-				if z > shadow.depth[at] {
-					shadow.depth[at] = z
-					shadow.opacity[at] = sampleOpacity
-				}
+				shadow.depth[at] = z
+				shadow.opacity[at] = sampleOpacity
 			}
 		}
 	}
@@ -812,7 +845,7 @@ func (r *Raster) paintGround(w *rasterWork, pixels *image.RGBA, bg color.NRGBA) 
 	ground := r.ground
 	samples := int64(pixels.Rect.Dx()) * int64(pixels.Rect.Dy())
 	shadowBounds := pixels.Rect.Intersect(r.groundBounds)
-	work := samples + int64(shadowBounds.Dx())*int64(shadowBounds.Dy())*9
+	work := samples + int64(shadowBounds.Dx())*int64(shadowBounds.Dy())*4
 	if err := w.charge(work); err != nil {
 		return err
 	}
@@ -827,7 +860,7 @@ func (r *Raster) paintGround(w *rasterWork, pixels *image.RGBA, bg color.NRGBA) 
 			if x >= shadowBounds.Min.X && x < shadowBounds.Max.X && y >= shadowBounds.Min.Y && y < shadowBounds.Max.Y {
 				p := r.camera.world(float64(x)+.5, float64(y)+.5, 0)
 				p = rasterAdd(p, rasterMul(r.camera.direction, (ground-p.Y)/r.camera.direction.Y))
-				shadow = r.groundShadow.occlusion(p, Vec{Y: 1}) * .11
+				shadow = r.groundShadow.coverage(p)
 			}
 			paint := bg
 			if r.backgroundTexture != nil {
@@ -1064,6 +1097,45 @@ func rasterMultiplyOver(dst []uint8, red, green, blue, alpha float64) {
 
 func rasterWeighted(a, b, c Vec, x, y, z float64) Vec {
 	return Vec{X: a.X*x + b.X*y + c.X*z, Y: a.Y*x + b.Y*y + c.Y*z, Z: a.Z*x + b.Z*y + c.Z*z}
+}
+
+// A shadow map needs only the alpha channel of each validated raster texture.
+// pix starts at the first alpha byte, including for strided subimages.
+type shadowAlphaTexture struct {
+	pix          []uint8
+	size         image.Point
+	stride, step int
+}
+
+func shadowTexture(texture image.Image) shadowAlphaTexture {
+	switch im := texture.(type) {
+	case *image.RGBA:
+		return shadowAlphaTexture{pix: im.Pix[3:], size: im.Rect.Size(), stride: im.Stride, step: 4}
+	case *image.NRGBA:
+		return shadowAlphaTexture{pix: im.Pix[3:], size: im.Rect.Size(), stride: im.Stride, step: 4}
+	case *image.Alpha:
+		return shadowAlphaTexture{pix: im.Pix, size: im.Rect.Size(), stride: im.Stride, step: 1}
+	}
+	return shadowAlphaTexture{}
+}
+
+func (t shadowAlphaTexture) sample(u, v float64) float64 {
+	x := rasterClamp(u)*float64(t.size.X) - .5
+	y := rasterClamp(v)*float64(t.size.Y) - .5
+	x0, y0 := int(math.Floor(x)), int(math.Floor(y))
+	fx, fy := x-float64(x0), y-float64(y0)
+	left := max(0, min(t.size.X-1, x0)) * t.step
+	right := max(0, min(t.size.X-1, x0+1)) * t.step
+	top := max(0, min(t.size.Y-1, y0)) * t.stride
+	bottom := max(0, min(t.size.Y-1, y0+1)) * t.stride
+	a := float64(t.pix[top+left]) / 255 * ((1 - fx) * (1 - fy))
+	a += float64(t.pix[top+right]) / 255 * (fx * (1 - fy))
+	a += float64(t.pix[bottom+left]) / 255 * ((1 - fx) * fy)
+	a += float64(t.pix[bottom+right]) / 255 * (fx * fy)
+	if a <= 1e-10 {
+		return 0
+	}
+	return a
 }
 
 func rasterTexture(texture image.Image, u, v float64) (float64, float64, float64, float64) {

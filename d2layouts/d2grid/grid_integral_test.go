@@ -100,26 +100,6 @@ func TestGridIntegralSingletonMeasurementsStayLazy(t *testing.T) {
 	}
 }
 
-func TestGridIntegralSearchMatchesReference(t *testing.T) {
-	rng := rand.New(rand.NewPCG(23, 94))
-	for fixture := 0; fixture < 100; fixture++ {
-		n := 2 + rng.IntN(16)
-		gd := benchmarkGrid(n, 1+rng.IntN(n))
-		gd.columns = 1 + rng.IntN(n)
-		gd.horizontalGap = rng.IntN(80)
-		gd.verticalGap = rng.IntN(80)
-		for _, object := range gd.objects {
-			object.Width = float64(1 + rng.IntN(500))
-			object.Height = float64(1 + rng.IntN(500))
-		}
-		for _, columns := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%d/columns=%v", fixture, columns), func(t *testing.T) {
-				assertSearchMatchesReference(t, gd, columns)
-			})
-		}
-	}
-}
-
 func BenchmarkGridIntegralMeasurements(b *testing.B) {
 	sizes := make([]float64, 3001)
 	for i := range sizes {

@@ -105,34 +105,26 @@ func TestImportNodeRejectsUnsupportedLinearGradientForms(t *testing.T) {
 		{"malformed-paint", valid[:strings.LastIndex(valid, `fill="`)] + `fill="url(#g))"/>`, "one local url(#id)"},
 		{"unknown-paint", valid[:strings.LastIndex(valid, `fill="`)] + `fill="url(#missing)"/>`, "unknown local id"},
 		{"wrong-resource-kind", `<defs><path id="g" d="M0 0L1 1"/></defs><rect width="1" height="1" fill="url(#g)"/>`, "does not name"},
-		{"outside-defs", `<linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0"/></linearGradient>`, "direct child of <defs>"},
-		{"missing-id", `<defs><linearGradient x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0"/></linearGradient></defs>`, "must declare an id"},
-		{"missing-coordinate", `<defs><linearGradient id="g" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0"/></linearGradient></defs>`, `missing required attribute "x1"`},
-		{"default-object-bounds", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0"/></linearGradient></defs>`, `missing required attribute "gradientUnits"`},
-		{"object-bounds", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox"><stop offset="0"/></linearGradient></defs>`, "userSpaceOnUse"},
-		{"percentage-coordinate", `<defs><linearGradient id="g" x1="0%" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0"/></linearGradient></defs>`, "percentages are unsupported"},
-		{"repeat-spread", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" spreadMethod="repeat"><stop offset="0"/></linearGradient></defs>`, "only the pad"},
+		{"bad-units", `<linearGradient gradientUnits="pixels"/>`, "invalid gradientUnits"},
+		{"bad-spread", `<linearGradient spreadMethod="mirror"/>`, "invalid spreadMethod"},
+		{"bad-coordinate", `<linearGradient x2="50 %"/>`, "percentage sign"},
+		{"invalid-offset", `<linearGradient><stop offset="oops%"/></linearGradient>`, "invalid offset"},
+		{"negative-radius", `<radialGradient r="-1"/>`, "negative radius"},
+		{"ambiguous-paint", valid + `<path id="g"/>`, "ambiguous local id"},
 		{"href-inheritance", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" href="#base"><stop offset="0"/></linearGradient></defs>`, `unsupported attribute "href"`},
 		{"xlink-inheritance", `<defs xmlns:xlink="http://www.w3.org/1999/xlink"><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" xlink:href="#base"><stop offset="0"/></linearGradient></defs>`, `unsupported attribute "href"`},
-		{"zero-vector", `<defs><linearGradient id="g" x1="1" y1="2" x2="1" y2="2" gradientUnits="userSpaceOnUse"><stop offset="0"/></linearGradient></defs>`, "zero-length"},
 		{"singular-transform", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="scale(0)"><stop offset="0"/></linearGradient></defs>`, "singular or unrepresentable"},
 		{"unrepresentable-inverse", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="scale(5e-324)"><stop offset="0"/></linearGradient></defs>`, "singular or unrepresentable"},
 		{"empty-transform", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform=""><stop offset="0"/></linearGradient></defs>`, "empty gradientTransform"},
-		{"no-stops", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"/></defs>`, "at least one <stop>"},
 		{"foreign-gradient-child", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><rect width="1" height="1"/></linearGradient></defs>`, "unsupported child <rect>"},
 		{"orphan-stop", `<defs><stop offset="0"/></defs>`, "only supported inside"},
-		{"missing-offset", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop/></linearGradient></defs>`, "missing offset"},
-		{"percentage-offset", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0%"/></linearGradient></defs>`, "percentages are unsupported"},
-		{"decreasing-offsets", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset=".75"/><stop offset=".25"/></linearGradient></defs>`, "decreasing stop offsets"},
 		{"stop-inherit", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="inherit"/></linearGradient></defs>`, "explicit solid color"},
 		{"stop-url", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="url(#g)"/></linearGradient></defs>`, "explicit solid color"},
 		{"stop-rendering-property", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" fill="red"/></linearGradient></defs>`, `unsupported attribute "fill"`},
 		{"shape-stop-property", `<rect width="1" height="1" stop-color="red"/>`, `unsupported style property "stop-color"`},
 		{"gradient-style", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" style="opacity:.5"><stop offset="0"/></linearGradient></defs>`, `unsupported attribute "style"`},
 		{"use-gradient", valid + `<use href="#g"/>`, "references unsupported <linearGradient>"},
-		{"radial", `<defs><radialGradient id="g"/></defs>`, "unsupported paint server <radialGradient>"},
 		{"pattern", `<defs><pattern id="g"/></defs>`, "unsupported paint server <pattern>"},
-		{"duplicate-id", `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0"/></linearGradient><path id="g"/></defs>`, "duplicate id"},
 		{"unused-invalid-stop-rule", `<style>.unused{stop-opacity:2}</style>`, "invalid stop-opacity"},
 		{"mixed-rule", `<style>.mixed{stop-color:red;fill:blue}</style>`, "mixes stop-only"},
 	}
@@ -162,14 +154,12 @@ func TestImportNodeLinearGradientLimitsAndCancellation(t *testing.T) {
 	}
 
 	importer := svgImporter{ctx: &cancelAfterContext{remaining: 1}, source: "cancel.svg", ids: make(map[string]*svgElement)}
-	_, err := importer.localLinearGradientPaint("url(#" + strings.Repeat("a", 4088) + ")")
+	_, err := importer.localGradient("url(#" + strings.Repeat("a", 4088) + ")")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("paint reference cancellation = %v", err)
 	}
 
-	_, err = paintWithOpacity(&cancelAfterContext{remaining: 3}, d2scene.LinearGradient{
-		Stops: make([]d2scene.GradientStop, 1024),
-	}, .5)
+	_, err = stopsWithOpacity(&cancelAfterContext{remaining: 3}, make([]d2scene.GradientStop, 1024), .5)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("gradient opacity cancellation = %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -86,6 +87,30 @@ func TestBuildConnectionLabelsAndDiagramWideMask(t *testing.T) {
 	}
 }
 
+func TestBuildOwnsSampledUnderlineProgress(t *testing.T) {
+	diagram := validDiagram()
+	half, full := .5, 1.
+	label := d2target.Text{Label: "ok", FontSize: 16, LabelWidth: 20, LabelHeight: 20, UnderlineProgress: &half}
+	diagram.Shapes[0].Text = label
+	diagram.Connections[0].Text = label
+	diagram.Connections[0].LabelPosition = "INSIDE_MIDDLE_CENTER"
+	diagram.Shapes[1].Text = label
+	diagram.Shapes[1].Language = "markdown"
+	diagram.Shapes[1].UnderlineProgress = &full
+	document, err := Build(context.Background(), diagram, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	half, full = 0, 0
+	for id, want := range map[string]float64{"a:label:0": .5, "a-b:label:0": .5, "b:markdown:primitive:0": 1} {
+		run := findSceneNode(t, document.Root, id).Primitive.(d2scene.TextRun)
+		if got := d2scene.UnderlineFraction(run.Underline, run.UnderlineProgress); got != want {
+			t.Errorf("mutating the input changed %s underline to %g, want %g", id, got, want)
+		}
+	}
+}
+
 func TestBuildOutsideConnectionLabelUsesPartialMask(t *testing.T) {
 	t.Parallel()
 
@@ -161,5 +186,46 @@ func TestBuildRejectsInvalidConnectionLabelContracts(t *testing.T) {
 				t.Fatalf("Build() error = %v, want connection context and %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestConnectionTraceKeepsLabelAndMaskTogether(t *testing.T) {
+	diagram := validDiagram()
+	e := &diagram.Connections[0]
+	e.Text = d2target.Text{Label: "Request", FontSize: 16, LabelWidth: 46, LabelHeight: 20, FontFamily: "default"}
+	e.LabelPosition = "INSIDE_MIDDLE_CENTER"
+	e.Opacity = .6
+	e.MotionLabel = &d2target.MotionLabel{Point: d2target.Point{X: 32, Y: 11}, Opacity: .35}
+	document, err := Build(context.Background(), diagram, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := findSceneNode(t, document.Root, e.ID)
+	if len(n.Children) != 2 || n.Children[1].Opacity != .35 {
+		t.Fatalf("expected fading caption over a fully painted route: %+v", n)
+	}
+	hole := n.Children[0].Mask.Root.Children[1]
+	box := hole.Primitive.(d2scene.Rect).Box
+	if hole.Opacity != .35 || box != (d2scene.Box{X: 30, Y: 11, Width: 50, Height: 20}) {
+		t.Fatalf("label mask %+v opacity %v", box, hole.Opacity)
+	}
+}
+
+func TestHiddenIconAndTooltipLeaveNoConnectionMask(t *testing.T) {
+	d := validDiagram()
+	e := &d.Connections[0]
+	e.Label, e.Tooltip = "", "Timing"
+	e.Icon = &url.URL{Scheme: "https", Host: "example.com", Path: "/mark.svg"}
+	e.IconPosition = "INSIDE_MIDDLE_CENTER"
+	b := builder{diagram: d, ctx: t.Context()}
+	e.Opacity = 0
+	mask, err := b.buildConnectionMask(d2scene.Box{Width: 150, Height: 90})
+	if err != nil || mask != nil {
+		t.Fatalf("hidden icon and tooltip left a mask: %v, %v", mask, err)
+	}
+	e.Opacity = .4
+	mask, err = b.buildConnectionMask(d2scene.Box{Width: 150, Height: 90})
+	if err != nil || mask == nil || len(mask.Root.Children) != 2 || mask.Root.Children[1].Opacity != 1 {
+		t.Fatalf("visible icon lost its authored mask: %v, %v", mask, err)
 	}
 }

@@ -31,6 +31,11 @@ type CompileOptions struct {
 	// context.Background().
 	Context  context.Context
 	UTF16Pos bool
+	// AnimateDuration overrides the root animate-duration, in milliseconds.
+	AnimateDuration *int64
+	// AnimateTweens controls sampling of step transitions. Nil follows
+	// the root animate-interval. False compiles only the authored endpoints.
+	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
 	// automatic copies they induce. Zero uses d2ir.DefaultMaxVariableExpansion.
 	MaxVariableExpansion int64
@@ -67,6 +72,8 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 	ir, _, err := d2ir.Compile(ast, &d2ir.CompileOptions{
 		Context:              opts.Context,
 		UTF16Pos:             opts.UTF16Pos,
+		AnimateTweens:        opts.AnimateTweens,
+		AnimateDuration:      opts.AnimateDuration,
 		MaxVariableExpansion: opts.MaxVariableExpansion,
 		MaxGlobExpansion:     opts.MaxGlobExpansion,
 		MaxEdgeExpansion:     opts.MaxEdgeExpansion,
@@ -97,6 +104,12 @@ func Compile(p string, r io.Reader, opts *CompileOptions) (*d2graph.Graph, *d2ta
 	config, err := compileConfig(ir)
 	if err != nil {
 		return nil, nil, err
+	}
+	if opts.AnimateDuration != nil {
+		if config == nil {
+			config = &d2target.Config{}
+		}
+		config.AnimateDuration = opts.AnimateDuration
 	}
 	if opts.Context != nil {
 		if err := opts.Context.Err(); err != nil {
@@ -357,6 +370,20 @@ func (c *compiler) compileBoardsField(g *d2graph.Graph, ir *d2ir.Map, fieldName 
 			g.Scenarios = append(g.Scenarios, g2)
 		case "steps":
 			g.Steps = append(g.Steps, g2)
+			g2.TweenDurationMS = m.TweenDurationMS
+			for _, sample := range m.TweenFrames {
+				if c.stopped() {
+					return
+				}
+				frame := d2graph.NewGraph()
+				frame.Parent, frame.Name = g2, g2.Name
+				frame.AST, frame.BaseAST = g2.AST, g2.BaseAST
+				c.compileBoard(frame, sample)
+				if f.Primary() != nil {
+					c.compileLabel(&frame.Root.Attributes, f)
+				}
+				g2.TweenFrames = append(g2.TweenFrames, frame)
+			}
 		}
 	}
 }
@@ -421,6 +448,7 @@ type compiler struct {
 	err             *d2parser.ParseError
 	activeClassMaps map[*d2ir.Map]struct{}
 	classMapsByRoot map[*d2ir.Map]map[string]*d2ir.Map
+	explicitLabels  map[*d2graph.Attributes]struct{}
 	ctx             context.Context
 	fatalErr        error
 }
@@ -692,6 +720,23 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 		c.errorf(f.LastRef().AST(), `%#v can only be used on connections`, f.Name.ScalarString())
 		return
 
+	} else if isReserved && keyword == "elk-layer-constraint" {
+		if obj.Parent == nil {
+			c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
+			return
+		}
+		if f.Primary() == nil || f.Composite != nil {
+			c.errorf(f.LastRef().AST(), "elk-layer-constraint expects first, last or none")
+			return
+		}
+		value := f.Primary().Value.ScalarString()
+		switch v := strings.ToUpper(value); v {
+		case "FIRST", "LAST", "NONE":
+			obj.ELKLayerConstraint = v
+		default:
+			c.errorf(f.Primary().Value, "elk-layer-constraint expects first, last or none, got %q", value)
+		}
+		return
 	} else if isReserved {
 		c.compileReserved(&obj.Attributes, f)
 		return
@@ -793,6 +838,15 @@ func (c *compiler) compileLabel(attrs *d2graph.Attributes, f d2ir.Node) {
 		attrs.Label.Value = scalar.ScalarString()
 	}
 	attrs.Label.MapKey = f.LastPrimaryKey()
+	if c.explicitLabels == nil {
+		c.explicitLabels = make(map[*d2graph.Attributes]struct{})
+	}
+	c.explicitLabels[attrs] = struct{}{}
+}
+
+func (c *compiler) hasExplicitLabel(attrs *d2graph.Attributes) bool {
+	_, ok := c.explicitLabels[attrs]
+	return ok
 }
 
 func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
@@ -861,6 +915,10 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 }
 
 func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
+	if strings.EqualFold(f.Name.ScalarString(), "elk-layer-constraint") {
+		c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
+		return
+	}
 	if f.Primary() == nil {
 		if f.Composite != nil {
 			switch f.Name.ScalarString() {
@@ -1053,6 +1111,9 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			c.errorf(scalar, "grid-rows %d exceeds the maximum of %d", v, d2graph.MaxGridDimension)
 			return
 		}
+		if attrs.GridRows == nil && attrs.GridColumns != nil {
+			attrs.GridRowsFirst = go2.Pointer(false)
+		}
 		attrs.GridRows = &d2graph.Scalar{}
 		attrs.GridRows.Value = scalar.ScalarString()
 		attrs.GridRows.MapKey = f.LastPrimaryKey()
@@ -1069,6 +1130,9 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 		if v > d2graph.MaxGridDimension {
 			c.errorf(scalar, "grid-columns %d exceeds the maximum of %d", v, d2graph.MaxGridDimension)
 			return
+		}
+		if attrs.GridColumns == nil && attrs.GridRows != nil {
+			attrs.GridRowsFirst = go2.Pointer(true)
 		}
 		attrs.GridColumns = &d2graph.Scalar{}
 		attrs.GridColumns.Value = scalar.ScalarString()
@@ -1151,7 +1215,14 @@ func (c *compiler) compileStyleField(styles *d2graph.Style, f *d2ir.Field) {
 	}
 	compileStyleFieldInit(styles, f)
 	scalar := f.Primary().Value
-	err := styles.Apply(f.Name.ScalarString(), scalar.ScalarString())
+	value := scalar.ScalarString()
+	if f.Name.ScalarString() == "opacity" && f.Primary().TweenOffset != 0 {
+		// A variable can also be used in a counter with coarser precision.
+		// Opacity is continuous, including during the zero-visibility check.
+		rounded, _ := strconv.ParseFloat(value, 64)
+		value = strconv.FormatFloat(rounded+f.Primary().TweenOffset, 'g', -1, 64)
+	}
+	err := styles.Apply(f.Name.ScalarString(), value)
 	if err != nil {
 		c.errorf(scalar, err.Error())
 		return
@@ -1169,7 +1240,7 @@ func compileStyleFieldInit(styles *d2graph.Style, f *d2ir.Field) {
 	case "fill-pattern":
 		styles.FillPattern = &d2graph.Scalar{MapKey: f.LastPrimaryKey()}
 	case "stroke-width":
-		styles.StrokeWidth = &d2graph.Scalar{MapKey: f.LastPrimaryKey()}
+		styles.StrokeWidth = &d2graph.Scalar{MapKey: f.LastPrimaryKey(), TweenOffset: f.Primary().TweenOffset}
 	case "stroke-dash":
 		styles.StrokeDash = &d2graph.Scalar{MapKey: f.LastPrimaryKey()}
 	case "border-radius":
@@ -1407,9 +1478,10 @@ func (c *compiler) compileClass(obj *d2graph.Object) {
 			}
 		}
 
+		// A field or method without an explicit label defaults it to its ID, which is not a type.
 		if !strings.Contains(f.IDVal, "(") {
 			typ := f.Label.Value
-			if typ == f.IDVal {
+			if !c.hasExplicitLabel(&f.Attributes) && typ == f.IDVal {
 				typ = ""
 			}
 			underline := f.Attributes.Style.Underline != nil && f.Attributes.Style.Underline.Value == "true"
@@ -1420,10 +1492,8 @@ func (c *compiler) compileClass(obj *d2graph.Object) {
 				Underline:  underline,
 			})
 		} else {
-			// TODO: Not great, AST should easily allow specifying alternate primary field
-			// as an explicit label should change the name.
 			returnType := f.Label.Value
-			if returnType == f.IDVal {
+			if !c.hasExplicitLabel(&f.Attributes) && returnType == f.IDVal {
 				returnType = "void"
 			}
 			underline := f.Attributes.Style.Underline != nil && f.Attributes.Style.Underline.Value == "true"
@@ -1464,9 +1534,8 @@ func (c *compiler) compileSQLTable(obj *d2graph.Object) {
 			return
 		}
 		typ := col.Label.Value
-		if typ == col.IDVal {
-			// Not great, AST should easily allow specifying alternate primary field
-			// as an explicit label should change the name.
+		// A column without an explicit label defaults it to its ID, which is not a type.
+		if !c.hasExplicitLabel(&col.Attributes) && typ == col.IDVal {
 			typ = ""
 		}
 		d2Col := d2target.SQLColumn{
@@ -1625,7 +1694,7 @@ func (c *compiler) validateNear(g *d2graph.Graph) {
 						continue
 					}
 				}
-				if nearObj.ClosestGridDiagram() != nil {
+				if nearObj.ClosestGridCell() != nil {
 					c.errorf(obj.NearKey, "near keys cannot be set to descendants of special objects, like grid cells")
 					continue
 				}
@@ -1696,6 +1765,11 @@ func (c *compiler) validateEdges(g *d2graph.Graph) {
 		//   grid -> outside : ok
 		//   grid -> grid.cell : not ok
 		//   grid -> grid.cell.inner : not ok
+		// A loop stays on the object's boundary. Only connections to strict
+		// descendants enter a grid or cell.
+		if edge.Src == edge.Dst && !edge.Src.IsSequenceDiagram() {
+			continue
+		}
 		if edge.Src.IsGridDiagram() && edge.Dst.IsDescendantOf(edge.Src) {
 			c.errorf(edge.GetAstEdge(), "edge from grid diagram %#v cannot enter itself", edge.Src.AbsID())
 			continue
@@ -1758,23 +1832,13 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 			continue
 		}
 	}
-	for _, b := range g.Layers {
-		if c.stopped() {
-			return
+	for _, group := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
+		for _, b := range group {
+			if c.stopped() {
+				return
+			}
+			c.validateBoardLinks(b)
 		}
-		c.validateBoardLinks(b)
-	}
-	for _, b := range g.Scenarios {
-		if c.stopped() {
-			return
-		}
-		c.validateBoardLinks(b)
-	}
-	for _, b := range g.Steps {
-		if c.stopped() {
-			return
-		}
-		c.validateBoardLinks(b)
 	}
 }
 
@@ -1830,10 +1894,33 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 
 	config := &d2target.Config{}
 
+	f = configMap.GetField(d2ast.FlatUnquotedString("animate-duration"))
+	if f != nil {
+		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())
+		config.AnimateDuration = &val
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("animate-interval"))
+	if f != nil {
+		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())
+		config.AnimateInterval = &val
+	}
+
 	f = configMap.GetField(d2ast.FlatUnquotedString("sketch"))
 	if f != nil {
 		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
 		config.Sketch = &val
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("scale"))
+	if f != nil {
+		val, _ := strconv.ParseFloat(f.Primary().Value.ScalarString(), 64)
+		if val != -1 {
+			config.Scale = &val
+		}
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("force-appendix"))
+	if f != nil {
+		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
+		config.ForceAppendix = &val
 	}
 	f = configMap.GetField(d2ast.FlatUnquotedString("isometric"))
 	if f != nil {

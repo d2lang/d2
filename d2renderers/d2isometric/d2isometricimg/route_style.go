@@ -16,11 +16,11 @@ func nativeRouteTint(edge d2isometric.Edge) string {
 	palette := [...]string{"#3d6d8f", "#36776b", "#786391", "#957245", "#586d86", "#8c606b"}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(edge.ID))
-	return palette[int(h.Sum32())%len(palette)]
+	return palette[h.Sum32()%uint32(len(palette))]
 }
 
 func nativeRouteRadius(edge d2isometric.Edge) float64 {
-	return max(.012, min(.075, float64(edge.StrokeWidth)*.012))
+	return max(.012, min(.075, edge.RenderedStrokeWidth()*.012))
 }
 
 // Diagram ink is a flat, unlit ribbon. Its authored path and any crossing
@@ -52,7 +52,11 @@ func (b *meshBuilder) routeCasing(points []Vec, radius float64, opacity float64)
 	if len(points) < 2 {
 		return
 	}
-	mat := nativeMaterial("#f5f7fb", 1, 0, opacity)
+	paper := b.palettePaper
+	if paper == "" {
+		paper = "#f5f7fb"
+	}
+	mat := nativeMaterial(paper, 1, 0, opacity)
 	mat.Unlit = true
 	left, right := make([]Vertex, len(points)), make([]Vertex, len(points))
 	for i, p := range points {

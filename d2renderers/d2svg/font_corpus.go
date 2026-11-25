@@ -1,6 +1,7 @@
 package d2svg
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/xml"
 	"io"
@@ -12,10 +13,6 @@ import (
 // Absence means the face is unused. A nil map asks the embedding code to keep
 // its legacy source triggers and whole-diagram corpus instead.
 type fontCorpora map[string]string
-
-// BaseStylesheet is public and callers may add font-selection rules. Keep the
-// original text so those callers retain whole-corpus font subsets.
-var fontCorpusBaseStylesheet = BaseStylesheet
 
 // restrictFontCorpora narrows the freshly collected map in place only when its
 // characters appeared in the legacy corpus. Rendering can introduce characters
@@ -77,13 +74,24 @@ func collectFontCorpora(source string) (fontCorpora, bool) {
 // scan. A nonnil class map means the complete fragment passed the existing
 // theme parser's safety checks and can avoid a second XML pass.
 func collectFontCorporaAndClasses(source string) (fontCorpora, map[string]bool, bool) {
-	if BaseStylesheet != fontCorpusBaseStylesheet {
+	fonts, classes, ok := scanFontCorporaAndClasses(strings.NewReader(source), new(bufio.Reader))
+	if !ok || !regularFaceTriggered(fonts, source) {
 		return nil, nil, false
 	}
-	decoder := xml.NewDecoder(io.MultiReader(
+	return fonts, classes, true
+}
+
+// scanFontCorporaAndClasses reads one or more complete sibling elements.
+// The legacy regular-face trigger must be checked against the entire board.
+func scanFontCorporaAndClasses(source io.Reader, buf *bufio.Reader) (fontCorpora, map[string]bool, bool) {
+	if !UsesDefaultStylesheet() {
+		return nil, nil, false
+	}
+	buf.Reset(io.MultiReader(
 		strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`),
-		strings.NewReader(source), strings.NewReader(`</svg>`),
+		source, strings.NewReader(`</svg>`),
 	))
+	decoder := xml.NewDecoder(buf)
 	type frame struct {
 		font   int
 		text   bool
@@ -161,7 +169,7 @@ func collectFontCorporaAndClasses(source string) (fontCorpora, map[string]bool, 
 						}
 						return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f'
 					}) {
-						if isPaletteClass(class) {
+						if isThemeClass(class) {
 							classes[class] = true
 						}
 						for i, fontClass := range embeddedFontClasses {
@@ -214,18 +222,18 @@ func collectFontCorporaAndClasses(source string) (fontCorpora, map[string]bool, 
 			result[embeddedFontClasses[i]] = corpora[i].String()
 		}
 	}
-	// The legacy regular-face trigger is narrower than CSS class matching.
-	// Customized SVG fragments may use another class first, or single quotes;
-	// do not introduce a regular-family rule that the old output lacked.
-	if _, regular := result["text"]; regular &&
-		!strings.Contains(source, `class="text"`) && !strings.Contains(source, `class="text `) &&
-		!strings.Contains(source, `class="md"`) && !strings.Contains(source, `class="md `) {
-		return nil, nil, false
-	}
 	if !classesSafe {
 		classes = nil
 	}
 	return result, classes, true
+}
+
+// Legacy regular-face embedding requires a matching source trigger anywhere on
+// the board. A raw fragment can inherit that face without containing a trigger.
+func regularFaceTriggered(fonts fontCorpora, source string) bool {
+	_, regular := fonts["text"]
+	return !regular || strings.Contains(source, `class="text"`) || strings.Contains(source, `class="text `) ||
+		strings.Contains(source, `class="md"`) || strings.Contains(source, `class="md `)
 }
 
 // Generated inline styles use simple declarations. Reject CSS syntax that

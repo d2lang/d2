@@ -1,3 +1,7 @@
+import { BrotliDecode } from "../vendor/decode.min.js";
+import { stringifyCompileRequest } from "./compile-request.js";
+import { initWasm } from "./init-wasm.js";
+
 let currentPort;
 let d2;
 
@@ -25,9 +29,12 @@ export function setupMessageHandler(isNode, port, initWasm) {
         }
         break;
 
+      case "format":
       case "compile":
+      case "renderSVG":
         try {
-          const result = await d2.compile(JSON.stringify(data));
+          const input = type === "format" ? data : stringifyCompileRequest(data);
+          const result = await d2[type](input);
           const response = JSON.parse(result);
           if (response.error) throw new Error(response.error.message);
           currentPort.postMessage({ id, type: "result", data: response.data });
@@ -111,11 +118,13 @@ export function setupMessageHandler(isNode, port, initWasm) {
   }
 }
 
-async function initWasmBrowser(wasmBinary) {
-  const go = new Go();
-  const result = await WebAssembly.instantiate(wasmBinary, go.importObject);
-  go.run(result.instance);
-  return self.d2;
-}
-
-setupMessageHandler(false, self, initWasmBrowser);
+setupMessageHandler(false, self, (wasm) => {
+  if (typeof wasm === "string") {
+    const compressed =
+      typeof Uint8Array.fromBase64 === "function"
+        ? Uint8Array.fromBase64(wasm)
+        : Uint8Array.from(atob(wasm), (char) => char.charCodeAt(0));
+    wasm = BrotliDecode(compressed);
+  }
+  return initWasm(wasm);
+});

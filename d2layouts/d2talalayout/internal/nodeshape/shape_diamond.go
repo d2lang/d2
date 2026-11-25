@@ -10,64 +10,39 @@ type shapeDiamond struct {
 	shape.Shape
 }
 
-func (s shapeDiamond) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapeDiamond) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.InsideMiddleCenter: {},
-		}
+		return 1 << label.InsideMiddleCenter
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:    {},
-			label.OutsideBottomCenter: {},
-			label.InsideMiddleLeft:    {},
-			label.InsideMiddleRight:   {},
-			label.OutsideLeftMiddle:   {},
-			label.OutsideRightMiddle:  {},
-			label.InsideBottomCenter:  {},
-			label.InsideTopCenter:     {},
-		}
+		return 1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomCenter |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideRightMiddle |
+			1<<label.InsideBottomCenter |
+			1<<label.InsideTopCenter
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:     {},
-			label.InsideTopRight:    {},
-			label.InsideBottomLeft:  {},
-			label.InsideBottomRight: {},
-		}
+		return 1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight
 	case Bad:
-		return map[label.Position]struct{}{
-			label.OutsideTopLeft:     {},
-			label.OutsideTopRight:    {},
-			label.OutsideLeftTop:     {},
-			label.OutsideRightTop:    {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightBottom: {},
-		}
+		return 1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightBottom
 	}
-	return map[label.Position]struct{}{}
+	return 0
 }
 
 func (s shapeDiamond) SnapPointPercentages() [][]*geo.RelativePoint {
-	return [][]*geo.RelativePoint{
-		// Top
-		{
-			geo.NewRelativePoint(0.5, 0),
-		},
-		// Left
-		{
-			geo.NewRelativePoint(0, 0.5),
-		},
-		// Bottom
-		{
-			geo.NewRelativePoint(0.5, 1),
-		},
-		// Right
-		{
-			geo.NewRelativePoint(1, 0.5),
-		},
-	}
+	return diamondSnapPoints
 }
 
 func (s shapeDiamond) PortIndices(orientation geo.Orientation) []int {
@@ -125,4 +100,24 @@ func (s shapeDiamond) CenterPortIndex(o geo.Orientation) int {
 	}
 
 	return centerPorts[centerPortsIndex]
+}
+
+// diamondSnapPoints is shared by every call: callers only read it.
+var diamondSnapPoints = [][]*geo.RelativePoint{
+	// Top
+	{
+		geo.NewRelativePoint(0.5, 0),
+	},
+	// Left
+	{
+		geo.NewRelativePoint(0, 0.5),
+	},
+	// Bottom
+	{
+		geo.NewRelativePoint(0.5, 1),
+	},
+	// Right
+	{
+		geo.NewRelativePoint(1, 0.5),
+	},
 }

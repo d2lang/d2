@@ -3,6 +3,8 @@ package layoutgraph
 import (
 	"fmt"
 	"math"
+	"slices"
+	"strconv"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labelgeom"
 
@@ -19,6 +21,16 @@ type Edge struct {
 	To     *Node
 	Points []*geo.Point
 
+	// preflightSlot is the edge's slot in the inventory of the most recent
+	// validateEngineGraph that recorded it. It is a lookup hint only, trusted
+	// when the slot it names holds this very edge, and never affects layout.
+	preflightSlot int32
+
+	// ReversedForLayout records normalization of an authored source-only arrow.
+	// D2 still renders endpoint labels along the original path traversal.
+	ReversedForLayout bool
+	// KeepExplicit retains decorations and interactions omitted from the geometry model.
+	KeepExplicit         bool
 	SourceArrowhead      Arrowhead
 	TargetArrowhead      Arrowhead
 	SourceArrowheadLabel *Label
@@ -42,6 +54,24 @@ type Edge struct {
 	// zero-value unset state and therefore use unit weight.
 	hierarchyRankWeight    int
 	hierarchyRankWeightSet bool
+}
+
+// LabelMinDimensions reserves room for a connector label and its endpoint
+// annotations. A freely turning route needs the larger dimension of each
+// annotation. Upright text on a vertical branch needs only its height.
+func (e *Edge) LabelMinDimensions(width, height int) (minWidth, minHeight, branchHeight int64) {
+	minWidth = int64(width) + 2*label.PADDING
+	minHeight = int64(height) + 2*label.PADDING
+	branchHeight = minHeight
+	for _, annotation := range []*Label{e.SourceArrowheadLabel, e.TargetArrowheadLabel} {
+		if annotation != nil {
+			allowance := int64(math.Max(annotation.Width, annotation.Height) + label.PADDING)
+			minWidth += allowance
+			minHeight += allowance
+			branchHeight += int64(annotation.Height + label.PADDING)
+		}
+	}
+	return
 }
 
 func (e1 *Edge) EquivalentStyles(e2 *Edge) bool {
@@ -357,6 +387,30 @@ func (edge *Edge) LabelTopLeft(labelPosition label.Position, width, height float
 	return point
 }
 
+// ArrowheadLabelTopLeft receives TALA's normalized endpoint and route. D2
+// places the text on the authored side of the line and measures the offset
+// along that traversal, including across bends when the terminal leg is short.
+func (e *Edge) ArrowheadLabelTopLeft(route geo.Route, isTarget bool, value *Label) *geo.Point {
+	source, target := e.SourceArrowhead, e.TargetArrowhead
+	if e.ReversedForLayout {
+		isTarget = !isTarget
+		source, target = target, source
+		if len(route) == 2 {
+			route = geo.Route{route[1], route[0]}
+		} else {
+			route = slices.Clone(route)
+			slices.Reverse(route)
+		}
+	}
+	var strokeWidth *int
+	if e.Style.StrokeWidth != nil {
+		if n, err := strconv.Atoi(e.Style.StrokeWidth.Value); err == nil {
+			strokeWidth = &n
+		}
+	}
+	return labelgeom.ArrowheadTopLeft(route, isTarget, string(source), string(target), value.Width, value.Height, strokeWidth)
+}
+
 func (e *Edge) bounds() (*geo.Point, *geo.Point) {
 	tl, br := e.boundingBoxValues()
 	return &tl, &br
@@ -382,28 +436,14 @@ func (e *Edge) boundingBoxValues() (geo.Point, geo.Point) {
 	}
 	if len(e.Points) > 0 {
 		if label := e.SourceArrowheadLabel; label != nil {
-			labelTL := labelgeom.ArrowheadTopLeft(
-				e.Points,
-				false,
-				string(e.SourceArrowhead),
-				string(e.TargetArrowhead),
-				label.Width,
-				label.Height,
-			)
+			labelTL := e.ArrowheadLabelTopLeft(e.Points, false, label)
 			tl.X = math.Min(tl.X, labelTL.X)
 			tl.Y = math.Min(tl.Y, labelTL.Y)
 			br.X = math.Max(br.X, labelTL.X+label.Width)
 			br.Y = math.Max(br.Y, labelTL.Y+label.Height)
 		}
 		if label := e.TargetArrowheadLabel; label != nil {
-			labelTL := labelgeom.ArrowheadTopLeft(
-				e.Points,
-				true,
-				string(e.SourceArrowhead),
-				string(e.TargetArrowhead),
-				label.Width,
-				label.Height,
-			)
+			labelTL := e.ArrowheadLabelTopLeft(e.Points, true, label)
 			tl.X = math.Min(tl.X, labelTL.X)
 			tl.Y = math.Min(tl.Y, labelTL.Y)
 			br.X = math.Max(br.X, labelTL.X+label.Width)

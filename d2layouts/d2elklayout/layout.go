@@ -6,14 +6,12 @@ package d2elklayout
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
-	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
-	elk "github.com/d2lang/elk-go"
 	"github.com/d2lang/util-go/xdefer"
 
 	"github.com/d2lang/util-go/go2"
@@ -102,6 +100,8 @@ type ELKGraph struct {
 }
 
 type ConfigurableOpts struct {
+	LayeredOptions
+	AlgorithmOptions
 	Algorithm       string `json:"elk.algorithm,omitempty"`
 	NodeSpacing     int    `json:"spacing.nodeNodeBetweenLayers,omitempty"`
 	Padding         string `json:"elk.padding,omitempty"`
@@ -122,7 +122,8 @@ var DefaultOpts = ConfigurableOpts{
 }
 
 var port_spacing = 40.
-var edge_node_spacing = 40
+
+const edge_node_spacing = 40
 
 type objectDegree struct {
 	incoming float64
@@ -143,10 +144,15 @@ type elkGraphStats struct {
 }
 
 func collectELKGraphStats(g *d2graph.Graph) elkGraphStats {
-	stats := elkGraphStats{
+	return collectELKGraphStatsInto(g, elkGraphStats{
 		degrees:          make(map[*d2graph.Object]objectDegree, len(g.Objects)),
 		selfLoopLabelMax: make(map[*d2graph.Object]selfLoopLabelSize),
-	}
+	})
+}
+
+// collectELKGraphStatsInto is collectELKGraphStats filling the given empty
+// maps.
+func collectELKGraphStatsInto(g *d2graph.Graph, stats elkGraphStats) elkGraphStats {
 	for _, edge := range g.Edges {
 		srcDegree := stats.degrees[edge.Src]
 		srcDegree.outgoing++
@@ -177,17 +183,18 @@ func (s elkGraphStats) maxSelfLoopLabel(parent *d2graph.Object, isWidth bool) in
 }
 
 type elkOpts struct {
-	EdgeNode              int       `json:"elk.spacing.edgeNode,omitempty"`
-	FixedAlignment        string    `json:"elk.layered.nodePlacement.bk.fixedAlignment,omitempty"`
-	Thoroughness          int       `json:"elk.layered.thoroughness,omitempty"`
-	Direction             Direction `json:"elk.direction"`
-	HierarchyHandling     string    `json:"elk.hierarchyHandling,omitempty"`
-	InlineEdgeLabels      bool      `json:"elk.edgeLabels.inline,omitempty"`
-	ForceNodeModelOrder   bool      `json:"elk.layered.crossingMinimization.forceNodeModelOrder,omitempty"`
-	ConsiderModelOrder    string    `json:"elk.layered.considerModelOrder.strategy,omitempty"`
-	CycleBreakingStrategy string    `json:"elk.layered.cycleBreaking.strategy,omitempty"`
+	FixedAlignment           string    `json:"elk.layered.nodePlacement.bk.fixedAlignment,omitempty"`
+	Thoroughness             int       `json:"elk.layered.thoroughness,omitempty"`
+	Direction                Direction `json:"elk.direction"`
+	HierarchyHandling        string    `json:"elk.hierarchyHandling,omitempty"`
+	InlineEdgeLabels         bool      `json:"elk.edgeLabels.inline,omitempty"`
+	RouteSelfLoops           bool      `json:"elkgo.routeSelfLoops,omitempty"`
+	RouteCrossContainerEdges bool      `json:"elkgo.routeCrossContainerEdges,omitempty"`
+	ConsiderModelOrder       string    `json:"elk.layered.considerModelOrder.strategy,omitempty"`
+	CycleBreakingStrategy    string    `json:"elk.layered.cycleBreaking.strategy,omitempty"`
 
 	SelfLoopDistribution string `json:"elk.layered.edgeRouting.selfLoopDistribution,omitempty"`
+	LayerConstraint      string `json:"elk.layered.layering.layerConstraint,omitempty"`
 
 	NodeSizeConstraints string `json:"elk.nodeSize.constraints,omitempty"`
 	ContentAlignment    string `json:"elk.contentAlignment,omitempty"`
@@ -199,19 +206,29 @@ type elkOpts struct {
 	ConfigurableOpts
 }
 
-func edgeEdgeSpacingOrDefault(opts *ConfigurableOpts) *int {
+// edgeEdgeSpacingInto stores the edge-edge spacing to send in value and
+// returns value.
+func edgeEdgeSpacingInto(opts *ConfigurableOpts, value *int) *int {
 	// Callers predating this option leave the field nil, and D2 sent 50 before
 	// it existed. Nil keeps that rather than dropping to ELK's default.
 	if opts.EdgeEdgeSpacing == nil {
-		return go2.Pointer(default_edge_edge_spacing)
+		*value = default_edge_edge_spacing
+	} else {
+		*value = *opts.EdgeEdgeSpacing
 	}
-	return go2.Pointer(*opts.EdgeEdgeSpacing)
+	return value
 }
 
 func newRootLayoutOptions(opts *ConfigurableOpts) *elkOpts {
-	return &elkOpts{
+	o := rootLayoutOptions(opts, new(float64), new(int))
+	return &o
+}
+
+// rootLayoutOptions is *newRootLayoutOptions(opts) with the values its
+// pointers would point to stored in edgeNode and edgeEdge.
+func rootLayoutOptions(opts *ConfigurableOpts, edgeNode *float64, edgeEdge *int) elkOpts {
+	return elkOpts{
 		Thoroughness:          8,
-		EdgeNode:              edge_node_spacing,
 		HierarchyHandling:     "INCLUDE_CHILDREN",
 		FixedAlignment:        "BALANCED",
 		ConsiderModelOrder:    "NODES_AND_EDGES",
@@ -219,21 +236,29 @@ func newRootLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 		NodeSizeConstraints:   "MINIMUM_SIZE",
 		ContentAlignment:      "H_CENTER V_CENTER",
 		ConfigurableOpts: ConfigurableOpts{
-			Algorithm:       opts.Algorithm,
-			NodeSpacing:     opts.NodeSpacing,
-			EdgeNodeSpacing: opts.EdgeNodeSpacing,
-			EdgeEdgeSpacing: edgeEdgeSpacingOrDefault(opts),
-			SelfLoopSpacing: opts.SelfLoopSpacing,
+			LayeredOptions:   opts.parentOptionsInto(true, edgeNode),
+			AlgorithmOptions: opts.AlgorithmOptions,
+			Algorithm:        opts.Algorithm,
+			NodeSpacing:      opts.NodeSpacing,
+			EdgeNodeSpacing:  opts.EdgeNodeSpacing,
+			EdgeEdgeSpacing:  edgeEdgeSpacingInto(opts, edgeEdge),
+			SelfLoopSpacing:  opts.SelfLoopSpacing,
 		},
 	}
 }
 
 func newContainerLayoutOptions(opts *ConfigurableOpts) *elkOpts {
-	return &elkOpts{
+	o := containerLayoutOptions(opts, new(float64), new(int))
+	return &o
+}
+
+// containerLayoutOptions is *newContainerLayoutOptions(opts) with the values
+// its pointers would point to stored in edgeNode and edgeEdge.
+func containerLayoutOptions(opts *ConfigurableOpts, edgeNode *float64, edgeEdge *int) elkOpts {
+	return elkOpts{
 		Thoroughness:      8,
 		HierarchyHandling: "INCLUDE_CHILDREN",
 		FixedAlignment:    "BALANCED",
-		EdgeNode:          edge_node_spacing,
 		// ELK 0.12 crashes on compound subgraphs when model-order
 		// processing is enabled below the root. Keep it disabled there.
 		ConsiderModelOrder:    "NONE",
@@ -241,9 +266,10 @@ func newContainerLayoutOptions(opts *ConfigurableOpts) *elkOpts {
 		NodeSizeConstraints:   "MINIMUM_SIZE",
 		ContentAlignment:      "H_CENTER V_CENTER",
 		ConfigurableOpts: ConfigurableOpts{
+			LayeredOptions:  opts.parentOptionsInto(false, edgeNode),
 			NodeSpacing:     opts.NodeSpacing,
 			EdgeNodeSpacing: opts.EdgeNodeSpacing,
-			EdgeEdgeSpacing: edgeEdgeSpacingOrDefault(opts),
+			EdgeEdgeSpacing: edgeEdgeSpacingInto(opts, edgeEdge),
 			SelfLoopSpacing: opts.SelfLoopSpacing,
 			Padding:         opts.Padding,
 		},
@@ -258,22 +284,52 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if opts == nil {
-		opts = &DefaultOpts
-	}
 	defer xdefer.Errorf(&err, "failed to ELK layout")
 	if err := layoutguard.CheckGraph(ctx, "ELK", g); err != nil {
 		return err
 	}
-	graphStats := collectELKGraphStats(g)
+	// The request is built in scratch storage that later calls reuse. It is
+	// released when the layout returns, not deferred: a layout that panics
+	// drops it rather than offering it for reuse while the panic unwinds.
+	scratch := acquireScratch(g)
+	err = layoutWith(ctx, g, opts, scratch)
+	releaseScratch(scratch)
+	return err
+}
 
-	elkGraph := &ELKGraph{
+// layoutWith is Layout after the graph check, building the request in
+// scratch.
+func layoutWith(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts, scratch *elkScratch) (err error) {
+	opts, err = scratch.graphOptions.of(g, opts)
+	if err != nil {
+		return err
+	}
+	padding, err := readPaddingCached(opts.Padding)
+	if err != nil {
+		return err
+	}
+	// One state per object the walk reaches (see walkObjects), holding the
+	// edge statistics the walk reads.
+	objects := scratch.objectStates
+	visits, rootRange := walkObjects(g, objects, &scratch.objects, scratch.visits[:0])
+	scratch.visits = visits
+	scratch.collectEdgeStats(g)
+
+	// The root's option struct and the values its pointers point to are
+	// kept in the scratch, as is the graph.
+	values := &scratch.optionValues
+	scratch.rootOpts = rootLayoutOptions(opts, &values.rootEdgeNode, &values.rootEdgeEdge)
+	// Request native routing on the D2 layout path.
+	scratch.rootOpts.RouteSelfLoops = opts.usesAlgorithm("stress") || opts.usesAlgorithm("force") || opts.usesAlgorithm("mrtree")
+	scratch.rootOpts.RouteCrossContainerEdges = scratch.rootOpts.RouteSelfLoops || opts.usesAlgorithm("radial")
+	elkGraph := &scratch.graph
+	*elkGraph = ELKGraph{
 		ID:            "",
-		LayoutOptions: newRootLayoutOptions(opts),
+		LayoutOptions: &scratch.rootOpts,
 	}
 	if elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing == DefaultOpts.SelfLoopSpacing {
 		// +5 for a tiny bit of padding
-		elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing = go2.Max(elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing, graphStats.maxSelfLoopLabel(g.Root, g.Root.Direction.Value == "down" || g.Root.Direction.Value == "" || g.Root.Direction.Value == "up")/2+5)
+		elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing = go2.Max(elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing, scratch.selfLoop(g, g.Root).of(g.Root.Direction.Value == "down" || g.Root.Direction.Value == "" || g.Root.Direction.Value == "up")/2+5)
 	}
 	switch g.Root.Direction.Value {
 	case "down":
@@ -287,29 +343,49 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 	default:
 		elkGraph.LayoutOptions.Direction = Down
 	}
+	// The root's option struct is now complete: a function of the graph
+	// options (when they are the memo's result, of its generation), the
+	// self-loop spacing, the direction and the edge-edge spacing value (see
+	// rootOptionsKey).
+	scratch.request.rootKey = rootOptionsKey{
+		generation: scratch.graphOptions.resultGeneration(opts),
+		selfLoop:   elkGraph.LayoutOptions.ConfigurableOpts.SelfLoopSpacing,
+		direction:  elkGraph.LayoutOptions.Direction,
+		edgeEdge:   values.rootEdgeEdge,
+	}
 
 	// set label and icon positions for ELK
+	var store elkGraphStore
+	store.reserve(g)
 	for _, obj := range g.Objects {
-		positionLabelsIcons(obj)
+		positionLabelsIconsWith(obj, store.stringPointer)
 	}
 
-	adjustments := make(map[*d2graph.Object]geo.Spacing)
-	elkNodes := make(map[*d2graph.Object]*ELKNode)
-	elkEdges := make(map[*d2graph.Edge]*ELKEdge)
+	// Option structs: leaves, ports and edge labels share the request's
+	// structs of the static option sets (never written); containers start
+	// from one copy of the container options of this call.
+	shared := &scratch.request.shared
+	containerBase := containerLayoutOptions(opts, &values.containerEdgeNode, &values.containerEdgeEdge)
+	verticalSelfLoops := g.Root.Direction.Value == "down" || g.Root.Direction.Value == "" || g.Root.Direction.Value == "up"
 
-	// BFS
-	var walk func(*d2graph.Object, *d2graph.Object, func(*d2graph.Object, *d2graph.Object))
-	walk = func(obj, parent *d2graph.Object, fn func(*d2graph.Object, *d2graph.Object)) {
-		if obj.Parent != nil {
-			fn(obj, parent)
-		}
-		for _, ch := range obj.ChildrenArray {
-			walk(ch, obj, fn)
-		}
+	// Per object: its ELK node, the margin taken off after layout and its
+	// absolute ID (computed once; nothing changes IDs or parents here), in
+	// its state; per edge, its ELK edge.
+	edgeStates := scratch.edgeStates
+	if len(g.Root.ChildrenArray) > 0 {
+		elkGraph.Children = scratch.nodeLists.makeCap(0, len(g.Root.ChildrenArray))
+	}
+	if len(g.Edges) > 0 {
+		elkGraph.Edges = scratch.edgeLists.makeCap(0, len(g.Edges))
 	}
 
-	walk(g.Root, nil, func(obj, parent *d2graph.Object) {
-		degree := graphStats.degrees[obj]
+	// The walk's visits (depth first through ChildrenArray, objects with a
+	// Parent). An object visited twice shares its state, whose fields hold
+	// the latest visit's values: what Layout's map by object, written at the
+	// end of each visit, held.
+	for _, visit := range visits {
+		obj, parent, state := visit.obj, visit.parent, visit.state
+		degree := state.degree
 		incoming := degree.incoming
 		outgoing := degree.outgoing
 		if incoming >= 2 || outgoing >= 2 {
@@ -333,85 +409,116 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		margin, _ := obj.SpacingOpt(label.PADDING, label.PADDING, false)
 		width := margin.Left + obj.Width + margin.Right
 		height := margin.Top + obj.Height + margin.Bottom
-		adjustments[obj] = margin
-
-		n := &ELKNode{
-			ID:     obj.AbsID(),
-			Width:  width,
-			Height: height,
+		state.margin = margin
+		// obj.AbsID() is its parent's AbsID, "." and its ID when the parent
+		// has an ID; the parent's was computed when the walk visited it.
+		if parentState := visitedState(objects, parent); parentState != nil && obj.Parent == parent && parent.ID != "" {
+			state.absID = parentState.absID + "." + obj.ID
+		} else {
+			state.absID = obj.AbsID()
 		}
 
-		if len(obj.ChildrenArray) > 0 {
-			n.LayoutOptions = newContainerLayoutOptions(opts)
-			if n.LayoutOptions.ConfigurableOpts.SelfLoopSpacing == DefaultOpts.SelfLoopSpacing {
-				n.LayoutOptions.ConfigurableOpts.SelfLoopSpacing = go2.Max(n.LayoutOptions.ConfigurableOpts.SelfLoopSpacing, graphStats.maxSelfLoopLabel(obj, g.Root.Direction.Value == "down" || g.Root.Direction.Value == "" || g.Root.Direction.Value == "up")/2+5)
+		n := scratch.nodes.new()
+		n.ID, n.Width, n.Height = state.absID, width, height
+		state.node = n
+
+		// The node's options: a container's copy of containerBase, or the
+		// leaf options (SelfLoopDistribution EQUALLY), plus the layer
+		// constraint, the padding and, for SQL tables, fixed port positions.
+		// The padding is set for objects with children in their Children
+		// map (IsContainer); a node with ChildrenArray entries but an empty
+		// Children map keeps containerBase's padding, as the original's
+		// container options did.
+		layerConstraint := strings.ToUpper(obj.ELKLayerConstraint)
+		isContainer := obj.IsContainer()
+		paddingOption := ""
+		if isContainer {
+			paddingOption = scratch.paddingTexts.text(adjustPadding(obj, width, height, padding))
+		}
+		switch {
+		case len(obj.ChildrenArray) > 0:
+			o := scratch.opts.new()
+			*o = containerBase
+			if o.ConfigurableOpts.SelfLoopSpacing == DefaultOpts.SelfLoopSpacing {
+				o.ConfigurableOpts.SelfLoopSpacing = go2.Max(o.ConfigurableOpts.SelfLoopSpacing, scratch.selfLoop(g, obj).of(verticalSelfLoops)/2+5)
 			}
 
 			switch elkGraph.LayoutOptions.Direction {
 			case Down, Up:
-				n.LayoutOptions.NodeSizeMinimum = fmt.Sprintf("(%d, %d)", int(math.Ceil(height)), int(math.Ceil(width)))
+				o.NodeSizeMinimum = nodeSizeMinimum(int(math.Ceil(height)), int(math.Ceil(width)))
 			case Right, Left:
-				n.LayoutOptions.NodeSizeMinimum = fmt.Sprintf("(%d, %d)", int(math.Ceil(width)), int(math.Ceil(height)))
+				o.NodeSizeMinimum = nodeSizeMinimum(int(math.Ceil(width)), int(math.Ceil(height)))
 			}
-		} else {
-			n.LayoutOptions = &elkOpts{
-				SelfLoopDistribution: "EQUALLY",
+			o.LayerConstraint = layerConstraint
+			if isContainer {
+				o.Padding = paddingOption
 			}
-		}
-
-		if obj.IsContainer() {
-			padding := parsePadding(opts.Padding)
-			padding = adjustPadding(obj, width, height, padding)
-			n.LayoutOptions.Padding = padding.String()
+			if obj.SQLTable != nil {
+				o.PortConstraints = "FIXED_POS"
+			}
+			n.LayoutOptions = o
+			n.Children = scratch.nodeLists.makeCap(0, len(obj.ChildrenArray))
+		case layerConstraint == "" && paddingOption == "" && obj.SQLTable == nil:
+			n.LayoutOptions = &shared[leafOptionSet]
+		case layerConstraint == "" && paddingOption == "":
+			n.LayoutOptions = &shared[sqlLeafOptionSet]
+		default:
+			o := scratch.opts.new()
+			o.SelfLoopDistribution = "EQUALLY"
+			o.LayerConstraint = layerConstraint
+			o.Padding = paddingOption
+			if obj.SQLTable != nil {
+				o.PortConstraints = "FIXED_POS"
+			}
+			n.LayoutOptions = o
 		}
 
 		if obj.HasLabel() {
-			n.Labels = append(n.Labels, &ELKLabel{
-				Text:   obj.Label.Value,
-				Width:  float64(obj.LabelDimensions.Width),
-				Height: float64(obj.LabelDimensions.Height),
-			})
+			l := scratch.labels.new()
+			l.Text = obj.Label.Value
+			l.Width = float64(obj.LabelDimensions.Width)
+			l.Height = float64(obj.LabelDimensions.Height)
+			n.Labels = scratch.labelList(l)
 		}
 
 		if parent == g.Root {
 			elkGraph.Children = append(elkGraph.Children, n)
 		} else {
-			elkNodes[parent].Children = append(elkNodes[parent].Children, n)
+			parentState := visitedState(objects, parent)
+			parentState.node.Children = append(parentState.node.Children, n)
 		}
 
 		if obj.SQLTable != nil {
-			n.LayoutOptions.PortConstraints = "FIXED_POS"
 			columns := obj.SQLTable.Columns
 			colHeight := n.Height / float64(len(columns)+1)
-			n.Ports = make([]*ELKPort, 0, len(columns)*2)
-			var srcSide, dstSide PortSide
-			switch elkGraph.LayoutOptions.Direction {
-			case Left:
-				srcSide, dstSide = West, East
-			default:
-				srcSide, dstSide = East, West
+			n.Ports = scratch.portLists.makeCap(0, len(columns)*2)
+			srcSide, dstSide := &shared[eastPortOptionSet], &shared[westPortOptionSet]
+			if elkGraph.LayoutOptions.Direction == Left {
+				srcSide, dstSide = dstSide, srcSide
 			}
 			for i, col := range columns {
-				n.Ports = append(n.Ports, &ELKPort{
-					ID:            srcPortID(obj, col.Name.Label),
-					Y:             float64(i+1)*colHeight + colHeight/2,
-					LayoutOptions: &elkOpts{PortSide: srcSide},
-				})
-				n.Ports = append(n.Ports, &ELKPort{
-					ID:            dstPortID(obj, col.Name.Label),
-					Y:             float64(i+1)*colHeight + colHeight/2,
-					LayoutOptions: &elkOpts{PortSide: dstSide},
-				})
+				p := scratch.ports.new()
+				p.ID = portID(state.absID, col.Name.Label, ".src")
+				p.Y = float64(i+1)*colHeight + colHeight/2
+				p.LayoutOptions = srcSide
+				n.Ports = append(n.Ports, p)
+				p = scratch.ports.new()
+				p.ID = portID(state.absID, col.Name.Label, ".dst")
+				p.Y = float64(i+1)*colHeight + colHeight/2
+				p.LayoutOptions = dstSide
+				n.Ports = append(n.Ports, p)
 			}
 		}
 
-		elkNodes[obj] = n
-	})
+		state.visited = true
+	}
 
 	var srcSide, dstSide PortSide
+	srcOptions, dstOptions := &shared[southPortOptionSet], &shared[northPortOptionSet]
 	switch elkGraph.LayoutOptions.Direction {
 	case Up:
 		srcSide, dstSide = North, South
+		srcOptions, dstOptions = dstOptions, srcOptions
 	default:
 		srcSide, dstSide = South, North
 	}
@@ -421,100 +528,95 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		side PortSide
 	}][]*ELKPort{}
 
+	absID := func(obj *d2graph.Object) string {
+		if state := visitedState(objects, obj); state != nil {
+			return state.absID
+		}
+		return obj.AbsID()
+	}
 	for ei, edge := range g.Edges {
 		var src, dst string
 
 		switch {
 		case edge.SrcTableColumnIndex != nil:
-			src = srcPortID(edge.Src, edge.Src.SQLTable.Columns[*edge.SrcTableColumnIndex].Name.Label)
+			src = portID(absID(edge.Src), edge.Src.SQLTable.Columns[*edge.SrcTableColumnIndex].Name.Label, ".src")
 		case edge.Src.SQLTable != nil:
-			p := &ELKPort{
-				ID:            fmt.Sprintf("%s.%d", srcPortID(edge.Src, "__root__"), ei),
-				LayoutOptions: &elkOpts{PortSide: srcSide},
-			}
+			p := scratch.ports.new()
+			p.ID = portID(absID(edge.Src), "__root__", ".src") + "." + strconv.Itoa(ei)
+			p.LayoutOptions = srcOptions
 			src = p.ID
-			elkNodes[edge.Src].Ports = append(elkNodes[edge.Src].Ports, p)
+			srcState := visitedState(objects, edge.Src)
+			srcState.node.Ports = append(srcState.node.Ports, p)
 			k := struct {
 				obj  *d2graph.Object
 				side PortSide
 			}{edge.Src, srcSide}
 			ports[k] = append(ports[k], p)
 		default:
-			src = edge.Src.AbsID()
+			src = absID(edge.Src)
 		}
 
 		switch {
 		case edge.DstTableColumnIndex != nil:
-			dst = dstPortID(edge.Dst, edge.Dst.SQLTable.Columns[*edge.DstTableColumnIndex].Name.Label)
+			dst = portID(absID(edge.Dst), edge.Dst.SQLTable.Columns[*edge.DstTableColumnIndex].Name.Label, ".dst")
 		case edge.Dst.SQLTable != nil:
-			p := &ELKPort{
-				ID:            fmt.Sprintf("%s.%d", dstPortID(edge.Dst, "__root__"), ei),
-				LayoutOptions: &elkOpts{PortSide: dstSide},
-			}
+			p := scratch.ports.new()
+			p.ID = portID(absID(edge.Dst), "__root__", ".dst") + "." + strconv.Itoa(ei)
+			p.LayoutOptions = dstOptions
 			dst = p.ID
-			elkNodes[edge.Dst].Ports = append(elkNodes[edge.Dst].Ports, p)
+			dstState := visitedState(objects, edge.Dst)
+			dstState.node.Ports = append(dstState.node.Ports, p)
 			k := struct {
 				obj  *d2graph.Object
 				side PortSide
 			}{edge.Dst, dstSide}
 			ports[k] = append(ports[k], p)
 		default:
-			dst = edge.Dst.AbsID()
+			dst = absID(edge.Dst)
 		}
 
-		e := &ELKEdge{
-			ID:      edge.AbsID(),
-			Sources: []string{src},
-			Targets: []string{dst},
-		}
+		e := scratch.edges.new()
+		e.ID = edge.AbsID()
+		e.Sources, e.Targets = scratch.idList(src), scratch.idList(dst)
 		if edge.Label.Value != "" {
-			e.Labels = append(e.Labels, &ELKLabel{
-				Text:   edge.Label.Value,
-				Width:  float64(edge.LabelDimensions.Width),
-				Height: float64(edge.LabelDimensions.Height),
-				LayoutOptions: &elkOpts{
-					InlineEdgeLabels: true,
-				},
-			})
+			l := scratch.labels.new()
+			l.Text = edge.Label.Value
+			l.Width = float64(edge.LabelDimensions.Width)
+			l.Height = float64(edge.LabelDimensions.Height)
+			l.LayoutOptions = &shared[edgeLabelOptionSet]
+			e.Labels = scratch.labelList(l)
 		}
 		elkGraph.Edges = append(elkGraph.Edges, e)
-		elkEdges[edge] = e
+		// An edge listed twice has one state, holding its last ELK edge (as
+		// a map by edge did).
+		edgeState := edgeStates[edge]
+		if edgeState == nil {
+			edgeState = scratch.edgeStateValues.new()
+			edgeState.first = ei
+			edgeStates[edge] = edgeState
+		}
+		edgeState.elk, edgeState.index = e, ei
+		scratch.edgeAt = append(scratch.edgeAt, edgeState)
 	}
 
 	for k, ports := range ports {
-		width := elkNodes[k.obj].Width
+		width := objects[k.obj].node.Width
 		spacing := width / float64(len(ports)+1)
 		for i, p := range ports {
 			p.X = float64(i+1) * spacing
 		}
 	}
 
-	raw, err := json.Marshal(elkGraph)
-	if err != nil {
+	if err := runELK(ctx, elkGraph, &scratch.request); err != nil {
 		return err
 	}
 
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// ELK does not accept a context. Check immediately around the call; the
-	// topology preflight above bounds inputs before entering this section.
-	jsonOut, err := elk.LayoutJSON(raw)
-	if err != nil {
-		return fmt.Errorf("native ELK layout failed: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(jsonOut, &elkGraph)
-	if err != nil {
-		return err
-	}
-
-	byID := make(map[string]*d2graph.Object)
-	walk(g.Root, nil, func(obj, parent *d2graph.Object) {
-		n := elkNodes[obj]
+	// The request names edge containers by node: nodeObjects holds every
+	// node's object by elk.NodeRef (none for the root).
+	nodeObjects := append(scratch.nodeObjects[:0], nil)
+	for _, visit := range visits {
+		obj, parent := visit.obj, visit.parent
+		n := visit.state.node
 
 		parentX := 0.0
 		parentY := 0.0
@@ -522,55 +624,69 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 			parentX = parent.TopLeft.X
 			parentY = parent.TopLeft.Y
 		}
-		obj.TopLeft = geo.NewPoint(parentX+n.X, parentY+n.Y)
+		obj.TopLeft = store.point(parentX+n.X, parentY+n.Y)
 		obj.Width = math.Ceil(n.Width)
 		obj.Height = math.Ceil(n.Height)
 
-		byID[obj.AbsID()] = obj
-	})
+		nodeObjects = append(nodeObjects, obj)
+	}
+	scratch.nodeObjects = nodeObjects
 
-	for _, edge := range g.Edges {
-		e := elkEdges[edge]
+	// The routes are cut from one block, each capped at its length: every
+	// route still owns its elements, and later appends to a route copy it
+	// (only routes' lengths and elements are ever read, and no other slice
+	// shares a route's elements, so capacity is not observable).
+	routePoints := 0
+	for ei := range g.Edges {
+		sections := scratch.edgeAt[ei].elk.Sections
+		if len(sections) == 0 {
+			edge := g.Edges[ei]
+			if edge.Src == edge.Dst {
+				return fmt.Errorf("ELK algorithm %q returned no route for self-loop %s", opts.Algorithm, edge.AbsID())
+			}
+			return fmt.Errorf("ELK algorithm %q returned no route for edge %s", opts.Algorithm, edge.AbsID())
+		}
+		for _, s := range sections {
+			routePoints += 2 + len(s.BendPoints)
+		}
+	}
+	routeBlock := make([]*geo.Point, routePoints)
+	for ei, edge := range g.Edges {
+		edgeState := scratch.edgeAt[ei]
+		e := edgeState.elk
 
 		parentX := 0.0
 		parentY := 0.0
 		if e.Container != "" {
-			parentX = byID[e.Container].TopLeft.X
-			parentY = byID[e.Container].TopLeft.Y
+			container := nodeObjects[scratch.request.containerRefs[edgeState.index]]
+			parentX = container.TopLeft.X
+			parentY = container.TopLeft.Y
 		}
 
 		var points []*geo.Point
+		if n := routeLength(e); n > 0 {
+			points = routeBlock[:0:n]
+			routeBlock = routeBlock[n:]
+		}
 		for _, s := range e.Sections {
-			points = append(points, &geo.Point{
-				X: parentX + s.Start.X,
-				Y: parentY + s.Start.Y,
-			})
+			points = append(points, store.point(parentX+s.Start.X, parentY+s.Start.Y))
 			for _, bp := range s.BendPoints {
-				points = append(points, &geo.Point{
-					X: parentX + bp.X,
-					Y: parentY + bp.Y,
-				})
+				points = append(points, store.point(parentX+bp.X, parentY+bp.Y))
 			}
-			points = append(points, &geo.Point{
-				X: parentX + s.End.X,
-				Y: parentY + s.End.Y,
-			})
+			points = append(points, store.point(parentX+s.End.X, parentY+s.End.Y))
 		}
 		edge.Route = points
 	}
 
-	objEdges := make(map[*d2graph.Object][]*d2graph.Edge)
-	for _, e := range g.Edges {
-		objEdges[e.Src] = append(objEdges[e.Src], e)
-		if e.Dst != e.Src {
-			objEdges[e.Dst] = append(objEdges[e.Dst], e)
-		}
-	}
-	descendantShifter := newDescendantShifter(g)
+	// Per object, the edges that start or end at it, in order and once each
+	// (lists cut from one block: counted first, then filled), in its state.
+	collectIncidentEdges(g, objects, &scratch.edgeRefs)
+	descendantShifter := newDescendantShifterWith(g, rootRange, objects, edgeStates)
 
 	for _, obj := range g.Objects {
-		if margin, has := adjustments[obj]; has {
-			edges := objEdges[obj]
+		if state := visitedState(objects, obj); state != nil {
+			margin := state.margin
+			edges := state.incident
 			// also move edges with the shrinking sides
 			if margin.Left > 0 {
 				for _, e := range edges {
@@ -629,8 +745,25 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		}
 	}
 
-	for _, edge := range g.Edges {
+	var keepRoutes map[*d2graph.Edge]bool
+	mrTree := opts.usesAlgorithm("mrtree")
+	for ei, edge := range g.Edges {
 		points := edge.Route
+		rootRoute := scratch.edgeAt[ei].elk.Container == ""
+		// Non-layered routing is enabled at the root. Its compound routes
+		// can also be stored on a top-level endpoint when it contains the
+		// other endpoint. Child graphs can still have ordinary layered routes.
+		compound := scratch.rootOpts.RouteCrossContainerEdges && edge.Src.Parent != edge.Dst.Parent &&
+			(rootRoute || edge.Src.Parent == g.Root || edge.Dst.Parent == g.Root)
+		if compound || (mrTree && rootRoute) {
+			if keepRoutes == nil {
+				keepRoutes = make(map[*d2graph.Edge]bool)
+			}
+			keepRoutes[edge] = true
+		}
+		if mrTree && rootRoute && edge.Src.Parent == edge.Dst.Parent {
+			points = trimMrTreeBends(edge)
+		}
 
 		startIndex, endIndex := 0, len(points)-1
 		start := points[startIndex]
@@ -659,7 +792,7 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		points = points[startIndex : endIndex+1]
 
 		if edge.Label.Value != "" {
-			edge.LabelPosition = go2.Pointer(label.InsideMiddleCenter.String())
+			edge.LabelPosition = store.stringPointer(label.InsideMiddleCenter.String())
 		}
 
 		edge.Route = points
@@ -675,18 +808,57 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		}
 	}
 
-	deleteBends(g)
+	if opts.EdgeRouting != "POLYLINE" {
+		// The bend index finds duplicate objects and edges by their states.
+		scratch.bendGrids.states, scratch.bendGrids.edgeAt = objects, scratch.edgeAt
+		deleteBendsWith(g, opts.LayeredOptions, keepRoutes, nil, &scratch.bendGrids)
+	}
 	deconflictSelfLoopLabels(g)
+	clearSelfLoopLabelBends(g)
 
 	return nil
 }
 
+// routeLength is the number of points of the route of e's sections.
+func routeLength(e *ELKEdge) int {
+	n := 0
+	for _, s := range e.Sections {
+		n += 2 + len(s.BendPoints)
+	}
+	return n
+}
+
+// Mr. Tree can repeat a bend on a return edge or run its final segment along
+// the target's border. Keep the attachment points and the bends in open space
+// so tracing and rounding the route do not send the arrow back into a shape.
+func trimMrTreeBends(edge *d2graph.Edge) []*geo.Point {
+	points := edge.Route
+	if len(points) <= 2 || edge.Src == edge.Dst {
+		return points
+	}
+	end := points[len(points)-1]
+	bends := points[1 : len(points)-1]
+	first := 0
+	for i, bend := range bends {
+		if edge.Dst.Box.Contains(bend) {
+			bends = bends[:i]
+			break
+		}
+		if edge.Src.Box.Contains(bend) {
+			first = i + 1
+		}
+	}
+	bends = slices.CompactFunc(bends[first:], (*geo.Point).Equals)
+	points = append(points[:1], bends...)
+	return append(points, end)
+}
+
 func srcPortID(obj *d2graph.Object, column string) string {
-	return fmt.Sprintf("%s.%s.src", obj.AbsID(), column)
+	return portID(obj.AbsID(), column, ".src")
 }
 
 func dstPortID(obj *d2graph.Object, column string) string {
-	return fmt.Sprintf("%s.%s.dst", obj.AbsID(), column)
+	return portID(obj.AbsID(), column, ".dst")
 }
 
 // deconflictSelfLoopLabels keeps the usual centered label position unless two
@@ -765,12 +937,15 @@ func overlapsAny(box *geo.Box, others []*geo.Box) bool {
 	return false
 }
 
-// deleteBends is a shim for ELK to delete unnecessary bends
-// see https://github.com/terrastruct/d2/issues/1030
-func deleteBends(g *d2graph.Graph) {
+// deleteBendsWith is a shim for ELK to delete unnecessary bends (see
+// https://github.com/terrastruct/d2/issues/1030), with the bend index form
+// chosen by scan when it is not nil (for tests; both forms give the same
+// result), and the storage of its grids taken from grids when that is not
+// nil.
+func deleteBendsWith(g *d2graph.Graph, opts LayeredOptions, keepRoute map[*d2graph.Edge]bool, scan *bool, grids *bendGrids) {
 	hasCandidate := false
 	for _, edge := range g.Edges {
-		if edge.Src != edge.Dst && len(edge.Route) >= 4 {
+		if edge.Src != edge.Dst && len(edge.Route) >= 4 && !keepRoute[edge] {
 			hasCandidate = true
 			break
 		}
@@ -778,13 +953,38 @@ func deleteBends(g *d2graph.Graph) {
 	if !hasCandidate {
 		return
 	}
-	collisionIndex := newBendCollisionIndex(g)
+	var collisionIndex *bendCollisionIndex
+	if scan != nil {
+		collisionIndex = newBendCollisionIndexWith(g, opts, *scan, grids)
+	} else {
+		items := len(g.Objects)
+		for _, edge := range g.Edges {
+			items += max(0, len(edge.Route)-1)
+		}
+		collisionIndex = newBendCollisionIndexWith(g, opts, items <= linearIndexLimit, grids)
+	}
+
+	// Straightening a bend can slide the attachment along the shape border.
+	// Keep ELK's shared input and output ports at their original positions.
+	type endpointKey struct {
+		object *d2graph.Object
+		point  geo.Point
+		source bool
+	}
+	var attachments map[endpointKey]int
+	if opts.MergeEdges {
+		attachments = make(map[endpointKey]int)
+		for _, edge := range g.Edges {
+			attachments[endpointKey{edge.Src, *edge.Route[0], true}]++
+			attachments[endpointKey{edge.Dst, *edge.Route[len(edge.Route)-1], false}]++
+		}
+	}
 
 	// Get rid of S-shapes at the source and the target
 	// TODO there might be value in repeating this. removal of an S shape introducing another S shape that can still be removed
 	for _, isSource := range []bool{true, false} {
 		for ei, e := range g.Edges {
-			if len(e.Route) < 4 {
+			if len(e.Route) < 4 || keepRoute[e] {
 				continue
 			}
 			if e.Src == e.Dst {
@@ -810,6 +1010,9 @@ func deleteBends(g *d2graph.Graph) {
 				columnIndex = e.DstTableColumnIndex
 			}
 
+			if opts.MergeEdges && attachments[endpointKey{endpoint, *start, isSource}] > 1 {
+				continue
+			}
 			isHorizontal := math.Ceil(start.Y) == math.Ceil(corner.Y)
 			dx, dy := endpoint.GetModifierElementAdjustments()
 
@@ -890,7 +1093,7 @@ func deleteBends(g *d2graph.Graph) {
 					newStart,
 				)
 			}
-			collisionIndex.updateEdge(g.Edges[ei])
+			collisionIndex.updateEdgeAt(ei, g.Edges[ei])
 		}
 	}
 
@@ -901,15 +1104,45 @@ func deleteBends(g *d2graph.Graph) {
 	// . │
 	// We want to transform these into L-shapes
 
-	points := map[geo.Point]int{}
-	for _, e := range g.Edges {
-		for _, p := range e.Route {
-			points[*p]++
+	// How many route points (as they are now) equal a point. Small graphs
+	// count in a flat copy instead of a map: the same equality (==, as map
+	// keys compare), the same snapshot.
+	var points map[geo.Point]int
+	var pointList []geo.Point
+	if collisionIndex.grids == nil {
+		total := 0
+		for _, e := range g.Edges {
+			total += len(e.Route)
 		}
+		pointList = make([]geo.Point, 0, total)
+		for _, e := range g.Edges {
+			for _, p := range e.Route {
+				pointList = append(pointList, *p)
+			}
+		}
+	} else {
+		points = map[geo.Point]int{}
+		for _, e := range g.Edges {
+			for _, p := range e.Route {
+				points[*p]++
+			}
+		}
+	}
+	pointCount := func(p geo.Point) int {
+		if points != nil {
+			return points[p]
+		}
+		count := 0
+		for _, q := range pointList {
+			if q == p {
+				count++
+			}
+		}
+		return count
 	}
 
 	for ei, e := range g.Edges {
-		if len(e.Route) < 6 {
+		if len(e.Route) < 6 || keepRoute[e] {
 			continue
 		}
 		if e.Src == e.Dst {
@@ -923,7 +1156,7 @@ func deleteBends(g *d2graph.Graph) {
 			end := e.Route[i+2]
 			after := e.Route[i+3]
 
-			if c, _ := points[*corner]; c > 1 {
+			if c := pointCount(*corner); c > 1 {
 				// If corner is shared with another edge, they merge
 				continue
 			}
@@ -1000,62 +1233,52 @@ func deleteBends(g *d2graph.Graph) {
 			),
 				e.Route[i+3:]...,
 			)
-			collisionIndex.updateEdge(g.Edges[ei])
+			collisionIndex.updateEdgeAt(ei, g.Edges[ei])
 			break
 		}
 	}
 }
 
 type shapePadding struct {
-	top, left, bottom, right int
+	top, left, bottom, right float64
 }
 
-// parse out values from elk padding string. e.g. "[top=50,left=50,bottom=50,right=50]"
-func parsePadding(in string) shapePadding {
-	reTop := regexp.MustCompile(`top=(\d+)`)
-	reLeft := regexp.MustCompile(`left=(\d+)`)
-	reBottom := regexp.MustCompile(`bottom=(\d+)`)
-	reRight := regexp.MustCompile(`right=(\d+)`)
-
-	padding := shapePadding{}
-
-	submatches := reTop.FindStringSubmatch(in)
-	if len(submatches) == 2 {
-		i, err := strconv.ParseInt(submatches[1], 10, 64)
-		if err == nil {
-			padding.top = int(i)
+// ELK accepts named padding on any subset of the four sides.
+func readPadding(value string) (shapePadding, error) {
+	var p shapePadding
+	// Match the delimiters accepted by the ELK spacing parser.
+	fields := strings.Trim(value, "()[]{}\"' \t\r\n")
+	for _, part := range strings.FieldsFunc(fields, func(r rune) bool { return r == ',' || r == ';' }) {
+		name, raw, ok := strings.Cut(part, "=")
+		n, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		if !ok || err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
+			return p, fmt.Errorf("invalid elk-padding field %q: expected side=nonnegative-number", part)
+		}
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "top":
+			p.top = n
+		case "left":
+			p.left = n
+		case "bottom":
+			p.bottom = n
+		case "right":
+			p.right = n
+		default:
+			return p, fmt.Errorf("unknown elk-padding side %q", name)
 		}
 	}
-
-	submatches = reLeft.FindStringSubmatch(in)
-	if len(submatches) == 2 {
-		i, err := strconv.ParseInt(submatches[1], 10, 64)
-		if err == nil {
-			padding.left = int(i)
-		}
-	}
-
-	submatches = reBottom.FindStringSubmatch(in)
-	if len(submatches) == 2 {
-		i, err := strconv.ParseInt(submatches[1], 10, 64)
-		if err == nil {
-			padding.bottom = int(i)
-		}
-	}
-
-	submatches = reRight.FindStringSubmatch(in)
-	i, err := strconv.ParseInt(submatches[1], 10, 64)
-	if len(submatches) == 2 {
-		if err == nil {
-			padding.right = int(i)
-		}
-	}
-
-	return padding
+	return p, nil
 }
 
+// String is fmt.Sprintf("[top=%g,left=%g,bottom=%g,right=%g]", ...): %g of a
+// float64 is strconv's shortest 'g' format, NaN and infinities included.
 func (padding shapePadding) String() string {
-	return fmt.Sprintf("[top=%d,left=%d,bottom=%d,right=%d]", padding.top, padding.left, padding.bottom, padding.right)
+	return "[top=" + formatG(padding.top) + ",left=" + formatG(padding.left) +
+		",bottom=" + formatG(padding.bottom) + ",right=" + formatG(padding.right) + "]"
+}
+
+func formatG(value float64) string {
+	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
 func adjustPadding(obj *d2graph.Object, width, height float64, padding shapePadding) shapePadding {
@@ -1142,43 +1365,49 @@ func adjustPadding(obj *d2graph.Object, width, height float64, padding shapePadd
 	innerLeft := int(math.Ceil(innerBox.TopLeft.X))
 	innerRight := int(math.Ceil(width - (innerBox.TopLeft.X + innerBox.Width)))
 
-	padding.top = go2.Max(padding.top, innerTop+extraTop)
-	padding.bottom = go2.Max(padding.bottom, innerBottom+extraBottom)
-	padding.left = go2.Max(padding.left, innerLeft+extraLeft)
-	padding.right = go2.Max(padding.right, innerRight+extraRight)
+	padding.top = math.Max(padding.top, float64(innerTop+extraTop))
+	padding.bottom = math.Max(padding.bottom, float64(innerBottom+extraBottom))
+	padding.left = math.Max(padding.left, float64(innerLeft+extraLeft))
+	padding.right = math.Max(padding.right, float64(innerRight+extraRight))
 
 	return padding
 }
 
 func positionLabelsIcons(obj *d2graph.Object) {
+	positionLabelsIconsWith(obj, go2.Pointer[string])
+}
+
+// positionLabelsIconsWith is positionLabelsIcons taking the string pointers it
+// stores from newString (each call a new variable).
+func positionLabelsIconsWith(obj *d2graph.Object, newString func(string) *string) {
 	if obj.Icon != nil && obj.IconPosition == nil {
 		if len(obj.ChildrenArray) > 0 {
-			obj.IconPosition = go2.Pointer(label.InsideTopLeft.String())
+			obj.IconPosition = newString(label.InsideTopLeft.String())
 			if obj.LabelPosition == nil {
-				obj.LabelPosition = go2.Pointer(label.InsideTopRight.String())
+				obj.LabelPosition = newString(label.InsideTopRight.String())
 				return
 			}
 		} else if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" {
-			obj.IconPosition = go2.Pointer(label.OutsideTopLeft.String())
+			obj.IconPosition = newString(label.OutsideTopLeft.String())
 		} else {
-			obj.IconPosition = go2.Pointer(label.InsideMiddleCenter.String())
+			obj.IconPosition = newString(label.InsideMiddleCenter.String())
 		}
 	}
 	if obj.HasLabel() && obj.LabelPosition == nil {
 		if len(obj.ChildrenArray) > 0 {
-			obj.LabelPosition = go2.Pointer(label.InsideTopCenter.String())
+			obj.LabelPosition = newString(label.InsideTopCenter.String())
 		} else if obj.HasOutsideBottomLabel() {
-			obj.LabelPosition = go2.Pointer(label.OutsideBottomCenter.String())
+			obj.LabelPosition = newString(label.OutsideBottomCenter.String())
 		} else if obj.Icon != nil {
-			obj.LabelPosition = go2.Pointer(label.InsideTopCenter.String())
+			obj.LabelPosition = newString(label.InsideTopCenter.String())
 		} else {
-			obj.LabelPosition = go2.Pointer(label.InsideMiddleCenter.String())
+			obj.LabelPosition = newString(label.InsideMiddleCenter.String())
 		}
 		if float64(obj.LabelDimensions.Width) > obj.Width || float64(obj.LabelDimensions.Height) > obj.Height {
 			if len(obj.ChildrenArray) > 0 {
-				obj.LabelPosition = go2.Pointer(label.OutsideTopCenter.String())
+				obj.LabelPosition = newString(label.OutsideTopCenter.String())
 			} else {
-				obj.LabelPosition = go2.Pointer(label.OutsideBottomCenter.String())
+				obj.LabelPosition = newString(label.OutsideBottomCenter.String())
 			}
 		}
 	}

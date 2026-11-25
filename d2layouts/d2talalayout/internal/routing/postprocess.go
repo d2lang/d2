@@ -188,6 +188,8 @@ func balanceRegularEdgesGuarded(g *layoutgraph.Graph, specialEdges, regularEdges
 			}
 		}
 		lockedSegments = append(lockedSegments, specialEdgeSegments...)
+		var previousLocks [][2]geo.Point
+		bounds := make([]balanceSegmentBounds, len(edgeSegments))
 		for len(lockedEdgeSegments) != len(edgeSegments) {
 			if err := guard.step(); err != nil {
 				return err
@@ -195,14 +197,29 @@ func balanceRegularEdgesGuarded(g *layoutgraph.Graph, specialEdges, regularEdges
 			minRange := Range{start: math.Inf(-1), end: math.Inf(1)}
 			segmentRanges := map[Range][]*layoutgraph.EdgeSegment{}
 
-			for _, es := range edgeSegments {
+			// Each round only adds locked segments. If a shared endpoint has
+			// moved, its previous contribution to the bounds must be recomputed.
+			known := len(previousLocks)
+			for i, segment := range lockedSegments {
+				if err := guard.step(); err != nil {
+					return err
+				}
+				position := [2]geo.Point{*segment.Start, *segment.End}
+				if i == len(previousLocks) {
+					previousLocks = append(previousLocks, position)
+				} else if previousLocks[i] != position {
+					previousLocks[i] = position
+					known = 0
+				}
+			}
+			for i, es := range edgeSegments {
 				if err := guard.step(); err != nil {
 					return err
 				}
 				if _, ok := lockedEdgeSegments[*es]; ok {
 					continue
 				}
-				floor, ceil, err := routeSegmentBounds(es.Segment, lockedSegments, segmentSpacingBuffer, guard)
+				floor, ceil, err := bounds[i].update(es.Segment, lockedSegments, known, guard)
 				if err != nil {
 					return err
 				}

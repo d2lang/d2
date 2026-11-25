@@ -1,22 +1,30 @@
-import { getWasmBinary, wasmExecJs } from "./wasm-loader.browser.js";
+import { compressedWasmBase64, wasmExecJs } from "./wasm-loader.browser.js";
 import workerScript from "./worker.js" with { type: "text" };
 
-// For the browser version, we build the wasm files into a file (wasm-loader.browser.js)
-// and loading a file just reads the text, so there's no external dependency calls
+export const isNode = false;
+
 export async function loadFile(path) {
   if (path === "./d2.wasm") {
-    return getWasmBinary();
+    return compressedWasmBase64;
   }
   return null;
 }
 
-export async function createWorker() {
-  let blob = new Blob([wasmExecJs, workerScript], {
+export async function createWorker(workerURL) {
+  if (workerURL !== undefined) {
+    const url = typeof workerURL === "string" ? workerURL : workerURL.href;
+    return { worker: new Worker(url, { type: "module" }) };
+  }
+
+  const blob = new Blob([wasmExecJs, workerScript], {
     type: "text/javascript;charset=utf-8",
   });
-
-  const worker = new Worker(URL.createObjectURL(blob), {
-    type: "module",
-  });
-  return worker;
+  const url = URL.createObjectURL(blob);
+  const releaseURL = () => URL.revokeObjectURL(url);
+  try {
+    return { worker: new Worker(url, { type: "module" }), releaseURL };
+  } catch (error) {
+    releaseURL();
+    throw error;
+  }
 }

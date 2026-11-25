@@ -3,6 +3,15 @@ package typedpool
 
 import "sync"
 
+// MaxRetainedEntries bounds what an object put into a Pool may keep: the
+// elements of each slice or map it holds (pools of per-node arrays name their
+// own bound). TinyGo's sync.Pool, which d2's wasm build uses, is a plain list
+// that never frees: everything put into it stays allocated, and is scanned
+// by every collection, for the life of the program. An object that grew
+// beyond the bound is not put back; the collector frees it, as it frees the
+// allocation the pool replaces.
+const MaxRetainedEntries = 4096
+
 // Pool keeps sync.Pool's allocation behavior while making both Get and Put
 // type-safe at their call sites.
 type Pool[T any] struct {

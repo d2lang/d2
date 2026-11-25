@@ -1589,6 +1589,35 @@ func AnimationFrameTime(frameIndex int) (time.Duration, error) {
 	return time.Duration(wholeSeconds)*time.Second + time.Duration(remainder)*time.Second/fps, nil
 }
 
+// StepDelay returns the centiseconds available to a frame on a step's clock.
+// Interior boundaries round down; the final boundary rounds up so the authored
+// endpoint is visible, even if the step lasts less than a centisecond.
+func StepDelay(elapsed, duration time.Duration, tweenSample bool) int {
+	const tick = 10 * time.Millisecond
+	end := elapsed + duration
+	endTick := end / tick
+	if !tweenSample && end%tick != 0 {
+		endTick++
+	}
+	return int(endTick - elapsed/tick)
+}
+
+// AppendFrameDelays divides a segment's centiseconds across its samples.
+func AppendFrameDelays(delays []int, centiseconds, count int) []int {
+	if count <= 0 {
+		return delays
+	}
+	schedule := gifFrameDelaySchedule{
+		framesPerBoard: count,
+		baseDelay:      centiseconds / count,
+		extraDelays:    centiseconds % count,
+	}
+	for range count {
+		delays = append(delays, schedule.next())
+	}
+	return delays
+}
+
 // gifFrameDelays distributes GIF's centisecond delays across each board's
 // sampled frames. The quantized duration rounds upward to avoid shortening the
 // requested interval. A non-sampled frame count is treated as one board.

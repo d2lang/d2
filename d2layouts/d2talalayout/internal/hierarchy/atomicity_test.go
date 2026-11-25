@@ -183,7 +183,8 @@ func newHierarchyExternalNearOwnerFixture(withHierarchy bool) (*layoutgraph.Grap
 	externalOwner.AddNewNodeToContainer(nil, external)
 	local.AddNear(external)
 	if withHierarchy {
-		local.Hierarchy = newHierarchyWithLevels(map[*layoutgraph.Node]int{local: 0})
+		local.Hierarchy = newHierarchyWithLevels(map[*layoutgraph.Node]int{local: 0, external: 0})
+		external.Hierarchy = local.Hierarchy
 	}
 	return graph, local, externalOwner, external
 }
@@ -237,7 +238,7 @@ func TestPlaceHierarchyComponentRestoresExternalNearOwnerOnError(t *testing.T) {
 		originalOwner: externalOwner,
 	}
 
-	err := place(ctx, graph, nil, rand.New(rand.NewSource(1)))
+	err := (Placement{Random: rand.New(rand.NewSource(1))}).place(ctx, graph, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("place error = %v, want context.Canceled", err)
 	}
@@ -265,7 +266,7 @@ func TestPlaceHierarchyComponentRestoresExternalNearOwnerOnPanic(t *testing.T) {
 	var recovered any
 	func() {
 		defer func() { recovered = recover() }()
-		_ = place(ctx, graph, nil, rand.New(rand.NewSource(1)))
+		_ = (Placement{Random: rand.New(rand.NewSource(1))}).place(ctx, graph, nil)
 	}()
 	if recovered != panicValue {
 		t.Fatalf("recovered panic = %v, want sentinel %p", recovered, panicValue)

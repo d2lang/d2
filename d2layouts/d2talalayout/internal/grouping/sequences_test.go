@@ -16,7 +16,11 @@ func mustIdentifySequences(t *testing.T, graph *layoutgraph.Graph, nodes []*layo
 	if err != nil {
 		t.Fatal(err)
 	}
-	sequences, err := identifySequences(graph, nodes, guard)
+	active, err := activeSequenceNodes(graph, guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequences, err := identifySequences(active, nodes, guard, compatibleStepGeometry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,5 +75,51 @@ func TestIdentifySequencesSkipsRememberedInactiveSteps(t *testing.T) {
 	second.Sequence = remembered
 	if got := mustIdentifySequences(t, graph, []*layoutgraph.Node{first, second}); len(got) != 0 {
 		t.Fatalf("remembered steps rediscovered as %d sequences", len(got))
+	}
+}
+
+func TestRememberedStepsKeepNewTransition(t *testing.T) {
+	g, first, second := newStepSequenceGraph()
+	r := rand.New(rand.NewSource(2))
+	if err := AddSequences(t.Context(), g, r); err != nil {
+		t.Fatal(err)
+	}
+	Cleanup(g)
+	added := g.Connect(first, second)
+	added.KeepExplicit = true
+	if err := AddSequences(t.Context(), g, r); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Sequences) != 0 || len(g.Edges) != 1 || g.Edges[0] != added {
+		t.Fatal("remembered sequence consumed a new explicit transition")
+	}
+}
+
+func TestAbductSequenceEdgesRetainsGraphOrder(t *testing.T) {
+	graph := layoutgraph.NewGraph()
+	newNode := func(id int64) *layoutgraph.Node {
+		n := layoutgraph.NewNode(id, 100, 60)
+		graph.AddNewNodeToContainer(nil, n)
+		return n
+	}
+	first, middle, last := newNode(1), newNode(2), newNode(3)
+	left, right, vessel := newNode(4), newNode(5), newNode(6)
+	sequence := &layoutgraph.Sequence{Graph: graph, Nodes: []*layoutgraph.Node{first, middle, last}, Vessel: vessel}
+	unrelated := graph.Connect(left, right)
+	abductSequenceEdges(sequence)
+	if len(sequence.EdgeAbductions) != 0 {
+		t.Fatal("isolated steps recorded unrelated edges")
+	}
+	out := graph.Connect(last, right)
+	in := graph.Connect(left, first)
+	internal := graph.Connect(first, last)
+	abductSequenceEdges(sequence)
+	if a := sequence.EdgeAbductions; len(a) != 2 || a[0].Edge != out || a[0].OriginallyFrom != last ||
+		a[1].Edge != in || a[1].OriginallyTo != first {
+		t.Fatalf("external edges lost their graph order or original endpoint: %+v", a)
+	}
+	if out.From != vessel || in.To != vessel || unrelated.From != left || unrelated.To != right ||
+		internal.From != first || internal.To != last {
+		t.Fatal("incorrectly transferred a sequence edge")
 	}
 }

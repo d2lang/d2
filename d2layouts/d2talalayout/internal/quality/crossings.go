@@ -7,69 +7,81 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 )
 
+type routeCrossings struct {
+	scored, interior int64
+}
+
 func countNonSharedCrossings(edges []*layoutgraph.Edge, guard *limits.WorkGuard) (int64, error) {
-	var crossingCount int64
+	counts, err := countRouteCrossings(edges, guard, nil)
+	return counts.scored, err
+}
+
+func countRouteCrossings(edges []*layoutgraph.Edge, guard *limits.WorkGuard, issues *LoopInspection) (routeCrossings, error) {
+	var counts routeCrossings
 	for i, edge := range edges {
 		if err := guard.Step(); err != nil {
-			return 0, err
+			return routeCrossings{}, err
 		}
-		for j := i + 1; j < len(edges); j++ {
-			// Charge every pair even when one route has no segments. Iterating a
-			// large collection of incomplete routes is still quadratic work.
+		for _, other := range edges[i+1:] {
+			// Charge each pair even when a route has no segments.
 			if err := guard.Step(); err != nil {
-				return 0, err
+				return routeCrossings{}, err
 			}
-			count, err := countEdgeCrossings(edge, edges[j], guard)
-			if err != nil {
-				return 0, err
+			before := counts
+			if err := counts.addEdgePair(edge, other, guard); err != nil {
+				return routeCrossings{}, err
 			}
-			crossingCount += count
+			if issues != nil {
+				issues.add(routeItem(edge), routeItem(other), counts.scored-before.scored, false)
+				issues.add(inspectionItem{edge.ID, interiorRoute}, inspectionItem{other.ID, interiorRoute}, counts.interior-before.interior, false)
+			}
 		}
 	}
-	return crossingCount, nil
+	return counts, nil
 }
 
-func countEdgeCrossings(edge, other *layoutgraph.Edge, guard *limits.WorkGuard) (int64, error) {
-	var crossingCount int64
-	for i := 0; i < len(edge.Points)-1; i++ {
+func (counts *routeCrossings) addEdgePair(edge, other *layoutgraph.Edge, guard *limits.WorkGuard) error {
+	for i := 1; i < len(edge.Points); i++ {
 		if err := guard.Step(); err != nil {
-			return 0, err
+			return err
 		}
-		for j := 0; j < len(other.Points)-1; j++ {
+		for j := 1; j < len(other.Points); j++ {
 			if err := guard.Step(); err != nil {
-				return 0, err
+				return err
 			}
-			if isNonSharedCrossing(edge, other, i, j) {
-				crossingCount++
+			scored, interior := classifyCrossing(edge.Points[i-1], edge.Points[i], other.Points[j-1], other.Points[j])
+			if scored {
+				counts.scored++
+			}
+			if interior && !edge.IsCurve && !other.IsCurve {
+				counts.interior++
 			}
 		}
 	}
-	return crossingCount, nil
+	return nil
 }
 
-func isNonSharedCrossing(edge, other *layoutgraph.Edge, edgeSegment, otherSegment int) bool {
-	if !nonParallelIntersection(
-		edge.Points[edgeSegment],
-		edge.Points[edgeSegment+1],
-		other.Points[otherSegment],
-		other.Points[otherSegment+1],
-	) {
-		return false
+func classifyCrossing(a, b, c, d *geo.Point) (scored, interior bool) {
+	abc, abd := orientation(a, b, c), orientation(a, b, d)
+	if equalSigns(abc, abd) {
+		return false, false
 	}
-
-	// Skip intersections at the exact end of the segment to avoid counting
-	// bends off shared edges.
-	segmentStartX := edge.Points[edgeSegment].X
-	segmentStartY := edge.Points[edgeSegment].Y
-	if segmentStartX == edge.Points[edgeSegment+1].X &&
-		(segmentStartX == other.Points[otherSegment].X || segmentStartX == other.Points[otherSegment+1].X) {
-		return false
+	cda, cdb := orientation(c, d, a), orientation(c, d, b)
+	if equalSigns(cda, cdb) {
+		return false, false
 	}
-	if segmentStartY == edge.Points[edgeSegment+1].Y &&
-		(segmentStartY == other.Points[otherSegment].Y || segmentStartY == other.Points[otherSegment+1].Y) {
-		return false
+	// Opposite nonzero orientations on both sides put the intersection strictly
+	// inside both segments. A T junction or a shared route's departure cannot
+	// cancel out a new interior crossing in a spacing trial.
+	if abc != 0 && abd != 0 && cda != 0 && cdb != 0 {
+		return true, true
 	}
-	return true
+	// Preserve the established score at route contacts: when tracing the first
+	// route, a bend off the second route's segment end does not add a crossing.
+	if a.X == b.X && (a.X == c.X || a.X == d.X) || a.Y == b.Y && (a.Y == c.Y || a.Y == d.Y) {
+		return false, false
+	}
+	return true, false
 }
 
 // orientation returns a positive value for a clockwise turn, a negative value
@@ -84,18 +96,4 @@ func orientation(p, q, r *geo.Point) float64 {
 
 func equalSigns(a, b float64) bool {
 	return a > 0 && b > 0 || a == 0 && b == 0 || a < 0 && b < 0
-}
-
-// nonParallelIntersection reports whether segments ab and cd intersect at an
-// angle. Collinear overlap is intentionally not a crossing for layout scoring.
-func nonParallelIntersection(a, b, c, d *geo.Point) bool {
-	abcOrientation := orientation(a, b, c)
-	abdOrientation := orientation(a, b, d)
-	if equalSigns(abcOrientation, abdOrientation) {
-		return false
-	}
-
-	cdaOrientation := orientation(c, d, a)
-	cdbOrientation := orientation(c, d, b)
-	return !equalSigns(cdaOrientation, cdbOrientation)
 }

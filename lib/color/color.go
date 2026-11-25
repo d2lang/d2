@@ -2,6 +2,7 @@ package color
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"regexp"
 	"strconv"
@@ -15,8 +16,72 @@ import (
 
 var themeColorRegex = regexp.MustCompile(`^(N[1-7]|B[1-6]|AA[245]|AB[45])$`)
 
+// ParseRGBA resolves a CSS color literal to sRGB channels.
+func ParseRGBA(raw string) (color.NRGBA, bool) {
+	parsed, err := csscolorparser.Parse(raw)
+	if err != nil {
+		return color.NRGBA{}, false
+	}
+	r, g, b, a := parsed.RGBA255()
+	return color.NRGBA{R: r, G: g, B: b, A: a}, true
+}
+
+// InterpolateHex mixes sRGB channels with premultiplied alpha. Fading from transparent to a
+// color increases its opacity without darkening it along the way.
+func InterpolateHex(from, to color.NRGBA, fraction float64) string {
+	alpha := float64(from.A) + (float64(to.A)-float64(from.A))*fraction
+	weight := fraction
+	if from.A != to.A && alpha > 0 {
+		weight = fraction * float64(to.A) / alpha
+	}
+	channel := func(a, b uint8) uint8 {
+		return uint8(math.Round(float64(a) + (float64(b)-float64(a))*weight))
+	}
+	r, g, b := channel(from.R, to.R), channel(from.G, to.G), channel(from.B, to.B)
+	a := uint8(math.Round(alpha))
+	if a == 255 {
+		return fmt.Sprintf("#%02x%02x%02x", r, g, b)
+	}
+	return fmt.Sprintf("#%02x%02x%02x%02x", r, g, b, a)
+}
+
 func IsThemeColor(colorString string) bool {
 	return themeColorRegex.MatchString(colorString)
+}
+
+// PaintVisibleThroughout reports whether a stroke can be visible along its
+// entire length. A fade through an isolated transparent stop still qualifies.
+// Gradients that hold zero alpha over an interval use plain crossings because
+// a route-wide mask could otherwise erase a line beneath invisible paint.
+func PaintVisibleThroughout(raw string) bool {
+	if raw == "" || strings.EqualFold(raw, None) {
+		return false
+	}
+	if !IsGradient(raw) {
+		c, err := csscolorparser.Parse(raw)
+		return err != nil || c.A > 0
+	}
+	gradient, err := ParseGradient(raw)
+	if err != nil {
+		return true
+	}
+	previous, previousClear := 0.0, true
+	for i, stop := range gradient.ColorStops {
+		c, err := csscolorparser.Parse(stop.Color)
+		if err != nil {
+			return true
+		}
+		offset, err := stop.Offset(i, len(gradient.ColorStops), previous)
+		if err != nil {
+			return true
+		}
+		clear := c.A == 0
+		if clear && ((previousClear && offset > previous) || (i == len(gradient.ColorStops)-1 && offset < 1)) {
+			return false
+		}
+		previous, previousClear = offset, clear
+	}
+	return true
 }
 
 func Darken(colorString string) (string, error) {

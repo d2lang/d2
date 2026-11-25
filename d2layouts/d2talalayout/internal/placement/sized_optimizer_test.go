@@ -32,7 +32,7 @@ func bestSwapCandidateForTest(ctx context.Context, optim *sizedOptimizer, node *
 	return optim.bestSwapCandidateGuarded(ctx, node, guard)
 }
 
-func (optim *sizedOptimizer) findClosestUnoccupiedDistanceForTest(ctx context.Context, node *layoutgraph.Node, p *geo.Point, minimizingSelf bool, checked map[geo.Point]struct{}) (float64, error) {
+func (optim *sizedOptimizer) findClosestUnoccupiedDistanceForTest(ctx context.Context, node *layoutgraph.Node, p *geo.Point, minimizingSelf bool, checked *optimizerCheckedSet) (float64, error) {
 	guard, err := limits.NewOptimizationWorkGuard(ctx, "LocalOptimize", limits.MaxOptimizationWorkUnits)
 	if err != nil {
 		return 0, err

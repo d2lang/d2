@@ -29,11 +29,17 @@ type nativeSurfaceSVGWriter struct {
 	transform             d2scene.Matrix
 	linearGradients       bool
 	glyphs                map[nativeSVGFontGlyph]string
+	patterns              *nativeSVGPatterns
+	inPattern             bool
 }
 
 // nativeSurfaceSVG emits a self-contained fragment in normalized UV space.
 // All generated ink remains paths. Only authored raster-image assets use image.
 func nativeSurfaceSVG(ctx context.Context, surface *nativeVectorSurface, prefix string) (string, error) {
+	return nativeSurfaceSVGWithPatterns(ctx, surface, prefix, nil)
+}
+
+func nativeSurfaceSVGWithPatterns(ctx context.Context, surface *nativeVectorSurface, prefix string, patterns *nativeSVGPatterns) (string, error) {
 	if ctx == nil || surface == nil || surface.document == nil || prefix == "" {
 		return "", fmt.Errorf("native SVG requires a vector surface and prefix")
 	}
@@ -42,7 +48,7 @@ func nativeSurfaceSVG(ctx context.Context, surface *nativeVectorSurface, prefix 
 			return "", fmt.Errorf("native SVG has an invalid resource prefix")
 		}
 	}
-	w := &nativeSurfaceSVGWriter{ctx: ctx, doc: surface.document, prefix: prefix, fonts: make(map[d2scene.AssetID]*fontface.ParsedFace), rasterURLs: make(map[d2scene.AssetID]string)}
+	w := &nativeSurfaceSVGWriter{ctx: ctx, doc: surface.document, prefix: prefix, patterns: patterns, fonts: make(map[d2scene.AssetID]*fontface.ParsedFace), rasterURLs: make(map[d2scene.AssetID]string)}
 	matrix, err := nativeVectorViewport(w.doc)
 	if err != nil {
 		return "", err
@@ -60,7 +66,7 @@ func nativeSurfaceSVG(ctx context.Context, surface *nativeVectorSurface, prefix 
 		content = w.primitive(d2scene.Rect{Box: d2scene.Box{Width: 1, Height: 1}, Fill: surface.capPaint}, 0) + content
 	}
 	if surface.inkCoverage != nil {
-		ink, err := nativeSurfaceSVG(ctx, surface.inkCoverage, prefix+"-coverage")
+		ink, err := nativeSurfaceSVGWithPatterns(ctx, surface.inkCoverage, prefix+"-coverage", patterns)
 		if err != nil {
 			return "", err
 		}
@@ -127,6 +133,9 @@ func (w *nativeSurfaceSVGWriter) withinBytes(size int) bool {
 	if w.err != nil {
 		return false
 	}
+	if w.patterns != nil {
+		size += w.patterns.pending.Len()
+	}
 	if size > (32<<20)-w.defs.Len() {
 		w.err = fmt.Errorf("native SVG surface exceeds 32 MiB byte budget")
 		return false
@@ -149,6 +158,29 @@ func (w *nativeSurfaceSVGWriter) def(s string) {
 	if w.keep(s) != "" {
 		w.defs.WriteString(s)
 	}
+}
+
+// Write pattern resources beside the retained surface definitions. Referencing
+// a shared tile still applies its units and transform in each shape's space.
+func (w *nativeSurfaceSVGWriter) resource(tag, id, body string) string {
+	if !w.inPattern || w.patterns == nil {
+		w.def("<" + tag + " id=\"" + id + "\"" + body)
+		return id
+	}
+	// body contains the closing tag, so the key also distinguishes tag names.
+	if previous := w.patterns.ids[body]; previous != "" {
+		return previous
+	}
+	markup := "<" + tag + " id=\"" + id + "\"" + body
+	if !w.withinBytes(len(markup)) {
+		return id
+	}
+	if w.patterns.ids == nil {
+		w.patterns.ids = make(map[string]string)
+	}
+	w.patterns.ids[body] = id
+	w.patterns.pending.WriteString(markup)
+	return id
 }
 
 func (w *nativeSurfaceSVGWriter) node(n *d2scene.Node, depth int) string {
@@ -186,7 +218,7 @@ func (w *nativeSurfaceSVGWriter) node(n *d2scene.Node, depth int) string {
 	}
 	if n.Clip != nil {
 		id := w.id("clip")
-		w.def("<clipPath id=\"" + id + "\" clipPathUnits=\"userSpaceOnUse\"><path transform=\"" + nativeSVGMatrix(n.Clip.Transform) + "\" d=\"" + w.path(n.Clip.Path) + "\" clip-rule=\"" + nativeSVGFillRule(n.Clip.Path.FillRule) + "\"/></clipPath>")
+		id = w.resource("clipPath", id, " clipPathUnits=\"userSpaceOnUse\"><path transform=\""+nativeSVGMatrix(n.Clip.Transform)+"\" d=\""+w.path(n.Clip.Path)+"\" clip-rule=\""+nativeSVGFillRule(n.Clip.Path.FillRule)+"\"/></clipPath>")
 		attrs += nativeSVGAttr("clip-path", "url(#"+id+")")
 	}
 	if n.Mask != nil {
@@ -196,7 +228,7 @@ func (w *nativeSurfaceSVGWriter) node(n *d2scene.Node, depth int) string {
 			kind = "luminance"
 		}
 		body := w.node(n.Mask.Root, depth+1)
-		w.def("<mask id=\"" + id + "\" maskUnits=\"userSpaceOnUse\"" + nativeSVGBoxAttributes(w.surfaceBounds()) + " mask-type=\"" + kind + "\"><g transform=\"" + nativeSVGMatrix(n.Mask.Transform) + "\">" + body + "</g></mask>")
+		id = w.resource("mask", id, " maskUnits=\"userSpaceOnUse\""+nativeSVGBoxAttributes(w.surfaceBounds())+" mask-type=\""+kind+"\"><g transform=\""+nativeSVGMatrix(n.Mask.Transform)+"\">"+body+"</g></mask>")
 		attrs += nativeSVGAttr("mask", "url(#"+id+")")
 	}
 	if len(n.Filters) > 0 {
@@ -222,7 +254,7 @@ func (w *nativeSurfaceSVGWriter) node(n *d2scene.Node, depth int) string {
 				w.err = fmt.Errorf("native SVG unsupported filter %T", filter)
 			}
 		}
-		w.def("<filter id=\"" + id + "\" x=\"-100%\" y=\"-100%\" width=\"300%\" height=\"300%\" color-interpolation-filters=\"sRGB\">" + effects.String() + "</filter>")
+		id = w.resource("filter", id, " x=\"-100%\" y=\"-100%\" width=\"300%\" height=\"300%\" color-interpolation-filters=\"sRGB\">"+effects.String()+"</filter>")
 		attrs += nativeSVGAttr("filter", "url(#"+id+")")
 	}
 	var body strings.Builder
@@ -331,12 +363,15 @@ func (w *nativeSurfaceSVGWriter) paint(paint d2scene.Paint, role string, depth i
 	gradientStyle := nativeSVGAttr("color-interpolation", interpolation)
 	switch p := paint.(type) {
 	case d2scene.LinearGradient:
-		w.def("<linearGradient id=\"" + id + "\"" + nativeSVGAttr("gradientUnits", units(p.Units)) + gradientStyle + nativeSVGAttr("gradientTransform", nativeSVGMatrix(p.Transform)) + nativeSVGAttr("spreadMethod", spread(p.Spread)) + nativeSVGFloat("x1", p.Start.X) + nativeSVGFloat("y1", p.Start.Y) + nativeSVGFloat("x2", p.End.X) + nativeSVGFloat("y2", p.End.Y) + ">" + stops(p.Stops) + "</linearGradient>")
+		id = w.resource("linearGradient", id, nativeSVGAttr("gradientUnits", units(p.Units))+gradientStyle+nativeSVGAttr("gradientTransform", nativeSVGMatrix(p.Transform))+nativeSVGAttr("spreadMethod", spread(p.Spread))+nativeSVGFloat("x1", p.Start.X)+nativeSVGFloat("y1", p.Start.Y)+nativeSVGFloat("x2", p.End.X)+nativeSVGFloat("y2", p.End.Y)+">"+stops(p.Stops)+"</linearGradient>")
 	case d2scene.RadialGradient:
-		w.def("<radialGradient id=\"" + id + "\"" + nativeSVGAttr("gradientUnits", units(p.Units)) + gradientStyle + nativeSVGAttr("gradientTransform", nativeSVGMatrix(p.Transform)) + nativeSVGAttr("spreadMethod", spread(p.Spread)) + nativeSVGFloat("cx", p.Center.X) + nativeSVGFloat("cy", p.Center.Y) + nativeSVGFloat("r", p.Radius) + nativeSVGFloat("fx", p.Focal.X) + nativeSVGFloat("fy", p.Focal.Y) + nativeSVGFloat("fr", p.FocalRadius) + ">" + stops(p.Stops) + "</radialGradient>")
+		id = w.resource("radialGradient", id, nativeSVGAttr("gradientUnits", units(p.Units))+gradientStyle+nativeSVGAttr("gradientTransform", nativeSVGMatrix(p.Transform))+nativeSVGAttr("spreadMethod", spread(p.Spread))+nativeSVGFloat("cx", p.Center.X)+nativeSVGFloat("cy", p.Center.Y)+nativeSVGFloat("r", p.Radius)+nativeSVGFloat("fx", p.Focal.X)+nativeSVGFloat("fy", p.Focal.Y)+nativeSVGFloat("fr", p.FocalRadius)+">"+stops(p.Stops)+"</radialGradient>")
 	case d2scene.PatternPaint:
+		previous := w.inPattern
+		w.inPattern = true
 		body := w.node(p.Root, depth+1)
-		w.def("<pattern id=\"" + id + "\"" + nativeSVGAttr("patternUnits", units(p.Units)) + nativeSVGAttr("patternTransform", nativeSVGMatrix(p.Transform)) + nativeSVGFloat("x", p.Tile.X) + nativeSVGFloat("y", p.Tile.Y) + nativeSVGFloat("width", p.Tile.Width) + nativeSVGFloat("height", p.Tile.Height) + nativeSVGAttr("viewBox", "0 0 "+nativeSVGNumber(p.Tile.Width)+" "+nativeSVGNumber(p.Tile.Height)) + " preserveAspectRatio=\"none\">" + body + "</pattern>")
+		id = w.resource("pattern", id, nativeSVGAttr("patternUnits", units(p.Units))+nativeSVGAttr("patternTransform", nativeSVGMatrix(p.Transform))+nativeSVGFloat("x", p.Tile.X)+nativeSVGFloat("y", p.Tile.Y)+nativeSVGFloat("width", p.Tile.Width)+nativeSVGFloat("height", p.Tile.Height)+nativeSVGAttr("viewBox", "0 0 "+nativeSVGNumber(p.Tile.Width)+" "+nativeSVGNumber(p.Tile.Height))+" preserveAspectRatio=\"none\">"+body+"</pattern>")
+		w.inPattern = previous
 	default:
 		w.err = fmt.Errorf("native SVG unsupported paint %T", paint)
 	}
@@ -426,7 +461,7 @@ func (w *nativeSurfaceSVGWriter) primitive(primitive d2scene.Primitive, depth in
 				return ""
 			}
 			id := w.id("image-clip")
-			w.def("<clipPath id=\"" + id + "\"><rect" + nativeSVGFloat("x", p.Box.X) + nativeSVGFloat("y", p.Box.Y) + nativeSVGFloat("width", p.Box.Width) + nativeSVGFloat("height", p.Box.Height) + "/></clipPath>")
+			id = w.resource("clipPath", id, "><rect"+nativeSVGFloat("x", p.Box.X)+nativeSVGFloat("y", p.Box.Y)+nativeSVGFloat("width", p.Box.Width)+nativeSVGFloat("height", p.Box.Height)+"/></clipPath>")
 			previous := w.transform
 			w.transform = previous.Mul(matrix)
 			body := w.node(a.Root, depth+1)

@@ -33,7 +33,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 			continue
 		}
 		box, topLeft := shapeLabelPlacement(targetShape)
-		holeBox, ok := borderLabelMaskBox(position, topLeft, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.StrokeWidth)
+		holeBox, ok := borderLabelMaskBox(position, topLeft, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.RenderedStrokeWidth())
 		if !ok || holeBox.Width <= 0 || holeBox.Height <= 0 {
 			continue
 		}
@@ -46,7 +46,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		if err := b.ctx.Err(); err != nil {
 			return nil, err
 		}
-		if connection.Label == "" && connection.Icon == nil {
+		if connection.Opacity == 0 || connection.Label == "" && connection.Icon == nil {
 			continue
 		}
 		var holeBox d2scene.Box
@@ -83,7 +83,10 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		})
 		hole.ID = connection.ID + ":label-mask-hole"
 		if !label.FromString(position).IsOnEdge() {
-			hole.Opacity = .75
+			hole.Opacity *= .75
+		}
+		if p := connection.MotionLabel; p != nil {
+			hole.Opacity *= p.Opacity
 		}
 		holes = append(holes, hole)
 	}
@@ -100,29 +103,48 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}, nil
 }
 
-func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth, labelHeight int, shapeBox *geo.Box, strokeWidth int) (d2scene.Box, bool) {
-	effectiveStrokeWidth := float64(strokeWidth)
+// A crossing only cuts the back connection's stroke. Labels, markers and the
+// foreground connection keep their own paint and opacity.
+func crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap) *d2scene.Mask {
+	if len(gaps) == 0 {
+		return nil
+	}
+	root := d2scene.NewNode(nil)
+	root.Children = append(root.Children, d2scene.NewNode(d2scene.Rect{
+		Box: viewBox, Fill: d2scene.SolidPaint{Color: color.NRGBA{R: 255, G: 255, B: 255, A: 255}},
+	}))
+	for _, gap := range gaps {
+		root.Children = append(root.Children, d2scene.NewNode(d2scene.Ellipse{
+			Center:  d2scene.Point{X: gap.Center.X, Y: gap.Center.Y},
+			RadiusX: gap.Radius, RadiusY: gap.Radius,
+			Fill: d2scene.SolidPaint{Color: color.NRGBA{A: 255}},
+		}))
+	}
+	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}
+}
+
+func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth, labelHeight int, shapeBox *geo.Box, strokeWidth float64) (d2scene.Box, bool) {
 	var box d2scene.Box
 	switch position {
 	case label.BorderTopLeft, label.BorderTopCenter, label.BorderTopRight:
 		box = d2scene.Box{
-			X: topLeft.X - 2, Y: shapeBox.TopLeft.Y - effectiveStrokeWidth/2,
-			Width: float64(labelWidth + 4), Height: effectiveStrokeWidth,
+			X: topLeft.X - 2, Y: shapeBox.TopLeft.Y - strokeWidth/2,
+			Width: float64(labelWidth + 4), Height: strokeWidth,
 		}
 	case label.BorderBottomLeft, label.BorderBottomCenter, label.BorderBottomRight:
 		box = d2scene.Box{
-			X: topLeft.X - 2, Y: shapeBox.TopLeft.Y + shapeBox.Height - effectiveStrokeWidth/2,
-			Width: float64(labelWidth + 4), Height: effectiveStrokeWidth,
+			X: topLeft.X - 2, Y: shapeBox.TopLeft.Y + shapeBox.Height - strokeWidth/2,
+			Width: float64(labelWidth + 4), Height: strokeWidth,
 		}
 	case label.BorderLeftTop, label.BorderLeftMiddle, label.BorderLeftBottom:
 		box = d2scene.Box{
-			X: shapeBox.TopLeft.X - effectiveStrokeWidth/2, Y: topLeft.Y - 2,
-			Width: effectiveStrokeWidth, Height: float64(labelHeight + 4),
+			X: shapeBox.TopLeft.X - strokeWidth/2, Y: topLeft.Y - 2,
+			Width: strokeWidth, Height: float64(labelHeight + 4),
 		}
 	case label.BorderRightTop, label.BorderRightMiddle, label.BorderRightBottom:
 		box = d2scene.Box{
-			X: shapeBox.TopLeft.X + shapeBox.Width - effectiveStrokeWidth/2, Y: topLeft.Y - 2,
-			Width: effectiveStrokeWidth, Height: float64(labelHeight + 4),
+			X: shapeBox.TopLeft.X + shapeBox.Width - strokeWidth/2, Y: topLeft.Y - 2,
+			Width: strokeWidth, Height: float64(labelHeight + 4),
 		}
 	default:
 		return d2scene.Box{}, false
@@ -152,8 +174,7 @@ func shapeLabelPlacement(targetShape d2target.Shape) (*geo.Box, *geo.Point) {
 	} else {
 		box = geometry.GetInnerBox()
 	}
-	topLeft := position.GetPointOnBox(box, label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
-	return box, topLeft
+	return box, targetShape.LabelTopLeft(position, box)
 }
 
 func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2scene.Node, error) {
@@ -167,7 +188,7 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 		if connection.Language == "latex" {
 			latex, err := b.buildLatexLabelNode(
 				fmt.Sprintf("connection %q", connection.ID), connection.ID+":label:0",
-				connection.Label, connection.Color, topLeft,
+				connection.Label, connection.Color, topLeft, 1,
 			)
 			if err != nil {
 				return nil, err
@@ -215,10 +236,12 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 			}
 			fontColor := connection.GetFontColor()
 			underline := connection.Underline
+			progress := connection.UnderlineProgress
 			if connection.Link != "" {
 				// Linked connection labels are underlined and use unvisited-link blue.
 				fontColor = "blue"
 				underline = true
+				progress = nil
 			}
 			fill, err := b.paint(fontColor, fmt.Sprintf("connection %q label color", connection.ID))
 			if err != nil {
@@ -227,8 +250,14 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 			nodes = append(nodes, centeredTextRuns(
 				connection.ID+":label", connection.Label, topLeft,
 				connection.LabelWidth, connection.LabelHeight, connection.FontSize,
-				font, fill, underline,
+				font, fill, underline, progress,
 			)...)
+			nodes = appendPlainStrikes(nodes, connection.Text, topLeft, fill)
+		}
+		if p := connection.MotionLabel; p != nil {
+			caption := d2scene.NewNode(nil)
+			caption.Opacity, caption.Children = p.Opacity, nodes
+			nodes = []*d2scene.Node{caption}
 		}
 	}
 
@@ -266,13 +295,29 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 		nodes = append(nodes, centeredTextRuns(
 			fmt.Sprintf("%s:%s-label", connection.ID, endpoint.name), endpoint.text.Label, topLeft,
 			endpoint.text.LabelWidth, endpoint.text.LabelHeight, connection.FontSize,
-			font, fill, false,
+			font, fill, false, nil,
 		)...)
 	}
 	return nodes, nil
 }
 
-func centeredTextRuns(idPrefix, text string, topLeft *geo.Point, width, height, fontSize int, font d2scene.Font, fill d2scene.Paint, underline bool) []*d2scene.Node {
+// The scene owns its text runs independently of the sampled render target.
+func copyUnderlineProgress(progress *float64) *float64 {
+	if progress == nil {
+		return nil
+	}
+	visible := *progress
+	return &visible
+}
+
+func appendPlainStrikes(nodes []*d2scene.Node, label d2target.Text, topLeft *geo.Point, fill d2scene.Paint) []*d2scene.Node {
+	label.MarkdownStrike.PlainRules(topLeft.X, topLeft.Y+float64(label.FontSize), float64(label.LabelWidth), float64(label.FontSize), func(x, y, width, height float64) {
+		nodes = append(nodes, d2scene.NewNode(d2scene.Rect{Box: d2scene.Box{X: x, Y: y, Width: width, Height: height}, Fill: fill}))
+	})
+	return nodes
+}
+
+func centeredTextRuns(idPrefix, text string, topLeft *geo.Point, width, height, fontSize int, font d2scene.Font, fill d2scene.Paint, underline bool, progress *float64) []*d2scene.Node {
 	lines := strings.Split(text, "\n")
 	lineAdvance := float64(height) / float64(len(lines))
 	nodes := make([]*d2scene.Node, 0, len(lines))
@@ -284,11 +329,12 @@ func centeredTextRuns(idPrefix, text string, topLeft *geo.Point, width, height, 
 				X: topLeft.X + float64(width)/2,
 				Y: topLeft.Y + float64(fontSize) + float64(index)*lineAdvance,
 			},
-			Anchor:    d2scene.AnchorMiddle,
-			Font:      font,
-			Fill:      fill,
-			Underline: underline,
-			Ink:       d2scene.NewBounds(topLeft.X, lineTop, topLeft.X+float64(width), lineTop+lineAdvance),
+			Anchor:            d2scene.AnchorMiddle,
+			Font:              font,
+			Fill:              fill,
+			Underline:         underline,
+			UnderlineProgress: copyUnderlineProgress(progress),
+			Ink:               d2scene.NewBounds(topLeft.X, lineTop, topLeft.X+float64(width), lineTop+lineAdvance),
 		}
 		node := d2scene.NewNode(run)
 		node.ID = fmt.Sprintf("%s:%d", idPrefix, index)

@@ -22,12 +22,12 @@ func TestLayoutOutputAcrossSeeds(t *testing.T) {
 		seed    int64
 		sha256  string
 	}{
-		{fixture: "clusters", seed: 1, sha256: "79d04c0e5c4d00327a5d286e444446035a1c258981e6b07f161ad730c719abdd"},
+		{fixture: "clusters", seed: 1, sha256: "bcf99447349a3053b7eafd0fd257e8462aa41b8583a4f6274a3d820fb20b986c"},
 		{fixture: "clusters", seed: 123, sha256: "a7c8a0c80712a10754d0925c84ccd6cd880bb7497fefca69c86a286fb19cd7d1"},
 		{fixture: "clusters", seed: 8675309, sha256: "4f742ab0d3199a66b716e873fdba4c8bb9313d62c0a7a0102d710b7e82faf60f"},
-		{fixture: "hierarchy_subgraphs", seed: 1, sha256: "507b98b3e70c735c17ce177400737f86b29210276cded1d7e7d21aed0ac0812c"},
-		{fixture: "hierarchy_subgraphs", seed: 123, sha256: "99736f057c8fe8029c214df49a68355e0538641f841218caa0e52a0d8973764e"},
-		{fixture: "hierarchy_subgraphs", seed: 8675309, sha256: "c3566b4aac683d5571016b8db25bac771dd1e038199d55cd6a70bf8f6747efff"},
+		{fixture: "hierarchy_subgraphs", seed: 1, sha256: "7f7413f41fc82de7ecc00ff9db943b77bb35b48502916a409df65080db4344bb"},
+		{fixture: "hierarchy_subgraphs", seed: 123, sha256: "7a70f1af44050630ee7df5975ca5cc3965dfa8389013143da970b2f0187fde49"},
+		{fixture: "hierarchy_subgraphs", seed: 8675309, sha256: "3b033ca8cfc0b15d9827fe7728b907cd10feacb348ff5eb64e07437ff2dd9f28"},
 		{fixture: "simple_container_hierarchy", seed: 1, sha256: "c0acc7c6967e39fe42d1caca89812e907e316e6067e601af1d9032a3d064714b"},
 		{fixture: "simple_container_hierarchy", seed: 123, sha256: "41372d36020e12c44bdf9135fe42cb565dcce5a8cdb69c3ae3c4647a49574121"},
 		{fixture: "simple_container_hierarchy", seed: 8675309, sha256: "d7e4ef56bef99c4ae854a5a44d45dcffd93513a09b1b88719a5c5cb261101485"},

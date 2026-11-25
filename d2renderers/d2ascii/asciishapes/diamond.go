@@ -1,6 +1,9 @@
 package asciishapes
 
-import "math"
+import (
+	"math"
+	"unicode/utf8"
+)
 
 func DrawDiamond(ctx *Context, x, y, w, h float64, label, labelPosition string) {
 	ix, iy, iw, ih := ctx.Calibrate(x, y, w, h)
@@ -48,7 +51,7 @@ func DrawDiamond(ctx *Context, x, y, w, h float64, label, labelPosition string) 
 
 	if label != "" {
 		ly := LabelY(ctx.Ctx, y1, y2, ih, label, labelPosition)
-		lx := x1 + (iw-len(label))/2
+		lx := x1 + (iw-utf8.RuneCountInString(label))/2
 		ctx.Canvas.DrawLabel(lx, ly, label)
 	}
 }

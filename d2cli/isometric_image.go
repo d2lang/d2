@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2isometric/d2isometricimg"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
@@ -125,11 +127,8 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 	if len(boards) == 0 {
 		return nil, false, fmt.Errorf("isometric export has no drawable boards")
 	}
-	if intervalMS < 0 || intervalMS > 600000 || intervalMS > 0 && ext != isometricGIF {
-		return nil, false, fmt.Errorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
-	}
 	hasSubboards := len(diagram.Layers)+len(diagram.Scenarios)+len(diagram.Steps) > 0
-	if ext == isometricGIF && (hasSubboards || len(boards) > 1 || intervalMS > 0) {
+	if ext == isometricGIF && (hasSubboards || len(boards) > 1 || intervalMS > 0 || len(diagram.TweenFrames) > 0) {
 		if intervalMS == 0 {
 			intervalMS = 1000
 		}
@@ -138,7 +137,38 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 			return nil, false, err
 		}
 		defer o.Assets.Resolver.CloseIdleConnections()
-		data, err := d2isometricimg.RenderTimeline(ctx, boards, &o, time.Duration(intervalMS)*time.Millisecond)
+		if err := d2target.ValidateRenderTarget(diagram); err != nil {
+			return nil, false, err
+		}
+		var frames []*d2target.Diagram
+		var timings []d2isometricimg.BoardTiming
+		var scratch []d2animate.Frame
+		for i, board := range boards {
+			var previous *d2target.Diagram
+			if i > 0 && len(board.TweenFrames) > 0 {
+				first := board.TweenFrames[0]
+				prev := boards[i-1]
+				// The isometric camera is shared across all boards. Its scene
+				// also paints board captions, descriptions and crease weights.
+				if prev.Root.Label == first.Root.Label && prev.Description == first.Description &&
+					maps.Equal(prev.ExplicitDefaultStrokeWidths, first.ExplicitDefaultStrokeWidths) {
+					previous = prev
+				}
+			}
+			scratch = gifBoardFrames(scratch, board, previous, int(intervalMS))
+			if len(scratch) > d2isometricimg.MaxTimelineBoards-len(frames) {
+				return nil, false, fmt.Errorf("isometric timeline exceeds %d boards", d2isometricimg.MaxTimelineBoards)
+			}
+			for _, frame := range scratch {
+				frames = append(frames, frame.Diagram)
+				timings = append(timings, d2isometricimg.BoardTiming{
+					Duration:    time.Duration(frame.DurationMS) * time.Millisecond,
+					Elapsed:     time.Duration(frame.ElapsedMS) * time.Millisecond,
+					TweenSample: frame.TweenSample,
+				})
+			}
+		}
+		data, err := d2isometricimg.RenderTimedTimeline(ctx, frames, &o, timings)
 		if err != nil {
 			return nil, false, err
 		}

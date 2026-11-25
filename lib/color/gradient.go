@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Gradient struct {
@@ -22,6 +23,28 @@ type Gradient struct {
 type ColorStop struct {
 	Color    string
 	Position string
+}
+
+// Offset returns the rendered stop position, clamped to [previous, 1] so
+// authored stops cannot move backwards along the gradient.
+func (stop ColorStop) Offset(index, total int, previous float64) (float64, error) {
+	if stop.Position == "" {
+		if total == 1 {
+			return 0, nil
+		}
+		return max(previous, float64(index)/float64(total-1)), nil
+	}
+	position := strings.TrimSpace(stop.Position)
+	divisor := 1.0
+	if strings.HasSuffix(position, "%") {
+		position = strings.TrimSpace(strings.TrimSuffix(position, "%"))
+		divisor = 100
+	}
+	value, err := strconv.ParseFloat(position, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("must be a finite number or percentage")
+	}
+	return max(previous, min(1, value/divisor)), nil
 }
 
 func ParseGradient(cssGradient string) (Gradient, error) {
@@ -106,20 +129,36 @@ func parseColorStops(params []string) ([]ColorStop, error) {
 	var colorStops []ColorStop
 	for i, p := range params {
 		p = strings.TrimSpace(p)
-		parts := strings.Fields(p)
-
-		switch len(parts) {
-		case 1:
-			colorStops = append(colorStops, ColorStop{Color: parts[0]})
-		case 2:
-			position, err := canonicalGradientStopPosition(parts[1])
-			if err != nil {
-				return nil, fmt.Errorf("color stop %d position %q: %w", i, parts[1], err)
-			}
-			colorStops = append(colorStops, ColorStop{Color: parts[0], Position: position})
-		default:
+		if p == "" {
 			return nil, fmt.Errorf("invalid color stop %d %q", i, p)
 		}
+		stop := ColorStop{Color: p}
+		// Only whitespace outside a color function separates its offset.
+		depth := 0
+		for j, r := range p {
+			if depth == 0 && unicode.IsSpace(r) {
+				position := strings.TrimSpace(p[j:])
+				canonical, err := canonicalGradientStopPosition(position)
+				if err != nil {
+					return nil, fmt.Errorf("color stop %d position %q: %w", i, position, err)
+				}
+				stop.Color, stop.Position = p[:j], canonical
+				break
+			}
+			switch r {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth < 0 {
+					return nil, fmt.Errorf("unbalanced color function in stop %d %q", i, p)
+				}
+			}
+		}
+		if depth != 0 {
+			return nil, fmt.Errorf("unbalanced color function in stop %d %q", i, p)
+		}
+		colorStops = append(colorStops, stop)
 	}
 	return colorStops, nil
 }
@@ -167,72 +206,51 @@ func LinearGradientToSVG(gradient Gradient) string {
 	return sb.String()
 }
 
-func parseLinearGradientDirection(direction string) (x1, y1, x2, y2 string) {
-	x1, y1, x2, y2 = "0%", "0%", "0%", "100%"
-
+// LinearGradientVector returns endpoints in object-bounding-box coordinates.
+// For malformed directions it also reports an error; the coordinates retain
+// the historical SVG fallback for unrecognized direction words.
+func LinearGradientVector(direction string) (x1, y1, x2, y2 float64, err error) {
 	direction = strings.TrimSpace(direction)
 	if strings.HasPrefix(direction, "to ") {
-		dir := strings.TrimPrefix(direction, "to ")
-		dir = strings.TrimSpace(dir)
-		parts := strings.Fields(dir)
-		xStart, yStart := "50%", "50%"
-		xEnd, yEnd := "50%", "50%"
-
-		xDirSet, yDirSet := false, false
-
-		for _, part := range parts {
+		x1, y1, x2, y2 = .5, .5, .5, .5
+		for _, part := range strings.Fields(strings.TrimPrefix(direction, "to ")) {
 			switch part {
 			case "left":
-				xStart = "100%"
-				xEnd = "0%"
-				xDirSet = true
+				x1, x2 = 1, 0
 			case "right":
-				xStart = "0%"
-				xEnd = "100%"
-				xDirSet = true
+				x1, x2 = 0, 1
 			case "top":
-				yStart = "100%"
-				yEnd = "0%"
-				yDirSet = true
+				y1, y2 = 1, 0
 			case "bottom":
-				yStart = "0%"
-				yEnd = "100%"
-				yDirSet = true
+				y1, y2 = 0, 1
+			default:
+				err = fmt.Errorf("unsupported linear-gradient direction %q", direction)
 			}
 		}
-
-		if !xDirSet {
-			xStart = "50%"
-			xEnd = "50%"
-		}
-
-		if !yDirSet {
-			yStart = "50%"
-			yEnd = "50%"
-		}
-
-		x1, y1 = xStart, yStart
-		x2, y2 = xEnd, yEnd
-	} else if strings.HasSuffix(direction, "deg") {
-		angleStr := strings.TrimSuffix(direction, "deg")
-		angle, err := strconv.ParseFloat(strings.TrimSpace(angleStr), 64)
-		if err == nil {
-			cssAngle := angle
-			svgAngle := (90 - cssAngle) * (math.Pi / 180)
-
-			x1f := 50.0
-			y1f := 50.0
-			x2f := x1f + 50*math.Cos(svgAngle)
-			y2f := y1f + 50*math.Sin(svgAngle)
-
-			x1 = fmt.Sprintf("%.2f%%", x1f)
-			y1 = fmt.Sprintf("%.2f%%", y1f)
-			x2 = fmt.Sprintf("%.2f%%", x2f)
-			y2 = fmt.Sprintf("%.2f%%", y2f)
-		}
+		return x1, y1, x2, y2, err
 	}
+	if strings.HasSuffix(direction, "deg") {
+		degrees, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(direction, "deg")), 64)
+		if err != nil || math.IsNaN(degrees) || math.IsInf(degrees, 0) {
+			return 0, 0, 0, 1, fmt.Errorf("invalid linear-gradient angle %q", direction)
+		}
+		radians := (90 - degrees) * (math.Pi / 180)
+		return .5, .5, .5 + .5*math.Cos(radians), .5 + .5*math.Sin(radians), nil
+	}
+	if direction != "" {
+		err = fmt.Errorf("unsupported linear-gradient direction %q", direction)
+	}
+	return 0, 0, 0, 1, err
+}
 
-	return x1, y1, x2, y2
+func parseLinearGradientDirection(direction string) (x1, y1, x2, y2 string) {
+	ax, ay, bx, by, err := LinearGradientVector(direction)
+	precision := 0
+	if err == nil && strings.HasSuffix(strings.TrimSpace(direction), "deg") {
+		precision = 2
+	}
+	percent := func(v float64) string { return strconv.FormatFloat(v*100, 'f', precision, 64) + "%" }
+	return percent(ax), percent(ay), percent(bx), percent(by)
 }
 
 func RadialGradientToSVG(gradient Gradient) string {

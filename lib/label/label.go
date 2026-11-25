@@ -315,12 +315,95 @@ func (position Position) IsBorder() bool {
 	}
 }
 
+// ReserveBorderHalf accounts for the portion of a border decoration on either
+// side of the outline. It can be applied to outer margins or inner padding.
+func (position Position) ReserveBorderHalf(space *geo.Spacing, width, height float64) {
+	switch position {
+	case BorderTopLeft, BorderTopCenter, BorderTopRight:
+		space.Top = max(space.Top, height/2)
+	case BorderBottomLeft, BorderBottomCenter, BorderBottomRight:
+		space.Bottom = max(space.Bottom, height/2)
+	case BorderLeftTop, BorderLeftMiddle, BorderLeftBottom:
+		space.Left = max(space.Left, width/2)
+	case BorderRightTop, BorderRightMiddle, BorderRightBottom:
+		space.Right = max(space.Right, width/2)
+	}
+}
+
 func (position Position) IsOnEdge() bool {
 	switch position {
 	case InsideMiddleLeft, InsideMiddleCenter, InsideMiddleRight, UnlockedMiddle:
 		return true
 	default:
 		return false
+	}
+}
+
+// Transposed reflects a node label position across the x = y diagonal.
+func (position Position) Transposed() Position {
+	switch position {
+	case OutsideTopLeft:
+		return OutsideLeftTop
+	case OutsideLeftTop:
+		return OutsideTopLeft
+	case OutsideTopCenter:
+		return OutsideLeftMiddle
+	case OutsideLeftMiddle:
+		return OutsideTopCenter
+	case OutsideTopRight:
+		return OutsideLeftBottom
+	case OutsideLeftBottom:
+		return OutsideTopRight
+	case OutsideBottomLeft:
+		return OutsideRightTop
+	case OutsideRightTop:
+		return OutsideBottomLeft
+	case OutsideBottomCenter:
+		return OutsideRightMiddle
+	case OutsideRightMiddle:
+		return OutsideBottomCenter
+	case OutsideBottomRight:
+		return OutsideRightBottom
+	case OutsideRightBottom:
+		return OutsideBottomRight
+	case BorderTopLeft:
+		return BorderLeftTop
+	case BorderLeftTop:
+		return BorderTopLeft
+	case BorderTopCenter:
+		return BorderLeftMiddle
+	case BorderLeftMiddle:
+		return BorderTopCenter
+	case BorderTopRight:
+		return BorderLeftBottom
+	case BorderLeftBottom:
+		return BorderTopRight
+	case BorderBottomLeft:
+		return BorderRightTop
+	case BorderRightTop:
+		return BorderBottomLeft
+	case BorderBottomCenter:
+		return BorderRightMiddle
+	case BorderRightMiddle:
+		return BorderBottomCenter
+	case BorderBottomRight:
+		return BorderRightBottom
+	case BorderRightBottom:
+		return BorderBottomRight
+	case InsideTopCenter:
+		return InsideMiddleLeft
+	case InsideMiddleLeft:
+		return InsideTopCenter
+	case InsideTopRight:
+		return InsideBottomLeft
+	case InsideBottomLeft:
+		return InsideTopRight
+	case InsideMiddleRight:
+		return InsideBottomCenter
+	case InsideBottomCenter:
+		return InsideMiddleRight
+	default:
+		return position
 	}
 }
 

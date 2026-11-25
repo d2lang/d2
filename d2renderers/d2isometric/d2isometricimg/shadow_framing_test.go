@@ -133,3 +133,21 @@ func TestShadowFramingIgnoresNonCastingGeometry(t *testing.T) {
 		}
 	}
 }
+
+func TestGroundShadowFramingKeepsDepthUnderTranslation(t *testing.T) {
+	// With light directly overhead, shifting the caster along X shifts its
+	// entire filtered footprint by the same amount. Camera depth must not
+	// acquire a multiply-add residual when that shift is applied.
+	light := rasterCamera{right: nv(0, 0, 1), up: nv(1, 0, 0), direction: nv(0, 1, 0), scale: 100}
+	depth := func(x float64) float64 {
+		t := Triangle{CastShadow: true, V: [3]Vertex{
+			{Position: nv(x, 1, 0)}, {Position: nv(x-1, 1, 0)}, {Position: nv(x, 1, -1)},
+		}}
+		var extent projectedExtent
+		extent.preparedGroundShadows([]Triangle{t}, nil, 0, 0, light)
+		return extent.maxZ
+	}
+	if got, want := depth(1), depth(0)+nativeCameraAxes().direction.X; got != want {
+		t.Fatalf("translated shadow depth = %.17g, want %.17g", got, want)
+	}
+}

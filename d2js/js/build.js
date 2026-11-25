@@ -1,7 +1,7 @@
 import { build } from "bun";
 import { copyFile, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { brotliCompressSync } from "node:zlib";
+import { brotliCompressSync, constants } from "node:zlib";
 
 const __dirname = new URL(".", import.meta.url).pathname;
 const ROOT_DIR = resolve(__dirname);
@@ -11,11 +11,20 @@ await rm("./dist", { recursive: true, force: true });
 await mkdir("./dist/browser", { recursive: true });
 await mkdir("./dist/node-esm", { recursive: true });
 await mkdir("./dist/node-cjs", { recursive: true });
+await mkdir("./dist/wasm", { recursive: true });
 
 const wasmBinary = await readFile("./wasm/d2.wasm");
 const wasmExecJs = await readFile("./wasm/wasm_exec.js", "utf8");
+await writeFile("./dist/wasm/d2.wasm", wasmBinary);
+await writeFile("./dist/wasm/wasm_exec.js", wasmExecJs);
 
-const compressedWasm = brotliCompressSync(wasmBinary);
+// Tune distance coding for the size of the browser bundle after HTTP compression.
+const compressedWasm = brotliCompressSync(wasmBinary, {
+  params: {
+    [constants.BROTLI_PARAM_NPOSTFIX]: 1,
+    [constants.BROTLI_PARAM_NDIRECT]: 12,
+  },
+});
 console.log(
   `WASM compression: ${(wasmBinary.length / 1024 / 1024).toFixed(2)}MB → ${(
     compressedWasm.length /
@@ -24,19 +33,9 @@ console.log(
   ).toFixed(2)}MB`
 );
 
-// Store compressed WASM as base64 and include brotli decoder in the loader
-// Don't decompress immediately - let the consumer decompress when needed
-const brotliDecoder = await readFile("./vendor/decode.min.js", "utf8");
-
 await writeFile(
   join(SRC_DIR, "wasm-loader.browser.js"),
-  `${brotliDecoder}
-
-export const wasmBinaryCompressed = "${Buffer.from(compressedWasm).toString("base64")}";
-export function getWasmBinary() {
-  const compressedBytes = Uint8Array.from(atob(wasmBinaryCompressed), c => c.charCodeAt(0));
-  return BrotliDecode(compressedBytes);
-}
+  `export const compressedWasmBase64 = "${compressedWasm.toString("base64")}";
 export const wasmExecJs = ${JSON.stringify(wasmExecJs)};`
 );
 
@@ -57,12 +56,21 @@ async function buildDynamicFiles(platform) {
 
   await writeFile(join(SRC_DIR, "platform.js"), platformContent);
 
-  if (platform === "node") {
-    const workerContent = await readFile(join(SRC_DIR, "worker.node.js"), "utf8");
-    await writeFile(join(SRC_DIR, "worker.js"), workerContent);
+  const entrypoint = join(SRC_DIR, `worker.${platform}.js`);
+  const workerFile = join(SRC_DIR, "worker.js");
+  if (platform === "browser") {
+    // The browser loads this worker from a blob URL, so bundle its imports first.
+    const worker = await build({
+      ...commonConfig,
+      entrypoints: [entrypoint],
+      target: "browser",
+      format: "esm",
+    });
+    const workerScript = await worker.outputs[0].text();
+    await writeFile(workerFile, workerScript);
+    await writeFile("./dist/browser/worker.js", `${wasmExecJs}\n${workerScript}`);
   } else {
-    const workerContent = await readFile(join(SRC_DIR, "worker.browser.js"), "utf8");
-    await writeFile(join(SRC_DIR, "worker.js"), workerContent);
+    await copyFile(entrypoint, workerFile);
   }
 }
 
@@ -110,15 +118,8 @@ async function buildAndCopy(buildType) {
     );
   }
 
-  if (buildType !== "browser") {
-    await copyFile(resolve(ROOT_DIR, "wasm/d2.wasm"), join(config.outdir, "d2.wasm"));
-    await copyFile(
-      resolve(ROOT_DIR, "wasm/wasm_exec.js"),
-      join(config.outdir, "wasm_exec.js")
-    );
-    if (buildType === "node-cjs") {
-      await writeFile(join(config.outdir, "package.json"), '{"type":"commonjs"}\n');
-    }
+  if (buildType === "node-cjs") {
+    await writeFile(join(config.outdir, "package.json"), '{"type":"commonjs"}\n');
   }
 }
 

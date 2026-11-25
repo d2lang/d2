@@ -148,6 +148,8 @@ func TestBundledFontSourceIsIsolatedFromPublicRegistryMutation(t *testing.T) {
 		t.Fatalf("registered face = %p, %v, %v", source, matched, err)
 	}
 
+	// Nothing may measure text or encode a subset with this font while the
+	// byte is changed: results for a bundled font are shared between renders.
 	offset := len(data) / 2
 	original := data[offset]
 	data[offset] ^= 1

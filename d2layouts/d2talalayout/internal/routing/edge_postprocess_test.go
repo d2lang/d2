@@ -11,6 +11,32 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
+func TestBalanceBoundsReuseUnchangedSegments(t *testing.T) {
+	guard, err := newRouteWorkGuard(t.Context(), "BalanceEdgeSegments", maxRouteStageWorkUnits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vertical := func(x float64) *geo.Segment {
+		return &geo.Segment{Start: geo.NewPoint(x, 20), End: geo.NewPoint(x, 80)}
+	}
+	moving := vertical(10)
+	locked := []*geo.Segment{vertical(0), vertical(30)}
+	var bounds balanceSegmentBounds
+	check := func(known int, wantFloor, wantCeil float64, wantWork uint64) {
+		t.Helper()
+		before := guard.used
+		floor, ceil, err := bounds.update(*moving, locked, known, guard)
+		if err != nil || floor != wantFloor || ceil != wantCeil || guard.used-before != wantWork {
+			t.Fatalf("bounds (%g, %g), work %d, err %v", floor, ceil, guard.used-before, err)
+		}
+	}
+	check(0, 0, 30, 2)
+	locked = append(locked, vertical(15))
+	check(2, 0, 15, 1)
+	moving.Start.X, moving.End.X = 20, 20
+	check(3, 15, 30, 3)
+}
+
 // evenlyDistribute returns a list of positions of length num, where the values are evenly distributed between floor and ceiling
 func evenlyDistribute(floor, ceil float64, num int) []float64 {
 	out := make([]float64, 0)

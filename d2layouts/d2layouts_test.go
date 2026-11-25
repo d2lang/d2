@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/d2lang/d2/d2compiler"
@@ -314,6 +317,17 @@ func BenchmarkLayoutNestedPartitions(b *testing.B) {
 	}
 }
 
+func TestExtractAsNestedGraphPreservesTheme(t *testing.T) {
+	g := compileLayoutTestGraph(t, "box: {a -> b}")
+	if err := g.ApplyTheme(d2themescatalog.Origami.ID); err != nil {
+		t.Fatal(err)
+	}
+	nested := g.ExtractAsNestedGraph(g.Root.Children["box"])
+	if nested.Theme == nil || *nested.Theme != *g.Theme || nested.Theme == g.Theme {
+		t.Fatal("nested graph needs an independent copy of the board theme")
+	}
+}
+
 func TestExtractSubgraphsPreservesIndependentConfigData(t *testing.T) {
 	for _, batched := range []bool{false, true} {
 		t.Run(fmt.Sprintf("batched=%t", batched), func(t *testing.T) {
@@ -326,6 +340,9 @@ note: {near: top-left; c -> d}`)
 			g.Data = map[string]interface{}{
 				"tala-seeds": []interface{}{"7", "11"},
 				"metadata":   map[string]interface{}{"name": "original"},
+			}
+			if err := g.ApplyTheme(d2themescatalog.Origami.ID); err != nil {
+				t.Fatal(err)
 			}
 			specs := collectNestedExtractions(g)
 			var graphs []*d2graph.Graph
@@ -341,6 +358,9 @@ note: {near: top-left; c -> d}`)
 				}
 			}
 			for _, graph := range graphs {
+				if graph.Theme == nil || *graph.Theme != *g.Theme || graph.Theme == g.Theme {
+					t.Fatal("nested graph needs an independent copy of the board theme")
+				}
 				if !reflect.DeepEqual(graph.Data, data) {
 					t.Fatalf("nested data = %#v, want %#v", graph.Data, data)
 				}
@@ -351,5 +371,110 @@ note: {near: top-left; c -> d}`)
 				t.Fatalf("nested layout changed parent data: %#v", g.Data)
 			}
 		})
+	}
+}
+
+// shapesRecorder keeps the "shapes" attribute of every record, unformatted.
+type shapesRecorder struct {
+	mu     sync.Mutex
+	shapes []slog.Value
+}
+
+func (h *shapesRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (h *shapesRecorder) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h *shapesRecorder) WithGroup(string) slog.Handler            { return h }
+func (h *shapesRecorder) Handle(_ context.Context, record slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == "shapes" {
+			h.shapes = append(h.shapes, attr.Value)
+		}
+		return true
+	})
+	return nil
+}
+
+func TestLayoutNestedLogsShapesLazily(t *testing.T) {
+	t.Parallel()
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A grid, a sequence diagram and ordinary shapes reach every log call.
+	g := compileLayoutTestGraph(t, "a -> b\ngrid: {\n  grid-columns: 1\n  c -> d\n}\nsequence: {\n  shape: sequence_diagram\n  e -> f\n}\n")
+	if err := g.ApplyTheme(d2themescatalog.NeutralDefault.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &shapesRecorder{}
+	ctx := log.With(context.Background(), slog.New(recorder))
+	if err := LayoutNested(ctx, g, GraphInfo{}, d2dagrelayout.DefaultLayout, DefaultRouter); err != nil {
+		t.Fatal(err)
+	}
+	// Every graph is handed to the handler unformatted, so listing its objects
+	// costs nothing unless a handler asks for the text.
+	if len(recorder.shapes) < 6 {
+		t.Fatalf("LayoutNested logged the shapes of %d graphs, want at least 6", len(recorder.shapes))
+	}
+	for _, value := range recorder.shapes {
+		if value.Kind() != slog.KindLogValuer {
+			t.Fatalf("shapes were formatted before a handler asked for them: %v", value.Kind())
+		}
+	}
+
+	// The text is what was logged eagerly before, for both kinds of handler.
+	want := g.PrintString()
+	attr := slog.Any("shapes", graphShapes{g})
+	// log.PrettyHandler formats attribute values with fmt.
+	if got := fmt.Sprintf("%v", attr.Value); got != want {
+		t.Fatalf("fmt formatted %q, want %q", got, want)
+	}
+	// slog's own handlers resolve them.
+	var out strings.Builder
+	logger := slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	log.Debug(log.With(context.Background(), logger), "layout", attr)
+	if !strings.Contains(out.String(), "shapes="+strconv.Quote(want)) {
+		t.Fatalf("text handler wrote %q, want shapes=%q", out.String(), want)
+	}
+}
+
+func TestNestedLayoutMarksOnlyPartialInputs(t *testing.T) {
+	g := compileLayoutTestGraph(t, "a\nnote: {near: top-center}\na -> note")
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.ApplyTheme(d2themescatalog.NeutralDefault.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	var sawParent, sawNested bool
+	core := func(ctx context.Context, part *d2graph.Graph) error {
+		if !part.IsPartialLayout {
+			t.Fatal("core layout saw a partial graph marked as a whole board")
+		}
+		if part == g {
+			sawParent = true
+		} else {
+			sawNested = true
+		}
+		return d2dagrelayout.DefaultLayout(ctx, part)
+	}
+	router := func(ctx context.Context, board *d2graph.Graph, edges []*d2graph.Edge) error {
+		if board.IsPartialLayout {
+			t.Fatal("router saw a restored board marked as partial")
+		}
+		return DefaultRouter(ctx, board, edges)
+	}
+	if err := LayoutNested(log.WithDefault(t.Context()), g, GraphInfo{}, core, router); err != nil {
+		t.Fatal(err)
+	}
+	if !sawParent || !sawNested || g.IsPartialLayout {
+		t.Fatalf("partial input state: parent %v, extracted %v, returned board %v", sawParent, sawNested, g.IsPartialLayout)
 	}
 }

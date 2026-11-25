@@ -7,6 +7,7 @@ import (
 	"html"
 	"image/color"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,10 +87,14 @@ func preflightSVGMetadata(ctx context.Context, diagram *d2target.Diagram, budget
 }
 
 type nativeSVGWriter struct {
-	ctx      context.Context
-	buf      bytes.Buffer
-	err      error
-	surfaces map[*nativeVectorSurface]string
+	ctx           context.Context
+	buf           bytes.Buffer
+	err           error
+	surfaces      map[*nativeVectorSurface]string
+	lightingStops map[string]string
+	textureLights map[[6]string]int
+	shadowInk     bool
+	patterns      nativeSVGPatterns
 }
 
 func (w *nativeSVGWriter) write(format string, args ...any) {
@@ -116,52 +121,177 @@ func svgColor(r, g, b float64) string {
 	return fmt.Sprintf("#%02x%02x%02x", uint8(math.Round(rasterClamp(r)*255)), uint8(math.Round(rasterClamp(g)*255)), uint8(math.Round(rasterClamp(b)*255)))
 }
 
+// svgAppendCanonicalLoop writes the canonical loop of polygon into the
+// storage of p, replacing what p held, and returns nil for a degenerate
+// polygon.
+//
+// Normalize at the same precision used to serialize the SVG. Matching edges
+// may be cancelled only after their endpoints have been rounded and cleaned.
+func svgAppendCanonicalLoop(p, polygon []svgPoint) []svgPoint {
+	p = p[:0]
+	for _, v := range polygon {
+		v = svgPoint{x: math.Round(v.x*1e6) / 1e6, y: math.Round(v.y*1e6) / 1e6}
+		if len(p) == 0 || v != p[len(p)-1] {
+			p = append(p, v)
+		}
+	}
+	if len(p) > 1 && p[0] == p[len(p)-1] {
+		p = p[:len(p)-1]
+	}
+	p = svgOmitCollinearSplits(p)
+	if len(p) < 3 {
+		return nil
+	}
+	area := 2 * svgPolygonArea(p)
+	if math.Abs(area) < 1e-10 {
+		return nil
+	}
+	if area < 0 {
+		slices.Reverse(p)
+	}
+	first := 0
+	for i := range p {
+		if p[i].x < p[first].x || p[i].x == p[first].x && p[i].y < p[first].y {
+			first = i
+		}
+	}
+	// Start at the least vertex. Three reversals rotate in place.
+	slices.Reverse(p[:first])
+	slices.Reverse(p[first:])
+	slices.Reverse(p)
+	return p
+}
+
+func svgWriteLoop(s *strings.Builder, loop []svgPoint) {
+	for i, p := range loop {
+		if i == 0 {
+			s.WriteByte('M')
+		} else {
+			s.WriteByte('L')
+		}
+		s.WriteString(svgNumber(p.x))
+		s.WriteByte(' ')
+		s.WriteString(svgNumber(p.y))
+	}
+	if len(loop) > 0 {
+		s.WriteByte('Z')
+	}
+}
+
 func svgPolygonPath(polygons [][]svgPoint) string {
 	var s strings.Builder
+	var loop []svgPoint
 	for _, polygon := range polygons {
-		// Serialize a canonical loop. Clipping can retain a different starting
-		// vertex at an exactly shared edge, without changing its silhouette.
-		// Discard vertices that coincide at SVG precision before choosing it.
-		p := make([]svgPoint, 0, len(polygon))
-		for _, v := range polygon {
-			v = svgPoint{x: math.Round(v.x*1e6) / 1e6, y: math.Round(v.y*1e6) / 1e6}
-			if len(p) == 0 || v != p[len(p)-1] {
-				p = append(p, v)
+		if cap(loop) < len(polygon) {
+			loop = make([]svgPoint, 0, 2*len(polygon))
+		}
+		svgWriteLoop(&s, svgAppendCanonicalLoop(loop[:0], polygon))
+	}
+	return s.String()
+}
+
+// svgLoopPointKey identifies a rounded loop vertex. Both zeros are one vertex:
+// equal coordinates identify a vertex, not equal bit patterns.
+func svgLoopPointKey(p svgPoint) [2]uint64 {
+	// Adding zero turns negative zero into positive zero and changes nothing else.
+	return [2]uint64{math.Float64bits(p.x + 0), math.Float64bits(p.y + 0)}
+}
+
+// A nonzero fill depends only on the net directed edges. Two neighboring
+// fragments with a shared edge traverse it in opposite directions. Cancel
+// such edges before serializing large fills, keeping every exterior and hole
+// boundary at full precision. Stroked paths still need their interior edges.
+func svgFillPath(polygons [][]svgPoint) string {
+	if len(polygons) < 8 {
+		return svgPolygonPath(polygons)
+	}
+	// Bound the extra edge tables on large scenes. The ordinary compound
+	// path has the same fill and can be written one polygon at a time.
+	const maxEdges = 1 << 16
+	remaining := maxEdges
+	for _, polygon := range polygons {
+		if len(polygon) > remaining {
+			return svgPolygonPath(polygons)
+		}
+		remaining -= len(polygon)
+	}
+	// Vertices are numbered in order of first appearance and an edge is the
+	// pair of its vertex numbers, so the tables hash one word per edge.
+	capacity := maxEdges - remaining
+	vertexIDs := make(map[[2]uint64]int32, capacity)
+	vertices := make([]svgPoint, 0, capacity)
+	edges := make([]uint64, 0, capacity)
+	pending := make(map[uint64]int32, capacity)
+	var loop []svgPoint
+	var ids []int32
+	for _, polygon := range polygons {
+		if cap(loop) < len(polygon) {
+			loop = make([]svgPoint, 0, 2*len(polygon))
+		}
+		p := svgAppendCanonicalLoop(loop[:0], polygon)
+		ids = ids[:0]
+		for _, v := range p {
+			key := svgLoopPointKey(v)
+			id, ok := vertexIDs[key]
+			if !ok {
+				id = int32(len(vertices))
+				vertexIDs[key] = id
+				vertices = append(vertices, v)
 			}
+			ids = append(ids, id)
 		}
-		if len(p) > 1 && p[0] == p[len(p)-1] {
-			p = p[:len(p)-1]
-		}
-		p = svgOmitCollinearSplits(p)
-		if len(p) < 3 {
-			continue
-		}
-		area := 2 * svgPolygonArea(p)
-		if math.Abs(area) < 1e-10 {
-			continue
-		}
-		// A nonzero compound path is a union, including overlapping pieces.
-		first := 0
-		for i := range p {
-			if p[i].x < p[first].x || p[i].x == p[first].x && p[i].y < p[first].y {
-				first = i
+		for i, from := range ids {
+			to := ids[(i+1)%len(ids)]
+			e, back := uint64(uint32(from))<<32|uint64(uint32(to)), uint64(uint32(to))<<32|uint64(uint32(from))
+			if pending[back] > 0 {
+				pending[back]--
+				continue
 			}
+			pending[e]++
+			edges = append(edges, e)
 		}
-		for i := range p {
-			j := (first + i) % len(p)
-			if area < 0 {
-				j = (first + len(p) - i) % len(p)
-			}
-			if i == 0 {
-				s.WriteByte('M')
-			} else {
-				s.WriteByte('L')
-			}
-			s.WriteString(svgNumber(p[j].x))
-			s.WriteByte(' ')
-			s.WriteString(svgNumber(p[j].y))
+	}
+	// Build adjacency in input order. Avoid map iteration so snapshots and
+	// path winding remain deterministic even at point-touching components.
+	// The surviving edges of vertex v occupy next[start[v]:start[v]+count[v]].
+	count := make([]int32, len(vertices))
+	kept := edges[:0:0]
+	for _, e := range edges {
+		if pending[e] > 0 {
+			pending[e]--
+			count[e>>32]++
+			kept = append(kept, e)
 		}
-		s.WriteByte('Z')
+	}
+	start := make([]int32, len(vertices))
+	total := int32(0)
+	for v, n := range count {
+		start[v] = total
+		total += n
+		count[v] = 0
+	}
+	next := make([]int32, total)
+	for _, e := range kept {
+		from := e >> 32
+		next[start[from]+count[from]] = int32(uint32(e))
+		count[from]++
+	}
+	var s strings.Builder
+	loop = loop[:0]
+	for _, e := range edges {
+		first := int32(e >> 32)
+		for count[first] > 0 {
+			loop = loop[:0]
+			for at := first; ; {
+				loop = append(loop, vertices[at])
+				count[at]--
+				at = next[start[at]+count[at]]
+				if at == first {
+					break
+				}
+			}
+			svgWriteLoop(&s, loop)
+		}
 	}
 	return s.String()
 }
@@ -219,6 +349,7 @@ type svgPaintBatch struct {
 }
 
 type svgPaintUnit struct {
+	link    *nativeLink
 	batches []*svgPaintBatch
 	depth   float64
 	count   int
@@ -270,6 +401,7 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 		return nil, err
 	}
 	type unitKey struct {
+		link     *nativeLink
 		group    *nativeOpacityGroup
 		owner    *nativePaintOwner
 		material *Material
@@ -277,6 +409,15 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 	units := []*svgPaintUnit{}
 	unitIndex := make(map[unitKey]int)
 	batchIndexes := []map[svgBatchKey]*svgPaintBatch{}
+	// Object spans follow mesh construction order. Put the link around
+	// the visible paint so gaps between a body and its outside label and
+	// areas occluded by other objects keep their own hit targets.
+	var meshLinks []*nativeLink
+	for i := range scene.links {
+		if scene.links[i].meshEnd > 0 {
+			meshLinks = append(meshLinks, &scene.links[i])
+		}
+	}
 	shade := &Raster{camera: camera}
 	for i, t := range scene.triangles {
 		if t.svgCoverageOnly || len(visible[i]) == 0 || t.Material != nil && t.Material.Color.A == 0 {
@@ -291,6 +432,12 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 			t.Material = m
 		}
 		key := unitKey{group: t.OpacityGroup}
+		for len(meshLinks) > 0 && i >= meshLinks[0].meshEnd {
+			meshLinks = meshLinks[1:]
+		}
+		if len(meshLinks) > 0 && i >= meshLinks[0].meshStart {
+			key.link = meshLinks[0]
+		}
 		if key.group == nil {
 			key.owner = t.PaintOwner
 		}
@@ -301,7 +448,7 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 		if !exists {
 			unit = len(units)
 			unitIndex[key] = unit
-			u := &svgPaintUnit{first: i, opacity: 1, opaque: faces[i].opaque}
+			u := &svgPaintUnit{link: key.link, first: i, opacity: 1, opaque: faces[i].opaque}
 			if key.owner != nil {
 				u.opaque = key.owner.Opaque
 			}
@@ -390,18 +537,29 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 
 	w := &nativeSVGWriter{ctx: ctx}
 	w.write(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="%d" height="%d" viewBox="0 0 %d %d" role="img"><title>D2 isometric diagram</title>`, scene.width, scene.height, scene.width, scene.height)
-	w.write(`<rect width="100%%" height="100%%" fill="%s"/>`, svgColor(float64(scene.background.R)/255, float64(scene.background.G)/255, float64(scene.background.B)/255))
 	if scene.backgroundPaint != nil {
-		document := nativePaintDocument(scene.backgroundPaint)
-		fragment, err := nativeSurfaceSVG(ctx, &nativeVectorSurface{document: document}, "background")
+		// Stretch the normalized gradient and its opaque backing together
+		// when the document wrapper expands or crops the background.
+		surface := &nativeVectorSurface{document: nativePaintDocument(scene.backgroundPaint), capBackground: &scene.background}
+		fragment, err := nativeSurfaceSVG(ctx, surface, "background")
 		if err != nil {
 			return nil, err
 		}
-		w.write(`<g transform="scale(%d %d)">%s</g>`, scene.width, scene.height, fragment)
+		w.write(`<svg width="100%%" height="100%%" viewBox="0 0 1 1" preserveAspectRatio="none">%s</svg>`, fragment)
+	} else {
+		w.write(`<rect width="100%%" height="100%%" fill="%s"/>`, nativeSVGColor(scene.background))
 	}
 	writeSVGGroundShadow(w, scene)
 	id := 0
+	seenLinks := make(map[*nativeLink]bool)
 	for _, u := range units {
+		var closeLink string
+		if u.link != nil {
+			// Depth ordering can split one shape into several paint groups.
+			// All groups respond to clicks, but only the first is a tab stop.
+			closeLink = writeSVGLinkStart(w, *u.link, seenLinks[u.link])
+			seenLinks[u.link] = true
+		}
 		w.write(`<g opacity="%s">`, svgNumber(u.opacity))
 		for _, b := range u.batches {
 			id++
@@ -410,7 +568,7 @@ func nativeSceneSVG(ctx context.Context, scene *nativeScene) ([]byte, error) {
 				return nil, w.err
 			}
 		}
-		w.write(`</g>`)
+		w.write(`</g>%s`, closeLink)
 	}
 	writeSVGLinks(w, scene)
 	w.write(`</svg>`)
@@ -441,7 +599,7 @@ func writeSVGBatch(w *nativeSVGWriter, b *svgPaintBatch, id int, camera rasterCa
 		writeSVGPaintCover(w, b.cover, camera)
 		return
 	}
-	path := svgPolygonPath(b.polygons)
+	path := svgFillPath(b.polygons)
 	if path == "" {
 		return
 	}
@@ -460,11 +618,17 @@ func writeSVGBatch(w *nativeSVGWriter, b *svgPaintBatch, id int, camera rasterCa
 		filter := ""
 		if !m.Unlit {
 			slope, intercept := svgTextureLighting(camera, b.triangle)
-			w.write(`<defs><filter id="light-%d" color-interpolation-filters="linearRGB"><feComponentTransfer><feFuncR type="linear" slope="%s" intercept="%s"/><feFuncG type="linear" slope="%s" intercept="%s"/><feFuncB type="linear" slope="%s" intercept="%s"/></feComponentTransfer></filter></defs>`, id, svgNumber(slope[0]), svgNumber(intercept[0]), svgNumber(slope[1]), svgNumber(intercept[1]), svgNumber(slope[2]), svgNumber(intercept[2]))
-			filter = fmt.Sprintf(` filter="url(#light-%d)"`, id)
+			lightID := w.textureLight(id, slope, intercept)
+			filter = fmt.Sprintf(` filter="url(#light-%d)"`, lightID)
 		}
 		a := b.affine
-		w.write(`<g clip-path="url(#face-%d)" opacity="%s"%s><g transform="matrix(%s %s %s %s %s %s)"%s><use xlink:href="#%s"/></g></g>`, id, svgNumber(alpha), blend, svgNumber(a[0]), svgNumber(a[1]), svgNumber(a[2]), svgNumber(a[3]), svgNumber(a[4]), svgNumber(a[5]), filter, surfaceID)
+		w.write(`<g clip-path="url(#face-%d)" opacity="%s"%s><g transform="matrix(%s %s %s %s %s %s)"%s>`, id, svgNumber(alpha), blend, svgNumber(a[0]), svgNumber(a[1]), svgNumber(a[2]), svgNumber(a[3]), svgNumber(a[4]), svgNumber(a[5]), filter)
+		if m.outsideCaption {
+			// A complete label is one target, including whitespace between
+			// glyphs. The surrounding clip limits it to the visible surface.
+			w.write(`<rect width="1" height="1" fill="transparent" pointer-events="all"/>`)
+		}
+		w.write(`<use xlink:href="#%s"/></g></g>`, surfaceID)
 		return
 	}
 	fill := b.color
@@ -480,9 +644,13 @@ func writeSVGLinks(w *nativeSVGWriter, s *nativeScene) {
 		points []svgPoint
 		area   float64
 	}
-	links := make([]projectedLink, len(s.links))
-	for i, link := range s.links {
-		projected := &links[i]
+	links := make([]projectedLink, 0, len(s.links))
+	for _, link := range s.links {
+		if link.meshEnd > 0 {
+			continue
+		}
+		links = append(links, projectedLink{})
+		projected := &links[len(links)-1]
 		projected.link = link
 		for _, v := range link.points {
 			p := s.camera.project(v)
@@ -496,14 +664,29 @@ func writeSVGLinks(w *nativeSVGWriter, s *nativeScene) {
 	sort.SliceStable(links, func(i, j int) bool { return links[i].area > links[j].area })
 	for _, projected := range links {
 		link, points := projected.link, projected.points
-		destination := link.region.URL
-		if destination == "" && link.region.Target != "" {
-			destination = "#" + link.region.Target
-		}
-		w.write(`<a xlink:href="%s">`, html.EscapeString(destination))
-		if link.region.Tooltip != "" {
-			w.write(`<title>%s</title>`, html.EscapeString(link.region.Tooltip))
-		}
-		w.write(`<path d="%s" fill="transparent" pointer-events="all"/></a>`, svgPolygonPath([][]svgPoint{points}))
+		closeLink := writeSVGLinkStart(w, link, false)
+		w.write(`<path d="%s" fill="transparent" pointer-events="all"/>%s`, svgPolygonPath([][]svgPoint{points}), closeLink)
 	}
+}
+
+func writeSVGLinkStart(w *nativeSVGWriter, link nativeLink, continued bool) string {
+	destination := link.region.URL
+	if destination == "" && link.region.Target != "" {
+		destination = "#" + link.region.Target
+	}
+	closeTag := "</g>"
+	if destination != "" {
+		tabIndex := ""
+		if continued {
+			tabIndex = ` tabindex="-1"`
+		}
+		w.write(`<a xlink:href="%s"%s>`, html.EscapeString(destination), tabIndex)
+		closeTag = "</a>"
+	} else {
+		w.write(`<g>`)
+	}
+	if link.region.Tooltip != "" {
+		w.write(`<title>%s</title>`, html.EscapeString(link.region.Tooltip))
+	}
+	return closeTag
 }

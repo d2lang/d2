@@ -92,7 +92,7 @@ func TestHierarchyFixtureGroundShadowIgnoresUnrelatedDepth(t *testing.T) {
 	if !reflect.DeepEqual(raster.shadow, control.shadow) {
 		t.Fatal("root ground receivers changed physical surface shadows")
 	}
-	if reflect.DeepEqual(raster.groundShadow, control.groundShadow) || !reflect.DeepEqual(control.groundShadow, control.shadow) {
+	if reflect.DeepEqual(raster.groundShadow, control.groundShadow) || control.groundShadow.camera != control.shadow.camera {
 		t.Fatal("local receivers did not use an independent ground-only atlas")
 	}
 }

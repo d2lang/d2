@@ -123,10 +123,10 @@ func tunnelRangesBetweenChecked(g *layoutgraph.Graph,
 
 			// sequence nodes have shorter ranges along Top/Bottom (except last node in sequence)
 			if nodeA.Sequence != nil && nodeA.Sequence.Last() != nodeA {
-				nodeARight -= shape.STEP_WEDGE_WIDTH
+				nodeARight -= shape.StepWedgeWidth(nodeA.Width)
 			}
 			if nodeB.Sequence != nil && nodeB.Sequence.Last() != nodeB {
-				nodeBRight -= shape.STEP_WEDGE_WIDTH
+				nodeBRight -= shape.StepWedgeWidth(nodeB.Width)
 			}
 
 			start = math.Max(nodeA.TopLeft.X, nodeB.TopLeft.X)

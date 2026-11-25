@@ -136,3 +136,40 @@ func TestObstructionBoundsGeneratedRouteParity(t *testing.T) {
 		}
 	}
 }
+
+// referenceExcludes is the original finiteness test of excludes.
+func referenceExcludes(bounds obstructionBounds, node *layoutgraph.Node) bool {
+	if !bounds.usable || node == nil || node.TopLeft == nil {
+		return false
+	}
+	x, y := node.TopLeft.X, node.TopLeft.Y
+	right, bottom := x+node.Width, y+node.Height
+	if math.IsInf(x, 0) || math.IsInf(y, 0) || math.IsInf(right, 0) || math.IsInf(bottom, 0) ||
+		math.IsNaN(x) || math.IsNaN(y) || math.IsNaN(right) || math.IsNaN(bottom) {
+		return false
+	}
+	return (x < bounds.left && right < bounds.left) ||
+		(x > bounds.right && right > bounds.right) ||
+		(y < bounds.top && bottom < bounds.top) ||
+		(y > bounds.bottom && bottom > bounds.bottom)
+}
+
+func TestObstructionBoundsExcludesMatchesReference(t *testing.T) {
+	values := []float64{
+		0, math.Copysign(0, -1), 1, -1, 5, 10, 25, 40, -30, 1e300, -1e300,
+		math.MaxFloat64, -math.MaxFloat64, math.SmallestNonzeroFloat64,
+		math.Inf(1), math.Inf(-1), math.NaN(),
+	}
+	random := rand.New(rand.NewPCG(3, 3))
+	pick := func() float64 { return values[random.IntN(len(values))] }
+	for i := 0; i < 200_000; i++ {
+		bounds := scoringNodeBounds(obstructionBoundsNode(pick(), pick(), pick(), pick()))
+		if random.IntN(2) == 0 {
+			bounds = scoringNodeBounds(obstructionBoundsNode(10, 20, 30, 40))
+		}
+		node := obstructionBoundsNode(pick(), pick(), pick(), pick())
+		if got, want := bounds.excludes(node), referenceExcludes(bounds, node); got != want {
+			t.Fatalf("bounds %+v node %v,%v %vx%v: excludes=%v, reference %v", bounds, node.TopLeft.X, node.TopLeft.Y, node.Width, node.Height, got, want)
+		}
+	}
+}

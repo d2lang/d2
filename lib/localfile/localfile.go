@@ -49,7 +49,7 @@ type Policy struct {
 // rootState makes Policy copies share exactly one close operation. Policy is a
 // value type and is commonly copied into compiler and asset resolver options.
 type rootState struct {
-	handle *os.Root
+	handle *fileRoot
 	once   sync.Once
 	err    error
 }
@@ -63,7 +63,7 @@ func Rooted(root string) (Policy, error) {
 		return Policy{}, fmt.Errorf("localfile: resolve root %q: %w", root, err)
 	}
 	absolute = filepath.Clean(absolute)
-	handle, err := os.OpenRoot(absolute)
+	handle, err := openRoot(absolute)
 	if err != nil {
 		return Policy{}, fmt.Errorf("localfile: open root %q: %w", root, err)
 	}
@@ -81,6 +81,14 @@ func Rooted(root string) (Policy, error) {
 // Use it only for trusted local input, such as the D2 command-line interface.
 func Unrestricted() Policy {
 	return Policy{mode: modeUnrestricted}
+}
+
+// ResolveImportPath joins D2 imports using host filesystem path semantics.
+func (Policy) ResolveImportPath(parent, name string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+	return filepath.Join(filepath.Dir(parent), filepath.FromSlash(name))
 }
 
 // RootPath returns the absolute configured root and true for a rooted policy.
@@ -175,7 +183,7 @@ func closeFile(file *os.File, name string) error {
 	return nil
 }
 
-func closeRoot(root *os.Root, name string) error {
+func closeRoot(root *fileRoot, name string) error {
 	if err := root.Close(); err != nil {
 		return fmt.Errorf("localfile: close root %q: %w", name, err)
 	}

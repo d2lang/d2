@@ -47,14 +47,15 @@ var staticFS embed.FS
 type watcherOpts struct {
 	layout          *string
 	renderOpts      d2svg.RenderOpts
-	animateInterval int64
+	animateInterval *int64
+	animateDuration *int64
 	host            string
 	port            string
 	inputPath       string
 	outputPath      string
 	boardPath       string
 	bundle          bool
-	forceAppendix   bool
+	forceAppendix   *bool
 	fontFamily      *d2fonts.FontFamily
 	monoFontFamily  *d2fonts.FontFamily
 	outputFormat    exportExtension
@@ -444,16 +445,17 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 			recompiledPrefix = "re"
 		}
 
-		// Watch mode is a trusted local CLI workflow, so it may follow imports
-		// anywhere on the host filesystem. Keep that opt-in explicit while using
-		// localfile.Policy to reject directories and other special files.
-		fs := trackedFS{localFiles: localfile.Unrestricted()}
+		// Watch mode is a trusted local CLI workflow, so unless
+		// --allow-local-files=false, it may follow imports anywhere on the host
+		// filesystem. localfile.Policy rejects directories and other special files.
+		fs := trackedFS{localFiles: localFilesFromContext(ctx)}
 		w.boardpathMu.Lock()
 		var boardPath []string
 		if w.boardPath != "" {
 			boardPath = strings.Split(w.boardPath, string(os.PathSeparator))
 		}
-		svg, _, err := compile(ctx, w.ms, &fs, w.layout, w.renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.inputPath, w.outputPath, boardPath, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, true)
+		renderOpts := w.renderOpts
+		svg, _, err := compile(ctx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.inputPath, w.outputPath, boardPath, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, true)
 		w.boardpathMu.Unlock()
 		errs := ""
 		if err != nil {
@@ -470,11 +472,11 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 			return err
 		}
 
-		w.broadcast(&compileResult{
-			SVG:   string(svg),
-			Scale: w.renderOpts.Scale,
-			Err:   errs,
-		})
+		result := &compileResult{SVG: string(svg), Err: errs}
+		if len(svg) > 0 {
+			result.Scale = renderOpts.Scale
+		}
+		w.broadcast(result)
 
 		if firstCompile {
 			firstCompile = false

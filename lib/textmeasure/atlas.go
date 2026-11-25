@@ -2,11 +2,14 @@ package textmeasure
 
 import (
 	"sort"
+	"sync"
+	"sync/atomic"
 	"unicode"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/d2lang/d2/internal/bundledfont"
 	"github.com/d2lang/d2/lib/geo"
 )
 
@@ -85,6 +88,60 @@ func NewAtlas(face font.Face, runeSets ...[]rune) *atlas {
 		descent:    i2f(face.Metrics().Descent),
 		lineHeight: i2f(face.Metrics().Height),
 	}
+}
+
+// atlasMetrics is everything in an atlas except its face: the glyph mapping
+// and line metrics. They depend only on the font file, the size and Runes, and
+// nothing changes them after NewAtlas, so every Ruler can share one copy.
+type atlasMetrics struct {
+	mapping                     map[rune]glyph
+	ascent, descent, lineHeight float64
+}
+
+// atlasKey identifies a bundled font file by its backing array, the size its
+// face was created at, and the rune set that was measured. Runes is exported,
+// so a caller that replaces or extends it must not be served older atlases.
+type atlasKey struct {
+	src   *byte
+	size  int
+	runes *rune
+	count int
+}
+
+// Measuring every glyph of Runes costs far more than measuring a diagram's
+// labels, and each Ruler would otherwise repeat it for every face and size it
+// meets. Only D2's bundled fonts are shared: they live for the whole process,
+// whereas a caller's font may be registered afresh for every diagram and must
+// not be kept alive here. An atlas is about 41 KB and a diagram uses a
+// handful of sizes, so the table stops retaining new ones at about 10 MB;
+// a Ruler measures the sizes beyond that itself.
+const maxSharedAtlases = 256
+
+var (
+	sharedAtlases     sync.Map // atlasKey to *atlasMetrics
+	sharedAtlasesSize atomic.Int32
+)
+
+// sharedAtlas returns an atlas of Runes for face, which is parsed at size.
+func (f *parsedFont) sharedAtlas(face font.Face, size int) *atlas {
+	// Read the set once, so that the key names the runes that are measured.
+	runes := Runes
+	if !bundledfont.Is(f.src) || len(runes) == 0 {
+		return NewAtlas(face, runes)
+	}
+	key := atlasKey{src: &f.src[0], size: size, runes: &runes[0], count: len(runes)}
+	if cached, ok := sharedAtlases.Load(key); ok {
+		m := cached.(*atlasMetrics)
+		return &atlas{face: face, mapping: m.mapping, ascent: m.ascent, descent: m.descent, lineHeight: m.lineHeight}
+	}
+	a := NewAtlas(face, runes)
+	if sharedAtlasesSize.Load() < maxSharedAtlases {
+		m := &atlasMetrics{mapping: a.mapping, ascent: a.ascent, descent: a.descent, lineHeight: a.lineHeight}
+		if _, loaded := sharedAtlases.LoadOrStore(key, m); !loaded {
+			sharedAtlasesSize.Add(1)
+		}
+	}
+	return a
 }
 
 func (a *atlas) contains(r rune) bool {

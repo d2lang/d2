@@ -10,70 +10,39 @@ type shapePerson struct {
 	shape.Shape
 }
 
-func (s shapePerson) LabelPositionPreferences(preferenceSet LabelTier) map[label.Position]struct{} {
+func (s shapePerson) LabelPositionPreferences(preferenceSet LabelTier) LabelSet {
 	switch preferenceSet {
 	case Good:
-		return map[label.Position]struct{}{
-			label.OutsideBottomCenter: {},
-		}
+		return 1 << label.OutsideBottomCenter
 	case OK:
-		return map[label.Position]struct{}{
-			label.OutsideTopCenter:   {},
-			label.OutsideBottomLeft:  {},
-			label.OutsideBottomRight: {},
-		}
+		return 1<<label.OutsideTopCenter |
+			1<<label.OutsideBottomLeft |
+			1<<label.OutsideBottomRight
 	case Unideal:
-		return map[label.Position]struct{}{
-			label.InsideTopCenter:    {},
-			label.InsideMiddleCenter: {},
-			label.InsideBottomCenter: {},
-			label.InsideBottomLeft:   {},
-			label.InsideBottomRight:  {},
-			label.OutsideLeftMiddle:  {},
-			label.OutsideLeftBottom:  {},
-			label.OutsideRightMiddle: {},
-			label.OutsideRightBottom: {},
-		}
+		return 1<<label.InsideTopCenter |
+			1<<label.InsideMiddleCenter |
+			1<<label.InsideBottomCenter |
+			1<<label.InsideBottomLeft |
+			1<<label.InsideBottomRight |
+			1<<label.OutsideLeftMiddle |
+			1<<label.OutsideLeftBottom |
+			1<<label.OutsideRightMiddle |
+			1<<label.OutsideRightBottom
 	case Bad:
-		return map[label.Position]struct{}{
-			label.InsideTopLeft:     {},
-			label.InsideTopRight:    {},
-			label.InsideMiddleLeft:  {},
-			label.InsideMiddleRight: {},
-			label.OutsideRightTop:   {},
-			label.OutsideLeftTop:    {},
-			label.OutsideTopLeft:    {},
-			label.OutsideTopRight:   {},
-		}
+		return 1<<label.InsideTopLeft |
+			1<<label.InsideTopRight |
+			1<<label.InsideMiddleLeft |
+			1<<label.InsideMiddleRight |
+			1<<label.OutsideRightTop |
+			1<<label.OutsideLeftTop |
+			1<<label.OutsideTopLeft |
+			1<<label.OutsideTopRight
 	}
-	return map[label.Position]struct{}{}
+	return 0
 }
 
 func (s shapePerson) SnapPointPercentages() [][]*geo.RelativePoint {
-	return [][]*geo.RelativePoint{
-		// Top
-		{
-			geo.NewRelativePoint(0.21, 0.122),
-			geo.NewRelativePoint(0.5, 0),
-			geo.NewRelativePoint(0.79, 0.122),
-		},
-		// Left
-		{
-			geo.NewRelativePoint(0.135, 0.35),
-			geo.NewRelativePoint(0.08, 0.75),
-		},
-		// Bottom
-		{
-			geo.NewRelativePoint(0.25, 0.985),
-			geo.NewRelativePoint(0.5, 1),
-			geo.NewRelativePoint(0.75, 0.985),
-		},
-		// Right
-		{
-			geo.NewRelativePoint(0.865, 0.35),
-			geo.NewRelativePoint(0.92, 0.75),
-		},
-	}
+	return personSnapPoints
 }
 
 func (s shapePerson) PortIndices(orientation geo.Orientation) []int {
@@ -131,4 +100,30 @@ func (s shapePerson) CenterPortIndex(o geo.Orientation) int {
 	}
 
 	return centerPorts[centerPortsIndex]
+}
+
+// personSnapPoints is shared by every call: callers only read it.
+var personSnapPoints = [][]*geo.RelativePoint{
+	// Top
+	{
+		geo.NewRelativePoint(0.21, 0.122),
+		geo.NewRelativePoint(0.5, 0),
+		geo.NewRelativePoint(0.79, 0.122),
+	},
+	// Left
+	{
+		geo.NewRelativePoint(0.135, 0.35),
+		geo.NewRelativePoint(0.08, 0.75),
+	},
+	// Bottom
+	{
+		geo.NewRelativePoint(0.25, 0.985),
+		geo.NewRelativePoint(0.5, 1),
+		geo.NewRelativePoint(0.75, 0.985),
+	},
+	// Right
+	{
+		geo.NewRelativePoint(0.865, 0.35),
+		geo.NewRelativePoint(0.92, 0.75),
+	},
 }

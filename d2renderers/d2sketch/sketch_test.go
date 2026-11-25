@@ -1,6 +1,7 @@
 package d2sketch_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2elklayout"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/d2renderers/d2sketch"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/internal/testlog"
@@ -1471,4 +1473,22 @@ func run(t *testing.T, tc testCase) {
 	// We want the visual diffs to compare, but there's floating point precision differences between CI and user machines, so don't compare raw strings
 	err = diff.Testdata(filepath.Join(dataPath, "sketch"), ".svg", svgBytes)
 	assert.Success(t, err)
+}
+
+func TestSketchFillPatternsShareTheStreakPath(t *testing.T) {
+	for _, count := range []int{0, 1, 2, 4} {
+		var b bytes.Buffer
+		for _, shade := range []string{"bright", "normal", "dark", "darker"}[:count] {
+			b.WriteString("url(#streaks-" + shade + "-test)")
+		}
+		offset := b.Len()
+		d2sketch.DefineSharedFillPatterns(&b, "test")
+		defs := b.String()[offset:]
+		if strings.Count(defs, "<pattern ") != count || strings.Count(defs, "<path ") != min(count, 1) {
+			t.Fatalf("%d shades should share one drawing", count)
+		}
+		if count > 1 && strings.Count(defs, ` href="#streak-path-test"`) != count {
+			t.Fatalf("%d shades should all reference the shared path", count)
+		}
+	}
 }

@@ -19,8 +19,9 @@ import (
 
 const (
 	defaultIconSize = 32.0
-	threeDOffset    = 15.0
-	multipleOffset  = 10.0
+	// The SVG renderer uses integer division for the height of a hexagon’s back face.
+	threeDOffset   = 15
+	multipleOffset = 10.0
 )
 
 // HasLeakyEdge checks if
@@ -55,8 +56,10 @@ func (node *Node) fitNodeToGraph(g *Graph, padding Spacing) {
 }
 
 func (node *Node) fitToBoundingBox(tl, br *geo.Point, padding Spacing) {
-	width := br.X - tl.X
-	height := br.Y - tl.Y
+	node.Width, node.Height = node.fittedDimensions(br.X-tl.X, br.Y-tl.Y, padding)
+}
+
+func (node *Node) fittedDimensions(width, height float64, padding Spacing) (float64, float64) {
 	if node.Label != nil && !node.Label.Position.IsOutside() {
 		minWidth := node.Label.Width - padding.left - padding.right + label.PADDING*4
 		minHeight := node.Label.Height - padding.top - padding.bottom + label.PADDING*4
@@ -70,15 +73,16 @@ func (node *Node) fitToBoundingBox(tl, br *geo.Point, padding Spacing) {
 	// TODO move type Spacing to d2 and update GetDimensionsToFit for all shapes
 	fitWidth, fitHeight := node.GetDimensionsToFit(width, height, padding.left+padding.right, padding.top+padding.bottom)
 	if node.DesiredWidth != nil {
-		node.Width = math.Max(fitWidth, *node.DesiredWidth)
-	} else {
-		node.Width = fitWidth
+		fitWidth = math.Max(fitWidth, *node.DesiredWidth)
 	}
 	if node.DesiredHeight != nil {
-		node.Height = math.Max(fitHeight, *node.DesiredHeight)
-	} else {
-		node.Height = fitHeight
+		fitHeight = math.Max(fitHeight, *node.DesiredHeight)
 	}
+	if node.AspectRatio1() {
+		side := math.Max(fitWidth, fitHeight)
+		return side, side
+	}
+	return fitWidth, fitHeight
 }
 
 func (node *Node) bounds(allNodes Nodes) (*geo.Point, *geo.Point) {
@@ -135,7 +139,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 				tl.Y = math.Floor(labelTL.Y - outsidePadding)
 			}
 		}
-		if labelTL.X > br.X {
+		if labelTL.X+node.Label.Width > br.X {
 			if allNodes.Rightmost(node) {
 				br.X = math.Ceil(labelTL.X + node.Label.Width + boundaryOutsidePadding)
 			} else {
@@ -143,7 +147,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 			}
 		}
 
-		if labelTL.Y > br.Y {
+		if labelTL.Y+node.Label.Height > br.Y {
 			if allNodes.Bottommost(node) {
 				br.Y = math.Ceil(labelTL.Y + node.Label.Height + boundaryOutsidePadding)
 			} else {
@@ -152,7 +156,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 		}
 	}
 	if node.Icon != nil && node.shapeType != imageType && node.Icon.Position.IsOutside() && allNodes != nil {
-		iconSize := float64(MaxIconSize)
+		iconSize := node.OutsideIconReserve()
 		iconTL := node.LabelTopLeft(node.Icon.Position, iconSize, iconSize)
 
 		outsidePadding := 2. * label.PADDING
@@ -564,6 +568,41 @@ func (nodes Nodes) boundingBox(roundDimensions bool) (*geo.Point, *geo.Point) {
 	return geo.NewPoint(minX, minY), geo.NewPoint(maxX, maxY)
 }
 
+// fixedBoundsValues is fixedBounds without allocating its points; ok is
+// false when fixedBounds would return nil bounds (a node without a position).
+// The bounds are the same float operations in the same order. fixedOrigin
+// only answers from a node with FixedTopLeft, so without one it is nil and its
+// pure container scan is skipped.
+func (nodes Nodes) fixedBoundsValues() (tl, br geo.Point, ok bool) {
+	if len(nodes) == 0 {
+		return geo.Point{X: math.Inf(-1), Y: math.Inf(-1)}, geo.Point{X: math.Inf(1), Y: math.Inf(1)}, true
+	}
+	minX := math.Inf(1)
+	minY := math.Inf(1)
+	maxX := math.Inf(-1)
+	maxY := math.Inf(-1)
+	hasFixed := false
+	for _, node := range nodes {
+		if node.TopLeft == nil {
+			return geo.Point{}, geo.Point{}, false
+		}
+		nodeTL, nodeBR := node.boundingBoxValues(nodes, true)
+		minX = math.Min(minX, nodeTL.X)
+		minY = math.Min(minY, nodeTL.Y)
+		maxX = math.Max(maxX, nodeBR.X)
+		maxY = math.Max(maxY, nodeBR.Y)
+		hasFixed = hasFixed || node.FixedTopLeft != nil
+	}
+	tl = geo.Point{X: minX, Y: minY}
+	br = geo.Point{X: maxX, Y: maxY}
+	if hasFixed {
+		if fixedOrigin := nodes.fixedOrigin(); fixedOrigin != nil {
+			tl = *fixedOrigin
+		}
+	}
+	return tl, br, true
+}
+
 // for nodes in the same container, return the bounding box accounting for any fixed node offset
 func (nodes Nodes) fixedBounds() (*geo.Point, *geo.Point) {
 	tl, br := nodes.bounds()
@@ -623,6 +662,7 @@ type Node struct {
 	nodeshape.Shape
 	shapeType nodeshape.Kind
 
+	StepPaint      *StepPaint
 	ForceHierarchy bool
 
 	Container      *Node
@@ -656,6 +696,9 @@ type Node struct {
 	// bottom ┬ │  └──┬──────────┘
 	//        ┴ └─────┘
 	LoopOffsets map[geo.Orientation]float64
+	// SeparateLoopCorners is set on the private graph of a loop-clearance trial.
+	// Offset reservation and final routing must use the same corner assignment.
+	SeparateLoopCorners bool
 
 	margin  Spacing
 	padding Spacing
@@ -674,6 +717,23 @@ type Node struct {
 	// LongDistanceNeighborRequirements records optimizer-derived parallel-edge
 	// spacing by adjacent node.
 	LongDistanceNeighborRequirements map[*Node]LongDistanceNeighborRequirements
+
+	// snapSlot is the node's slot in the most recent transaction snapshot
+	// that recorded it. It is a lookup hint only (see snapshotSlots) and never
+	// affects layout.
+	snapSlot int32
+	// overlapSlot is the node's number in the most recent existing-overlap
+	// set that recorded it; a lookup hint like snapSlot.
+	overlapSlot int32
+	// imageSlot is the node's slot in the most recent GeometryImage that
+	// recorded it; a lookup hint like snapSlot.
+	imageSlot int32
+	// memoSlot is the node's entry in the most recent container memo that
+	// recorded it; a lookup hint like snapSlot.
+	memoSlot int32
+	// preflightSlot is the node's slot in the inventory of the most recent
+	// validateEngineGraph that recorded it; a lookup hint like snapSlot.
+	preflightSlot int32
 }
 
 func (n *Node) DebugID() string {
@@ -786,21 +846,35 @@ func (n1 *Node) deltaTo(n2 *Node, atPoint *geo.Point) int {
 }
 
 func (n1 *Node) deltaToGuarded(n2 *Node, atPoint *geo.Point, guard workStepper) (int, error) {
+	delta, units, err := n1.deltaToCounted(n2, atPoint)
+	if guard != nil {
+		// The spacing computation has no side effects, so charging its per-edge
+		// units afterwards fails exactly where the interleaved Steps did.
+		for range units {
+			if stepErr := guard.Step(); stepErr != nil {
+				return 0, stepErr
+			}
+		}
+	}
+	return delta, err
+}
+
+// deltaToCounted computes deltaToGuarded's spacing and reports the number of
+// per-edge work units deltaToGuarded charges for it (one before each inspected
+// edge, including an invalid edge that ends the scan).
+func (n1 *Node) deltaToCounted(n2 *Node, atPoint *geo.Point) (int, int64, error) {
 	if n1 == nil || n2 == nil || atPoint == nil {
-		return 0, invariant.New("spacing check received incomplete nodes")
+		return 0, 0, invariant.New("spacing check received incomplete nodes")
 	}
 	// n1 may have multiple edges to n2. We want to get the largest distance that we need to maintain
 	maxEdgeWidth := math.MinInt
 	maxEdgeHeight := math.MinInt
 	isConnected := false
+	var units int64
 	for _, e := range n1.Edges {
-		if guard != nil {
-			if err := guard.Step(); err != nil {
-				return 0, err
-			}
-		}
+		units++
 		if e == nil || e.From == nil || e.To == nil {
-			return 0, invariant.New("spacing check encountered an incomplete edge")
+			return 0, units, invariant.New("spacing check encountered an incomplete edge")
 		}
 		// TODO (Sun Apr 10 16:07:25 2022) this doesn't take edge abductions into consideration, so it may not find a minWidth to a child
 		if n1.adjacent(e) == n2 {
@@ -839,7 +913,7 @@ func (n1 *Node) deltaToGuarded(n2 *Node, atPoint *geo.Point, guard workStepper) 
 	// affect the result; retain the edge scan above for its validation and work.
 	if horizontalDelta == verticalDelta && len(n1.LoopOffsets) == 0 && len(n2.LoopOffsets) == 0 &&
 		n1.margin == (Spacing{}) && n2.margin == (Spacing{}) {
-		return horizontalDelta, nil
+		return horizontalDelta, units, nil
 	}
 	o := n1.orientationAtPoint(n2, atPoint)
 
@@ -913,14 +987,14 @@ func (n1 *Node) deltaToGuarded(n2 *Node, atPoint *geo.Point, guard workStepper) 
 
 	switch o {
 	case geo.Top, geo.Bottom:
-		return verticalDelta, nil
+		return verticalDelta, units, nil
 	case geo.Left, geo.Right:
-		return horizontalDelta, nil
+		return horizontalDelta, units, nil
 	default:
 		if horizontalDelta < verticalDelta {
-			return horizontalDelta, nil
+			return horizontalDelta, units, nil
 		}
-		return verticalDelta, nil
+		return verticalDelta, units, nil
 	}
 }
 
@@ -948,8 +1022,11 @@ func (n *Node) UpdateSpacing() {
 		}
 	}
 
-	if n.Icon != nil && n.Icon.PositionFixed() {
+	if n.HasIconDecoration() && n.Icon.PositionFixed() {
 		iconSize := float64(MaxIconSize + 2*label.PADDING)
+		if n.Icon.Position.IsOutside() {
+			iconSize = n.OutsideIconReserve() + 2*label.PADDING
+		}
 		switch n.Icon.Position {
 		case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight:
 			n.margin.top = math.Max(n.margin.top, iconSize)
@@ -2138,9 +2215,11 @@ func (n *Node) moveNodeWithChildren(dx, dy float64) {
 		return
 	}
 	n.translate(dx, dy)
-	for _, child := range n.Graph.allDescendantNodes(n, true) {
+	// The walk completes before the first descendant moves, as when the list
+	// was copied out first; moving changes no ownership the walk reads.
+	n.Graph.forEachDescendant(n, true, func(child *Node) {
 		child.translate(dx, dy)
-	}
+	})
 }
 
 func (n *Node) translate(dx, dy float64) {
@@ -2176,18 +2255,43 @@ func (n Node) CanContain() bool {
 		n.shapeType != textType
 }
 
-// Make enough room for label to be center positioned
-// Even though labels are placed at the last step, the most common is for long labels to be outside centered top or bottom.
-// So we pre-emptively make enough room for it.
+// A wide automatic caption beside an anchored icon has fewer usable sides.
+// Leave the shared margin available until its final position is known.
+func (frame *Node) NeedsAutomaticCaptionRoom(nodes Nodes) bool {
+	if !frame.IsRectangular() || frame.FixedTopLeft != nil || frame.DesiredWidth != nil || frame.DesiredHeight != nil {
+		return false
+	}
+	// One undetermined side can use the spare band. Competing automatic
+	// captions may need different sides, so leave their normal fit intact.
+	found := false
+	for _, n := range nodes {
+		if n.HasWideCaptionWithFixedIcon() {
+			if found {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
+}
+
+func (n *Node) HasWideCaptionWithFixedIcon() bool {
+	return n.HasIconDecoration() && n.Icon.PositionFixed() && n.Label != nil && !n.Label.PositionFixed() && n.Label.Width > n.Width
+}
+
+func (n *Node) NeedsCenteredLabelWidth(wideAutomatic bool) bool {
+	return n.Label != nil && n.Label.Width > n.Width &&
+		(wideAutomatic || !(n.Label.PositionFixed() && n.Label.Position.IsOutside()))
+}
+
 func (n *Node) expandForLabels(tl, br *geo.Point) {
-	children := n.Graph.Containers[n]
+	children := Nodes(n.Graph.Containers[n])
+	wideAutomatic := n.NeedsAutomaticCaptionRoom(children)
 
 	for _, child := range children {
-		if child.Label != nil && (child.TopLeft.X == tl.X || child.TopLeft.X+child.Width == br.X) {
-			if child.Label.Width > child.Width {
-				tl.X = math.Min(tl.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
-				br.X = math.Max(br.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
-			}
+		if child.NeedsCenteredLabelWidth(wideAutomatic) && (child.TopLeft.X == tl.X || child.TopLeft.X+child.Width == br.X) {
+			tl.X = math.Min(tl.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
+			br.X = math.Max(br.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
 		}
 	}
 }
@@ -2199,7 +2303,18 @@ func (n *Node) wrapChildren() {
 	}
 	children = n.Graph.Containers[n]
 	padding := n.Graph.containerPadding(n, false)
-	tl, br := children.fixedBounds()
+	tlValue, brValue, ok := children.fixedBoundsValues()
+	if !ok {
+		// A child without a position: the legacy pointer path, whose nil
+		// bounds fail exactly as before.
+		tl, br := children.fixedBounds()
+		n.expandForLabels(tl, br)
+		n.fitToBoundingBox(tl, br, padding)
+		innerTL := n.InsidePlacement(br.X-tl.X, br.Y-tl.Y, padding)
+		n.translate(tl.X-innerTL.X, tl.Y-innerTL.Y)
+		return
+	}
+	tl, br := &tlValue, &brValue
 	n.expandForLabels(tl, br)
 	n.fitToBoundingBox(tl, br, padding)
 	innerTL := n.InsidePlacement(br.X-tl.X, br.Y-tl.Y, padding)
@@ -2261,6 +2376,16 @@ func (n *Node) isMajorityTarget() bool {
 		}
 	}
 	return counter > 0
+}
+
+// OutsideIconReserve uses the painted size when the icon has a fixed position
+// and its owner has no siblings. Keep the full spacing between siblings
+// during placement, before the final packing comparison.
+func (n *Node) OutsideIconReserve() float64 {
+	if n.Icon.PositionFixed() && n.Graph != nil && len(n.Graph.Containers[n.OwningContainer()]) == 1 {
+		return math.Ceil(n.IconSize(n.Icon.Position))
+	}
+	return MaxIconSize
 }
 
 // IconSize returns the icon size appropriate for iconPosition on n.

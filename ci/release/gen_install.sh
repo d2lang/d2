@@ -19,6 +19,8 @@ set -eu
 # - ./ci/sub/lib/flag.sh
 # - ./ci/sub/lib/release.sh
 # - ./ci/release/checksum.sh
+# - ./ci/release/checksums/*.txt
+# - ./ci/release/verifier.sh
 # - ./ci/release/_install.sh
 #
 # The last of which implements the installation logic.
@@ -37,7 +39,18 @@ sh_c cat \
   ./ci/sub/lib/flag.sh \
   ./ci/sub/lib/release.sh \
   ./ci/release/checksum.sh \
+  ./ci/release/verifier.sh \
   \| sed "-e'/^\. /d'" \>\> ./install.sh
+
+(
+  export LC_ALL=C
+  echo 'release_checksums() {'
+  echo "  cat <<'D2_RELEASE_CHECKSUMS'"
+  cat ./ci/release/checksums/*.txt
+  echo 'D2_RELEASE_CHECKSUMS'
+  echo '}'
+) >> ./install.sh
+
 sh_c cat ./ci/release/_install.sh \
   \| sed -n "'/cd -- \"\$(dirname/,/cd -/!p'" \>\> install.sh
 sh_c chmod -w install.sh

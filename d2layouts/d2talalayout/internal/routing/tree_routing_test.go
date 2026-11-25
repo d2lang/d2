@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -62,6 +63,62 @@ func TestTreePathAlignment(t *testing.T) {
 	for i := 1; i < len(route.OVGNodes)-3; i++ {
 		if route.OVGNodes[i].X != route.OVGNodes[i+1].X {
 			t.Fatalf("Expected tree route to be a vertical line, but there is a bend at %d", i)
+		}
+	}
+}
+
+func TestAnnotatedTreeKeepsReadyRoutesWhenAlternateSearchExhausts(t *testing.T) {
+	ctx := withTestLogger(t.Context(), t)
+	g := layoutgraph.NewGraph()
+	hub := g.AddNode(layoutgraph.NewNode(1, 100, 100))
+	hub.TopLeft = geo.NewPoint(180, 0)
+	for i := range 3 {
+		leaf := g.AddNode(layoutgraph.NewNode(layoutgraph.EntityID(i+2), 80, 60))
+		leaf.TopLeft = geo.NewPoint(float64(i*180), 200)
+		edge := g.Connect(hub, leaf)
+		edge.TargetArrowhead = layoutgraph.TriangleArrowhead
+		edge.SourceArrowheadLabel = &layoutgraph.Label{Text: "Status", Width: 42, Height: 16}
+	}
+	for _, node := range g.Nodes {
+		g.AddNodeToContainer(nil, node)
+	}
+	if err := trees.Preprocess(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	if err := trees.Place(ctx, g, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each alternate exhausts its individual search budget, but the
+	// original tree routes have already been prepared within that budget.
+	const searchLimit = 5_000
+	stage, err := newRouteWorkGuard(ctx, "EdgeRouting", maxEdgeRoutingStageWorkUnits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := routeEdgesWithSearchWorkLimit(contextWithRouteAggregateWork(ctx, stage), g, nil, searchLimit); err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range g.Edges {
+		if len(edge.Points) < 2 {
+			t.Fatalf("lost tree edge %v", edge)
+		}
+		edge.Points = nil
+	}
+
+	// The same attempt must still fail atomically when the aggregate can't
+	// pay for the work already performed by these optional searches.
+	limited, err := newRouteWorkGuard(ctx, "EdgeRouting", stage.used-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = routeEdgesWithSearchWorkLimit(contextWithRouteAggregateWork(ctx, limited), g, nil, searchLimit)
+	if !errors.Is(err, errRouteStageWorkLimit) {
+		t.Fatalf("aggregate used %d (prior %d): got %v", limited.used, stage.used, err)
+	}
+	for _, edge := range g.Edges {
+		if edge.Points != nil {
+			t.Fatalf("committed a route after aggregate exhaustion: %v", edge)
 		}
 	}
 }

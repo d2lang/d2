@@ -1,0 +1,40 @@
+# d2 read-pool.d2 read-pool.svg
+vars: {d2-config: {animate-interval: 2s; animate-duration: 1200ms; pad: 20}}
+style.fill: "#f5f7fa"
+
+title: "Rebalancing the read pool" {
+  near: top-center
+  shape: text
+  style: {font-size: 24; bold: true; font-color: "#1c3147"}
+}
+
+pool: "" {
+  grid-rows: 1
+  grid-gap: 6
+  style: {fill: transparent; stroke-width: 0}
+  east: "East" {
+    width: 288
+    height: 54
+    style: {opacity: 1.00; fill: "#235575"; font-color: white; bold: true; border-radius: 6; stroke-width: 0}
+  }
+  west: "West" {
+    width: 96
+    height: 54
+    style: {opacity: 0.70; fill: "#b8dbdc"; font-color: "#173d41"; bold: true; border-radius: 6; stroke-width: 0}
+  }
+}
+
+caption: "Shifting 6 of 12 read slots from East to West" {
+  near: bottom-center
+  shape: text
+  style: {font-size: 16; font-color: "#425970"}
+}
+
+steps: {
+  shift: {
+    pool.east.width: 96
+    pool.west.width: 288
+    pool.east.style.opacity: 0.70
+    pool.west.style.opacity: 1.00
+  }
+}

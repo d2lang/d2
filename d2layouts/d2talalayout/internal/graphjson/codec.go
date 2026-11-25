@@ -644,6 +644,7 @@ func serializeNode(node *layoutgraph.Node, guard *limits.WorkGuard) (SerializedN
 		FontSize:       fontSize,
 		ShapeType:      node.ShapeType(),
 		ForceHierarchy: node.ForceHierarchy,
+		StepPaint:      node.StepPaint.Copy(),
 		Label:          serializeLabel(node.Label),
 		Icon:           serializeIcon(node.Icon),
 		NumColumns:     node.NumColumns(),
@@ -688,6 +689,8 @@ func serializeEdge(edge *layoutgraph.Edge, edgeIDs *edgeSerializationIDs, guard 
 		D2ID:                 d2ID,
 		FromNode:             layoutgraph.NodeIDForSerialization(edge.From),
 		ToNode:               layoutgraph.NodeIDForSerialization(edge.To),
+		ReversedForLayout:    edge.ReversedForLayout,
+		KeepExplicit:         edge.KeepExplicit,
 		SourceArrowhead:      string(edge.SourceArrowhead),
 		TargetArrowhead:      string(edge.TargetArrowhead),
 		SourceArrowheadLabel: serializeLabel(edge.SourceArrowheadLabel),
@@ -869,6 +872,8 @@ func deserializeEdge(edge SerializedEdge, nodesByID map[layoutgraph.EntityID]*la
 	if edge.D2ID != nil {
 		newedge.D2ID = new(*edge.D2ID)
 	}
+	newedge.ReversedForLayout = edge.ReversedForLayout
+	newedge.KeepExplicit = edge.KeepExplicit
 	newedge.SourceArrowhead = layoutgraph.Arrowhead(edge.SourceArrowhead)
 	newedge.TargetArrowhead = layoutgraph.Arrowhead(edge.TargetArrowhead)
 	var err error
@@ -1004,6 +1009,7 @@ func deserializeNode(g *layoutgraph.Graph, node SerializedNode, guard *limits.Wo
 	if err != nil {
 		return nil, err
 	}
+	n.StepPaint = node.StepPaint.Copy()
 	n.Is3D = node.Is3D
 	n.IsMultiple = node.IsMultiple
 	n.ForceHierarchy = node.ForceHierarchy

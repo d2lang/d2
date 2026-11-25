@@ -15,6 +15,7 @@ import (
 type Metrics struct {
 	NodeOverlaps, RouteObstructions int64
 	TextOcclusions                  int64
+	InteriorCrossings               int64 // Intersections strictly inside both straight route segments.
 	Crossings, Detour, RouteLength  float64
 }
 
@@ -25,6 +26,10 @@ func Inspect(ctx context.Context, graph *layoutgraph.Graph) (Metrics, error) {
 }
 
 func inspectWithLimit(ctx context.Context, graph *layoutgraph.Graph, workLimit int64) (Metrics, int64, error) {
+	return inspectWithIssues(ctx, graph, workLimit, nil)
+}
+
+func inspectWithIssues(ctx context.Context, graph *layoutgraph.Graph, workLimit int64, issues *LoopInspection) (Metrics, int64, error) {
 	if graph == nil {
 		return Metrics{}, 0, fmt.Errorf("cannot evaluate a nil graph")
 	}
@@ -76,15 +81,16 @@ func inspectWithLimit(ctx context.Context, graph *layoutgraph.Graph, workLimit i
 		score.Detour += math.Max(0, length-direct) / math.Max(scale, direct)
 
 	}
-	crossings, err := countNonSharedCrossings(visible, guard)
+	crossings, err := countRouteCrossings(visible, guard, issues)
 	if err != nil {
 		return fail(err)
 	}
-	score.Crossings = float64(crossings)
-	if err := measureGeometry(graph, &score, guard); err != nil {
+	score.Crossings = float64(crossings.scored)
+	score.InteriorCrossings = crossings.interior
+	if err := measureGeometry(graph, &score, guard, issues); err != nil {
 		return fail(err)
 	}
-	if err := measureLabels(graph, &score, guard); err != nil {
+	if err := measureLabels(graph, &score, guard, issues); err != nil {
 		return fail(err)
 	}
 	if !finite(score.RouteLength) || !finite(score.Detour) {

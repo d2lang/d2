@@ -40,6 +40,10 @@ func resetWoffCompression(compression *woffCompression) {
 // compressTable starts an independent zlib stream, retaining only the working buffers.
 // The returned bytes must be copied before another table or release.
 func (compression *woffCompression) compressTable(data []byte) []byte {
+	return compression.compressTableMode(data, false)
+}
+
+func (compression *woffCompression) compressTableMode(data []byte, compact bool) []byte {
 	compression.buffer.Reset()
 	if compression.writer == nil {
 		compression.writer = zlib.NewWriter(&compression.buffer)
@@ -47,7 +51,11 @@ func (compression *woffCompression) compressTable(data []byte) []byte {
 		compression.writer.Reset(&compression.buffer)
 	}
 	compression.writer.Write(data)
-	compression.writer.Flush()
+	if !compact {
+		// Sfnt2Woff preserves its original encoding. SVG subsets have no
+		// consumer for an intermediate flush between Write and Close.
+		compression.writer.Flush()
+	}
 	compression.writer.Close()
 	return compression.buffer.Bytes()
 }

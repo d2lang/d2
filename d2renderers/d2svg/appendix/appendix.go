@@ -1,11 +1,9 @@
-// appendix.go writes appendices/footnotes to SVG
-// Intended to be run only for static exports, like PNG or PDF.
-// SVG exports are already interactive.
-
+// Package appendix adds numbered footnotes to D2 SVGs and animation frames.
 package appendix
 
 import (
 	"fmt"
+	"image"
 	"regexp"
 	"sort"
 	"strconv"
@@ -14,6 +12,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2renderers/internal/svgframe"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/lib/color"
@@ -52,8 +51,8 @@ const (
 )
 
 var viewboxRegex = regexp.MustCompile(`viewBox=\"([0-9\- ]+)\"`)
-var widthRegex = regexp.MustCompile(`width=\"([.0-9]+)\"`)
-var heightRegex = regexp.MustCompile(`height=\"([.0-9]+)\"`)
+var widthRegex = regexp.MustCompile(` width="[.0-9]+"`)
+var heightRegex = regexp.MustCompile(` height="[.0-9]+"`)
 var svgRegex = regexp.MustCompile(`<svg(.*?)>`)
 
 func FindViewboxSlice(svg []byte) []string {
@@ -63,15 +62,91 @@ func FindViewboxSlice(svg []byte) []string {
 	return strings.Split(viewboxRaw, " ")
 }
 
+// Append adds footnotes to the SVG, returning nil if rendering fails.
 func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) []byte {
+	out, _ := AppendWithError(diagram, renderOpts, ruler, in)
+	return out
+}
+
+// AppendRendered adds an appendix to output from d2svg.Render. Its scoped
+// stylesheet already selects any faces embedded by the diagram, including
+// for the new footnotes and numbered markers.
+func AppendRendered(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) ([]byte, error) {
+	return appendWithError(diagram, renderOpts, ruler, in, true)
+}
+
+// AppendWithError adds footnotes and reports errors such as an appendix
+// exceeding the scaled SVG dimension range.
+func AppendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte) ([]byte, error) {
+	return appendWithError(diagram, renderOpts, ruler, in, false)
+}
+
+func appendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *textmeasure.Ruler, in []byte, rendered bool) ([]byte, error) {
 	svg := string(in)
-
-	appendix, w, h := generateAppendix(diagram, ruler, svg)
-
-	if h == 0 {
-		return in
+	tl, br := diagram.BoundingBox()
+	isFrame := strings.HasPrefix(svg, "<g ")
+	var frame svgframe.Frame
+	if isFrame {
+		var ok bool
+		frame, ok = svgframe.Read(in)
+		if !ok {
+			return in, nil
+		}
+		// Keep the separator below rendered content, including a tall legend.
+		br.Y = max(br.Y, frame.ViewBox.Max.Y-PAD_TOP)
 	}
 
+	appendix, w, h := generateAppendix(diagram, ruler, tl, br)
+
+	if h == 0 {
+		return in, nil
+	}
+
+	separatorEl := d2themes.NewThemableElement("line", nil)
+	separatorEl.X1 = float64(tl.X - PAD_SIDES)
+	separatorEl.Y1 = float64(br.Y + PAD_TOP)
+	separatorEl.X2 = float64(go2.IntMax(w, br.X) + PAD_SIDES)
+	separatorEl.Y2 = float64(br.Y + PAD_TOP)
+	separatorEl.Stroke = color.B2 // same as --color-border-muted in markdown
+	appendix = separatorEl.Render() + appendix
+
+	// Animated boards are group fragments. Their enclosing SVG supplies fonts
+	// and uses the shared animation ID when drawing tooltip and link icons.
+	var diagramHash string
+	if isFrame {
+		diagramHash = frame.MasterID
+		var ok bool
+		svg, ok = appendToFrame(svg, appendix, frame.ViewBox, tl, br, w, h)
+		if !ok {
+			return in, nil
+		}
+	} else {
+		var salt *string
+		if renderOpts != nil {
+			salt = renderOpts.Salt
+		}
+		var err error
+		diagramHash, err = diagram.HashID(salt)
+		if err != nil {
+			return nil, err
+		}
+		scale := 1.0
+		if renderOpts != nil && renderOpts.Scale != nil {
+			scale = *renderOpts.Scale
+		}
+		fontScope := ""
+		if rendered && d2svg.UsesDefaultStylesheet() {
+			fontScope = diagramHash
+		}
+		svg, err = appendToStandaloneSVG(svg, appendix, w, h, scale, fontScope)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return []byte(numberIcons(diagram, diagramHash, svg)), nil
+}
+
+func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64, fontScope string) (string, error) {
 	// match 1st two viewboxes, 1st is outer fit-to-screen viewbox="0 0 innerWidth innerHeight"
 	viewboxMatches := viewboxRegex.FindAllStringSubmatch(svg, 2)
 	viewboxMatch := viewboxMatches[1]
@@ -80,15 +155,6 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	viewboxPadLeft, _ := strconv.Atoi(viewboxSlice[0])
 	viewboxWidth, _ := strconv.Atoi(viewboxSlice[2])
 	viewboxHeight, _ := strconv.Atoi(viewboxSlice[3])
-
-	tl, br := diagram.BoundingBox()
-	separatorEl := d2themes.NewThemableElement("line", nil)
-	separatorEl.X1 = float64(tl.X - PAD_SIDES)
-	separatorEl.Y1 = float64(br.Y + PAD_TOP)
-	separatorEl.X2 = float64(go2.IntMax(w, br.X) + PAD_SIDES)
-	separatorEl.Y2 = float64(br.Y + PAD_TOP)
-	separatorEl.Stroke = color.B2 // same as --color-border-muted in markdown
-	appendix = separatorEl.Render() + appendix
 
 	w -= viewboxPadLeft
 	w += PAD_SIDES * 2
@@ -101,27 +167,31 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	newOuterViewbox := fmt.Sprintf(`viewBox="0 0 %d %d"`, viewboxWidth, viewboxHeight)
 	newViewbox := fmt.Sprintf(`viewBox="%s %s %s %s"`, viewboxSlice[0], viewboxSlice[1], strconv.Itoa(viewboxWidth), strconv.Itoa(viewboxHeight))
 
-	dimensionsToUpdate := 2
-	outerSVG := svgRegex.FindString(svg)
-	// if outer svg has dimensions set we also need to update it
-	if widthRegex.FindString(outerSVG) != "" {
-		dimensionsToUpdate++
+	// The outer SVG carries display dimensions. The inner SVG and its
+	// background use unscaled diagram coordinates.
+	outerEnd := svgRegex.FindStringIndex(svg)[1]
+	outer, inner := svg[:outerEnd], svg[outerEnd:]
+	outer = strings.Replace(outer, viewboxMatches[0][0], newOuterViewbox, 1)
+	if widthRegex.MatchString(outer) {
+		dimensions, err := svglib.ScaledDimensions(viewboxWidth, viewboxHeight, &scale)
+		if err != nil {
+			return "", err
+		}
+		outer = heightRegex.ReplaceAllString(outer, "")
+		outer = widthRegex.ReplaceAllString(outer, dimensions)
 	}
-
-	// update 1st 3 matches of width and height 1st is outer svg (if dimensions are set), 2nd inner svg, 3rd is background color rect
-	widthMatches := widthRegex.FindAllStringSubmatch(svg, dimensionsToUpdate)
-	heightMatches := heightRegex.FindAllStringSubmatch(svg, dimensionsToUpdate)
-	newWidth := fmt.Sprintf(`width="%s"`, strconv.Itoa(viewboxWidth))
-	newHeight := fmt.Sprintf(`height="%s"`, strconv.Itoa(viewboxHeight))
-
-	svg = strings.Replace(svg, viewboxMatches[0][0], newOuterViewbox, 1)
-	svg = strings.Replace(svg, viewboxMatch[0], newViewbox, 1)
-	for i := 0; i < dimensionsToUpdate; i++ {
-		svg = strings.Replace(svg, widthMatches[i][0], newWidth, 1)
-		svg = strings.Replace(svg, heightMatches[i][0], newHeight, 1)
+	inner = strings.Replace(inner, viewboxMatch[0], newViewbox, 1)
+	newWidth := svglib.RenderAttributes(svglib.IntAttr("width", viewboxWidth))
+	newHeight := svglib.RenderAttributes(svglib.IntAttr("height", viewboxHeight))
+	for _, match := range widthRegex.FindAllString(inner, 2) {
+		inner = strings.Replace(inner, match, newWidth, 1)
 	}
+	for _, match := range heightRegex.FindAllString(inner, 2) {
+		inner = strings.Replace(inner, match, newHeight, 1)
+	}
+	svg = outer + inner
 
-	if !strings.Contains(svg, `font-family: "font-regular"`) {
+	if needsAppendixFont(svg, fontScope, "text", "regular") {
 		appendix += fmt.Sprintf(`<style type="text/css"><![CDATA[
 .text {
 	font-family: "font-regular";
@@ -130,9 +200,9 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	font-family: font-regular;
 	src: url("%s");
 }
-]]></style>`, d2fonts.FontEncodings.Get(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR)))
+]]></style>`, d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR).GetEncodedFull())
 	}
-	if !strings.Contains(svg, `font-family: "font-bold"`) {
+	if needsAppendixFont(svg, fontScope, "text-bold", "bold") {
 		appendix += fmt.Sprintf(`<style type="text/css"><![CDATA[
 .text-bold {
 	font-family: "font-bold";
@@ -141,12 +211,24 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 	font-family: font-bold;
 	src: url("%s");
 }
-]]></style>`, d2fonts.FontEncodings.Get(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_BOLD)))
+]]></style>`, d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_BOLD).GetEncodedFull())
 	}
 
 	closingIndex := strings.LastIndex(svg, "</svg></svg>")
-	svg = svg[:closingIndex] + appendix + svg[closingIndex:]
+	return svg[:closingIndex] + appendix + svg[closingIndex:], nil
+}
 
+func needsAppendixFont(svg, scope, class, face string) bool {
+	if strings.Contains(svg, `font-family: "font-`+face+`"`) {
+		return false
+	}
+	// Use the renderer's exact class selector. A face declaration alone can
+	// select a different class, and unscoped styles on arbitrary input can
+	// still refer to the legacy family.
+	return scope == "" || !strings.Contains(svg, "."+scope+" ."+class+" {\n\tfont-family: \""+scope+"-font-"+face+"\";")
+}
+
+func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {
 	// icons are numbered according to diagram.Shapes which is based on their order of definition,
 	// but they appear in the svg according to renderOrder so we have to replace in that order
 	type appendixIcon struct {
@@ -162,7 +244,7 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 			renderOrder = append(renderOrder, appendixIcon{i, true, s})
 			i++
 		}
-		if s.Link != "" {
+		if s.AppendixLinkText() != "" {
 			renderOrder = append(renderOrder, appendixIcon{i, false, s})
 			i++
 		}
@@ -177,14 +259,6 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		return renderOrder[i].shape.Level < renderOrder[j].shape.Level
 	})
 
-	var salt *string
-	if renderOpts != nil {
-		salt = renderOpts.Salt
-	}
-	diagramHash, err := diagram.HashID(salt)
-	if err != nil {
-		return nil
-	}
 	// replace each rendered svg icon
 	for _, icon := range renderOrder {
 		// The clip-path has a unique ID, so this won't replace any user icons
@@ -198,19 +272,52 @@ func Append(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ruler *text
 		svg = strings.Replace(svg, iconStr, generateNumberedIcon(icon.number, 0, ICON_RADIUS), 1)
 	}
 
-	return []byte(svg)
+	return svg
 }
 
-func generateAppendix(diagram *d2target.Diagram, ruler *textmeasure.Ruler, svg string) (string, int, int) {
-	tl, br := diagram.BoundingBox()
+// D2 emits the frame group followed by its background rectangles (including
+// double borders and pattern overlays). Resize only those opening elements.
+var frameBackground = regexp.MustCompile(`^<g [^>]*>(?:<rect [^>]* />)*`)
+var frameDimension = regexp.MustCompile(` (x|width|height)="(-?[0-9]+)"`)
 
+func appendToFrame(svg, appendix string, box image.Rectangle, tl, br d2target.Point, w, h int) (string, bool) {
+	left := min(box.Min.X, 0, tl.X-PAD_SIDES)
+	right := max(box.Max.X, w+PAD_SIDES*2, br.X+PAD_SIDES)
+	bottom := br.Y + 2*PAD_TOP + h
+	width, height := right-left, bottom-box.Min.Y
+	prefix := frameBackground.FindString(svg)
+	end := strings.LastIndex(svg, "</g>")
+	if len(prefix) == 0 || end < len(prefix) {
+		return "", false
+	}
+	resized := frameDimension.ReplaceAllStringFunc(prefix, func(attr string) string {
+		name, value, _ := strings.Cut(attr[1:], `="`)
+		n, _ := strconv.Atoi(strings.TrimSuffix(value, `"`))
+		switch name {
+		case "x":
+			n += left - box.Min.X
+		case "width":
+			n += width - box.Dx()
+		case "height":
+			n += height - box.Dy()
+		}
+		return svglib.RenderAttributes(svglib.IntAttr(name, n))
+	})
+	viewBox := svglib.Attr("viewBox", fmt.Sprintf("%d %d %d %d", left, box.Min.Y, width, height))
+	resized = viewboxRegex.ReplaceAllString(resized, strings.TrimSpace(svglib.RenderAttributes(viewBox)))
+	return resized + svg[len(prefix):end] + appendix + svg[end:], true
+}
+
+func generateAppendix(diagram *d2target.Diagram, ruler *textmeasure.Ruler, tl, br d2target.Point) (string, int, int) {
 	maxWidth, totalHeight := 0, 0
 
 	var lines []string
 	i := 1
 
 	for _, s := range diagram.Shapes {
-		for _, txt := range []string{s.Tooltip, s.PrettyLink} {
+		// Must list exactly the icons numbered in Append: one sequence, tooltip
+		// before link, in diagram.Shapes order.
+		for _, txt := range []string{s.Tooltip, s.AppendixLinkText()} {
 			if txt != "" {
 				line, w, h := generateLine(i, br.Y+(PAD_TOP*2)+totalHeight, txt, ruler)
 				i++

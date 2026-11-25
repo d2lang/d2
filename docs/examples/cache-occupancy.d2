@@ -1,0 +1,32 @@
+# d2 cache-occupancy.d2 cache-occupancy.svg
+vars: {d2-config: {animate-interval: 2s; animate-duration: 1200ms; pad: 20}}
+style.fill: "#fcfaf5"
+
+title: "Build cache occupancy" {
+  near: top-center
+  shape: text
+  style: {font-size: 24; bold: true; font-color: "#343c35"}
+}
+
+cache: "" {
+  width: 400
+  height: 56
+  style: {
+    fill: "linear-gradient(to right, #529c80 60%, #e6e8de 60%)"
+    stroke: "#afb6a7"
+    stroke-width: 1
+    border-radius: 8
+  }
+}
+
+caption: "60% used   →   80% high-water mark" {
+  near: bottom-center
+  shape: text
+  style: {font-size: 16; font-color: "#4b5c4e"}
+}
+
+steps: {
+  populate: {
+    cache.style.fill: "linear-gradient(to right, #ce8a28 80%, #e6e8de 80%)"
+  }
+}

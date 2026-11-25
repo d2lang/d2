@@ -5,6 +5,7 @@ package d2ir
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -145,8 +146,14 @@ func (r *FieldReference) DueToLazyGlob() bool  { return r.DueToLazyGlob_ }
 func (r *EdgeReference) DueToLazyGlob() bool   { return r.DueToLazyGlob_ }
 
 type Scalar struct {
-	parent Node
-	Value  d2ast.Scalar `json:"value"`
+	order fieldOrder // Occurrence that supplied this primary value.
+	// binding retains a step expression for interpolation after its endpoint resolves.
+	binding *tweenBinding
+	parent  Node
+	Value   d2ast.Scalar `json:"value"`
+	// TweenOffset retains precision lost when formatting a numeric sample for
+	// text. Continuous paint properties can use it for the unrounded value.
+	TweenOffset float64 `json:"-"`
 }
 
 func (s *Scalar) Copy(newParent Node) Node {
@@ -169,6 +176,11 @@ func (s *Scalar) Equal(n2 Node) bool {
 }
 
 type Map struct {
+	// TweenFrames are fully resolved, read-only samples of this board's incoming
+	// transition. They are shared across IR copies, outside the authored board tree.
+	TweenFrames     []*Map `json:"-"`
+	TweenDurationMS int    `json:"-"`
+
 	parent    Node
 	importAST d2ast.Node
 	// variableExpansion is shared across automatic copies created during one
@@ -177,7 +189,9 @@ type Map struct {
 	Fields            []*Field `json:"fields"`
 	Edges             []*Edge  `json:"edges"`
 
-	globs []*globContext
+	globs             []*globContext
+	edgePropertyRules *spreadEdgeRule
+	pendingSpreads    []*Field
 
 	// Fields and Edges retain source order. These indexes are derived lookup
 	// accelerators only; they never determine iteration order.
@@ -190,6 +204,10 @@ type Map struct {
 	// this map or any descendant. Lazy globs use it instead of recursively
 	// recounting the whole IR around every compiled key.
 	structureVersion uint64
+
+	// Fields whose subtrees have held edges. The selector restores source
+	// order after matching, so these links can be maintained without a slice.
+	firstEdgeField *Field
 }
 
 type fieldIndexKey struct {
@@ -331,7 +349,38 @@ func (m *Map) markStructureChanged() {
 	}
 }
 
+func (m *Map) mayHaveEdges() bool {
+	return m != nil && (len(m.Edges) > 0 || m.firstEdgeField != nil)
+}
+
+func (m *Map) addEdgeField(f *Field) {
+	f.nextEdgeField = m.firstEdgeField
+	f.inEdgeFields = true
+	m.firstEdgeField = f
+}
+
+func (f *Field) noteEdges() {
+	for f != nil && !f.inEdgeFields {
+		parent, ok := f.parent.(*Map)
+		if !ok {
+			return
+		}
+		parent.addEdgeField(f)
+		f, _ = parent.parent.(*Field)
+	}
+}
+
+func (f *Field) setComposite(value Composite) {
+	f.Composite = value
+	if f.Map().mayHaveEdges() {
+		f.noteEdges()
+	}
+}
+
 func (m *Map) appendField(f *Field) {
+	if f.Name == nil {
+		m.pendingSpreads = append(m.pendingSpreads, f)
+	}
 	oldLen := len(m.Fields)
 	m.Fields = append(m.Fields, f)
 	if m.fieldIndex != nil && m.fieldIndexSize == oldLen && f != nil && f.Name != nil {
@@ -344,29 +393,29 @@ func (m *Map) appendField(f *Field) {
 		m.fieldIndex = nil
 		m.fieldIndexSize = 0
 	}
-	m.markStructureChanged()
-}
-
-func (m *Map) insertField(index int, f *Field) {
-	oldLen := len(m.Fields)
-	m.Fields = append(m.Fields, nil)
-	copy(m.Fields[index+1:], m.Fields[index:])
-	m.Fields[index] = f
-	if m.fieldIndex != nil && m.fieldIndexSize == oldLen && f != nil && f.Name != nil {
-		key := makeFieldIndexKey(f.Name)
-		if _, exists := m.fieldIndex[key]; !exists {
-			m.fieldIndex[key] = f
-		}
-		m.fieldIndexSize++
-	} else {
-		m.fieldIndex = nil
-		m.fieldIndexSize = 0
+	if f.Map().mayHaveEdges() {
+		f.noteEdges()
 	}
 	m.markStructureChanged()
 }
 
 func (m *Map) removeField(index int) *Field {
 	f := m.Fields[index]
+	if f.Name == nil {
+		if j := slices.Index(m.pendingSpreads, f); j >= 0 {
+			m.pendingSpreads = slices.Delete(m.pendingSpreads, j, j+1)
+		}
+	}
+	if f != nil && f.inEdgeFields {
+		for link := &m.firstEdgeField; *link != nil; link = &(*link).nextEdgeField {
+			if *link == f {
+				*link = f.nextEdgeField
+				break
+			}
+		}
+		f.nextEdgeField = nil
+		f.inEdgeFields = false
+	}
 	copy(m.Fields[index:], m.Fields[index+1:])
 	m.Fields = m.Fields[:len(m.Fields)-1]
 	m.fieldIndex = nil
@@ -385,6 +434,9 @@ func (m *Map) appendEdge(e *Edge) {
 	} else {
 		m.edgeIndex = nil
 		m.edgeIndexSize = 0
+	}
+	if f, ok := m.parent.(*Field); ok {
+		f.noteEdges()
 	}
 	m.markStructureChanged()
 }
@@ -431,17 +483,27 @@ func (m *Map) Copy(newParent Node) Node {
 	}
 	tmp := *m
 	m = &tmp
+	m.edgePropertyRules = m.edgePropertyRules.fork()
 	m.fieldIndex = nil
 	m.fieldIndexSize = 0
 	m.edgeIndex = nil
 	m.edgeIndexSize = 0
 	m.structureVersion = 0
+	m.firstEdgeField = nil
+	m.pendingSpreads = nil
 
 	m.parent = newParent
 	pfields := m.Fields
 	m.Fields = make([]*Field, 0, len(pfields))
 	for _, f := range pfields {
-		m.Fields = append(m.Fields, f.Copy(m).(*Field))
+		field := f.Copy(m).(*Field)
+		if field.Name == nil {
+			m.pendingSpreads = append(m.pendingSpreads, field)
+		}
+		m.Fields = append(m.Fields, field)
+		if field.Map().mayHaveEdges() {
+			m.addEdgeField(field)
+		}
 	}
 	m.Edges = append([]*Edge(nil), m.Edges...)
 	for i := range m.Edges {
@@ -484,7 +546,7 @@ func (m *Map) CopyBase(newParent Node) *Map {
 	}
 	for _, board := range []*Field{layers, scenarios, steps} {
 		if board != nil {
-			m.deleteEdgesForFieldReferences(board)
+			m.deleteEdgesForReferences(board.References, nil)
 		}
 	}
 	base := *m
@@ -501,14 +563,25 @@ func (m *Map) CopyBase(newParent Node) *Map {
 	return copy
 }
 
-func (m *Map) deleteEdgesForFieldReferences(f *Field) {
-	for _, fr := range f.References {
+func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrder) {
+	// An edge attribute can refer to the edge selector that assigned it, but
+	// it is never an endpoint whose removal should delete that connection.
+	if ParentEdge(m) != nil {
+		return
+	}
+	for _, fr := range refs {
+		if cutoff != nil && (!fr.InEdge() || cutoff.before(fr.order)) {
+			continue
+		}
 		currM := m
 		for currM != nil {
-			for _, edge := range currM.Edges {
+			for i := len(currM.Edges) - 1; i >= 0; i-- {
+				edge := currM.Edges[i]
 				for _, er := range edge.References {
 					if er.Context_ == fr.Context_ {
-						currM.DeleteEdge(edge.ID)
+						if cutoff == nil || !edge.recreatedAfter(*cutoff) {
+							currM.removeEdge(i)
+						}
 						break
 					}
 				}
@@ -594,10 +667,17 @@ var _ Importable = &Field{}
 var _ Importable = &Map{}
 
 type Field struct {
+	templateNull    *fieldOrder // Last null assigned in a map variable, retained through later edits.
+	spreadDeletions *spreadDeletion
+	declaration     fieldOrder
+	compositeOrder  fieldOrder // Occurrence that supplied the map or array.
+	mapReset        fieldOrder // Last array replacement, even when the map was subsequently reopened.
 	// *Map.
-	parent    Node
-	importAST d2ast.Node
-	suspended bool
+	parent        Node
+	importAST     d2ast.Node
+	suspended     bool
+	inEdgeFields  bool
+	nextEdgeField *Field
 
 	Name d2ast.String `json:"name"`
 
@@ -621,15 +701,20 @@ func (f *Field) SetImportAST(node d2ast.Node) {
 }
 
 func (f *Field) Copy(newParent Node) Node {
+	old := f
 	tmp := *f
 	f = &tmp
 
+	f.nextEdgeField = nil
+	f.inEdgeFields = false
 	f.parent = newParent
 	f.References = append([]*FieldReference(nil), f.References...)
 	if f.Primary_ != nil {
 		f.Primary_ = f.Primary_.Copy(f).(*Scalar)
 	}
-	if f.Composite != nil {
+	if old.Map() != nil && old.Map().Parent() != old {
+		f.Composite = old.copyAliasMap(f)
+	} else if f.Composite != nil {
 		f.Composite = f.Composite.Copy(f).(Composite)
 	}
 	return f
@@ -731,6 +816,12 @@ func edgePathEqual(p1, p2 []d2ast.String) bool {
 	return true
 }
 
+// A path segment containing a star stays part of the edge ID, even when
+// both endpoints share it. Only literal scope prefixes are trimmed.
+func canTrimEdgeScope(name d2ast.String) bool {
+	return !strings.Contains(name.ScalarString(), "*")
+}
+
 // resolve resolves both underscores and commons in eid.
 // It returns the new eid, containing map adjusted for underscores and common ida.
 func (eid *EdgeID) resolve(m *Map) (_ *EdgeID, _ *Map, common []d2ast.String, _ error) {
@@ -756,7 +847,7 @@ func (eid *EdgeID) resolve(m *Map) (_ *EdgeID, _ *Map, common []d2ast.String, _ 
 	}
 
 	for len(eid.SrcPath) > 1 && len(eid.DstPath) > 1 {
-		if !strings.EqualFold(eid.SrcPath[0].ScalarString(), eid.DstPath[0].ScalarString()) || strings.Contains(eid.SrcPath[0].ScalarString(), "*") {
+		if !strings.EqualFold(eid.SrcPath[0].ScalarString(), eid.DstPath[0].ScalarString()) || !canTrimEdgeScope(eid.SrcPath[0]) {
 			return eid, m, common, nil
 		}
 		common = append(common, eid.SrcPath[0])
@@ -850,6 +941,7 @@ func (a *Array) Copy(newParent Node) Node {
 }
 
 type FieldReference struct {
+	order   fieldOrder
 	String  d2ast.String   `json:"string"`
 	KeyPath *d2ast.KeyPath `json:"key_path"`
 
@@ -864,6 +956,7 @@ type FieldReference struct {
 // (context, key-path element) prevents glob evaluation order from inflating
 // reference lists quadratically while preserving every distinct source.
 func (f *Field) appendReference(ref *FieldReference) {
+	ref.order = ref.Context_.order
 	if ref.DueToLazyGlob_ {
 		for _, existing := range f.References {
 			if sameReferenceContext(existing.Context_, ref.Context_) &&
@@ -915,12 +1008,14 @@ func (fr *FieldReference) AST() d2ast.Node {
 }
 
 type EdgeReference struct {
+	order          fieldOrder
 	Context_       *RefContext `json:"context"`
 	DueToGlob_     bool        `json:"due_to_glob"`
 	DueToLazyGlob_ bool        `json:"due_to_lazy_glob"`
 }
 
 func (e *Edge) appendReference(ref *EdgeReference) {
+	ref.order = ref.Context_.order
 	if ref.DueToLazyGlob_ {
 		for _, existing := range e.References {
 			if sameReferenceContext(existing.Context_, ref.Context_) &&
@@ -950,6 +1045,7 @@ func (er *EdgeReference) Primary() bool {
 }
 
 type RefContext struct {
+	order    fieldOrder  // Original key position, including its lazy glob applications.
 	Edge     *d2ast.Edge `json:"edge"`
 	Key      *d2ast.Key  `json:"key"`
 	Scope    *d2ast.Map  `json:"-"`
@@ -1442,6 +1538,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			return nil
 		}
 	}
+	if c != nil {
+		f.declaration = c.nextFieldOrder()
+	}
 	m.appendField(f)
 	*created = append(*created, f)
 	if i+1 == len(kp.Path) {
@@ -1494,27 +1593,11 @@ func (m *Map) DeleteField(ida ...string) *Field {
 	rest := ida[1:]
 
 	for i, f := range m.Fields {
-		if !strings.EqualFold(f.Name.ScalarString(), s) {
+		if f.Name == nil || !strings.EqualFold(f.Name.ScalarString(), s) {
 			continue
 		}
 		if len(rest) == 0 {
-			m.deleteEdgesForFieldReferences(f)
-			m.removeField(i)
-
-			// If a field was deleted from a keyword-holder keyword and that holder is empty,
-			// then that holder becomes meaningless and should be deleted too
-			parent := ParentField(f)
-			for keywordHolder := range d2ast.ReservedKeywordHolders {
-				if parent != nil && parent.Name.ScalarString() == keywordHolder && parent.Name.IsUnquoted() && len(parent.Map().Fields) == 0 {
-					keywordHolderParentMap := ParentMap(parent)
-					for i, f := range keywordHolderParentMap.Fields {
-						if f.Name.ScalarString() == keywordHolder && f.Name.IsUnquoted() {
-							keywordHolderParentMap.removeField(i)
-							break
-						}
-					}
-				}
-			}
+			m.deleteFieldAt(i)
 			return f
 		}
 		if f.Map() != nil {
@@ -1522,6 +1605,31 @@ func (m *Map) DeleteField(ida ...string) *Field {
 		}
 	}
 	return nil
+}
+
+func (m *Map) deleteField(f *Field) {
+	if i := slices.Index(m.Fields, f); i >= 0 {
+		m.deleteFieldAt(i)
+	}
+}
+
+func (m *Map) deleteFieldAt(i int) {
+	f := m.Fields[i]
+	m.deleteEdgesForReferences(f.References, nil)
+	m.removeField(i)
+	// An empty keyword holder has no independent meaning.
+	parent := ParentField(f)
+	if parent == nil || parent.Name == nil || !parent.Name.IsUnquoted() || len(m.Fields) != 0 {
+		return
+	}
+	if _, ok := d2ast.ReservedKeywordHolders[parent.Name.ScalarString()]; ok {
+		holder := ParentMap(parent)
+		if holder != nil {
+			if i := slices.Index(holder.Fields, parent); i >= 0 {
+				holder.removeField(i)
+			}
+		}
+	}
 }
 
 func (m *Map) GetEdges(eid *EdgeID, refctx *RefContext, c *compiler) []*Edge {
@@ -1561,6 +1669,9 @@ func (m *Map) getEdgesMode(eid *EdgeID, refctx *RefContext, c *compiler, indexed
 	var gctx *globContext
 	if refctx.Key.HasGlob() && c != nil {
 		gctx = c.ensureGlobContext(refctx)
+	}
+	if indexed && eid.Glob && gctx != nil && sameRecursiveEndpoints(refctx.Edge) {
+		return m.selectRecursiveEdges(eid, refctx, gctx, c)
 	}
 	var ea []*Edge
 	m.getEdges(eid, refctx, gctx, c, indexed, &ea)
@@ -1644,13 +1755,18 @@ func (m *Map) getEdges(eid *EdgeID, refctx *RefContext, gctx *globContext, c *co
 		return err
 	}
 
+	m.getEdgesBetween(eid, refctx, gctx, c, indexed, srcFA, dstFA, ea)
+	return nil
+}
+
+func (m *Map) getEdgesBetween(eid *EdgeID, refctx *RefContext, gctx *globContext, c *compiler, indexed bool, srcFA, dstFA []*Field, ea *[]*Edge) {
 	for _, src := range srcFA {
 		for _, dst := range dstFA {
 			if c != nil && c.stopped() {
-				return nil
+				return
 			}
 			if c != nil && (refctx.Edge.Src.HasGlob() || refctx.Edge.Dst.HasGlob()) && !c.reserveEdgeExpansion(refctx.Edge, gctx, src, dst, true) {
-				return nil
+				return
 			}
 			eid2 := eid.Copy()
 			eid2.SrcPath = RelIDA(m, src)
@@ -1664,12 +1780,7 @@ func (m *Map) getEdges(eid *EdgeID, refctx *RefContext, gctx *globContext, c *co
 			}
 			for _, e := range ea2 {
 				if gctx != nil {
-					var ks string
-					if refctx.Key.HasTripleGlob() {
-						ks = d2format.FormatKeyPath(IDA(e))
-					} else {
-						ks = d2format.FormatKeyPath(BoardIDA(e))
-					}
+					ks := gctx.edgeKey(e)
 					if _, ok := gctx.appliedEdges[ks]; ok {
 						continue
 					}
@@ -1679,7 +1790,6 @@ func (m *Map) getEdges(eid *EdgeID, refctx *RefContext, gctx *globContext, c *co
 			}
 		}
 	}
-	return nil
 }
 
 func (m *Map) CreateEdge(eid *EdgeID, refctx *RefContext, c *compiler) ([]*Edge, error) {
@@ -1908,6 +2018,7 @@ func (m *Map) createEdge2(eid *EdgeID, refctx *RefContext, gctx *globContext, c 
 		parent: m,
 		ID:     eid,
 		References: []*EdgeReference{{
+			order:          refctx.order,
 			Context_:       refctx,
 			DueToGlob_:     len(c.globRefContextStack) > 0,
 			DueToLazyGlob_: c.lazyGlobBeingApplied,

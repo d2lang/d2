@@ -24,6 +24,78 @@ type sizelessOptimizer struct {
 	randGenerator *rand.Rand
 
 	occupied map[geo.Point]*layoutgraph.Node
+
+	// occupiedLog records the changes of occupied during one optimize pass
+	// when logOccupied is set, so a failed pass can undo them.
+	occupiedLog []sizelessOccupiedChange
+	logOccupied bool
+	// points is placementPointsGuarded's candidate storage.
+	points []geo.Point
+	// neighbors is the median's neighbor storage.
+	neighbors []*layoutgraph.Node
+	// moveScratch holds the snapshots and descendant walks of nodes that
+	// move with descendants.
+	moveScratch optimizerMoveScratch
+}
+
+// sizelessSnapshotOccupied makes optimize passes copy occupied as they used
+// to (tests compare both ways).
+var sizelessSnapshotOccupied = false
+
+type sizelessOccupiedChange struct {
+	key      geo.Point
+	previous *layoutgraph.Node
+	existed  bool
+}
+
+func (optim *sizelessOptimizer) logOccupiedChange(key geo.Point) {
+	if optim.logOccupied {
+		previous, existed := optim.occupied[key]
+		optim.occupiedLog = append(optim.occupiedLog, sizelessOccupiedChange{key: key, previous: previous, existed: existed})
+	}
+}
+
+func (optim *sizelessOptimizer) deleteOccupied(key geo.Point) {
+	optim.logOccupiedChange(key)
+	delete(optim.occupied, key)
+}
+
+func (optim *sizelessOptimizer) setOccupied(key geo.Point, node *layoutgraph.Node) {
+	optim.logOccupiedChange(key)
+	optim.occupied[key] = node
+}
+
+// undoOccupiedLog restores occupied to its content when logging started.
+func (optim *sizelessOptimizer) undoOccupiedLog() {
+	for i := len(optim.occupiedLog) - 1; i >= 0; i-- {
+		change := optim.occupiedLog[i]
+		if change.existed {
+			optim.occupied[change.key] = change.previous
+		} else {
+			delete(optim.occupied, change.key)
+		}
+	}
+}
+
+// occupiedKeysFinite reports whether every placed graph node has a finite
+// position. Then every key a pass sets is finite (medians, candidates and
+// swaps only combine finite positions), so deleting it undoes its insertion;
+// a NaN key could not be deleted from the map.
+func (optim *sizelessOptimizer) occupiedKeysFinite() bool {
+	for _, node := range optim.g.Nodes {
+		if node == nil {
+			return false
+		}
+		if node.TopLeft != nil && !(optimizerIndexFinite(node.TopLeft.X) && optimizerIndexFinite(node.TopLeft.Y)) {
+			return false
+		}
+	}
+	for _, node := range optim.nodes {
+		if node == nil || node.TopLeft == nil || !(optimizerIndexFinite(node.TopLeft.X) && optimizerIndexFinite(node.TopLeft.Y)) {
+			return false
+		}
+	}
+	return true
 }
 
 func newSizelessOptimizer(ctx context.Context, g *layoutgraph.Graph, randGenerator *rand.Rand) (*sizelessOptimizer, error) {
@@ -78,6 +150,13 @@ func newSizelessOptimizer(ctx context.Context, g *layoutgraph.Graph, randGenerat
 	return optim, nil
 }
 
+// idle reports whether the optimizer has no node to optimize: its passes
+// then change nothing and make no random draws (it still needs a graph and a
+// random generator to run them).
+func (optim *sizelessOptimizer) idle() bool {
+	return len(optim.nodes) == 0 && optim.g != nil && optim.randGenerator != nil
+}
+
 // resetOccupied resets the occpupied positions of the optimizer
 // this is useful if the nodes changed their positions outside `optimize`
 func (optim *sizelessOptimizer) resetOccupied() {
@@ -120,14 +199,45 @@ func (optim *sizelessOptimizer) optimizeWithLimit(ctx context.Context, temp floa
 		return err
 	}
 	occupiedRef := optim.occupied
-	occupiedSnapshot := make(map[geo.Point]*layoutgraph.Node, len(optim.occupied))
-	for point, node := range optim.occupied {
-		if err := guard.Step(); err != nil {
+	// The pass used to copy occupied (one unit per entry) to restore it on
+	// failure. When every key the pass can set is finite, a log of its
+	// changes restores the same content; the copy's units are still charged.
+	logged := occupiedRef != nil && !sizelessSnapshotOccupied && optim.occupiedKeysFinite()
+	var occupiedSnapshot map[geo.Point]*layoutgraph.Node
+	if logged {
+		entries := len(optim.occupied)
+		if _, err := chargeOrReplay(guard, uint64(entries), func() error {
+			for range entries {
+				if err := guard.Step(); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
-		occupiedSnapshot[point] = node
+		optim.occupiedLog = optim.occupiedLog[:0]
+		optim.logOccupied = true
+		defer func() {
+			optim.logOccupied = false
+			clear(optim.occupiedLog)
+			optim.occupiedLog = optim.occupiedLog[:0]
+		}()
+	} else {
+		occupiedSnapshot = make(map[geo.Point]*layoutgraph.Node, len(optim.occupied))
+		for point, node := range optim.occupied {
+			if err := guard.Step(); err != nil {
+				return err
+			}
+			occupiedSnapshot[point] = node
+		}
 	}
 	restoreOccupied := func() {
+		if logged {
+			optim.undoOccupiedLog()
+			optim.occupied = occupiedRef
+			return
+		}
 		if occupiedRef == nil {
 			optim.occupied = nil
 			return
@@ -184,7 +294,7 @@ func (optim *sizelessOptimizer) optimizeGuarded(ctx context.Context, temp float6
 		}
 
 		// we should always be able to move to the original position
-		delete(optim.occupied, *node.TopLeft)
+		optim.deleteOccupied(*node.TopLeft)
 		medianPoint, err := optim.medianPointGuarded(node, temp, guard)
 		if err != nil {
 			return err
@@ -215,16 +325,16 @@ func (optim *sizelessOptimizer) optimizeGuarded(ctx context.Context, temp float6
 				if err := optimizerSwapPositions(node, bestSwapCandidate, guard); err != nil {
 					return err
 				}
-				optim.occupied[*bestSwapCandidate.TopLeft] = bestSwapCandidate
+				optim.setOccupied(*bestSwapCandidate.TopLeft, bestSwapCandidate)
 			}
 		}
-		optim.occupied[*node.TopLeft] = node
+		optim.setOccupied(*node.TopLeft, node)
 	}
 	return guard.Finish()
 }
 
 func (optim *sizelessOptimizer) medianPointGuarded(node *layoutgraph.Node, temp float64, guard *limits.OptimizationWorkGuard) (*geo.Point, error) {
-	medianX, medianY, err := optimizerMedianToNeighbors(node, false, nil, guard)
+	medianX, medianY, err := optimizerMedianToNeighborsInto(node, false, nil, guard, &optim.neighbors)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +457,7 @@ func (optim *sizelessOptimizer) isOccupied(p *geo.Point) bool {
 // . n2    n4
 // .    n3 #*  *
 // .        *
-func (optim *sizelessOptimizer) placementPointsGuarded(node *layoutgraph.Node, medianPoint *geo.Point, minUnoccupiedDistance float64, guard *limits.OptimizationWorkGuard) ([]*geo.Point, error) {
+func (optim *sizelessOptimizer) placementPointsGuarded(node *layoutgraph.Node, medianPoint *geo.Point, minUnoccupiedDistance float64, guard *limits.OptimizationWorkGuard) ([]geo.Point, error) {
 	if node == nil || node.Graph == nil || medianPoint == nil {
 		return nil, fmt.Errorf("TALA %s placement generation requires a node, graph, and median", guard.Location())
 	}
@@ -359,7 +469,10 @@ func (optim *sizelessOptimizer) placementPointsGuarded(node *layoutgraph.Node, m
 	if capacity < 0 || capacity > maxOptimizerPlacementCandidates {
 		return nil, fmt.Errorf("%w: TALA sizelessOptimizer.optimize placement candidates exceed limit %d", limits.ErrOptimizationResourceLimit, maxOptimizerPlacementCandidates)
 	}
-	points := make([]*geo.Point, 0, capacity)
+	if cap(optim.points) < capacity {
+		optim.points = make([]geo.Point, 0, capacity)
+	}
+	points := optim.points[:0]
 
 	fixedOrigin, err := optimizerFixedOrigin(node.Graph, node.OwningContainer(), guard)
 	if err != nil {
@@ -385,22 +498,23 @@ func (optim *sizelessOptimizer) placementPointsGuarded(node *layoutgraph.Node, m
 				return nil, err
 			}
 			if y != 0 {
-				point := geo.NewPoint(medianPoint.X+x, medianPoint.Y-y)
-				if !pastOrigin(point.X, point.Y) && !optim.isOccupied(point) {
+				point := geo.Point{X: medianPoint.X + x, Y: medianPoint.Y - y}
+				if !pastOrigin(point.X, point.Y) && !optim.isOccupied(&point) {
 					points = append(points, point)
 				}
 			}
-			point := geo.NewPoint(medianPoint.X+x, medianPoint.Y+y)
-			if !pastOrigin(point.X, point.Y) && !optim.isOccupied(point) {
+			point := geo.Point{X: medianPoint.X + x, Y: medianPoint.Y + y}
+			if !pastOrigin(point.X, point.Y) && !optim.isOccupied(&point) {
 				points = append(points, point)
 			}
 		}
 	}
+	optim.points = points
 
 	return points, nil
 }
 
-func (optim *sizelessOptimizer) moveNodeToBestGuarded(ctx context.Context, node *layoutgraph.Node, points []*geo.Point, guard *limits.OptimizationWorkGuard) (bool, error) {
+func (optim *sizelessOptimizer) moveNodeToBestGuarded(ctx context.Context, node *layoutgraph.Node, points []geo.Point, guard *limits.OptimizationWorkGuard) (bool, error) {
 	scorer := placementcost.NewNodeEdgeLengthScorer(node, placementcost.EdgeLengthOptions{
 		EdgeAbductions: nil, IncludeNodeSizes: false,
 		EnforceMinimumGap: false, PenalizeDirection: true,
@@ -410,7 +524,7 @@ func (optim *sizelessOptimizer) moveNodeToBestGuarded(ctx context.Context, node 
 	leastDistancePoint := node.TopLeft.Copy()
 	currentNodeX := node.TopLeft.X
 	currentNodeY := node.TopLeft.Y
-	movement, err := captureOptimizerCandidateMovement(node, guard)
+	movement, err := optim.moveScratch.candidateMovement(node, guard)
 	if err != nil {
 		return false, err
 	}
@@ -422,15 +536,12 @@ func (optim *sizelessOptimizer) moveNodeToBestGuarded(ctx context.Context, node 
 		}
 	}()
 
-	for _, point := range points {
+	for i := range points {
 		if err := guard.Step(); err != nil {
 			restoreNodePositions(originalPositions)
 			return false, err
 		}
-		if point == nil {
-			restoreNodePositions(originalPositions)
-			return false, fmt.Errorf("TALA sizelessOptimizer.optimize found a nil placement point")
-		}
+		point := &points[i]
 		x := point.X
 		y := point.Y
 		if err := movement.moveAbs(x, y, guard); err != nil {
@@ -508,7 +619,7 @@ func (optim *sizelessOptimizer) bestSwapCandidateGuarded(ctx context.Context, no
 		}
 
 		var swappedL1, swappedL2 float64
-		err = withOptimizerPositionsSwapped(node, swapCandidate, guard, func() error {
+		err = optim.moveScratch.withPositionsSwapped(node, swapCandidate, guard, func() error {
 			var scoreErr error
 			if scoreErr = chargeOptimizerScoring(node, nil, false, guard); scoreErr != nil {
 				return scoreErr

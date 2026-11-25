@@ -136,6 +136,12 @@ func (el *ThemableElement) SetClipPathID(id svg.ID) {
 }
 
 func (el *ThemableElement) Render() string {
+	return el.RenderWithClasses(nil)
+}
+
+// RenderWithClasses also reports the classes generated for this element and
+// its fill-pattern overlay. It does not inspect trusted inner SVG.
+func (el *ThemableElement) RenderWithClasses(visit func(string)) string {
 	attributes := make([]svg.Attribute, 0, 24+len(el.extraAttributes))
 	// href has to be at the top for the img bundler to detect <image> tags correctly
 	if len(el.Href) > 0 {
@@ -169,10 +175,10 @@ func (el *ThemableElement) Render() string {
 		attributes = append(attributes, svg.FloatAttr("r", el.R))
 	}
 	if el.Rx != math.MaxFloat64 {
-		attributes = append(attributes, svg.FloatAttr("rx", calculateAxisRadius(el.Rx, el.Width, el.Height)))
+		attributes = append(attributes, svg.FloatAttr("rx", ClampBorderRadius(el.Rx, el.Width, el.Height)))
 	}
 	if el.Ry != math.MaxFloat64 {
-		attributes = append(attributes, svg.FloatAttr("ry", calculateAxisRadius(el.Ry, el.Width, el.Height)))
+		attributes = append(attributes, svg.FloatAttr("ry", ClampBorderRadius(el.Ry, el.Width, el.Height)))
 	}
 	if el.Cx != math.MaxFloat64 {
 		attributes = append(attributes, svg.FloatAttr("cx", el.Cx))
@@ -247,11 +253,19 @@ func (el *ThemableElement) Render() string {
 		if el.inlineTheme != nil {
 			attributes = append(attributes, svg.Attr("color", ResolveThemeColor(*el.inlineTheme, el.Color)))
 		}
+	} else if el.Color != "" && color.IsGradient(el.Color) {
+		// SVG currentColor takes a single color even when the font paint is a gradient.
+		if gradient, err := color.ParseGradient(el.Color); err == nil {
+			attributes = append(attributes, svg.Attr("color", gradient.ColorStops[0].Color))
+		}
 	} else if len(el.Color) > 0 {
 		attributes = append(attributes, svg.Attr("color", el.Color))
 	}
 
 	if len(class) > 0 {
+		if visit != nil {
+			visit(class)
+		}
 		attributes = append(attributes, svg.Attr("class", class))
 	}
 	if len(style) > 0 {
@@ -294,12 +308,13 @@ func (el *ThemableElement) Render() string {
 		patternEl.Color = ""
 		patternEl.ClassName = fmt.Sprintf("%s-overlay", fillPattern)
 		patternEl.FillPattern = ""
-		out += patternEl.Render()
+		out += patternEl.RenderWithClasses(visit)
 	}
 	return out
 }
 
-func calculateAxisRadius(borderRadius, width, height float64) float64 {
+// ClampBorderRadius limits both corner axes to half the shorter side of the body.
+func ClampBorderRadius(borderRadius, width, height float64) float64 {
 	minimumSideSize := math.Min(width, height)
 	maximumBorderRadiusValue := minimumSideSize / 2.0
 	return math.Min(borderRadius, maximumBorderRadiusValue)

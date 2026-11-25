@@ -58,23 +58,40 @@ import { D2 } from '@d2lang/d2';
 
 const d2 = new D2();
 
-const result = await d2.compile('x -> y');
-const svg = await d2.render(result.diagram, result.renderOptions);
-await d2.dispose();
+try {
+  const svg = await d2.renderSVG('x -> y');
+  console.log(svg);
+} finally {
+  await d2.dispose();
+}
 ```
 
-Configuring render options (see [CompileOptions](#compileoptions) for all available options):
+Reuse the same instance for multiple diagrams before calling `dispose()`. Pass
+options as the second argument, for example `d2.renderSVG('x -> y', { sketch: true })`.
+
+### Open in Playground
+
+Use `d2.encode(source)` to put a diagram into a shareable Playground URL.
+It compresses the UTF-8 source with raw DEFLATE and encodes the result as padded,
+URL-safe Base64.
 
 ```javascript
 import { D2 } from '@d2lang/d2';
 
 const d2 = new D2();
-
-const result = await d2.compile('x -> y', {
-    sketch: true,
-});
-const svg = await d2.render(result.diagram, result.renderOptions);
+try {
+  const url = new URL('https://play.d2lang.com/');
+  url.searchParams.set('script', await d2.encode('client -> server'));
+  console.log(url.href);
+} finally {
+  await d2.dispose();
+}
 ```
+
+To read a link, get its `script` value with `url.searchParams.get('script')`.
+When present, pass that value to `await d2.decode(encoded)` to recover the original source.
+You can set other parameters on the same URL, such as `sketch=1` or `theme=300`.
+From the command line, `d2 play diagram.d2` opens a file directly in the Playground.
 
 ### Imports
 
@@ -90,21 +107,54 @@ const fs = {
   "import.d2": "x: {shape: circle}",
 }
 
-const result = await d2.compile({
-    fs,
-    inputPath: "project.d2",
-    options: {
-        sketch: true
-    }
+const svg = await d2.renderSVG({
+  fs,
+  inputPath: "project.d2",
+  options: { sketch: true },
 });
-const svg = await d2.render(result.diagram, result.renderOptions);
+await d2.dispose();
 ```
 
 ## API Reference
 
-### `new D2()`
+### `new D2(options?)`
 
-Creates a new D2 instance.
+Creates a D2 instance with its own worker. Browsers use a blob URL by default.
+Calling the constructor from a dedicated browser worker starts a nested worker.
+Node.js uses its bundled worker.
+
+The browser option `workerURL` accepts a string or a `URL`. For a site with a
+Content Security Policy such as `worker-src 'self'`, serve the JavaScript file
+exported as `@d2lang/d2/worker` from the same origin. For example, if your app
+serves `public/` at its root, copy the worker from the same installed package
+during your build.
+
+```sh
+node -e "require('node:fs').copyFileSync(require.resolve('@d2lang/d2/worker'), 'public/d2-worker.js')"
+```
+
+```javascript
+const d2 = new D2({ workerURL: '/d2-worker.js' });
+```
+
+The worker's Content Security Policy must also allow WebAssembly compilation.
+
+### `format(source: string): Promise<string>`
+
+Formats a single D2 source string with the same formatter as `d2 fmt`. It leaves
+imports in place, so an editor can format the current file even when its imports
+are unavailable. Syntax errors reject the promise.
+
+```javascript
+const formatted = await d2.format('client->server'); // "client -> server\n"
+```
+
+### `renderSVG(input: string | CompileRequest, options?: CompileOptions): Promise<string>`
+
+Compiles D2 source and returns an SVG string in one worker call. It accepts the
+same input and options as `compile`, including file imports and custom fonts.
+For ASCII output, use `compile` and `render`. Passing `ascii: true` to
+`renderSVG` rejects the promise.
 
 ### `compile(input: string | CompileRequest, options?: CompileOptions): Promise<CompileResponse>`
 
@@ -112,6 +162,14 @@ Compiles D2 markup into an intermediate representation. Pass options directly as
 second argument, for example `d2.compile('x -> y', { layout: 'tala' })`. For an object
 input, `input.options` is optional and takes precedence over the second argument when
 both specify the same option.
+
+Use the two-step API to inspect the graph or render a diagram again with different
+options.
+
+```javascript
+const { diagram, renderOptions } = await d2.compile('x -> y');
+const svg = await d2.render(diagram, renderOptions);
+```
 
 ### `render(diagram: Diagram, options?: RenderOptions): Promise<string>`
 
@@ -128,6 +186,7 @@ resources are released. Calling `dispose()` more than once is safe.
 All [RenderOptions](#renderoptions) properties in addition to:
 
 - `layout`: Layout engine to use (`'dagre' | 'elk' | 'tala'`) [default: `'dagre'`]
+- `animateDuration`: Transition duration in milliseconds (0–600000, default 0). Numeric properties, solid colors, compatible gradients, variables, and grid layouts animate between steps. Underlines and Markdown strikethroughs draw or retract when the same text gains or loses its decoration across boards. Set this in `compile()` or `renderSVG()` to override `vars.d2-config.animate-duration`. A shorter transition uses the rest of the board interval to hold its final value. A longer transition extends the board.
 - `fontRegular` A byte array containing .ttf file to use for the regular font. If none provided, Source Sans Pro Regular is used.
 - `fontItalic` A byte array containing .ttf file to use for the italic font. If none provided, Source Sans Pro Italic is used.
 - `fontBold` A byte array containing .ttf file to use for the bold font. If none provided, Source Sans Pro Bold is used.
@@ -135,16 +194,16 @@ All [RenderOptions](#renderoptions) properties in addition to:
 
 ### `RenderOptions`
 
-- `sketch`: Enable sketch mode [default: false]
+- `sketch`: Enable sketch mode (default `false`). In an animated diagram, changed solid fills shade in with pencil strokes. You can enable sketch when compiling or when rendering an already compiled diagram.
 - `isometric`: Enable native isometric SVG rendering [default: false]. The compiled layout is preserved. Icons and images must be embedded as data URLs; the JavaScript renderer does not fetch external image URLs. Set this in compile options or `vars.d2-config.isometric`, then pass the returned `renderOptions` to `render`, just like sketch. This mode currently cannot be combined with sketch, ASCII, `darkThemeID`, `forceAppendix`, or `animateInterval`.
 - `themeID`: Theme ID to use [default: 0]
 - `darkThemeID`: Theme ID to use when client is in dark mode
 - `center`: Center the SVG in the containing viewbox [default: false]
 - `pad`: Pixels padded around the rendered diagram [default: 100]
-- `scale`: Scale the output. E.g., 0.5 to halve the default size. The default will render SVG's that will fit to screen. Setting to 1 turns off SVG fitting to screen.
-- `forceAppendix`: Adds an appendix for tooltips and links [default: false]
-- `target`: Target board/s to render. If target ends with '*', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. `target: 'layers.x.*'` to render layer 'x' with all of its children. Pass '*' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board outputs are currently only supported for animated SVGs and so `animateInterval` must be set to a value greater than 0 when targeting multiple boards.
-- `animateInterval`: If given, multiple boards are packaged as 1 SVG which transitions through each board at the interval (in milliseconds).
+- `scale`: Overrides the diagram’s `vars.d2-config.scale`. A positive multiplier sets the SVG dimensions. For example, `0.5` halves its natural size. Use `-1` to fit the screen (default).
+- `forceAppendix`: Adds a numbered SVG appendix for tooltips and links (default `false`). An explicit option overrides `vars.d2-config.force-appendix`, including `false`.
+- `target`: Target board/s to render. If target ends with '*', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. `target: 'layers.x.*'` to render layer 'x' with all of its children. Pass '*' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board SVG requires a positive animation interval.
+- `animateInterval`: Minimum milliseconds to display each board in an animated SVG. Defaults to the diagram’s `vars.d2-config.animate-interval` setting. An explicit option overrides the source setting, including `0` to disable animation.
 - `salt`: Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output.
 - `noXMLTag`: Omit XML tag `(<?xml ...?>)` from output SVG files. Useful when generating SVGs for direct HTML embedding.
 
@@ -163,18 +222,11 @@ All [RenderOptions](#renderoptions) properties in addition to:
 
 ## Development
 
-D2.js development requires the Go version in the root `go.mod`, the Bun version
-in `package.json`, and Node.js 24 with npm. The integration tests use Node to
-check the installed npm package in both CommonJS and ESM applications.
-
-Optional: For optimal WASM file size, also install binaryen:
-```bash
-# macOS
-brew install binaryen
-
-# Ubuntu/Debian
-sudo apt-get install binaryen
-```
+D2.js builds its browser and Node.js WebAssembly module with TinyGo. Install the
+Go version in the root `go.mod`, TinyGo 0.44.0, Binaryen (CI uses version 133),
+the Bun version in `package.json`, and Node.js 24 with npm. Put `tinygo` and
+`wasm-opt` on PATH. The build bundles the JavaScript runtime from the same TinyGo
+installation as the compiler.
 
 ### Building from source
 

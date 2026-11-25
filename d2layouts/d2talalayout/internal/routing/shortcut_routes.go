@@ -95,7 +95,7 @@ func shortcutRoutesGuarded(g *layoutgraph.Graph, guard *routeWorkGuard) error {
 		}
 		if !labelsReady {
 			var err error
-			boxes, err = shortcutLabelBoxes(g, guard)
+			boxes, err = shortcutLabelBoxes(g, guard, false)
 			if err != nil {
 				return err
 			}
@@ -228,9 +228,15 @@ func shortcutCandidateSafe(g *layoutgraph.Graph, e *layoutgraph.Edge, points []*
 	if !shortcutOrthogonal(points) || shortcutBends(points) >= shortcutBends(e.Points) || shortcutLength(points) > shortcutLength(e.Points)+shortcutEpsilon {
 		return false, nil
 	}
+	return shortcutGeometrySafe(g, e, points, labels, true, guard)
+}
+
+// shortcutGeometrySafe checks the new geometry against each wall, label and
+// other edge. Callers that move a port separately validate its face and marker.
+func shortcutGeometrySafe(g *layoutgraph.Graph, e *layoutgraph.Edge, points []*geo.Point, labels []geo.Box, fixedPorts bool, guard *routeWorkGuard) (bool, error) {
 	candidate := *e
 	candidate.Points = points
-	safe, err := changedRouteIsClear(g, &candidate, e.Points, true, guard)
+	safe, err := changedRouteIsClear(g, &candidate, e.Points, fixedPorts, guard)
 	if err != nil || !safe {
 		return safe, err
 	}
@@ -515,7 +521,7 @@ func shortcutParallelClearance(g *layoutgraph.Graph, e *layoutgraph.Edge, a, b *
 	return true, nil
 }
 
-func shortcutLabelBoxes(g *layoutgraph.Graph, guard *routeWorkGuard) ([]geo.Box, error) {
+func shortcutLabelBoxes(g *layoutgraph.Graph, guard *routeWorkGuard, includePaint bool) ([]geo.Box, error) {
 	var boxes []geo.Box
 	for _, n := range g.Nodes {
 		if err := guard.add(uint64(1 + 4*len(g.Nodes))); err != nil {
@@ -540,7 +546,7 @@ func shortcutLabelBoxes(g *layoutgraph.Graph, guard *routeWorkGuard) ([]geo.Box,
 			continue
 		}
 		if e.Label != nil && e.Label.Position != label.Unset {
-			boxes = append(boxes, geo.Box{TopLeft: e.LabelTopLeft(e.Label.Position, e.Label.Width, e.Label.Height), Width: e.Label.Width, Height: e.Label.Height})
+			boxes = append(boxes, routeLabelBox(e, includePaint))
 		}
 		if e.SourceArrowheadLabel != nil {
 			boxes = append(boxes, labeling.PositionArrowheadLabel(e, false, e.Points).Box)

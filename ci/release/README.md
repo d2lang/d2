@@ -47,8 +47,8 @@ The template for the install script in the root of the d2 repository.
 
 ### gen_install.sh
 
-Generates the install.sh script in the root of the repository by prepending the libraries
-it depends on from ../sub/lib.
+Generates the root `install.sh` from the install template, its shell libraries, and the
+verified release manifests in `ci/release/checksums/`.
 
 ## release.sh
 
@@ -87,18 +87,40 @@ Pushing the tag starts one `Release archives` dependency graph:
    stripped binaries and normalized archives, enforces size budgets, and generates an SBOM.
 2. Each archive runs natively on its supported platform, checking its version, SVG, and PNG.
 3. The reusable `Windows MSI` workflow consumes that run's Windows amd64 archive, verifies
-   its checksum, and builds and verifies the installer on `windows-2022`. It always packages
+   its checksum, and builds and verifies both installers on `windows-2022`. It always packages
    notices from the new archive, so an old published release is no longer a PR test fixture.
 4. After tests, native smoke, and MSI verification succeed, the workflow attests the archive
    provenance, SBOM, and checksum manifest. A separate write-scoped job creates or resumes a
-   draft and uploads the same archives, `SHA256SUMS`, MSI, and `d2.spdx.json`.
+   draft and uploads the same archives, their signed `d2-<version>-provenance.sigstore.json`
+   bundle, `SHA256SUMS`, both MSIs, and `d2.spdx.json`.
 
 The uploader rechecks the tag commit and draft identity/state before uploads and verifies
 all final asset digests. Existing assets are accepted only when their bytes match; nothing
 is overwritten. There is no workstation download/upload handoff or independent MSI poller.
 
-After the workflow succeeds, review and merge the release PR, then publish the complete
-draft manually on GitHub. `release.sh` rejects `--publish`, `--skip-build`, and `--rebuild`,
+After the workflow succeeds, review and merge the release PR. Before publishing the draft,
+promote its archive checksums in a separate PR.
+
+1. Create a branch from the updated `master`. Set `VERSION` to the exact draft tag.
+   Use an authenticated GitHub CLI (2.102.0 or later) with access to the draft.
+2. From the repository root, generate the checksum manifest and installer.
+
+   ```sh
+   python3 ci/release/promote-checksums.py --version "$VERSION"
+   ./ci/release/gen_install.sh
+   ```
+
+3. Commit `ci/release/checksums/$VERSION.txt` and `install.sh` on the new branch and open a
+   PR to `master`. The promotion tool verifies the release workflow's signed `SHA256SUMS`
+   for that tag and commit and checks all six archive digests against the release assets.
+   The required `ci` check independently verifies the proposed manifest
+   against its public attestation and checks that regenerating the installer produces the
+   committed file.
+4. After that check passes and the promotion PR merges, publish the complete draft manually
+   on GitHub. An installer fetched from `master` now has the verified SHA-256 for each
+   platform. The release tag and its prepared branch stay at the original build commit.
+
+`release.sh` rejects `--publish`, `--skip-build`, and `--rebuild`,
 and never repurposes an existing version. To recover a failed run without changing code or
 artifacts, use **Re-run failed jobs** on that run. Code or build changes require a new version,
 even if the old version is still a draft. Individual Actions artifacts are immutable, but
@@ -114,11 +136,23 @@ Release-related PRs exercise the same archive and native smoke jobs and, when th
 below is enabled, the MSI build. PRs never attest or write release assets. CI is called
 directly by the tag workflow, so it does not depend on another token-generated event.
 
-Every release produced by this workflow includes `SHA256SUMS`. To verify archive
-provenance and its checksum:
+After publishing a release, update `manifests/t/Terrastruct/D2/<version>/Terrastruct.D2.installer.yaml`
+in `microsoft/winget-pkgs`. Add both x64 installers, each with its own URL, SHA-256,
+ProductCode, and AppsAndFeaturesEntries. Set Scope and DefaultInstallLocation on each
+entry so WinGet can select the requested installer.
+
+| Release file | WinGet scope | Install location |
+| --- | --- | --- |
+| `d2-<version>-windows-amd64.msi` | `machine` | `%ProgramFiles%\D2` |
+| `d2-<version>-windows-amd64-user.msi` | `user` | `%LOCALAPPDATA%\Programs\D2` |
+
+Download the archive, its provenance bundle, and `SHA256SUMS` from the same release.
+For example, set `VERSION` to the downloaded tag and verify a Linux amd64 archive with:
 
 ```sh
-gh attestation verify d2-v0.0.0-linux-amd64.tar.gz --repo d2lang/d2
+gh attestation verify "d2-$VERSION-linux-amd64.tar.gz" --repo d2lang/d2 \
+  --bundle "d2-$VERSION-provenance.sigstore.json" \
+  --signer-workflow d2lang/d2/.github/workflows/release-archives.yml --source-ref "refs/tags/$VERSION"
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 

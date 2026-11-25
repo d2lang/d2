@@ -21,26 +21,6 @@ func newWorkGuard(ctx context.Context, limit int64) (*limits.WorkGuard, error) {
 	return guard, nil
 }
 
-func binPackScoreGuarded(nodes layoutgraph.Nodes, root *layoutgraph.Node, guard *limits.WorkGuard) (float64, error) {
-	topLeft, bottomRight, err := graphbounds.FixedBoundingBox(nodes, guard)
-	if err != nil {
-		return 0, err
-	}
-	width := bottomRight.X - topLeft.X
-	height := bottomRight.Y - topLeft.Y
-	desiredAxisPenalty := 0.
-	if root != nil {
-		if root.DesiredWidth != nil && root.DesiredHeight == nil && width < *root.DesiredWidth {
-			desiredAxisPenalty = *root.DesiredWidth - width
-		} else if root.DesiredWidth == nil && root.DesiredHeight != nil && height < *root.DesiredHeight {
-			desiredAxisPenalty = *root.DesiredHeight - height
-		}
-	}
-	score := width*height + math.Pow(width-height, 2.0)*subgraphSquareDampener +
-		math.Pow(desiredAxisPenalty, 2.0)*subgraphSquareDampener
-	return score, guard.Finish()
-}
-
 func binPackContainerTopLeft(g *layoutgraph.Graph, container *layoutgraph.Node, children layoutgraph.Nodes, guard *limits.WorkGuard) (*geo.Point, error) {
 	topLeft, bottomRight, err := graphbounds.FixedBoundingBox(children, guard)
 	if err != nil {
@@ -178,7 +158,7 @@ func binPackOrderedNears(node *layoutgraph.Node, guard *limits.WorkGuard) ([]*la
 }
 
 type binPackHierarchyBox struct {
-	topLeft, bottomRight *geo.Point
+	topLeft, bottomRight geo.Point
 }
 
 func binPackHierarchyBoxes(packed []layoutgraph.Nodes, guard *limits.WorkGuard) ([]binPackHierarchyBox, error) {
@@ -193,7 +173,7 @@ func binPackHierarchyBoxes(packed []layoutgraph.Nodes, guard *limits.WorkGuard) 
 		if nodes[0].Hierarchy == nil {
 			continue
 		}
-		topLeft, bottomRight, err := graphbounds.BoundingBox(nodes, guard)
+		topLeft, bottomRight, err := packBoundingBox(nodes, guard)
 		if err != nil {
 			return nil, err
 		}
@@ -228,12 +208,15 @@ func binPackWrapChildren(root *layoutgraph.Node, guard *limits.WorkGuard) error 
 	if err != nil {
 		return err
 	}
+	if err := guard.Add(int64(len(children))); err != nil {
+		return err
+	}
+	wideAutomatic := root.NeedsAutomaticCaptionRoom(children)
 	for _, child := range children {
 		if err := guard.Step(); err != nil {
 			return err
 		}
-		if child.Label != nil && (child.TopLeft.X == topLeft.X || child.TopLeft.X+child.Width == bottomRight.X) &&
-			child.Label.Width > child.Width {
+		if child.NeedsCenteredLabelWidth(wideAutomatic) && (child.TopLeft.X == topLeft.X || child.TopLeft.X+child.Width == bottomRight.X) {
 			topLeft.X = math.Min(topLeft.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
 			bottomRight.X = math.Max(bottomRight.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
 		}
@@ -286,6 +269,10 @@ func binPackPositionContainerChildren(node *layoutgraph.Node, guard *limits.Work
 	if err != nil {
 		return err
 	}
+	if err := guard.Add(int64(len(children))); err != nil {
+		return err
+	}
+	wideAutomatic := node.NeedsAutomaticCaptionRoom(children)
 	for _, child := range children {
 		if err := guard.Step(); err != nil {
 			return err
@@ -293,8 +280,7 @@ func binPackPositionContainerChildren(node *layoutgraph.Node, guard *limits.Work
 		if child == nil || child.TopLeft == nil {
 			return invariant.New("BinPack container contains an unplaced child")
 		}
-		if child.Label != nil && (child.TopLeft.X == topLeft.X || child.TopLeft.X+child.Width == bottomRight.X) &&
-			child.Label.Width > child.Width {
+		if child.NeedsCenteredLabelWidth(wideAutomatic) && (child.TopLeft.X == topLeft.X || child.TopLeft.X+child.Width == bottomRight.X) {
 			topLeft.X = math.Min(topLeft.X, math.Floor(child.TopLeft.X+(child.Width/2.-child.Label.Width/2.)))
 			bottomRight.X = math.Max(bottomRight.X, math.Ceil(child.TopLeft.X+child.Width-(child.Width/2.-child.Label.Width/2.)))
 		}
@@ -445,7 +431,7 @@ func binPackSmallestDeltas(subgraphs []layoutgraph.Nodes, guard *limits.WorkGuar
 		if err := guard.Step(); err != nil {
 			return 0, 0, err
 		}
-		topLeft, bottomRight, err := graphbounds.BoundingBox(subgraph, guard)
+		topLeft, bottomRight, err := packBoundingBox(subgraph, guard)
 		if err != nil {
 			return 0, 0, err
 		}

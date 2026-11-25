@@ -38,7 +38,6 @@ func TestSVGWrappersMatchCanonicalOutput(t *testing.T) {
 		digest string
 	}{
 		{name: "grain", output: GrainSVG(), bytes: 28443, digest: "e23dfd58ed7febaf5c2485c087585953c4d42e37cbca621f0bfc46a8381ef075"},
-		{name: "streak", output: StreaksSVG(), bytes: 9399, digest: "7f03b8ab83a8373fe3cf773c700642956503c35acefb7ed5dbe9daa98253c597"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

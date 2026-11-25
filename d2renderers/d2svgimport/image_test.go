@@ -423,7 +423,7 @@ func TestImportNodeEmbeddedRasterStrictAdversarialSubset(t *testing.T) {
 		{name: "empty payload", source: base("data:image/png;base64,"), want: "empty"},
 		{name: "invalid alphabet", source: base("data:image/png;base64,!!!!"), want: "base64"},
 		{name: "unpadded base64", source: base("data:image/png;base64,AAA"), want: "base64"},
-		{name: "payload whitespace", source: base(strings.Replace(pngURI, ",", ",\n", 1)), want: "base64"},
+		{name: "invalid base64 character", source: base(strings.Replace(pngURI, ",", ",!", 1)), want: "base64"},
 		{name: "wrong MIME", source: base(embeddedRasterDataURI("image/png", jpegData)), want: "does not match"},
 		{name: "fake PNG SVG", source: base(embeddedRasterDataURI("image/png", []byte(`<svg><script/></svg>`))), want: "signature"},
 		{name: "truncated PNG", source: base(embeddedRasterDataURI("image/png", pngData[:20])), want: "malformed PNG"},

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/svg"
@@ -40,7 +41,7 @@ func newMarkdownRenderer(fontFamily, monoFontFamily *d2fonts.FontFamily, inlineT
 	}
 }
 
-func (r *markdownRenderer) layout(markdown, fontName string, fontSize int) (*textmeasure.MarkdownLayout, error) {
+func (r *markdownRenderer) layout(markdown, fontName string, fontSize int, strike *d2target.MarkdownStrikeTransition) (*textmeasure.MarkdownLayout, error) {
 	fontFamily := r.fontFamily
 	if strings.EqualFold(fontName, "mono") {
 		fontFamily = r.monoFontFamily
@@ -50,17 +51,23 @@ func (r *markdownRenderer) layout(markdown, fontName string, fontSize int) (*tex
 		}
 	}
 
-	return r.layoutWithFont(markdown, fontFamily, r.monoFontFamily, fontSize)
+	return r.layoutWithFont(markdown, fontFamily, r.monoFontFamily, fontSize, strike)
 }
 
-func (r *markdownRenderer) layoutWithFont(markdown string, fontFamily, monoFontFamily *d2fonts.FontFamily, fontSize int) (*textmeasure.MarkdownLayout, error) {
+func (r *markdownRenderer) layoutWithFont(markdown string, fontFamily, monoFontFamily *d2fonts.FontFamily, fontSize int, strike *d2target.MarkdownStrikeTransition) (*textmeasure.MarkdownLayout, error) {
 	if r.ruler == nil && r.rulerErr == nil {
 		r.ruler, r.rulerErr = textmeasure.NewRuler()
 	}
 	if r.rulerErr != nil {
 		return nil, r.rulerErr
 	}
-	layout, err := textmeasure.LayoutMarkdown(markdown, r.ruler, fontFamily, monoFontFamily, fontSize)
+	var layout *textmeasure.MarkdownLayout
+	var err error
+	if strike != nil {
+		layout, err = textmeasure.LayoutMarkdownStrikeFrame(strike.From, markdown, strike.Progress, r.ruler, fontFamily, monoFontFamily, fontSize)
+	} else {
+		layout, err = textmeasure.LayoutMarkdown(markdown, r.ruler, fontFamily, monoFontFamily, fontSize)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +82,7 @@ func (r *markdownRenderer) render(
 	foreground, background string,
 	disableLinks bool,
 	underline bool,
+	underlineProgress *float64,
 ) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, `<svg x="%s" y="%s" width="%d" height="%d" viewBox="0 0 %d %d" overflow="hidden">`,
@@ -102,10 +110,11 @@ func (r *markdownRenderer) render(
 		textmeasure.MarkdownColorNeutralMuted:     r.fillPaint(color.N6),
 	}
 	out.WriteString(layout.SVG(textmeasure.MarkdownSVGOptions{
-		Class:        "md md-native",
-		RolePaint:    rolePaint,
-		DisableLinks: disableLinks,
-		Underline:    underline,
+		Class:             "md md-native",
+		RolePaint:         rolePaint,
+		DisableLinks:      disableLinks,
+		Underline:         underline,
+		UnderlineProgress: underlineProgress,
 	}))
 	out.WriteString(`</svg>`)
 	return out.String()

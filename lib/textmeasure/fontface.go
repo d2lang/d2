@@ -20,6 +20,9 @@ type parsedFont struct {
 	ascentUnits  fixed.Int26_6
 	descentUnits fixed.Int26_6
 	kern         []kernPair
+	// src is the font file this was parsed from. Its backing array identifies
+	// the face to caches shared between Rulers.
+	src []byte
 }
 
 type kernPair struct {
@@ -53,6 +56,7 @@ func parseFont(src []byte) (*parsedFont, error) {
 		ascentUnits:  metrics.Ascent,
 		descentUnits: metrics.Descent,
 		kern:         kern,
+		src:          src,
 	}, nil
 }
 

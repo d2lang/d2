@@ -21,7 +21,7 @@ func (b *meshBuilder) classicInkJunctions(segments, ends []classicInkSegment, ra
 	junctions := make(map[classicInkKey][]classicInkSegment)
 	for _, s := range ends {
 		key := classicInkKeyOf(s.a)
-		if degree[key] > 2 {
+		if degree[key] >= 2 {
 			junctions[key] = append(junctions[key], s)
 		}
 	}
@@ -35,6 +35,7 @@ func (b *meshBuilder) classicInkJunctions(segments, ends []classicInkSegment, ra
 	type ray struct {
 		direction Vec
 		angle     float64
+		radius    float64
 	}
 	for _, key := range keys {
 		if err := b.ctx.Err(); err != nil {
@@ -42,7 +43,7 @@ func (b *meshBuilder) classicInkJunctions(segments, ends []classicInkSegment, ra
 			return
 		}
 		incident := junctions[key]
-		if len(incident) < 2 {
+		if len(incident) < 2 || degree[key] == 2 && incident[0].crease == incident[1].crease {
 			continue
 		}
 		var rays []ray
@@ -55,7 +56,7 @@ func (b *meshBuilder) classicInkJunctions(segments, ends []classicInkSegment, ra
 				continue
 			}
 			direction := nunit(delta)
-			rays = append(rays, ray{direction, math.Atan2(ndot(direction, camera.up), ndot(direction, camera.right))})
+			rays = append(rays, ray{direction, math.Atan2(ndot(direction, camera.up), ndot(direction, camera.right)), s.radius(radius)})
 			for _, face := range s.support {
 				if !seen[face] {
 					seen[face] = true
@@ -93,9 +94,11 @@ func (b *meshBuilder) classicInkJunctions(segments, ends []classicInkSegment, ra
 			// at acute tips, without extending the authored stroke weight.
 			u := ncross(view, a.direction)
 			v := nmul(ncross(view, c.direction), -1)
-			left, right := nmul(u, radius), nmul(v, radius)
-			miter := nmul(nadd(u, v), radius/max(1e-12, 1+ndot(u, v)))
-			if nlen(miter) <= 2*radius {
+			left, right := nmul(u, a.radius), nmul(v, c.radius)
+			// Bevel a change of weight. Extending unequal parallel offsets
+			// to their intersection would produce a spike near a tangent.
+			miter := nmul(nadd(u, v), a.radius/max(1e-12, 1+ndot(u, v)))
+			if a.radius == c.radius && nlen(miter) <= 2*a.radius {
 				b.classicInkFace([3]Vertex{vertex(Vec{}), vertex(left), vertex(miter)}, support, material, camera)
 				b.classicInkFace([3]Vertex{vertex(Vec{}), vertex(miter), vertex(right)}, support, material, camera)
 			} else {

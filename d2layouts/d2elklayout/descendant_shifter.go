@@ -5,49 +5,59 @@ import "github.com/d2lang/d2/d2graph"
 // descendantShifter applies the same geometry updates as
 // d2graph.Object.ShiftDescendants while avoiding its repeated whole-graph edge
 // scans. ELK performs several sequential margin corrections per object, so the
-// shifter deliberately keeps each correction separate: ShiftStart/ShiftEnd may
+// shifter deliberately keeps each correction separate: ShiftStart/ShiftEdge may
 // simplify a route after each individual horizontal or vertical move.
+//
+// It reads the states of the objects reached from the graph's root through
+// ChildrenArray (see walkObjects): each one's preorder range and incident
+// edges; edges' seen stamps are in their states.
 type descendantShifter struct {
-	preorder   map[*d2graph.Object]int
-	subtreeEnd map[*d2graph.Object]int
-	incident   map[*d2graph.Object][]*d2graph.Edge
-	seen       map[*d2graph.Edge]uint64
+	root      *d2graph.Object
+	rootRange subtreeRange
+	objects   map[*d2graph.Object]*elkObject
+	edges     map[*d2graph.Edge]*elkEdgeState
+
 	candidates []*d2graph.Edge
 	generation uint64
 }
 
-func newDescendantShifter(g *d2graph.Graph) *descendantShifter {
-	s := &descendantShifter{
-		preorder:   make(map[*d2graph.Object]int, len(g.Objects)+1),
-		subtreeEnd: make(map[*d2graph.Object]int, len(g.Objects)+1),
-		incident:   make(map[*d2graph.Object][]*d2graph.Edge, len(g.Objects)),
-		seen:       make(map[*d2graph.Edge]uint64, len(g.Edges)),
-	}
-	next := 0
-	var indexSubtree func(*d2graph.Object)
-	indexSubtree = func(obj *d2graph.Object) {
-		s.preorder[obj] = next
-		next++
-		for _, child := range obj.ChildrenArray {
-			indexSubtree(child)
-		}
-		s.subtreeEnd[obj] = next
-	}
-	indexSubtree(g.Root)
+type subtreeRange struct {
+	start, end int
+}
 
-	for _, edge := range g.Edges {
-		s.incident[edge.Src] = append(s.incident[edge.Src], edge)
-		if edge.Dst != edge.Src {
-			s.incident[edge.Dst] = append(s.incident[edge.Dst], edge)
-		}
+// newDescendantShifterWith shifts with the states of objects (every object
+// reached from g.Root, with its subtree range and incident edges) and edges
+// (every edge of g), and the root's range.
+func newDescendantShifterWith(g *d2graph.Graph, rootRange subtreeRange,
+	objects map[*d2graph.Object]*elkObject, edges map[*d2graph.Edge]*elkEdgeState) *descendantShifter {
+	return &descendantShifter{root: g.Root, rootRange: rootRange, objects: objects, edges: edges}
+}
+
+// rangeOf is the preorder range of obj, if the walk reached obj (the root
+// included).
+func (s *descendantShifter) rangeOf(obj *d2graph.Object) (subtreeRange, bool) {
+	if obj == s.root {
+		return s.rootRange, true
 	}
-	return s
+	if state := s.objects[obj]; state != nil {
+		return state.subtree, true
+	}
+	return subtreeRange{}, false
 }
 
 func (s *descendantShifter) inSubtree(root, obj *d2graph.Object) bool {
-	rootStart, rootOK := s.preorder[root]
-	objStart, objOK := s.preorder[obj]
-	return rootOK && objOK && rootStart <= objStart && objStart < s.subtreeEnd[root]
+	rootRange, rootOK := s.rangeOf(root)
+	objRange, objOK := s.rangeOf(obj)
+	return rootOK && objOK && rootRange.start <= objRange.start && objRange.start < rootRange.end
+}
+
+// incident is the incident edge list of obj, if the walk reached it (only
+// such objects are shifted).
+func (s *descendantShifter) incident(obj *d2graph.Object) []*d2graph.Edge {
+	if state := s.objects[obj]; state != nil {
+		return state.incident
+	}
+	return nil
 }
 
 func (s *descendantShifter) shift(root *d2graph.Object, dx, dy float64) {
@@ -57,17 +67,20 @@ func (s *descendantShifter) shift(root *d2graph.Object, dx, dy float64) {
 
 	s.generation++
 	if s.generation == 0 {
-		clear(s.seen)
+		for _, state := range s.edges {
+			state.seen = 0
+		}
 		s.generation = 1
 	}
 	generation := s.generation
 	candidates := s.candidates[:0]
 	addIncident := func(obj *d2graph.Object) {
-		for _, edge := range s.incident[obj] {
-			if s.seen[edge] == generation {
+		for _, edge := range s.incident(obj) {
+			state := s.edges[edge]
+			if state.seen == generation {
 				continue
 			}
-			s.seen[edge] = generation
+			state.seen = generation
 			candidates = append(candidates, edge)
 		}
 	}
