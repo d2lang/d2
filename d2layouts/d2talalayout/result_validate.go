@@ -24,7 +24,7 @@ type resultEdgeTopology struct {
 // All other input records must still be present with the same identity and
 // endpoints, and the result may not introduce extra records.
 func validateLayoutResultTopology(ctx context.Context, expected, actual *layoutgraph.Graph) (map[layoutgraph.EntityID]struct{}, error) {
-	sequenceEdges, err := grouping.SequenceDefiningEdges(ctx, expected)
+	sequenceEdges, err := grouping.SequenceDefiningEdges(ctx, expected, actual)
 	if err != nil {
 		return nil, err
 	}
@@ -34,6 +34,8 @@ func validateLayoutResultTopology(ctx context.Context, expected, actual *layoutg
 	return sequenceEdges, nil
 }
 
+// validateTopology leaves only transitions actually absent from the result
+// in allowedMissingEdges. The patch commits every edge that has a route.
 func validateTopology(ctx context.Context, expected, actual *layoutgraph.Graph, allowedMissingEdges map[layoutgraph.EntityID]struct{}) error {
 	if expected == nil || actual == nil {
 		return fmt.Errorf("cannot compare nil graph topology")
@@ -88,6 +90,7 @@ func validateTopology(ctx context.Context, expected, actual *layoutgraph.Graph, 
 			return fmt.Errorf("result contains duplicate edge ID %d", edge.ID)
 		}
 		actualEdges[edge.ID] = struct{}{}
+		delete(allowedMissingEdges, edge.ID)
 		want, ok := expectedEdges[edge.ID]
 		if !ok {
 			return fmt.Errorf("result contains unexpected edge ID %d", edge.ID)

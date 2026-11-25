@@ -207,3 +207,72 @@ A -> B -> C
 		}
 	}
 }
+
+func TestPrescaledStepsRetainOnlyTheirActualConnectors(t *testing.T) {
+	for _, tc := range []struct {
+		name, steps string
+		external    int
+		fused       bool
+	}{
+		{"captions fit after scaling", `direction: right
+A: some longer step caption {shape: step; label.near: outside-top-center; style.font-size: 16}
+B: some longer step caption {shape: step; label.near: outside-top-center; style.font-size: 16; width: 75}`, 8, true},
+		{"unequal heights after scaling", "A: A {shape: step}\nB: B {shape: step; height: 150}", 3, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := compileRoutingDiagram(t, t.Context(), tc.steps+"\nA -> B\n"+strings.Repeat("X -> A\n", tc.external), 1, nil)
+			var external, between int
+			for _, e := range d.Connections {
+				switch {
+				case e.Src == "X" && e.Dst == "A":
+					external++
+				case e.Src == "A" && e.Dst == "B" && len(e.Route) >= 2:
+					between++
+				default:
+					t.Fatalf("unexpected connection %s", e.ID)
+				}
+			}
+			if external != tc.external || tc.fused && between != 0 || !tc.fused && between != 1 {
+				t.Fatalf("got %d external connectors and %d step connectors", external, between)
+			}
+			if tc.fused {
+				a, b := d.Shapes[0], d.Shapes[1]
+				if a.Pos.Y != b.Pos.Y || a.Pos.X+a.Width-35 != b.Pos.X {
+					t.Fatalf("the consumed transition left disconnected step shapes at %v and %v", a.Pos, b.Pos)
+				}
+			}
+		})
+	}
+}
+
+func TestUnpaintedStepKeepsItsConnectors(t *testing.T) {
+	for _, style := range []string{"style.opacity: 0", "style.fill: transparent; style.stroke: transparent", "style.fill: transparent; style.stroke-width: 0"} {
+		d := compileRoutingDiagram(t, t.Context(), "C: {shape: step}\nA: {shape: step}\nB: Middle {shape: step; "+style+"}\nA -> B -> C", 1, nil)
+		if len(d.Connections) != 2 || d.Connections[0].Src != "A" || d.Connections[0].Dst != "B" || d.Connections[1].Src != "B" || d.Connections[1].Dst != "C" {
+			t.Fatalf("%s: expected A to connect through B to C", style)
+		}
+	}
+}
+
+func TestNarrowStepWithInteriorIconRenders(t *testing.T) {
+	const source = `A: A {shape: step; width: 30; height: 60; icon: "status.svg"; icon.near: center-center}
+B: B {shape: step; width: 30; height: 60}
+A -> B`
+	d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	svg, err := d2svg.Render(d, &d2svg.RenderOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Shapes) != 2 || len(d.Connections) != 0 || !strings.Contains(string(svg), `<image `) || strings.Contains(string(svg), `width="-`) || strings.Contains(string(svg), `height="-`) {
+		t.Fatal("expected a fused narrow row and nonnegative SVG dimensions")
+	}
+}
+
+func TestBlankStepTransitionLabelRenders(t *testing.T) {
+	d := compileRoutingDiagram(t, t.Context(), `A: {shape: step}
+B: {shape: step}
+A -> B: " "`, 1, nil)
+	if len(d.Connections) != 1 || len(d.Connections[0].Route) < 2 || d.Connections[0].Label != " " {
+		t.Fatalf("lost the explicit, blank-labeled transition")
+	}
+}

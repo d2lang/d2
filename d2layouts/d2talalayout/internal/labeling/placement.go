@@ -825,7 +825,7 @@ func findBestEdgeLabelPosition(edge *layoutgraph.Edge, g *layoutgraph.Graph, pla
 		if err != nil {
 			return err
 		}
-		score := scoreEdgeLabelOverlaps(
+		score := ScoreEdgeLabelOverlaps(
 			fakeLabelNode.Area(),
 			ancestorOverlaps.area+nodeOverlaps.area,
 			ancestorOverlaps.count+nodeOverlaps.count,
@@ -1104,12 +1104,16 @@ func findSharedSegmentsChecked(edges []*layoutgraph.Edge, checkCanceled func() e
 	return sharedSegments, nil
 }
 
-func scoreEdgeLabelOverlaps(
+// ScoreEdgeLabelOverlaps evaluates the same painted area during placement and seed selection.
+func ScoreEdgeLabelOverlaps(
 	labelArea, nodeOverlapArea float64,
 	nodeOverlapCount, edgeOverlapCount,
 	almostLabelOverlapCount, labelOverlapCount, sharedSegmentOverlapCount int,
 ) float64 {
-	score := (nodeOverlapArea / labelArea) * 2.
+	score := 0.0
+	if labelArea > 0 {
+		score = nodeOverlapArea / labelArea * 2
+	}
 	// avoid as much as possible overlapping with other labels
 	score += float64(labelOverlapCount) * 10
 	score += float64(almostLabelOverlapCount)

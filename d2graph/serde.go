@@ -52,6 +52,12 @@ func DeserializeGraph(bytes []byte, g *Graph) error {
 	}
 
 	for _, so := range append(sg.Objects, sg.Root) {
+		if size, ok := so["layoutFontSize"].(string); ok {
+			id, _ := so["AbsID"].(string)
+			if obj := idToObj[id]; obj != nil && obj.Style.FontSize != nil && obj.Style.FontSize.Value == size {
+				obj.MarkLayoutFontSize()
+			}
+		}
 		if so["ChildrenArray"] != nil {
 			children := make(map[string]*Object)
 			var childrenArray []*Object
@@ -133,6 +139,9 @@ func toSerializedObject(o *Object) (SerializedObject, error) {
 	}
 
 	so["AbsID"] = o.AbsID()
+	if o.HasLayoutFontSize() {
+		so["layoutFontSize"] = o.Style.FontSize.Value
+	}
 
 	if len(o.ChildrenArray) > 0 {
 		var children []string

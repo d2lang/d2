@@ -24,10 +24,13 @@ func implicitStepTransition(e *layoutgraph.Edge) bool {
 		!(e.HasSourceArrow() && e.HasTargetArrow())
 }
 
+type stepPathCheck func([]*layoutgraph.Node, *limits.WorkGuard) (bool, error)
+
 type stepNetwork struct {
-	links    map[*layoutgraph.Node][]*layoutgraph.Edge
-	parallel map[*layoutgraph.Edge]bool
-	guard    *limits.WorkGuard
+	checkPath stepPathCheck
+	links     map[*layoutgraph.Node][]*layoutgraph.Edge
+	parallel  map[*layoutgraph.Edge]bool
+	guard     *limits.WorkGuard
 }
 
 func activeSequenceNodes(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*layoutgraph.Node]struct{}, error) {
@@ -41,21 +44,21 @@ func activeSequenceNodes(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*la
 	return active, nil
 }
 
-func identifySequences(active map[*layoutgraph.Node]struct{}, nodes []*layoutgraph.Node, guard *limits.WorkGuard) ([][]*layoutgraph.Node, error) {
+func identifySequences(active map[*layoutgraph.Node]struct{}, nodes []*layoutgraph.Node, guard *limits.WorkGuard, checkPath stepPathCheck) ([][]*layoutgraph.Node, error) {
 	var steps []*layoutgraph.Node
 	for _, n := range nodes {
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
-		if _, present := active[n]; present && n.IsSequenceStep() && !n.IsContainer() && n.FixedTopLeft == nil &&
+		if _, present := active[n]; present && n.IsSequenceStep() && !n.IsInvisible && !n.IsContainer() && n.FixedTopLeft == nil &&
 			(n.Sequence == nil || n.Sequence.IsActive()) {
 			steps = append(steps, n)
 		}
 	}
-	if len(steps) < 2 {
+	if len(steps) < 2 || !rightwardStepRow(steps[0]) {
 		return nil, nil
 	}
-	net := stepNetwork{links: make(map[*layoutgraph.Node][]*layoutgraph.Edge, len(steps)), parallel: map[*layoutgraph.Edge]bool{}, guard: guard}
+	net := stepNetwork{checkPath: checkPath, links: make(map[*layoutgraph.Node][]*layoutgraph.Edge, len(steps)), parallel: map[*layoutgraph.Edge]bool{}, guard: guard}
 	for _, n := range steps {
 		net.links[n] = nil
 	}
@@ -169,13 +172,15 @@ func (s stepNetwork) paths(component []*layoutgraph.Node) ([][]*layoutgraph.Node
 	return paths, nil
 }
 
+func rightwardStepRow(first *layoutgraph.Node) bool {
+	dir := first.Graph.Direction(first.Container)
+	return dir == geo.NONE || dir == geo.Right
+}
+
 // A fused row runs right. Its members share a height, matching wedges and a
 // common upper and lower baseline for any exterior captions.
 func compatibleStepGeometry(steps []*layoutgraph.Node, guard *limits.WorkGuard) (bool, error) {
 	first := steps[0]
-	if dir := first.Graph.Direction(first.Container); dir != geo.NONE && dir != geo.Right {
-		return false, nil
-	}
 	wedge := shape.StepWedgeWidth(sequenceStepWidth(first))
 	type span struct{ left, right float64 }
 	var captions [2][]span
@@ -270,7 +275,7 @@ func (s stepNetwork) orderedPath(group []*layoutgraph.Node) ([]*layoutgraph.Node
 			n = next
 		}
 		if len(path) == len(group) {
-			if ok, err := compatibleStepGeometry(path, s.guard); err != nil || !ok {
+			if ok, err := s.checkPath(path, s.guard); err != nil || !ok {
 				return nil, err
 			}
 			return path, nil

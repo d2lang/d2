@@ -225,7 +225,7 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 
 		// Only automatic font sizes participate in TALA's density scaling.
 		// D2 has already measured the label using any authored font size.
-		if obj.Style.FontSize == nil {
+		if obj.Style.FontSize == nil || obj.HasLayoutFontSize() {
 			n.FontSize = new(obj.Text().FontSize)
 			if obj.Class != nil || obj.SQLTable != nil {
 				*n.FontSize -= d2target.HeaderFontAdd
@@ -256,34 +256,8 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 				n.IsInvisible = true
 			}
 		}
-		if !n.IsInvisible {
-			noFill := false
-			noStroke := false
-			noLabel := false
-			noIcon := false
-
-			if obj.Style.Fill != nil && strings.EqualFold(obj.Style.Fill.Value, "transparent") {
-				noFill = true
-			}
-			if obj.Style.StrokeWidth != nil {
-				f, err := strconv.Atoi(obj.Style.StrokeWidth.Value)
-				if err == nil && f == 0 {
-					noStroke = true
-				}
-			}
-			if obj.Style.Stroke != nil && strings.EqualFold(obj.Style.Stroke.Value, "transparent") {
-				noStroke = true
-			}
-			if obj.Label.Value == "" {
-				noLabel = true
-			}
-			if obj.Icon == nil {
-				noIcon = true
-			}
-
-			if noFill && noStroke && noLabel && noIcon {
-				n.IsInvisible = true
-			}
+		if obj.Label.Value == "" && obj.Icon == nil && unpaintedBody(obj) {
+			n.IsInvisible = true
 		}
 
 		n.D2ID = new(obj.AbsID())
@@ -358,6 +332,10 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		talaEdge.ReversedForLayout = reversed
 		talaEdge.KeepExplicit = e.Tooltip != nil || e.Link != nil || e.Icon != nil || len(e.Classes) > 0 ||
 			e.SrcArrowhead != nil || e.DstArrowhead != nil || e.ZIndex != 0
+		if talaEdge.From.IsSequenceStep() && talaEdge.To.IsSequenceStep() && (unpaintedBody(edgeSrc) || unpaintedBody(edgeDst)) {
+			// The text or icon may be visible even when the connecting wedge is not.
+			talaEdge.KeepExplicit = true
+		}
 		talaEdge.SourceArrowhead, talaEdge.SourceArrowheadLabel = translateArrowhead(srcArrow, srcAttrs)
 		talaEdge.TargetArrowhead, talaEdge.TargetArrowheadLabel = translateArrowhead(dstArrow, dstAttrs)
 		if loadExistingLayout {
@@ -432,6 +410,20 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 	}
 
 	return bindings, nil
+}
+
+func unpaintedBody(obj *d2graph.Object) bool {
+	if obj.Style.Fill == nil || !strings.EqualFold(obj.Style.Fill.Value, "transparent") {
+		return false
+	}
+	if obj.Style.Stroke != nil && strings.EqualFold(obj.Style.Stroke.Value, "transparent") {
+		return true
+	}
+	if obj.Style.StrokeWidth != nil {
+		width, err := strconv.Atoi(obj.Style.StrokeWidth.Value)
+		return err == nil && width == 0
+	}
+	return false
 }
 
 func cloneStyle(style d2graph.Style) layoutgraph.EdgeStyle {

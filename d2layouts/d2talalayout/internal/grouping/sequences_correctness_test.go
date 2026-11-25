@@ -186,9 +186,14 @@ func TestSequenceDefiningEdgesMidContainerTraversalCancellation(t *testing.T) {
 	nodesBefore := captureExactTestSlice(graph.Nodes)
 	containersMap := reflect.ValueOf(graph.Containers).Pointer()
 
+	result, _, _ := newStepSequenceGraph()
+	if err := AddSequences(t.Context(), result, rand.New(rand.NewSource(1))); err != nil {
+		t.Fatal(err)
+	}
+	Cleanup(result)
 	edges, err := SequenceDefiningEdges(
 		&cancelWhenStackContains{Context: context.Background(), function: "containerRDFSOrderContext"},
-		graph,
+		graph, result,
 	)
 	if edges != nil {
 		t.Fatalf("sequence edge result = %v, want nil after cancellation", edges)

@@ -19,8 +19,9 @@ import (
 
 const (
 	defaultIconSize = 32.0
-	threeDOffset    = 15.0
-	multipleOffset  = 10.0
+	// The SVG renderer uses integer division for the height of a hexagon’s back face.
+	threeDOffset   = 15
+	multipleOffset = 10.0
 )
 
 // HasLeakyEdge checks if

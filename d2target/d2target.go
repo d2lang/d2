@@ -1500,6 +1500,10 @@ func GetIconSize(box *geo.Box, position string) int {
 	iconPosition := label.FromString(position)
 
 	minDimension := int(math.Min(box.Width, box.Height))
+	// A tightly sized shape can have no usable interior for an icon.
+	if minDimension <= 0 {
+		return 0
+	}
 	halfMinDimension := int(math.Ceil(0.5 * float64(minDimension)))
 
 	var size int

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"math"
+	"math/rand"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/graphjson"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/grouping"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 
 	"github.com/d2lang/d2/d2graph"
@@ -439,7 +441,20 @@ func TestValidateLayoutResultTopologyAllowsOnlyConsumedSequenceEdges(t *testing.
 		t.Fatalf("edge %d not found", id)
 		return nil
 	}
-	completed.Disconnect(findEdge(completed, sequenceEdge.ID))
+	t.Run("a missing transition needs a matching fused row", func(t *testing.T) {
+		attempt, err := layoutgraph.Clone(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt.Disconnect(findEdge(attempt, sequenceEdge.ID))
+		if _, err := validateLayoutResultTopology(t.Context(), input, attempt); err == nil || !strings.Contains(err.Error(), "missing edge") {
+			t.Fatalf("topology error = %v, want unrepresented step transition rejected", err)
+		}
+	})
+	if err := grouping.AddSequences(t.Context(), completed, rand.New(rand.NewSource(1))); err != nil {
+		t.Fatal(err)
+	}
+	grouping.Cleanup(completed)
 
 	sequenceEdges, err := validateLayoutResultTopology(t.Context(), input, completed)
 	if err != nil {
@@ -453,6 +468,46 @@ func TestValidateLayoutResultTopologyAllowsOnlyConsumedSequenceEdges(t *testing.
 	}
 	if err := validateTopology(t.Context(), input, completed, nil); err == nil || !strings.Contains(err.Error(), "missing edge") {
 		t.Fatalf("strict topology error = %v, want missing-edge rejection", err)
+	}
+
+	t.Run("a routed transition remains explicit", func(t *testing.T) {
+		attempt, err := layoutgraph.Clone(t.Context(), completed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var members []*layoutgraph.Node
+		for _, sequence := range attempt.Sequences {
+			members = sequence.Nodes
+		}
+		e := attempt.Connect(members[0], members[1])
+		e.ID = sequenceEdge.ID
+		missing, err := validateLayoutResultTopology(t.Context(), input, attempt)
+		if err != nil || len(missing) != 0 {
+			t.Fatalf("omissions = %v, error = %v, want no omissions", missing, err)
+		}
+		e.KeepExplicit = !sequenceEdge.KeepExplicit
+		if err := validateLayoutResultMetadata(t.Context(), input, attempt, missing); err == nil {
+			t.Fatal("routed transition with changed metadata was accepted")
+		}
+	})
+	for _, replacement := range []string{"repeated member", "foreign node with matching ID"} {
+		t.Run(replacement, func(t *testing.T) {
+			attempt, err := layoutgraph.Clone(t.Context(), completed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, seq := range attempt.Sequences {
+				if replacement == "repeated member" {
+					seq.Nodes[1] = seq.Nodes[0]
+				} else {
+					foreign := *seq.Nodes[1]
+					seq.Nodes[1] = &foreign
+				}
+			}
+			if _, err := validateLayoutResultTopology(t.Context(), input, attempt); err == nil {
+				t.Fatal("unrepresented omitted transition was accepted")
+			}
+		})
 	}
 
 	t.Run("ordinary edge remains required", func(t *testing.T) {

@@ -20,7 +20,7 @@ func mustIdentifySequences(t *testing.T, graph *layoutgraph.Graph, nodes []*layo
 	if err != nil {
 		t.Fatal(err)
 	}
-	sequences, err := identifySequences(active, nodes, guard)
+	sequences, err := identifySequences(active, nodes, guard, compatibleStepGeometry)
 	if err != nil {
 		t.Fatal(err)
 	}

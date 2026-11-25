@@ -129,11 +129,12 @@ func (patch d2Patch) apply() {
 			update.object.IconPosition = update.icon
 		}
 		if update.font != nil {
-			if update.font.existing != nil {
-				update.font.existing.Value = update.font.value
-			} else {
+			if update.font.replacement != nil {
 				update.object.Style.FontSize = update.font.replacement
+			} else {
+				update.font.existing.Value = update.font.value
 			}
+			update.object.MarkLayoutFontSize()
 		}
 	}
 	for _, update := range patch.edges {
@@ -363,6 +364,11 @@ func buildObjectPatch(ctx context.Context, object *d2graph.Object, node *layoutg
 		}
 		if font.existing == nil {
 			font.replacement = &d2graph.Scalar{Value: font.value}
+		} else if object.HasLayoutFontSize() && font.existing.Value != font.value {
+			// A caller may have copied the previous automatic font into another style.
+			scalar := *font.existing
+			scalar.Value = font.value
+			font.replacement = &scalar
 		}
 		patch.font = font
 	}

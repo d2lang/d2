@@ -15,11 +15,18 @@ import (
 	"github.com/d2lang/d2/lib/shape"
 )
 
-// SequenceDefiningEdges returns the IDs of edges consumed when step nodes are
-// replaced by sequence vessels.
-func SequenceDefiningEdges(ctx context.Context, graph *layoutgraph.Graph) (map[layoutgraph.EntityID]struct{}, error) {
+// SequenceDefiningEdges checks each original step path against the runs that
+// were fused in the completed layout. Port reservation and prescaling can
+// change a step’s dimensions between translation and sequence discovery.
+func SequenceDefiningEdges(ctx context.Context, graph, result *layoutgraph.Graph) (map[layoutgraph.EntityID]struct{}, error) {
 	if err := layoutgraph.Validate(ctx, "GetSequenceDefiningEdges", graph); err != nil {
 		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("missing layout result for sequence edge validation")
+	}
+	if len(result.Sequences) == 0 {
+		return nil, ctx.Err()
 	}
 	guard, err := limits.NewWorkGuard(ctx, "GetSequenceDefiningEdges", limits.MaxEngineWorkUnits)
 	if err != nil {
@@ -34,12 +41,44 @@ func SequenceDefiningEdges(ctx context.Context, graph *layoutgraph.Graph) (map[l
 	if err != nil {
 		return nil, err
 	}
+	// An omission is justified only by the actual result nodes and their
+	// registered sequence. An unrelated record can reuse a member ID.
+	resultNodes := make(map[layoutgraph.EntityID]*layoutgraph.Node, len(result.Nodes))
+	for _, node := range result.Nodes {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if node == nil || resultNodes[node.ID] != nil {
+			return nil, fmt.Errorf("invalid or duplicate result node in sequence validation")
+		}
+		resultNodes[node.ID] = node
+	}
+	fused := func(steps []*layoutgraph.Node, guard *limits.WorkGuard) (bool, error) {
+		first := resultNodes[steps[0].ID]
+		if first == nil || first.Sequence == nil {
+			return false, nil
+		}
+		seq := first.Sequence
+		if seq.Vessel == nil || result.Sequences[seq.Vessel] != seq || seq.Graph != result || len(seq.Nodes) != len(steps) {
+			return false, nil
+		}
+		for i, step := range steps {
+			if err := guard.Step(); err != nil {
+				return false, err
+			}
+			member := seq.Nodes[i]
+			if member == nil || member.Sequence != seq || resultNodes[step.ID] != member {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
 	sequenceEdges := make(map[layoutgraph.EntityID]struct{})
 	for _, container := range containerOrder {
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
-		sequences, err := identifySequences(active, graph.Containers[container], guard)
+		sequences, err := identifySequences(active, graph.Containers[container], guard, fused)
 		if err != nil {
 			return nil, err
 		}
@@ -98,7 +137,7 @@ func isValidRememberedSequence(
 			return false, nil
 		}
 		seen[node] = struct{}{}
-		if _, active := activeNodes[node]; !active || node.Graph != graph || !node.IsSequenceStep() || node.FixedTopLeft != nil {
+		if _, active := activeNodes[node]; !active || node.Graph != graph || !node.IsSequenceStep() || node.IsInvisible || node.FixedTopLeft != nil {
 			return false, nil
 		}
 		if node.Sequence != sequence || node.Container != sequence.Container {
@@ -127,6 +166,9 @@ func isValidRememberedSequence(
 		}
 	}
 
+	if !rightwardStepRow(sequence.Nodes[0]) {
+		return false, nil
+	}
 	return compatibleStepGeometry(sequence.Nodes, guard)
 }
 
@@ -270,7 +312,7 @@ func AddSequences(ctx context.Context, graph *layoutgraph.Graph, random *rand.Ra
 		if err := guard.Step(); err != nil {
 			return err
 		}
-		groups, err := identifySequences(activeNodes, graph.Containers[container], guard)
+		groups, err := identifySequences(activeNodes, graph.Containers[container], guard, compatibleStepGeometry)
 		if err != nil {
 			return err
 		}
