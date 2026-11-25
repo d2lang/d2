@@ -278,3 +278,25 @@ func TestOutsideLabelFarEdgeIncludedInBounds(t *testing.T) {
 		assertGeometryParity(t, nodes)
 	}
 }
+
+func TestDecoratedBoundsShareOneExtremaScan(t *testing.T) {
+	const count = 384
+	sides := [...]label.Position{label.OutsideBottomCenter, label.OutsideLeftMiddle, label.OutsideTopCenter, label.OutsideRightMiddle}
+	nodes := make(layoutgraph.Nodes, 0, count)
+	for i := range count {
+		node := layoutgraph.NewNode(layoutgraph.EntityID(i+1), 64, 45)
+		node.TopLeft = geo.NewPoint(float64(i%24)*100.5, float64(i/24)*77.5)
+		node.Label = &layoutgraph.Label{Position: sides[i%len(sides)], Width: 100, Height: 55}
+		nodes = append(nodes, node)
+	}
+	// The raw left, right, top and bottom extrema are shared by whole rows
+	// and columns. Each tie receives the same outer padding as the direct scan.
+	wantTL, wantBR := nodes.BoundingBox()
+	guard := &countingGuard{limit: 2 * count}
+	gotTL, gotBR, err := BoundingBox(nodes, guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPointParity(t, "top-left", gotTL, wantTL)
+	assertPointParity(t, "bottom-right", gotBR, wantBR)
+}

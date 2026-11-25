@@ -19,24 +19,44 @@ type WorkStepper interface {
 	Finish() error
 }
 
-func isExtreme(
-	nodes layoutgraph.Nodes,
-	node *layoutgraph.Node,
-	disqualifies func(*layoutgraph.Node) bool,
-	guard WorkStepper,
-) (bool, error) {
-	for _, other := range nodes {
+// BodyExtrema caches the outermost body coordinates for one unchanged set
+// of peers. Every exterior caption in a bounding-box calculation compares
+// against those same coordinates.
+type BodyExtrema struct {
+	Left, Top, Right, Bottom float64
+	measured                 bool
+}
+
+func (b *BodyExtrema) Measure(nodes layoutgraph.Nodes, guard WorkStepper) error {
+	if b.measured {
+		return nil
+	}
+	b.Left, b.Top = math.Inf(1), math.Inf(1)
+	b.Right, b.Bottom = math.Inf(-1), math.Inf(-1)
+	for _, n := range nodes {
 		if err := guard.Step(); err != nil {
-			return false, err
+			return err
 		}
-		if other == node || other.TopLeft == nil {
+		if n == nil || n.TopLeft == nil {
 			continue
 		}
-		if disqualifies(other) {
-			return false, nil
+		// Use the same strict comparisons as a scan of an individual side.
+		// Equal edges share the boundary and NaN cannot disqualify a peer.
+		if x := n.TopLeft.X; x < b.Left {
+			b.Left = x
+		}
+		if y := n.TopLeft.Y; y < b.Top {
+			b.Top = y
+		}
+		if x := n.TopLeft.X + n.Width; x > b.Right {
+			b.Right = x
+		}
+		if y := n.TopLeft.Y + n.Height; y > b.Bottom {
+			b.Bottom = y
 		}
 	}
-	return true, nil
+	b.measured = true
+	return nil
 }
 
 // NodeBoundingBox computes the packing-compatible bounds for one placed node. When
@@ -47,7 +67,7 @@ func NodeBoundingBox(
 	allNodes layoutgraph.Nodes,
 	guard WorkStepper,
 ) (*geo.Point, *geo.Point, error) {
-	bounds, err := nodeBounds(node, allNodes, guard)
+	bounds, err := nodeBounds(node, allNodes, &BodyExtrema{}, guard)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -66,6 +86,7 @@ type box struct {
 func nodeBounds(
 	node *layoutgraph.Node,
 	allNodes layoutgraph.Nodes,
+	extrema *BodyExtrema,
 	guard WorkStepper,
 ) (box, error) {
 	if err := guard.Step(); err != nil {
@@ -86,58 +107,37 @@ func nodeBounds(
 	maxY += node.LoopOffsets[geo.Bottom]
 
 	if node.Label != nil && node.Label.Position.IsOutside() && allNodes != nil {
+		if err := extrema.Measure(allNodes, guard); err != nil {
+			return box{}, err
+		}
 		labelTopLeft := node.LabelTopLeft(node.Label.Position, node.Label.Width, node.Label.Height)
 		boundaryPadding := float64(label.PADDING)
 		outsidePadding := 2. * label.PADDING
 		if labelTopLeft.X < minX {
-			extreme, err := isExtreme(allNodes, node, func(other *layoutgraph.Node) bool {
-				return other.TopLeft.X < node.TopLeft.X
-			}, guard)
-			if err != nil {
-				return box{}, err
-			}
-			padding := outsidePadding
-			if extreme {
-				padding = boundaryPadding
+			padding := boundaryPadding
+			if extrema.Left < node.TopLeft.X {
+				padding = outsidePadding
 			}
 			minX = math.Floor(labelTopLeft.X - padding)
 		}
 		if labelTopLeft.Y < minY {
-			extreme, err := isExtreme(allNodes, node, func(other *layoutgraph.Node) bool {
-				return other.TopLeft.Y < node.TopLeft.Y
-			}, guard)
-			if err != nil {
-				return box{}, err
-			}
-			padding := outsidePadding
-			if extreme {
-				padding = boundaryPadding
+			padding := boundaryPadding
+			if extrema.Top < node.TopLeft.Y {
+				padding = outsidePadding
 			}
 			minY = math.Floor(labelTopLeft.Y - padding)
 		}
 		if labelTopLeft.X+node.Label.Width > maxX {
-			extreme, err := isExtreme(allNodes, node, func(other *layoutgraph.Node) bool {
-				return other.TopLeft.X+other.Width > node.TopLeft.X+node.Width
-			}, guard)
-			if err != nil {
-				return box{}, err
-			}
-			padding := outsidePadding
-			if extreme {
-				padding = boundaryPadding
+			padding := boundaryPadding
+			if extrema.Right > node.TopLeft.X+node.Width {
+				padding = outsidePadding
 			}
 			maxX = math.Ceil(labelTopLeft.X + node.Label.Width + padding)
 		}
 		if labelTopLeft.Y+node.Label.Height > maxY {
-			extreme, err := isExtreme(allNodes, node, func(other *layoutgraph.Node) bool {
-				return other.TopLeft.Y+other.Height > node.TopLeft.Y+node.Height
-			}, guard)
-			if err != nil {
-				return box{}, err
-			}
-			padding := outsidePadding
-			if extreme {
-				padding = boundaryPadding
+			padding := boundaryPadding
+			if extrema.Bottom > node.TopLeft.Y+node.Height {
+				padding = outsidePadding
 			}
 			maxY = math.Ceil(labelTopLeft.Y + node.Label.Height + padding)
 		}
@@ -161,8 +161,9 @@ func BoundingBox(nodes layoutgraph.Nodes, guard WorkStepper) (*geo.Point, *geo.P
 	}
 	minX, minY := math.Inf(1), math.Inf(1)
 	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	var extrema BodyExtrema
 	for _, node := range nodes {
-		bounds, err := nodeBounds(node, nodes, guard)
+		bounds, err := nodeBounds(node, nodes, &extrema, guard)
 		if err != nil {
 			return nil, nil, err
 		}
