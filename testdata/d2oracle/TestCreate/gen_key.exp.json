@@ -3,7 +3,7 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,0:0:0-1:0:17",
+      "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,0:0:0-2:0:16",
       "nodes": [
         {
           "map_key": {
@@ -30,13 +30,13 @@
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,0:8:8-0:16:16",
+            "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,1:0:7-1:8:15",
             "key": {
-              "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,0:8:8-0:16:16",
+              "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,1:0:7-1:8:15",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,0:8:8-0:16:16",
+                    "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,1:0:7-1:8:15",
                     "value": [
                       {
                         "string": "square 2",
@@ -131,11 +131,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,0:8:8-0:16:16",
+              "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,1:0:7-1:8:15",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,0:8:8-0:16:16",
+                    "range": "d2/testdata/d2oracle/TestCreate/gen_key.d2,1:0:7-1:8:15",
                     "value": [
                       {
                         "string": "square 2",

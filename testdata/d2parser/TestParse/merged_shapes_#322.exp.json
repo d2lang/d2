@@ -6,11 +6,11 @@
         "map_key": {
           "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,1:0:1-1:2:3",
           "key": {
-            "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,1:0:1-1:1:2",
+            "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,1:0:1-1:2:3",
             "path": [
               {
                 "unquoted_string": {
-                  "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,1:0:1-1:1:2",
+                  "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,1:0:1-1:2:3",
                   "value": [
                     {
                       "string": "a-",
@@ -29,11 +29,11 @@
         "map_key": {
           "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,2:0:4-2:2:6",
           "key": {
-            "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,2:0:4-2:1:5",
+            "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,2:0:4-2:2:6",
             "path": [
               {
                 "unquoted_string": {
-                  "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,2:0:4-2:1:5",
+                  "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,2:0:4-2:2:6",
                   "value": [
                     {
                       "string": "b-",
@@ -52,11 +52,11 @@
         "map_key": {
           "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,3:0:7-3:2:9",
           "key": {
-            "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,3:0:7-3:1:8",
+            "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,3:0:7-3:2:9",
             "path": [
               {
                 "unquoted_string": {
-                  "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,3:0:7-3:1:8",
+                  "range": "d2/testdata/d2parser/TestParse/merged_shapes_#322.d2,3:0:7-3:2:9",
                   "value": [
                     {
                       "string": "c-",

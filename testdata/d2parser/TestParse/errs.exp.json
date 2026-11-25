@@ -311,11 +311,6 @@
               "dst_arrow": ">"
             }
           ],
-          "edge_index": {
-            "range": "d2/testdata/d2parser/TestParse/errs.d2,23:10:177-23:11:178",
-            "int": null,
-            "glob": false
-          },
           "primary": {},
           "value": {}
         }
@@ -449,10 +444,6 @@
       {
         "range": "d2/testdata/d2parser/TestParse/errs.d2,23:6:173-23:9:176",
         "errmsg": "d2/testdata/d2parser/TestParse/errs.d2:24:7: connection missing destination"
-      },
-      {
-        "range": "d2/testdata/d2parser/TestParse/errs.d2,23:10:177-23:11:178",
-        "errmsg": "d2/testdata/d2parser/TestParse/errs.d2:24:11: unexpected character in edge index"
       },
       {
         "range": "d2/testdata/d2parser/TestParse/errs.d2,23:10:177-23:11:178",

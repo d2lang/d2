@@ -1414,15 +1414,23 @@ layers: {
 			},
 		},
 		{
-			name: "fmt-single-hyphen-connection",
+			name: "fmt-invalid-syntax",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
-				const source = "\"build\" - server\n"
-				assert.WriteFile(t, filepath.Join(dir, "invalid.d2"), []byte(source), 0644)
-				err := runTestMainPersist(t, ctx, dir, env, "fmt", "invalid.d2")
-				if err == nil || !strings.Contains(err.Error(), "--") {
-					t.Fatalf("expected a diagnostic suggesting --, got %v", err)
+				for _, tc := range []struct{ name, source, diagnostic string }{
+					{"single-hyphen", "\"build\" - server\n", "use --"},
+					{"unclosed-group", "(a -> b", "terminated with )"},
+					{"wrong-block-fence", "x: |!#md\n  hello\n##|\n", "terminated with !#|"},
+					{"incomplete-variable", "x: amount$\n", "substitutions must begin"},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						assert.WriteFile(t, filepath.Join(dir, "invalid.d2"), []byte(tc.source), 0644)
+						err := runTestMainPersist(t, ctx, dir, env, "fmt", "invalid.d2")
+						if err == nil || !strings.Contains(err.Error(), tc.diagnostic) {
+							t.Fatalf("expected %q, got %v", tc.diagnostic, err)
+						}
+						assert.Equal(t, tc.source, string(readFile(t, dir, "invalid.d2")))
+					})
 				}
-				assert.Equal(t, source, string(readFile(t, dir, "invalid.d2")))
 			},
 		},
 		{

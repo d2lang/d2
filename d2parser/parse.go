@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	tunicode "golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
@@ -645,12 +645,6 @@ func (p *parser) parseBlockComment() *d2ast.BlockComment {
 	p.depth++
 	defer dec(&p.depth)
 
-	var sb strings.Builder
-	defer func() {
-		bc.Value = trimSpaceAfterLastNewline(sb.String())
-		bc.Value = trimCommonIndent(bc.Value)
-	}()
-
 	for {
 		r, eof := p.peek()
 		if eof {
@@ -668,31 +662,49 @@ func (p *parser) parseBlockComment() *d2ast.BlockComment {
 		}
 	}
 
-	for {
+	var closed bool
+	bc.Value, closed = p.readBlockBody("", `"""`)
+	if !closed {
+		p.errorf(bc.Range.Start, p.readerPos, `block comments must be terminated with """`)
+	}
+	return bc
+}
+
+// readBlockBody consumes through the first complete delimiter. The prefix
+// table lets partial matches overlap without rereading any of the body.
+func (p *parser) readBlockBody(indent, delimiter string) (string, bool) {
+	end := []rune(delimiter)
+	prefix := make([]int, len(end))
+	advance := func(n int, r rune) int {
+		for n > 0 && r != end[n] {
+			n = prefix[n-1]
+		}
+		if r == end[n] {
+			n++
+		}
+		return n
+	}
+	for i := 1; i < len(end); i++ {
+		prefix[i] = advance(prefix[i-1], end[i])
+	}
+
+	var body strings.Builder
+	body.WriteString(indent)
+	matched := 0
+	for matched != len(end) {
 		r, eof := p.read()
 		if eof {
-			p.errorf(bc.Range.Start, p.readerPos, `block comments must be terminated with """`)
-			return bc
+			break
 		}
-
-		if r != '"' {
-			sb.WriteRune(r)
-			continue
-		}
-
-		s, eof := p.peekn(2)
-		if eof {
-			p.errorf(bc.Range.Start, p.readerPos, `block comments must be terminated with """`)
-			return bc
-		}
-		if s != `""` {
-			sb.WriteByte('"')
-			p.rewind()
-			continue
-		}
-		p.commit()
-		return bc
+		body.WriteRune(r)
+		matched = advance(matched, r)
 	}
+	text := body.String()
+	closed := matched == len(end)
+	if closed {
+		text = text[:len(text)-len(delimiter)]
+	}
+	return trimCommonIndent(trimSpaceAfterLastNewline(text)), closed
 }
 
 func trimSpaceAfterLastNewline(s string) string {
@@ -837,26 +849,23 @@ func (p *parser) parseMapKeyValue(mk *d2ast.Key) {
 }
 
 func (p *parser) parseEdgeGroup(mk *d2ast.Key) {
-	// To prevent p.parseUnquotedString from consuming terminating parentheses.
+	groupStart := p.pos.Subtract('(', p.utf16Pos)
+	// Only endpoint keys use the group's closing parenthesis as a delimiter.
 	p.inEdgeGroup = true
-	defer func() {
-		p.inEdgeGroup = false
-	}()
-
 	src := p.parseKey()
 	p.parseEdges(mk, src)
+	p.inEdgeGroup = false
 
 	r, newlines, eof := p.peekNotSpace()
-	if eof || newlines > 0 {
+	if eof || newlines > 0 || r != ')' {
 		p.rewind()
-		return
-	}
-	if r != ')' {
-		p.rewind()
-		p.errorf(mk.Range.Start, p.pos, "edge groups must be terminated with )")
+		p.errorf(groupStart, p.pos, "edge groups must be terminated with )")
 		return
 	}
 	p.commit()
+	if len(mk.Edges) == 0 {
+		p.errorf(groupStart, p.pos, "edge groups must contain a connection")
+	}
 
 	r, newlines, eof = p.peekNotSpace()
 	if eof || newlines > 0 {
@@ -882,7 +891,6 @@ func (p *parser) parseEdgeGroup(mk *d2ast.Key) {
 		p.rewind()
 	}
 
-	p.inEdgeGroup = false
 	p.parseMapKeyValue(mk)
 }
 
@@ -895,51 +903,39 @@ func (p *parser) parseEdgeIndex() *d2ast.EdgeIndex {
 	}
 	defer ei.Range.End.From(&p.pos)
 
-	r, newlines, eof := p.peekNotSpace()
-	if eof || newlines > 0 {
-		p.rewind()
-		return nil
-	}
-
-	if unicode.IsDigit(r) {
-		p.commit()
-		var sb strings.Builder
-		sb.WriteRune(r)
-		for {
-			r, newlines, eof = p.peekNotSpace()
-			if eof || newlines > 0 {
-				p.rewind()
-				p.errorf(ei.Range.Start, p.pos, "unterminated edge index")
-				return nil
-			}
-			if r == ']' {
-				p.rewind()
-				break
-			}
-			p.commit()
-			if !unicode.IsDigit(r) {
-				p.errorf(p.pos.Subtract(r, p.utf16Pos), p.pos, "unexpected character in edge index")
-				continue
-			}
-			sb.WriteRune(r)
+	var sb strings.Builder
+	for {
+		r, eof := p.peek()
+		// Leave statement, value and comment delimiters for the caller on error.
+		if eof || strings.ContainsRune("\n;:{}#", r) {
+			p.rewind()
+			p.errorf(ei.Range.Start, p.pos, "unterminated edge index")
+			return nil
 		}
-		i, _ := strconv.Atoi(sb.String())
-		ei.Int = &i
-	} else if r == '*' {
 		p.commit()
-		ei.Glob = true
-	} else {
-		p.errorf(p.pos.Subtract(r, p.utf16Pos), p.pos, "unexpected character in edge index")
-		// TODO: skip to ], maybe add a p.skipTo to skip to certain characters
+		if r == ']' {
+			break
+		}
+		sb.WriteRune(r)
 	}
 
-	r, newlines, eof = p.peekNotSpace()
-	if eof || newlines > 0 || r != ']' {
-		p.rewind()
-		p.errorf(ei.Range.Start, p.pos, "unterminated edge index")
+	index := strings.TrimSpace(sb.String())
+	if index == "*" {
+		ei.Glob = true
 		return ei
 	}
-	p.commit()
+	// Parse unsigned digits within the range of EdgeIndex.Int.
+	n, err := strconv.ParseUint(index, 10, strconv.IntSize-1)
+	if errors.Is(err, strconv.ErrRange) {
+		p.errorf(ei.Range.Start, p.pos, "edge index is too large")
+		return nil
+	}
+	if err != nil {
+		p.errorf(ei.Range.Start, p.pos, "edge index must be a nonnegative decimal integer or *")
+		return nil
+	}
+	i := int(n)
+	ei.Int = &i
 	return ei
 }
 
@@ -1206,7 +1202,7 @@ func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
 				return s
 			}
 			switch r2 {
-			case '\n', '#', '{', '}', '[', ']', ':', '.':
+			case ';', '#', '{', '}', '[', ']', ':', '.':
 				p.rewind()
 				return s
 			}
@@ -1236,31 +1232,14 @@ func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
 				p.rewind()
 				return s
 			case '-':
-				// TODO: need a peekNotSpace across escaped newlines
-				r2, eof := p.peek()
-				if eof {
+				// Only the first character of an arrow belongs to the edge parser.
+				// Otherwise consume the hyphen as text and scan the next rune normally.
+				next, eof := p.peek()
+				p.rewind()
+				if !eof && (next == '-' || next == '>' || next == '*') {
 					return s
 				}
-				switch r2 {
-				case '\n', ';', '#', '{', '}', '[', ']':
-					p.rewind()
-					p.peek()
-					p.commit()
-					sb.WriteRune(r)
-					if hasRaw {
-						rawb.WriteRune(r)
-					}
-					return s
-				}
-				if r2 == '-' || r2 == '>' || r2 == '*' {
-					p.rewind()
-					return s
-				}
-				sb.WriteRune(r)
-				if hasRaw {
-					rawb.WriteRune(r)
-				}
-				r = r2
+				p.peek()
 			}
 		}
 
@@ -1481,43 +1460,25 @@ func (p *parser) parseBlockString() *d2ast.BlockString {
 	p.depth++
 	defer dec(&p.depth)
 
-	var sb strings.Builder
-	defer func() {
-		bs.Value = trimSpaceAfterLastNewline(sb.String())
-		bs.Value = trimCommonIndent(bs.Value)
-	}()
-
-	// Do we have more symbol quotes?
-	bs.Quote = ""
+	var fence, tag strings.Builder
 	for {
 		r, eof := p.peek()
-		if eof {
-			p.errorf(bs.Range.Start, p.readerPos, `block string must be terminated with %v`, bs.Quote+"|")
-			return bs
-		}
-
-		if unicode.IsSpace(r) || unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+		if eof || unicode.IsSpace(r) {
+			bs.Quote = fence.String()
+			bs.Tag = tag.String()
+			if eof {
+				p.errorf(bs.Range.Start, p.readerPos, `block string must be terminated with %v`, bs.Quote+"|")
+				return bs
+			}
 			p.rewind()
 			break
 		}
 		p.commit()
-		bs.Quote += string(r)
-	}
-
-	// Do we have a tag?
-	for {
-		r, eof := p.peek()
-		if eof {
-			p.errorf(bs.Range.Start, p.readerPos, `block string must be terminated with %v`, bs.Quote+"|")
-			return bs
+		if tag.Len() == 0 && !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+			fence.WriteRune(r)
+		} else {
+			tag.WriteRune(r)
 		}
-
-		if unicode.IsSpace(r) {
-			p.rewind()
-			break
-		}
-		p.commit()
-		bs.Tag += string(r)
 	}
 	if bs.Tag == "" {
 		// TODO: no and fix compiler to not set text/markdown shape always.
@@ -1529,6 +1490,7 @@ func (p *parser) parseBlockString() *d2ast.BlockString {
 	}
 
 	// Skip non newline whitespace.
+	var indent string
 	for {
 		r, eof := p.peek()
 		if eof {
@@ -1537,7 +1499,7 @@ func (p *parser) parseBlockString() *d2ast.BlockString {
 		}
 		if !unicode.IsSpace(r) {
 			// Non whitespace characters on the first line have an implicit indent.
-			sb.WriteString(p.getIndent())
+			indent = p.getIndent()
 			p.rewind()
 			break
 		}
@@ -1547,39 +1509,12 @@ func (p *parser) parseBlockString() *d2ast.BlockString {
 		}
 	}
 
-	endHint := '|'
-	endRest := ""
-	if len(bs.Quote) > 0 {
-		var size int
-		endHint, size = utf8.DecodeLastRuneInString(bs.Quote)
-		endRest = bs.Quote[size:] + "|"
+	var closed bool
+	bs.Value, closed = p.readBlockBody(indent, bs.Quote+"|")
+	if !closed {
+		p.errorf(bs.Range.Start, p.readerPos, `block string must be terminated with %v`, bs.Quote+"|")
 	}
-
-	for {
-		r, eof := p.read()
-		if eof {
-			p.errorf(bs.Range.Start, p.readerPos, `block string must be terminated with %v`, bs.Quote+"|")
-			return bs
-		}
-
-		if r != endHint {
-			sb.WriteRune(r)
-			continue
-		}
-
-		s, eof := p.peekn(len(endRest))
-		if eof {
-			p.errorf(bs.Range.Start, p.readerPos, `block string must be terminated with %v`, bs.Quote+"|")
-			return bs
-		}
-		if s != endRest {
-			sb.WriteRune(endHint)
-			p.rewind()
-			continue
-		}
-		p.commit()
-		return bs
-	}
+	return bs
 }
 
 func (p *parser) parseArray() *d2ast.Array {
@@ -1695,6 +1630,7 @@ func (p *parser) parseArrayNode(r rune) d2ast.ArrayNodeBox {
 		p.errorf(p.pos, p.pos.Advance(r, p.utf16Pos), "unquoted strings cannot start on %q", r)
 	}
 	box.Null = vbox.Null
+	box.Suspension = vbox.Suspension
 	box.Boolean = vbox.Boolean
 	box.Number = vbox.Number
 	box.UnquotedString = vbox.UnquotedString
@@ -1822,24 +1758,18 @@ func (p *parser) parseSubstitution(spread bool) *d2ast.Substitution {
 	}
 
 	r, newlines, eof := p.peekNotSpace()
-	if eof {
-		return nil
-	}
-	if newlines > 0 {
+	if eof || newlines > 0 || r != '{' {
 		p.rewind()
+		p.errorf(subst.Range.Start, p.pos, "substitutions must begin on {")
 		return nil
 	}
-	if r != '{' {
-		p.rewind()
-		p.errorf(subst.Range.Start, p.readerPos, "substitutions must begin on {")
-		return nil
-	} else {
-		p.commit()
-	}
+	p.commit()
 
 	k := p.parseKey()
 	if k != nil {
 		subst.Path = k.Path
+	} else {
+		p.errorf(subst.Range.Start, p.pos, "substitution requires a variable name")
 	}
 
 	r, newlines, eof = p.peekNotSpace()
@@ -1888,6 +1818,7 @@ func (p *parser) parseImport(spread bool) *d2ast.Import {
 
 	k := p.parseKey()
 	if k == nil {
+		p.errorf(imp.Range.Start, p.pos, "import requires a path")
 		return imp
 	}
 	if k.Path[0].UnquotedString != nil && len(k.Path) > 1 && k.Path[1].UnquotedString != nil && k.Path[1].Unbox().ScalarString() == "d2" {
@@ -1917,60 +1848,44 @@ func (p *parser) getIndent() string {
 	return strings.Repeat(" ", p.depth*2)
 }
 
-func trimIndent(s, indent string) string {
+func trimCommonIndent(s string) string {
 	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		if l == "" {
+	common := -1
+	for _, line := range lines {
+		width, rest := splitLeadingIndent(line, -1)
+		if rest == "" {
 			continue
 		}
-		_, l = splitLeadingIndent(l, len(indent))
-		lines[i] = l
+		if width == 0 {
+			return s
+		}
+		if common < 0 || width < common {
+			common = width
+		}
+	}
+	if common < 0 {
+		return s
+	}
+	for i, line := range lines {
+		_, lines[i] = splitLeadingIndent(line, common)
 	}
 	return strings.Join(lines, "\n")
 }
 
-func trimCommonIndent(s string) string {
-	commonIndent := ""
-	for _, l := range strings.Split(s, "\n") {
-		if l == "" {
-			continue
+// splitLeadingIndent removes up to limit columns (all of them if negative).
+// A tab occupies two columns; removing only its first leaves one space.
+func splitLeadingIndent(s string, limit int) (width int, rest string) {
+	for i, r := range s {
+		if width == limit || !unicode.IsSpace(r) {
+			return width, s[i:]
 		}
-		lineIndent, l := splitLeadingIndent(l, -1)
-		if lineIndent == "" {
-			// No common indent return as is.
-			return s
-		}
-		if l == "" {
-			// Whitespace only line.
-			continue
-		}
-		if commonIndent == "" || len(lineIndent) < len(commonIndent) {
-			commonIndent = lineIndent
+		width++
+		if r == '\t' {
+			if width == limit {
+				return width, " " + s[i+1:]
+			}
+			width++
 		}
 	}
-	if commonIndent == "" {
-		return s
-	}
-	return trimIndent(s, commonIndent)
-}
-
-func splitLeadingIndent(s string, maxSpaces int) (indent, rets string) {
-	var indentb strings.Builder
-	i := 0
-	for _, r := range s {
-		if !unicode.IsSpace(r) {
-			break
-		}
-		i++
-		if r != '\t' {
-			indentb.WriteRune(r)
-		} else {
-			indentb.WriteByte(' ')
-			indentb.WriteByte(' ')
-		}
-		if maxSpaces > -1 && indentb.Len() == maxSpaces {
-			break
-		}
-	}
-	return indentb.String(), s[i:]
+	return width, ""
 }

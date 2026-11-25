@@ -4,6 +4,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/d2lang/d2/d2ast"
 )
@@ -106,17 +107,7 @@ func (p *printer) blockComment(bc *d2ast.BlockComment) {
 		p.sb.WriteByte(' ')
 	}
 
-	lines := strings.Split(bc.Value, "\n")
-	for _, l := range lines {
-		if !bc.Range.OneLine() {
-			if l == "" {
-				p.sb.WriteByte('\n')
-			} else {
-				p.newline()
-			}
-		}
-		p.sb.WriteString(l)
-	}
+	p.blockLines(bc.Value, bc.Range.OneLine())
 
 	if !bc.Range.OneLine() {
 		p.newline()
@@ -124,6 +115,21 @@ func (p *printer) blockComment(bc *d2ast.BlockComment) {
 		p.sb.WriteByte(' ')
 	}
 	p.sb.WriteString(`"""`)
+}
+
+func (p *printer) blockLines(value string, oneLine bool) {
+	// With no nonblank line, the parser keeps all indentation as literal text.
+	indent := strings.TrimSpace(value) != ""
+	for _, line := range strings.Split(value, "\n") {
+		if !oneLine {
+			if line != "" && indent {
+				p.newline()
+			} else {
+				p.sb.WriteByte('\n')
+			}
+		}
+		p.sb.WriteString(line)
+	}
 }
 
 func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString bool) {
@@ -145,7 +151,7 @@ func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleStr
 		default:
 			text = escapeUnquotedValue(*b.String, p.inKey, wholeToken)
 		}
-		if wholeToken && !isDoubleString {
+		if p.inKey && wholeToken && !isDoubleString {
 			lower := strings.ToLower(text)
 			if _, ok := d2ast.ReservedKeywords[lower]; ok {
 				text = lower
@@ -157,15 +163,12 @@ func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleStr
 
 func (p *printer) blockString(bs *d2ast.BlockString) {
 	quote := bs.Quote
-	for strings.Contains(bs.Value, "|"+quote) {
-		if quote == "" {
-			quote += "|"
-		} else {
-			quote += string(quote[len(quote)-1])
-		}
+	extend := '|'
+	if quote != "" {
+		extend, _ = utf8.DecodeLastRuneInString(quote)
 	}
-	for strings.Contains(bs.Value, quote+"|") {
-		quote += string(quote[len(quote)-1])
+	for strings.Contains(bs.Value, "|"+quote) || strings.Contains(bs.Value, quote+"|") {
+		quote += string(extend)
 	}
 
 	if bs.Range == (d2ast.Range{}) {
@@ -183,17 +186,7 @@ func (p *printer) blockString(bs *d2ast.BlockString) {
 		p.sb.WriteByte(' ')
 	}
 
-	lines := strings.Split(bs.Value, "\n")
-	for _, l := range lines {
-		if !bs.Range.OneLine() {
-			if l == "" {
-				p.sb.WriteByte('\n')
-			} else {
-				p.newline()
-			}
-		}
-		p.sb.WriteString(l)
-	}
+	p.blockLines(bs.Value, bs.Range.OneLine())
 
 	if !bs.Range.OneLine() {
 		p.deindent()
@@ -232,13 +225,20 @@ func (p *printer) _import(i *d2ast.Import) {
 		p.sb.WriteString(pre)
 		p.sb.WriteRune('/')
 	}
-	if len(i.Path) > 0 {
-		i2 := *i
-		i2.Path = append([]*d2ast.StringBox{}, i.Path...)
-		i2.Path[0] = d2ast.RawStringBox(path.Clean(i.Path[0].Unbox().ScalarString()), true)
-		i = &i2
+	if len(i.Path) == 0 {
+		return
 	}
-	p.path(i.Path)
+	filename := path.Clean(i.Path[0].ScalarString())
+	if len(i.Path) > 1 && i.Path[1].UnquotedString != nil && i.Path[1].ScalarString() == "d2" {
+		// After a quoted filename, the parser reads .d2 as a field name.
+		p.node(d2ast.FlatDoubleQuotedString(filename))
+	} else {
+		p.node(d2ast.RawString(filename, true))
+	}
+	if len(i.Path) > 1 {
+		p.sb.WriteByte('.')
+		p.path(i.Path[1:])
+	}
 }
 
 func (p *printer) array(a *d2ast.Array) {
@@ -284,9 +284,10 @@ func (p *printer) array(a *d2ast.Array) {
 }
 
 func (p *printer) _map(m *d2ast.Map) {
+	oneLine := !m.IsFileMap() && m.Range.OneLine()
 	if !m.IsFileMap() {
 		p.sb.WriteByte('{')
-		if !m.Range.OneLine() {
+		if !oneLine {
 			p.indent()
 		}
 	}
@@ -299,17 +300,15 @@ func (p *printer) _map(m *d2ast.Map) {
 		n := nb.Unbox()
 		// extract out layer, scenario, and step nodes and skip
 		if nb.IsBoardNode() {
-			boardType := nb.MapKey.Key.Path[0].Unbox().ScalarString()
-			if (boardType == "layers" || boardType == "scenarios" || boardType == "steps") &&
-				nb.MapKey.Value.Map != nil && len(nb.MapKey.Value.Map.Nodes) > 0 {
+			if nb.MapKey.Value.Map != nil && len(nb.MapKey.Value.Map.Nodes) > 0 {
 				boardNodes = append(boardNodes, nb)
 			}
 			prev = n
 			continue
 		}
 
-		// Handle inline comments.
-		if i > 0 && (nb.Comment != nil || nb.BlockComment != nil) {
+		// A line comment can follow an entry without a separator.
+		if i > 0 && nb.Comment != nil {
 			if n.GetRange().Start.Line == prev.GetRange().End.Line && n.GetRange().OneLine() {
 				p.sb.WriteByte(' ')
 				p.node(n)
@@ -317,7 +316,7 @@ func (p *printer) _map(m *d2ast.Map) {
 			}
 		}
 
-		if !m.Range.OneLine() {
+		if !oneLine {
 			if prev != m {
 				if n.GetRange().Start.Line-prev.GetRange().End.Line > 1 {
 					p.sb.WriteByte('\n')
@@ -352,7 +351,7 @@ func (p *printer) _map(m *d2ast.Map) {
 	}
 
 	if !m.IsFileMap() {
-		if !m.Range.OneLine() {
+		if !oneLine {
 			p.deindent()
 			p.newline()
 		}

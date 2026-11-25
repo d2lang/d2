@@ -506,7 +506,8 @@ z: 343
 		{
 			name: "substitution",
 			in:   `x: ${ok}; y: [...${yes}]`,
-			exp: `x: ${ok}; y: [...${yes}]
+			exp: `x: ${ok}
+y: [...${yes}]
 `,
 		},
 
@@ -979,4 +980,26 @@ func TestEdge(t *testing.T) {
 
 	assert.String(t, `x -> y`, d2format.Format(mk.Edges[0]))
 	assert.String(t, `[0]`, d2format.Format(mk.EdgeIndex))
+}
+
+func TestRootMapLayoutRoundTrip(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, source, want string }{
+		{"one-line", "a; b", "a\nb\n"},
+		{"group", "(a -> b); next", "a -> b\nnext\n"},
+		{"nested-map", "a: {b; c}; next # note", "a: {b; c}\nnext # note\n"},
+		{"block-comment", `a; """ note """; b`, "a\n\"\"\" note \"\"\"\nb\n"},
+		{"nested-block-comment", `a: {b; """ note """; c}`, "a: {b; \"\"\" note \"\"\"; c}\n"},
+		{"multiline", "a; b\nc", "a\nb\nc\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := tc.source
+			for range 2 {
+				ast, err := d2parser.Parse("test.d2", strings.NewReader(source), nil)
+				assert.Success(t, err)
+				source = d2format.Format(ast)
+				assert.String(t, tc.want, source)
+			}
+		})
+	}
 }
