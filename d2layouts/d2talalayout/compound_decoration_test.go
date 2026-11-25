@@ -42,3 +42,76 @@ func TestCompoundFitsAuthoredExteriorIcon(t *testing.T) {
 		})
 	}
 }
+
+func TestCompoundKeepsCenteredTitleClearOfChild(t *testing.T) {
+	for _, size := range []string{"", "height: 300", "width: 380"} {
+		source := fmt.Sprintf("Pool: Runtime {label.near: center-center\n%s\nworker: Worker {width: 120; height: 80}\n}", size)
+		d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+		p, n := d.Shapes[0], d.Shapes[1]
+		titleBottom := float64(p.Pos.Y) + float64(p.Height+p.LabelHeight)/2
+		if n.Pos.Y < int(titleBottom)+label.PADDING || n.Pos.Y+n.Height > p.Pos.Y+p.Height {
+			t.Fatalf("%s: tile %v does not fit below the centered title in %v", size, n.Pos, p.Pos)
+		}
+	}
+}
+
+func TestCompoundCircleHonorsAuthoredHeight(t *testing.T) {
+	const source = `Zone: {shape: circle; height: 320
+  tile: Window {width: 80; height: 60}
+}`
+	d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	p, n := d.Shapes[0], d.Shapes[1]
+	if p.Width != 320 || p.Height != 320 || n.Width != 80 || n.Height != 60 {
+		t.Fatalf("circle = %d × %d, tile = %d × %d", p.Width, p.Height, n.Width, n.Height)
+	}
+	if p.Pos.X*2+p.Width != n.Pos.X*2+n.Width || p.Pos.Y*2+p.Height != n.Pos.Y*2+n.Height {
+		t.Fatalf("tile at %v is off center in circle at %v", n.Pos, p.Pos)
+	}
+}
+
+func TestCenteredTitleUsesRoomInsideNeighboringFrames(t *testing.T) {
+	const source = `Pool: Runtime {label.near: center-center
+  worker: Worker {width: 120; height: 48}
+}
+Ledger`
+	d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	p, n := d.Shapes[0], d.Shapes[1]
+	if p.Height != n.Height+120 {
+		t.Fatalf("frame grows to %d px despite available room for the child", p.Height)
+	}
+	titleBottom := float64(p.Pos.Y) + float64(p.Height+p.LabelHeight)/2
+	clearance := float64(n.Pos.Y) - titleBottom
+	borderGap := p.Pos.Y + p.Height - n.Pos.Y - n.Height
+	if clearance < label.PADDING || borderGap < label.PADDING {
+		t.Fatalf("child has %.1f px from the title and %d px from the lower border", clearance, borderGap)
+	}
+}
+
+func TestCompoundSquareCentersTitleUsingItsFittedSide(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		tileWidth         int
+		titleAlreadyClear bool
+	}{
+		{"wide tile above title", 240, true},
+		{"tile overlaps title", 120, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := fmt.Sprintf("Pool: Runtime {shape: square; label.near: center-center\nworker: Worker {width: %d; height: 80}\n}", tc.tileWidth)
+			d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+			p, n := d.Shapes[0], d.Shapes[1]
+			if p.Width != p.Height || n.Width != tc.tileWidth || n.Height != 80 {
+				t.Fatalf("square = %d × %d, tile = %d × %d", p.Width, p.Height, n.Width, n.Height)
+			}
+			tileTop := n.Pos.Y - p.Pos.Y
+			titleTop := float64(p.Height-p.LabelHeight) / 2
+			if tc.titleAlreadyClear {
+				if p.Width != 360 || tileTop != 60 || float64(tileTop+n.Height+label.PADDING) > titleTop {
+					t.Fatalf("square side %d, tile top %d, title top %.1f", p.Width, tileTop, titleTop)
+				}
+			} else if float64(tileTop) < titleTop+float64(p.LabelHeight)+label.PADDING || tileTop+n.Height > p.Height {
+				t.Fatalf("tile at %d is not clear of the title in the %d px square", tileTop, p.Height)
+			}
+		})
+	}
+}

@@ -87,9 +87,6 @@ func buildTreeAdjacencyMatrix(g *layoutgraph.Graph, guard *limits.WorkGuard) (fu
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
-		if edge == nil || edge.From == nil || edge.To == nil {
-			return nil, treePreprocessBadState("tree preprocessing encountered an edge with missing endpoints")
-		}
 		if _, has := fromNodeToToNodeToEdge[edge.From]; !has {
 			fromNodeToToNodeToEdge[edge.From] = make(map[*layoutgraph.Node]*layoutgraph.Edge)
 		}

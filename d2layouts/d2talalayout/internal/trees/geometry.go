@@ -65,18 +65,31 @@ func shiftSubtreeHorizontally(t *layoutgraph.Tree, delta float64, guard *limits.
 	return offsetSubtree(t, delta, 0, guard)
 }
 
-func spacingToChildren(t *layoutgraph.Tree, guard *limits.WorkGuard) (float64, error) {
+func spacingToChildren(t *layoutgraph.Tree, childRankHeight float64, guard *limits.WorkGuard) (float64, error) {
 	maxLabelSize := 0.0
 	for _, c := range t.Children {
 		if err := guard.Step(); err != nil {
 			return 0, err
 		}
-		if c == nil || c.SentinelEdge == nil {
+		if c == nil || c.Node == nil || c.SentinelEdge == nil {
 			return 0, treePreprocessBadState("tree placement encountered an incomplete child edge")
 		}
-		labelSize := float64(c.SentinelEdge.MinHeight)
-		if t.Orientation == geo.Left || t.Orientation == geo.Right {
-			labelSize = float64(c.SentinelEdge.MinWidth)
+		edge := c.SentinelEdge
+		labelSize := float64(edge.MinHeight)
+		if t.Orientation.IsHorizontal() {
+			labelSize = float64(edge.MinWidth)
+		} else if len(t.Children) > 1 && c.Node.Height == childRankHeight && edge.D2ID != nil && (edge.SourceArrowheadLabel != nil || edge.TargetArrowheadLabel != nil) {
+			// On a shorter child, a wide endpoint caption can cross the body of
+			// a taller sibling centered on the same rank. Keep its larger clearance.
+			// Preserve a minimum supplied independently of the D2 label size.
+			height := 0
+			if edge.Label != nil {
+				height = int(edge.Label.Height)
+			}
+			_, automatic, upright := edge.LabelMinDimensions(0, height)
+			if int64(edge.MinHeight) == automatic {
+				labelSize = float64(upright)
+			}
 		}
 		maxLabelSize = math.Max(maxLabelSize, labelSize)
 	}
@@ -110,25 +123,35 @@ func spacingToChildren(t *layoutgraph.Tree, guard *limits.WorkGuard) (float64, e
 	return layoutgraph.TreeParentSpacing/2 + math.Max(layoutgraph.TreeParentSpacing/2, labelSpacingWithArrowheads), nil
 }
 
-// captionOverhang is measured from the body in the bottom-oriented coordinate
-// system used during construction. Text itself stays upright in the diagram.
-type captionOverhang struct {
+// decorationOverhang is measured from the body in the bottom-oriented coordinate
+// system used during construction. Icons and text stay upright in the diagram.
+type decorationOverhang struct {
 	left, right, top, bottom float64
 }
 
-func treeCaptionOverhang(t *layoutgraph.Tree) captionOverhang {
+func treeDecorationOverhang(t *layoutgraph.Tree) decorationOverhang {
 	n := t.Node
-	if n.Label == nil || !n.Label.Position.IsOutside() {
-		return captionOverhang{}
+	hasLabel := n.Label != nil && n.Label.Position.IsOutside()
+	hasIcon := n.Icon != nil && n.Icon.Position.IsOutside()
+	if !hasLabel && !hasIcon {
+		return decorationOverhang{}
 	}
 	box := geo.Box{TopLeft: &geo.Point{}, Width: n.Width, Height: n.Height}
 	if t.Orientation.IsHorizontal() {
 		box.Width, box.Height = box.Height, box.Width
 	}
-	pos := n.Label.Position.GetPointOnBox(&box, label.PADDING, n.Label.Width, n.Label.Height)
-	o := captionOverhang{
-		left: max(0, -pos.X), right: max(0, pos.X+n.Label.Width-box.Width),
-		top: max(0, -pos.Y), bottom: max(0, pos.Y+n.Label.Height-box.Height),
+	var o decorationOverhang
+	include := func(p label.Position, w, h float64) {
+		tl := p.GetPointOnBox(&box, label.PADDING, w, h)
+		o.left, o.right = max(o.left, -tl.X), max(o.right, tl.X+w-box.Width)
+		o.top, o.bottom = max(o.top, -tl.Y), max(o.bottom, tl.Y+h-box.Height)
+	}
+	if hasLabel {
+		include(n.Label.Position, n.Label.Width, n.Label.Height)
+	}
+	if hasIcon {
+		size := math.Ceil(n.IconSize(n.Icon.Position))
+		include(n.Icon.Position, size, size)
 	}
 	if t.Orientation.IsHorizontal() {
 		o.left, o.right, o.top, o.bottom = o.top, o.bottom, o.left, o.right
@@ -146,25 +169,25 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 		return err
 	}
 
-	// Center bodies on each rank while retaining any caption that extends
+	// Center bodies on each rank while retaining any decoration that extends
 	// beyond the largest body on either side of that rank.
 	type rank struct {
 		height, aboveCenter, belowCenter float64
 	}
 	ranks := make([]rank, len(treeLevels))
-	var captions map[*layoutgraph.Tree]captionOverhang
+	var overhangs map[*layoutgraph.Tree]decorationOverhang
 	for level := range ranks {
 		r := &ranks[level]
 		for _, member := range treeLevels[level] {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			o := treeCaptionOverhang(member)
-			if o != (captionOverhang{}) {
-				if captions == nil {
-					captions = make(map[*layoutgraph.Tree]captionOverhang)
+			o := treeDecorationOverhang(member)
+			if o != (decorationOverhang{}) {
+				if overhangs == nil {
+					overhangs = make(map[*layoutgraph.Tree]decorationOverhang)
 				}
-				captions[member] = o
+				overhangs[member] = o
 			}
 			h := member.Node.Height
 			r.height = max(r.height, h)
@@ -179,7 +202,7 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			spacing, err := spacingToChildren(levelNode, guard)
+			spacing, err := spacingToChildren(levelNode, ranks[level+1].height, guard)
 			if err != nil {
 				return err
 			}
@@ -217,7 +240,7 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			nextPosition += captions[levelNode].left
+			nextPosition += overhangs[levelNode].left
 			if len(levelNode.Children) == 0 {
 				// 3a. Simply set position according to nextPosition value
 				if err := moveTreeNodeAbsWithChildren(levelNode.Node, nextPosition, levelNode.Node.TopLeft.Y, guard); err != nil {
@@ -251,7 +274,7 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 				if err != nil {
 					return err
 				}
-				if err := spaceChildrenEvenly(levelNode, captions, guard); err != nil {
+				if err := spaceChildrenEvenly(levelNode, overhangs, guard); err != nil {
 					return err
 				}
 				spacingAfter, err := totalChildrenSpacing(levelNode, guard)
@@ -288,7 +311,7 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 			}
 
 			// 3c. the next position on this level is siblingSpacing past the end of this level node
-			nextPosition = levelNode.Node.TopLeft.X + levelNode.Node.Width + captions[levelNode].right + siblingSpacing
+			nextPosition = levelNode.Node.TopLeft.X + levelNode.Node.Width + overhangs[levelNode].right + siblingSpacing
 		}
 	}
 	return guard.Finish()
@@ -452,7 +475,7 @@ func childrenCenterX(t *layoutgraph.Tree, guard *limits.WorkGuard) (float64, err
 	return centerX, nil
 }
 
-func spaceChildrenEvenly(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]captionOverhang, guard *limits.WorkGuard) error {
+func spaceChildrenEvenly(t *layoutgraph.Tree, overhangs map[*layoutgraph.Tree]decorationOverhang, guard *limits.WorkGuard) error {
 	maxSpacing := siblingSpacing
 
 	childrenSpacing := make([]float64, 1, len(t.Children))
@@ -462,7 +485,7 @@ func spaceChildrenEvenly(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]cap
 			return err
 		}
 		left, right := t.Children[i-1], t.Children[i]
-		s := (right.Node.TopLeft.X - captions[right].left) - (left.Node.TopLeft.X + left.Node.Width + captions[left].right)
+		s := (right.Node.TopLeft.X - overhangs[right].left) - (left.Node.TopLeft.X + left.Node.Width + overhangs[left].right)
 		maxSpacing = math.Max(maxSpacing, s)
 		childrenSpacing = append(childrenSpacing, s)
 	}
@@ -476,7 +499,7 @@ func spaceChildrenEvenly(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]cap
 		if shiftAmount == 0 {
 			continue
 		}
-		spacingBefore, err := spacingBefore(t, captions, i, guard)
+		spacingBefore, err := spacingBefore(t, overhangs, i, guard)
 		if err != nil {
 			return err
 		}
@@ -516,7 +539,7 @@ func totalChildrenSpacing(t *layoutgraph.Tree, guard *limits.WorkGuard) (float64
 	return spacing, nil
 }
 
-func spacingBefore(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]captionOverhang, childIndex int, guard *limits.WorkGuard) (float64, error) {
+func spacingBefore(t *layoutgraph.Tree, overhangs map[*layoutgraph.Tree]decorationOverhang, childIndex int, guard *limits.WorkGuard) (float64, error) {
 	// returns the minimum space between child at i and i-1 including all descendant levels
 	// .        ┌───┐            0, 1
 	// .        │ t │ Children: [A, X]
@@ -530,11 +553,11 @@ func spacingBefore(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]captionOv
 	// . │  B  │      │ Y │
 	// . └─────┘      └───┘
 	// .       ├───6──┤      return min(3,6)
-	rights, err := levelRights(t.Children[childIndex-1], captions, guard)
+	rights, err := levelRights(t.Children[childIndex-1], overhangs, guard)
 	if err != nil {
 		return 0, err
 	}
-	lefts, err := levelLefts(t.Children[childIndex], captions, guard)
+	lefts, err := levelLefts(t.Children[childIndex], overhangs, guard)
 	if err != nil {
 		return 0, err
 	}
@@ -550,7 +573,7 @@ func spacingBefore(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]captionOv
 }
 
 // returns the leftmost positions for each level of descendants from this node
-func levelLefts(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]captionOverhang, guard *limits.WorkGuard) ([]float64, error) {
+func levelLefts(t *layoutgraph.Tree, overhangs map[*layoutgraph.Tree]decorationOverhang, guard *limits.WorkGuard) ([]float64, error) {
 	levels, err := levelsByDepth(t, guard)
 	if err != nil {
 		return nil, err
@@ -564,12 +587,12 @@ func levelLefts(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]captionOverh
 			return nil, err
 		}
 		first := levels[level][0]
-		lefts[level] = first.Node.TopLeft.X - captions[first].left
+		lefts[level] = first.Node.TopLeft.X - overhangs[first].left
 	}
 	return lefts, nil
 }
 
-func levelRights(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]captionOverhang, guard *limits.WorkGuard) ([]float64, error) {
+func levelRights(t *layoutgraph.Tree, overhangs map[*layoutgraph.Tree]decorationOverhang, guard *limits.WorkGuard) ([]float64, error) {
 	levels, err := levelsByDepth(t, guard)
 	if err != nil {
 		return nil, err
@@ -586,7 +609,7 @@ func levelRights(t *layoutgraph.Tree, captions map[*layoutgraph.Tree]captionOver
 		if err := guard.Step(); err != nil {
 			return nil, err
 		}
-		rights[level] = last.Node.TopLeft.X + last.Node.Width + captions[last].right
+		rights[level] = last.Node.TopLeft.X + last.Node.Width + overhangs[last].right
 	}
 	return rights, nil
 }

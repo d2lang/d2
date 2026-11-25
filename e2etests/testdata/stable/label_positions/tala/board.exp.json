@@ -3869,7 +3869,7 @@
       "type": "rectangle",
       "pos": {
         "x": 2475,
-        "y": 2704
+        "y": 2758
       },
       "width": 183,
       "height": 66,
@@ -3902,7 +3902,7 @@
       "underline": false,
       "labelWidth": 138,
       "labelHeight": 21,
-      "labelPosition": "OUTSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 3
     },

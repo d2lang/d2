@@ -55,8 +55,10 @@ func (node *Node) fitNodeToGraph(g *Graph, padding Spacing) {
 }
 
 func (node *Node) fitToBoundingBox(tl, br *geo.Point, padding Spacing) {
-	width := br.X - tl.X
-	height := br.Y - tl.Y
+	node.Width, node.Height = node.fittedDimensions(br.X-tl.X, br.Y-tl.Y, padding)
+}
+
+func (node *Node) fittedDimensions(width, height float64, padding Spacing) (float64, float64) {
 	if node.Label != nil && !node.Label.Position.IsOutside() {
 		minWidth := node.Label.Width - padding.left - padding.right + label.PADDING*4
 		minHeight := node.Label.Height - padding.top - padding.bottom + label.PADDING*4
@@ -70,15 +72,16 @@ func (node *Node) fitToBoundingBox(tl, br *geo.Point, padding Spacing) {
 	// TODO move type Spacing to d2 and update GetDimensionsToFit for all shapes
 	fitWidth, fitHeight := node.GetDimensionsToFit(width, height, padding.left+padding.right, padding.top+padding.bottom)
 	if node.DesiredWidth != nil {
-		node.Width = math.Max(fitWidth, *node.DesiredWidth)
-	} else {
-		node.Width = fitWidth
+		fitWidth = math.Max(fitWidth, *node.DesiredWidth)
 	}
 	if node.DesiredHeight != nil {
-		node.Height = math.Max(fitHeight, *node.DesiredHeight)
-	} else {
-		node.Height = fitHeight
+		fitHeight = math.Max(fitHeight, *node.DesiredHeight)
 	}
+	if node.AspectRatio1() {
+		side := math.Max(fitWidth, fitHeight)
+		return side, side
+	}
+	return fitWidth, fitHeight
 }
 
 func (node *Node) bounds(allNodes Nodes) (*geo.Point, *geo.Point) {

@@ -1526,5 +1526,36 @@ func (g *Graph) containerPadding(container *Node, considerChildren bool) Spacing
 	spacing.top = math.Max(spacing.top, math.Max(container.padding.top, padding))
 	spacing.bottom = math.Max(spacing.bottom, math.Max(container.padding.bottom, padding))
 
+	// The center belongs to the authored title. With a single plain child
+	// the fitted frame and title position are known before placing the child.
+	if children := g.Containers[container]; len(children) == 1 && container.IsRectangular() &&
+		container.Icon == nil && container.Label != nil && container.Label.PositionFixed() &&
+		container.Label.Position == label.InsideMiddleCenter {
+		child := children[0]
+		if child.IsRectangular() && !child.isContainer && child.FixedTopLeft == nil && child.Icon == nil &&
+			!child.Is3D && !child.IsMultiple && (child.Label == nil || !child.Label.Position.IsOutside()) {
+			spacing.reserveCenteredTitle(container, child, len(g.Containers[container.container()]) > 1)
+		}
+	}
+
 	return spacing
+}
+
+// reserveCenteredTitle adds just enough top padding to clear either the
+// content-sized frame's midpoint or the midpoint of a larger authored frame.
+func (s *Spacing) reserveCenteredTitle(container, child *Node, hasSiblings bool) {
+	title := container.Label
+	width, height := container.fittedDimensions(child.Width, child.Height, *s)
+	titleBox := geo.NewBox(geo.NewPoint((width-title.Width)/2, (height-title.Height)/2), title.Width, title.Height)
+	childBox := geo.NewBox(geo.NewPoint(s.left, s.top), child.Width, child.Height)
+	if titleBox.Overlaps(*childBox) {
+		belowTitle := math.Ceil(titleBox.TopLeft.Y + title.Height + label.PADDING)
+		// With neighboring frames, move the child within the current box
+		// when the remaining band can hold it with a visible border gap.
+		if hasSiblings && height-belowTitle-child.Height >= label.PADDING {
+			s.top, s.bottom = belowTitle, height-belowTitle-child.Height
+			return
+		}
+		s.top = math.Max(child.Height+s.bottom+title.Height+2*label.PADDING, belowTitle)
+	}
 }

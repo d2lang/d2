@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -373,19 +372,7 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		bindings.edgeIDs[e] = talaEdge.ID
 		talaEdge.D2ID = new(edgeID)
 		talaEdge.Style = cloneStyle(e.Style)
-		minWidth := int64(e.LabelDimensions.Width + 2*label.PADDING)
-		minHeight := int64(e.LabelDimensions.Height + 2*label.PADDING)
-		// TODO update minWidth/minHeight logic
-		if l := talaEdge.SourceArrowheadLabel; l != nil {
-			max := math.Max(l.Width, l.Height) + 5
-			minWidth += int64(max)
-			minHeight += int64(max)
-		}
-		if l := talaEdge.TargetArrowheadLabel; l != nil {
-			max := math.Max(l.Width, l.Height) + 5
-			minWidth += int64(max)
-			minHeight += int64(max)
-		}
+		minWidth, minHeight, _ := talaEdge.LabelMinDimensions(e.LabelDimensions.Width, e.LabelDimensions.Height)
 		if minWidth > maxResultCoordinate || minHeight > maxResultCoordinate {
 			return bindings, fmt.Errorf("D2 edge %q minimum dimensions exceed supported limit %d", e.AbsID(), maxResultCoordinate)
 		}

@@ -1,6 +1,8 @@
 package grouping
 
 import (
+	"math"
+
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/shape"
@@ -163,15 +165,31 @@ func (s stepNetwork) paths(component []*layoutgraph.Node) ([][]*layoutgraph.Node
 	return paths, nil
 }
 
+// A fused row uses one height and its neighboring wedges must meet.
+func compatibleStepSizes(steps []*layoutgraph.Node, guard *limits.WorkGuard) (bool, error) {
+	wedge := shape.StepWedgeWidth(sequenceStepWidth(steps[0]))
+	maxHeight, minAuthoredHeight := 0., math.Inf(1)
+	for _, n := range steps {
+		if err := guard.Step(); err != nil {
+			return false, err
+		}
+		maxHeight = max(maxHeight, n.Height)
+		if n.DesiredHeight != nil {
+			minAuthoredHeight = min(minAuthoredHeight, n.Height)
+		}
+		if maxHeight > minAuthoredHeight || shape.StepWedgeWidth(sequenceStepWidth(n)) != wedge {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (s stepNetwork) orderedPath(group []*layoutgraph.Node) ([]*layoutgraph.Node, error) {
-	// The outlines of adjacent steps meet only when the wedges have the
-	// same depth. Keep the explicit transitions for incompatible shapes.
-	wedge := shape.StepWedgeWidth(sequenceStepWidth(group[0]))
+	if ok, err := compatibleStepSizes(group, s.guard); err != nil || !ok {
+		return nil, err
+	}
 	var ends []*layoutgraph.Node
 	for _, n := range group {
-		if shape.StepWedgeWidth(sequenceStepWidth(n)) != wedge {
-			return nil, nil
-		}
 		degree := 0
 		for _, e := range s.links[n] {
 			if err := s.guard.Step(); err != nil {

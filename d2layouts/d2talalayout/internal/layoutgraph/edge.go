@@ -56,6 +56,24 @@ type Edge struct {
 	hierarchyRankWeightSet bool
 }
 
+// LabelMinDimensions reserves room for a connector label and its endpoint
+// annotations. A freely turning route needs the larger dimension of each
+// annotation. Upright text on a vertical branch needs only its height.
+func (e *Edge) LabelMinDimensions(width, height int) (minWidth, minHeight, branchHeight int64) {
+	minWidth = int64(width) + 2*label.PADDING
+	minHeight = int64(height) + 2*label.PADDING
+	branchHeight = minHeight
+	for _, annotation := range []*Label{e.SourceArrowheadLabel, e.TargetArrowheadLabel} {
+		if annotation != nil {
+			allowance := int64(math.Max(annotation.Width, annotation.Height) + label.PADDING)
+			minWidth += allowance
+			minHeight += allowance
+			branchHeight += int64(annotation.Height + label.PADDING)
+		}
+	}
+	return
+}
+
 func (e1 *Edge) EquivalentStyles(e2 *Edge) bool {
 	return e1.stylesMatchOneWay(e2) && e2.stylesMatchOneWay(e1)
 }

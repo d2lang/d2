@@ -127,7 +127,7 @@ func isValidRememberedSequence(
 		}
 	}
 
-	return true, nil
+	return compatibleStepSizes(sequence.Nodes, guard)
 }
 
 func clearRememberedSequenceMembership(sequence *layoutgraph.Sequence, guard *limits.WorkGuard) error {

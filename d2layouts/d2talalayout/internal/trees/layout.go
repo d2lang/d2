@@ -14,7 +14,8 @@ import (
 
 func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, guard *limits.WorkGuard) (map[*layoutgraph.Node][]*layoutgraph.Tree, error) {
 	containerNodes := g.Containers[container]
-	nodeToTree := make(map[*layoutgraph.Node]*layoutgraph.Tree)
+	nodeToTree := make(map[*layoutgraph.Node]*layoutgraph.Tree, len(containerNodes))
+	var tables []*layoutgraph.Node
 	for _, node := range containerNodes {
 		if err := guard.Step(); err != nil {
 			return nil, err
@@ -23,15 +24,11 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 			return nil, treePreprocessBadState("tree container contains a nil node")
 		}
 		if node.IsTable() {
-			return nil, nil
+			tables = append(tables, node)
 		}
 		nodeToTree[node] = layoutgraph.NewTree(node)
 	}
-	// TODO: Compare this adjacency matrix with repeated ConnectionTo lookups.
-	edgeBetween, err := buildTreeAdjacencyMatrix(g, guard)
-	if err != nil {
-		return nil, err
-	}
+	var edgeBetween func(a, b *layoutgraph.Node) *layoutgraph.Edge
 
 	// Terminal node: tree never reaches here, but roots can connect to graph here
 	// Sentinel node: the node that a tree root is connected to
@@ -39,6 +36,27 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 	sentinelToTreeRoots := make(map[*layoutgraph.Node][]*layoutgraph.Tree)
 	sentinelToArrowheads := make(map[*layoutgraph.Node]map[layoutgraph.Arrowhead]struct{})
 
+	// Column ports use the regular placement path. A table in another
+	// component of this container does not constrain a disconnected tree.
+	inScope := func(node *layoutgraph.Node) bool { return nodeToTree[node] != nil }
+	for _, table := range tables {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if isTerminal[table] {
+			continue
+		}
+		connected, err := table.ReachableNodesContext(inScope, false, true, false, nil, guard)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range connected {
+			if err := guard.Step(); err != nil {
+				return nil, err
+			}
+			isTerminal[node] = true
+		}
+	}
 	// mark all containers as terminal so they aren't in trees
 	for container := range g.Containers {
 		if err := guard.Step(); err != nil {
@@ -79,6 +97,12 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 		}
 		if len(fringeNodes) == 0 {
 			break
+		}
+		if edgeBetween == nil {
+			edgeBetween, err = buildTreeAdjacencyMatrix(g, guard)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		for _, fn := range fringeNodes {
@@ -227,6 +251,17 @@ func extractTrees(g *layoutgraph.Graph, guard *limits.WorkGuard) (map[*layoutgra
 		return nil, err
 	}
 	containerOrder = append(containerOrder, nil)
+	// Check the endpoints once even when there are no leaves and no
+	// adjacency lookup is needed. Extraction only removes edges.
+	for _, edge := range g.Edges {
+		if err := guard.Step(); err != nil {
+			return nil, err
+		}
+		if edge == nil || edge.From == nil || edge.To == nil {
+			return nil, treePreprocessBadState("tree preprocessing encountered an edge with missing endpoints")
+		}
+	}
+
 	for _, container := range containerOrder {
 		if err := guard.Step(); err != nil {
 			return nil, err

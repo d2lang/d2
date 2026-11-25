@@ -131,3 +131,32 @@ func TestFusedStepsRespectAuthoredWedgeWidths(t *testing.T) {
 		})
 	}
 }
+
+func TestFusedStepsRespectAuthoredHeights(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		attributes [3]string
+		heights    [3]int
+		links      int
+	}{
+		{"mixed authored heights", [3]string{"height: 42", "height: 105", "height: 56"}, [3]int{42, 105, 56}, 2},
+		{"automatic neighbors can grow", [3]string{"", "height: 105", ""}, [3]int{105, 105, 105}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var source strings.Builder
+			for i, attr := range tc.attributes {
+				fmt.Fprintf(&source, "%c: {shape: step; width: 100; %s}\n", 'A'+i, attr)
+			}
+			source.WriteString("A -> B -> C")
+			d := compileRoutingDiagram(t, t.Context(), source.String(), 1, nil)
+			if len(d.Shapes) != len(tc.heights) || len(d.Connections) != tc.links {
+				t.Fatalf("got %d shapes and %d explicit transitions", len(d.Shapes), len(d.Connections))
+			}
+			for i, n := range d.Shapes {
+				if n.Height != tc.heights[i] {
+					t.Errorf("%s has height %d, want %d", n.ID, n.Height, tc.heights[i])
+				}
+			}
+		})
+	}
+}

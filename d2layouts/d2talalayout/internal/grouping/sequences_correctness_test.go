@@ -268,6 +268,13 @@ func TestAddSequencesDiscardsStaleRememberedMembership(t *testing.T) {
 		}
 	}
 
+	t.Run("authored height changed", func(t *testing.T) {
+		run(t, func(_ *layoutgraph.Graph, _ *layoutgraph.Node, b *layoutgraph.Node) {
+			b.Height = 20
+			b.DesiredHeight = new(b.Height)
+		})
+	})
+
 	t.Run("shape changed", func(t *testing.T) {
 		run(t, func(_ *layoutgraph.Graph, _ *layoutgraph.Node, b *layoutgraph.Node) {
 			b.SetShape(shape.SQUARE_TYPE)
