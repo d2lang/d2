@@ -16,10 +16,37 @@ func Format(n d2ast.Node) string {
 	return p.sb.String()
 }
 
+// Some map keys name user data even when they happen to spell a D2 keyword.
+type keyScope int
+
+const (
+	diagramKeys     keyScope = iota
+	definitionNames          // each child names a board or class
+	variableKeys             // arbitrary variable names and data, including plugin configuration
+)
+
+func (scope keyScope) child(keyword string) keyScope {
+	switch scope {
+	case variableKeys:
+		return variableKeys
+	case definitionNames:
+		return diagramKeys
+	}
+	switch keyword {
+	case "vars":
+		return variableKeys
+	case "layers", "scenarios", "steps", "classes":
+		return definitionNames
+	default:
+		return diagramKeys
+	}
+}
+
 type printer struct {
 	sb        strings.Builder
 	indentStr string
 	inKey     bool
+	keyScope  keyScope
 }
 
 func (p *printer) indent() {
@@ -151,7 +178,7 @@ func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleStr
 		default:
 			text = escapeUnquotedValue(*b.String, p.inKey, wholeToken)
 		}
-		if p.inKey && wholeToken && !isDoubleString {
+		if p.inKey && p.keyScope == diagramKeys && wholeToken && !isDoubleString {
 			lower := strings.ToLower(text)
 			if _, ok := d2ast.ReservedKeywords[lower]; ok {
 				text = lower
@@ -299,7 +326,7 @@ func (p *printer) _map(m *d2ast.Map) {
 		nb := m.Nodes[i]
 		n := nb.Unbox()
 		// extract out layer, scenario, and step nodes and skip
-		if nb.IsBoardNode() {
+		if p.keyScope != variableKeys && nb.IsBoardNode() {
 			if nb.MapKey.Value.Map != nil && len(nb.MapKey.Value.Map.Nodes) > 0 {
 				boardNodes = append(boardNodes, nb)
 			}
@@ -369,8 +396,9 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 		p.sb.WriteByte('!')
 		p.sb.WriteByte('&')
 	}
+	valueScope := p.keyScope
 	if mk.Key != nil {
-		p.key(mk.Key)
+		valueScope = p.fieldPath(mk.Key)
 	}
 
 	if len(mk.Edges) > 0 {
@@ -417,8 +445,29 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 		} else {
 			p.sb.WriteByte(' ')
 		}
+		parent := p.keyScope
+		p.keyScope = valueScope
 		p.node(mk.Value.Unbox())
+		p.keyScope = parent
 	}
+}
+
+// fieldPath follows scopes through dotted assignments just as through nested maps.
+func (p *printer) fieldPath(k *d2ast.KeyPath) keyScope {
+	parent := p.keyScope
+	p.inKey = true
+	for i, part := range k.Path {
+		if i > 0 {
+			p.sb.WriteByte('.')
+		}
+		s := part.Unbox()
+		p.node(s)
+		p.keyScope = p.keyScope.child(d2ast.Keyword(s))
+	}
+	p.inKey = false
+	child := p.keyScope
+	p.keyScope = parent
+	return child
 }
 
 func (p *printer) key(k *d2ast.KeyPath) {

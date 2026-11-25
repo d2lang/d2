@@ -323,7 +323,7 @@ func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[N
 		if f.Name == nil {
 			continue
 		}
-		if f.Name.ScalarString() == "vars" && f.Name.IsUnquoted() && f.Map() != nil {
+		if d2ast.Keyword(f.Name) == "vars" && f.Map() != nil {
 			varsStack = append([]*Map{f.Map()}, varsStack...)
 		}
 	}
@@ -360,7 +360,7 @@ func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[N
 				}
 			}
 		} else if f.Map() != nil {
-			if f.Name != nil && f.Name.ScalarString() == "vars" && f.Name.IsUnquoted() {
+			if f.Name != nil && d2ast.Keyword(f.Name) == "vars" {
 				c.compileSubstitutionsWalk(f.Map(), varsStack, seen, f.LastRef().AST())
 				c.validateConfigs(f.Map().getFieldIndexed(d2ast.FlatUnquotedString("d2-config")))
 			} else {
@@ -1039,7 +1039,7 @@ func (c *compiler) resolveSubstitution(vars *Map, node Node, substitution *d2ast
 		//
 		// When resolving hi.vars.x, the vars stack includes itself.
 		// So this next if clause says, "ignore if we're using the current scope's vars to try to resolve a substitution that requires a var from further in the stack"
-		if fok && fieldNode.Name != nil && fieldNode.Name.ScalarString() == p.Unbox().ScalarString() && isCurrentScopeVars && parent.Name.ScalarString() == "vars" && parent.Name.IsUnquoted() {
+		if fok && fieldNode.Name != nil && fieldNode.Name.ScalarString() == p.Unbox().ScalarString() && isCurrentScopeVars && d2ast.Keyword(parent.Name) == "vars" {
 			return nil
 		}
 
@@ -1525,6 +1525,17 @@ func (c *compiler) compileField(dst *Map, kp *d2ast.KeyPath, refctx *RefContext)
 	}
 }
 
+// Filter-only names such as src and leaf retain their own spelling rules.
+func globFilterKey(s d2ast.String) string {
+	if !s.IsUnquoted() {
+		return ""
+	}
+	if keyword := d2ast.Keyword(s); keyword != "" {
+		return keyword
+	}
+	return s.ScalarString()
+}
+
 func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 	if !refctx.Key.Ampersand && !refctx.Key.NotAmpersand {
 		return true
@@ -1542,7 +1553,13 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		return false
 	}
 
-	firstPart := keyPath.Path[0].Unbox().ScalarString()
+	filter := refctx.Key.Value.ScalarBox().Unbox()
+	if filter == nil {
+		c.errorf(refctx.Key, "glob filters cannot be composites")
+		return false
+	}
+
+	firstPart := globFilterKey(keyPath.Path[0].Unbox())
 	if (firstPart == "src" || firstPart == "dst") && len(keyPath.Path) > 1 {
 		if len(c.mapRefContextStack) == 0 {
 			return false
@@ -1566,10 +1583,9 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 			return false
 		}
 
-		secondPart := keyPath.Path[1].Unbox().ScalarString()
-		value := refctx.Key.Value.ScalarBox().Unbox().ScalarString()
+		secondPart := globFilterKey(keyPath.Path[1].Unbox())
 
-		if len(keyPath.Path) == 2 && c._ampersandPropertyFilter(secondPart, value, node, refctx.Key) {
+		if len(keyPath.Path) == 2 && c._ampersandPropertyFilter(secondPart, filter, node, refctx.Key) {
 			return true
 		}
 
@@ -1594,7 +1610,7 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		}
 
 		for _, f := range fa {
-			if c._ampersandFilter(f, propRefCtx) {
+			if matchesScalarFilter(f, filter) {
 				return true
 			}
 		}
@@ -1607,7 +1623,7 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		return false
 	}
 	if len(fa) == 0 {
-		if refctx.Key.Value.ScalarBox().Unbox() != nil && refctx.Key.Value.ScalarBox().Unbox().ScalarString() == "*" {
+		if filter.ScalarString() == "*" {
 			return false
 		}
 		// The field/edge has no value for this filter
@@ -1615,49 +1631,50 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		// So we make a fake field for the default
 		// NOTE: this does not apply to things that themes control, like stroke and fill
 		// Nor does it apply to layout things like width and height
-		switch refctx.Key.Key.Last().ScalarString() {
+		last := globFilterKey(refctx.Key.Key.Last().Unbox())
+		switch last {
 		case "shape":
 			f := &Field{
 				Primary_: &Scalar{
 					Value: d2ast.FlatUnquotedString("rectangle"),
 				},
 			}
-			return c._ampersandFilter(f, refctx)
+			return matchesScalarFilter(f, filter)
 		case "border-radius", "stroke-dash":
 			f := &Field{
 				Primary_: &Scalar{
 					Value: d2ast.FlatUnquotedString("0"),
 				},
 			}
-			return c._ampersandFilter(f, refctx)
+			return matchesScalarFilter(f, filter)
 		case "opacity":
 			f := &Field{
 				Primary_: &Scalar{
 					Value: d2ast.FlatUnquotedString("1"),
 				},
 			}
-			return c._ampersandFilter(f, refctx)
+			return matchesScalarFilter(f, filter)
 		case "stroke-width":
 			f := &Field{
 				Primary_: &Scalar{
 					Value: d2ast.FlatUnquotedString("2"),
 				},
 			}
-			return c._ampersandFilter(f, refctx)
+			return matchesScalarFilter(f, filter)
 		case "icon", "tooltip", "link":
 			f := &Field{
 				Primary_: &Scalar{
 					Value: d2ast.FlatUnquotedString(""),
 				},
 			}
-			return c._ampersandFilter(f, refctx)
+			return matchesScalarFilter(f, filter)
 		case "shadow", "multiple", "3d", "animated", "filled":
 			f := &Field{
 				Primary_: &Scalar{
 					Value: d2ast.FlatUnquotedString("false"),
 				},
 			}
-			return c._ampersandFilter(f, refctx)
+			return matchesScalarFilter(f, filter)
 
 		case "label":
 			f := &Field{}
@@ -1676,7 +1693,7 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 			} else {
 				f.Primary_ = n.Primary()
 			}
-			return c._ampersandFilter(f, refctx)
+			return matchesScalarFilter(f, filter)
 		case "src":
 			if len(c.mapRefContextStack) == 0 {
 				return false
@@ -1686,8 +1703,6 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 			if edge == nil {
 				return false
 			}
-
-			filterValue := refctx.Key.Value.ScalarBox().Unbox().ScalarString()
 
 			var srcParts []string
 			for _, part := range edge.ID.SrcPath {
@@ -1711,7 +1726,7 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 
 			srcPath := strings.Join(srcParts, ".")
 
-			return srcPath == filterValue
+			return srcPath == filter.ScalarString()
 
 		case "dst":
 			if len(c.mapRefContextStack) == 0 {
@@ -1722,8 +1737,6 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 			if edge == nil {
 				return false
 			}
-
-			filterValue := refctx.Key.Value.ScalarBox().Unbox().ScalarString()
 
 			var dstParts []string
 			for _, part := range edge.ID.DstPath {
@@ -1748,19 +1761,17 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 			}
 			dstPath := strings.Join(dstParts, ".")
 
-			return dstPath == filterValue
+			return dstPath == filter.ScalarString()
 		default:
 			parent := refctx.ScopeMap.Parent()
 			if field, ok := parent.(*Field); ok {
-				propName := refctx.Key.Key.Last().ScalarString()
-				value := refctx.Key.Value.ScalarBox().Unbox().ScalarString()
-				return c._ampersandPropertyFilter(propName, value, field, refctx.Key)
+				return c._ampersandPropertyFilter(last, filter, field, refctx.Key)
 			}
 			return false
 		}
 	}
 	for _, f := range fa {
-		ok := c._ampersandFilter(f, refctx)
+		ok := matchesScalarFilter(f, filter)
 		if !ok {
 			return false
 		}
@@ -1769,7 +1780,8 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 }
 
 // handles filters that are not based on fields
-func (c *compiler) _ampersandPropertyFilter(propName string, value string, node *Field, key *d2ast.Key) bool {
+func (c *compiler) _ampersandPropertyFilter(propName string, filter d2ast.Scalar, node *Field, key *d2ast.Key) bool {
+	value := filter.ScalarString()
 	switch propName {
 	case "level":
 		levelVal, err := strconv.Atoi(value)
@@ -1820,49 +1832,26 @@ func (c *compiler) _ampersandPropertyFilter(propName string, value string, node 
 		} else {
 			f.Primary_ = node.Primary()
 		}
-		propKey := &d2ast.Key{
-			Key:   key.Key,
-			Value: key.Value,
-		}
-		propRefCtx := &RefContext{
-			Key: propKey,
-		}
-		return c._ampersandFilter(f, propRefCtx)
+		return matchesScalarFilter(f, filter)
 	}
 	return false
 }
 
-func (c *compiler) _ampersandFilter(f *Field, refctx *RefContext) bool {
-	if refctx.Key.Value.ScalarBox().Unbox() == nil {
-		c.errorf(refctx.Key, "glob filters cannot be composites")
-		return false
-	}
-
+func matchesScalarFilter(f *Field, filter d2ast.Scalar) bool {
 	if a, ok := f.Composite.(*Array); ok {
 		for _, v := range a.Values {
-			if s, ok := v.(*Scalar); ok {
-				if refctx.Key.Value.ScalarBox().Unbox().ScalarString() == s.Value.ScalarString() {
-					return true
-				}
+			if s, ok := v.(*Scalar); ok && filter.ScalarString() == s.Value.ScalarString() {
+				return true
 			}
 		}
 	}
-
 	if f.Primary_ == nil {
 		return false
 	}
-
-	us, ok := refctx.Key.Value.ScalarBox().Unbox().(*d2ast.UnquotedString)
-
-	if ok && us.Pattern != nil {
+	if us, ok := filter.(*d2ast.UnquotedString); ok && us.Pattern != nil {
 		return matchPattern(f.Primary_.Value.ScalarString(), us.Pattern)
-	} else {
-		if refctx.Key.Value.ScalarBox().Unbox().ScalarString() != f.Primary_.Value.ScalarString() {
-			return false
-		}
 	}
-
-	return true
+	return filter.ScalarString() == f.Primary_.Value.ScalarString()
 }
 
 func (c *compiler) _compileField(f *Field, refctx *RefContext) {
@@ -2082,7 +2071,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		}
 		c.setFieldPrimary(f, refctx.Key.Value.ScalarBox().Unbox())
 		// If the link is a board, we need to transform it into an absolute path.
-		if f.Name.ScalarString() == "link" && f.Name.IsUnquoted() {
+		if d2ast.Keyword(f.Name) == "link" {
 			c.compileLink(f, refctx)
 		}
 	}
@@ -2114,7 +2103,7 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 		if f.Name == nil {
 			continue
 		}
-		if f.Name.ScalarString() == "link" && f.Name.IsUnquoted() {
+		if d2ast.Keyword(f.Name) == "link" {
 			if nodeBoardKind != "" {
 				c.errorf(f.LastRef().AST(), "a board itself cannot be linked; only objects within a board can be linked")
 				continue
@@ -2149,11 +2138,10 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 			}
 
 			extendedIDA := append(importIDA, linkIDA[1:]...)
-			kp := d2ast.MakeKeyPathString(extendedIDA)
-			s := d2format.Format(kp)
+			s := formatBoardPath(extendedIDA)
 			f.Primary_.Value = d2ast.MakeValueBox(d2ast.FlatUnquotedString(s)).ScalarBox().Unbox()
 		}
-		if f.Name.ScalarString() == "icon" && f.Name.IsUnquoted() && f.Primary() != nil {
+		if d2ast.Keyword(f.Name) == "icon" && f.Primary() != nil {
 			val := f.Primary().Value.ScalarString()
 			// It's likely a substitution
 			if val == "" {
@@ -2229,8 +2217,13 @@ func (c *compiler) compileLink(f *Field, refctx *RefContext) {
 
 	// Create the absolute path by appending scope path with value specified
 	scopeIDA = append(scopeIDA, linkIDA...)
-	kp := d2ast.MakeKeyPathString(scopeIDA)
-	f.Primary_.Value = d2ast.FlatUnquotedString(d2format.Format(kp))
+	f.Primary_.Value = d2ast.FlatUnquotedString(formatBoardPath(scopeIDA))
+}
+
+// Format a board path like a dotted declaration so a board named WIDTH keeps
+// its spelling in a link such as root.layers.WIDTH.
+func formatBoardPath(path []d2ast.String) string {
+	return d2format.Format(&d2ast.Key{Key: d2ast.MakeKeyPathString(path)})
 }
 
 func (c *compiler) compileEdges(refctx *RefContext) {
@@ -2572,8 +2565,7 @@ func (m *Map) removeSuspendedFields() {
 		if m.Fields[i].Name == nil {
 			continue
 		}
-		_, isReserved := d2ast.ReservedKeywords[m.Fields[i].Name.ScalarString()]
-		if isReserved {
+		if d2ast.Keyword(m.Fields[i].Name) != "" {
 			continue
 		}
 		if m.Fields[i].suspended {

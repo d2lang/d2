@@ -1290,11 +1290,7 @@ func (mb MapNodeBox) IsBoardNode() bool {
 	if mb.MapKey == nil || mb.MapKey.Key == nil || len(mb.MapKey.Key.Path) != 1 {
 		return false
 	}
-	name := mb.MapKey.Key.Path[0].UnquotedString
-	if name == nil {
-		return false
-	}
-	_, ok := BoardKeywords[name.ScalarString()]
+	_, ok := BoardKeywords[Keyword(mb.MapKey.Key.Path[0].Unbox())]
 	return ok
 }
 

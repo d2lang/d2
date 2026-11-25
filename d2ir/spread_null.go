@@ -28,7 +28,7 @@ func (c *compiler) setFieldPrimary(f *Field, value d2ast.Scalar) {
 // placeholder in the field slice, and another spread can recreate the field.
 func (c *compiler) collectSpreadNulls(dst, src *Map, site *spreadSite) {
 	for _, from := range src.Fields {
-		if from.Name == nil || from.Name.IsUnquoted() && from.Name.ScalarString() == "vars" {
+		if from.Name == nil || d2ast.Keyword(from.Name) == "vars" {
 			continue
 		}
 		to := dst.getFieldIndexed(from.Name)
