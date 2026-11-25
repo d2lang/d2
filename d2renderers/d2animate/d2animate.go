@@ -137,17 +137,19 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		if uniform && len(svgs) <= 100 {
 			fmt.Fprint(buf, makeKeyframe(startMS, duration, totalMS, i, diagramHash))
 		} else {
-			// Use a discrete cut at exact boundaries. A 1 ms cross-fade or a
-			// whole-percent rounding error can hide an entire short sample.
+			// Cut between samples without giving every frame its own opacity
+			// layer. An empty clip also leaves shared paint resources usable
+			// and descendant animations running while the frame is offscreen.
+			const hidden, visible = "{clip-path:inset(50%)}", "{clip-path:none}"
 			fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d{", diagramHash, i)
 			if startMS > 0 {
-				fmt.Fprint(buf, "0%{opacity:0}")
+				buf.WriteString("0%" + hidden)
 			}
-			fmt.Fprintf(buf, "%s{opacity:1}", percentage(100*float64(startMS)/float64(totalMS), 9))
+			buf.WriteString(percentage(100*float64(startMS)/float64(totalMS), 9) + visible)
 			if endMS := startMS + duration; endMS < totalMS {
-				fmt.Fprintf(buf, "%s,100%%{opacity:0}", percentage(100*float64(endMS)/float64(totalMS), 9))
+				buf.WriteString(percentage(100*float64(endMS)/float64(totalMS), 9) + ",100%" + hidden)
 			} else {
-				fmt.Fprint(buf, "100%{opacity:1}")
+				buf.WriteString("100%" + visible)
 			}
 			fmt.Fprint(buf, "}")
 		}

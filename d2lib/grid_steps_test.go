@@ -212,7 +212,7 @@ steps: {add: {c}; remove: {c: null}}`
 	}
 	add.TweenDurationMS = 240
 	const limit = 15 // Five authored boards, three paint frames, seven grid frames.
-	if err := sampleBoardTransitions(context.Background(), board, g, 240, limit, false); err != nil {
+	if err := sampleBoardTransitions(context.Background(), board, g, 240, limit, false, false); err != nil {
 		t.Fatal(err)
 	}
 	total := 0

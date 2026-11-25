@@ -31,6 +31,26 @@ func TestAnimatedStrokeBounds(t *testing.T) {
 	}
 }
 
+func TestValidateSQLRowReveal(t *testing.T) {
+	d := NewDiagram()
+	s := BaseShape()
+	s.ID, s.Type, s.Width, s.Height = "tracks", ShapeSQLTable, 160, 109
+	s.Columns = make([]SQLColumn, 2)
+	d.Shapes = []Shape{*s}
+	d.Shapes[0].RowReveal = &SQLRowReveal{FullHeight: 120}
+	if err := ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []SQLRowReveal{
+		{FullHeight: 100}, {FullHeight: 400}, {FullHeight: 0},
+	} {
+		d.Shapes[0].RowReveal = &invalid
+		if err := ValidateRenderTarget(d); err == nil || !strings.Contains(err.Error(), "rowReveal") {
+			t.Fatalf("accepted invalid row reveal %+v: %v", invalid, err)
+		}
+	}
+}
+
 func TestValidateRenderTargetBoundsBoardTree(t *testing.T) {
 	t.Parallel()
 
@@ -101,6 +121,7 @@ func TestValidateRenderTargetTweenFrames(t *testing.T) {
 		{TweenDurationMS: 1, TweenFrames: []*Diagram{nil}},
 		{TweenDurationMS: 1, TweenFrames: []*Diagram{{Layers: []*Diagram{{}}}}},
 		{TweenDurationMS: 1, TweenFrames: []*Diagram{{Shapes: []Shape{{Width: -1}}}}},
+		{TweenDurationMS: 1, TweenFrames: []*Diagram{{Shapes: []Shape{{MotionLabelBox: &MotionBox{Width: 20, Height: 0}}}}}},
 	}
 	for i, diagram := range invalid {
 		if err := ValidateRenderTarget(diagram); err == nil {

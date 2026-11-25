@@ -147,6 +147,10 @@ type Diagram struct {
 	TweenFrameEndsMS []int `json:"tweenFrameEndsMS,omitempty"`
 	// GridMotion keeps a common coordinate system for raster playback as cells reflow.
 	GridMotion bool `json:"gridMotion,omitempty"`
+	// LayoutContinuity means the board shares layout coordinates with its
+	// parent scenario base or the preceding step. Independent layers start
+	// their own coordinate system.
+	LayoutContinuity bool `json:"layoutContinuity,omitempty"`
 }
 
 type Legend struct {
@@ -551,7 +555,7 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 			if position.IsOutside() || position.IsBorder() {
 				box = targetShape.OuterLabelBox(box)
 			}
-			labelTL := position.GetPointOnBox(box, label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
+			labelTL := targetShape.LabelTopLeft(position, box)
 			left, top := int(labelTL.X), int(labelTL.Y)
 			right, bottom := left+targetShape.LabelWidth, top+targetShape.LabelHeight
 			if position.IsBorder() {
@@ -792,6 +796,9 @@ type MotionClip struct {
 	Height int `json:"height"`
 }
 
+// MotionBox holds reference bounds in diagram coordinates during an animation.
+type MotionBox = MotionClip
+
 // SketchFillTransition describes the pencil shading on one sampled frame.
 type SketchFillTransition struct {
 	From     string  `json:"from"`
@@ -809,6 +816,11 @@ type Shape struct {
 	MotionScale        float64     `json:"motionScale,omitempty"`
 	MotionClip         *MotionClip `json:"motionClip,omitempty"`
 	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
+	// MotionLabelBox holds the authored body bounds for a stationary inside label.
+	MotionLabelBox *MotionBox    `json:"motionLabelBox,omitempty"`
+	RowReveal      *SQLRowReveal `json:"rowReveal,omitempty"`
+	// OutlineProgress traces an incoming container frame in a transition sample.
+	OutlineProgress *float64 `json:"outlineProgress,omitempty"`
 
 	Pos    Point `json:"pos"`
 	Width  int   `json:"width"`
@@ -861,6 +873,31 @@ type Shape struct {
 	PrimaryAccentColor   string `json:"primaryAccentColor,omitempty"`
 	SecondaryAccentColor string `json:"secondaryAccentColor,omitempty"`
 	NeutralAccentColor   string `json:"neutralAccentColor,omitempty"`
+}
+
+// Geometry returns the same outline and inner content box used for rendering.
+func (s *Shape) Geometry() shape.Shape {
+	return s.geometry(s.Pos, s.Width, s.Height)
+}
+
+func (s *Shape) geometry(pos Point, width, height int) shape.Shape {
+	g := shape.NewShape(DSL_SHAPE_TO_SHAPE_TYPE[s.Type], geo.NewBox(
+		geo.NewPoint(float64(pos.X), float64(pos.Y)), float64(width), float64(height)))
+	if s.Type == ShapeCloud && s.ContentAspectRatio != nil {
+		g.SetInnerBoxAspectRatio(*s.ContentAspectRatio)
+	}
+	return g
+}
+
+// LabelTopLeft resolves both ordinary captions and intermediate animation anchors.
+func (s *Shape) LabelTopLeft(position label.Position, box *geo.Box) *geo.Point {
+	if p := s.MotionLabelTopLeft; p != nil {
+		return geo.NewPoint(float64(p.X), float64(p.Y))
+	}
+	if b := s.MotionLabelBox; b != nil {
+		box = s.geometry(b.Point, b.Width, b.Height).GetInnerBox()
+	}
+	return position.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
 }
 
 func (s Shape) RenderedStrokeWidth() float64 {
@@ -993,10 +1030,19 @@ func BaseShape() *Shape {
 	}
 }
 
+// MotionLabel anchors the caption and its mask while a partial route is drawn.
+type MotionLabel struct {
+	Point
+	Opacity float64 `json:"opacity"`
+}
+
 type Connection struct {
 	ID string `json:"id"`
 
-	MotionClip *MotionClip `json:"motionClip,omitempty"`
+	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
+	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`
+	// MotionDashOffset pins a backward trace’s dashes to its stationary end.
+	MotionDashOffset float64 `json:"motionDashOffset,omitempty"`
 
 	Classes []string `json:"classes,omitempty"`
 
@@ -1101,6 +1147,10 @@ func (c Connection) CSSStyle() string {
 		dashSize, gapSize := svg.GetStrokeDashAttributes(c.RenderedStrokeWidth(), strokeDash)
 		out += "stroke-dasharray:" + svg.FormatFloat(dashSize) + "," + svg.FormatFloat(gapSize) + ";"
 
+		if c.MotionDashOffset != 0 {
+			out += "stroke-dashoffset:" + svg.FormatFloat(c.MotionDashOffset) + ";"
+		}
+
 		if c.Animated {
 			dashOffset := -10
 			if c.SrcArrow != NoArrowhead && c.DstArrow == NoArrowhead {
@@ -1114,6 +1164,9 @@ func (c Connection) CSSStyle() string {
 }
 
 func (c *Connection) GetLabelTopLeft() *geo.Point {
+	if p := c.MotionLabel; p != nil {
+		return geo.NewPoint(float64(p.X), float64(p.Y))
+	}
 	point, _ := label.FromString(c.LabelPosition).GetPointOnRoute(
 		c.Route,
 		c.RenderedStrokeWidth(),

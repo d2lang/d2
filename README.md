@@ -147,6 +147,12 @@ D2 renders SVG, PNG, GIF, PDF, PowerPoint (`.pptx`), and text diagrams (`.txt`) 
 For example, `d2 hello.d2 hello.txt` draws the diagram with Unicode characters.
 Use `--ascii-mode=standard` for plain ASCII. [Export guide](https://d2lang.com/tour/exports/)
 
+For animated SVG and GIF, set `animate-interval` and `animate-duration` in
+`vars.d2-config`. With TALA, newly appended SQL rows can drop into place
+while existing rows and connections stay anchored. Appending a sequence message can
+extend the activation bar and draw the arrow from sender to recipient.
+[Animated TALA example](./docs/examples/tala-step-motion/dispatch.gif) · [D2 source](./docs/examples/tala-step-motion/dispatch.d2)
+
 ## Layout engines
 
 D2 bundles three layout engines. Select one with `--layout=dagre`, `--layout=elk`, or

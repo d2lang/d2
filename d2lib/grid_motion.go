@@ -364,6 +364,11 @@ func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel floa
 		x += float64(pos.X - offset.X)
 		y += float64(pos.Y - offset.Y)
 	}
+	return scaleMotionShape(s, x, y, scale, opacity)
+}
+
+// Scale the body, text and decorations together at a sampled top-left point.
+func scaleMotionShape(s d2target.Shape, x, y, scale, opacity float64) d2target.Shape {
 	s.Pos = d2target.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
 	scaled := func(v int) int {
 		if v == 0 {

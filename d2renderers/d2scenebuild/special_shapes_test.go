@@ -130,6 +130,48 @@ func TestBuildSQLTableExactColumnsAndSeparators(t *testing.T) {
 	}
 }
 
+func TestBuildSQLRowDropsAtFullOpacityInsideOpeningSlot(t *testing.T) {
+	table := structuredTestShape("tracks", d2target.ShapeSQLTable, 10, 10, 240, 120)
+	table.BorderRadius = 9
+	table.Columns = []d2target.SQLColumn{
+		{Name: d2target.Text{Label: "album_id", LabelWidth: 42}},
+		{Name: d2target.Text{Label: "seconds", LabelWidth: 39}, Type: d2target.Text{Label: "int"}, Constraint: []string{"unique"}},
+	}
+	end := buildStructuredDocument(t, table)
+	table.Height = 100 // 20 of the appended row's 40 pixels are open.
+	table.RowReveal = &d2target.SQLRowReveal{FullHeight: 120}
+	frame := buildStructuredDocument(t, table)
+	existing := "tracks:table-row:0:name"
+	if findSceneNode(t, frame.Root, existing).Primitive.(d2scene.TextRun).Origin != findSceneNode(t, end.Root, existing).Primitive.(d2scene.TextRun).Origin {
+		t.Fatal("moved an existing row")
+	}
+	tableNode := findSceneNode(t, frame.Root, "tracks")
+	var row *d2scene.Node
+	for _, child := range tableNode.Children {
+		if len(child.Children) == 3 && child.Children[0].ID == "tracks:table-row:1:name" {
+			row = child
+			break
+		}
+	}
+	if row == nil || row.Opacity != 1 || row.Transform != d2scene.Translate(0, -20) || row.Clip == nil {
+		t.Fatalf("expected one opaque descending row, got %+v", row)
+	}
+	// With the row's -20 translation the clip spans diagram y=90..110.
+	if !equalCommands(row.Clip.Path.Commands, boxClip(d2scene.Box{X: 10, Y: 110, Width: 240, Height: 20}).Path.Commands) {
+		t.Fatalf("unexpected slot clip: %+v", row.Clip.Path.Commands)
+	}
+	for _, text := range row.Children {
+		want := findSceneNode(t, end.Root, text.ID).Primitive.(d2scene.TextRun)
+		if got := text.Primitive.(d2scene.TextRun); got.Origin != want.Origin || text.Opacity != 1 {
+			t.Fatalf("changed the spacing or opacity of %s", text.ID)
+		}
+	}
+	path := findSceneNode(t, frame.Root, "tracks:table-row:1:separator").Primitive.(d2scene.Path)
+	if !equalCommands(path.Commands, []d2scene.PathCommand{d2scene.MoveTo(19, 110), d2scene.LineTo(241, 110)}) {
+		t.Fatalf("bottom separator escaped rounded border: %+v", path.Commands)
+	}
+}
+
 func TestBuildClassShapeMultilineHeader(t *testing.T) {
 	t.Parallel()
 

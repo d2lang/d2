@@ -126,7 +126,7 @@ func drawTable(writer *objectWriter, diagramHash string, targetShape d2target.Sh
 		float64(targetShape.Width),
 		float64(targetShape.Height),
 	)
-	rowHeight := box.Height / float64(1+len(targetShape.SQLTable.Columns))
+	rowHeight := targetShape.SQLRowHeight()
 	headerBox := geo.NewBox(box.TopLeft, box.Width, rowHeight)
 
 	tableHeader(writer, diagramHash, targetShape, headerBox, targetShape.Label,
@@ -142,20 +142,29 @@ func drawTable(writer *objectWriter, diagramHash string, targetShape d2target.Sh
 	rowBox := geo.NewBox(box.TopLeft.Copy(), box.Width, rowHeight)
 	rowBox.TopLeft.Y += headerBox.Height
 	for idx, f := range targetShape.Columns {
+		visible := targetShape.SQLRowVisibleHeight(rowBox.TopLeft.Y, rowHeight)
+		if targetShape.RowReveal != nil && visible <= 0 {
+			break
+		}
+		if visible < rowHeight {
+			fmt.Fprint(writer.buf, svg.OpenClippedViewport(rowBox.TopLeft.X, rowBox.TopLeft.Y, rowBox.Width, visible, rowBox.TopLeft.Y+(rowHeight-visible)))
+		}
 		tableRow(writer, targetShape, rowBox, f.Name.Label, f.Type.Label, f.ConstraintAbbr(), float64(targetShape.FontSize), float64(longestNameWidth), float64(longestTypeWidth), inlineTheme)
-		rowBox.TopLeft.Y += rowHeight
+		if visible < rowHeight {
+			writer.buf.WriteString("</svg>")
+		}
+		y, inset, last := targetShape.SQLRowDivider(idx, rowBox.TopLeft.Y+rowHeight, float64(targetShape.BorderRadius))
+		rowBox.TopLeft.Y = y
 
 		lineEl := d2themes.NewThemableElement("line", inlineTheme)
-		if idx == len(targetShape.Columns)-1 && targetShape.BorderRadius != 0 {
-			lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X+float64(targetShape.BorderRadius), rowBox.TopLeft.Y
-			lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width-float64(targetShape.BorderRadius), rowBox.TopLeft.Y
-		} else {
-			lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X, rowBox.TopLeft.Y
-			lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width, rowBox.TopLeft.Y
-		}
+		lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X+inset, y
+		lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width-inset, y
 		lineEl.Stroke = targetShape.Fill
 		lineEl.Style = "stroke-width:2"
 		writer.element(lineEl)
+		if last {
+			break
+		}
 	}
 
 	if targetShape.Icon != nil && targetShape.Type != d2target.ShapeImage {
