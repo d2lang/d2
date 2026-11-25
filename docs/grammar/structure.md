@@ -99,6 +99,8 @@ input.
 | --- | --- |
 | `a.` | Produces the same key path as `a`. |
 | `(a -> b` at end of file | Returns a connection despite the missing closing parenthesis. |
+| `(a -> b); c` | Treats `)` before a semicolon as part of the bare destination and reports an unclosed group. Put `c` on the next line, or write `(a -> "b"); c`. |
+| `(a -> b)[0].call(): ok` | Applies the same parenthesis lookahead while reading the property path after the group. Quote the segment as `(a -> b)[0]."call()": ok`. |
 | `"svc"(a -> b)[0]` | Accepts the quoted scope without a separating dot. |
 | `x: @` or `x: ${}` | Produces an import or substitution with an empty path. |
 | `(a -> b)[1 2]` | Reads index 12. A non-ASCII decimal digit may be accepted and decoded as zero. |

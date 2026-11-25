@@ -462,7 +462,7 @@
   },
   {
     "name": "glob-and-filters",
-    "source": "api*.style: {&shape: circle; !&label: old}",
+    "source": "api*.style: {&shape: circle; &label: pre*; !&label: \"pre*\"; !&label: pre\\*fix*}",
     "nodes": [
       {
         "map_key": {
@@ -485,8 +485,22 @@
                 {
                   "map_key": {
                     "key": {"path": [{"unquoted_string": {"value": [{"string": "label"}]}}]},
+                    "ampersand": true,
+                    "value": {"unquoted_string": {"value": [{"string": "pre*"}], "pattern": ["pre", "*"]}}
+                  }
+                },
+                {
+                  "map_key": {
+                    "key": {"path": [{"unquoted_string": {"value": [{"string": "label"}]}}]},
                     "not_ampersand": true,
-                    "value": {"unquoted_string": {"value": [{"string": "old"}]}}
+                    "value": {"double_quoted_string": {"value": [{"string": "pre*"}]}}
+                  }
+                },
+                {
+                  "map_key": {
+                    "key": {"path": [{"unquoted_string": {"value": [{"string": "label"}]}}]},
+                    "not_ampersand": true,
+                    "value": {"unquoted_string": {"value": [{"string": "pre*fix*"}], "pattern": ["pre*fix", "*"]}}
                   }
                 }
               ]

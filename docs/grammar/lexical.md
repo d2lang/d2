@@ -27,8 +27,10 @@ Read the longest string allowed in the current position. Skip leading whitespace
 | Position | What ends the string or changes how it is read |
 | --- | --- |
 | Key or value | Unescaped LF, `;`, `#`, `{`, `}`, `[`, or `]` ends the string. A backslash introduces an escape or a line continuation. |
-| Key | `:`, `.`, `<`, `>`, and `&` delimit the key. `--`, `->`, and `-*` leave the hyphen for the edge parser. An ordinary internal hyphen, as in `build-server`, is text. An unescaped `*` records a wildcard. Write `\*` or quote the segment for a literal star. |
+| Key | `:`, `.`, `<`, `>`, and `&` delimit the key. `--`, `->`, and `-*` leave the hyphen for the edge parser. An ordinary internal hyphen, as in `build-server`, is text. |
 | Value | Periods, colons, ampersands, and arrows are ordinary text. An unescaped dollar starts a substitution. Use `\$` for a literal dollar. |
+
+In both keys and values, the parser records each unescaped `*` as a wildcard alongside the literal pieces of the unquoted string. The compiler uses these patterns when matching keys and filter values. For example, `&label: pre*` matches labels beginning with `pre`. With `&label: "pre*"` or `&label: pre\*`, the star is literal. An ordinary label such as `x: pre*` displays its star.
 
 When the first nonspace character is a single quote, double quote, or pipe, use the corresponding quoted or block string. These characters can occur literally later in a bare string. At the start of a key, an opening parenthesis introduces an edge group where the structure permits one. Parentheses embedded in names such as `fn()` stay in the name. Within an edge group a closing parenthesis terminates a bare endpoint if the next nonspace character is `#`, `{`, `}`, `[`, `]`, `:`, or `.`, or if LF or end of input intervenes. Otherwise it belongs to the name.
 
@@ -70,7 +72,8 @@ The parser skips opening whitespace up to and including the first LF, or up to t
 
 ## Go parser compatibility notes
 
-- **Mixed fences.** For a block beginning `|!#md`, the formatter and parser diagnostic both spell the closing delimiter `!#|`. The current parser rejects that spelling and accepts `##|`. The grammar documents the delimiter rule above. A single ASCII fence character or repeated copies of it work in both the parser and formatter.
+- **Custom fences.** For a block beginning `|!#md`, the formatter and parser diagnostic both spell the closing delimiter `!#|`. The current parser rejects that spelling and accepts `##|`. A repeated non-ASCII fence, such as `|§§md` closed by `§§|`, can also be rejected. A single ASCII fence character or repeated copies of it work in both the parser and formatter.
 - **Hyphens in bare keys.** The parser examines the character after a hyphen before applying the usual key delimiters. With `a-.b`, it consumes the period into the key segment. A key ending in a hyphen immediately before LF is accepted, while the same input ending at the hyphen can report an unterminated connection. Quote the segment to preserve the spelling at either boundary.
 - **Trailing dollars.** The current parser can drop a bare dollar immediately before LF or end of input. Escape the dollar to preserve it.
+- **Formatting after a substitution.** A literal that follows a substitution can lose its escaping during formatting. For example, `x: before${v}\#tag` formats to `x: before${v}#tag`, where `#tag` becomes a comment on reparse.
 - **Non-ASCII indentation.** When removing common indentation, the Go parser can split a multibyte whitespace character and produce invalid UTF-8. For example, this occurs with U+2003 (EM SPACE) at the start of each body line.

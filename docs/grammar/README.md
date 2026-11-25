@@ -65,5 +65,12 @@ go test ./d2parser -run '^TestGrammar'
 The tests verify that every production is defined and reachable from `File`.
 They also run the EBNF against the corpus and check the Go parser's trees and
 errors. The scanner rules account for rejections marked with `lexicalConstraint`.
+
+Acceptance alone leaves some trees ambiguous. For example, the raw productions
+can match `build-server` as either a key path or an edge chain. The key scanner
+consumes the internal hyphen, giving one key and zero connections. A second
+parser should compare its trees against the expected nodes as well as checking
+which inputs it accepts.
+
 When changing D2 syntax, update the affected rules and add an example that
 shows how the change affects acceptance or the resulting tree.
