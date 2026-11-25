@@ -116,7 +116,7 @@ func routeEdgesWithBudgets(ctx context.Context, g *layoutgraph.Graph, edges []*l
 		}
 
 		for _, edge := range edges {
-			if edge.HasTableColumn() {
+			if edge.IsLoop() || edge.HasTableColumn() {
 				if err := guard.step(); err != nil {
 					return err
 				}

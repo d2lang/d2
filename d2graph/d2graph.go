@@ -266,8 +266,10 @@ type Attributes struct {
 	Direction  Scalar   `json:"direction"`
 	Constraint []string `json:"constraint"`
 
-	GridRows      *Scalar `json:"gridRows,omitempty"`
-	GridColumns   *Scalar `json:"gridColumns,omitempty"`
+	GridRows    *Scalar `json:"gridRows,omitempty"`
+	GridColumns *Scalar `json:"gridColumns,omitempty"`
+	// GridRowsFirst records declaration order in the merged map when both axes exist.
+	GridRowsFirst *bool   `json:"gridRowsFirst,omitempty"`
 	GridGap       *Scalar `json:"gridGap,omitempty"`
 	VerticalGap   *Scalar `json:"verticalGap,omitempty"`
 	HorizontalGap *Scalar `json:"horizontalGap,omitempty"`
@@ -1183,7 +1185,10 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 	s := shape.NewShape(shapeType, geo.NewBox(geo.NewPoint(0, 0), contentWidth, contentHeight))
 
 	var fitWidth, fitHeight float64
-	if shapeType == shape.PERSON_TYPE {
+	gridContainer := obj.IsGridDiagram() && len(obj.ChildrenArray) > 0
+	if gridContainer {
+		fitWidth, fitHeight = shape.GridDimensionsToFit(s, contentWidth, contentHeight, paddingX, paddingY)
+	} else if shapeType == shape.PERSON_TYPE {
 		fitWidth = contentWidth + paddingX
 		fitHeight = contentHeight + paddingY
 	} else {
@@ -1206,9 +1211,15 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 		obj.Height = fitHeight
 	}
 
-	if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" {
+	// A grid must reserve enough space for its children even when an authored
+	// dimension is smaller than the shape needed to enclose them.
+	if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" || gridContainer {
 		obj.Width = math.Max(float64(desiredWidth), fitWidth)
 		obj.Height = math.Max(float64(desiredHeight), fitHeight)
+	}
+
+	if gridContainer && shapeType == shape.C4_PERSON_TYPE {
+		obj.Width, obj.Height = shape.FitC4PersonBody(obj.Width, obj.Height, contentHeight+paddingY)
 	}
 
 	if s.AspectRatio1() {

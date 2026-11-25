@@ -9,7 +9,7 @@
 [![ci](https://github.com/d2lang/d2/actions/workflows/ci.yml/badge.svg)](https://github.com/d2lang/d2/actions/workflows/ci.yml)
 [![weekly race tests](https://github.com/d2lang/d2/actions/workflows/weekly-race.yml/badge.svg)](https://github.com/d2lang/d2/actions/workflows/weekly-race.yml)
 [![release](https://img.shields.io/github/v/release/d2lang/d2)](https://github.com/d2lang/d2/releases)
-[![changelog](https://img.shields.io/badge/changelog-read-blue)](./CHANGELOG.md)
+[![changelog](https://img.shields.io/badge/changelog-read-blue)](https://d2lang.com/releases/intro/)
 [![npm version](https://img.shields.io/npm/v/@d2lang/d2)](https://www.npmjs.com/package/@d2lang/d2)
 [![discord](https://img.shields.io/discord/1039184639652265985?label=discord)](https://discord.gg/NF6X8K4eDq)
 [![license](https://img.shields.io/github/license/d2lang/d2?color=9cf)](./LICENSE.txt)
@@ -22,29 +22,12 @@ https://user-images.githubusercontent.com/3120367/206125010-bd1fea8e-248a-43e7-8
 
 </div>
 
-# Table of Contents
+<p align="center">
+    <img width="400px" src="./docs/assets/example.svg" alt="D2 render example" />
+</p>
 
-<!-- toc -->
-- [What does D2 look like?](#what-does-d2-look-like)
-- [Quickstart](#quickstart)
-- [Install](#install)
-- [D2 as a library](#d2-as-a-library)
-- [Themes](#themes)
-- [Fonts](#fonts)
-- [Export file types](#export-file-types)
-- [Language tooling](#language-tooling)
-- [Layout engines](#layout-engines)
-- [Comparison](#comparison)
-- [Contributing](#contributing)
-- [License](#license)
-- [Related](#related)
-  - [Official plugins](#official-plugins)
-  - [Community plugins](#community-plugins)
-  - [Misc](#misc)
-- [FAQ](#faq)
-- [Notable open-source projects documenting with D2](#notable-open-source-projects-documenting-with-d2)
-
-## What does D2 look like?
+<details>
+<summary>Source code</summary>
 
 ```d2
 vars: {
@@ -99,68 +82,53 @@ logs: {shape: page; style.multiple: true}
 network.data processor -> api server
 ```
 
+</details>
+
+[Open in Playground](https://play.d2lang.com/?script=rVLLTsQwDLznKyJxbrWwtyLxFdyR1Zg2ahpHibvLCvXfcdqGfSHthVv8yIxn7APE1OhvpbV5qVryn7ZbQ60dnGjiCn1nPTYa3bCkn_Q7xtF6cJp7HFG3ZHCpLGFlTaP3u51kZjUrj3ykOKyYLTr5REeMhSMBS84yppKRXA9B-BJTRPNhgKEU-OSwHifHNjjp4DitxLNa-SP4NFpmjOoGXVdvl2VBR2_-sWeZgLwTp3SgyOCKnsnKa5PU4xd05OfyIWvTIVKLKdHZExEOHd4Z0p4E3oi2h25s8Ge764uZs4Rr4vqXMfQkAhx1SVanplQWtU0QMCbyEh-t4b7Rz_td6cuo267ryzWPMMiFgHN3XVdu1dkmaPM8K-EiLnGkASsDScj2mQqCFcvj4RGUsSnI_d70Z2GrCptYrVHZTRADXv80VWgL0bVvGfJMoH4A) · [Browse more examples](https://d2lang.com/examples/overview/)
+
+## Trusted by
+
+Organizations around the world use D2 to power blog posts and docs both internally and externally. D2 is also integrated into many popular tools and services.
+
 <p align="center">
-    <img width="400px" src="./docs/assets/example.svg" alt="D2 render example" />
+  <a href="https://github.com/ai-dynamo/dynamo/blob/c14d1e627ec6d96430ea94cfe340418ce496f5fd/docs/fern/pages/blog/_assets/agentic-inference/kv-memory-hierarchy.d2" title="Dynamo’s KV cache memory hierarchy"><img src="./docs/assets/users/nvidia.svg" alt="NVIDIA" width="240"></a>
+  <a href="https://github.com/GoogleCloudPlatform/scion/blob/c1208b6f49cdbd4676df4377c3bc15ba26b96427/docs-site/src/content/docs/contributing/architecture.md?plain=1#L23-L43" title="Google Cloud Scion architecture"><img src="./docs/assets/users/google.svg" alt="Google" width="240"></a>
+  <a href="https://github.com/awslabs/nx-plugin-for-aws/blob/dd639aa541e880083d716191299609a02dd20dfa/docs/src/content/docs/en/snippets/agent/architecture.mdx?plain=1#L11-L43" title="AWS Labs’ Bedrock AgentCore architecture"><img src="./docs/assets/users/amazon.svg" alt="Amazon" width="240"></a>
+  <a href="https://github.com/gitlabhq/cli/blob/093bdd1b82d84dd066eefc9fac91d382e3128899/internal/commands/cluster/graph/server.go#L232-L248" title="How the GitLab CLI renders cluster graphs with D2"><img src="./docs/assets/users/gitlab.svg" alt="GitLab" width="240"></a>
+  <a href="https://github.com/SamsungDS/gears_h/blob/f1dda8c547a7b25468550eabd8ae4a2494111b20/architecture_figures/0_overview.d2" title="Samsung Device Solutions’ GEARS H model architecture"><img src="./docs/assets/users/samsung.svg" alt="Samsung" width="240"></a>
+  <a href="https://github.com/stripe/sync-engine/blob/0cb8ca453d7ad266de714f83838f4e38565e8a57/docs/d2.mjs#L15-L25" title="How Stripe Sync Engine renders documentation diagrams with D2.js"><img src="./docs/assets/users/stripe.svg" alt="Stripe" width="240"></a>
+  <a href="https://github.com/alibaba/kubeskoop/blob/5da8ccbbc66289c31dd1364170c880bead89e030/pkg/skoop/ui/graph.go#L43-L91" title="How Alibaba KubeSkoop renders network paths with D2"><img src="./docs/assets/users/alibaba.svg" alt="Alibaba Group" width="240"></a>
+  <a href="https://github.com/langchain-ai/design-agent/blob/86d8f667796890eb6d3612dbd1b9e941782fe03f/skills/data-viz/scripts/lib/d2.mjs#L99-L114" title="How LangChain’s Design Agent invokes D2"><img src="./docs/assets/users/langchain.svg" alt="LangChain" width="240"></a>
+  <a href="https://github.com/ministryofjustice/hmpps-probation-integration-services/blob/b79d1f51670f09e6d60c07c8ffd57dfe72ae5483/doc/diagrams/approved-premises-and-delius-workflow-application.d2" title="HM Prison and Probation Service’s Approved Premises application workflow"><img src="./docs/assets/users/ministry-of-justice.svg" alt="UK Ministry of Justice" width="240"></a>
 </p>
-
-> Open in [playground](https://play.d2lang.com/?script=rVLLTsQwDLznKyJxbrWwtyLxFdyR1Zg2ahpHibvLCvXfcdqGfSHthVv8yIxn7APE1OhvpbV5qVryn7ZbQ60dnGjiCn1nPTYa3bCkn_Q7xtF6cJp7HFG3ZHCpLGFlTaP3u51kZjUrj3ykOKyYLTr5REeMhSMBS84yppKRXA9B-BJTRPNhgKEU-OSwHifHNjjp4DitxLNa-SP4NFpmjOoGXVdvl2VBR2_-sWeZgLwTp3SgyOCKnsnKa5PU4xd05OfyIWvTIVKLKdHZExEOHd4Z0p4E3oi2h25s8Ge764uZs4Rr4vqXMfQkAhx1SVanplQWtU0QMCbyEh-t4b7Rz_td6cuo267ryzWPMMiFgHN3XVdu1dkmaPM8K-EiLnGkASsDScj2mQqCFcvj4RGUsSnI_d70Z2GrCptYrVHZTRADXv80VWgL0bVvGfJMoH4A)
-
-> For more examples, see [./docs/examples](./docs/examples).
 
 ## Quickstart
 
-The most convenient way to use D2 is to just run it as a CLI executable to
-produce SVGs from `.d2` files.
+<a name="install"></a>
 
-```sh
-# First, install D2
-curl -fsSL https://d2lang.com/install.sh | sh -s --
-
-echo 'x -> y -> z' > in.d2
-d2 --watch in.d2 out.svg
-```
-
-A browser window will open with `out.svg` and live-reload on changes to `in.d2`.
-
-## Install
-
-The easiest way to install is with our install script:
+On macOS or Linux, run the install script.
 
 ```sh
 curl -fsSL https://d2lang.com/install.sh | sh -s --
 ```
 
-You can run the install script with `--dry-run` to see the commands that will be used
-to install without executing them.
+On x64 Windows, download the MSI installer from the [latest release](https://github.com/d2lang/d2/releases/latest).
+The [installation guide](./docs/INSTALL.md) covers other platforms, package managers, and uninstalling.
 
-Or if you have Go installed you can install from source though you won't get the manpage:
-
-```sh
-go install github.com/d2lang/d2@latest
-```
-
-You can also install a release from source which will include manpages.
-See [./docs/INSTALL.md#source-release](./docs/INSTALL.md#source-release).
-
-To uninstall with the install script:
+Save `x -> y -> z` in a file named `hello.d2`, then run the following command to create `hello.svg`.
 
 ```sh
-curl -fsSL https://d2lang.com/install.sh | sh -s -- --uninstall
+d2 hello.d2
 ```
 
-For detailed installation docs, see [./docs/INSTALL.md](./docs/INSTALL.md).
-We demonstrate alternative methods and examples for each OS.
-
-As well, the functioning of the install script is described in detail to alleviate any
-concern of its use. We recommend using your OS's package manager directly instead for
-improved security but the install script is by no means insecure.
+For a live preview in your browser, run `d2 --watch hello.d2` and edit the file.
 
 ## D2 as a library
 
-In addition to being a runnable CLI tool, D2 can also be used to produce diagrams from
-Go programs.
+You can render diagrams from Go with `d2lib` or from JavaScript and TypeScript with
+`@d2lang/d2`.
 
-For examples, see [./docs/examples/lib](./docs/examples/lib).
+[Go examples](./docs/examples/lib) · [D2.js usage guide](./d2js/js/README.md#usage)
 
 ## Themes
 
@@ -175,20 +143,14 @@ one, please see [./d2renderers/d2fonts](./d2renderers/d2fonts).
 
 ## Export file types
 
-D2 supports SVG, PNG, GIF, PDF, and PPTX exports.
+D2 renders SVG, PNG, GIF, PDF, PowerPoint (`.pptx`), and text diagrams (`.txt`) without a browser.
+For example, `d2 hello.d2 hello.txt` draws the diagram with Unicode characters.
+Use `--ascii-mode=standard` for plain ASCII. [Export guide](https://d2lang.com/tour/exports/)
 
 For animated SVG and GIF, set `animate-interval` and `animate-duration` in
 `vars.d2-config`. With TALA, newly appended SQL rows can drop into place
 while existing rows and connections stay anchored. Appending a sequence message can
 extend the activation bar and draw the arrow from sender to recipient.
-
-## Language tooling
-
-D2 is designed with language tooling in mind. D2's parser can parse multiple errors from a
-broken program, has an autoformatter, syntax highlighting, and we have plans for LSP's and
-more. Good language tooling is necessary for creating and maintaining large diagrams.
-
-The extensions for VSCode and Vim can be found in the [Related](#related) section.
 
 ## Layout engines
 
@@ -202,9 +164,8 @@ Run `d2 layout` to list the engines or `d2 layout <name>` for their configuratio
 - [elk-go](https://github.com/d2lang/elk-go) (bundled): A native Go port of the ELK
   directed graph layout engine, particularly suited for node-link diagrams with an
   inherent direction and ports.
-- [TALA](./d2layouts/d2talalayout) (bundled, opt-in): Native layout and edge-routing engine designed
-  specifically for software architecture diagrams. Select it with `--layout=tala`,
-  `D2_LAYOUT=tala`, or a `layout-engine: tala` setting under `vars.d2-config` in D2 source.
+- [TALA](./d2layouts/d2talalayout) (bundled): Native layout and edge-routing engine designed
+  specifically for software architecture diagrams.
 
 D2 also handles specialized layouts such as sequence diagrams and grids. Go applications
 can use the [layout packages](./d2layouts) directly or provide layout and routing functions
@@ -225,6 +186,9 @@ For a comparison against other popular text-to-diagram tools, see
 
 Contributions are welcome! See [./docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md).
 
+D2 is an independent open-source project fiscally sponsored by Hack Club.
+[Sponsor D2](https://d2lang.com/sponsor/)
+
 ## License
 
 Open sourced under the Mozilla Public License 2.0. See [./LICENSE.txt](./LICENSE.txt).
@@ -243,38 +207,34 @@ let us know and we'll be happy to include it here!
 - **Vim extension**: [https://github.com/d2lang/d2-vim](https://github.com/d2lang/d2-vim)
 - **Obsidian plugin**: [https://github.com/d2lang/d2-obsidian](https://github.com/d2lang/d2-obsidian)
 
-### Community plugins
+### Community integrations
 
-- **Tree-sitter grammar**: [https://github.com/ravsii/tree-sitter-d2](https://github.com/ravsii/tree-sitter-d2)
-- **Emacs major mode**: [https://github.com/andorsk/d2-mode](https://github.com/andorsk/d2-mode)
-- **Goldmark extension**: [https://github.com/FurqanSoftware/goldmark-d2](https://github.com/FurqanSoftware/goldmark-d2)
-- **Telegram bot**: [https://github.com/meinside/telegram-d2-bot](https://github.com/meinside/telegram-d2-bot)
-- **Postgres importer**: [https://github.com/zekenie/d2-erd-from-postgres](https://github.com/zekenie/d2-erd-from-postgres)
-- **Structurizr to D2 exporter**: [https://github.com/goto1134/structurizr-d2-exporter](https://github.com/goto1134/structurizr-d2-exporter)
-- **MdBook preprocessor**: [https://github.com/danieleades/mdbook-d2](https://github.com/danieleades/mdbook-d2)
-- **ROS2 D2 Exporter**: [https://github.com/Greenroom-Robotics/ros-d2](https://github.com/Greenroom-Robotics/ros-d2)
-- **D2 org-mode support**: [https://github.com/xcapaldi/ob-d2](https://github.com/xcapaldi/ob-d2)
-- **Python D2 diagram builder**: [https://github.com/MrBlenny/py-d2](https://github.com/MrBlenny/py-d2)
-- **Clojure D2 transpiler**: [https://github.com/judepayne/dictim](https://github.com/judepayne/dictim)
-- **JavaScript D2 diagram builder**: [https://github.com/Kreshnik/d2lang-js](https://github.com/Kreshnik/d2lang-js)
-- **C# & dotnet SDK**: [https://github.com/Stephanvs/d2lang-cs](https://github.com/Stephanvs/d2lang-cs)
-- **Maven plugin**: [https://github.com/andrinmeier/unofficial-d2lang-maven-plugin](https://github.com/andrinmeier/unofficial-d2lang-maven-plugin)
-- **Confluence plugin**: [https://github.com/andrinmeier/unofficial-d2lang-confluence-plugin](https://github.com/andrinmeier/unofficial-d2lang-confluence-plugin)
-- **CIL (C#, Visual Basic, F#, C++ CLR) to D2**: [https://github.com/HugoVG/AppDiagram](https://github.com/HugoVG/AppDiagram)
-- **D2 Snippets (for text editors)**: [https://github.com/Paracelsus-Rose/D2-Language-Code-Snippets](https://github.com/Paracelsus-Rose/D2-Language-Code-Snippets)
-- **Mongo to D2**: [https://github.com/novuhq/mongo-to-D2](https://github.com/novuhq/mongo-to-D2)
-- **Pandoc filter (TypeScript)**: [https://github.com/ram02z/d2-filter](https://github.com/ram02z/d2-filter)
-- **Pandoc filter (Python)**: [https://github.com/fliiiix/pandoc-d2-filter](https://github.com/fliiiix/pandoc-d2-filter)
-- **Logseq-D2**: [https://github.com/b-yp/logseq-d2](https://github.com/b-yp/logseq-d2)
-- **ent2d2**: [https://github.com/tmc/ent2d2](https://github.com/tmc/ent2d2)
-- **MkDocs Plugin**: [https://github.com/landmaj/mkdocs-d2-plugin](https://github.com/landmaj/mkdocs-d2-plugin)
-- **Remark Plugin**: [https://github.com/mech-a/remark-d2](https://github.com/mech-a/remark-d2)
-- **VitePress Plugin**: [https://github.com/BadgerHobbs/vitepress-plugin-d2](https://github.com/BadgerHobbs/vitepress-plugin-d2)
-- **Zed extension**: [https://github.com/gabeidx/zed-d2](https://github.com/gabeidx/zed-d2)
-- **Hexo blog extension**: [https://github.com/leverimmy/hexo-d2](https://github.com/leverimmy/hexo-d2)
-- **Rehype Plugin**: [https://github.com/stereobooster/beoe/tree/main/packages/rehype-d2](https://github.com/stereobooster/beoe/tree/main/packages/rehype-d2)
-- **AsyncAPI to D2**: [https://github.com/holydocs/messageflow](https://github.com/holydocs/messageflow)
-- **Database Schemas to D2**: [https://github.com/holydocs/dberd](https://github.com/holydocs/dberd)
+<a name="community-plugins"></a>
+
+**Libraries and publishing**
+
+- [Astro D2](https://astro-d2.vercel.app/getting-started/) — Render D2 code blocks in Astro or remark.
+- [MkDocs D2](https://landmaj.github.io/mkdocs-d2-plugin/guide/usage/) — Embed D2 diagrams in MkDocs pages.
+- [d2-python](https://github.com/h0rv/d2-python#coming-from-py-d2) — Build D2 source from typed Python. Includes a migration guide for py-d2.
+- [VitePress D2](https://github.com/BadgerHobbs/vitepress-plugin-d2#readme) — Render D2 code blocks in VitePress.
+- [mdBook D2](https://github.com/danieleades/mdbook-d2#readme) — Render D2 code blocks in mdBook.
+
+**Editors and notes**
+
+- [Zed](https://zed.dev/extensions/d2) — Add D2 language support in Zed.
+- [JetBrains IDEs](https://plugins.jetbrains.com/plugin/29542-d2-diagram) — Edit, format, and preview D2 diagrams.
+- [Emacs Org Babel](https://github.com/xcapaldi/ob-d2#readme) — Evaluate D2 source blocks in Org documents.
+- [Logseq D2](https://github.com/b-yp/logseq-d2#readme) — Render D2 diagrams offline in Logseq using WebAssembly.
+
+**Tools with D2 support**
+
+- [dependency-cruiser](https://github.com/sverweij/dependency-cruiser/blob/main/doc/cli.md#d2) — Export JavaScript and TypeScript dependency graphs to D2.
+- [LikeC4](https://likec4.dev/tooling/cli/#generate-mermaid-dot-d2-plantuml) — Export architecture views to D2.
+- [Markdown Preview Enhanced](https://github.com/shd101wyy/markdown-preview-enhanced/blob/master/docs/diagrams.md#d2) — Preview D2 code blocks in Markdown using the local D2 CLI.
+- [Kroki](https://docs.kroki.io/kroki/setup/configuration/#_d2) — Render D2 through an HTTP API. It also powers D2 previews in [GitLab instances with Kroki enabled](https://docs.gitlab.com/administration/integration/kroki/).
+- [KubeDiagrams](https://github.com/philippemerle/KubeDiagrams#d2-diagram-generation) — Generate D2 diagrams from Kubernetes manifests and Helm charts.
+- [Mark for Confluence](https://github.com/kovetskiy/mark#readme) — Publish Markdown with rendered D2 diagrams to Confluence.
+- [Asciidoctor Diagram](https://docs.asciidoctor.org/diagram-extension/latest/diagram_types/d2/) — Render D2 blocks in AsciiDoc using the D2 CLI.
 
 ### Misc
 
@@ -297,34 +257,4 @@ let us know and we'll be happy to include it here!
 - I have a feature request, proposal, or bug report.
   - Please open up a Github Issue.
 - I have a private inquiry.
-  - Please reach out at [hi@d2lang.com](hi@d2lang.com).
-
-## Notable open-source projects documenting with D2
-
-Do you have or see an open-source project with `.d2` files? Please submit a PR adding to
-this selected list of featured projects using D2.
-
-- [ElasticSearch](https://github.com/elastic/beats/blob/main/libbeat/publisher/queue/proxy/diagrams/broker.d2)
-- [Sourcegraph](https://handbook.sourcegraph.com/departments/engineering/managed-services/telemetry-gateway/#dev-architecture-diagram)
-- [Temporal](https://github.com/temporalio/temporal/blob/0be2681c994470c7c61ea88e4fcef89bb4024e58/docs/_assets/matching-context.d2)
-- [Tauri](https://v2.tauri.app/concept/inter-process-communication/)
-    - Rust GUI framework (78.5k stars)
-- [Intellij](https://github.com/JetBrains/intellij-community/blob/45bcfc17a3f3e0d8548bc69e922d4ca97ac21b2b/platform/settings/docs/topics/overview.md)
-- [Coder](https://coder.com/blog/managing-templates-in-coder)
-- [UC
-  Berkeley](https://github.com/ucb-bar/hammer/blob/2b5c04d7b7d9ee3c73575efcd7ee0698bd5bfa88/doc/Hammer-Use/hier.d2)
-- [Coronacheck](https://github.com/minvws/nl-covid19-coronacheck-app-ios/blob/e1567e9d1633b3273c537a105bff0e7d3a57ecfe/Diagrams/client-side-datamodel.d2)
-  - Official app of the Netherlands for coronavirus entry passes.
-- [Block
-  Protocol](https://github.com/blockprotocol/blockprotocol/blob/db4cf8d422b881e52113aa52467d53115270e2b3/libs/%40blockprotocol/type-system/crate/assets/overview.d2)
-  - The Block Protocol is an open standard for building and using data-driven blocks (1.2k
-    stars).
-- [Dagger](https://github.com/dagger/dagger/tree/main/cmd/dagger-graph)
-  - A programmable CI/CD engine that runs your pipelines in containers (8k stars).
-- [Ivy
-  Wallet](https://github.com/Ivy-Apps/ivy-wallet/blob/8062624bfa65175ec143cdc4038de27a84d38b57/assets/calc_algo.d2)
-  - Open-source money manager app for Android (1.1k stars).
-- [LocalStack](https://docs.localstack.cloud/references/network-troubleshooting/)
-  - Cloud service emulator (46k stars)
-- [Queue Library](https://github.com/golang-queue/queue/tree/master/images)
-  - Queue is a Golang library for spawning and managing a Goroutine pool
+  - Please reach out at <alex@d2lang.com>.

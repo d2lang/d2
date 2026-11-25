@@ -17,6 +17,8 @@
 
 #### Improvements 🧹
 
+- Grids with one specified axis choose more evenly sized rows or columns. For common integral cell sizes the partition search finds the minimum total deviation from the average track length.
+
 - Standalone installs check the archive against a SHA-256 verified during release review. Use `--verify-provenance` to also check the signed build provenance locally. [#315](https://github.com/d2lang/d2/issues/315)
 
 - cli: `--allow-local-files=false` (or `$D2_ALLOW_LOCAL_FILES=false`) denies every local-file access, so imports and local images fail instead of reading files on the host. Use it with the default network policy to render untrusted diagrams. [#3002](https://github.com/d2lang/d2/pull/3002)
@@ -67,6 +69,10 @@
     outside the selected tree. [#2908](https://github.com/d2lang/d2/pull/2908)
 
 #### Bugfixes ⛑️
+
+- Grids retain cell order across repeated dimensions, imports and variable spreads. [#2115](https://github.com/d2lang/d2/issues/2115)
+- Grid cells preserve shape proportions and keep nested children, routed connections and their captions inside the container. Border icons and labels fit in zero-padding exports. [#1405](https://github.com/d2lang/d2/issues/1405)
+- Grid connections retain SQL row attachments as cells move, separate reciprocal captions, and make room for self-loops between neighboring cells. TALA routes around intervening cells and accepts a grid container as a `near` target. [#1741](https://github.com/d2lang/d2/issues/1741)
 
 - Standalone upgrades and forced reinstalls preserve the working installation if the replacement fails. The installer rejects install-only flags with `--uninstall` and falls back to the GitHub API when the latest-release redirect fails. [#84](https://github.com/d2lang/d2/issues/84)
 
@@ -157,6 +163,7 @@
     label is available (e.g. `link: _` in a scenario). [#2961](https://github.com/d2lang/d2/issues/2961)
   - Render forced appendices inside their animated SVG frames and size the
     animation to include every board's footnotes.
+- sequence diagrams: fix a compile error ("invalid position with infinity value") when a group nested in another group contains only a note. [#2750](https://github.com/d2lang/d2/issues/2750)
 
 ---
 

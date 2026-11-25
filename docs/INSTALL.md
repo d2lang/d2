@@ -40,6 +40,12 @@ methods:
 curl -fsSL https://d2lang.com/install.sh | sh -s -- --help
 ```
 
+To uninstall D2 with the same script, run
+
+```sh
+curl -fsSL https://d2lang.com/install.sh | sh -s -- --uninstall
+```
+
 ### Security
 
 The install script is not the most secure way to install d2. We recommend that if

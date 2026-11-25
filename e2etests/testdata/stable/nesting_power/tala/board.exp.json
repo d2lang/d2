@@ -6812,7 +6812,7 @@
       "underline": false,
       "labelWidth": 14,
       "labelHeight": 31,
-      "labelPosition": "INSIDE_MIDDLE_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "labelPercentage": 0,
       "link": "",
       "route": [
@@ -6973,11 +6973,11 @@
       "link": "",
       "route": [
         {
-          "x": -469.5,
+          "x": -470,
           "y": 1309.5
         },
         {
-          "x": -469.5,
+          "x": -470,
           "y": 1329.5
         }
       ],
@@ -7012,11 +7012,11 @@
       "link": "",
       "route": [
         {
-          "x": -469.5,
+          "x": -470,
           "y": 1395.5
         },
         {
-          "x": -469.5,
+          "x": -470,
           "y": 1415.5
         }
       ],
@@ -8879,17 +8879,17 @@
       "underline": false,
       "labelWidth": 47,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_MIDDLE_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "labelPercentage": 0,
       "link": "",
       "route": [
         {
           "x": 4843,
-          "y": 1151
+          "y": 1157
         },
         {
           "x": 4943,
-          "y": 1156
+          "y": 1157
         }
       ],
       "animated": false,
