@@ -386,6 +386,69 @@ func TestRenderGIFMultiBoardRetainsIndependentQuantizedFrames(t *testing.T) {
 	}
 }
 
+func TestGIFPreservesPositionsAcrossRelatedBoards(t *testing.T) {
+	addLeaf := func(board *d2target.Diagram, x int) {
+		leaf := board.Shapes[0]
+		leaf.ID, leaf.Fill, leaf.Pos.X = "leaf", "#0000ff", x
+		board.Shapes = append(board.Shapes, leaf)
+		board.LayoutContinuity = true
+	}
+	root, child := simpleRasterDiagram(), simpleRasterDiagram()
+	addLeaf(child, -60)
+	// Independently fitted boards can have very distant world coordinates.
+	// They share the output canvas, but each family has its own viewport.
+	layer := simpleRasterDiagramWithSize(100, 20)
+	layer.Shapes[0].Fill, layer.Shapes[0].Pos.X = "#00ff00", -50000
+	next, last := simpleRasterDiagram(), simpleRasterDiagram()
+	next.Shapes[0].Pos.X, last.Shapes[0].Pos.X = 50000, 50000
+	addLeaf(last, 50040)
+	root.Layers = []*d2target.Diagram{layer}
+	root.Steps = []*d2target.Diagram{child, next, last}
+
+	data, _, err := renderGIF(t.Context(), "-", false, root,
+		d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anim, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(anim.Image) != 5 || anim.Config.Width != 100 || anim.Config.Height != 20 {
+		t.Fatalf("got %d frames on a %dx%d canvas", len(anim.Image), anim.Config.Width, anim.Config.Height)
+	}
+	redBounds := func(frame *image.Paletted) image.Rectangle {
+		var box image.Rectangle
+		for y := frame.Rect.Min.Y; y < frame.Rect.Max.Y; y++ {
+			for x := frame.Rect.Min.X; x < frame.Rect.Max.X; x++ {
+				if c := color.NRGBAModel.Convert(frame.At(x, y)).(color.NRGBA); c.R > 240 && c.G < 16 && c.B < 16 {
+					box = box.Union(image.Rect(x, y, x+1, y+1))
+				}
+			}
+		}
+		return box
+	}
+	for _, pair := range [][2]int{{0, 2}, {3, 4}} {
+		a, b := redBounds(anim.Image[pair[0]]), redBounds(anim.Image[pair[1]])
+		if a.Empty() || a != b {
+			t.Errorf("anchor moved between frames %v: %v to %v", pair, a, b)
+		}
+	}
+}
+
+func TestGIFViewportsFollowIncomingTween(t *testing.T) {
+	root, base, next := simpleRasterDiagram(), simpleRasterDiagram(), simpleRasterDiagram()
+	root.Steps = []*d2target.Diagram{base, next}
+	base.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
+	next.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
+	next.LayoutContinuity = true
+	views := gifViewports(root, []*d2target.Diagram{root, base, next})
+	if views[base] == nil || views[next] != views[base] || views[next.TweenFrames[0]] != views[base] ||
+		views[root] != nil || views[base.TweenFrames[0]] != nil {
+		t.Fatal("incoming samples must share the viewport only for the continuous transition")
+	}
+}
+
 func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
 	for _, tc := range []struct {
 		name                        string
@@ -422,6 +485,40 @@ func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
 				t.Fatalf("last frame has color %v, want authored blue endpoint", got)
 			}
 		})
+	}
+}
+
+func TestRenderGIFDenseContinuitySamples(t *testing.T) {
+	step := simpleRasterDiagram()
+	step.LayoutContinuity = true
+	step.TweenDurationMS = 800
+	step.Shapes[0].Fill = "#0000ff"
+	for range 48 {
+		sample := simpleRasterDiagram()
+		sample.Shapes[0].Fill = "#ff0000"
+		step.TweenFrames = append(step.TweenFrames, sample)
+	}
+	data, _, err := renderGIF(t.Context(), "-", false, step, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 800, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	animation, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, delay := range animation.Delay {
+		if delay < 2 {
+			t.Fatalf("delay %dcs will play slowly in browsers", delay)
+		}
+		total += delay
+	}
+	if total != 80 || len(animation.Delay) != 40 {
+		t.Fatalf("got %d frames over %dcs", len(animation.Delay), total)
+	}
+	last := animation.Image[len(animation.Image)-1].At(5, 5)
+	if got := color.NRGBAModel.Convert(last).(color.NRGBA); got != (color.NRGBA{B: 255, A: 255}) {
+		t.Fatal("lost the authored endpoint")
 	}
 }
 

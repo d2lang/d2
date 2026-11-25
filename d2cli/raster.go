@@ -552,11 +552,11 @@ type gifRenderSummary struct {
 	maxWidth, maxHeight int
 }
 
-// Browsers commonly display a 0cs or 1cs GIF frame for 100ms. Grid motion
-// samples at up to 60fps and its paint and geometry boundaries can be closer
-// still. Pick the nearest native sample for each 20ms tick before rendering,
-// and reserve the last two centiseconds for the exact authored endpoint.
-func gridGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
+// Browsers commonly display a 0cs or 1cs GIF frame for 100ms. Motion can
+// sample at 60fps and paint boundaries can be closer still. Pick the nearest
+// native sample for each 20ms tick and reserve the last two centiseconds
+// for the exact authored endpoint.
+func motionGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
 	end := frames[len(frames)-1]
 	slot := end.ElapsedMS + end.DurationMS
 	ticks := (slot + 9) / 10
@@ -636,15 +636,20 @@ func renderGIFWithSession(
 	}
 	type gifSegment struct {
 		d2animate.Frame
-		count int
+		count    int
+		viewport *gifViewport
+		bounds   image.Rectangle
 	}
+	viewports := gifViewports(diagram, boards)
 	var timeline []gifSegment
 	totalFrames := 0
 	var boardFrames []d2animate.Frame
 	for _, board := range boards {
 		boardFrames = d2animate.AppendBoardFrames(boardFrames[:0], board, intervalMs)
-		if board.GridMotion {
-			boardFrames = gridGIFFrames(boardFrames)
+		motionTicks := board.GridMotion || board.LayoutContinuity && len(board.TweenFrames) > 0 &&
+			slices.ContainsFunc(boardFrames, func(f d2animate.Frame) bool { return f.DurationMS < 20 })
+		if motionTicks {
+			boardFrames = motionGIFFrames(boardFrames)
 		}
 		for _, segment := range boardFrames {
 			delay := xgif.StepDelay(time.Duration(segment.ElapsedMS)*time.Millisecond, time.Duration(segment.DurationMS)*time.Millisecond, segment.TweenSample)
@@ -658,7 +663,7 @@ func renderGIFWithSession(
 					return summary, err
 				}
 			}
-			if board.GridMotion {
+			if motionTicks {
 				// A short endpoint hold can otherwise be split into 1cs frames.
 				count = min(count, max(1, delay/2))
 			}
@@ -666,7 +671,12 @@ func renderGIFWithSession(
 				return summary, fmt.Errorf("GIF animation exceeds the %d-frame limit", gifMaxFrames)
 			}
 			summary.delays = xgif.AppendFrameDelays(summary.delays, delay, count)
-			timeline = append(timeline, gifSegment{segment, count})
+			viewport := viewports[segment.Diagram]
+			if viewport != nil {
+				tl, br := segment.Diagram.BoundingBox()
+				viewport.bounds = viewport.bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
+			}
+			timeline = append(timeline, gifSegment{Frame: segment, count: count, viewport: viewport})
 			totalFrames += count
 		}
 	}
@@ -684,22 +694,9 @@ func renderGIFWithSession(
 		return summary, err
 	}
 	summary.totalFrames = totalFrames
-	// An independently fitted GIF frame is centered by the encoder. Give all
-	// grid samples the same world-space viewport so that adding a column does
-	// not appear to move its stationary neighbors.
-	var gridBounds *image.Rectangle
-	if slices.ContainsFunc(boards, func(b *d2target.Diagram) bool { return b.GridMotion }) {
-		var bounds image.Rectangle
-		for _, segment := range timeline {
-			tl, br := segment.Diagram.BoundingBox()
-			bounds = bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
-		}
-		gridBounds = &bounds
-	}
 	// Legends, appendix entries and root borders can expand individual scenes
 	// beyond the shared object bounds. Preserve their final world-space origins
 	// when padding frames for the encoder.
-	var canvas image.Rectangle
 	scale := 1.0
 	if opts.Scale != nil {
 		scale = *opts.Scale
@@ -721,7 +718,9 @@ func renderGIFWithSession(
 		}
 		frameOptions := gifFrameOptions(0, totalFrames)
 		sceneOpts := sceneOptionsForFrame(frameOptions)
-		sceneOpts.minimumBounds = gridBounds
+		if segment.viewport != nil {
+			sceneOpts.minimumBounds = &segment.viewport.bounds
+		}
 		document, err := buildSceneWithResourcesAndLinks(ctx, board, boardOpts, assetOptions, fontOptions, linkBudget, sceneOpts)
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d scene: %w", boardIndex, err)
@@ -730,20 +729,20 @@ func renderGIFWithSession(
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
-		if gridBounds != nil {
+		canvas := plannedBounds
+		frameBounds := plannedBounds
+		if v := segment.viewport; v != nil {
 			offset := image.Pt(
-				int(math.Round((document.ViewBox.X-float64(gridBounds.Min.X))*scale)),
-				int(math.Round((document.ViewBox.Y-float64(gridBounds.Min.Y))*scale)),
+				int(math.Round((document.ViewBox.X-float64(v.bounds.Min.X))*scale)),
+				int(math.Round((document.ViewBox.Y-float64(v.bounds.Min.Y))*scale)),
 			)
-			canvas = canvas.Union(plannedBounds.Add(offset))
-			for range segment.count {
-				summary.offsets = append(summary.offsets, offset)
-			}
-			summary.maxWidth, summary.maxHeight = canvas.Dx(), canvas.Dy()
-		} else {
-			summary.maxWidth = max(summary.maxWidth, plannedBounds.Dx())
-			summary.maxHeight = max(summary.maxHeight, plannedBounds.Dy())
+			frameBounds = plannedBounds.Add(offset)
+			v.canvas = v.canvas.Union(frameBounds)
+			canvas = v.canvas
 		}
+		timeline[boardIndex].bounds = frameBounds
+		summary.maxWidth = max(summary.maxWidth, canvas.Dx())
+		summary.maxHeight = max(summary.maxHeight, canvas.Dy())
 		if err := validateGIFNormalizedFootprint(summary.maxWidth, summary.maxHeight, totalFrames); err != nil {
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
@@ -785,8 +784,19 @@ func renderGIFWithSession(
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
 	}
-	for i := range summary.offsets {
-		summary.offsets[i] = summary.offsets[i].Sub(canvas.Min)
+	if len(viewports) != 0 {
+		for _, segment := range timeline {
+			canvas := segment.bounds
+			if segment.viewport != nil {
+				canvas = segment.viewport.canvas
+			}
+			// Center an entire related group as a unit in the final GIF.
+			offset := image.Pt((summary.maxWidth-canvas.Dx())/2, (summary.maxHeight-canvas.Dy())/2)
+			offset = offset.Add(segment.bounds.Min.Sub(canvas.Min))
+			for range segment.count {
+				summary.offsets = append(summary.offsets, offset)
+			}
+		}
 	}
 	if renderedFrameCount != totalFrames {
 		return summary, fmt.Errorf("GIF rendered frame count %d differs from schedule %d", renderedFrameCount, totalFrames)

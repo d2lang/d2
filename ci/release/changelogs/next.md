@@ -4,6 +4,8 @@
 
 - Animate grid edits between steps with the same `animate-duration` setting. Cells slide to their new positions, arrivals grow in, and departures shrink away. An inserted row or column opens as a group. A replacement can hand off in place, and a summary cell can unfold to show a nested grid.
 
+- TALA keeps familiar nodes and links in place across compatible edits to steps and scenarios. With `animate-duration`, new connections can draw toward arriving nodes, containers can form around their contents, services can move between containers, SQL rows can drop into place, and sequence messages can travel to their receivers.
+
 - Set `scale` and `force-appendix` in `vars.d2-config`. Scaled SVGs and raster exports now retain their requested display size when tooltips or links add an appendix.
 - Configure Dagre's node and edge spacing in `vars.d2-config.data` with `dagre-nodesep` and `dagre-edgesep`.
 

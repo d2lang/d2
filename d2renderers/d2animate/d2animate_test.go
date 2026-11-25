@@ -17,6 +17,26 @@ func TestWrapRejectsTimelineOverflow(t *testing.T) {
 	}
 }
 
+func TestWrapTimedClipsBetweenSamples(t *testing.T) {
+	frames := [][]byte{[]byte("<g></g>"), []byte("<g></g>"), []byte("<g></g>")}
+	out, err := WrapTimed(d2target.NewDiagram(), frames, d2svg.RenderOpts{}, []int{7, 1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range []string{
+		"-0{0%{clip-path:none}70%,100%{clip-path:inset(50%)}}",
+		"-1{0%{clip-path:inset(50%)}70%{clip-path:none}80%,100%{clip-path:inset(50%)}}",
+		"-2{0%{clip-path:inset(50%)}80%{clip-path:none}100%{clip-path:none}}",
+	} {
+		if !strings.Contains(string(out), rule) {
+			t.Errorf("missing frame boundary %q", rule)
+		}
+	}
+	if n := strings.Count(string(out), "10ms steps(1,end) infinite"); n != len(frames) {
+		t.Errorf("got %d discrete animations for %d frames", n, len(frames))
+	}
+}
+
 func TestWrapDefaultsMissingPadding(t *testing.T) {
 	diagram := d2target.NewDiagram()
 	out, err := Wrap(diagram, [][]byte{[]byte(`<g></g>`)}, d2svg.RenderOpts{}, 1_000)

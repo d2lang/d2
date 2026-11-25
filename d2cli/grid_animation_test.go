@@ -129,7 +129,7 @@ func TestGridGIFSelectsSamplesOnBrowserClock(t *testing.T) {
 				ids[f.Diagram] = i
 			}
 			var times, indices []int
-			result := gridGIFFrames(frames)
+			result := motionGIFFrames(frames)
 			for i, f := range result {
 				times = append(times, f.ElapsedMS)
 				indices = append(indices, ids[f.Diagram])

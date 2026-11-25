@@ -22,6 +22,8 @@ import (
 	"github.com/d2lang/util-go/xmain"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2renderers/d2animate"
@@ -114,7 +116,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate step changes to numeric properties, solid colors, compatible gradients, variables, and grid layouts (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
+	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate step changes to numeric properties, solid colors, compatible gradients, variables, grid layouts, and supported TALA structural edits (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
 	if err != nil {
 		return err
 	}
@@ -519,6 +521,8 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		FS:              fs,
 		LayoutReuse:     true,
 		AnimateDuration: animateDurationFlag,
+
+		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
 	}
 
 	// With no SVG interval override, compilation reads the interval from d2-config.

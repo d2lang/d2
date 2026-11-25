@@ -297,6 +297,18 @@ func (b *builder) buildOrdinaryShapeOutline(targetShape d2target.Shape, fill d2s
 			Stroke:  stroke,
 		}))
 	case d2target.ShapeRectangle, d2target.ShapeSquare, d2target.ShapeSequenceDiagram, d2target.ShapeHierarchy, "":
+		if targetShape.DrawingOutline() {
+			nodes = append(nodes, d2scene.NewNode(d2scene.Rect{Box: box, Fill: fill}))
+			points := targetShape.DrawnOutline()
+			if len(points) > 0 {
+				path := d2scene.Path{Stroke: stroke, Commands: []d2scene.PathCommand{d2scene.MoveTo(points[0].X, points[0].Y)}}
+				for _, p := range points[1:] {
+					path.Commands = append(path.Commands, d2scene.LineTo(p.X, p.Y))
+				}
+				nodes = append(nodes, d2scene.NewNode(path))
+			}
+			break
+		}
 		radius := clampBorderRadius(float64(targetShape.BorderRadius), box.Width, box.Height)
 		nodes = append(nodes, d2scene.NewNode(d2scene.Rect{
 			Box:     box,

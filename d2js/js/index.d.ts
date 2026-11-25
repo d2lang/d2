@@ -141,6 +141,7 @@ export interface Diagram {
   /** Exclusive millisecond end offsets for nonuniform samples. Omitted for uniform timing. */
   tweenFrameEndsMS?: number[];
   gridMotion?: boolean;
+  layoutContinuity?: boolean;
   tweenDurationMS?: number;
 }
 
@@ -154,6 +155,12 @@ export type Shape = (Class | SQLTable | Text) & ShapeBase;
 export interface ShapeBase {
   motionClip?: MotionClip;
   motionLabelTopLeft?: Point;
+  /** Authored body bounds for an anchored label during a node entrance. */
+  motionLabelBox?: MotionClip;
+  /** Authored table height while appended rows drop into place. */
+  rowReveal?: { fullHeight: number };
+  /** Length fraction of a rectangular container outline in an incoming step sample. */
+  outlineProgress?: number;
   motionScale?: number;
   id: string;
   type: string;
@@ -254,6 +261,8 @@ export interface Text {
 
 export interface Connection extends Text {
   motionClip?: MotionClip;
+  motionLabel?: Point & { opacity: number };
+  motionDashOffset?: number;
   id: string;
   classes?: string[];
   src: string;
