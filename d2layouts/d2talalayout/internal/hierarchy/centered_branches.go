@@ -146,6 +146,11 @@ func CenteredBranchCandidate(ctx context.Context, g *layoutgraph.Graph) (*layout
 		if horizontal {
 			across, along, width, height = along, across, height, width
 		}
+		// Each lane uses an integer port inside the leading and trailing
+		// faces. A one-pixel face has only its two corners on that grid.
+		if width < 2 {
+			return g, nil
+		}
 		if reverse {
 			along = -along - height
 		}

@@ -58,6 +58,37 @@ func TestCenteredBranchesKeepAuthoredRanksAndLabels(t *testing.T) {
 	}
 }
 
+func TestCenteredBranchesPreservePortsOnThinShapes(t *testing.T) {
+	for _, direction := range []string{"down", "up", "left", "right"} {
+		t.Run(direction, func(t *testing.T) {
+			size := "width: 1; height: 66"
+			if direction == "left" || direction == "right" {
+				size = "width: 66; height: 1"
+			}
+			source := "direction: " + direction + "\nA -> B -> F\nA -> C -> D -> E -> F\nB: \"\" {" + size + "}"
+			d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+			for _, n := range d.Shapes {
+				if n.ID != "B" {
+					continue
+				}
+				for _, e := range d.Connections {
+					p := e.Route[0]
+					if e.Dst == n.ID {
+						p = e.Route[len(e.Route)-1]
+					} else if e.Src != n.ID {
+						continue
+					}
+					atX := p.X == float64(n.Pos.X) || p.X == float64(n.Pos.X+n.Width)
+					atY := p.Y == float64(n.Pos.Y) || p.Y == float64(n.Pos.Y+n.Height)
+					if atX && atY {
+						t.Errorf("%s attaches to a corner of %s at %v", e.ID, n.ID, p)
+					}
+				}
+			}
+		})
+	}
+}
+
 func workflowGaps(t *testing.T, d *d2target.Diagram, direction, fork, short, join string) (int, int) {
 	t.Helper()
 	bounds := make(map[string][2]int, len(d.Shapes))
