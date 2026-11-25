@@ -154,7 +154,15 @@ export type Shape = (Class | SQLTable | Text) & ShapeBase;
 
 export interface ShapeBase {
   /** Timeline role for an opt-in sequence diagram. */
-  sequenceRole?: "container" | "actor" | "group" | "branch" | "span" | "note" | "event" | "repeat";
+  sequenceRole?:
+    | "container"
+    | "actor"
+    | "group"
+    | "branch"
+    | "span"
+    | "note"
+    | "event"
+    | "repeat";
   motionClip?: MotionClip;
   motionLabelTopLeft?: Point;
   /** Authored body bounds for an anchored label during a node entrance. */

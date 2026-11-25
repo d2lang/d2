@@ -44,7 +44,8 @@ for (const layout of ["dagre", "elk", "tala"] as const) {
 configured.then((response) => {
   response.diagram.shapes.filter((shape) => shape.sequenceRole === "branch");
   response.diagram.connections.filter((edge) => edge.sequenceRole === "lifeline");
-  const numbered: boolean | undefined = response.graph.root?.attributes.sequence?.numbered;
+  const numbered: boolean | undefined =
+    response.graph.root?.attributes.sequence?.numbered;
   const captionFill: string | undefined = response.graph.objects[0]?.labelFill?.value;
 
   const renderOptions: RenderOptions = response.renderOptions;
