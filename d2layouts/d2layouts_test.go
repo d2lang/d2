@@ -317,6 +317,17 @@ func BenchmarkLayoutNestedPartitions(b *testing.B) {
 	}
 }
 
+func TestExtractAsNestedGraphPreservesTheme(t *testing.T) {
+	g := compileLayoutTestGraph(t, "box: {a -> b}")
+	if err := g.ApplyTheme(d2themescatalog.Origami.ID); err != nil {
+		t.Fatal(err)
+	}
+	nested := g.ExtractAsNestedGraph(g.Root.Children["box"])
+	if nested.Theme == nil || *nested.Theme != *g.Theme || nested.Theme == g.Theme {
+		t.Fatal("nested graph needs an independent copy of the board theme")
+	}
+}
+
 func TestExtractSubgraphsPreservesIndependentConfigData(t *testing.T) {
 	for _, batched := range []bool{false, true} {
 		t.Run(fmt.Sprintf("batched=%t", batched), func(t *testing.T) {
@@ -329,6 +340,9 @@ note: {near: top-left; c -> d}`)
 			g.Data = map[string]interface{}{
 				"tala-seeds": []interface{}{"7", "11"},
 				"metadata":   map[string]interface{}{"name": "original"},
+			}
+			if err := g.ApplyTheme(d2themescatalog.Origami.ID); err != nil {
+				t.Fatal(err)
 			}
 			specs := collectNestedExtractions(g)
 			var graphs []*d2graph.Graph
@@ -344,6 +358,9 @@ note: {near: top-left; c -> d}`)
 				}
 			}
 			for _, graph := range graphs {
+				if graph.Theme == nil || *graph.Theme != *g.Theme || graph.Theme == g.Theme {
+					t.Fatal("nested graph needs an independent copy of the board theme")
+				}
 				if !reflect.DeepEqual(graph.Data, data) {
 					t.Fatalf("nested data = %#v, want %#v", graph.Data, data)
 				}

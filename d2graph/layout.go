@@ -44,6 +44,9 @@ func (g *Graph) ExtractAsNestedGraph(obj *Object) *Graph {
 
 	tempGraph := NewGraph()
 	tempGraph.IsPartialLayout = true
+	if g.Theme != nil {
+		tempGraph.Theme = new(*g.Theme)
+	}
 	tempGraph.RootLevel = int(obj.Level()) - 1
 	tempGraph.Root.ChildrenArray = []*Object{obj}
 	tempGraph.Root.Children[strings.ToLower(obj.ID)] = obj

@@ -342,9 +342,16 @@ func TestThemePaperPreservesOtherwiseTransparentWedge(t *testing.T) {
 B: Middle {shape: step; style.fill: transparent; style.stroke-width: 0}
 C: {shape: step}
 A -> B -> C`
-	d := compileRoutingDiagram(t, t.Context(), source, 1, &d2svg.RenderOpts{ThemeID: new(int64(302))})
-	if d.Shapes[1].FillPattern != "paper" || len(d.Connections) != 0 {
-		t.Fatal("the theme paints the middle wedge with paper")
+	for _, board := range []string{source, "Box: {grid-columns: 1; Cell: {\n" + source + "\n}}"} {
+		d := compileRoutingDiagram(t, t.Context(), board, 1, &d2svg.RenderOpts{ThemeID: new(int64(302))})
+		if len(d.Connections) != 0 {
+			t.Fatalf("the theme paints the middle wedge with paper on %s", board)
+		}
+		for _, s := range d.Shapes {
+			if s.Type == "step" && s.FillPattern != "paper" {
+				t.Fatalf("missing paper on step %s", s.ID)
+			}
+		}
 	}
 }
 

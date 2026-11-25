@@ -501,6 +501,9 @@ func extractSubgraphs(g *d2graph.Graph, specs []subgraphExtractionSpec) *subgrap
 		}
 		nestedGraph := d2graph.NewGraph()
 		nestedGraph.IsPartialLayout = true
+		if g.Theme != nil {
+			nestedGraph.Theme = new(*g.Theme)
+		}
 		nestedGraph.Data = cloneGraphData(g.Data)
 		nestedGraph.RootLevel = int(spec.container.Level())
 		if spec.includeSelf {
@@ -665,6 +668,9 @@ func ExtractSubgraph(container *d2graph.Object, includeSelf bool) (nestedGraph *
 	// we want to include itself in the nested graph, not just its descendants,
 	nestedGraph = d2graph.NewGraph()
 	nestedGraph.IsPartialLayout = true
+	if container.Graph.Theme != nil {
+		nestedGraph.Theme = new(*container.Graph.Theme)
+	}
 	nestedGraph.Data = cloneGraphData(container.Graph.Data)
 	nestedGraph.RootLevel = int(container.Level())
 	if includeSelf {
