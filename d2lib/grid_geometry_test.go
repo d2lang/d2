@@ -8,6 +8,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/shape"
 )
 
 func TestGridAspectConstrainedShapes(t *testing.T) {
@@ -242,5 +243,34 @@ g: Title {
 	if 2*child.Pos.Y < 2*panel.Pos.Y+panel.LabelHeight ||
 		2*(child.Pos.X+child.Width) > 2*(panel.Pos.X+panel.Width)-iconSize {
 		t.Fatalf("grid child %+v %dx%d overlaps its container's title or %dpx icon", child.Pos, child.Width, child.Height, iconSize)
+	}
+}
+
+func TestZeroGapGridStaysInsidePaintedShape(t *testing.T) {
+	for _, axis := range []string{"grid-rows", "grid-columns"} {
+		for _, kind := range []string{"person", "page", "cloud"} {
+			t.Run(axis+"/"+kind, func(t *testing.T) {
+				d, _ := compileGridMotionTest(t, fmt.Sprintf(`
+%s: 1
+panel: "" {shape: %s; grid-rows: 1; grid-gap: 0; child: "" {width: 40; height: 180}}
+peer: "" {width: 400; height: 500}`, axis, kind))
+				panel, child := shapeByID(t, d, "panel"), shapeByID(t, d, "panel.child")
+				box := geo.NewBox(geo.NewPoint(float64(panel.Pos.X), float64(panel.Pos.Y)), float64(panel.Width), float64(panel.Height))
+				perimeter := shape.NewShape(d2target.DSL_SHAPE_TO_SHAPE_TYPE[kind], box).Perimeter()
+				// Check each exported corner against the paint path.
+				for _, x := range []float64{float64(child.Pos.X) + .5, float64(child.Pos.X+child.Width) - .5} {
+					for _, y := range []float64{float64(child.Pos.Y) + .5, float64(child.Pos.Y+child.Height) - .5} {
+						ray := geo.NewSegment(geo.NewPoint(box.TopLeft.X-1, y), geo.NewPoint(x, y))
+						crossings := 0
+						for _, side := range perimeter {
+							crossings += len(side.Intersections(*ray))
+						}
+						if crossings%2 == 0 {
+							t.Fatalf("child corner (%g, %g) outside %s outline %v", x, y, kind, box.ToString())
+						}
+					}
+				}
+			})
+		}
 	}
 }

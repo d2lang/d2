@@ -390,6 +390,15 @@ func (obj *Object) ToShape() shape.Shape {
 	return s
 }
 
+// LayoutInnerBox is the usable interior for a container's children.
+func (obj *Object) LayoutInnerBox() *geo.Box {
+	s := obj.ToShape()
+	if obj.IsGridDiagram() {
+		return shape.GridContentBox(s)
+	}
+	return s.GetInnerBox()
+}
+
 func (obj *Object) GetLabelTopLeft() *geo.Point {
 	if obj.LabelPosition == nil {
 		return nil

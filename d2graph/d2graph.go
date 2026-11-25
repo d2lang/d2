@@ -1181,7 +1181,9 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 
 	var fitWidth, fitHeight float64
 	gridContainer := obj.IsGridDiagram() && len(obj.ChildrenArray) > 0
-	if shapeType == shape.PERSON_TYPE && !gridContainer {
+	if gridContainer {
+		fitWidth, fitHeight = shape.GridDimensionsToFit(s, contentWidth, contentHeight, paddingX, paddingY)
+	} else if shapeType == shape.PERSON_TYPE {
 		fitWidth = contentWidth + paddingX
 		fitHeight = contentHeight + paddingY
 	} else {

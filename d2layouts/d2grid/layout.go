@@ -20,40 +20,51 @@ const (
 
 // Layout places the grid and routes connections using straight joins between cells.
 func Layout(ctx context.Context, g *d2graph.Graph) error {
-	return LayoutWithRouter(ctx, g, RouteEdges)
-}
-
-// LayoutWithRouter gives the selected layout engine the final positions of the
-// direct grid cells. Edges crossing extracted subgraphs are routed by LayoutNested.
-func LayoutWithRouter(ctx context.Context, g *d2graph.Graph, router d2graph.RouteEdges) error {
-	obj := g.Root
-
-	gd, err := layoutGrid(g, obj)
+	fit, err := PlaceCells(ctx, g, RouteEdges)
 	if err != nil {
 		return err
+	}
+	fit(nil)
+	return nil
+}
+
+// PlaceCells positions the cells and routes their direct edges. After nested
+// diagrams have been restored and their cross-cell edges routed, call the
+// returned function with those edges to size the container around the result.
+func PlaceCells(ctx context.Context, g *d2graph.Graph, router d2graph.RouteEdges) (fit func([]*d2graph.Edge), err error) {
+	obj := g.Root
+	gd, err := layoutGrid(g, obj)
+	if err != nil {
+		return nil, err
 	}
 
 	var direct []*d2graph.Edge
 	for _, e := range g.Edges {
-		if e.Src.Parent.IsDescendantOf(obj) || e.Dst.Parent.IsDescendantOf(obj) {
-			gd.edges = append(gd.edges, e)
-		}
 		if e.Src.Parent == obj && e.Dst.Parent == obj {
 			direct = append(direct, e)
 		}
 	}
-	if len(direct) > 0 {
+	if len(direct) != 0 {
 		if router == nil {
 			router = RouteEdges
 		}
-		if err := router(ctx, g, direct); err != nil {
-			return err
-		}
-		if g.RootLevel > 0 {
-			gd.fitRoutes(direct)
+		if err := gd.routeCells(ctx, g, direct, router); err != nil {
+			return nil, err
 		}
 	}
+	return func(cross []*d2graph.Edge) {
+		// All child diagrams now use this grid's coordinate system. Shift their
+		// routes with their owners when adding container padding or label space.
+		gd.edges = g.Edges
+		if g.RootLevel > 0 {
+			gd.fitRoutes(append(direct, cross...))
+		}
+		gd.fitContainer(g)
+	}, nil
+}
 
+func (gd *gridDiagram) fitContainer(g *d2graph.Graph) {
+	obj := g.Root
 	if obj.HasLabel() && obj.LabelPosition == nil {
 		obj.LabelPosition = go2.Pointer(label.InsideTopCenter.String())
 	}
@@ -147,16 +158,18 @@ func LayoutWithRouter(ctx context.Context, g *d2graph.Graph, router d2graph.Rout
 		padding.Left = math.Max(padding.Left, float64(horizontalPadding))
 		padding.Right = math.Max(padding.Right, float64(horizontalPadding))
 
+		shapeType := d2target.DSL_SHAPE_TO_SHAPE_TYPE[strings.ToLower(obj.Shape.Value)]
+		shape.ReserveGridPadding(shapeType, contentHeight, &padding)
+
 		totalWidth := padding.Left + contentWidth + padding.Right
 		totalHeight := padding.Top + contentHeight + padding.Bottom
 		obj.SizeToContent(totalWidth, totalHeight, 0, 0)
 
 		// compute where the grid should be placed inside shape
-		s := obj.ToShape()
-		innerTL := s.GetInsidePlacement(totalWidth, totalHeight, 0, 0)
+		innerBox := obj.LayoutInnerBox()
+		innerTL := innerBox.TopLeft
 		// depending on the shape innerBox may be larger than totalWidth, totalHeight
 		// if this is the case, we want to center the cells within the larger innerBox
-		innerBox := s.GetInnerBox()
 		var resizeDx, resizeDy float64
 		if innerBox.Width > totalWidth {
 			resizeDx = (innerBox.Width - totalWidth) / 2
@@ -193,7 +206,6 @@ func LayoutWithRouter(ctx context.Context, g *d2graph.Graph, router d2graph.Rout
 			obj.TopLeft.Y+float64(verticalPadding),
 		)
 	}
-	return nil
 }
 
 func layoutGrid(g *d2graph.Graph, obj *d2graph.Object) (*gridDiagram, error) {
@@ -387,6 +399,7 @@ func (gd *gridDiagram) layoutDynamic(g *d2graph.Graph, obj *d2graph.Object) {
 	}
 
 	cursor := geo.NewPoint(0, 0)
+	gd.tracks = layout
 	var maxY, maxX float64
 	if gd.rowDirected {
 		// measure row widths

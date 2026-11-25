@@ -4,9 +4,11 @@ import (
 	"math"
 	"testing"
 
+	"github.com/d2lang/d2/d2exporter"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2lib"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/log"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -187,5 +189,160 @@ func TestGridRoutesAroundFrozenLoop(t *testing.T) {
 			}
 		}
 		t.Fatalf("new loop reused retained loop's route: %v", added.Route)
+	}
+}
+
+func TestNestedGridContainsCrossCellRoute(t *testing.T) {
+	const source = `grid-columns: 1
+grid-gap: 0
+inner: "" {
+  grid-rows: 1
+  grid-gap: 0
+  alpha: "" {grid-rows: 1; grid-gap: 0; a}
+  middle: M
+  omega: "" {grid-rows: 1; grid-gap: 0; b}
+  alpha.a -> omega.b: data flow
+}
+next`
+	g := compileGridRoutes(t, "tala", source)
+	box := g.Root.Children["inner"].Box
+	e := d2exporter.ToConnection(g.Edges[0], g.Theme)
+	for _, p := range e.Route {
+		if !box.Contains(p) {
+			t.Fatalf("cross-cell route leaves its grid at %v", p)
+		}
+	}
+	p := e.GetLabelTopLeft()
+	if !box.Contains(p) || !box.Contains(geo.NewPoint(p.X+float64(e.LabelWidth), p.Y+float64(e.LabelHeight))) {
+		t.Fatalf("cross-cell label at %v leaves %s", p, box.ToString())
+	}
+}
+
+func TestGridContainsEdgeDecorations(t *testing.T) {
+	for _, engine := range builtinLayoutNames() {
+		t.Run(engine, func(t *testing.T) {
+			const source = `grid-columns: 1
+grid-gap: 0
+inner: "" {
+  grid-rows: 1
+  grid-gap: 0
+  a: "" {width: 25; height: 20}
+  b: "" {width: 25; height: 20}
+  a -> b: note {
+    icon: https://example.com/icon.svg
+    source-arrowhead.label: many records in a region
+    target-arrowhead.label: only one record is accepted
+  }
+}
+next`
+			g := compileGridRoutes(t, engine, source)
+			box := g.Root.Children["inner"].Box
+			e := d2exporter.ToConnection(g.Edges[0], g.Theme)
+			check := func(p *geo.Point, w, h int) {
+				t.Helper()
+				if !box.Contains(p) || !box.Contains(geo.NewPoint(p.X+float64(w), p.Y+float64(h))) {
+					t.Fatalf("decoration at %v (%d×%d) leaves %s", p, w, h, box.ToString())
+				}
+			}
+			check(e.GetLabelTopLeft(), e.LabelWidth, e.LabelHeight)
+			check(e.GetIconPosition(), d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE)
+			check(e.GetArrowheadLabelPosition(false), e.SrcLabel.LabelWidth, e.SrcLabel.LabelHeight)
+			check(e.GetArrowheadLabelPosition(true), e.DstLabel.LabelWidth, e.DstLabel.LabelHeight)
+		})
+	}
+}
+
+func TestGridLoopsClearOtherCells(t *testing.T) {
+	for _, engine := range builtinLayoutNames() {
+		for _, axes := range []string{"grid-rows: 3\ngrid-columns: 3", "grid-rows: 3", "grid-columns: 3"} {
+			t.Run(engine+"/"+axes, func(t *testing.T) {
+				g := compileGridRoutes(t, engine, axes+"\ngrid-gap: 0\na; b; c; d; e; f; g; h; i\ne -> e: retry\nd -> f")
+				loop := d2exporter.ToConnection(g.Edges[0], g.Theme)
+				lb := geo.NewBox(loop.GetLabelTopLeft(), float64(loop.LabelWidth), float64(loop.LabelHeight))
+				for _, o := range g.Objects {
+					if o == g.Edges[0].Src {
+						continue
+					}
+					if o.Box.Overlaps(*lb) {
+						t.Fatalf("loop label overlaps %s", o.ID)
+					}
+					for i, p := range loop.Route[1:] {
+						if o.Box.Intersects(geo.Segment{Start: loop.Route[i], End: p}, -1) {
+							t.Fatalf("loop crosses %s at %v–%v", o.ID, loop.Route[i], p)
+						}
+					}
+				}
+				// The ordinary edge sees the shifted endpoints and the existing loop.
+				link := g.Edges[1]
+				for _, port := range []struct {
+					p   *geo.Point
+					box *geo.Box
+				}{{link.Route[0], link.Src.Box}, {link.Route[len(link.Route)-1], link.Dst.Box}} {
+					b := port.box
+					outline := geo.NewBox(geo.NewPoint(b.TopLeft.X-1, b.TopLeft.Y-1), b.Width+2, b.Height+2)
+					if !outline.Contains(port.p) {
+						t.Fatalf("link detached from %s at %v", port.box.ToString(), port.p)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestGridConnectionIconFitsCanvas(t *testing.T) {
+	const source = `grid-rows: 1
+grid-gap: 0
+a: "" {width: 25; height: 20}
+b: "" {width: 25; height: 20}
+a -> b: note {icon: https://example.com/icon.svg}`
+	for _, engine := range builtinLayoutNames() {
+		t.Run(engine, func(t *testing.T) {
+			g := compileGridRoutes(t, engine, source)
+			d, err := d2exporter.Export(t.Context(), g, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tl, br := d.BoundingBox()
+			icon := d.Connections[0].GetIconPosition()
+			if float64(tl.X) > icon.X || float64(tl.Y) > icon.Y || float64(br.X) < icon.X+d2target.DEFAULT_ICON_SIZE || float64(br.Y) < icon.Y+d2target.DEFAULT_ICON_SIZE {
+				t.Fatalf("icon at %v falls outside canvas %v–%v", icon, tl, br)
+			}
+		})
+	}
+}
+
+func TestGridParallelCaptionsRemainDistinct(t *testing.T) {
+	for _, engine := range builtinLayoutNames() {
+		for _, src := range []string{
+			"grid-columns: 1\na -> b: start request\nb -> a: receive response",
+			"grid-columns: 1\ngrid-gap: 0\na -> b: start request\nb -> a: receive response",
+			"grid-rows: 1\na -> b: start\nb -> a: done\na -> b: again\nb -> a: stops",
+			`grid-rows: 1
+a: {shape: sql_table; id: int; more: int}
+b: {shape: sql_table; more: int; fk: int}
+a.id -> b.fk: start
+b.fk -> a.id: done
+a.id -> b.fk: retry
+b.fk -> a.id: stop`,
+		} {
+			g := compileGridRoutes(t, engine, src)
+			var seen []*geo.Box
+			for _, edge := range g.Edges {
+				c := d2exporter.ToConnection(edge, g.Theme)
+				if col := edge.SrcTableColumnIndex; col != nil && math.Abs(edge.Route[0].Y-(edge.Src.TopLeft.Y+(1.5+float64(*col))*edge.Src.Height/3)) > 1 {
+					t.Fatalf("%s left its named source row", edge.AbsID())
+				}
+				if col := edge.DstTableColumnIndex; col != nil && math.Abs(edge.Route[len(edge.Route)-1].Y-(edge.Dst.TopLeft.Y+(1.5+float64(*col))*edge.Dst.Height/3)) > 1 {
+					t.Fatalf("%s left its named destination row", edge.AbsID())
+				}
+				box := geo.NewBox(c.GetLabelTopLeft(), float64(c.LabelWidth), float64(c.LabelHeight))
+				for _, prior := range seen {
+					if prior.Overlaps(*box) {
+						t.Fatalf("%s: caption %q in %s overlaps %s", engine, c.Label, box.ToString(), prior.ToString())
+					}
+				}
+				seen = append(seen, box)
+			}
+		}
 	}
 }

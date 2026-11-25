@@ -295,11 +295,12 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 	// We can now run layout with accurate sizes of nested layout containers
 	// Layout according to the type of diagram
 	var err error
+	var fitGrid func([]*d2graph.Edge)
 	if len(g.Objects) > 0 {
 		switch graphInfo.DiagramType {
 		case GridDiagram:
 			log.Debug(ctx, "layout grid", slog.Any("rootlevel", g.RootLevel), slog.Any("shapes", graphShapes{g}))
-			if err = d2grid.LayoutWithRouter(ctx, g, edgeRouter); err != nil {
+			if fitGrid, err = d2grid.PlaceCells(ctx, g, edgeRouter); err != nil {
 				return err
 			}
 
@@ -392,6 +393,9 @@ func LayoutNested(ctx context.Context, g *d2graph.Graph, graphInfo GraphInfo, co
 		}
 	}
 
+	if fitGrid != nil {
+		fitGrid(extractedEdges)
+	}
 	if err := validateObjectPositions(g.Objects); err != nil {
 		return err
 	}
@@ -791,8 +795,8 @@ func PositionNested(container *d2graph.Object, nestedGraph *d2graph.Graph) {
 		(container.Width != original.Width || container.Height != original.Height) {
 		// Stretching a shaped cell can move its usable interior (e.g. the
 		// sloping sides of a diamond). Preserve the children's inset from it.
-		oldInner := original.ToShape().GetInnerBox()
-		newInner := container.ToShape().GetInnerBox()
+		oldInner := original.LayoutInnerBox()
+		newInner := container.LayoutInnerBox()
 		dx = newInner.TopLeft.X - oldInner.TopLeft.X
 		dy = newInner.TopLeft.Y - oldInner.TopLeft.Y
 	}

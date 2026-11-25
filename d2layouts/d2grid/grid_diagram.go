@@ -11,6 +11,9 @@ import (
 type gridDiagram struct {
 	objects []*d2graph.Object
 	edges   []*d2graph.Edge
+	// Dynamic rows or columns have different numbers of cells. Keep their
+	// membership to reserve room for routed self-loops.
+	tracks  [][]*d2graph.Object
 	rows    int
 	columns int
 
