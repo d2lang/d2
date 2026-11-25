@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/hierarchy"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
@@ -111,6 +112,7 @@ func TestHandoffFallbacks(t *testing.T) {
 		{"fixed-origin", "workers.top: 110\nworkers.left: 260"},
 		{"caption", "(events.placed -> workers.dispatch)[0]: dispatch"},
 		{"outside-caption", "events.stock.label.near: outside-top-center"},
+		{"authored-title", "events.label.near: bottom-center"},
 		{"decorated-port", "(events.placed -> workers.dispatch)[0].target-arrowhead: count"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,6 +127,7 @@ func TestHandoffFallbacks(t *testing.T) {
 		{"duplicate", "events.stock -> workers.stock"},
 		{"internal", "events.placed -> events.stock"},
 		{"backward", "workers.stock -> events.placed"},
+		{"invisible-endpoint", "events.refund.label: \"\"\nevents.refund.style.fill: transparent\nevents.refund.style.stroke: transparent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := handoffGraph(t, handoffFixture+tc.extra+"\n")
@@ -137,5 +140,56 @@ func TestHandoffFallbacks(t *testing.T) {
 				t.Fatalf("accepted=%v, error=%v", changed, err)
 			}
 		})
+	}
+}
+
+func TestHandoffPreservesSavedPanelTitles(t *testing.T) {
+	g := handoffGraph(t, handoffFixture)
+	// A serialized graph can carry chosen title positions even when the
+	// original source left both panels' label.near unset.
+	bottom, top := label.InsideBottomCenter.String(), label.InsideTopCenter.String()
+	g.Root.Children["events"].LabelPosition = &bottom
+	g.Root.Children["workers"].LabelPosition = &top
+	data, err := d2graph.SerializeGraph(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := d2graph.NewGraph()
+	if err := d2graph.DeserializeGraph(data, restored); err != nil {
+		t.Fatal(err)
+	}
+	if err := Layout(t.Context(), restored, nil); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"events": bottom, "workers": top} {
+		panel := restored.Root.Children[id]
+		if panel.LabelPosition == nil || *panel.LabelPosition != want {
+			t.Fatalf("%s lost its saved %s title", id, want)
+		}
+		w, h := float64(panel.LabelDimensions.Width), float64(panel.LabelDimensions.Height)
+		pos := label.FromString(want).GetPointOnBox(panel.Box, label.PADDING, w, h)
+		for _, child := range panel.ChildrenArray {
+			if pos.Y < child.TopLeft.Y+child.Height && child.TopLeft.Y < pos.Y+h {
+				t.Errorf("%s overlaps %s's title band", child.AbsID(), id)
+			}
+		}
+	}
+	for _, e := range restored.Edges[:5] {
+		if len(e.Route) != 2 || e.Route[0].Y != e.Route[1].Y ||
+			e.Route[0].Y != e.Src.TopLeft.Y+e.Src.Height/2 || e.Route[1].Y != e.Dst.TopLeft.Y+e.Dst.Height/2 {
+			t.Errorf("%s was not placed on its shared row: %v", e.AbsID(), e.Route)
+		}
+	}
+}
+
+func TestHandoffRejectsUnmatchedPanelSizes(t *testing.T) {
+	for _, source := range []string{
+		"direction: right\na -> b\na -> b",
+		handoffFixture + "workers.extra\n",
+		handoffFixture + "events.refund.nested\n",
+	} {
+		if supportsHandoffs(handoffGraph(t, source)) {
+			t.Fatal("accepted objects outside two equal rows of leaves")
+		}
 	}
 }

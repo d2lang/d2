@@ -73,12 +73,15 @@ func orderHandoffRows(ctx context.Context, rows []handoffRow, edges []*layoutgra
 	// row, then displacement from source declaration order. Visit remaining
 	// exact ties in declaration order.
 	bestCost := [3]int{math.MaxInt, math.MaxInt, math.MaxInt}
+	// Every off-row connection spans at least one row. If declaration order
+	// attains that bound without crossings, it is already the optimal order.
+	minCost := [3]int{0, len(edges) - len(rows), 0}
 	var best []handoffRow
 	order := make([]int, len(rows))
 	position := make([]int, len(rows))
 	var visit func(int, int)
 	visit = func(depth, used int) {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || bestCost == minCost {
 			return
 		}
 		if depth < len(rows) {
@@ -135,7 +138,7 @@ func PlaceHandoffs(ctx context.Context, g *layoutgraph.Graph, declaration map[la
 	seen := make(map[[2]*layoutgraph.Node]bool, len(g.Edges))
 	for _, e := range g.Edges {
 		pair := [2]*layoutgraph.Node{e.From, e.To}
-		if seen[pair] || e.From.Container != source || e.To.Container != target ||
+		if seen[pair] || e.From.Container != source || e.To.Container != target || e.From.IsInvisible || e.To.IsInvisible ||
 			e.HasSourceArrow() || !e.HasTargetArrow() || e.IsInvisible || e.IsCurve ||
 			e.Label != nil || e.SourceArrowheadLabel != nil || e.TargetArrowheadLabel != nil {
 			return false, nil
@@ -155,11 +158,15 @@ func PlaceHandoffs(ctx context.Context, g *layoutgraph.Graph, declaration map[la
 
 	const inset, corridor, rowGap = 24., 80., 26.
 	widths := [2]float64{}
-	y := 0.
+	var topTitle, bottomTitle float64
 	for i, root := range []*layoutgraph.Node{source, target} {
 		if root.Label != nil {
 			widths[i] = root.Label.Width
-			y = max(y, root.Label.Height)
+			if root.Label.PositionFixed() && root.Label.Position == label.InsideBottomCenter {
+				bottomTitle = max(bottomTitle, root.Label.Height)
+			} else {
+				topTitle = max(topTitle, root.Label.Height)
+			}
 		}
 		for _, child := range g.Containers[root] {
 			widths[i] = max(widths[i], child.Width)
@@ -169,7 +176,7 @@ func PlaceHandoffs(ctx context.Context, g *layoutgraph.Graph, declaration map[la
 		}
 		widths[i] += 2 * inset
 	}
-	y += 20
+	y := topTitle + 20
 	positions := make(map[*layoutgraph.Node]*geo.Point, len(g.Nodes))
 	indices := make(map[*layoutgraph.Node]int, 2*len(rows))
 	for i, row := range rows {
@@ -179,7 +186,7 @@ func PlaceHandoffs(ctx context.Context, g *layoutgraph.Graph, declaration map[la
 		indices[row.from], indices[row.to] = i, i
 		y += h + rowGap
 	}
-	height := y - rowGap + inset
+	height := y - rowGap + inset + bottomTitle
 	positions[source], positions[target] = geo.NewPoint(0, 0), geo.NewPoint(widths[0]+corridor, 0)
 	type ports struct{ from, to float64 }
 	slots := make(map[*layoutgraph.Edge]ports, len(g.Edges))
@@ -242,7 +249,7 @@ func PlaceHandoffs(ctx context.Context, g *layoutgraph.Graph, declaration map[la
 	source.Width, target.Width = widths[0], widths[1]
 	source.Height, target.Height = height, height
 	for _, root := range roots {
-		if root.Label != nil {
+		if root.Label != nil && !root.Label.PositionFixed() {
 			root.Label.Position = label.InsideTopCenter
 		}
 	}
