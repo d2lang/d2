@@ -4,6 +4,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/d2lang/d2/d2graph"
@@ -21,7 +22,10 @@ type boardTransfer struct {
 	stays      map[string]*d2target.Connection // current ID -> old rigid wire
 	oldStays   map[string]bool
 	captionIDs map[string]string // shared host whose title changes sides
+	reconnect  float64           // first instant when all rounded geometry has landed
 }
+
+const transferDepart, transferArrive = .14, .84
 
 func newBoardTransfer(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.Graph) *boardTransfer {
 	if prev == nil || next == nil || oldGraph == nil || newGraph == nil || !next.LayoutContinuity ||
@@ -92,6 +96,7 @@ func newBoardTransfer(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.
 		return nil
 	}
 	p.captionIDs = make(map[string]string)
+	maxTravel := 0.
 	for i := range next.Shapes {
 		b := &next.Shapes[i]
 		a := p.shapes[b.ID]
@@ -107,6 +112,9 @@ func newBoardTransfer(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.
 			return nil
 		}
 		p.shapes[b.ID] = a
+		maxTravel = max(maxTravel,
+			math.Abs(float64(b.Pos.X-a.Pos.X)), math.Abs(float64(b.Pos.Y-a.Pos.Y)),
+			math.Abs(float64(b.Width-a.Width)), math.Abs(float64(b.Height-a.Height)))
 		if a.LabelPosition != b.LabelPosition && b.Label != "" {
 			id := b.ID + ".__handoff_title"
 			for oldShapes[id] != nil || newShapes[id] != nil {
@@ -215,6 +223,13 @@ func newBoardTransfer(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.
 			return nil
 		}
 	}
+	// Bodies and their rigid wires round to whole-pixel displacements.
+	// Fade attachments back as soon as even the longest move rounds home.
+	const ticks = 1024
+	landed := sort.Search(ticks, func(i int) bool {
+		return (1-boardGlide(float64(i)/ticks))*maxTravel < .5
+	})
+	p.reconnect = transferDepart + (transferArrive-transferDepart)*float64(landed)/ticks
 	return p
 }
 
@@ -280,9 +295,8 @@ func motionBoxesCross(a, b, c, d *d2target.Shape) bool {
 
 func (p *boardTransfer) sample(base *d2target.Diagram, t float64) *d2target.Diagram {
 	// Leave and reconnect at rest. A wire never points at a vacated port.
-	const leave, arrive = .18, .78
 	board := base
-	if t < leave {
+	if t < transferDepart {
 		board = p.before
 	}
 	frame := *board
@@ -290,8 +304,14 @@ func (p *boardTransfer) sample(base *d2target.Diagram, t float64) *d2target.Diag
 	frame.TweenDurationMS, frame.TweenFrameEndsMS, frame.GridMotion = 0, nil, false
 	frame.Shapes = slices.Clone(board.Shapes)
 	frame.Connections = make([]d2target.Connection, 0, len(board.Connections))
-	travel := gridEase(gridPhase(t, leave, arrive))
-	if t >= leave {
+	// Give the body most of the clock. Its slower approach to the receiving
+	// host is shared by its outline, contents, and internal connectors.
+	travel := boardGlide(gridPhase(t, transferDepart, transferArrive))
+	attachmentOpacity := boardGlide(gridPhase(t, p.reconnect, 1))
+	if t < transferDepart {
+		attachmentOpacity = 1 - boardGlide(t/transferDepart)
+	}
+	if t >= transferDepart {
 		for i := range frame.Shapes {
 			s := &frame.Shapes[i]
 			old := p.shapes[s.ID]
@@ -314,23 +334,19 @@ func (p *boardTransfer) sample(base *d2target.Diagram, t float64) *d2target.Diag
 			caption := *s
 			s.Label = ""
 			s.LabelWidth, s.LabelHeight = 0, 0
-			alpha := gridEase(gridPhase(t, arrive, 1))
-			if t < leave {
-				alpha = 1 - gridEase(t/leave)
-			}
-			if alpha > 0 {
+			if attachmentOpacity > 0 {
 				caption.ID = id
 				caption.Fill, caption.Stroke, caption.FillPattern = "transparent", "transparent", ""
 				caption.DoubleBorder = false
-				caption.Opacity *= alpha
+				caption.Opacity *= attachmentOpacity
 				frame.Shapes = append(frame.Shapes, caption)
 			}
 		}
 	}
 	for _, e := range board.Connections {
-		if t < leave {
+		if t < transferDepart {
 			if !p.oldStays[e.ID] {
-				e.Opacity *= 1 - gridEase(t/leave)
+				e.Opacity *= attachmentOpacity
 			}
 		} else if before := p.stays[e.ID]; before != nil {
 			if travel < 1 && (before.Route[0].X != e.Route[0].X || before.Route[0].Y != e.Route[0].Y) {
@@ -342,7 +358,7 @@ func (p *boardTransfer) sample(base *d2target.Diagram, t float64) *d2target.Diag
 				}
 			}
 		} else {
-			e.Opacity *= gridEase(gridPhase(t, arrive, 1))
+			e.Opacity *= attachmentOpacity
 		}
 		if e.Opacity > 0 {
 			frame.Connections = append(frame.Connections, e)

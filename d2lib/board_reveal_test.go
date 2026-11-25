@@ -222,3 +222,112 @@ steps: {more: {a -> b; b.tooltip: "New object tip"; b.link: "https://example.com
 		t.Fatal("settled node lost its tooltip or link badge")
 	}
 }
+
+func TestBoardRevealEasesToThePortThenRebounds(t *testing.T) {
+	const src = `vars: {d2-config: {animate-interval: 1400ms; animate-duration: 800ms}}
+direction: right
+order: Order service
+queue: Dispatch queue
+order -> queue
+steps: {ship: {ship: Shipping; queue -> ship}}`
+	prev, graph := compileContinuity(t, src, d2talalayout.ContinueBoard)
+	next, g := prev.Steps[0], graph.Steps[0]
+	m := planBoardReveal(prev, next, g)
+	if m == nil || m.nodes["ship"].rebound <= 0 {
+		t.Fatal("isolated leaf should have room for a small rebound")
+	}
+	apply := func(t float64) *d2target.Diagram {
+		frame := *next
+		frame.Shapes = slices.Clone(next.Shapes)
+		m.apply(&frame, t)
+		return &frame
+	}
+	wire := continuityWire(t, next, "queue", "ship")
+	half := continuityWire(t, apply(.25), "queue", "ship")
+	start, port := wire.Route[0], wire.Route[1]
+	if len(wire.Route) != 2 || *half.Route[0] != *start {
+		t.Fatal("expected a straight route anchored at the dispatch queue")
+	}
+	tip := half.Route[1]
+	fraction := math.Hypot(tip.X-start.X, tip.Y-start.Y) / math.Hypot(port.X-start.X, port.Y-start.Y)
+	if math.Abs(fraction-.6875) > 1e-6 {
+		t.Fatalf("at half the trace time, tip has traveled %.3f of the route", fraction)
+	}
+	if s := shapeByID(t, apply(.49), "ship"); s.Opacity != 0 {
+		t.Fatal("the node appeared before the stroke arrived")
+	}
+	body := shapeByID(t, next, "ship")
+	peak := shapeByID(t, apply(.5+.5*.59), "ship")
+	if float64(body.Pos.X) != port.X || peak.Pos.X != body.Pos.X || math.Abs(float64(peak.Pos.Y)+float64(peak.Height)/2-port.Y) > 1 {
+		t.Fatal("the overshoot moved the port away from the arriving wire")
+	}
+	if peak.Width <= body.Width || peak.Width > body.Width+5 || peak.Height > body.Height+5 {
+		t.Fatalf("rebound changed %dx%d to %dx%d", body.Width, body.Height, peak.Width, peak.Height)
+	}
+	end := apply(1)
+	if !reflect.DeepEqual(end.Shapes, next.Shapes) || !reflect.DeepEqual(end.Connections, next.Connections) {
+		t.Fatal("revealed diagram differs from its authored endpoint")
+	}
+	// Put a neighboring body, then a passing wire, just outside the final
+	// right face. They both need the settling motion to stay within the box.
+	n := g.Root.Children["ship"]
+	for _, obstacle := range []string{"body", "wire"} {
+		packed := *next
+		packed.Shapes = slices.Clone(next.Shapes)
+		packed.Connections = slices.Clone(next.Connections)
+		shapes := gridEdgeShapeMap(packed.Shapes)
+		x, y := body.Pos.X+body.Width+2, body.Pos.Y
+		if obstacle == "body" {
+			shapes["order"].Pos = d2target.Point{X: x, Y: y}
+		} else {
+			packed.Connections[0].Route = []*geo.Point{geo.NewPoint(float64(x), float64(y-20)), geo.NewPoint(float64(x), float64(y+body.Height+20))}
+		}
+		b := m.nodes["ship"]
+		b.rebound = m.popClearance(n, &packed, g, shapes, &packed.Connections[1], b)
+		if b.rebound != 0 {
+			t.Errorf("nearby %s was too close to allow a rebound", obstacle)
+		}
+		last := 0.
+		for i := 0; i <= 100; i++ {
+			scale, _ := b.pop(float64(i) / 100)
+			if scale < last || scale > 1 || i == 100 && scale != 1 {
+				t.Fatalf("tight %s: scale %.5f at %d%%", obstacle, scale, i)
+			}
+			last = scale
+		}
+	}
+}
+
+func TestBoardTraceRoundsOffSpeedAtSharpTurns(t *testing.T) {
+	points := []*geo.Point{geo.NewPoint(777, 410), geo.NewPoint(777, 490), geo.NewPoint(497, 490), geo.NewPoint(497, 570)}
+	w := boardTrace{points: points, lengths: []float64{0, 80, 360, 440}}
+	// Bisection gives the instant the pen reaches the bend's location.
+	lo, hi := 0., 1.
+	for range 40 {
+		mid := (lo + hi) / 2
+		if boardStroke(mid) < 80./440 {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	const dt = .0001
+	speed := (w.travel(lo+dt) - w.travel(lo-dt)) / (boardStroke(lo+dt) - boardStroke(lo-dt))
+	if speed < .50 || speed > .55 {
+		t.Fatalf("speed at the first turn was %.1f%% of the straight stroke", 100*speed)
+	}
+	last := 0.
+	for i := 0; i <= 1000; i++ {
+		d := w.travel(float64(i) / 1000)
+		if d < last || d > 1 || i == 0 && d != 0 || i == 1000 && d != 1 {
+			t.Fatalf("unexpected travel %.8f at sample %d", d, i)
+		}
+		last = d
+	}
+	// A straight span that happens to have an extra waypoint retains its speed.
+	w.points = []*geo.Point{geo.NewPoint(0, 0), geo.NewPoint(80, 0), geo.NewPoint(440, 0)}
+	w.lengths = []float64{0, 80, 440}
+	if w.travel(lo+dt) != boardStroke(lo+dt) {
+		t.Fatal("collinear waypoints slowed down the tip")
+	}
+}

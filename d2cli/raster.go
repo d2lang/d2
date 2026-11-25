@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -551,11 +552,11 @@ type gifRenderSummary struct {
 	maxWidth, maxHeight int
 }
 
-// Browsers commonly display a 0cs or 1cs GIF frame for 100ms. Grid motion
-// samples at up to 60fps and its paint and geometry boundaries can be closer
-// still. Pick the nearest native sample for each 20ms tick before rendering,
-// and reserve the last two centiseconds for the exact authored endpoint.
-func gridGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
+// Browsers commonly display a 0cs or 1cs GIF frame for 100ms. Motion can
+// sample at 60fps and paint boundaries can be closer still. Pick the nearest
+// native sample for each 20ms tick and reserve the last two centiseconds
+// for the exact authored endpoint.
+func motionGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
 	end := frames[len(frames)-1]
 	slot := end.ElapsedMS + end.DurationMS
 	ticks := (slot + 9) / 10
@@ -645,8 +646,10 @@ func renderGIFWithSession(
 	var boardFrames []d2animate.Frame
 	for _, board := range boards {
 		boardFrames = d2animate.AppendBoardFrames(boardFrames[:0], board, intervalMs)
-		if board.GridMotion {
-			boardFrames = gridGIFFrames(boardFrames)
+		motionTicks := board.GridMotion || board.LayoutContinuity && len(board.TweenFrames) > 0 &&
+			slices.ContainsFunc(boardFrames, func(f d2animate.Frame) bool { return f.DurationMS < 20 })
+		if motionTicks {
+			boardFrames = motionGIFFrames(boardFrames)
 		}
 		for _, segment := range boardFrames {
 			delay := xgif.StepDelay(time.Duration(segment.ElapsedMS)*time.Millisecond, time.Duration(segment.DurationMS)*time.Millisecond, segment.TweenSample)
@@ -660,7 +663,7 @@ func renderGIFWithSession(
 					return summary, err
 				}
 			}
-			if board.GridMotion {
+			if motionTicks {
 				// A short endpoint hold can otherwise be split into 1cs frames.
 				count = min(count, max(1, delay/2))
 			}

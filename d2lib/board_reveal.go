@@ -1,6 +1,7 @@
 package d2lib
 
 import (
+	"image"
 	"math"
 	"slices"
 	"sort"
@@ -8,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 )
 
 // Trace new connections outward from familiar objects. A new leaf grows
@@ -21,6 +23,7 @@ type boardReveal struct {
 
 type boardBirth struct {
 	pivot      geo.Point
+	rebound    float64
 	start, end float64
 }
 
@@ -115,7 +118,7 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 				port = e.Route[0]
 			}
 			birth.pivot = *port
-			birth.start = float64(level-1) + .58
+			birth.start = float64(level-1) + .50
 			birth.end = float64(level)
 		}
 		m.nodes[id] = birth
@@ -129,7 +132,7 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 			if arrival[id] == e {
 				backwards = e.Src == id
 				start = float64(depth[id] - 1)
-				end = start + .60
+				end = start + .50
 				break
 			}
 		}
@@ -151,7 +154,149 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 	if m.end == 0 {
 		return nil
 	}
+	// Only grow past the authored box after reserving the extra space.
+	// Large edits still get the damped arrival within the ordinary footprint.
+	if len(next.Shapes) <= 40 && len(next.Connections) <= 48 {
+		for _, n := range g.Objects {
+			id := n.AbsID()
+			if birth, ok := m.nodes[id]; ok {
+				birth.rebound = m.popClearance(n, next, g, shapes, arrival[id], birth)
+				m.nodes[id] = birth
+			}
+		}
+	}
 	return m
+}
+
+func (w *boardTrace) travel(t float64) float64 {
+	distance := boardStroke(t)
+	if len(w.points) <= 2 {
+		return distance
+	}
+	total := w.lengths[len(w.lengths)-1]
+	at := distance * total
+	i := sort.SearchFloat64s(w.lengths, at)
+	if i > 0 && at-w.lengths[i-1] < w.lengths[i]-at {
+		i--
+	}
+	if i == 0 || i == len(w.points)-1 {
+		return distance
+	}
+	a, b, c := w.points[i-1], w.points[i], w.points[i+1]
+	left, right := w.lengths[i]-w.lengths[i-1], w.lengths[i+1]-w.lengths[i]
+	// A tiny jog or an almost straight join should read as one stroke.
+	if min(left, right) < 8 || (b.X-a.X)*(c.X-b.X)+(b.Y-a.Y)*(c.Y-b.Y) > math.Sqrt2/2*left*right {
+		return distance
+	}
+	return boardCorner(distance, w.lengths[i]/total, min(.10, min(left, right)/(2*total)))
+}
+
+// A short scale rebound around the arrival port is limited to five pixels.
+// With a tight footprint use a critically damped approach, settling from below.
+func (b boardBirth) pop(t float64) (scale, opacity float64) {
+	alpha := gridEase(min(1, t/.32))
+	if b.rebound == 0 {
+		r := 1 - t
+		return 1 - .68*r*r*(1+7*t)*math.Exp(-5*t), alpha
+	}
+	const peak = .59
+	if t < peak {
+		return .32 + (.68+b.rebound)*boardStroke(t/peak), alpha
+	}
+	return 1 + b.rebound*(1-gridEase((t-peak)/(1-peak))), alpha
+}
+
+func (m *boardReveal) popClearance(n *d2graph.Object, d *d2target.Diagram, g *d2graph.Graph, shapes map[string]*d2target.Shape, arrival *d2target.Connection, b boardBirth) float64 {
+	s := shapes[n.AbsID()]
+	// Decorated shapes can extend beyond the body. Their contained arrival
+	// doesn't need a painted-silhouette approximation.
+	if s.Type != d2target.ShapeRectangle || s.Shadow || s.ThreeDee || s.Multiple || s.Icon != nil || s.Language != "" ||
+		s.LabelPosition != "" && label.FromString(s.LabelPosition) != label.InsideMiddleCenter ||
+		s.LabelWidth > s.Width || s.LabelHeight > s.Height || s.Width < 1 || s.Height < 1 {
+		return 0
+	}
+	body := image.Rect(s.Pos.X, s.Pos.Y, s.Pos.X+s.Width, s.Pos.Y+s.Height)
+	if b.pivot.X < float64(body.Min.X) || b.pivot.X > float64(body.Max.X) || b.pivot.Y < float64(body.Min.Y) || b.pivot.Y > float64(body.Max.Y) {
+		return 0
+	}
+	extra := min(.045, 5/float64(max(s.Width, s.Height)))
+	// Include the growing stroke, pixel rounding, and a second entrant's
+	// five-pixel rebound when two leaves are introduced together.
+	pad := int(math.Ceil(extra*float64(max(s.Width, s.Height))+(1+extra)*s.RenderedStrokeWidth()/2)) + 2
+	area := body.Inset(-pad)
+	for _, other := range g.Objects {
+		if n == other {
+			continue
+		}
+		o := shapes[other.AbsID()]
+		if o == nil {
+			return 0
+		}
+		if n.IsDescendantOf(other) {
+			if !o.CanDrawOutline() {
+				return 0
+			}
+			r := image.Rect(o.Pos.X, o.Pos.Y, o.Pos.X+o.Width, o.Pos.Y+o.Height).Inset(2 + int(math.Ceil(o.RenderedStrokeWidth()/2)))
+			if o.Label != "" {
+				switch label.FromString(o.LabelPosition) {
+				case label.InsideTopCenter:
+					r.Min.Y += o.LabelHeight + 2*label.PADDING
+				case label.InsideBottomCenter:
+					r.Max.Y -= o.LabelHeight + 2*label.PADDING
+				default:
+					return 0
+				}
+			}
+			if !area.In(r) {
+				return 0
+			}
+		} else {
+			neighbor := *d
+			neighbor.Shapes = []d2target.Shape{*o}
+			neighbor.Connections = nil
+			lo, hi := neighbor.BoundingBox()
+			reserved := image.Rect(lo.X, lo.Y, hi.X, hi.Y)
+			if _, entering := m.nodes[o.ID]; entering {
+				reserved = reserved.Inset(-6)
+			}
+			if area.Overlaps(reserved) {
+				return 0
+			}
+		}
+	}
+	for i := range d.Connections {
+		e := &d.Connections[i]
+		if e.Opacity == 0 {
+			continue
+		}
+		if len(e.Route) < 2 || slices.Contains(e.Route, nil) {
+			return 0
+		}
+		if e == arrival && len(e.Route) == 2 {
+			other := e.Route[0]
+			if e.Src == s.ID {
+				other = e.Route[1]
+			}
+			if b.pivot.X == float64(body.Min.X) && other.X < b.pivot.X || b.pivot.X == float64(body.Max.X) && other.X > b.pivot.X ||
+				b.pivot.Y == float64(body.Min.Y) && other.Y < b.pivot.Y || b.pivot.Y == float64(body.Max.Y) && other.Y > b.pivot.Y {
+				continue
+			}
+		}
+		if w := m.wires[e.ID]; w != nil && w.start >= b.end {
+			continue
+		}
+		if e.Icon != nil || e.Label != "" || e.SrcLabel != nil || e.DstLabel != nil || e.Tooltip != "" || e.Link != "" {
+			return 0
+		}
+		r := area.Inset(-int(math.Ceil(boardArrowReach(e))))
+		expanded := *s
+		expanded.Pos = d2target.Point{X: r.Min.X, Y: r.Min.Y}
+		expanded.Width, expanded.Height = r.Dx(), r.Dy()
+		if transferWireCrosses(e, 0, 0, s, &expanded) {
+			return 0
+		}
+	}
+	return extra
 }
 
 func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
@@ -160,7 +305,7 @@ func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 		s := &frame.Shapes[i]
 		if birth, ok := m.nodes[s.ID]; ok && now < birth.end {
 			ratio := gridPhase(now, birth.start, birth.end)
-			scale, alpha := gridPop(ratio)
+			scale, alpha := birth.pop(ratio)
 			x := birth.pivot.X + (float64(s.Pos.X)-birth.pivot.X)*scale
 			y := birth.pivot.Y + (float64(s.Pos.Y)-birth.pivot.Y)*scale
 			*s = scaleMotionShape(*s, x, y, scale, alpha)
@@ -173,8 +318,9 @@ func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 	for _, e := range frame.Connections {
 		if wire := m.wires[e.ID]; wire != nil {
 			t := gridPhase(now, wire.start, wire.end)
+			lengthFraction := wire.travel(t)
 			if t < 1 {
-				path := wire.prefix(gridEase(t))
+				path := wire.prefix(lengthFraction)
 				if len(path) < 2 {
 					continue
 				}
@@ -185,7 +331,7 @@ func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 				e.Label, e.Icon, e.SrcLabel, e.DstLabel = "", nil, nil, nil
 			}
 			if t < 1 {
-				revealed := gridEase(t) * wire.lengths[len(wire.lengths)-1]
+				revealed := lengthFraction * wire.lengths[len(wire.lengths)-1]
 				// Do not let a full-size marker overwhelm a tiny first segment.
 				w1, _ := e.SrcArrow.Dimensions(e.RenderedStrokeWidth())
 				w2, _ := e.DstArrow.Dimensions(e.RenderedStrokeWidth())

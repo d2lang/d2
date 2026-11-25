@@ -488,6 +488,40 @@ func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
 	}
 }
 
+func TestRenderGIFDenseContinuitySamples(t *testing.T) {
+	step := simpleRasterDiagram()
+	step.LayoutContinuity = true
+	step.TweenDurationMS = 800
+	step.Shapes[0].Fill = "#0000ff"
+	for range 48 {
+		sample := simpleRasterDiagram()
+		sample.Shapes[0].Fill = "#ff0000"
+		step.TweenFrames = append(step.TweenFrames, sample)
+	}
+	data, _, err := renderGIF(t.Context(), "-", false, step, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 800, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	animation, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, delay := range animation.Delay {
+		if delay < 2 {
+			t.Fatalf("delay %dcs will play slowly in browsers", delay)
+		}
+		total += delay
+	}
+	if total != 80 || len(animation.Delay) != 40 {
+		t.Fatalf("got %d frames over %dcs", len(animation.Delay), total)
+	}
+	last := animation.Image[len(animation.Image)-1].At(5, 5)
+	if got := color.NRGBAModel.Convert(last).(color.NRGBA); got != (color.NRGBA{B: 255, A: 255}) {
+		t.Fatal("lost the authored endpoint")
+	}
+}
+
 func TestRenderGIFSingleStepShorterThanTwoTicks(t *testing.T) {
 	step := simpleRasterDiagram()
 	step.TweenDurationMS = 18

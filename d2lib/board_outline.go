@@ -1,12 +1,15 @@
 package d2lib
 
 import (
+	"image"
+	"math"
 	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 )
 
 // Panel IDs map to their stagger within the incoming step. The outer frame
@@ -181,6 +184,18 @@ func planBoardOutline(prev, next *d2target.Diagram, previousGraph, nextGraph *d2
 	if matched != len(prev.Connections) || len(wrapped) > 0 && plan.needsReveal {
 		return nil
 	}
+	// Start the pen as the contents settle only when their remaining paths
+	// already clear every new frame. Nested borders still follow the outer one.
+	gather := 0.
+	if len(plan.positions) > 0 {
+		gather = boardTracePickup
+		for n := range panels {
+			if !plan.canTraceDuringGather(n, wrapped, after) {
+				gather = boardGatherEnd
+				break
+			}
+		}
+	}
 	for n := range panels {
 		depth := 0
 		for parent := n.Parent; parent != nil; parent = parent.Parent {
@@ -188,17 +203,113 @@ func planBoardOutline(prev, next *d2target.Diagram, previousGraph, nextGraph *d2
 				depth++
 			}
 		}
-		start := min(.24, float64(depth)*.12)
+		stagger := min(.24, float64(depth)*.12)
 		if len(plan.positions) > 0 {
-			start = .5 + start/2
+			stagger /= 2
 		}
+		start := gather + stagger
 		plan.start[n.AbsID()] = start
 	}
 	return plan
 }
 
+const (
+	boardGatherEnd   = .56
+	boardTracePickup = .29
+)
+
+// A straight journey between the pickup and final positions stays inside
+// their bounding rectangle. Keep that rectangle clear of the new border and
+// its title before allowing the pen to start. Complex captions wait until rest.
+func (o *boardOutline) canTraceDuringGather(panel *d2graph.Object, wrapped map[*d2graph.Object]*d2graph.Object, shapes map[string]*d2target.Shape) bool {
+	s := shapes[panel.AbsID()]
+	border := image.Rect(s.Pos.X, s.Pos.Y, s.Pos.X+s.Width, s.Pos.Y+s.Height)
+	pad := int(math.Ceil(s.RenderedStrokeWidth()/2)) + 1
+	inside, outside := border.Inset(pad), border.Inset(-pad)
+	var title image.Rectangle
+	if s.Label != "" {
+		switch label.FromString(s.LabelPosition) {
+		case label.InsideTopLeft, label.InsideTopCenter, label.InsideTopRight:
+			inside.Min.Y += s.LabelHeight + label.PADDING
+			title = image.Rect(outside.Min.X, outside.Min.Y, outside.Max.X, inside.Min.Y)
+		case label.InsideBottomLeft, label.InsideBottomCenter, label.InsideBottomRight:
+			inside.Max.Y -= s.LabelHeight + label.PADDING
+			title = image.Rect(outside.Min.X, inside.Max.Y, outside.Max.X, outside.Max.Y)
+		default:
+			return false
+		}
+	}
+	travel := boardGlide(boardTracePickup / boardGatherEnd)
+	pickup := func(child *d2target.Shape) image.Point {
+		if from, moving := o.positions[child.ID]; moving {
+			return image.Pt(gridLerpInt(from.X, child.Pos.X, travel), gridLerpInt(from.Y, child.Pos.Y, travel))
+		}
+		return image.Pt(child.Pos.X, child.Pos.Y)
+	}
+	members := make(map[string]bool, len(wrapped))
+	for n := range wrapped {
+		id := n.AbsID()
+		members[id] = n.IsDescendantOf(panel)
+		if _, moving := o.positions[id]; !moving {
+			continue
+		}
+		child := shapes[id]
+		pos := label.FromString(child.LabelPosition)
+		if child.Label != "" && (pos.IsOutside() || pos.IsBorder()) {
+			return false
+		}
+		start := pickup(child)
+		final := image.Rect(child.Pos.X, child.Pos.Y, child.Pos.X+child.Width, child.Pos.Y+child.Height)
+		sweep := final.Union(image.Rect(0, 0, child.Width, child.Height).Add(start)).Inset(-int(math.Ceil(child.RenderedStrokeWidth() / 2)))
+		if members[id] {
+			if !sweep.In(inside) {
+				return false
+			}
+		} else if sweep.Overlaps(outside) {
+			return false
+		}
+	}
+	if o.edges != nil {
+		for _, pair := range o.edges.pairs {
+			e := pair.after.edge
+			if e.Label != "" || e.SrcLabel != nil || e.DstLabel != nil {
+				return false
+			}
+			sweep := gatherWireSweep(pair.after, pickup)
+			if sweep.Overlaps(title) ||
+				members[e.Src] && members[e.Dst] && !sweep.In(inside) ||
+				!members[e.Src] && !members[e.Dst] && sweep.Overlaps(outside) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Direct ports clip the center line. Its swept bounds contain every
+// intermediate shaft even when both endpoints move independently.
+func gatherWireSweep(wire gridEdgeLayout, pickup func(*d2target.Shape) image.Point) image.Rectangle {
+	var sweep image.Rectangle
+	for _, end := range [2]*d2target.Shape{wire.src, wire.dst} {
+		start, last := pickup(end), image.Pt(end.Pos.X, end.Pos.Y)
+		center := image.Rect(end.Width/2, end.Height/2, end.Width/2+1, end.Height/2+1)
+		sweep = sweep.Union(center.Add(start)).Union(center.Add(last))
+	}
+	return sweep.Inset(-int(math.Ceil(boardArrowReach(wire.edge) + wire.edge.RenderedStrokeWidth()/2 + 1)))
+}
+
+// Both pen tips cover w+h: half the top, a side, and half the bottom.
+// Let the stroke gather speed early and pass each sharp turn more slowly.
+// The local adjustment has unit slope at both ends and never stops the nib.
+func boardOutlineStroke(t, w, h float64) float64 {
+	corner := w / (2 * (w + h))
+	radius := min(.10, corner, .5-corner)
+	distance := boardCorner(boardStroke(t), corner, radius)
+	return boardCorner(distance, 1-corner, radius)
+}
+
 func (o *boardOutline) apply(frame *d2target.Diagram, progress float64) {
-	travel := gridEase(gridPhase(progress, 0, .5))
+	travel := boardGlide(gridPhase(progress, 0, boardGatherEnd))
 	for i := range frame.Shapes {
 		s := &frame.Shapes[i]
 		if previous, moving := o.positions[s.ID]; moving && travel < 1 {
@@ -209,15 +320,15 @@ func (o *boardOutline) apply(frame *d2target.Diagram, progress float64) {
 		if !ok || !s.CanDrawOutline() {
 			continue
 		}
-		phase := gridPhase(progress, start, .90)
+		phase := gridPhase(progress, start, .94)
 		if phase == 1 {
 			continue
 		}
-		traced := gridEase(phase)
+		traced := boardOutlineStroke(phase, float64(s.Width), float64(s.Height))
 		s.OutlineProgress = &traced
 		// The tint and title enter with the stroke while the child objects
 		// retain their own independent visibility.
-		s.Opacity *= gridEase(gridPhase(phase, 0, .48))
+		s.Opacity *= boardGlide(gridPhase(phase, 0, .52))
 	}
 	if o.edges != nil && travel < 1 {
 		frame.Connections = o.edges.sample(frame.Connections, frame.Shapes, travel, 1, 0, nil)

@@ -113,7 +113,12 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 			if p.motion != nil || p.ink != nil || p.from != nil {
 				p.board = board
 				count := len(board.TweenFrames)
-				if p.ink != nil || p.from != nil {
+				if p.from != nil {
+					// Give a short arrival or landing enough distinct samples to
+					// show its acceleration. The existing per-board and total
+					// geometry limits still apply when many steps play together.
+					count = min(d2target.MaxTweenFrames, (60*duration+999)/1000)
+				} else if p.ink != nil {
 					count = d2target.TweenFrameCount(duration)
 				}
 				if p.motion != nil {

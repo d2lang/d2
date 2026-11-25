@@ -33,9 +33,11 @@ The adapter exposes local, in-process entry points:
   `d2lib.CompileOptions.LayoutContinuations`.
 - In animated exports, a positive `animate-duration` can draw new connections
   along their routes and grow each new node from the port where its first
-  connection arrives. A new rectangular container can trace its outline around
-  its contents. When one identifiable service or intact team changes parents,
-  its external connections can fade while it travels between them. These
+  connection arrives. A new node can briefly grow past its final size when
+  there is room around it. A rectangular container can begin tracing its
+  outline as its contents settle, slowing through the corners. When one
+  identifiable service or intact team changes parents, its external connections
+  can fade while it accelerates and settles into its new position. These
   effects use cumulative steps that share layout coordinates. Complex edits
   can keep the ordinary transition. Set `animate-duration: 0` for an
   immediate change between boards.

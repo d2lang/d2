@@ -21,18 +21,22 @@ func TestBoardTransferKeepsTeamTogether(t *testing.T) {
 	before, after := diagramGeometryOf(prev), diagramGeometryOf(next)
 	oldPanel := continuityRect(t, prev, "platform.telemetry")
 	oldWire := continuityWire(t, prev, "platform.telemetry.ingest", "platform.telemetry.index").Route
-	for _, progress := range []float64{0, .12, .25, .48, .5, .75, .86, 1} {
+	for _, progress := range []float64{0, .10, .16, .25, .48, .5, .75, .86, 1} {
 		f := m.sample(next, progress)
 		if err := d2target.ValidateRenderTarget(f); err != nil {
 			t.Fatal(err)
 		}
 		panel := "reliability.telemetry"
-		if progress < .18 {
+		if progress < .14 {
 			panel = "platform.telemetry"
 		}
 		shift := continuityRect(t, f, panel).Min.Sub(oldPanel.Min)
-		if progress == .5 && (shift.Y <= 0 || shift.Y >= continuityRect(t, next, "reliability.telemetry").Min.Y-oldPanel.Min.Y) {
-			t.Fatal("team should be between hosts halfway through the transfer")
+		if progress == .5 {
+			landed := continuityRect(t, next, "reliability.telemetry").Min.Y - oldPanel.Min.Y
+			fraction := float64(shift.Y) / float64(landed)
+			if fraction < .70 || fraction > .90 {
+				t.Fatalf("team should have a long braking approach, halfway progress %v", fraction)
+			}
 		}
 		for _, name := range []string{".ingest", ".index"} {
 			if continuityRect(t, f, panel+name) != continuityRect(t, prev, "platform.telemetry"+name).Add(shift) {
@@ -55,6 +59,37 @@ func TestBoardTransferKeepsTeamTogether(t *testing.T) {
 	}
 	if !reflect.DeepEqual(diagramGeometryOf(prev), before) || !reflect.DeepEqual(diagramGeometryOf(next), after) {
 		t.Fatal("sampling mutated an authored endpoint")
+	}
+	// All the box dimensions are integer pixels. Start reconnecting on the
+	// first settled sample, without exposing the final route during travel.
+	firstLanded, firstWire := 0, 0
+	for tick := 20; tick <= 100; tick++ {
+		f := m.sample(next, float64(tick)/100)
+		shapes := gridEdgeShapeMap(f.Shapes)
+		landed := true
+		for _, target := range next.Shapes {
+			s := shapes[target.ID]
+			if s.Pos != target.Pos || s.Width != target.Width || s.Height != target.Height {
+				landed = false
+				break
+			}
+		}
+		if landed && firstLanded == 0 {
+			firstLanded = tick
+		}
+		for _, e := range f.Connections {
+			if e.Src == "platform.api" && e.Dst == "reliability.telemetry.ingest" {
+				if !landed {
+					t.Fatalf("wire reattached before the geometry arrived at tick %d", tick)
+				}
+				if firstWire == 0 {
+					firstWire = tick
+				}
+			}
+		}
+	}
+	if firstLanded == 0 || firstWire == 0 || firstWire-firstLanded > 1 {
+		t.Fatalf("idle gap after landing: last body arrived at tick %d, wire entered at %d", firstLanded, firstWire)
 	}
 }
 
