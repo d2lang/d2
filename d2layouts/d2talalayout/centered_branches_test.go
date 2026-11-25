@@ -1,6 +1,7 @@
 package d2talalayout_test
 
 import (
+	"maps"
 	"math"
 	"strings"
 	"testing"
@@ -86,6 +87,46 @@ func TestCenteredBranchesPreservePortsOnThinShapes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCenteredBranchSidePortsKeepHalfPixels(t *testing.T) {
+	for _, direction := range []string{"down", "up", "left", "right"} {
+		for _, id := range []string{"A", "F"} {
+			t.Run(direction+"/"+id, func(t *testing.T) {
+				horizontal := direction == "left" || direction == "right"
+				size := "width: 66; height: 1"
+				if horizontal {
+					size = "width: 1; height: 66"
+				}
+				source := "direction: " + direction + "\nA -> B -> F\nA -> C -> D -> E -> F\n" + id + ": \"\" {" + size + "}"
+				d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+				var want map[[2]float64]bool
+				for _, n := range d.Shapes {
+					if n.ID == id {
+						x, y := float64(n.Pos.X), float64(n.Pos.Y)
+						want = map[[2]float64]bool{{x, y + 0.5}: true, {x + 66, y + 0.5}: true}
+						if horizontal {
+							want = map[[2]float64]bool{{x + 0.5, y}: true, {x + 0.5, y + 66}: true}
+						}
+					}
+				}
+				got := make(map[[2]float64]bool)
+				for _, e := range d.Connections {
+					if e.Src == id {
+						p := e.Route[0]
+						got[[2]float64{p.X, p.Y}] = true
+					}
+					if e.Dst == id {
+						p := e.Route[len(e.Route)-1]
+						got[[2]float64{p.X, p.Y}] = true
+					}
+				}
+				if !maps.Equal(got, want) || len(want) != 2 {
+					t.Fatalf("%s has ports %v, want each side center %v", id, got, want)
+				}
+			})
+		}
 	}
 }
 

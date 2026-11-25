@@ -169,6 +169,11 @@ func PlaceHandoffs(ctx context.Context, g *layoutgraph.Graph, declaration map[la
 			}
 		}
 		for _, child := range g.Containers[root] {
+			// Integer shape bounds need at least one interior pixel for
+			// the primary port between the two corners of a vertical face.
+			if child.Height < 2 {
+				return false, nil
+			}
 			widths[i] = max(widths[i], child.Width)
 			if l := child.Label; l != nil && (l.Position.IsOutside() || l.Width > child.Width || l.Height > child.Height) {
 				return false, nil

@@ -193,3 +193,24 @@ func TestHandoffRejectsUnmatchedPanelSizes(t *testing.T) {
 		}
 	}
 }
+
+func TestHandoffPortNeedsInteriorOfRenderedSide(t *testing.T) {
+	for _, direction := range []string{"right", "left"} {
+		for _, leaf := range []string{"events.stock", "workers.disputes"} {
+			for _, height := range []int{1, 2} {
+				t.Run(fmt.Sprintf("%s/%s/%d", direction, leaf, height), func(t *testing.T) {
+					source := strings.Replace(handoffFixture, "direction: right", "direction: "+direction, 1)
+					source += fmt.Sprintf("%s.label: \"\"\n%s.height: %d\n", leaf, leaf, height)
+					input, err := newSeedInput(t.Context(), handoffGraph(t, source))
+					if err != nil {
+						t.Fatal(err)
+					}
+					changed, err := hierarchy.PlaceHandoffs(t.Context(), input.graph, nil)
+					if err != nil || changed != (height == 2) {
+						t.Fatalf("height %d, placed=%v, err=%v", height, changed, err)
+					}
+				})
+			}
+		}
+	}
+}
