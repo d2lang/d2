@@ -1180,7 +1180,8 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 	s := shape.NewShape(shapeType, geo.NewBox(geo.NewPoint(0, 0), contentWidth, contentHeight))
 
 	var fitWidth, fitHeight float64
-	if shapeType == shape.PERSON_TYPE && !obj.IsGridDiagram() {
+	gridContainer := obj.IsGridDiagram() && len(obj.ChildrenArray) > 0
+	if shapeType == shape.PERSON_TYPE && !gridContainer {
 		fitWidth = contentWidth + paddingX
 		fitHeight = contentHeight + paddingY
 	} else {
@@ -1205,9 +1206,13 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 
 	// A grid must reserve enough space for its children even when an authored
 	// dimension is smaller than the shape needed to enclose them.
-	if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" || (obj.IsGridDiagram() && len(obj.ChildrenArray) > 0) {
+	if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" || gridContainer {
 		obj.Width = math.Max(float64(desiredWidth), fitWidth)
 		obj.Height = math.Max(float64(desiredHeight), fitHeight)
+	}
+
+	if gridContainer && shapeType == shape.C4_PERSON_TYPE {
+		obj.Width, obj.Height = shape.FitC4PersonBody(obj.Width, obj.Height, contentHeight+paddingY)
 	}
 
 	if s.AspectRatio1() {

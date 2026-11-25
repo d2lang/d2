@@ -355,6 +355,9 @@ func (obj *Object) GetMargin() geo.Spacing {
 		position := label.FromString(*obj.IconPosition)
 
 		iconSize := float64(d2target.MAX_ICON_SIZE + label.PADDING)
+		// The icon can grow after tracks are stretched, when the available
+		// border gap has already been allocated.
+		position.ReserveBorderHalf(&margin, d2target.MAX_ICON_SIZE, d2target.MAX_ICON_SIZE)
 		switch position {
 		case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight:
 			margin.Top = math.Max(margin.Top, iconSize)

@@ -117,6 +117,24 @@ func routeEdge(e *d2graph.Edge, index, count int) {
 			reach := max(srcRight, dstRight) + 24 + 16*float64(index)
 			route = []*geo.Point{a, geo.NewPoint(reach, a.Y), geo.NewPoint(reach, b.Y), b}
 		}
+	case touchingFaces(e.Src.Box, e.Dst.Box):
+		// There is no visible shaft between touching faces. Alternate
+		// reciprocal edges on the outer sides of the row or column.
+		gap := 24 + 16*float64(index/2)
+		src, dst := e.Src.Box, e.Dst.Box
+		if src.TopLeft.X+src.Width == dst.TopLeft.X || dst.TopLeft.X+dst.Width == src.TopLeft.X {
+			y := min(src.TopLeft.Y, dst.TopLeft.Y) - gap
+			if index%2 != 0 {
+				y = max(src.TopLeft.Y+src.Height, dst.TopLeft.Y+dst.Height) + gap
+			}
+			route = []*geo.Point{a, geo.NewPoint(a.X, y), geo.NewPoint(b.X, y), b}
+		} else {
+			x := max(src.TopLeft.X+src.Width, dst.TopLeft.X+dst.Width) + gap
+			if index%2 != 0 {
+				x = min(src.TopLeft.X, dst.TopLeft.X) - gap
+			}
+			route = []*geo.Point{a, geo.NewPoint(x, a.Y), geo.NewPoint(x, b.Y), b}
+		}
 	case count > 1:
 		horizontal := math.Abs(a.X-b.X) >= math.Abs(a.Y-b.Y)
 		span := min(e.Src.Width, e.Dst.Width)
@@ -135,6 +153,13 @@ func routeEdge(e *d2graph.Edge, index, count int) {
 	e.Route = route
 	start, end := e.TraceToShape(e.Route, 0, len(e.Route)-1)
 	e.Route = e.Route[start : end+1]
+}
+
+func touchingFaces(a, b *geo.Box) bool {
+	ar, ab := a.TopLeft.X+a.Width, a.TopLeft.Y+a.Height
+	br, bb := b.TopLeft.X+b.Width, b.TopLeft.Y+b.Height
+	return ((ar == b.TopLeft.X || br == a.TopLeft.X) && a.TopLeft.Y <= bb && b.TopLeft.Y <= ab) ||
+		((ab == b.TopLeft.Y || bb == a.TopLeft.Y) && a.TopLeft.X <= br && b.TopLeft.X <= ar)
 }
 
 // A detour or loop can extend beyond the outermost cell. Include it in the
@@ -159,8 +184,10 @@ func (gd *gridDiagram) fitRoutes(edges []*d2graph.Edge) {
 			stroke, _ = strconv.ParseFloat(e.Style.StrokeWidth.Value, 64)
 		}
 		p, _ := label.FromString(*e.LabelPosition).GetPointOnRoute(e.Route, stroke, percentage, width, height)
-		left, top = min(left, p.X), min(top, p.Y)
-		right, bottom = max(right, p.X+width), max(bottom, p.Y+height)
+		if p != nil {
+			left, top = min(left, p.X), min(top, p.Y)
+			right, bottom = max(right, p.X+width), max(bottom, p.Y+height)
+		}
 	}
 	gd.width, gd.height = right-left, bottom-top
 	if left != 0 || top != 0 {

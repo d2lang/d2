@@ -1758,10 +1758,9 @@ func (c *compiler) validateEdges(g *d2graph.Graph) {
 		//   grid -> outside : ok
 		//   grid -> grid.cell : not ok
 		//   grid -> grid.cell.inner : not ok
-		if edge.Src == edge.Dst && (edge.Src.IsGridDiagram() || edge.Src.Parent.IsGridDiagram()) && !edge.Src.IsSequenceDiagram() {
-			if edge.Src.IsContainer() {
-				c.errorf(edge.GetAstEdge(), "self-loops on grid containers are not supported")
-			}
+		// A loop stays on the object's boundary. Only connections to strict
+		// descendants enter a grid or cell.
+		if edge.Src == edge.Dst && !edge.Src.IsSequenceDiagram() {
 			continue
 		}
 		if edge.Src.IsGridDiagram() && edge.Dst.IsDescendantOf(edge.Src) {

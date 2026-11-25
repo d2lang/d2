@@ -163,23 +163,23 @@ func routeLoops(n *layoutgraph.Node, selected map[*layoutgraph.Edge]struct{}) []
 			continue
 		}
 
-		_, moving := selected[e]
-		moving = moving || selected == nil
-		if moving {
-			routedEdges = append(routedEdges, e)
-			if e.Label != nil {
-				e.Label.Position = label.OutsideTopCenter
-			}
+		if _, moving := selected[e]; selected != nil && !moving {
+			continue
+		}
+		routedEdges = append(routedEdges, e)
+		if e.Label != nil {
+			e.Label.Position = label.OutsideTopCenter
 		}
 		loopIndex++
 		if IsTableRowLoop(e) {
-			if moving {
-				e.Points = rowRoutes[e]
-			}
+			e.Points = rowRoutes[e]
 			continue
 		}
 		if availablePorts == nil {
 			availablePorts = makeLoopPorts(n)
+			if selected != nil {
+				reserveFrozenCorners(availablePorts, ordered, selected)
+			}
 		}
 		portsPair := findLoopPortsForEdge(e, availablePorts)
 		if split {
@@ -187,9 +187,7 @@ func routeLoops(n *layoutgraph.Node, selected map[*layoutgraph.Edge]struct{}) []
 			order := [...]int{0, 3, 1, 2}
 			portsPair = availablePorts[order[(loopIndex-1)%len(order)]]
 		}
-		if moving {
-			e.Points = routeLoop(portsPair)
-		}
+		e.Points = routeLoop(portsPair)
 		portsPair.verticalOffset, portsPair.horizontalOffset = computeEdgeOffset(e)
 		portsPair.hasSourceArrowhead = new(e.HasSourceArrow())
 		portsPair.hasTargetArrowhead = new(e.HasTargetArrow())
@@ -197,6 +195,36 @@ func routeLoops(n *layoutgraph.Node, selected map[*layoutgraph.Edge]struct{}) []
 		portsPair.targetArrowhead = e.TargetArrowhead
 	}
 	return routedEdges
+}
+
+// Reserve the space that retained loops actually occupy. Their geometry may
+// come from another router or from an earlier layout with different labels.
+func reserveFrozenCorners(ports []*loopPorts, edges []*layoutgraph.Edge, selected map[*layoutgraph.Edge]struct{}) {
+	for _, edge := range edges {
+		if _, moving := selected[edge]; moving || !edge.IsLoop() || len(edge.Points) < 2 {
+			continue
+		}
+		tl, br := edge.BoundingBoxValues()
+		for _, p := range ports {
+			hPort, vPort := p.from, p.to
+			hDir, vDir := p.fromDirection, p.toDirection
+			if hDir.IsVertical() {
+				hPort, vPort = vPort, hPort
+				hDir, vDir = vDir, hDir
+			}
+			h, v := hPort.X-tl.X, vPort.Y-tl.Y
+			if hDir == geo.Right {
+				h = br.X - hPort.X
+			}
+			if vDir == geo.Bottom {
+				v = br.Y - vPort.Y
+			}
+			if h > 0 && v > 0 {
+				p.horizontalOffset = max(p.horizontalOffset, h)
+				p.verticalOffset = max(p.verticalOffset, v)
+			}
+		}
+	}
 }
 
 // RouteSelected plans chosen loops together and keeps unselected routes fixed.

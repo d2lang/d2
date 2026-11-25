@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
@@ -143,5 +144,103 @@ b: Backup Region {width: 140; height: 60; label.near: %s}
 				}
 			})
 		}
+	}
+}
+
+func TestGridC4PersonContainsChild(t *testing.T) {
+	for _, axis := range []string{"grid-rows", "grid-columns"} {
+		for _, tc := range []struct {
+			name, attr string
+			w, h       int
+		}{
+			{"wide child", "", 80, 40},
+			{"tall child", "", 40, 160},
+			{"authored wide frame", "width: 350", 80, 40},
+		} {
+			t.Run(axis+"/"+tc.name, func(t *testing.T) {
+				_, g := compileGridMotionTest(t, fmt.Sprintf(`
+%s: 1
+pod: "" {
+  shape: c4-person
+  grid-rows: 1
+  grid-gap: 0
+  %s
+  child: "" {width: %d; height: %d}
+}
+peer: "" {width: 500; height: 500}`, axis, tc.attr, tc.w, tc.h))
+				pod := g.Root.Children["pod"]
+				child := pod.Children["child"]
+				inside := pod.ToShape().GetInnerBox()
+				far := geo.NewPoint(child.TopLeft.X+child.Width, child.TopLeft.Y+child.Height)
+				if !inside.Contains(child.TopLeft) || !inside.Contains(far) {
+					t.Fatalf("child %v escapes C4 body %v", child.Box.ToString(), inside.ToString())
+				}
+			})
+		}
+	}
+}
+
+func TestGridEmptyPersonKeepsLeafDimensions(t *testing.T) {
+	d, _ := compileGridMotionTest(t, `grid-rows: 1
+person: Foo {shape: person; style.font-size: 16; grid-columns: 1}
+plain: Foo {shape: person; style.font-size: 16}`)
+	person, plain := shapeByID(t, d, "person"), shapeByID(t, d, "plain")
+	if person.Width != plain.Width || person.Height != plain.Height {
+		t.Fatalf("empty grid %dx%d, ordinary person %dx%d", person.Width, person.Height, plain.Width, plain.Height)
+	}
+}
+
+func TestGridBorderIconSpacing(t *testing.T) {
+	for _, tc := range []struct{ axis, first, second string }{
+		{"grid-rows", "border-right-center", "border-left-center"},
+		{"grid-columns", "border-bottom-center", "border-top-center"},
+	} {
+		for _, size := range []int{100, 200} {
+			t.Run(fmt.Sprintf("%s_%d", tc.axis, size), func(t *testing.T) {
+				// The first icon grows when its track stretches to the second shape.
+				w, h := size, 40
+				if tc.axis == "grid-columns" {
+					w, h = h, w
+				}
+				d, _ := compileGridMotionTest(t, fmt.Sprintf(`
+%[1]s: 1
+grid-gap: 0
+a: "" {width: %[5]d; height: %[6]d; icon: https://example.com/icon.svg; icon.near: %[2]s}
+b: "" {width: %[4]d; height: %[4]d; icon: https://example.com/icon.svg; icon.near: %[3]s}`, tc.axis, tc.first, tc.second, size, w, h))
+				bounds := func(id string) *geo.Box {
+					s := shapeByID(t, d, id)
+					box := geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height))
+					rendered := float64(d2target.GetIconSize(box, s.IconPosition))
+					if rendered != float64(min(size/2, d2target.MAX_ICON_SIZE)) {
+						t.Fatalf("unexpected icon size %v", rendered)
+					}
+					p := label.FromString(s.IconPosition).GetPointOnBox(box, label.PADDING, rendered, rendered)
+					return geo.NewBox(p, rendered, rendered)
+				}
+				a, b := bounds("a"), bounds("b")
+				if a.Overlaps(*b) {
+					t.Fatalf("border icons overlap: %v and %v", a.ToString(), b.ToString())
+				}
+			})
+		}
+	}
+}
+
+func TestGridContainerBorderDecorationsClearChildren(t *testing.T) {
+	d, _ := compileGridMotionTest(t, `
+g: Title {
+  grid-rows: 1
+  grid-gap: 0
+  label.near: border-top-center
+  icon: https://example.com/icon.svg
+  icon.near: border-right-center
+  child: "" {width: 100; height: 40}
+}`)
+	panel, child := shapeByID(t, d, "g"), shapeByID(t, d, "g.child")
+	box := geo.NewBox(geo.NewPoint(float64(panel.Pos.X), float64(panel.Pos.Y)), float64(panel.Width), float64(panel.Height))
+	iconSize := d2target.GetIconSize(box, panel.IconPosition)
+	if 2*child.Pos.Y < 2*panel.Pos.Y+panel.LabelHeight ||
+		2*(child.Pos.X+child.Width) > 2*(panel.Pos.X+panel.Width)-iconSize {
+		t.Fatalf("grid child %+v %dx%d overlaps its container's title or %dpx icon", child.Pos, child.Width, child.Height, iconSize)
 	}
 }

@@ -92,12 +92,18 @@ func LayoutWithRouter(ctx context.Context, g *d2graph.Graph, router d2graph.Rout
 			labelHeight = float64(obj.LabelDimensions.Height) + 2*label.PADDING
 		}
 
+		labelPosition.ReserveBorderHalf(&padding, labelWidth, labelHeight)
+		if obj.HasIcon() {
+			iconPosition.ReserveBorderHalf(&padding, d2target.MAX_ICON_SIZE, d2target.MAX_ICON_SIZE)
+		}
 		if labelWidth > 0 {
 			switch labelPosition {
 			case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight,
 				label.InsideTopLeft, label.InsideTopCenter, label.InsideTopRight,
 				label.InsideBottomLeft, label.InsideBottomCenter, label.InsideBottomRight,
-				label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight:
+				label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight,
+				label.BorderTopLeft, label.BorderTopCenter, label.BorderTopRight,
+				label.BorderBottomLeft, label.BorderBottomCenter, label.BorderBottomRight:
 				overflow := labelWidth - contentWidth
 				if overflow > 0 {
 					padding.Left += overflow / 2
@@ -109,7 +115,9 @@ func LayoutWithRouter(ctx context.Context, g *d2graph.Graph, router d2graph.Rout
 			switch labelPosition {
 			case label.OutsideLeftTop, label.OutsideLeftMiddle, label.OutsideLeftBottom,
 				label.InsideMiddleLeft, label.InsideMiddleCenter, label.InsideMiddleRight,
-				label.OutsideRightTop, label.OutsideRightMiddle, label.OutsideRightBottom:
+				label.OutsideRightTop, label.OutsideRightMiddle, label.OutsideRightBottom,
+				label.BorderLeftTop, label.BorderLeftMiddle, label.BorderLeftBottom,
+				label.BorderRightTop, label.BorderRightMiddle, label.BorderRightBottom:
 				overflow := labelHeight - contentHeight
 				if overflow > 0 {
 					padding.Top += overflow / 2
@@ -960,18 +968,7 @@ func (gd *gridDiagram) reserveCellMargins() (placeWithinCells func()) {
 
 			// A track can stretch independently along either axis. Fit constrained
 			// shapes inside it, preserving their measured minimum dimensions.
-			var ratio float64
-			switch strings.ToLower(o.Shape.Value) {
-			case d2target.ShapeCircle, d2target.ShapeSquare:
-				ratio = 1
-			case d2target.ShapePerson:
-				ratio = shape.PERSON_AR_LIMIT
-			case d2target.ShapeOval:
-				ratio = shape.OVAL_AR_LIMIT
-			}
-			if ratio > 0 {
-				o.Width = min(o.Width, max(cell.width, ratio*o.Height))
-				o.Height = min(o.Height, max(cell.height, ratio*o.Width))
+			if fitGridAspectRatio(o, cell.width, cell.height) {
 				margin = o.GetMargin()
 				// Center the shape and its outside decorations as a unit.
 				margin.Left += (slotWidth - o.Width - margin.Left - margin.Right) / 2
@@ -982,4 +979,31 @@ func (gd *gridDiagram) reserveCellMargins() (placeWithinCells func()) {
 			}
 		}
 	}
+}
+
+// fitGridAspectRatio leaves the track intact and fits the painted shape inside it.
+func fitGridAspectRatio(o *d2graph.Object, measuredWidth, measuredHeight float64) bool {
+	var ratio float64
+	switch strings.ToLower(o.Shape.Value) {
+	case d2target.ShapeCircle, d2target.ShapeSquare:
+		ratio = 1
+	case d2target.ShapePerson:
+		ratio = shape.PERSON_AR_LIMIT
+	case d2target.ShapeOval:
+		ratio = shape.OVAL_AR_LIMIT
+	case d2target.ShapeC4Person:
+		// The head radius is proportional to the outer width. Preserve the
+		// measured proportions so the body retains room for its contents.
+		if measuredWidth <= 0 || measuredHeight <= 0 {
+			return false
+		}
+		scale := min(o.Width/measuredWidth, o.Height/measuredHeight)
+		o.Width, o.Height = measuredWidth*scale, measuredHeight*scale
+		return true
+	default:
+		return false
+	}
+	o.Width = min(o.Width, max(measuredWidth, ratio*o.Height))
+	o.Height = min(o.Height, max(measuredHeight, ratio*o.Width))
+	return true
 }
