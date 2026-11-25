@@ -27,7 +27,7 @@ EdgeGroup   = "(" spaces keyPath spaces Arrow EdgeTargets spaces ")"
 EdgeTargets = spaces keyPath { spaces Arrow spaces keyPath } .
 EdgeIndex   = "*" | decimalDigit { decimalDigit } .
 
-FirstArrow       = ( "-" | "<" ) ArrowTail .
+FirstArrow       = "<" ArrowTail | "-" { EdgeContinuation } ( "-" ArrowTail | ">" | "*" ) .
 Arrow            = FirstArrow | "*" ArrowTail .
 ArrowTail        = { "-" | EdgeContinuation } [ ">" | "*" ] .
 EdgeContinuation = "\\" spaces newline spaces .

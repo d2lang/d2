@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"reflect"
 	"strings"
@@ -15,6 +16,24 @@ import (
 
 func TestGrammarConformance(t *testing.T) {
 	grammar := grammartest.Load(t)
+	t.Run("edge-chain-production", func(t *testing.T) {
+		// Start at EdgeChain so a match through File's keyPath alternative cannot mask an invalid arrow.
+		edgeGrammar := maps.Clone(grammar)
+		edgeGrammar["File"] = grammar["EdgeChain"]
+		for _, tc := range []struct {
+			source string
+			want   bool
+		}{
+			{"build-server", false},
+			{`"build" - server`, false},
+			{"build--server", true},
+			{"build->server", true},
+		} {
+			if got := grammartest.Recognizes(t, edgeGrammar, tc.source); got != tc.want {
+				t.Errorf("EdgeChain recognition of %q = %t, want %t", tc.source, got, tc.want)
+			}
+		}
+	})
 	f, err := os.Open("../docs/grammar/testdata/conformance.json")
 	if err != nil {
 		t.Fatal(err)

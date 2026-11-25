@@ -553,8 +553,21 @@
   },
   {
     "name": "hyphenated-key-and-long-arrow",
-    "source": "a - b; a ---> b",
+    "source": "build-server; build--server; a - b; a ---> b",
     "nodes": [
+      {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "build-server"}]}}]}}},
+      {
+        "map_key": {
+          "edges": [
+            {
+              "src": {"path": [{"unquoted_string": {"value": [{"string": "build"}]}}]},
+              "src_arrow": "",
+              "dst_arrow": "",
+              "dst": {"path": [{"unquoted_string": {"value": [{"string": "server"}]}}]}
+            }
+          ]
+        }
+      },
       {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "a - b"}]}}]}}},
       {
         "map_key": {

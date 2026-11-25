@@ -38,7 +38,8 @@ on the same line. See [lexical rules](lexical.md) for comment and string scannin
 
 ## Connections
 
-The four conventional arrows are `--`, `->`, `<-` and `<->`. A chain such as
+The four conventional arrows are `--`, `->`, `<-` and `<->`. An undirected
+connection requires at least two hyphens. A chain such as
 `a -> b -> c` produces two connections, with `b` as the shared endpoint.
 Parentheses allow an index, a property path, or both to follow a chain.
 A preceding path scopes the group, as in `svc.(a -> b)[*]`. Decimal indices
@@ -63,8 +64,10 @@ already ended, as in `("a" *- "b")[0]`.
 
 ## Scalars, substitutions and imports
 
-Quote style is part of the tree. Classify a plain unquoted scalar after
-decoding its escapes. The spellings `null`, `true`, `false`, `suspend` and
+Quote style is part of the tree. Classify an unquoted scalar only when the
+value consists of one literal. Preserve each piece of an interpolated value,
+including the literal `10` and the reference to `unit` in `10${unit}`.
+After escape decoding, the spellings `null`, `true`, `false`, `suspend` and
 `unsuspend` are case-insensitive. The first produces a null value, the next
 two produce booleans and the last two produce suspension values. The Go
 parser then recognizes a number if the entire spelling denotes a rational
@@ -98,6 +101,7 @@ input.
 | Input | Go parser behavior |
 | --- | --- |
 | `a.` | Produces the same key path as `a`. |
+| `"build" - server` | The baseline parser accepts a single hyphen after the quoted source as an undirected connection. Write `"build" -- server` for the specified form. |
 | `(a -> b` at end of file | Returns a connection despite the missing closing parenthesis. |
 | `(a -> b); c` | Treats `)` before a semicolon as part of the bare destination and reports an unclosed group. Put `c` on the next line, or write `(a -> "b"); c`. |
 | `(a -> b)[0].call(): ok` | Applies the same parenthesis lookahead while reading the property path after the group. Quote the segment as `(a -> b)[0]."call()": ok`. |
