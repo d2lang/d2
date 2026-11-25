@@ -103,6 +103,50 @@ g.a -> out`
 	}
 }
 
+func TestGridSpreadUpdatesOnlyItsAlias(t *testing.T) {
+	// Both maps exist at the use site even when the variable is defined later.
+	// The overlay repeats their cells in reverse order and adds one only to g.
+	const grid = `g: ${defaults}
+h: ${defaults}
+...${changes}
+vars: {defaults: {grid-rows: 1; b; a}}`
+	const changes = `vars: {changes: {g: {a; b; c}}}`
+	for _, tc := range []struct {
+		name, source string
+	}{
+		{"forward defined map", grid + "\n" + changes},
+		{"fresh and cached import", changes + "\ncopy: @library\n...@library"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := &d2compiler.CompileOptions{FS: fstest.MapFS{"library.d2": {Data: []byte(grid)}}}
+			graph, _, err := d2compiler.Compile("main.d2", strings.NewReader(tc.source), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, root := range []*d2graph.Object{graph.Root, graph.Root.Children["copy"]} {
+				if root == nil {
+					continue
+				}
+				for _, cells := range []struct {
+					id   string
+					want []string
+				}{
+					{"g", []string{"b", "a", "c"}},
+					{"h", []string{"b", "a"}},
+				} {
+					var got []string
+					for _, cell := range root.Children[cells.id].ChildrenArray {
+						got = append(got, cell.ID)
+					}
+					if !slices.Equal(got, cells.want) {
+						t.Fatalf("%s cells %v, want %v", root.Children[cells.id].AbsID(), got, cells.want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestGridImportSpreadsCallerVariable(t *testing.T) {
 	const source = `vars: {cells: {g: {grid-rows: 1; a; b}}}
 copy: @library

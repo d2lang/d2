@@ -555,7 +555,10 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 							if !c.reserveVariableCopy(box.Substitution, resolvedField.Map()) {
 								return
 							}
-							expandSubstitutionIndexed(m, resolvedField.Map(), n)
+							expandSubstitution(m, resolvedField.Map(), n, true, c)
+							if c.stopped() {
+								return
+							}
 						}
 						// Remove the placeholder field
 						for i, f2 := range m.Fields {
@@ -1793,6 +1796,15 @@ func (c *compiler) _ampersandFilter(f *Field, refctx *RefContext) bool {
 	return true
 }
 
+func (c *compiler) fieldScalar(f *Field, value d2ast.Scalar) *Scalar {
+	f.aliasSite = nil
+	if s, ok := value.(*d2ast.UnquotedString); ok && len(s.Value) == 1 && s.Value[0].Substitution != nil {
+		order := c.nextFieldOrder()
+		f.aliasSite = &order
+	}
+	return &Scalar{parent: f, Value: value}
+}
+
 func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 	if c.stopped() {
 		return
@@ -1839,10 +1851,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		if c.ignoreLazyGlob(f) {
 			return
 		}
-		f.Primary_ = &Scalar{
-			parent: f,
-			Value:  refctx.Key.Primary.Unbox(),
-		}
+		f.Primary_ = c.fieldScalar(f, refctx.Key.Primary.Unbox())
 	}
 
 	if refctx.Key.Value.Array != nil {
@@ -1993,10 +2002,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		if c.ignoreLazyGlob(f) {
 			return
 		}
-		f.Primary_ = &Scalar{
-			parent: f,
-			Value:  refctx.Key.Value.ScalarBox().Unbox(),
-		}
+		f.Primary_ = c.fieldScalar(f, refctx.Key.Value.ScalarBox().Unbox())
 		// If the link is a board, we need to transform it into an absolute path.
 		if f.Name.ScalarString() == "link" && f.Name.IsUnquoted() {
 			c.compileLink(f, refctx)

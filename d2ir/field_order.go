@@ -44,8 +44,25 @@ func (o fieldOrder) path(buf []uint64) []uint64 {
 	return buf
 }
 
+// Copying an alias materializes this occurrence of its variable. Establish
+// its use-site order whether the copy is for an import, a board, or an edit.
+func (f *Field) copyAliasMap(parent *Field) *Map {
+	use := f.aliasSite
+	if use == nil {
+		order := f.declaration
+		use = &order
+	}
+	m := f.Map().Copy(parent).(*Map)
+	m.nestDeclarationOrder(use)
+	return m
+}
+
 func (f *Field) nestDeclarationOrder(site *fieldOrder) {
 	f.declaration = f.declaration.within(site)
+	if f.aliasSite != nil {
+		order := f.aliasSite.within(site)
+		f.aliasSite = &order
+	}
 	f.Map().nestDeclarationOrder(site)
 }
 

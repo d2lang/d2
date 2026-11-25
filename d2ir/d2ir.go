@@ -640,6 +640,7 @@ var _ Importable = &Map{}
 
 type Field struct {
 	declaration fieldOrder
+	aliasSite   *fieldOrder // Position of a scalar substitution which may supply a shared map.
 	// *Map.
 	parent        Node
 	importAST     d2ast.Node
@@ -669,6 +670,7 @@ func (f *Field) SetImportAST(node d2ast.Node) {
 }
 
 func (f *Field) Copy(newParent Node) Node {
+	old := f
 	tmp := *f
 	f = &tmp
 
@@ -679,7 +681,9 @@ func (f *Field) Copy(newParent Node) Node {
 	if f.Primary_ != nil {
 		f.Primary_ = f.Primary_.Copy(f).(*Scalar)
 	}
-	if f.Composite != nil {
+	if old.Map() != nil && old.Map().Parent() != old {
+		f.Composite = old.copyAliasMap(f)
+	} else if f.Composite != nil {
 		f.Composite = f.Composite.Copy(f).(Composite)
 	}
 	return f

@@ -29,21 +29,23 @@ func overlayMap(base, overlay *Map, indexed bool) {
 }
 
 func ExpandSubstitution(m, resolved *Map, placeholder *Field) {
-	expandSubstitution(m, resolved, placeholder, false)
+	expandSubstitution(m, resolved, placeholder, false, nil)
 }
 
-func expandSubstitutionIndexed(m, resolved *Map, placeholder *Field) {
-	expandSubstitution(m, resolved, placeholder, true)
+type spreadSite struct {
+	fieldOrder
+	compiler    *compiler
+	placeholder *Field
 }
 
-func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool) {
+func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool, c *compiler) {
 	at := slices.Index(m.Fields, placeholder)
 	if at < 0 {
 		at = len(m.Fields)
 	}
-	var site fieldOrder
+	site := spreadSite{compiler: c, placeholder: placeholder}
 	if placeholder != nil {
-		site = placeholder.declaration
+		site.fieldOrder = placeholder.declaration
 	}
 	mergeMap(m, resolved, indexed, &site, at)
 }
@@ -51,7 +53,7 @@ func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool) {
 // Merge a deferred spread at its original position. Earlier declarations retain
 // their slots, while fields first mentioned by later keys or edge endpoints go
 // in the spread's order. Apply the same rule inside overlapping containers.
-func mergeMap(m, overlay *Map, indexed bool, site *fieldOrder, at int) {
+func mergeMap(m, overlay *Map, indexed bool, site *spreadSite, at int) {
 	var spread map[*Field]bool
 	var insert []*Field
 	if site != nil {
@@ -69,11 +71,14 @@ func mergeMap(m, overlay *Map, indexed bool, site *fieldOrder, at int) {
 		if bf == nil {
 			bf = of.Copy(m).(*Field)
 			if site != nil {
-				bf.nestDeclarationOrder(site)
+				bf.nestDeclarationOrder(&site.fieldOrder)
 			}
 			m.appendField(bf)
 		} else {
 			overlayFieldAt(bf, of, indexed, site)
+			if site != nil && site.compiler != nil && site.compiler.halted {
+				return
+			}
 		}
 		if site != nil && !spread[bf] {
 			spread[bf] = true
@@ -124,12 +129,26 @@ func overlayField(bf, of *Field, indexed bool) {
 	overlayFieldAt(bf, of, indexed, nil)
 }
 
-func overlayFieldAt(bf, of *Field, indexed bool, site *fieldOrder) {
+func overlayFieldAt(bf, of *Field, indexed bool, site *spreadSite) {
+	// Composite substitutions share their variable's map until an overlay
+	// edits it. Detach this occurrence and anchor its children at the use,
+	// which may precede the variable definition or follow an earlier reference.
+	if site != nil && of.Map() != nil && bf.Map() != nil && bf.Map().Parent() != bf {
+		if site.compiler != nil && !site.compiler.reserveVariableCopy(site.placeholder.LastRef().AST(), bf.Map()) {
+			return
+		}
+		bf.setComposite(bf.copyAliasMap(bf))
+	}
 	if site != nil && site.before(bf.declaration) {
-		bf.declaration = of.declaration.within(site)
+		bf.declaration = of.declaration.within(&site.fieldOrder)
 	}
 	if of.Primary_ != nil {
 		bf.Primary_ = of.Primary_.Copy(bf).(*Scalar)
+		bf.aliasSite = of.aliasSite
+		if site != nil && bf.aliasSite != nil {
+			order := bf.aliasSite.within(&site.fieldOrder)
+			bf.aliasSite = &order
+		}
 	}
 
 	if of.Composite != nil {
@@ -146,7 +165,7 @@ func overlayFieldAt(bf, of *Field, indexed bool, site *fieldOrder) {
 			beforeFields, beforeEdges := structureCounts(bf.Map())
 			bf.setComposite(of.Composite.Copy(bf).(Composite))
 			if site != nil {
-				bf.Map().nestDeclarationOrder(site)
+				bf.Map().nestDeclarationOrder(&site.fieldOrder)
 			}
 			markStructureCountDelta(ParentMap(bf), beforeFields, beforeEdges, bf.Map())
 		}
