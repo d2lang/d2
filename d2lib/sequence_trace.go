@@ -16,12 +16,12 @@ import (
 // messages belong. Trace newly sent messages if the prior exchange still fits
 // at its authored positions. Appending a message can extend a lifeline or bar.
 type sequenceTrace struct {
-	actors     map[string]int                  // original x for a horizontally displaced actor
-	spans      map[string]int                  // original height for a growing activation
-	lines      map[string]*d2target.Connection // previous vertical lifelines
-	messages   map[string]*sequenceMessage
-	prepare    float64
-	dashWidths traceDashWidths // stroke widths of stationary sequence actors
+	actors      map[string]int                  // original x for a horizontally displaced actor
+	spans       map[string]int                  // original height for a growing activation
+	lines       map[string]*d2target.Connection // previous vertical lifelines
+	messages    map[string]*sequenceMessage
+	prepare     float64
+	shapeWidths traceShapeWidths // stroke widths of stationary sequence actors
 }
 
 type sequenceMessage struct {
@@ -150,7 +150,7 @@ func planSequenceTrace(prev, next *d2target.Diagram, prevGraph, nextGraph *d2gra
 	// A batch of messages follows the visual reading order of the sequence.
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].target.Route[0].Y < ordered[j].target.Route[0].Y })
 	for i, msg := range ordered {
-		msg.wire.measureDashes(msg.target, next.Shapes, &m.dashWidths)
+		msg.wire.measure(msg.target, next.Shapes, &m.shapeWidths)
 		msg.wire.start = m.prepare + (1-m.prepare)*float64(i)/float64(len(ordered))
 		msg.wire.end = m.prepare + (1-m.prepare)*float64(i+1)/float64(len(ordered))
 	}
@@ -213,11 +213,10 @@ func (m *sequenceTrace) apply(frame *d2target.Diagram, t float64) {
 				if fraction*w.lengths[len(w.lengths)-1] < w.minDraw {
 					continue
 				}
-				e.Route = w.prefix(fraction)
-				if len(e.Route) < 2 {
+				if !w.applyPrefix(&e, fraction) {
 					continue
 				}
-				w.pinDashes(&e, frame.Shapes, &m.dashWidths)
+				w.pinDashes(&e, frame.Shapes, &m.shapeWidths)
 				if e.Label != "" {
 					e.MotionLabel = &d2target.MotionLabel{Point: msg.caption, Opacity: gridPhase(u, .45, .92)}
 				}

@@ -366,6 +366,9 @@ func validateRenderShapeNumbers(targetShape Shape, path string) error {
 }
 
 func validateRenderConnectionNumbers(connection Connection, path string) error {
+	if tip := connection.MotionTip; tip != "" && (tip != TraceSource && tip != TraceDestination || connection.IsCurve) {
+		return invalidRenderField(path, "motionTip", tip, "requires the source or destination of a polyline trace")
+	}
 	if v := connection.MotionDashOffset; v != 0 && (!finiteRenderNumber(v) || connection.StrokeDash <= 0 || connection.Animated) {
 		return invalidRenderField(path, "motionDashOffset", v, "requires a finite offset on a dashed, non-animated stroke")
 	}

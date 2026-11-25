@@ -151,8 +151,8 @@ type Scalar struct {
 	binding *tweenBinding
 	parent  Node
 	Value   d2ast.Scalar `json:"value"`
-	// TweenOffset retains the fractional part lost when formatting an integer
-	// sample. Consumers such as stroke-width can paint it at subpixel precision.
+	// TweenOffset retains precision lost when formatting a numeric sample for
+	// text. Continuous paint properties can use it for the unrounded value.
 	TweenOffset float64 `json:"-"`
 }
 

@@ -92,3 +92,12 @@ func TestAnimateIntervalSourceUnsupportedFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestNegativeAnimationInterval(t *testing.T) {
+	for _, format := range []string{"svg", "gif"} {
+		data, err := imageCLI(t, t.TempDir(), "a\nsteps: {next: {b}}", "--animate-interval=-1", "--stdout-format="+format, "-")
+		if err == nil || !strings.Contains(err.Error(), "--animate-interval") || len(data) != 0 {
+			t.Errorf("%s: got %d bytes, %v", format, len(data), err)
+		}
+	}
+}

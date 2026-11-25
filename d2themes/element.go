@@ -175,10 +175,10 @@ func (el *ThemableElement) RenderWithClasses(visit func(string)) string {
 		attributes = append(attributes, svg.FloatAttr("r", el.R))
 	}
 	if el.Rx != math.MaxFloat64 {
-		attributes = append(attributes, svg.FloatAttr("rx", calculateAxisRadius(el.Rx, el.Width, el.Height)))
+		attributes = append(attributes, svg.FloatAttr("rx", ClampBorderRadius(el.Rx, el.Width, el.Height)))
 	}
 	if el.Ry != math.MaxFloat64 {
-		attributes = append(attributes, svg.FloatAttr("ry", calculateAxisRadius(el.Ry, el.Width, el.Height)))
+		attributes = append(attributes, svg.FloatAttr("ry", ClampBorderRadius(el.Ry, el.Width, el.Height)))
 	}
 	if el.Cx != math.MaxFloat64 {
 		attributes = append(attributes, svg.FloatAttr("cx", el.Cx))
@@ -313,7 +313,8 @@ func (el *ThemableElement) RenderWithClasses(visit func(string)) string {
 	return out
 }
 
-func calculateAxisRadius(borderRadius, width, height float64) float64 {
+// ClampBorderRadius limits both corner axes to half the shorter side of the body.
+func ClampBorderRadius(borderRadius, width, height float64) float64 {
 	minimumSideSize := math.Min(width, height)
 	maximumBorderRadiusValue := minimumSideSize / 2.0
 	return math.Min(borderRadius, maximumBorderRadiusValue)

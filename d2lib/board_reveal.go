@@ -137,7 +137,7 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 		m.nodes[id] = birth
 		m.end = max(m.end, birth.end)
 	}
-	var dashWidths traceDashWidths
+	var shapeWidths traceShapeWidths
 	for _, e := range added {
 		backwards := e.DstArrow == d2target.NoArrowhead && e.SrcArrow != d2target.NoArrowhead
 		start := max(m.nodes[e.Src].end, m.nodes[e.Dst].end)
@@ -154,7 +154,7 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 		if wire == nil {
 			return nil
 		}
-		wire.measureDashes(e, next.Shapes, &dashWidths)
+		wire.measure(e, next.Shapes, &shapeWidths)
 		m.wires[e.ID] = wire
 		m.end = max(m.end, end)
 	}
@@ -201,36 +201,49 @@ func newBoardTrace(e *d2target.Connection, backwards bool, start, end float64) *
 	dstWidth, _ := e.DstArrow.Dimensions(e.RenderedStrokeWidth())
 	return &boardTrace{
 		start: start, end: end, backwards: backwards, points: points, lengths: lengths,
-		minDraw: max(srcWidth, dstWidth, 2*e.RenderedStrokeWidth()),
+		minDraw: max(srcWidth+dstWidth, 2*e.RenderedStrokeWidth()),
 	}
 }
 
-// A backwards trace grows by moving the start of the SVG path. Keep the
-// already-drawn dashes at their authored distance from the stationary end.
-type traceDashWidths map[string]float64
+type traceShapeWidths map[string]float64
 
-func (w *boardTrace) measureDashes(e *d2target.Connection, shapes []d2target.Shape, cache *traceDashWidths) {
+func (w *boardTrace) measure(e *d2target.Connection, shapes []d2target.Shape, cache *traceShapeWidths) {
+	src, dst := cache.adjustments(e, shapes)
+	insets := math.Hypot(src.X, src.Y) + math.Hypot(dst.X, dst.Y)
+	// The inset centerline must point forward, even between thick node borders.
+	// Two markers also need room for their combined artwork inside that line.
+	shaft := e.RenderedStrokeWidth()
+	if e.SrcArrow != d2target.NoArrowhead && e.DstArrow != d2target.NoArrowhead {
+		shaft = w.minDraw
+	}
+	w.minDraw = max(w.minDraw, insets+shaft)
+
 	if w.backwards && e.StrokeDash > 0 && !e.Animated {
 		w.dashLength = cache.length(e, shapes)
 	}
 }
 
-func (w *boardTrace) pinDashes(e *d2target.Connection, shapes []d2target.Shape, cache *traceDashWidths) {
+func (w *boardTrace) pinDashes(e *d2target.Connection, shapes []d2target.Shape, cache *traceShapeWidths) {
 	if w.dashLength > 0 {
 		e.MotionDashOffset = w.dashLength - cache.length(e, shapes)
 	}
 }
 
-// Use the rendered centerline, including rounded bends and the insets at
-// both ends. An entering shape can have a different stroke width per sample.
-func (cache *traceDashWidths) length(e *d2target.Connection, shapes []d2target.Shape) float64 {
+// An entering shape can have a different stroke width per sample.
+func (cache *traceShapeWidths) adjustments(e *d2target.Connection, shapes []d2target.Shape) (*geo.Point, *geo.Point) {
 	if *cache == nil {
-		*cache = make(traceDashWidths, len(shapes))
+		*cache = make(traceShapeWidths, len(shapes))
 		for i := range shapes {
 			(*cache)[shapes[i].ID] = shapes[i].RenderedStrokeWidth()
 		}
 	}
-	src, dst := e.ArrowheadAdjustmentsForWidths((*cache)[e.Src], (*cache)[e.Dst])
+	return e.ArrowheadAdjustmentsForWidths((*cache)[e.Src], (*cache)[e.Dst])
+}
+
+// Measure the rendered centerline so the existing dashes keep their phase as
+// the start of a backward trace moves.
+func (cache *traceShapeWidths) length(e *d2target.Connection, shapes []d2target.Shape) float64 {
+	src, dst := cache.adjustments(e, shapes)
 	var prev geo.Point
 	var length float64
 	for cmd := range e.PathCommands(src, dst) {
@@ -493,25 +506,21 @@ func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 			}
 		}
 	}
-	var dashWidths traceDashWidths
+	var shapeWidths traceShapeWidths
 	result := make([]d2target.Connection, 0, len(frame.Connections))
 	for _, e := range frame.Connections {
 		if wire := m.wires[e.ID]; wire != nil {
 			t := gridPhase(now, wire.start, wire.end)
 			lengthFraction := wire.travel(t)
-			if t < 1 {
-				path := wire.prefix(lengthFraction)
-				if len(path) < 2 {
-					continue
-				}
-				e.Route = path
+			if t < 1 && !wire.applyPrefix(&e, lengthFraction) {
+				continue
 			}
 			// Labels and badges use the full route for placement.
 			if t < 1 || now < max(m.nodes[e.Src].end, m.nodes[e.Dst].end) {
 				e.Label, e.Icon, e.SrcLabel, e.DstLabel = "", nil, nil, nil
 				// The click and hover regions belong to the caption's box.
 				e.Link, e.PrettyLink, e.Tooltip = "", "", ""
-				wire.pinDashes(&e, frame.Shapes, &dashWidths)
+				wire.pinDashes(&e, frame.Shapes, &shapeWidths)
 			}
 			if t < 1 {
 				revealed := lengthFraction * wire.lengths[len(wire.lengths)-1]
@@ -524,6 +533,15 @@ func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 		result = append(result, e)
 	}
 	frame.Connections = result
+}
+
+func (w *boardTrace) applyPrefix(e *d2target.Connection, fraction float64) bool {
+	e.Route = w.prefix(fraction)
+	e.MotionTip = d2target.TraceDestination
+	if w.backwards {
+		e.MotionTip = d2target.TraceSource
+	}
+	return len(e.Route) >= 2
 }
 
 func (w *boardTrace) prefix(fraction float64) []*geo.Point {

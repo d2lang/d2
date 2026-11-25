@@ -22,16 +22,18 @@ func percentage(v float64, precision int) string {
 	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', precision, 64), "0"), ".") + "%"
 }
 
-func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash string) string {
+func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash, hidden, visible string) string {
 	before := math.Max(0, float64(delayMS-transitionDurationMS)) / float64(totalMS) * 100
 	start := float64(delayMS) / float64(totalMS) * 100
 	end := float64(delayMS+durationMS-transitionDurationMS) / float64(totalMS) * 100
-	css := fmt.Sprintf("@keyframes d2Transition-%s-%d{0%%,%s{opacity:0}%s,", diagramHash, identifier, percentage(before, 6), percentage(start, 6))
-	if math.Ceil(end) == 100 {
-		return css + "100%{opacity:1}}"
+	css := fmt.Sprintf("@keyframes d2Transition-%s-%d{0%%,%s%s%s,", diagramHash, identifier, percentage(before, 6), hidden, percentage(start, 6))
+	// The first board takes over at the loop boundary. Keep the final board
+	// visible until then, including when the whole loop is 100ms or shorter.
+	if delayMS+durationMS == totalMS {
+		return css + "100%" + visible + "}"
 	}
 	after := float64(delayMS+durationMS) / float64(totalMS) * 100
-	return css + percentage(end, 6) + "{opacity:1}" + percentage(after, 6) + ",100%{opacity:0}}"
+	return css + percentage(end, 6) + visible + percentage(after, 6) + ",100%" + hidden + "}"
 }
 
 func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, intervalMS int) ([]byte, error) {
@@ -88,11 +90,18 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		return nil, err
 	}
 
-	fitToScreenWrapperOpening := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" d2Version="%s" preserveAspectRatio="xMinYMin meet" viewBox="0 0 %d %d"%s>`,
-		version.Version,
-		width, height, dimensions,
-	)
-	fmt.Fprint(buf, fitToScreenWrapperOpening)
+	if renderOpts.NoXMLTag == nil || !*renderOpts.NoXMLTag {
+		buf.WriteString(`<?xml version="1.0" encoding="utf-8"?>`)
+	}
+	buf.WriteString(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"`)
+	if renderOpts.OmitVersion == nil || !*renderOpts.OmitVersion {
+		buf.WriteString(svg.RenderAttributes(svg.Attr("d2Version", version.Version)))
+	}
+	align := "xMinYMin"
+	if renderOpts.Center != nil && *renderOpts.Center {
+		align = "xMidYMid"
+	}
+	fmt.Fprintf(buf, ` preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`, align, width, height, dimensions)
 
 	innerOpening := fmt.Sprintf(`<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d">`,
 		width, height, left, top, width, height)
@@ -132,15 +141,29 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	}
 
 	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)
+	fade := uniform && len(svgs) <= 100
+	hidden, visible := "{opacity:0", "{opacity:1"
+	if !fade {
+		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"
+	}
+	if strings.Contains(svgsStr, "<a ") || strings.Contains(svgsStr, "<title>") {
+		// Transparent frames can intercept the pointer; even clipped anchors
+		// remain keyboard-focusable. Keep their paint servers available to
+		// other frames by changing visibility only on the links themselves.
+		fmt.Fprintf(buf, ".%s a{visibility:var(--d2-link-visibility,inherit)}", diagramHash)
+		hidden += ";pointer-events:none;--d2-link-visibility:hidden"
+		visible += ";pointer-events:inherit;--d2-link-visibility:initial"
+	}
+	hidden += "}"
+	visible += "}"
 	startMS := 0
 	for i, duration := range durationsMS {
-		if uniform && len(svgs) <= 100 {
-			fmt.Fprint(buf, makeKeyframe(startMS, duration, totalMS, i, diagramHash))
+		if fade {
+			fmt.Fprint(buf, makeKeyframe(startMS, duration, totalMS, i, diagramHash, hidden, visible))
 		} else {
 			// Cut between samples without giving every frame its own opacity
 			// layer. An empty clip also leaves shared paint resources usable
 			// and descendant animations running while the frame is offscreen.
-			const hidden, visible = "{clip-path:inset(50%)}", "{clip-path:none}"
 			fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d{", diagramHash, i)
 			if startMS > 0 {
 				buf.WriteString("0%" + hidden)
@@ -158,7 +181,7 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	fmt.Fprint(buf, `]]></style>`)
 
 	timing := ""
-	if !uniform || len(svgs) > 100 {
+	if !fade {
 		timing = " steps(1,end)"
 	}
 	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"

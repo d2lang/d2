@@ -37,6 +37,54 @@ func TestWrapTimedClipsBetweenSamples(t *testing.T) {
 	}
 }
 
+func TestShortSVGLoopKeepsLastBoardVisible(t *testing.T) {
+	frames := [][]byte{[]byte("<g></g>"), []byte("<g></g>")}
+	out, err := Wrap(d2target.NewDiagram(), frames, d2svg.RenderOpts{}, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"-0{0%,0%{opacity:0}0%,48.75%{opacity:1}50%,100%{opacity:0}}",
+		"-1{0%,48.75%{opacity:0}50%,100%{opacity:1}}",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("missing frame boundary %q", want)
+		}
+	}
+}
+
+func TestHiddenFrameInteraction(t *testing.T) {
+	link := []byte(`<g><a href="https://example.org"><rect/></a></g>`)
+	tooltip := []byte(`<g><rect/><title>Next stage</title></g>`)
+	for _, tc := range []struct {
+		name      string
+		durations []int
+		frames    [][]byte
+		gate      string
+	}{
+		{"linked board followed by a plain board", []int{1000, 1000}, [][]byte{link, []byte("<g/>")}, "opacity:0"},
+		{"links in sampled frames", []int{1000, 25}, [][]byte{link, link}, "clip-path:inset(50%)"},
+		{"tooltip without a link", []int{1000, 1000}, [][]byte{tooltip, tooltip}, "opacity:0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := WrapTimed(d2target.NewDiagram(), tc.frames, d2svg.RenderOpts{}, tc.durations)
+			if err != nil {
+				t.Fatal(err)
+			}
+			style := string(out)
+			for _, rule := range []string{
+				" a{visibility:var(--d2-link-visibility,inherit)}",
+				tc.gate + ";pointer-events:none;--d2-link-visibility:hidden",
+				";pointer-events:inherit;--d2-link-visibility:initial",
+			} {
+				if !strings.Contains(style, rule) {
+					t.Errorf("missing frame interaction rule %q", rule)
+				}
+			}
+		})
+	}
+}
+
 func TestWrapDefaultsMissingPadding(t *testing.T) {
 	diagram := d2target.NewDiagram()
 	out, err := Wrap(diagram, [][]byte{[]byte(`<g></g>`)}, d2svg.RenderOpts{}, 1_000)
@@ -45,6 +93,33 @@ func TestWrapDefaultsMissingPadding(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `viewBox="0 0 200 200"`) {
 		t.Fatalf("Wrap() did not use default padding: %q", out)
+	}
+}
+
+func TestWrapSVGDocumentOptions(t *testing.T) {
+	on := true
+	for _, tc := range []struct {
+		name                 string
+		opts                 d2svg.RenderOpts
+		xml, version, center bool
+	}{
+		{"defaults", d2svg.RenderOpts{}, true, true, false},
+		{"center", d2svg.RenderOpts{Center: &on}, true, true, true},
+		{"no XML declaration", d2svg.RenderOpts{NoXMLTag: &on}, false, true, false},
+		{"omit version", d2svg.RenderOpts{OmitVersion: &on}, true, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := Wrap(d2target.NewDiagram(), [][]byte{[]byte("<g/>"), []byte("<g/>")}, tc.opts, 1000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start, _, _ := strings.Cut(string(out), `><svg class="d2-svg"`)
+			if strings.HasPrefix(start, "<?xml") != tc.xml || strings.Contains(start, ` d2Version="`) != tc.version ||
+				strings.Contains(start, `preserveAspectRatio="xMidYMid meet"`) != tc.center ||
+				strings.Contains(start, `preserveAspectRatio="xMinYMin meet"`) == tc.center {
+				t.Errorf("unexpected SVG envelope: %s", start)
+			}
+		})
 	}
 }
 

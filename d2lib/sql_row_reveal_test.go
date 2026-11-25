@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
+	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
@@ -135,6 +136,40 @@ func TestSQLRowRevealRequiresStableLayout(t *testing.T) {
 			tc.change(&next)
 			if got := planSQLRowReveal(prev, &next) != nil; got != tc.want {
 				t.Fatalf("planned = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStructuredShapeDividersStayInsideRoundedOutline(t *testing.T) {
+	const config = "vars: {d2-config: {animate-interval: 700ms; animate-duration: 420ms}}\n"
+	for _, test := range []struct{ name, source string }{
+		{"SQL row drop", `catalog: {shape: sql_table; style.border-radius: 250; catalog_id: int; title: text}
+steps: {pages: {catalog.pages: int}}`},
+		{"class rounding", `Message: {shape: class; id: int; style.border-radius: 0}
+steps: {round: {Message.style.border-radius: 250}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root, _ := compileContinuity(t, config+test.source, d2talalayout.ContinueBoard)
+			step := root.Steps[0]
+			if len(step.TweenFrames) < 3 {
+				t.Fatal("expected intermediate frames")
+			}
+			for _, frame := range append(slices.Clone(step.TweenFrames), step) {
+				shape := frame.Shapes[0]
+				radius := min(float64(shape.BorderRadius), float64(min(shape.Height, shape.Width))/2)
+				svgBytes, err := d2svg.Render(frame, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				doc := string(svgBytes)
+				x, y := float64(shape.Pos.X), float64(shape.Pos.Y)
+				bottom := svg.FormatFloat(y + float64(shape.Height))
+				divider := fmt.Sprintf(`<line x1="%s" x2="%s" y1="%s" y2="%s"`, svg.FormatFloat(x+radius), svg.FormatFloat(x+float64(shape.Width)-radius), bottom, bottom)
+				clipStart := fmt.Sprintf(`<path d="M %s %s L`, svg.FormatFloat(x), svg.FormatFloat(y+radius))
+				if !strings.Contains(doc, divider) || radius > 0 && (!strings.Contains(doc, clipStart) || !strings.Contains(doc, `Z" fill="none" /> </clipPath>`)) {
+					t.Fatalf("header clip or bottom divider misses the outline radius %.1f", radius)
+				}
 			}
 		})
 	}
