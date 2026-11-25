@@ -15,6 +15,7 @@
     {
       "id": "request",
       "type": "rectangle",
+      "sequenceRole": "group",
       "pos": {
         "x": 58,
         "y": 138
@@ -58,6 +59,7 @@
     {
       "id": "client",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 24,
         "y": 24
@@ -100,6 +102,7 @@
     {
       "id": "server",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 184,
         "y": 24
@@ -142,6 +145,7 @@
     {
       "id": "request.processing",
       "type": "rectangle",
+      "sequenceRole": "group",
       "pos": {
         "x": 224,
         "y": 254
@@ -185,6 +189,7 @@
     {
       "id": "server.work",
       "type": "",
+      "sequenceRole": "span",
       "pos": {
         "x": 228,
         "y": 311
@@ -226,6 +231,7 @@
     {
       "id": "database",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 344,
         "y": 24
@@ -268,6 +274,7 @@
     {
       "id": "database.query",
       "type": "",
+      "sequenceRole": "span",
       "pos": {
         "x": 392,
         "y": 311
@@ -310,6 +317,7 @@
   "connections": [
     {
       "id": "(client -> server)[0]",
+      "sequenceRole": "message",
       "src": "client",
       "srcArrow": "none",
       "dst": "server",
@@ -349,6 +357,7 @@
     },
     {
       "id": "(server.work -> database.query)[0]",
+      "sequenceRole": "message",
       "src": "server.work",
       "srcArrow": "none",
       "dst": "database.query",
@@ -388,6 +397,7 @@
     },
     {
       "id": "(database.query -> server.work)[0]",
+      "sequenceRole": "message",
       "src": "database.query",
       "srcArrow": "none",
       "dst": "server.work",
@@ -427,6 +437,7 @@
     },
     {
       "id": "(server -> client)[0]",
+      "sequenceRole": "message",
       "src": "server",
       "srcArrow": "none",
       "dst": "client",
@@ -466,6 +477,7 @@
     },
     {
       "id": "(client -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "client",
       "srcArrow": "none",
       "dst": "client-lifeline-end-2119091193",
@@ -505,6 +517,7 @@
     },
     {
       "id": "(server -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "server",
       "srcArrow": "none",
       "dst": "server-lifeline-end-2777460813",
@@ -544,6 +557,7 @@
     },
     {
       "id": "(database -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "database",
       "srcArrow": "none",
       "dst": "database-lifeline-end-7355771",
@@ -585,6 +599,7 @@
   "root": {
     "id": "",
     "type": "",
+    "sequenceRole": "container",
     "pos": {
       "x": 0,
       "y": 0

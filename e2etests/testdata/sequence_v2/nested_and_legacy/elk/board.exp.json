@@ -57,6 +57,7 @@
     {
       "id": "modern.x.mirror",
       "type": "rectangle",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 380,
         "y": 342
@@ -99,6 +100,7 @@
     {
       "id": "modern.y.mirror",
       "type": "rectangle",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 540,
         "y": 342
@@ -225,6 +227,7 @@
     {
       "id": "modern",
       "type": "rectangle",
+      "sequenceRole": "container",
       "pos": {
         "x": 356,
         "y": 12
@@ -267,6 +270,7 @@
     {
       "id": "modern.group",
       "type": "rectangle",
+      "sequenceRole": "group",
       "pos": {
         "x": 414,
         "y": 210
@@ -310,6 +314,7 @@
     {
       "id": "modern.x",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 380,
         "y": 96
@@ -352,6 +357,7 @@
     {
       "id": "modern.y",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 540,
         "y": 96
@@ -434,6 +440,7 @@
     },
     {
       "id": "modern.(x -> y)[0]",
+      "sequenceRole": "message",
       "src": "modern.x",
       "srcArrow": "none",
       "dst": "modern.y",
@@ -590,6 +597,7 @@
     },
     {
       "id": "(modern.x -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "modern.x",
       "srcArrow": "none",
       "dst": "x-lifeline-end-1678191278",
@@ -629,6 +637,7 @@
     },
     {
       "id": "(modern.y -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "modern.y",
       "srcArrow": "none",
       "dst": "y-lifeline-end-35261543",

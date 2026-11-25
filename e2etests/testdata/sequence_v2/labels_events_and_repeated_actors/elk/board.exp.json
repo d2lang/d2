@@ -15,6 +15,7 @@
     {
       "id": "client",
       "type": "person",
+      "sequenceRole": "actor",
       "pos": {
         "x": 24,
         "y": 24
@@ -57,6 +58,7 @@
     {
       "id": "client.mirror",
       "type": "person",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 24,
         "y": 951
@@ -99,6 +101,7 @@
     {
       "id": "server.mirror",
       "type": "rectangle",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 232,
         "y": 951
@@ -141,6 +144,7 @@
     {
       "id": "server",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 232,
         "y": 109
@@ -183,6 +187,7 @@
     {
       "id": "server.work",
       "type": "",
+      "sequenceRole": "span",
       "pos": {
         "x": 241,
         "y": 233
@@ -225,6 +230,7 @@
     {
       "id": "server.work.inner",
       "type": "",
+      "sequenceRole": "span",
       "pos": {
         "x": 243,
         "y": 345
@@ -267,6 +273,7 @@
     {
       "id": "server.status",
       "type": "page",
+      "sequenceRole": "note",
       "pos": {
         "x": 234,
         "y": 480
@@ -309,6 +316,7 @@
     {
       "id": "server.checkpoint",
       "type": "diamond",
+      "sequenceRole": "event",
       "pos": {
         "x": 189,
         "y": 615
@@ -351,6 +359,7 @@
     {
       "id": "server.again",
       "type": "rectangle",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 232,
         "y": 755
@@ -394,6 +403,7 @@
   "connections": [
     {
       "id": "(client -> server.work)[0]",
+      "sequenceRole": "message",
       "src": "client",
       "srcArrow": "none",
       "dst": "server.work",
@@ -433,6 +443,7 @@
     },
     {
       "id": "server.work.(inner -> inner)[0]",
+      "sequenceRole": "message",
       "src": "server.work.inner",
       "srcArrow": "none",
       "dst": "server.work.inner",
@@ -480,6 +491,7 @@
     },
     {
       "id": "(server.work.inner -> client)[0]",
+      "sequenceRole": "message",
       "src": "server.work.inner",
       "srcArrow": "none",
       "dst": "client",
@@ -519,6 +531,7 @@
     },
     {
       "id": "(client -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "client",
       "srcArrow": "none",
       "dst": "client-lifeline-end-2119091193",
@@ -558,6 +571,7 @@
     },
     {
       "id": "(server -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "server",
       "srcArrow": "none",
       "dst": "server-lifeline-end-2777460813",
@@ -597,6 +611,7 @@
     },
     {
       "id": "(server -- )[1]",
+      "sequenceRole": "lifeline",
       "src": "server",
       "srcArrow": "none",
       "dst": "server-lifeline-end-2777460813",
@@ -636,6 +651,7 @@
     },
     {
       "id": "(server -- )[2]",
+      "sequenceRole": "lifeline",
       "src": "server",
       "srcArrow": "none",
       "dst": "server-lifeline-end-2777460813",
@@ -675,6 +691,7 @@
     },
     {
       "id": "(server -- )[3]",
+      "sequenceRole": "lifeline",
       "src": "server",
       "srcArrow": "none",
       "dst": "server-lifeline-end-2777460813",
@@ -716,6 +733,7 @@
   "root": {
     "id": "",
     "type": "",
+    "sequenceRole": "container",
     "pos": {
       "x": 0,
       "y": 0

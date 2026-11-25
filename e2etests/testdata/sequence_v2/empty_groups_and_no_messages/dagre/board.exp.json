@@ -15,6 +15,7 @@
     {
       "id": "actors",
       "type": "rectangle",
+      "sequenceRole": "group",
       "pos": {
         "x": 24,
         "y": 24
@@ -57,6 +58,7 @@
     {
       "id": "actors.a",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 40,
         "y": 71
@@ -99,6 +101,7 @@
     {
       "id": "actors.b",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 232,
         "y": 71
@@ -141,6 +144,7 @@
     {
       "id": "empty",
       "type": "rectangle",
+      "sequenceRole": "group",
       "pos": {
         "x": 58,
         "y": 185
@@ -184,6 +188,7 @@
     {
       "id": "actors.a.note",
       "type": "page",
+      "sequenceRole": "note",
       "pos": {
         "x": 47,
         "y": 286
@@ -227,6 +232,7 @@
   "connections": [
     {
       "id": "(actors.a -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "actors.a",
       "srcArrow": "none",
       "dst": "a-lifeline-end-2251863791",
@@ -266,6 +272,7 @@
     },
     {
       "id": "(actors.a -- )[1]",
+      "sequenceRole": "lifeline",
       "src": "actors.a",
       "srcArrow": "none",
       "dst": "a-lifeline-end-2251863791",
@@ -305,6 +312,7 @@
     },
     {
       "id": "(actors.b -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "actors.b",
       "srcArrow": "none",
       "dst": "b-lifeline-end-668380428",
@@ -346,6 +354,7 @@
   "root": {
     "id": "",
     "type": "",
+    "sequenceRole": "container",
     "pos": {
       "x": 0,
       "y": 0

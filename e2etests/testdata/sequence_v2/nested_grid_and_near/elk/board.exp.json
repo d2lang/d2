@@ -57,6 +57,7 @@
     {
       "id": "grid.first.a.mirror",
       "type": "rectangle",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 96,
         "y": 334
@@ -99,6 +100,7 @@
     {
       "id": "grid.first.b.mirror",
       "type": "rectangle",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 256,
         "y": 334
@@ -141,6 +143,7 @@
     {
       "id": "grid.first",
       "type": "rectangle",
+      "sequenceRole": "container",
       "pos": {
         "x": 72,
         "y": 72
@@ -183,6 +186,7 @@
     {
       "id": "grid.first.a",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 96,
         "y": 151
@@ -225,6 +229,7 @@
     {
       "id": "grid.first.b",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 256,
         "y": 151
@@ -267,6 +272,7 @@
     {
       "id": "grid.second",
       "type": "rectangle",
+      "sequenceRole": "container",
       "pos": {
         "x": 420,
         "y": 72
@@ -309,6 +315,7 @@
     {
       "id": "grid.second.x",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 444,
         "y": 151
@@ -351,6 +358,7 @@
     {
       "id": "grid.second.y",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 604,
         "y": 151
@@ -393,6 +401,7 @@
     {
       "id": "legend",
       "type": "rectangle",
+      "sequenceRole": "container",
       "pos": {
         "x": 246,
         "y": 504
@@ -435,6 +444,7 @@
     {
       "id": "legend.p",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 270,
         "y": 588
@@ -477,6 +487,7 @@
     {
       "id": "legend.q",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 430,
         "y": 588
@@ -520,6 +531,7 @@
   "connections": [
     {
       "id": "grid.first.(a -> b)[0]",
+      "sequenceRole": "message",
       "src": "grid.first.a",
       "srcArrow": "none",
       "dst": "grid.first.b",
@@ -559,6 +571,7 @@
     },
     {
       "id": "grid.second.(x -> y)[0]",
+      "sequenceRole": "message",
       "src": "grid.second.x",
       "srcArrow": "none",
       "dst": "grid.second.y",
@@ -598,6 +611,7 @@
     },
     {
       "id": "legend.(p -> q)[0]",
+      "sequenceRole": "message",
       "src": "legend.p",
       "srcArrow": "none",
       "dst": "legend.q",
@@ -637,6 +651,7 @@
     },
     {
       "id": "(legend.p -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "legend.p",
       "srcArrow": "none",
       "dst": "p-lifeline-end-1398835718",
@@ -676,6 +691,7 @@
     },
     {
       "id": "(legend.q -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "legend.q",
       "srcArrow": "none",
       "dst": "q-lifeline-end-1491495039",
@@ -715,6 +731,7 @@
     },
     {
       "id": "(grid.first.a -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "grid.first.a",
       "srcArrow": "none",
       "dst": "a-lifeline-end-2251863791",
@@ -754,6 +771,7 @@
     },
     {
       "id": "(grid.first.b -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "grid.first.b",
       "srcArrow": "none",
       "dst": "b-lifeline-end-668380428",
@@ -793,6 +811,7 @@
     },
     {
       "id": "(grid.second.x -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "grid.second.x",
       "srcArrow": "none",
       "dst": "x-lifeline-end-1678191278",
@@ -832,6 +851,7 @@
     },
     {
       "id": "(grid.second.y -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "grid.second.y",
       "srcArrow": "none",
       "dst": "y-lifeline-end-35261543",

@@ -15,6 +15,7 @@
     {
       "id": "table",
       "type": "sql_table",
+      "sequenceRole": "actor",
       "pos": {
         "x": 24,
         "y": 90
@@ -89,6 +90,7 @@
     {
       "id": "table.mirror",
       "type": "sql_table",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 24,
         "y": 654
@@ -163,6 +165,7 @@
     {
       "id": "service.mirror",
       "type": "class",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 202,
         "y": 654
@@ -215,6 +218,7 @@
     {
       "id": "service",
       "type": "class",
+      "sequenceRole": "actor",
       "pos": {
         "x": 202,
         "y": 24
@@ -267,6 +271,7 @@
     {
       "id": "table.again",
       "type": "sql_table",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 24,
         "y": 279
@@ -341,6 +346,7 @@
     {
       "id": "service.again",
       "type": "class",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 202,
         "y": 399
@@ -394,6 +400,7 @@
   "connections": [
     {
       "id": "(table -> service)[0]",
+      "sequenceRole": "message",
       "src": "table",
       "srcArrow": "none",
       "dst": "service",
@@ -433,6 +440,7 @@
     },
     {
       "id": "(service -> table)[0]",
+      "sequenceRole": "message",
       "src": "service",
       "srcArrow": "none",
       "dst": "table",
@@ -472,6 +480,7 @@
     },
     {
       "id": "(table -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "table",
       "srcArrow": "none",
       "dst": "table-lifeline-end-3070911574",
@@ -511,6 +520,7 @@
     },
     {
       "id": "(table -- )[1]",
+      "sequenceRole": "lifeline",
       "src": "table",
       "srcArrow": "none",
       "dst": "table-lifeline-end-3070911574",
@@ -550,6 +560,7 @@
     },
     {
       "id": "(service -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "service",
       "srcArrow": "none",
       "dst": "service-lifeline-end-22863415",
@@ -589,6 +600,7 @@
     },
     {
       "id": "(service -- )[1]",
+      "sequenceRole": "lifeline",
       "src": "service",
       "srcArrow": "none",
       "dst": "service-lifeline-end-22863415",
@@ -630,6 +642,7 @@
   "root": {
     "id": "",
     "type": "",
+    "sequenceRole": "container",
     "pos": {
       "x": 0,
       "y": 0

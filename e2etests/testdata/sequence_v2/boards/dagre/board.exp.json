@@ -15,6 +15,7 @@
     {
       "id": "a",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 24,
         "y": 24
@@ -57,6 +58,7 @@
     {
       "id": "a.mirror",
       "type": "rectangle",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 24,
         "y": 207
@@ -99,6 +101,7 @@
     {
       "id": "b.mirror",
       "type": "rectangle",
+      "sequenceRole": "repeat",
       "pos": {
         "x": 184,
         "y": 207
@@ -141,6 +144,7 @@
     {
       "id": "b",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 184,
         "y": 24
@@ -184,6 +188,7 @@
   "connections": [
     {
       "id": "(a -> b)[0]",
+      "sequenceRole": "message",
       "src": "a",
       "srcArrow": "none",
       "dst": "b",
@@ -223,6 +228,7 @@
     },
     {
       "id": "(a -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "a",
       "srcArrow": "none",
       "dst": "a-lifeline-end-2251863791",
@@ -262,6 +268,7 @@
     },
     {
       "id": "(b -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "b",
       "srcArrow": "none",
       "dst": "b-lifeline-end-668380428",
@@ -303,6 +310,7 @@
   "root": {
     "id": "",
     "type": "",
+    "sequenceRole": "container",
     "pos": {
       "x": 0,
       "y": 0
@@ -351,6 +359,7 @@
         {
           "id": "a",
           "type": "rectangle",
+          "sequenceRole": "actor",
           "pos": {
             "x": 24,
             "y": 24
@@ -393,6 +402,7 @@
         {
           "id": "a.mirror",
           "type": "rectangle",
+          "sequenceRole": "repeat",
           "pos": {
             "x": 24,
             "y": 276
@@ -435,6 +445,7 @@
         {
           "id": "b.mirror",
           "type": "rectangle",
+          "sequenceRole": "repeat",
           "pos": {
             "x": 184,
             "y": 276
@@ -477,6 +488,7 @@
         {
           "id": "b",
           "type": "rectangle",
+          "sequenceRole": "actor",
           "pos": {
             "x": 184,
             "y": 24
@@ -520,6 +532,7 @@
       "connections": [
         {
           "id": "(a -> b)[0]",
+          "sequenceRole": "message",
           "src": "a",
           "srcArrow": "none",
           "dst": "b",
@@ -559,6 +572,7 @@
         },
         {
           "id": "(b -> a)[0]",
+          "sequenceRole": "message",
           "src": "b",
           "srcArrow": "none",
           "dst": "a",
@@ -598,6 +612,7 @@
         },
         {
           "id": "(a -- )[0]",
+          "sequenceRole": "lifeline",
           "src": "a",
           "srcArrow": "none",
           "dst": "a-lifeline-end-2251863791",
@@ -637,6 +652,7 @@
         },
         {
           "id": "(b -- )[0]",
+          "sequenceRole": "lifeline",
           "src": "b",
           "srcArrow": "none",
           "dst": "b-lifeline-end-668380428",
@@ -678,6 +694,7 @@
       "root": {
         "id": "",
         "type": "",
+        "sequenceRole": "container",
         "pos": {
           "x": 0,
           "y": 0

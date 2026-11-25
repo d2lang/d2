@@ -15,6 +15,7 @@
     {
       "id": "app",
       "type": "rectangle",
+      "sequenceRole": "group",
       "pos": {
         "x": 24,
         "y": 71
@@ -57,6 +58,7 @@
     {
       "id": "app.producer",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 40,
         "y": 118
@@ -99,6 +101,7 @@
     {
       "id": "app.consumer",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 254,
         "y": 118
@@ -141,6 +144,7 @@
     {
       "id": "kafka",
       "type": "rectangle",
+      "sequenceRole": "group",
       "pos": {
         "x": 460,
         "y": 24
@@ -183,6 +187,7 @@
     {
       "id": "kafka.topics",
       "type": "rectangle",
+      "sequenceRole": "group",
       "pos": {
         "x": 476,
         "y": 71
@@ -225,6 +230,7 @@
     {
       "id": "kafka.topics.source",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 492,
         "y": 118
@@ -267,6 +273,7 @@
     {
       "id": "kafka.topics.destination",
       "type": "rectangle",
+      "sequenceRole": "actor",
       "pos": {
         "x": 731,
         "y": 118
@@ -310,6 +317,7 @@
   "connections": [
     {
       "id": "(app.producer -> kafka.topics.source)[0]",
+      "sequenceRole": "message",
       "src": "app.producer",
       "srcArrow": "none",
       "dst": "kafka.topics.source",
@@ -349,6 +357,7 @@
     },
     {
       "id": "kafka.topics.(source -> destination)[0]",
+      "sequenceRole": "message",
       "src": "kafka.topics.source",
       "srcArrow": "none",
       "dst": "kafka.topics.destination",
@@ -388,6 +397,7 @@
     },
     {
       "id": "(kafka.topics.destination -> app.consumer)[0]",
+      "sequenceRole": "message",
       "src": "kafka.topics.destination",
       "srcArrow": "none",
       "dst": "app.consumer",
@@ -427,6 +437,7 @@
     },
     {
       "id": "app.(consumer -> producer)[0]",
+      "sequenceRole": "message",
       "src": "app.consumer",
       "srcArrow": "none",
       "dst": "app.producer",
@@ -466,6 +477,7 @@
     },
     {
       "id": "(app.producer -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "app.producer",
       "srcArrow": "none",
       "dst": "producer-lifeline-end-1653502030",
@@ -505,6 +517,7 @@
     },
     {
       "id": "(app.consumer -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "app.consumer",
       "srcArrow": "none",
       "dst": "consumer-lifeline-end-1341291824",
@@ -544,6 +557,7 @@
     },
     {
       "id": "(kafka.topics.source -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "kafka.topics.source",
       "srcArrow": "none",
       "dst": "source-lifeline-end-3962253211",
@@ -583,6 +597,7 @@
     },
     {
       "id": "(kafka.topics.destination -- )[0]",
+      "sequenceRole": "lifeline",
       "src": "kafka.topics.destination",
       "srcArrow": "none",
       "dst": "destination-lifeline-end-2709100342",
@@ -624,6 +639,7 @@
   "root": {
     "id": "",
     "type": "",
+    "sequenceRole": "container",
     "pos": {
       "x": 0,
       "y": 0
