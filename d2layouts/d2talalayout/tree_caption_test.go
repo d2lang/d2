@@ -268,3 +268,45 @@ Detached`
 		}
 	}
 }
+
+func TestTreePortSearchPreservesClearEndpointCaptions(t *testing.T) {
+	const source = `direction: left
+H: Main {width: 80; height: 75}
+N0 <- H: {target-arrowhead: Next}
+H -> N1: {source-arrowhead: Next}
+N4 <- H
+H -> N5
+N6 <- H`
+	const twoEdges = `direction: left
+H: Main {width: 80; height: 155}
+N0: Load {shape: document; width: 117; height: 64}
+N0 <- H: {target-arrowhead: Hold for financial reconciliation}
+N1: Job {width: 117; height: 64}
+H -> N1: {source-arrowhead: Hold for financial reconciliation}`
+	for _, input := range []string{source, source + "\nH.style.fill: red", twoEdges} {
+		d := compileRoutingDiagram(t, t.Context(), input, 1, nil)
+		var captions []geo.Box
+		for _, e := range d.Connections {
+			for _, target := range [...]bool{false, true} {
+				end := e.SrcLabel
+				if target {
+					end = e.DstLabel
+				}
+				if end != nil {
+					captions = append(captions, geo.Box{TopLeft: e.GetArrowheadLabelPosition(target), Width: float64(end.LabelWidth), Height: float64(end.LabelHeight)})
+				}
+			}
+		}
+		if len(captions) != 2 || captions[0].Overlaps(captions[1]) {
+			t.Fatalf("the two visible endpoint captions should be separate, got %v", captions)
+		}
+		for _, shape := range d.Shapes {
+			body := geo.NewBox(geo.NewPoint(float64(shape.Pos.X), float64(shape.Pos.Y)), float64(shape.Width), float64(shape.Height))
+			for _, caption := range captions {
+				if body.Overlaps(caption) {
+					t.Fatalf("shape %q covers an endpoint caption", shape.ID)
+				}
+			}
+		}
+	}
+}

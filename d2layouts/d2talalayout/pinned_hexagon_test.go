@@ -40,13 +40,15 @@ func TestPinned3DHexagonKeepsShortVerticalConnector(t *testing.T) {
 func TestTouchingPinnedModifiersHaveAnExteriorConnector(t *testing.T) {
 	for _, tc := range []struct {
 		shape, style, link string
-		x, y               int
+		x, y, height       int
+		peerStyle          string
 		vertical           bool
 	}{
-		{"hexagon", "3d", "a -> b", 230, 121, true},
-		{"rectangle", "multiple", "b -> a", 320, 190, false},
+		{"hexagon", "3d", "a -> b", 230, 121, 32, "", true},
+		{"rectangle", "multiple", "b -> a", 320, 190, 32, "", false},
+		{"hexagon", "3d", "b <-> a", 265, 68, 85, "; shape: hexagon; style.3d: true", true},
 	} {
-		source := fmt.Sprintf("a: A {shape: %s; left: 180; top: 160; width: 130; height: 90; style.%s: true}\nb: B {left: %d; top: %d; width: 52; height: 32}\n%s: active", tc.shape, tc.style, tc.x, tc.y, tc.link)
+		source := fmt.Sprintf("a: A {shape: %s; left: 180; top: 160; width: 130; height: 90; style.%s: true}\nb: B {left: %d; top: %d; width: 52; height: %d%s}\n%s: active", tc.shape, tc.style, tc.x, tc.y, tc.height, tc.peerStyle, tc.link)
 		diag := compileRoutingDiagram(t, t.Context(), source, 1, nil)
 		if len(diag.Connections) != 1 || diag.Connections[0].Label != "active" || len(diag.Connections[0].Route) != 4 {
 			t.Fatalf("%s: missing exterior labeled route", tc.shape)

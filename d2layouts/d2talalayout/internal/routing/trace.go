@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"math"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
@@ -126,6 +127,10 @@ func routeTouchingPins(edge *layoutgraph.Edge) {
 		return
 	}
 	for _, n := range []*layoutgraph.Node{from, to} {
+		// An authored decoration on the border can occupy the exterior lane.
+		if n.Icon != nil || n.Label != nil && n.Label.PositionFixed() && (n.Label.Position.IsOutside() || n.Label.Position.IsBorder()) {
+			return
+		}
 		switch n.ShapeType() {
 		case shape.SQUARE_TYPE, shape.HEXAGON_TYPE:
 		default:
@@ -135,6 +140,9 @@ func routeTouchingPins(edge *layoutgraph.Edge) {
 	// Both modifiers extend up and right. The left and bottom faces are
 	// available without crossing either outline.
 	start, end := from.Center(), to.Center()
+	// Border tracing snaps non-rectangular ports to integer coordinates.
+	start.X, start.Y = math.Round(start.X), math.Round(start.Y)
+	end.X, end.Y = math.Round(end.X), math.Round(end.Y)
 	first, last := *start, *end
 	if from.TopLeft.Y+from.Height <= to.TopLeft.Y || to.TopLeft.Y+to.Height <= from.TopLeft.Y {
 		start.X, end.X = from.TopLeft.X, to.TopLeft.X

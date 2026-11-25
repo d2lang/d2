@@ -621,6 +621,18 @@ func routeEdgesWithResourceGuards(
 		leastDistance, bestRoutes, bestWork = response.Distance, response.Routes, response.work
 	}
 
+	if bestWork != nil && fallback != nil && len(parentByAnnotation) == 2 {
+		hide, err := obscuresOpposingTreeCaptions(ctx, treeFallback, bestRoutes, parentByAnnotation, annotationCount, g.Nodes, nearbyNodes, bestWork)
+		if chargeErr := bestWork.finish(); chargeErr != nil {
+			return ovg, chargeErr
+		}
+		if err != nil && !errors.Is(err, errRouteSearchWorkLimit) {
+			return ovg, err
+		}
+		if hide || err != nil {
+			bestWork = nil
+		}
+	}
 	if bestWork != nil || fallback == nil {
 		err := finalizeSelectedRoutes(ctx, g, bestRoutes, nil, bestWork, true)
 		if err == nil || fallback == nil || !errors.Is(err, errRouteSearchWorkLimit) {
@@ -633,6 +645,67 @@ func routeEdgesWithResourceGuards(
 	applyRouteUpdates(fallback)
 
 	return ovg, nil
+}
+
+// A shared port can display two captions on opposite sides of its trunk when
+// one edge was authored in reverse. Keep that port if separating the branches
+// would make the two captions overlap, and the shared routes clear all bodies.
+func obscuresOpposingTreeCaptions(ctx context.Context, ready, selected []*Route, parents map[*layoutgraph.Edge]*layoutgraph.Node, counts map[*layoutgraph.Node]int, nodes, nearby []*layoutgraph.Node, work *routeSearchWorkGuard) (bool, error) {
+	reversed := 0
+	for e, parent := range parents {
+		if len(parent.Edges) < 3 || e.Label != nil || (e.From == parent && e.TargetArrowheadLabel != nil) || (e.To == parent && e.SourceArrowheadLabel != nil) {
+			return false, nil
+		}
+		if e.ReversedForLayout {
+			reversed++
+		}
+	}
+	if reversed != 1 {
+		return false, nil
+	}
+	for pass, routes := range [][]*Route{selected, ready} {
+		var first *labeling.PositionedArrowheadLabel
+		var firstPort *geo.Point
+		for _, r := range routes {
+			if err := work.step(); err != nil {
+				return false, err
+			}
+			e := r.GEdge
+			parent := parents[e]
+			if parent == nil {
+				continue
+			}
+			if err := work.add(uint64(len(r.OVGNodes))); err != nil {
+				return false, err
+			}
+			points := r.createSegmentEndpoints()
+			target := e.To == parent
+			caption := labeling.PositionArrowheadLabel(e, target, points)
+			if caption == nil || caption.Width <= 0 || caption.Height <= 0 {
+				return false, nil
+			}
+			port := points[0]
+			if target {
+				port = points[len(points)-1]
+			}
+			if first == nil {
+				first, firstPort = caption, port
+				continue
+			}
+			overlap := first.Box.Overlaps(caption.Box)
+			if pass == 0 {
+				if !overlap {
+					return false, nil
+				}
+				break
+			}
+			if overlap || !port.Equals(firstPort) {
+				return false, nil
+			}
+			return treeCaptionsClearNodes(ctx, ready, parents, counts, nodes, nearby, work)
+		}
+	}
+	return false, nil
 }
 
 // A long caption can follow the path past its first bend and land on a

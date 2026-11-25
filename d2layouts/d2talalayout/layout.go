@@ -335,6 +335,9 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 		clearPinnedFrameNeighbor(graph, best.graph)
 		clearIsolatedFrameDecoration(graph, best.graph)
 		clearCrowdedCaptions(graph, best.graph)
+		if refineRoutes {
+			clearPackedTreeTile(graph, best.graph)
+		}
 	}
 	return applySeedResult(workCtx, graph, best)
 }
