@@ -42,3 +42,33 @@ Review -> Settle
 		})
 	}
 }
+
+func TestTreeJunctionStaysNearFixedNeighbor(t *testing.T) {
+	const source = `direction: down
+Hub: {near: Reference}
+Input -> Hub -> Verify
+Hub -> Audit
+Hub -> Settle
+Reference: {left: 600; top: 360}
+Registry: {shape: sql_table; id: int {constraint: primary_key}; name: varchar}
+`
+	shapes := hierarchyGeometry(t, source)
+	ref := shapes["Reference"]
+	if ref.Pos.X != 600 || ref.Pos.Y != 360 {
+		t.Fatalf("fixed reference moved to (%d, %d)", ref.Pos.X, ref.Pos.Y)
+	}
+	// Measure gaps between body rectangles so a wide neighboring shape
+	// can't appear farther away simply because its center is farther away.
+	distanceSquared := func(id string) int {
+		n := shapes[id]
+		dx := max(0, n.Pos.X-ref.Pos.X-ref.Width, ref.Pos.X-n.Pos.X-n.Width)
+		dy := max(0, n.Pos.Y-ref.Pos.Y-ref.Height, ref.Pos.Y-n.Pos.Y-n.Height)
+		return dx*dx + dy*dy
+	}
+	want := distanceSquared("Hub")
+	for id := range shapes {
+		if id != "Reference" && distanceSquared(id) < want {
+			t.Errorf("%s ended up closer to Reference than the requested Hub", id)
+		}
+	}
+}

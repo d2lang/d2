@@ -299,6 +299,18 @@ func handleTreeSubgraph(g *layoutgraph.Graph, rootSentinel, container *layoutgra
 	if rootSentinel.IsContainer() || rootSentinel.FixedTopLeft != nil {
 		return rootSentinel, roots, nil
 	}
+	// Keep the movable end of a near relationship available when its peer
+	// has a fixed position and cannot follow a reconstructed branch.
+	nearFixedNode := false
+	for near := range rootSentinel.Nears {
+		if err := guard.Step(); err != nil {
+			return nil, nil, err
+		}
+		nearFixedNode = nearFixedNode || near.FixedTopLeft != nil
+	}
+	if nearFixedNode {
+		return rootSentinel, roots, nil
+	}
 
 	var newRootSentinel *layoutgraph.Node
 	var newTreeRoot *layoutgraph.Tree
