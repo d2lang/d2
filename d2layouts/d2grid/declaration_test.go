@@ -19,7 +19,8 @@ func TestGridDeclarationOrder(t *testing.T) {
 		{"removed and reintroduced", "grid-rows: 2\ngrid-columns: 2\ngrid-rows: null\ngrid-rows: 2", "", false},
 		{"import before local", "...@axis\ngrid-columns: 2", "# Changing this comment cannot move the declaration.\ngrid-rows: 2", true},
 		{"local before import", "grid-columns: 2\n...@axis", "grid-rows: 2", false},
-		{"spread before local", "vars: {axis: {grid-rows: 2}}\n...${axis}\ngrid-columns: 2\ngrid-rows: 2", "", true},
+		{"spread before local", "vars: {axis: {grid-rows: 1}}\n...${axis}\ngrid-columns: 2\ngrid-rows: 2", "", true},
+		{"local before spread", "vars: {axis: {grid-rows: 2}}\ngrid-columns: 2\ngrid-rows: 1\n...${axis}", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := &d2compiler.CompileOptions{FS: fstest.MapFS{"axis.d2": {Data: []byte(tc.imported)}}}

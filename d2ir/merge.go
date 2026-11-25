@@ -34,8 +34,46 @@ func ExpandSubstitution(m, resolved *Map, placeholder *Field) {
 
 type spreadSite struct {
 	fieldOrder
-	compiler    *compiler
-	placeholder *Field
+	compiler *compiler
+	source   Node
+}
+
+func (s *spreadSite) allows(order fieldOrder) bool {
+	return s == nil || s.compiler == nil || !s.before(order)
+}
+
+func (s *spreadSite) place(order fieldOrder) fieldOrder {
+	if s == nil {
+		return order
+	}
+	return order.within(&s.fieldOrder)
+}
+
+func (r *FieldReference) occurrence() fieldOrder { return r.order }
+func (r *EdgeReference) occurrence() fieldOrder  { return r.order }
+
+// Keep the later explicit assignments at the end for diagnostics and edits.
+// Successive earlier spreads normally move just that trailing assignment.
+func insertEarlierRefs[R interface{ occurrence() fieldOrder }](dst, incoming []R, site *spreadSite) []R {
+	at := len(dst)
+	for at > 0 && site.before(dst[at-1].occurrence()) {
+		at--
+	}
+	if !site.compiler.reserveVariableExpansion(site.source.LastRef().AST(), int64(len(dst)-at)) {
+		return dst
+	}
+	return slices.Insert(dst, at, incoming...)
+}
+
+func (s *spreadSite) insertionIndex(m *Map) int {
+	if s == nil {
+		return 0
+	}
+	at := 0
+	for at < len(m.Fields) && !s.before(m.Fields[at].declaration) {
+		at++
+	}
+	return at
 }
 
 func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool, c *compiler) {
@@ -43,11 +81,23 @@ func expandSubstitution(m, resolved *Map, placeholder *Field, indexed bool, c *c
 	if at < 0 {
 		at = len(m.Fields)
 	}
-	site := spreadSite{compiler: c, placeholder: placeholder}
+	site := spreadSite{compiler: c, source: placeholder}
 	if placeholder != nil {
 		site.fieldOrder = placeholder.declaration
 	}
+	if placeholder != nil && placeholder.spreadDeletions != nil {
+		if c != nil && !c.reserveVariableCopy(placeholder.LastRef().AST(), resolved) {
+			return
+		}
+		resolved = resolved.Copy(nil).(*Map)
+		if !placeholder.spreadDeletions.apply(c, resolved, placeholder.LastRef().AST()) {
+			return
+		}
+	}
 	mergeMap(m, resolved, indexed, &site, at)
+	if c != nil && c.hasTemplateNull && !c.stopped() && !IsVar(m) {
+		c.collectSpreadNulls(m, resolved, &site)
+	}
 }
 
 // Merge a deferred spread at its original position. Earlier declarations retain
@@ -105,10 +155,14 @@ func mergeMap(m, overlay *Map, indexed bool, site *spreadSite, at int) {
 			bea = m.GetEdges(oe.ID, nil, nil)
 		}
 		if len(bea) == 0 {
-			m.appendEdge(oe.Copy(m).(*Edge))
+			edge := oe.Copy(m).(*Edge)
+			if site != nil {
+				edge.nestDeclarationOrder(&site.fieldOrder)
+			}
+			m.appendEdge(edge)
 			continue
 		}
-		overlayEdge(bea[0], oe, indexed)
+		overlayEdge(bea[0], oe, indexed, site)
 	}
 }
 
@@ -130,11 +184,17 @@ func overlayField(bf, of *Field, indexed bool) {
 }
 
 func overlayFieldAt(bf, of *Field, indexed bool, site *spreadSite) {
+	if of.templateNull != nil {
+		order := site.place(*of.templateNull)
+		if bf.templateNull == nil || bf.templateNull.before(order) {
+			bf.templateNull = &order
+		}
+	}
 	// Composite substitutions share their variable's map until an overlay
 	// edits it. Detach this occurrence and anchor its children at the use,
 	// which may precede the variable definition or follow an earlier reference.
 	if site != nil && of.Map() != nil && bf.Map() != nil && bf.Map().Parent() != bf {
-		if site.compiler != nil && !site.compiler.reserveVariableCopy(site.placeholder.LastRef().AST(), bf.Map()) {
+		if site.compiler != nil && !site.compiler.reserveVariableCopy(site.source.LastRef().AST(), bf.Map()) {
 			return
 		}
 		bf.setComposite(bf.copyAliasMap(bf))
@@ -142,28 +202,35 @@ func overlayFieldAt(bf, of *Field, indexed bool, site *spreadSite) {
 	if site != nil && site.before(bf.declaration) {
 		bf.declaration = of.declaration.within(&site.fieldOrder)
 	}
-	if of.Primary_ != nil {
+	applyPrimary := of.Primary_ != nil && (bf.Primary_ == nil || site.allows(bf.Primary_.order))
+	if applyPrimary {
 		bf.Primary_ = of.Primary_.Copy(bf).(*Scalar)
-		bf.aliasSite = of.aliasSite
-		if site != nil && bf.aliasSite != nil {
-			order := bf.aliasSite.within(&site.fieldOrder)
-			bf.aliasSite = &order
-		}
+		bf.Primary_.order = site.place(bf.Primary_.order)
 	}
 
-	if of.Composite != nil {
+	if of.Map() != nil && site != nil && site.compiler != nil {
+		site.compiler.noteMapOpening(bf, site.fieldOrder)
+	}
+	_, array := of.Composite.(*Array)
+	if of.Composite != nil && !(array && site.applyArrayReset(bf)) {
 		if bf.Map() != nil && of.Map() != nil {
-			at := 0
-			if site != nil {
-				children := bf.Map().Fields
-				for at < len(children) && !site.before(children[at].declaration) {
-					at++
-				}
+			if site.allows(bf.mapReset) {
+				mergeMap(bf.Map(), of.Map(), indexed, site, site.insertionIndex(bf.Map()))
 			}
-			mergeMap(bf.Map(), of.Map(), indexed, site, at)
-		} else {
+			if site.allows(bf.compositeOrder) {
+				bf.compositeOrder = site.place(of.compositeOrder)
+			}
+		} else if site.allows(bf.compositeOrder) {
 			beforeFields, beforeEdges := structureCounts(bf.Map())
-			bf.setComposite(of.Composite.Copy(bf).(Composite))
+			if of.Map() != nil && of.Map().Parent() != of {
+				bf.setComposite(of.copyAliasMap(bf))
+			} else {
+				bf.setComposite(of.Composite.Copy(bf).(Composite))
+			}
+			bf.compositeOrder = site.place(of.compositeOrder)
+			if _, ok := bf.Composite.(*Array); ok {
+				bf.mapReset = bf.compositeOrder
+			}
 			if site != nil {
 				bf.Map().nestDeclarationOrder(&site.fieldOrder)
 			}
@@ -171,7 +238,17 @@ func overlayFieldAt(bf, of *Field, indexed bool, site *spreadSite) {
 		}
 	}
 
-	bf.References = append(bf.References, of.References...)
+	// Preserve the winning assignment as the last primary reference so
+	// diagnostics and graph edits address the same source that supplied it.
+	refs := of.References
+	if site != nil {
+		refs = fieldRefsWithin(refs, &site.fieldOrder)
+	}
+	if of.Primary_ != nil && !applyPrimary {
+		bf.References = insertEarlierRefs(bf.References, refs, site)
+	} else {
+		bf.References = append(bf.References, refs...)
+	}
 }
 
 // OverlayEdge applies one edge overlay directly to another edge.
@@ -180,21 +257,34 @@ func overlayFieldAt(bf, of *Field, indexed bool, site *spreadSite) {
 // OverlayEdge is an internal IR mutation detail and will be removed after one
 // compatibility release.
 func OverlayEdge(be, oe *Edge) {
-	overlayEdge(be, oe, false)
+	overlayEdge(be, oe, false, nil)
 }
 
-func overlayEdge(be, oe *Edge, indexed bool) {
-	if oe.Primary_ != nil {
+func overlayEdge(be, oe *Edge, indexed bool, site *spreadSite) {
+	applyPrimary := oe.Primary_ != nil && (be.Primary_ == nil || site.allows(be.Primary_.order))
+	if applyPrimary {
 		be.Primary_ = oe.Primary_.Copy(be).(*Scalar)
+		be.Primary_.order = site.place(be.Primary_.order)
 	}
 	if oe.Map_ != nil {
 		if be.Map_ != nil {
-			overlayMap(be.Map(), oe.Map_, indexed)
+			mergeMap(be.Map_, oe.Map_, indexed, site, site.insertionIndex(be.Map_))
 		} else {
 			beforeFields, beforeEdges := structureCounts(be.Map())
 			be.Map_ = oe.Map_.Copy(be).(*Map)
+			if site != nil {
+				be.Map_.nestDeclarationOrder(&site.fieldOrder)
+			}
 			markStructureCountDelta(ParentMap(be), beforeFields, beforeEdges, be.Map())
 		}
 	}
-	be.References = append(be.References, oe.References...)
+	refs := oe.References
+	if site != nil {
+		refs = edgeRefsWithin(refs, &site.fieldOrder)
+	}
+	if oe.Primary_ != nil && !applyPrimary {
+		be.References = insertEarlierRefs(be.References, refs, site)
+	} else {
+		be.References = append(be.References, refs...)
+	}
 }
