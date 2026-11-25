@@ -94,7 +94,7 @@ func markdownShapeLabelTopLeft(targetShape d2target.Shape) *geo.Point {
 	} else {
 		box = geometry.GetInnerBox()
 	}
-	return position.GetPointOnBox(box, label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
+	return targetShape.LabelTopLeft(position, box)
 }
 
 func (b *builder) buildMarkdownLabel(

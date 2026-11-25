@@ -305,6 +305,9 @@ func validateMotionClip(c *MotionClip, path string) error {
 }
 
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
+	if b := targetShape.MotionLabelBox; b != nil && (b.Width <= 0 || b.Height <= 0) {
+		return invalidRenderField(path, "motionLabelBox", b, "must have positive dimensions")
+	}
 	if p := targetShape.OutlineProgress; p != nil {
 		if err := validateInkProgress(path, "outlineProgress", *p); err != nil {
 			return err

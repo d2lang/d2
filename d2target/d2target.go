@@ -564,6 +564,9 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 			)
 
 			labelTL := labelPosition.GetPointOnBox(s.GetBox(), label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
+			if targetShape.MotionLabelBox != nil {
+				labelTL = targetShape.LabelTopLeft(labelPosition, s.GetBox())
+			}
 			if targetShape.ThreeDee {
 				offset := THREE_DEE_OFFSET
 				if targetShape.Type == ShapeHexagon {
@@ -807,6 +810,9 @@ type MotionClip struct {
 	Height int `json:"height"`
 }
 
+// MotionBox holds reference bounds in diagram coordinates during an animation.
+type MotionBox = MotionClip
+
 // SketchFillTransition describes the pencil shading on one sampled frame.
 type SketchFillTransition struct {
 	From     string  `json:"from"`
@@ -824,6 +830,8 @@ type Shape struct {
 	MotionScale        float64     `json:"motionScale,omitempty"`
 	MotionClip         *MotionClip `json:"motionClip,omitempty"`
 	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
+	// MotionLabelBox holds the authored body bounds for a stationary inside label.
+	MotionLabelBox *MotionBox `json:"motionLabelBox,omitempty"`
 	// OutlineProgress traces an incoming container frame in a transition sample.
 	OutlineProgress *float64 `json:"outlineProgress,omitempty"`
 
@@ -878,6 +886,31 @@ type Shape struct {
 	PrimaryAccentColor   string `json:"primaryAccentColor,omitempty"`
 	SecondaryAccentColor string `json:"secondaryAccentColor,omitempty"`
 	NeutralAccentColor   string `json:"neutralAccentColor,omitempty"`
+}
+
+// Geometry returns the same outline and inner content box used for rendering.
+func (s *Shape) Geometry() shape.Shape {
+	return s.geometry(s.Pos, s.Width, s.Height)
+}
+
+func (s *Shape) geometry(pos Point, width, height int) shape.Shape {
+	g := shape.NewShape(DSL_SHAPE_TO_SHAPE_TYPE[s.Type], geo.NewBox(
+		geo.NewPoint(float64(pos.X), float64(pos.Y)), float64(width), float64(height)))
+	if s.Type == ShapeCloud && s.ContentAspectRatio != nil {
+		g.SetInnerBoxAspectRatio(*s.ContentAspectRatio)
+	}
+	return g
+}
+
+// LabelTopLeft resolves both ordinary captions and intermediate animation anchors.
+func (s *Shape) LabelTopLeft(position label.Position, box *geo.Box) *geo.Point {
+	if p := s.MotionLabelTopLeft; p != nil {
+		return geo.NewPoint(float64(p.X), float64(p.Y))
+	}
+	if b := s.MotionLabelBox; b != nil {
+		box = s.geometry(b.Point, b.Width, b.Height).GetInnerBox()
+	}
+	return position.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
 }
 
 func (s Shape) RenderedStrokeWidth() float64 {

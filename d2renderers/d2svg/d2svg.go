@@ -1723,12 +1723,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	height := float64(targetShape.Height)
 	fill, stroke := d2themes.ShapeTheme(targetShape)
 	style := targetShape.CSSStyle()
-	shapeType := d2target.DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type]
-
-	s := shape.NewShape(shapeType, geo.NewBox(tl, width, height))
-	if shapeType == shape.CLOUD_TYPE && targetShape.ContentAspectRatio != nil {
-		s.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
-	}
+	s := targetShape.Geometry()
 
 	var shadowAttr string
 	if targetShape.Shadow {
@@ -1965,7 +1960,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			fmt.Fprint(writer, render3DHexagon(resourceHash, targetShape, inlineTheme))
 		} else {
 			if targetShape.Multiple {
-				multiplePathData := shape.NewShape(shapeType, geo.NewBox(multipleTL, width, height)).GetSVGPathData()
+				multiplePathData := shape.NewShape(s.GetType(), geo.NewBox(multipleTL, width, height)).GetSVGPathData()
 				el := d2themes.NewThemableElement("path", inlineTheme)
 				el.Fill = fill
 				el.Stroke = stroke
@@ -1997,7 +1992,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	case d2target.ShapeText, d2target.ShapeCode:
 	default:
 		if targetShape.Multiple {
-			multiplePathData := shape.NewShape(shapeType, geo.NewBox(multipleTL, width, height)).GetSVGPathData()
+			multiplePathData := shape.NewShape(s.GetType(), geo.NewBox(multipleTL, width, height)).GetSVGPathData()
 			el := d2themes.NewThemableElement("path", inlineTheme)
 			el.Fill = fill
 			el.Stroke = stroke
@@ -2098,14 +2093,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		} else {
 			box = s.GetInnerBox()
 		}
-		labelTL := labelPosition.GetPointOnBox(box, label.PADDING,
-			float64(targetShape.LabelWidth),
-			float64(targetShape.LabelHeight),
-		)
-
-		if p := targetShape.MotionLabelTopLeft; p != nil {
-			labelTL = geo.NewPoint(float64(p.X), float64(p.Y))
-		}
+		labelTL := targetShape.LabelTopLeft(labelPosition, box)
 		if labelPosition.IsBorder() {
 			if sketch {
 				labelMask = makeBorderLabelMask(labelPosition, labelTL, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.RenderedStrokeWidth(), 1.0, tl)
@@ -2149,10 +2137,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			} else {
 				box = s.GetInnerBox()
 			}
-			labelTL := labelPosition.GetPointOnBox(box, label.PADDING,
-				float64(targetShape.LabelWidth),
-				float64(targetShape.LabelHeight),
-			)
+			labelTL := targetShape.LabelTopLeft(labelPosition, box)
 			gEl.SetTranslate(labelTL.X, labelTL.Y)
 			if targetShape.MotionScale != 0 {
 				gEl.Transform += fmt.Sprintf(" scale(%s)", svg.FormatFloat(targetShape.MotionScale))

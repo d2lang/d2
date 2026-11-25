@@ -1056,15 +1056,7 @@ func (b *builder) buildShapeText(targetShape d2target.Shape) ([]*d2scene.Node, e
 }
 
 func targetGeometry(targetShape d2target.Shape) shape.Shape {
-	shapeType := d2target.DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type]
-	geometry := shape.NewShape(shapeType, geo.NewBox(
-		geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)),
-		float64(targetShape.Width), float64(targetShape.Height),
-	))
-	if targetShape.Type == d2target.ShapeCloud && targetShape.ContentAspectRatio != nil {
-		geometry.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
-	}
-	return geometry
+	return targetShape.Geometry()
 }
 
 func scenePath(commands []svg.PathCommand, fill d2scene.Paint, stroke *d2scene.Stroke) (d2scene.Path, error) {

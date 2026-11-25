@@ -101,6 +101,7 @@ func TestValidateRenderTargetTweenFrames(t *testing.T) {
 		{TweenDurationMS: 1, TweenFrames: []*Diagram{nil}},
 		{TweenDurationMS: 1, TweenFrames: []*Diagram{{Layers: []*Diagram{{}}}}},
 		{TweenDurationMS: 1, TweenFrames: []*Diagram{{Shapes: []Shape{{Width: -1}}}}},
+		{TweenDurationMS: 1, TweenFrames: []*Diagram{{Shapes: []Shape{{MotionLabelBox: &MotionBox{Width: 20, Height: 0}}}}}},
 	}
 	for i, diagram := range invalid {
 		if err := ValidateRenderTarget(diagram); err == nil {

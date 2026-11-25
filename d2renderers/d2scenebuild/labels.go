@@ -171,11 +171,7 @@ func shapeLabelPlacement(targetShape d2target.Shape) (*geo.Box, *geo.Point) {
 	} else {
 		box = geometry.GetInnerBox()
 	}
-	topLeft := position.GetPointOnBox(box, label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
-	if p := targetShape.MotionLabelTopLeft; p != nil {
-		topLeft = geo.NewPoint(float64(p.X), float64(p.Y))
-	}
-	return box, topLeft
+	return box, targetShape.LabelTopLeft(position, box)
 }
 
 func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2scene.Node, error) {

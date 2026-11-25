@@ -155,6 +155,8 @@ export type Shape = (Class | SQLTable | Text) & ShapeBase;
 export interface ShapeBase {
   motionClip?: MotionClip;
   motionLabelTopLeft?: Point;
+  /** Authored body bounds for an anchored label during a node entrance. */
+  motionLabelBox?: MotionClip;
   /** Length fraction of a rectangular container outline in an incoming step sample. */
   outlineProgress?: number;
   motionScale?: number;

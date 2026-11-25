@@ -25,6 +25,8 @@ type boardBirth struct {
 	pivot               geo.Point
 	rebound             float64
 	start, contact, end float64
+	labelBox            *d2target.MotionBox
+	labelAt             *geo.Point
 }
 
 type boardTrace struct {
@@ -120,6 +122,16 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 			}
 			birth.pivot = *port
 			birth.end = float64(level)
+		}
+		// Fixed inside captions can be shown as soon as the body covers their ink.
+		// Border captions and icons depend on the moving silhouette.
+		pos := label.FromString(s.LabelPosition)
+		if pos == label.Unset && (s.Language == "markdown" || s.Language == "latex") {
+			pos = label.InsideMiddleCenter
+		}
+		if s.Label != "" && !integralBoardText(s) && s.Icon == nil && !pos.IsOutside() && !pos.IsBorder() && s.Width > 0 && s.Height > 0 {
+			birth.labelBox = &d2target.MotionBox{Point: s.Pos, Width: s.Width, Height: s.Height}
+			birth.labelAt = s.LabelTopLeft(pos, s.Geometry().GetInnerBox())
 		}
 		m.nodes[id] = birth
 		m.end = max(m.end, birth.end)
@@ -353,19 +365,72 @@ func (m *boardReveal) popClearance(n *d2graph.Object, d *d2target.Diagram, g *d2
 	return extra
 }
 
+// These renderers lay out the content and its body together. Introduce the
+// authored block in one frame so code, equations and table rows stay legible.
+func integralBoardText(s *d2target.Shape) bool {
+	return s.Type == d2target.ShapeText || s.Type == d2target.ShapeCode ||
+		s.Type == d2target.ShapeClass || s.Type == d2target.ShapeSQLTable ||
+		s.Language != "" && s.Language != "markdown" && s.Language != "latex"
+}
+
+func (b boardBirth) sampleShape(final d2target.Shape, now float64) d2target.Shape {
+	scale, alpha := b.pop(b.progress(now))
+	if integralBoardText(&final) {
+		if alpha < .5 {
+			final.Opacity = 0
+		}
+		return final
+	}
+	x := b.pivot.X + (float64(final.Pos.X)-b.pivot.X)*scale
+	y := b.pivot.Y + (float64(final.Pos.Y)-b.pivot.Y)*scale
+	s := scaleMotionShape(final, x, y, scale, alpha)
+	s.Text, s.MotionScale = final.Text, final.MotionScale
+	if s.Label == "" {
+		return s
+	}
+	if alpha == 1 {
+		if sameSlot(&s, &final) {
+			return s
+		}
+		if b.labelAt != nil {
+			// An overshooting body already covers the authored silhouette,
+			// including labels intentionally placed against its edge.
+			if scale >= 1 {
+				s.MotionLabelBox = b.labelBox
+				return s
+			}
+			room := s.Geometry().GetInnerBox()
+			p := b.labelAt
+			pad := math.Max(label.PADDING, s.RenderedStrokeWidth()/2)
+			if p.X >= room.TopLeft.X+pad && p.Y >= room.TopLeft.Y+pad &&
+				p.X+float64(s.LabelWidth) <= room.TopLeft.X+room.Width-pad &&
+				p.Y+float64(s.LabelHeight) <= room.TopLeft.Y+room.Height-pad {
+				s.MotionLabelBox = b.labelBox
+				return s
+			}
+		}
+	}
+	s.Label = ""
+	return s
+}
+
 func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 	now := progress * m.end
 	for i := range frame.Shapes {
 		s := &frame.Shapes[i]
 		if birth, ok := m.nodes[s.ID]; ok && now < birth.end {
-			ratio := birth.progress(now)
-			scale, alpha := birth.pop(ratio)
-			x := birth.pivot.X + (float64(s.Pos.X)-birth.pivot.X)*scale
-			y := birth.pivot.Y + (float64(s.Pos.Y)-birth.pivot.Y)*scale
-			*s = scaleMotionShape(*s, x, y, scale, alpha)
-			// SVG draws link and tooltip badges in a separate appendix layer.
-			// Attach them once the node settles at its final size and location.
-			s.Tooltip, s.Link, s.PrettyLink = "", "", ""
+			final := *s
+			*s = birth.sampleShape(final, now)
+			// The appendix draws badges separately from the body. Attach them
+			// at rest, including the first visible frame of a text or code card.
+			if birth.rebound > 0 || s.Opacity != final.Opacity || !sameSlot(s, &final) {
+				s.Tooltip, s.Link, s.PrettyLink = "", "", ""
+				if final.Link != "" && final.Language == "markdown" {
+					// The outer link suppresses links inside the Markdown. Keep
+					// that caption with its link so a nested target never flashes.
+					s.Label = ""
+				}
+			}
 		}
 	}
 	result := make([]d2target.Connection, 0, len(frame.Connections))

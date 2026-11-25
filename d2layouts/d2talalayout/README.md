@@ -33,8 +33,10 @@ The adapter exposes local, in-process entry points:
   `d2lib.CompileOptions.LayoutContinuations`.
 - In animated exports, a positive `animate-duration` can draw new connections
   along their routes. A connected node starts opening from its port as the
-  incoming stroke covers its last few pixels. A new node can briefly grow
-  past its final size when there is room around it. A rectangular container
+  incoming stroke covers its last few pixels. Its label appears at its final
+  size and position once the body has room. Text blocks, code, classes and SQL
+  tables appear at their authored size. A new node can briefly grow past its
+  final size when there is room around it. A rectangular container
   can begin tracing its outline as its contents settle, slowing through the
   corners. When one identifiable service or intact team changes parents, its
   external connections can fade while it accelerates and settles into its new
