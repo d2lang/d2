@@ -39,7 +39,8 @@ type compiler struct {
 	hasTemplateNull     bool
 	spreadNulls         []spreadNull
 	hasMapSpread        bool
-	hasEdgeClearGlob    bool
+	hasEdgePropertyGlob bool
+	spreadRuleCopies    map[spreadRuleScope]*globContext
 	fieldOrder          uint64
 	err                 *d2parser.ParseError
 	ctx                 context.Context
@@ -621,8 +622,8 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 
 						if removedField && !c.lazyGlobBeingApplied {
 							globs := m.globs
-							if c.hasEdgeClearGlob && resolvedField.Map().mayHaveEdges() {
-								globs = c.edgePropertyGlobsForSpread(m)
+							if c.hasEdgePropertyGlob && resolvedField.Map().mayHaveEdges() {
+								globs = c.edgePropertyGlobsForSpread(m, box.Substitution)
 							}
 							origGlobStack := c.globContextStack
 							c.globContextStack = append(c.globContextStack, globs)
@@ -1338,6 +1339,12 @@ func (c *compiler) compileKey(refctx *RefContext) {
 		refctx.order = c.assignmentOrder()
 	}
 	if refctx.Key.HasGlob() {
+		// Replaying a property may first create its style map. Finish that
+		// write before evaluating the next deferred selector in source order.
+		if stack := c.globRefContextStack; c.replayingSpreadGlobs && len(stack) != 0 &&
+			replaysEdgeProperties(stack[len(stack)-1].Key) && replaysEdgeProperties(refctx.Key) {
+			return
+		}
 		for _, refctx2 := range c.globRefContextStack {
 			if refctx.Equal(refctx2) {
 				// Break the infinite loop.
@@ -1348,7 +1355,11 @@ func (c *compiler) compileKey(refctx *RefContext) {
 		defer func() {
 			c.globRefContextStack = c.globRefContextStack[:len(c.globRefContextStack)-1]
 		}()
-		c.ensureGlobContext(refctx)
+		g := c.ensureGlobContext(refctx)
+		if !c.lazyGlobBeingApplied && replaysEdgeProperties(refctx.Key) {
+			refctx.ScopeMap.addEdgeRule(g)
+			c.hasEdgePropertyGlob = true
+		}
 	}
 	oldVersion := refctx.ScopeMap.structureVersion
 	if len(refctx.Key.Edges) == 0 {
@@ -2279,9 +2290,6 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 	// A null selector with a property suffix clears only that edge field.
 	clearing := refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil
 	deleteEdge := clearing && refctx.Key.EdgeKey == nil
-	if clearing && refctx.Key.EdgeKey != nil && refctx.Key.HasGlob() {
-		c.hasEdgeClearGlob = true
-	}
 	for i, eid := range eida {
 		if c.stopped() {
 			return

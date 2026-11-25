@@ -147,38 +147,3 @@ func (d *spreadDeletion) apply(c *compiler, m *Map, source d2ast.Node) bool {
 	}
 	return true
 }
-
-// A nested map only captures the rules that existed when it was declared.
-// Also replay later edge property clears in enclosing scopes when the spread
-// introduces their endpoints. The normal selector handles index and path globs.
-func (c *compiler) edgePropertyGlobsForSpread(m *Map) []*globContext {
-	globs := m.globs
-	var seen map[*globContext]bool
-	for scope := m; NodeBoardKind(scope) == ""; {
-		scope = ParentMap(scope)
-		if scope == nil {
-			break
-		}
-		for _, g := range scope.globs {
-			k := g.refctx.Key
-			if !c.reserveGlobWork(k, 1) {
-				return nil
-			}
-			if g.refctx.ScopeMap != scope || k.EdgeKey == nil || (k.Primary.Null == nil && k.Value.Null == nil) {
-				continue
-			}
-			if seen == nil {
-				seen = make(map[*globContext]bool, len(globs))
-				for _, prev := range globs {
-					seen[prev] = true
-				}
-				globs = append([]*globContext(nil), globs...)
-			}
-			if !seen[g] {
-				seen[g] = true
-				globs = append(globs, g)
-			}
-		}
-	}
-	return globs
-}

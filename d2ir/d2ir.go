@@ -189,8 +189,9 @@ type Map struct {
 	Fields            []*Field `json:"fields"`
 	Edges             []*Edge  `json:"edges"`
 
-	globs          []*globContext
-	pendingSpreads []*Field
+	globs             []*globContext
+	edgePropertyRules *spreadEdgeRule
+	pendingSpreads    []*Field
 
 	// Fields and Edges retain source order. These indexes are derived lookup
 	// accelerators only; they never determine iteration order.
@@ -482,6 +483,7 @@ func (m *Map) Copy(newParent Node) Node {
 	}
 	tmp := *m
 	m = &tmp
+	m.edgePropertyRules = m.edgePropertyRules.fork()
 	m.fieldIndex = nil
 	m.fieldIndexSize = 0
 	m.edgeIndex = nil
