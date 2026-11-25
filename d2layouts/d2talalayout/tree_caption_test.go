@@ -2,6 +2,7 @@ package d2talalayout_test
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -339,5 +340,77 @@ H -> N3`
 	}
 	if len(captions) != 2 || captions[0].Overlaps(captions[1]) || bends > 1 {
 		t.Fatalf("wanted two readable captions and at most one bend, got %v and %d bends", captions, bends)
+	}
+}
+
+func TestTreeFaceSeparatesWideCaptionsWithoutMovingChildren(t *testing.T) {
+	const source = `direction: left
+H: Hub {width: 126; height: 103}
+N0: Review {width: 115; height: 116}
+N0 <- H: {target-arrowhead: Cleared for processing}
+N1: Review {width: 73; height: 64}
+N1 <- H: {target-arrowhead: Cleared for processing; source-arrowhead: Received}
+N2: Review {width: 73; height: 64}
+H -> N2
+N3: Review {width: 115; height: 64}
+N3 <- H
+N4: Review {width: 73; height: 48}
+N4 <- H
+N2 -> Audit`
+	t.Run("collapsed whitespace", func(t *testing.T) {
+		spaced := strings.ReplaceAll(source, "Cleared for processing", `"A`+strings.Repeat(" ", 21)+`B"`)
+		diagram := compileRoutingDiagram(t, t.Context(), spaced, 1, nil)
+		control := compileRoutingDiagram(t, t.Context(), spaced+"\nH.style.fill: red", 1, nil)
+		if !reflect.DeepEqual(diagram.Connections, control.Connections) {
+			t.Fatal("collapsed whitespace changed the tree ports")
+		}
+	})
+
+	diagram := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	original := compileRoutingDiagram(t, t.Context(), source+"\nH.style.fill: red", 1, nil)
+	tl, br := diagram.BoundingBox()
+	oldTL, oldBR := original.BoundingBox()
+	if tl.X < oldTL.X || tl.Y < oldTL.Y || br.X > oldBR.X || br.Y > oldBR.Y {
+		t.Fatalf("changing a tree port expanded the canvas from %v..%v to %v..%v", oldTL, oldBR, tl, br)
+	}
+	var bodies []geo.Box
+	for i, s := range diagram.Shapes {
+		if s.Pos != original.Shapes[i].Pos {
+			t.Fatalf("moved %s", s.ID)
+		}
+		bodies = append(bodies, *geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height)))
+	}
+	var ink []geo.Box
+	for i, e := range diagram.Connections {
+		old := original.Connections[i]
+		if e.Src == "N0" || e.Src == "N1" {
+			if *e.Route[0] != *old.Route[0] {
+				t.Fatalf("changed the child attachment on %s", e.ID)
+			}
+		}
+		for _, target := range [...]bool{false, true} {
+			end := e.SrcLabel
+			if target {
+				end = e.DstLabel
+			}
+			if end == nil {
+				continue
+			}
+			box := geo.NewBox(e.GetArrowheadLabelPosition(target), float64(end.LabelWidth), float64(end.LabelHeight))
+			for _, other := range ink {
+				if box.Overlaps(other) {
+					t.Fatalf("endpoint captions overlap on %s", e.ID)
+				}
+			}
+			for j, body := range bodies {
+				if box.Overlaps(body) {
+					t.Fatalf("caption on %s overlaps %s", e.ID, diagram.Shapes[j].ID)
+				}
+			}
+			ink = append(ink, *box)
+		}
+	}
+	if len(ink) != 3 {
+		t.Fatalf("expected three endpoint captions, got %d", len(ink))
 	}
 }

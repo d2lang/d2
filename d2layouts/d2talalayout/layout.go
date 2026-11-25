@@ -12,6 +12,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/engine"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placement"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/routing"
 )
 
 const (
@@ -335,7 +336,10 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 		clearPinnedFrameNeighbor(graph, best.graph)
 		clearIsolatedFrameDecoration(graph, best.graph)
 		clearCrowdedCaptions(graph, best.graph)
-		if refineRoutes {
+		if refineRoutes && hasCompetingTreeCaptions(best.graph) && supportsTreeCaptionComparison(graph) {
+			if err := routing.RefineCrowdedTreeFace(workCtx, best.graph); err != nil {
+				return err
+			}
 			clearPackedTreeTile(graph, best.graph)
 		}
 	}

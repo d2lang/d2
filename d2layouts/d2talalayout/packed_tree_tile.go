@@ -55,6 +55,11 @@ func supportsTreeCaptionComparison(g *d2graph.Graph) bool {
 		if !plain(&e.Attributes) || !plain(e.SrcArrowhead) || !plain(e.DstArrowhead) || e.ZIndex != 0 {
 			return false
 		}
+		for _, end := range []*d2graph.Attributes{e.SrcArrowhead, e.DstArrowhead} {
+			if end != nil && (len(end.Label.Value) > 1024 || !plainCaptionSpacing(end.Label.Value)) {
+				return false
+			}
+		}
 	}
 	return true
 }
@@ -62,7 +67,7 @@ func supportsTreeCaptionComparison(g *d2graph.Graph) bool {
 // Keep both the selected ports and their placement when a single free tile
 // can slide clear of the captions inside the existing canvas.
 func clearPackedTreeTile(source *d2graph.Graph, g *layoutgraph.Graph) bool {
-	if !hasCompetingTreeCaptions(g) || len(g.Containers[nil]) != len(g.Nodes) || len(source.Objects) != len(g.Nodes) || !supportsTreeCaptionComparison(source) {
+	if len(g.Containers[nil]) != len(g.Nodes) || len(source.Objects) != len(g.Nodes) {
 		return false
 	}
 	for _, o := range source.Objects {
