@@ -5,10 +5,12 @@ import (
 	"math"
 	"math/bits"
 	"slices"
+	"strings"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
 )
 
@@ -204,15 +206,27 @@ func compatibleStepGeometry(steps []*layoutgraph.Node, guard *limits.WorkGuard) 
 		}
 		width := sequenceStepWidth(n)
 		body := geo.Box{TopLeft: &geo.Point{X: x}, Width: width, Height: maxHeight}
-		for _, decoration := range n.StepDecorations(&body) {
-			if decoration.Box.TopLeft == nil {
-				continue
+		for index, decoration := range n.StepDecorations(&body) {
+			fullCoverOnly := decoration.Box.TopLeft == nil
+			if fullCoverOnly {
+				// With multiline or heavily spaced text we cannot locate individual
+				// glyphs reliably. A face covering the *entire* label still hides it.
+				l := n.Label
+				if index != 0 || l == nil || l.Width <= 0 || l.Height <= 0 {
+					continue
+				}
+				decoration.Side = layoutgraph.StepDecorationSide(l.Position)
+				if !decoration.Side.IsHorizontal() || strings.TrimSpace(l.Text) == "" {
+					continue
+				}
+				decoration.Box = geo.Box{TopLeft: l.Position.GetPointOnBox(&body, label.PADDING, l.Width, l.Height), Width: l.Width, Height: l.Height}
+			} else {
+				decorations = append(decorations, decoration)
 			}
-			decorations = append(decorations, decoration)
 			if decoration.Side != geo.Left && decoration.Side != geo.Right {
 				continue
 			}
-			covered, err := stepFaceCovers(steps, i, x, maxHeight, decoration, guard)
+			covered, err := stepFaceCovers(steps, i, x, maxHeight, decoration, fullCoverOnly, guard)
 			if err != nil || covered {
 				return false, err
 			}
@@ -243,7 +257,7 @@ func compatibleStepGeometry(steps []*layoutgraph.Node, guard *limits.WorkGuard) 
 	return true, nil
 }
 
-func stepFaceCovers(steps []*layoutgraph.Node, i int, x, height float64, decoration layoutgraph.StepDecoration, guard *limits.WorkGuard) (bool, error) {
+func stepFaceCovers(steps []*layoutgraph.Node, i int, x, height float64, decoration layoutgraph.StepDecoration, fullCoverOnly bool, guard *limits.WorkGuard) (bool, error) {
 	delta := 1
 	if decoration.Side == geo.Left {
 		delta = -1
@@ -266,7 +280,7 @@ func stepFaceCovers(steps []*layoutgraph.Node, i int, x, height float64, decorat
 				break
 			}
 		}
-		if laterOpaqueStep(other.StepPaint, steps[i].StepPaint) && stepIntersectsDecoration(x, width, height, box) {
+		if laterOpaqueStep(other.StepPaint, steps[i].StepPaint) && stepCoversDecoration(x, width, height, box, fullCoverOnly) {
 			return true, nil
 		}
 	}
@@ -281,16 +295,24 @@ func laterOpaqueStep(face, owner *layoutgraph.StepPaint) bool {
 // At each height, the step is a horizontal strip of constant width, shifted
 // by the two matching chevrons. Compare only the strip swept through the
 // decoration, preserving a fused row when the item fits inside the notch.
-func stepIntersectsDecoration(x, width, height float64, box geo.Box) bool {
+func stepCoversDecoration(x, width, height float64, box geo.Box, fullCoverOnly bool) bool {
 	top, bottom := max(0, box.TopLeft.Y), min(height, box.TopLeft.Y+box.Height)
 	if top >= bottom {
 		return false
 	}
 	wedge := shape.StepWedgeWidth(width)
 	offset := func(y float64) float64 { return wedge * (1 - math.Abs(2*y/height-1)) }
-	left := x + min(offset(top), offset(bottom))
-	middle := min(bottom, max(top, height/2))
-	right := x + width - wedge + offset(middle)
+	minOffset := min(offset(top), offset(bottom))
+	maxOffset := offset(min(bottom, max(top, height/2)))
+	if fullCoverOnly {
+		// The notch reaches farthest into the box nearest the middle; the
+		// opposite flank recedes farthest at one of the vertical extremes.
+		// Leave one pixel for export rounding on every side.
+		return box.TopLeft.Y >= 1 && box.TopLeft.Y+box.Height <= height-1 &&
+			box.TopLeft.X >= x+maxOffset+1 && box.TopLeft.X+box.Width <= x+width-wedge+minOffset-1
+	}
+	left := x + minOffset
+	right := x + width - wedge + maxOffset
 	return min(right, box.TopLeft.X+box.Width)-max(left, box.TopLeft.X) >= 1
 }
 

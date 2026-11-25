@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"math"
 	"slices"
+	"strings"
+	"unicode"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -13,8 +15,9 @@ import (
 )
 
 type stepRouteDecoration struct {
-	visible *geo.Box
-	bounds  *geo.Box
+	visible   *geo.Box
+	bounds    *geo.Box
+	fullWidth bool
 }
 
 // A straight wire between matching chevrons can slide up or down. Both ends
@@ -52,8 +55,19 @@ func clearStepConnectorDecorations(source *d2graph.Graph, g *layoutgraph.Graph) 
 		visible := n.StepDecorations(item.body)
 		for k, bounds := range [2]*geo.Box{item.caption, item.icon} {
 			v := visible[k]
-			if bounds != nil && v.Box.TopLeft != nil && v.Side.IsHorizontal() && (k == 0 && n.Label.PositionFixed() || k == 1 && n.Icon.PositionFixed()) {
-				anchored = append(anchored, stepRouteDecoration{&v.Box, bounds})
+			if bounds == nil || !(k == 0 && n.Label.PositionFixed() || k == 1 && n.Icon.PositionFixed()) {
+				continue
+			}
+			fullWidth := v.Box.TopLeft == nil
+			if fullWidth {
+				if k != 0 || !centerLineText(n.Label.Text) {
+					continue
+				}
+				v.Side = layoutgraph.StepDecorationSide(n.Label.Position)
+				v.Box = *bounds
+			}
+			if v.Side.IsHorizontal() {
+				anchored = append(anchored, stepRouteDecoration{&v.Box, bounds, fullWidth})
 			}
 		}
 		if item.caption != nil {
@@ -77,6 +91,15 @@ func clearStepConnectorDecorations(source *d2graph.Graph, g *layoutgraph.Graph) 
 	for i, edge := range byGap {
 		slideClearOfStepDecoration(edge, items[i].body, items[i+1].body, anchored, decorations, byGap)
 	}
+}
+
+// A centered shaft spanning a whole single line passes through ordinary
+// letters and digits, even when SVG collapses white space on either side.
+// Superscripts and punctuation can sit entirely above or below the shaft.
+func centerLineText(text string) bool {
+	return len(text) <= 1024 && !strings.ContainsAny(text, "\r\n\t") && strings.ContainsFunc(text, func(r rune) bool {
+		return r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r))
+	})
 }
 
 func plainStepConnections(g *d2graph.Graph) bool {
@@ -117,6 +140,10 @@ func slideClearOfStepDecoration(e *layoutgraph.Edge, from, to *geo.Box, anchored
 	bestDistance := math.Inf(1)
 	for _, obstacle := range anchored {
 		if !shaft.Overlaps(*obstacle.visible) {
+			continue
+		}
+		if obstacle.fullWidth && (a.X > obstacle.bounds.TopLeft.X || b.X < obstacle.bounds.TopLeft.X+obstacle.bounds.Width ||
+			math.Abs(a.Y-obstacle.bounds.Center().Y) > 1) {
 			continue
 		}
 		for _, y := range [...]float64{math.Floor(obstacle.bounds.TopLeft.Y - clearance), math.Ceil(obstacle.bounds.TopLeft.Y + obstacle.bounds.Height + clearance)} {

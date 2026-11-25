@@ -16,10 +16,11 @@ func TestStepConnectorClearsAnchoredDecoration(t *testing.T) {
 		{"caption", "Middle", "label.near: outside-right-center", ""},
 		{"icon", "Middle", "icon: status.svg; icon.near: outside-right-center", ""},
 		{"nearly opaque successor", "Middle", "label.near: outside-right-center", "; style.opacity: 0.99"},
+		{"leading spaces", "  Review", "label.near: outside-right-center", "; style.fill: white"},
 		{"collapsed space", "Middle  step", "label.near: outside-right-center", "; style.fill: white"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			source := fmt.Sprintf("direction: right\nA: First {shape: step; width: 120; height: 65}\nB: %s {shape: step; width: 120; height: 65; %s}\nC: Last {shape: step; width: 120; height: 65%s}\nA -> B -> C", tc.text, tc.placement, tc.paint)
+			source := fmt.Sprintf("direction: right\nA: First {shape: step; width: 120; height: 65}\nB: %q {shape: step; width: 120; height: 65; %s}\nC: Last {shape: step; width: 120; height: 65%s}\nA -> B -> C", tc.text, tc.placement, tc.paint)
 			d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
 			if len(d.Connections) != 2 || len(d.Shapes) != 3 {
 				t.Fatalf("got %d steps, %d connections", len(d.Shapes), len(d.Connections))
@@ -48,5 +49,19 @@ func TestStepConnectorClearsAnchoredDecoration(t *testing.T) {
 				t.Fatalf("endpoints left the step outlines: %v", route)
 			}
 		})
+	}
+}
+
+func TestUncertainStepCaptionsRetainClearCenterline(t *testing.T) {
+	for _, text := range []string{"  .", "  ˣ", "    ", "Review\nrequest"} {
+		source := fmt.Sprintf("direction: right\nA: First {shape: step; width: 120; height: 90}\nB: %q {shape: step; width: 120; height: 90; label.near: outside-right-center}\nC: Last {shape: step; width: 200; height: 90}\nA -> B -> C\n(A -> B)[0].style.stroke-width: 2", text)
+		d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+		if len(d.Connections) != 2 {
+			t.Fatalf("%q: expected explicit connections", text)
+		}
+		route := d.Connections[1].Route
+		if len(route) != 2 || route[0].Y != float64(d.Shapes[1].Pos.Y)+float64(d.Shapes[1].Height)/2 || route[1].Y != route[0].Y {
+			t.Errorf("%q: clear centerline moved: %v", text, route)
+		}
 	}
 }
