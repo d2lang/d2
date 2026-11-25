@@ -153,3 +153,90 @@ steps: {move: {depart.service: null; receive.service}}`
 		t.Fatal("an unrelated clear wire should remain in place")
 	}
 }
+
+func TestTransferWireAndDiagonalSweep(t *testing.T) {
+	old := d2target.BaseShape()
+	old.Pos, old.Width, old.Height = d2target.Point{X: 248, Y: 142}, 142, 66
+	next := *old
+	next.Pos = d2target.Point{X: 601, Y: 0}
+	for _, tc := range []struct {
+		name    string
+		route   []*geo.Point
+		curve   bool
+		crosses bool
+	}{
+		{"left of worker", []*geo.Point{geo.NewPoint(112, 33), geo.NewPoint(253, 33)}, false, false},
+		{"below worker", []*geo.Point{geo.NewPoint(733, 175), geo.NewPoint(894, 175)}, false, false},
+		{"between the two poses", []*geo.Point{geo.NewPoint(510, 85), geo.NewPoint(510, 120)}, false, true},
+		{"slanted wire outside sweep", []*geo.Point{geo.NewPoint(250, 72), geo.NewPoint(420, 5)}, false, false},
+		{"cubic outside sweep", []*geo.Point{geo.NewPoint(733, 175), geo.NewPoint(760, 190), geo.NewPoint(820, 182), geo.NewPoint(894, 175)}, true, false},
+		{"cubic inside sweep", []*geo.Point{geo.NewPoint(510, 85), geo.NewPoint(510, 95), geo.NewPoint(510, 110), geo.NewPoint(510, 120)}, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := &d2target.Connection{Opacity: 1, Route: tc.route, IsCurve: tc.curve}
+			if got := transferWireCrosses(wire, 0, 0, old, &next); got != tc.crosses {
+				t.Fatalf("crosses = %v, want %v", got, tc.crosses)
+			}
+		})
+	}
+}
+
+func TestTransferMovingWireAndResizingObstacle(t *testing.T) {
+	// The two-pixel line travels a thousand pixels over the transition.
+	// At 0.011 the growing obstacle reaches its height near the passing line.
+	old := d2target.BaseShape()
+	old.Pos, old.Width, old.Height = d2target.Point{X: 11, Y: 0}, 1, 1
+	next := *old
+	next.Height = 2000
+	wire := &d2target.Connection{
+		Opacity: 1, Route: []*geo.Point{geo.NewPoint(0, 20), geo.NewPoint(0, 22)},
+	}
+	if !transferWireCrosses(wire, 1000, 0, old, &next) {
+		t.Fatal("missed a crossing between the first two 50 Hz samples")
+	}
+	// Moving both the wire and the obstacle at the same speed leaves them
+	// horizontally separated even as the obstacle grows.
+	next.Pos.X += 1000
+	if transferWireCrosses(wire, 1000, 0, old, &next) {
+		t.Fatal("parallel translation introduced a crossing")
+	}
+}
+
+func TestBoardTransferKeepsClearWiresThroughout(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 1700ms; animate-duration: 850ms}}
+direction: right
+checkout: Checkout
+queue: Order queue
+checkout -> queue
+steps: {
+  accept: {worker: Order worker; queue -> worker}
+  group: {
+    queue: null; worker: null
+    intake: Order intake {queue: Order queue; worker: Order worker; queue -> worker}
+    checkout -> intake.queue
+  }
+  fulfill: {
+    fulfillment: Fulfillment {pack: Pack order; ship: Ship parcel; pack -> ship}
+    intake.worker -> fulfillment.pack
+  }
+  handoff: {
+    intake.worker: null
+    fulfillment.worker: Order worker
+    intake.queue -> fulfillment.worker -> fulfillment.pack
+  }
+}`
+	board, _ := compileContinuity(t, source, d2talalayout.ContinueBoard)
+	before, handoff := board.Steps[2], board.Steps[3]
+	if len(handoff.TweenFrames) < 3 {
+		t.Fatal("expected animated handoff")
+	}
+	for _, pair := range [][2]string{{"checkout", "intake.queue"}, {"fulfillment.pack", "fulfillment.ship"}} {
+		want := continuityWire(t, before, pair[0], pair[1])
+		for i, frame := range handoff.TweenFrames {
+			got := continuityWire(t, frame, pair[0], pair[1])
+			if got.Opacity != want.Opacity || !reflect.DeepEqual(got.Route, want.Route) {
+				t.Fatalf("frame %d changed unobstructed wire %s", i, want.ID)
+			}
+		}
+	}
+}

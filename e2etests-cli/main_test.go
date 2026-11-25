@@ -1955,7 +1955,7 @@ func validatePDF(tb testing.TB, content []byte, wantPages int) {
 	}
 }
 
-// Each playback frame has its own opacity animation. Shared definitions can
+// Each playback frame has its own timing animation. Shared definitions can
 // also carry the diagram's theme class.
 func getNumBoards(svg string) int {
 	return strings.Count(svg, `<g style="animation: d2Transition-`)

@@ -233,9 +233,8 @@ func newBoardTransfer(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.
 	return p
 }
 
-// In the wire's moving coordinate system a translating route is fixed.
-// The union of the endpoint boxes bounds every intermediate position and
-// size of the obstacle, including instants between animation samples.
+// In the wire's moving coordinate system the route is fixed. Check the
+// obstacle's projections at the same instant, including between samples.
 func transferWireCrosses(wire *d2target.Connection, dx, dy int, old, next *d2target.Shape) bool {
 	if wire.Opacity == 0 || old.Opacity == 0 && next.Opacity == 0 {
 		return false
@@ -244,29 +243,64 @@ func transferWireCrosses(wire *d2target.Connection, dx, dy int, old, next *d2tar
 	if old.Pos.X == endX && old.Pos.Y == endY && old.Width == next.Width && old.Height == next.Height {
 		return false
 	}
-	pad := 1 + (wire.RenderedStrokeWidth()+old.RenderedStrokeWidth())/2
-	left, top := float64(min(old.Pos.X, endX))-pad, float64(min(old.Pos.Y, endY))-pad
-	right, bottom := float64(max(old.Pos.X+old.Width, endX+next.Width))+pad, float64(max(old.Pos.Y+old.Height, endY+next.Height))+pad
-	box := geo.NewBox(geo.NewPoint(left, top), right-left, bottom-top)
 	if wire.IsCurve && (len(wire.Route)-1)%3 != 0 {
 		return true
 	}
+	// The wire, the obstacle's position, and its size round independently.
+	pad := 1.5 + (wire.RenderedStrokeWidth()+old.RenderedStrokeWidth())/2
 	var last geo.Point
 	for cmd := range wire.PathCommands(&geo.Point{}, &geo.Point{}) {
-		switch cmd.Kind {
-		case 'L':
-			if box.Contains(&cmd.End) || box.Contains(&last) || box.Intersects(geo.Segment{Start: &last, End: &cmd.End}, 0) {
-				return true
+		start := last
+		last = cmd.End
+		if cmd.Kind == 'M' {
+			continue
+		}
+		points := []geo.Point{start, cmd.End}
+		axes := []geo.Point{{X: 1}, {Y: 1}}
+		if cmd.Kind != 'L' {
+			// A cubic stays inside the bounds of its control points.
+			points = append(points, cmd.Control1, cmd.Control2)
+		} else if start.X != cmd.End.X && start.Y != cmd.End.Y {
+			// A slanted line and a box may also separate along the line normal.
+			axes = append(axes, geo.Point{X: start.Y - cmd.End.Y, Y: cmd.End.X - start.X})
+		}
+		enter, leave := 0., 1.
+		// Intersect the time window with the interval when a linearly
+		// interpolated distance is nonnegative. Keep stroke contact.
+		clip := func(a, b float64) bool {
+			if a < 0 && b < 0 {
+				return false
 			}
-		case 'C', 'S':
-			// A cubic, including a rounded corner, stays inside the
-			// bounds of its endpoints and control points.
-			if max(last.X, cmd.End.X, cmd.Control1.X, cmd.Control2.X) >= left && min(last.X, cmd.End.X, cmd.Control1.X, cmd.Control2.X) <= right &&
-				max(last.Y, cmd.End.Y, cmd.Control1.Y, cmd.Control2.Y) >= top && min(last.Y, cmd.End.Y, cmd.Control1.Y, cmd.Control2.Y) <= bottom {
-				return true
+			if a < 0 {
+				enter = max(enter, a/(a-b))
+			} else if b < 0 {
+				leave = min(leave, a/(a-b))
+			}
+			return enter <= leave
+		}
+		overlaps := true
+		for _, n := range axes {
+			low, high := math.Inf(1), math.Inf(-1)
+			for _, pt := range points {
+				proj := n.X*pt.X + n.Y*pt.Y
+				low, high = min(low, proj), max(high, proj)
+			}
+			box := func(x, y, width, height int) (float64, float64) {
+				origin := n.X*float64(x) + n.Y*float64(y)
+				w, h := n.X*float64(width), n.Y*float64(height)
+				margin := pad * (math.Abs(n.X) + math.Abs(n.Y))
+				return origin + min(0, w) + min(0, h) - margin, origin + max(0, w) + max(0, h) + margin
+			}
+			oldLow, oldHigh := box(old.Pos.X, old.Pos.Y, old.Width, old.Height)
+			newLow, newHigh := box(endX, endY, next.Width, next.Height)
+			if !clip(oldHigh-low, newHigh-low) || !clip(high-oldLow, high-newLow) {
+				overlaps = false
+				break
 			}
 		}
-		last = cmd.End
+		if overlaps {
+			return true
+		}
 	}
 	return false
 }
