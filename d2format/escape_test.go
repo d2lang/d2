@@ -301,7 +301,8 @@ func TestParsedInterpolation(t *testing.T) {
 
 	for _, tc := range []struct{ name, value, label string }{
 		{"unquoted-delimiters", `before${v}\#tag\;end`, `beforeX#tag;end`},
-		{"unquoted-spelling", `before${v}\*literal`, `beforeX*literal`},
+		{"unquoted-spelling", `before${v}\*literal*active`, `beforeX*literal*active`},
+		{"escaped-trailing-whitespace", `before${v}\*literal\n`, `beforeX*literal`},
 		{"adjacent-substitutions", `STYLE${v}${v}FILL`, `STYLEXXFILL`},
 		{"quoted-escapes", `"\"${v}\"mid${v}\\tail\nend"`, "\"X\"midX\\tail\nend"},
 	} {
@@ -311,6 +312,25 @@ func TestParsedInterpolation(t *testing.T) {
 			formatted := d2format.Format(ast.Nodes[0].MapKey.Value.Unbox())
 			assert.String(t, tc.value, formatted)
 			checkFormattedInterpolation(t, formatted, tc.label)
+		})
+	}
+}
+
+func TestEditedInterpolation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, raw, edit, want string }{
+		{"plain", `old`, `new`, `new`},
+		{"escaped", `\#old`, `#;new`, `\#\;new`},
+		{"edit-to-raw-spelling", `\#old`, `\#old`, `\\\#old`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value, err := d2parser.ParseValue(`before${v}` + tc.raw)
+			assert.Success(t, err)
+			*value.(*d2ast.UnquotedString).Value[2].String = tc.edit
+			formatted := d2format.Format(value)
+			assert.String(t, `before${v}`+tc.want, formatted)
+			checkFormattedInterpolation(t, formatted, "beforeX"+tc.edit)
 		})
 	}
 }

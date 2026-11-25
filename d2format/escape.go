@@ -2,8 +2,11 @@ package d2format
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/internal/d2string"
 )
 
 func escapeSingleQuotedValue(s string) string {
@@ -85,4 +88,33 @@ func escapeUnquotedValue(s string, inKey, wholeToken bool) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// A caller can edit a parsed fragment's text without updating its raw spelling.
+// Compare before reusing the raw escapes, including the distinction between
+// a literal \* and a wildcard. The parser folds line continuations before
+// storing the raw fragment and trims trailing whitespace from the final value.
+func matchesUnquotedFragment(raw, text string, last bool) bool {
+	if !strings.Contains(raw, `\`) {
+		return raw == text
+	}
+	escaped := false
+	for _, r := range raw {
+		if escaped {
+			r = d2string.DecodeEscape(r)
+			escaped = false
+		} else if r == '\\' {
+			escaped = true
+			continue
+		}
+		if text == "" && last && unicode.IsSpace(r) {
+			continue
+		}
+		want, size := utf8.DecodeRuneInString(text)
+		if size == 0 || r != want {
+			return false
+		}
+		text = text[size:]
+	}
+	return !escaped && text == ""
 }

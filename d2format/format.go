@@ -128,7 +128,7 @@ func (p *printer) blockComment(bc *d2ast.BlockComment) {
 
 func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString bool) {
 	wholeToken := len(boxes) == 1
-	for _, b := range boxes {
+	for i, b := range boxes {
 		if b.Substitution != nil {
 			p.substitution(b.Substitution)
 			continue
@@ -140,7 +140,7 @@ func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleStr
 			// In parsed double-quoted strings, the raw suffix can include text
 			// from before a substitution. Each decoded fragment is independent.
 			text = escapeDoubledQuotedValue(*b.String, p.inKey)
-		case b.StringRaw != nil:
+		case b.StringRaw != nil && (wholeToken || matchesUnquotedFragment(*b.StringRaw, *b.String, i == len(boxes)-1)):
 			text = *b.StringRaw
 		default:
 			text = escapeUnquotedValue(*b.String, p.inKey, wholeToken)

@@ -16,6 +16,7 @@ import (
 	"golang.org/x/text/transform"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/internal/d2string"
 	"github.com/d2lang/util-go/go2"
 )
 
@@ -1329,36 +1330,9 @@ func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
 			rawb.WriteString(sb.String())
 			hasRaw = true
 		}
-		sb.WriteRune(decodeEscape(r2))
+		sb.WriteRune(d2string.DecodeEscape(r2))
 		rawb.WriteByte('\\')
 		rawb.WriteRune(r2)
-	}
-}
-
-// https://go.dev/ref/spec#Rune_literals
-// TODO: implement all Go escapes like the unicode ones
-func decodeEscape(r2 rune) rune {
-	switch r2 {
-	case 'a':
-		return '\a'
-	case 'b':
-		return '\b'
-	case 'f':
-		return '\f'
-	case 'n':
-		return '\n'
-	case 'r':
-		return '\r'
-	case 't':
-		return '\t'
-	case 'v':
-		return '\v'
-	case '\\':
-		return '\\'
-	case '"':
-		return '"'
-	default:
-		return r2
 	}
 }
 
@@ -1427,7 +1401,7 @@ func (p *parser) parseDoubleQuotedString(inKey bool) *d2ast.DoubleQuotedString {
 			// TODO: deindent
 			continue
 		}
-		sb.WriteRune(decodeEscape(r2))
+		sb.WriteRune(d2string.DecodeEscape(r2))
 		rawb.WriteByte('\\')
 		rawb.WriteRune(r2)
 	}
