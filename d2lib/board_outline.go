@@ -167,10 +167,13 @@ func planBoardOutline(prev, next *d2target.Diagram, previousGraph, nextGraph *d2
 				return nil
 			}
 			pair := &gridEdgePair{
-				before: gridEdgeLayout{old, before[old.Src], before[old.Dst]},
-				after:  gridEdgeLayout{e, after[e.Src], after[e.Dst]}, dstAnchor: e.Dst,
+				before:    gridEdgeLayout{edge: old, src: before[old.Src], dst: before[old.Dst], srcRow: -1, dstRow: -1},
+				after:     gridEdgeLayout{edge: e, src: after[e.Src], dst: after[e.Dst], srcRow: -1, dstRow: -1},
+				dstAnchor: e.Dst,
 			}
-			if !pair.before.direct() || !pair.after.direct() {
+			pair.before.straight = pair.before.hasStraightPorts()
+			pair.after.straight = pair.after.hasStraightPorts()
+			if !pair.before.straight || !pair.after.straight {
 				return nil
 			}
 			if plan.edges == nil {

@@ -73,7 +73,10 @@ steps: {boundary: {
 	// would expose a border over the still-arriving service.
 	ledgerBefore := gridEdgeShapeMap(d.Shapes)["ledger"]
 	ledgerBefore.Pos.X += 4000
+	wire := d.Connections[1].Route
+	wire[len(wire)-1].X += 4000
 	out := planBoardOutline(d, board, g, g.Steps[0])
+	wire[len(wire)-1].X -= 4000
 	ledgerBefore.Pos.X -= 4000
 	if out == nil || out.start["payments"] < boardGatherEnd {
 		t.Fatal("outline should wait for this longer approach")
@@ -108,7 +111,7 @@ func TestBoardOutlineGatherClearsPaintAndTitles(t *testing.T) {
 	}
 	wire := d2target.BaseConnection()
 	wire.Src, wire.Dst = b.ID, a.ID
-	o.edges = &gridMotionEdges{pairs: map[string]*gridEdgePair{"link": {after: gridEdgeLayout{wire, b, a}}}}
+	o.edges = &gridMotionEdges{pairs: map[string]*gridEdgePair{"link": {after: gridEdgeLayout{edge: wire, src: b, dst: a, srcRow: -1, dstRow: -1}}}}
 	if o.canTraceDuringGather(panel, members, shapes) {
 		t.Fatal("external connector crosses the panel title while its port moves")
 	}
