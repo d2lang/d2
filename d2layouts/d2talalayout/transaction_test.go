@@ -786,6 +786,46 @@ func TestEdgePatchPreservesReverseArrowSemantics(t *testing.T) {
 	}
 }
 
+func TestEdgePatchDropsOnlyRedundantPolylinePoints(t *testing.T) {
+	a, b, c := geo.NewPoint(10, 20), geo.NewPoint(10, 40), geo.NewPoint(50, 40)
+	for _, tc := range []struct {
+		name           string
+		reverse, curve bool
+		input, want    []*geo.Point
+	}{
+		{"normal", false, false, []*geo.Point{a, a, b, b, c, c}, []*geo.Point{a, b, c}},
+		{"reversed", true, false, []*geo.Point{a, a, b, b, c, c}, []*geo.Point{c, b, a}},
+		{"cubic controls", true, true, []*geo.Point{a, b, b, c}, []*geo.Point{c, b, b, a}},
+		{"degenerate", false, false, []*geo.Point{a, a}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, edge := newD2TransactionGraph(false)
+			decoration := &d2graph.Attributes{Shape: d2graph.Scalar{Value: "diamond"}}
+			edge.SrcArrow, edge.DstArrow = tc.reverse, !tc.reverse
+			if tc.reverse {
+				edge.SrcArrowhead = decoration
+			} else {
+				edge.DstArrowhead = decoration
+			}
+			patch, err := buildEdgePatch(t.Context(), edge, &layoutgraph.Edge{Points: tc.input, IsCurve: tc.curve}, true)
+			if tc.want == nil {
+				if err == nil {
+					t.Fatal("expected wholly degenerate polyline to fail")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			d2Patch{edges: []d2EdgePatch{patch}}.apply()
+			if !reflect.DeepEqual(edge.Route, tc.want) || edge.IsCurve != tc.curve ||
+				tc.reverse && edge.SrcArrowhead != decoration || !tc.reverse && edge.DstArrowhead != decoration {
+				t.Fatalf("changed route geometry or authored arrowhead: %+v", edge)
+			}
+		})
+	}
+}
+
 func TestRoutePatchUpdatesOnlyRoutedEdges(t *testing.T) {
 	g, routedEdge := newD2TransactionGraph(false)
 	routedEdge.SrcArrow = true

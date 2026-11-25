@@ -423,3 +423,41 @@ func TestLayoutNestedLogsShapesLazily(t *testing.T) {
 		t.Fatalf("text handler wrote %q, want shapes=%q", out.String(), want)
 	}
 }
+
+func TestNestedLayoutMarksOnlyPartialInputs(t *testing.T) {
+	g := compileLayoutTestGraph(t, "a\nnote: {near: top-center}\na -> note")
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.ApplyTheme(d2themescatalog.NeutralDefault.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.SetDimensions(nil, ruler, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	var sawParent, sawNested bool
+	core := func(ctx context.Context, part *d2graph.Graph) error {
+		if !part.IsPartialLayout {
+			t.Fatal("core layout saw a partial graph marked as a whole board")
+		}
+		if part == g {
+			sawParent = true
+		} else {
+			sawNested = true
+		}
+		return d2dagrelayout.DefaultLayout(ctx, part)
+	}
+	router := func(ctx context.Context, board *d2graph.Graph, edges []*d2graph.Edge) error {
+		if board.IsPartialLayout {
+			t.Fatal("router saw a restored board marked as partial")
+		}
+		return DefaultRouter(ctx, board, edges)
+	}
+	if err := LayoutNested(log.WithDefault(t.Context()), g, GraphInfo{}, core, router); err != nil {
+		t.Fatal(err)
+	}
+	if !sawParent || !sawNested || g.IsPartialLayout {
+		t.Fatalf("partial input state: parent %v, extracted %v, returned board %v", sawParent, sawNested, g.IsPartialLayout)
+	}
+}

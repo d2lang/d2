@@ -15,6 +15,8 @@ type SerializedGraph struct {
 	Objects   []SerializedObject     `json:"objects"`
 	RootLevel int                    `json:"rootLevel"`
 	Data      map[string]interface{} `json:"data,omitempty"`
+
+	IsPartialLayout bool `json:"isPartialLayout,omitempty"`
 }
 
 type SerializedObject map[string]interface{}
@@ -33,6 +35,7 @@ func DeserializeGraph(bytes []byte, g *Graph) error {
 	Convert(sg.Root, &root)
 	g.Root = &root
 	root.Graph = g
+	g.IsPartialLayout = sg.IsPartialLayout
 	g.RootLevel = sg.RootLevel
 
 	idToObj := make(map[string]*Object)
@@ -96,6 +99,7 @@ func SerializeGraph(g *Graph) ([]byte, error) {
 		return nil, err
 	}
 	sg.Root = root
+	sg.IsPartialLayout = g.IsPartialLayout
 	sg.RootLevel = g.RootLevel
 	sg.Data = g.Data
 

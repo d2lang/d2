@@ -94,3 +94,32 @@ func TestRememberedStepsKeepNewTransition(t *testing.T) {
 		t.Fatal("remembered sequence consumed a new explicit transition")
 	}
 }
+
+func TestAbductSequenceEdgesRetainsGraphOrder(t *testing.T) {
+	graph := layoutgraph.NewGraph()
+	newNode := func(id int64) *layoutgraph.Node {
+		n := layoutgraph.NewNode(id, 100, 60)
+		graph.AddNewNodeToContainer(nil, n)
+		return n
+	}
+	first, middle, last := newNode(1), newNode(2), newNode(3)
+	left, right, vessel := newNode(4), newNode(5), newNode(6)
+	sequence := &layoutgraph.Sequence{Graph: graph, Nodes: []*layoutgraph.Node{first, middle, last}, Vessel: vessel}
+	unrelated := graph.Connect(left, right)
+	abductSequenceEdges(sequence)
+	if len(sequence.EdgeAbductions) != 0 {
+		t.Fatal("isolated steps recorded unrelated edges")
+	}
+	out := graph.Connect(last, right)
+	in := graph.Connect(left, first)
+	internal := graph.Connect(first, last)
+	abductSequenceEdges(sequence)
+	if a := sequence.EdgeAbductions; len(a) != 2 || a[0].Edge != out || a[0].OriginallyFrom != last ||
+		a[1].Edge != in || a[1].OriginallyTo != first {
+		t.Fatalf("external edges lost their graph order or original endpoint: %+v", a)
+	}
+	if out.From != vessel || in.To != vessel || unrelated.From != left || unrelated.To != right ||
+		internal.From != first || internal.To != last {
+		t.Fatal("incorrectly transferred a sequence edge")
+	}
+}

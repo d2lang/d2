@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
+	"github.com/d2lang/d2/lib/geo"
 )
 
 func TestEdgesInOrderPreservesEqualLabelOrder(t *testing.T) {
@@ -57,5 +58,22 @@ func TestEdgesInOrderPreservesNaNLabelTie(t *testing.T) {
 	got := edgesInOrder([]*layoutgraph.Edge{nonFinite, finite})
 	if got[0] != nonFinite || got[1] != finite {
 		t.Fatal("NaN label area no longer remains equivalent to a finite area")
+	}
+}
+
+func TestUpdateOffsetsAfterLastLoopIsReconnected(t *testing.T) {
+	g := layoutgraph.NewGraph()
+	host := g.AddNode(layoutgraph.NewNode(1, 100, 70))
+	other := g.AddNode(layoutgraph.NewNode(2, 80, 60))
+	loop := g.Connect(host, host)
+	UpdateOffsets(host)
+	if len(host.LoopOffsets) == 0 || host.TopLeft != nil {
+		t.Fatalf("before reconnect: offsets %v, position %v", host.LoopOffsets, host.TopLeft)
+	}
+	loop.Reconnect(other, true)
+	loop.Points = []*geo.Point{geo.NewPoint(5, 8), geo.NewPoint(55, 8)}
+	UpdateOffsets(host)
+	if len(host.LoopOffsets) != 0 || host.TopLeft != nil || len(loop.Points) != 2 {
+		t.Fatalf("after reconnect: offsets %v, position %v, route %v", host.LoopOffsets, host.TopLeft, loop.Points)
 	}
 }

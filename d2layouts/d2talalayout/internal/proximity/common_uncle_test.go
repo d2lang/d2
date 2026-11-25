@@ -22,6 +22,7 @@ func TestCommonUncleTieAcrossContainers(t *testing.T) {
 	x, y, z := add(late), add(late), add(late)
 	g.Connect(x, b)
 	g.Connect(x, a)
+	g.Connect(x, b) // a second edge to b still counts x only once
 	g.Connect(y, b)
 	g.Connect(z, a)
 	got := CommonUncleSiblings(g)

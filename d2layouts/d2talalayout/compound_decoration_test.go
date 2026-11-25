@@ -6,6 +6,7 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/shape"
 )
 
 func TestCompoundSeparatesFixedExteriorCaptions(t *testing.T) {
@@ -136,6 +137,84 @@ func TestExteriorFrameIconLeavesInnerMarginsAvailable(t *testing.T) {
 		p, n := d.Shapes[0], d.Shapes[1]
 		if p.Width != 240 || p.Height != 180 || n.Pos.X-p.Pos.X != 60 || n.Pos.Y-p.Pos.Y != 60 {
 			t.Fatalf("%s frame %d × %d, child offset %d,%d", pos, p.Width, p.Height, n.Pos.X-p.Pos.X, n.Pos.Y-p.Pos.Y)
+		}
+	}
+}
+
+func TestAnchoredCaptionUsesSpaceInsideTheExistingFrame(t *testing.T) {
+	for _, tc := range []struct {
+		shape, anchor string
+		width, height int
+	}{
+		{"rectangle", "border-top-left", 664, 180},
+		{"rectangle", "border-top-right", 664, 180},
+		{"circle", "border-top-right", 812, 812},
+		{"oval", "border-top-left", 939, 313},
+	} {
+		source := fmt.Sprintf(`Panel: "" {shape: %s
+ Worker: Warehouse inventory reconciliation for incoming international consignments {width: 80; height: 60; label.near: %s}
+}`, tc.shape, tc.anchor)
+		d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+		p, c := d.Shapes[0], d.Shapes[1]
+		body := geo.NewBox(geo.NewPoint(float64(c.Pos.X), float64(c.Pos.Y)), float64(c.Width), float64(c.Height))
+		caption := label.FromString(c.LabelPosition).GetPointOnBox(body, label.PADDING, float64(c.LabelWidth), float64(c.LabelHeight))
+		if p.Width != tc.width || p.Height != tc.height || c.Width != 80 || c.Height != 60 {
+			t.Fatalf("%s %s: frame %d × %d, child %d × %d", tc.shape, tc.anchor, p.Width, p.Height, c.Width, c.Height)
+		}
+		if caption.X < float64(p.Pos.X)+20 || caption.X+float64(c.LabelWidth) > float64(p.Pos.X+p.Width)-20 {
+			t.Fatalf("%s %s: caption starting at %v extends beyond its frame's gutter", tc.shape, tc.anchor, caption)
+		}
+	}
+}
+
+func TestIsolatedOvalClearsTitleWithoutGrowing(t *testing.T) {
+	const source = `Pool: Expansion {shape: oval; label.near: top-center
+ Worker: Worker {width: 120; height: 65}
+}`
+	d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	p, c := d.Shapes[0], d.Shapes[1]
+	box := geo.NewBox(geo.NewPoint(float64(p.Pos.X), float64(p.Pos.Y)), float64(p.Width), float64(p.Height))
+	inner := shape.NewOval(box).GetInnerBox()
+	title := label.InsideTopCenter.GetPointOnBox(inner, label.PADDING, float64(p.LabelWidth), float64(p.LabelHeight))
+	if p.Width != 319 || p.Height != 173 || title.Y+float64(p.LabelHeight)+label.PADDING > float64(c.Pos.Y) {
+		t.Fatalf("oval %d × %d: title at %v, child at %v", p.Width, p.Height, title, c.Pos)
+	}
+}
+
+func TestIsolatedFrameClearsCenteredIconOnlyWithRoom(t *testing.T) {
+	for _, tc := range []struct{ height, workerY int }{{213, 74}, {320, 58}} {
+		source := fmt.Sprintf(`Pool: Runtime {shape: rectangle; height: %d
+ label.near: outside-top-center; icon: "https://example.org/status.svg"; icon.near: center-center
+ Worker: Worker {width: 120; height: 65}
+}`, tc.height)
+		d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+		p, c := d.Shapes[0], d.Shapes[1]
+		if p.Height != tc.height || p.Width != 268 || c.Pos.X != p.Pos.X+74 || c.Pos.Y != p.Pos.Y+tc.workerY {
+			t.Fatalf("height %d: frame %d × %d, child at %v", tc.height, p.Width, p.Height, c.Pos)
+		}
+	}
+}
+
+func TestFramePreservesTilePositionWhenNestedLayoutHidesAnEdge(t *testing.T) {
+	const panel = `Panel: "" {shape: rectangle
+ Worker: Warehouse inventory reconciliation for incoming international consignments {width: 80; height: 60; label.near: border-top-left}
+}`
+	for _, source := range []string{
+		panel + "\nExtras: {near: top-center}\nPanel.Worker -> Extras",
+		"Grid: {grid-columns: 1\n" + panel + "\n}\nGrid.Panel.Worker -> Extras",
+	} {
+		d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+		var parentX, workerX int
+		for _, s := range d.Shapes {
+			switch s.ID {
+			case "Panel", "Grid.Panel":
+				parentX = s.Pos.X
+			case "Panel.Worker", "Grid.Panel.Worker":
+				workerX = s.Pos.X
+			}
+		}
+		if len(d.Connections) != 1 || workerX-parentX != 292 {
+			t.Fatalf("external connection count %d, worker x offset %d", len(d.Connections), workerX-parentX)
 		}
 	}
 }

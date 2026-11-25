@@ -251,3 +251,20 @@ func TestTreeFanKeepsRoutesWhenCaptionsOutnumberPorts(t *testing.T) {
 		}
 	}
 }
+
+func TestIncomingTreeFanRendersWithoutZeroLengthSegments(t *testing.T) {
+	const source = `direction: down
+Issue: {width: 190; height: 84}
+Step0 -> Issue
+Step1 -> Issue: {target-arrowhead: Review}
+Step2 -> Issue: {source-arrowhead: Log; target-arrowhead: Log}
+Step3 -> Issue
+Step4 -> Issue: {source-arrowhead: Log; target-arrowhead: Log}
+Detached`
+	for _, seed := range []int64{1, 2, 3} {
+		d := compileRoutingDiagram(t, t.Context(), source, seed, nil)
+		if _, err := d2svg.Render(d, &d2svg.RenderOpts{}); err != nil {
+			t.Fatalf("seed %d: %v", seed, err)
+		}
+	}
+}

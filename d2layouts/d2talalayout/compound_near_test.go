@@ -49,3 +49,25 @@ func TestNearTargetsOrdinaryCompoundMember(t *testing.T) {
 		}
 	}
 }
+
+func TestPinnedNearClosesOnlyTheRequestedGap(t *testing.T) {
+	const source = `Anchor: Here {left: 300; top: 350; width: 90; height: 62}
+Job: Main {near: Anchor}
+t0: Tile 0
+t1: Tile 1`
+	d := compileRoutingDiagram(t, t.Context(), source, 3, nil)
+	want := map[string]d2target.Point{
+		"Anchor": {X: 300, Y: 350},
+		"Job":    {X: 270, Y: 432}, // 20 px below the bottom of the pin.
+		"t0":     {X: 270, Y: 264},
+		"t1":     {X: 270, Y: 178},
+	}
+	if len(d.Shapes) != len(want) {
+		t.Fatalf("got %d shapes, want %d", len(d.Shapes), len(want))
+	}
+	for _, n := range d.Shapes {
+		if n.Pos != want[n.ID] {
+			t.Errorf("%s moved to %v, want %v", n.ID, n.Pos, want[n.ID])
+		}
+	}
+}

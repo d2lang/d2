@@ -28,7 +28,6 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 		}
 		nodeToTree[node] = layoutgraph.NewTree(node)
 	}
-	var edgeBetween func(a, b *layoutgraph.Node) *layoutgraph.Edge
 
 	// Terminal node: tree never reaches here, but roots can connect to graph here
 	// Sentinel node: the node that a tree root is connected to
@@ -98,12 +97,6 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 		if len(fringeNodes) == 0 {
 			break
 		}
-		if edgeBetween == nil {
-			edgeBetween, err = buildTreeAdjacencyMatrix(g, guard)
-			if err != nil {
-				return nil, err
-			}
-		}
 
 		for _, fn := range fringeNodes {
 			if err := guard.Step(); err != nil {
@@ -134,10 +127,7 @@ func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, 
 			if tree == nil {
 				return nil, treePreprocessBadState("fringe node %d has no tree record", fn.ID)
 			}
-			tree.SentinelEdge = edgeBetween(fn, sentinelNode)
-			if tree.SentinelEdge == nil {
-				return nil, treePreprocessBadState("fringe node %d has no graph sentinel edge", fn.ID)
-			}
+			tree.SentinelEdge = fn.Edges[0]
 
 			if _, exists := sentinelToTreeRoots[sentinelNode]; !exists {
 				sentinelToTreeRoots[sentinelNode] = make([]*layoutgraph.Tree, 0)

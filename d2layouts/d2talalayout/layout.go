@@ -330,6 +330,12 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 			return err
 		}
 	}
+	if !graph.IsPartialLayout {
+		tightenPinnedNear(graph, best)
+		clearPinnedFrameNeighbor(graph, best.graph)
+		clearIsolatedFrameDecoration(graph, best.graph)
+		clearCrowdedCaptions(graph, best.graph)
+	}
 	return applySeedResult(workCtx, graph, best)
 }
 

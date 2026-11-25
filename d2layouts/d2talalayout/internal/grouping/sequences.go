@@ -402,7 +402,15 @@ func addSequence(graph *layoutgraph.Graph, sequence *layoutgraph.Sequence) {
 func abductSequenceEdges(sequence *layoutgraph.Sequence) {
 	isStep := map[*layoutgraph.Node]struct{}{}
 	for _, node := range sequence.Nodes {
-		isStep[node] = struct{}{}
+		if len(node.Edges) != 0 {
+			isStep[node] = struct{}{}
+		}
+	}
+	// The defining transitions have already been disconnected. An empty
+	// index means there are no remaining edges to transfer to this vessel.
+	if len(isStep) == 0 {
+		sequence.EdgeAbductions = nil
+		return
 	}
 	var abductions []*layoutgraph.EdgeAbduction
 	for _, edge := range sequence.Graph.Edges {

@@ -68,6 +68,11 @@ type Graph struct {
 	// Object.Level uses the location of a nested graph
 	RootLevel int `json:"rootLevel,omitempty"`
 
+	// IsPartialLayout marks a layout input whose surrounding objects or edges
+	// were removed for a nested layout. RootLevel can still be zero when an
+	// extraction includes its top-level container.
+	IsPartialLayout bool `json:"isPartialLayout,omitempty"`
+
 	// Data embedded from source configuration variables, including layout options.
 	Data map[string]interface{} `json:"data,omitempty"`
 }

@@ -81,26 +81,6 @@ func treeContainerRDFSOrder(g *layoutgraph.Graph, root *layoutgraph.Node, guard 
 	return order, nil
 }
 
-func buildTreeAdjacencyMatrix(g *layoutgraph.Graph, guard *limits.WorkGuard) (func(a, b *layoutgraph.Node) *layoutgraph.Edge, error) {
-	fromNodeToToNodeToEdge := make(map[*layoutgraph.Node]map[*layoutgraph.Node]*layoutgraph.Edge)
-	for _, edge := range g.Edges {
-		if err := guard.Step(); err != nil {
-			return nil, err
-		}
-		if _, has := fromNodeToToNodeToEdge[edge.From]; !has {
-			fromNodeToToNodeToEdge[edge.From] = make(map[*layoutgraph.Node]*layoutgraph.Edge)
-		}
-		fromNodeToToNodeToEdge[edge.From][edge.To] = edge
-	}
-	return func(a, b *layoutgraph.Node) *layoutgraph.Edge {
-		edge, has := fromNodeToToNodeToEdge[a][b]
-		if !has {
-			edge = fromNodeToToNodeToEdge[b][a]
-		}
-		return edge
-	}, nil
-}
-
 func treeFringeNodes(nodes []*layoutgraph.Node, guard *limits.WorkGuard) ([]*layoutgraph.Node, error) {
 	inSet := make(map[*layoutgraph.Node]struct{}, len(nodes))
 	for _, node := range nodes {

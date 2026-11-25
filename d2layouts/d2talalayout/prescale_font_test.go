@@ -33,3 +33,23 @@ func TestPrescaleRetainsAuthoredFont(t *testing.T) {
 		})
 	}
 }
+
+func TestIsolatedTextLoopKeepsMeasuredSize(t *testing.T) {
+	const source = "a: Q {shape: text}\n"
+	plain := compileRoutingDiagram(t, t.Context(), source, 1, nil).Shapes[0]
+	d := compileRoutingDiagram(t, t.Context(), source+"a -> a\n", 1, nil)
+	n := d.Shapes[0]
+	if n.Width != plain.Width || n.Height != plain.Height || n.FontSize != plain.FontSize {
+		t.Errorf("text with a loop is %dx%d at %d px, want %dx%d at %d px", n.Width, n.Height, n.FontSize, plain.Width, plain.Height, plain.FontSize)
+	}
+	if len(d.Connections) != 1 || len(d.Connections[0].Route) != 5 {
+		t.Fatalf("expected one routed loop with three bends")
+	}
+	// On a mixed board the existing loop clearance participates in packing.
+	mixed := compileRoutingDiagram(t, t.Context(), source+"a -> a\nOther\n", 1, nil)
+	for _, n := range mixed.Shapes {
+		if n.ID == "a" && (n.Width != 42 || n.Height != 42) {
+			t.Errorf("mixed-board loop box changed to %dx%d", n.Width, n.Height)
+		}
+	}
+}

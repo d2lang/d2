@@ -256,3 +256,42 @@ func TestAssignNearsWorkLimitLeavesLiveMapsUnchanged(t *testing.T) {
 		t.Fatalf("Near relationships changed on work-limit error: first=%v second=%v", first.Nears, second.Nears)
 	}
 }
+
+func TestAssignNearsUsesFirstChildOwningEitherEndpoint(t *testing.T) {
+	g, root, first, second, abductions := nearAssignmentFixture()
+	external := abductions[0].CurrentTo
+	another := layoutgraph.NewNode(5, 10, 10)
+	g.AddNewNodeToContainer(nil, another)
+	// The target belongs to the first declared child. Choosing the source
+	// here would put second in another group and lose this near pair.
+	abductions[0] = &layoutgraph.EdgeAbduction{
+		OriginallyFrom: second, OriginallyTo: first, CurrentFrom: external, CurrentTo: another,
+	}
+	for i := range 256 {
+		g.AddNewNodeToContainer(root, layoutgraph.NewNode(int64(6+i), 10, 10))
+	}
+	if err := assignNearsWithWorkLimit(t.Context(), g, root, abductions, 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := first.Nears[second]; !ok {
+		t.Fatal("lost first child's shared neighbor")
+	}
+}
+
+func TestAssignNearsChecksDirectEndpointsWithoutAncestryWalks(t *testing.T) {
+	g, root, first, second, abductions := nearAssignmentFixture()
+	// Put both owners at the far end of a wide panel, with many unrelated
+	// siblings to check for each record.
+	for i := range 128 {
+		g.AddNewNodeToContainer(root, layoutgraph.NewNode(int64(5+i), 10, 10))
+	}
+	children := g.Containers[root]
+	children[0], children[128] = children[128], children[0]
+	children[1], children[129] = children[129], children[1]
+	if err := assignNearsWithWorkLimit(t.Context(), g, root, abductions, 300); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := first.Nears[second]; !ok {
+		t.Fatal("lost the two late owners' shared neighbor")
+	}
+}

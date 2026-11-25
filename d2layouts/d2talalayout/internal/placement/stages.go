@@ -56,11 +56,10 @@ func scaleBasedOnEdges(node *layoutgraph.Node) {
 		totalEdges += count
 		maxEdgesToAdjacent = max(maxEdgesToAdjacent, count)
 	}
-	sidesForEdges := 4.0
-	if len(edgeCounts) < 4 {
-		sidesForEdges = float64(len(edgeCounts))
+	edgesPerSide := maxEdgesToAdjacent
+	if sides := min(4, len(edgeCounts)); sides > 0 {
+		edgesPerSide = max(edgesPerSide, (totalEdges+sides-1)/sides)
 	}
-	edgesPerSide := max(maxEdgesToAdjacent, int(math.Ceil(float64(totalEdges)/sidesForEdges)))
 	if edgesPerSide == 1 {
 		return
 	}

@@ -280,6 +280,7 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 	for level := len(treeLevels) - 1; level > 0; level-- {
 		// nextPosition moves along the x axis as we position each level node on this level
 		nextPosition := 0.0
+		firstSubsequentChild := 0
 		for i, levelNode := range treeLevels[level] {
 			if err := guard.Step(); err != nil {
 				return err
@@ -294,18 +295,10 @@ func layoutTree(t *layoutgraph.Tree, guard *limits.WorkGuard) error {
 					return err
 				}
 			} else {
-				lastChildPosition := len(treeLevels[level+1])
-				for i := lastChildPosition - 1; i >= 0; i-- {
-					if err := guard.Step(); err != nil {
-						return err
-					}
-					if treeLevels[level+1][i].Parent == levelNode {
-						lastChildPosition = i
-						break
-					}
-				}
+				// Breadth-first level order keeps each parent's children contiguous.
+				firstSubsequentChild += len(levelNode.Children)
 				shiftSubsequentLevelNodes := func(dx float64) error {
-					for i := lastChildPosition + 1; i < len(treeLevels[level+1]); i++ {
+					for i := firstSubsequentChild; i < len(treeLevels[level+1]); i++ {
 						if err := guard.Step(); err != nil {
 							return err
 						}

@@ -28,7 +28,10 @@ func CommonUncleSiblings(graph *layoutgraph.Graph) map[*layoutgraph.Node]layoutg
 						orderedUncles = append(orderedUncles, adjacent)
 						uncleToCousins[adjacent] = []*layoutgraph.Node{}
 					}
-					if !slices.Contains(uncleToCousins[adjacent], node) {
+					// Edges are visited together for each sibling, so a repeated
+					// sibling is always the last member of this group.
+					siblings := uncleToCousins[adjacent]
+					if len(siblings) == 0 || siblings[len(siblings)-1] != node {
 						uncleToCousins[adjacent] = append(uncleToCousins[adjacent], node)
 					}
 				}
