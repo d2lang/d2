@@ -5,8 +5,11 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/log"
 )
 
 func gridEdgeTestShape(id string, x, y int) d2target.Shape {
@@ -69,6 +72,113 @@ a.id -> b.fk`)
 	want := geo.NewPoint(original[1].X, original[1].Y+80)
 	if !sampled[0].Equals(original[0]) || !sampled[1].Equals(want) {
 		t.Fatalf("row ports moved off their table rows: %v", sampled)
+	}
+}
+
+func TestGridMotionPreservesOutsideCaptionPort(t *testing.T) {
+	board, graph := compileGridMotionTest(t, `grid-rows: 1
+a: Caption {width: 80; height: 60; label.near: outside-right-center}
+b: "" {width: 80; height: 60}
+a -> b`)
+	captionPort := board.Connections[0].Route[0]
+	a := shapeByID(t, board, "a")
+	if captionPort.X <= float64(a.Pos.X+a.Width) {
+		t.Fatalf("fixture missed the caption: %v", captionPort)
+	}
+	m := newGridMotionEdges(board, board, graph, graph, map[string]bool{"b": true})
+	shapes := slices.Clone(board.Shapes)
+	shapes[1].Pos.X += 50
+	got := m.sample(board.Connections, shapes, .5, 1, 1, nil)
+	if len(got) != 1 || !got[0].Route[0].Equals(captionPort) {
+		t.Fatal("moving the destination pulled the wire through the source caption")
+	}
+}
+
+func TestGridMotionSQLRowSwitchesFaces(t *testing.T) {
+	for _, tc := range []struct{ engine, link string }{
+		{"dagre", "a.id -> b"}, {"dagre", "b -> a.id"}, {"dagre", "a.id -> b.id"},
+		{"tala", "a.id -> b"}, {"tala", "b -> a.id"},
+	} {
+		t.Run(tc.engine+"/"+tc.link, func(t *testing.T) {
+			link := tc.link
+			peer := "shape: circle; width: 120; height: 120"
+			if link == "a.id -> b.id" {
+				peer = "shape: sql_table; id: int; name: string"
+			}
+			source := `vars: {d2-config: {animate-interval: 1s; animate-duration: 600ms}}
+grid-rows: 1
+a: {shape: sql_table; id: int; name: string; value: text}
+b: {` + peer + `}
+` + link + `
+steps: {swap: {
+ a: null
+ a: {shape: sql_table; id: int; name: string; value: text}
+ ` + link + `
+}}`
+			opts := dagreCompileOptions(new(int))
+			if tc.engine == "tala" {
+				opts.Layout = &tc.engine
+				opts.LayoutResolver = func(string) (d2graph.LayoutGraph, error) { return d2talalayout.DefaultLayout, nil }
+				opts.RouterResolver = func(string) (d2graph.RouteEdges, error) { return d2talalayout.RouteEdges, nil }
+			}
+			board, _, err := Compile(log.WithDefault(t.Context()), source, opts, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frames := board.Steps[0].TweenFrames
+			var left, right, crossing bool
+			for i, f := range frames {
+				a, b := shapeByID(t, f, "a"), shapeByID(t, f, "b")
+				wantX := a.Pos.X
+				switch {
+				case a.Pos.X+a.Width < b.Pos.X:
+					wantX += a.Width
+					left = true
+				case b.Pos.X+b.Width < a.Pos.X:
+					right = true
+				default:
+					// A straight connection between the facing ports disappears as
+					// the shapes pass through one another.
+					if a.Pos.X < b.Pos.X+b.Width/2 && b.Pos.X < a.Pos.X+a.Width/2 {
+						crossing = true
+						if len(f.Connections) != 0 {
+							t.Fatalf("frame %d drew a shaft inside the overlapping shapes", i)
+						}
+					}
+					continue
+				}
+				if len(f.Connections) != 1 || len(f.Connections[0].Route) < 2 {
+					t.Fatalf("frame %d lost the connection between separated shapes", i)
+				}
+				e := f.Connections[0]
+				port, other := e.Route[0], e.Route[len(e.Route)-1]
+				if e.Src != "a" {
+					port, other = other, port
+				}
+				wantY := float64(a.Pos.Y) + 1.5*float64(a.Height)/4
+				if math.Abs(port.X-float64(wantX)) > 1 || math.Abs(port.Y-wantY) > 1 {
+					t.Fatalf("frame %d row endpoint (%.1f,%.1f), want (%d,%.1f)", i, port.X, port.Y, wantX, wantY)
+				}
+				if b.Type == d2target.ShapeSQLTable {
+					otherX := b.Pos.X
+					if wantX == a.Pos.X {
+						otherX += b.Width
+					}
+					otherY := float64(b.Pos.Y) + 1.5*float64(b.Height)/3
+					if math.Abs(other.X-float64(otherX)) > 1 || math.Abs(other.Y-otherY) > 1 {
+						t.Fatalf("frame %d peer row endpoint (%.1f,%.1f), want (%d,%.1f)", i, other.X, other.Y, otherX, otherY)
+					}
+				} else if b.Type == d2target.ShapeOval {
+					center := gridEdgeCenter(&b)
+					if math.Abs(math.Hypot(other.X-center.X, other.Y-center.Y)-float64(b.Width)/2) > 1.5 {
+						t.Fatalf("frame %d endpoint (%.1f,%.1f) left circle outline", i, other.X, other.Y)
+					}
+				}
+			}
+			if !left || !right || !crossing {
+				t.Fatal("transition did not exercise separation on both sides and overlap")
+			}
+		})
 	}
 }
 
