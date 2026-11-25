@@ -57,20 +57,27 @@ func (a sourcePosition) less(b sourcePosition) bool {
 }
 func objectPosition(o *d2graph.Object) sourcePosition {
 	p := sourcePosition{line: math.MaxInt, column: math.MaxInt, edge: math.MaxInt}
+	var sourcePath string
 	for _, r := range o.References {
 		if r.MapKey == nil || (r.Key != nil && r.Key.HasGlob()) {
 			continue
 		}
-		position := r.MapKey.Range.Start
+		source := r.MapKey.Range
 		// Endpoint references share their enclosing message's map key. Use the
 		// referenced path component so client -> server introduces client first,
 		// even when group normalization changed the children encounter order.
 		if r.Key != nil && r.KeyPathIndex >= 0 && r.KeyPathIndex < len(r.Key.Path) {
-			position = r.Key.Path[r.KeyPathIndex].Unbox().GetRange().Start
+			source = r.Key.Path[r.KeyPathIndex].Unbox().GetRange()
 		}
-		q := sourcePosition{line: position.Line, column: position.Column, edge: r.MapKeyEdgeIndex}
+		// Overlays append references from other files to an existing object.
+		// Only positions within the file that introduced it are comparable.
+		if p.line != math.MaxInt && source.Path != sourcePath {
+			continue
+		}
+		q := sourcePosition{line: source.Start.Line, column: source.Start.Column, edge: r.MapKeyEdgeIndex}
 		if q.less(p) {
 			p = q
+			sourcePath = source.Path
 		}
 	}
 	if o.SequenceImportPosition != nil {

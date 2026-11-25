@@ -238,6 +238,7 @@ func TestImportedTimelineUsesImportSite(t *testing.T) {
 	fs := fstest.MapFS{"part.d2": {Data: []byte(`a.note: Imported note {shape: page}
  b -> c: imported`)}}
 	g, _, err := d2compiler.Compile("index.d2", strings.NewReader(`shape: sequence-diagram
+ first; a; b
  a -> b: before
  ...@part
  c -> a: after`), &d2compiler.CompileOptions{FS: fs})
@@ -253,6 +254,16 @@ func TestImportedTimelineUsesImportSite(t *testing.T) {
 	}
 	if err := sequencediagram.Layout(context.Background(), g); err != nil {
 		t.Fatal(err)
+	}
+	// The spread introduces c and references previously declared actors.
+	// Those references must not move the earlier actors to new columns.
+	previousX := math.Inf(-1)
+	for _, id := range []string{"first", "a", "b", "c"} {
+		x := obj(t, g, id).Center().X
+		if x <= previousX {
+			t.Fatalf("actor %s at x=%v follows actor at x=%v", id, x, previousX)
+		}
+		previousX = x
 	}
 	es := messages(g)
 	ys := make(map[string]float64)
