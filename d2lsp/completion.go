@@ -51,7 +51,7 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		ast, _ = d2parser.Parse("", strings.NewReader(getTextUntilPosition(text, line, column, utf16Pos)), parseOpts)
 	}
 
-	keyword := getKeywordContext(text, ast, line, column, utf16Pos)
+	keyword := completionScope{root: ast}.keywordContext(text, ast, line, column, utf16Pos)
 	switch keyword {
 	case "style", "style.":
 		return getStyleCompletions(), nil
@@ -128,7 +128,17 @@ func getTextUntilPosition(text string, line, column int, utf16Pos bool) string {
 	return result
 }
 
-func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos bool) string {
+// Shape declarations can live in a different block from the property being edited.
+type completionScope struct {
+	root *d2ast.Map
+	path []*d2ast.StringBox
+}
+
+func (s completionScope) qualified(path []*d2ast.StringBox) []*d2ast.StringBox {
+	return append(s.path[:len(s.path):len(s.path)], path...)
+}
+
+func (s completionScope) keywordContext(text string, m *d2ast.Map, line, column int, utf16Pos bool) string {
 	if m == nil {
 		return ""
 	}
@@ -172,10 +182,10 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 					dotColumn := columnByteOffset(lineText, column, utf16Pos)
 					if isHolderLast && keyRange.End.Line == line && isAfterDot(lineText, dotColumn) {
 						if lastPart == "shape" {
-							return shapeOptionsContext(m, key)
+							return s.shapeOptionsContext(key.Path, "")
 						}
 						if len(n.MapKey.Edges) == 0 {
-							if caption := captionContext(m, key); caption != "" {
+							if caption := s.captionContext(key); caption != "" {
 								return caption
 							}
 						}
@@ -198,17 +208,21 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 		// Check nested map
 		if n.MapKey.Value.Map != nil && isPositionInMap(line, column, n.MapKey.Value.Map) {
+			child := completionScope{root: n.MapKey.Value.Map}
+			if len(n.MapKey.Edges) == 0 && key != nil {
+				child = completionScope{root: s.root, path: s.qualified(key.Path)}
+			}
 			if key != nil && len(key.Path) > 0 && key.Last().Unbox().IsUnquoted() && strings.EqualFold(key.Last().Unbox().ScalarString(), "shape") {
-				prefix := shapeOptionsContext(m, key)
+				prefix := s.shapeOptionsContext(key.Path, "")
 				if prefix == "" {
 					return ""
 				}
-				nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
+				nested := child.keywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
 				return prefix + strings.ToLower(nested)
 			}
-			nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
+			nested := child.keywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
 			if len(n.MapKey.Edges) == 0 && key != nil {
-				if caption := captionContext(m, key); caption != "" {
+				if caption := s.captionContext(key); caption != "" {
 					switch nested {
 					case "":
 						return caption
@@ -256,9 +270,9 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 			if key != nil && len(key.Path) > 1 {
 				parent := key.Path[len(key.Path)-2].Unbox()
 				if parent.IsUnquoted() && strings.EqualFold(parent.ScalarString(), "shape") {
-					prefix := shapeOptionsContext(m, &d2ast.KeyPath{Path: key.Path[:len(key.Path)-1]})
+					prefix := s.shapeOptionsContext(key.Path[:len(key.Path)-1], "shape.")
 					if prefix == "" {
-						prefix = "shape."
+						return ""
 					}
 					return prefix + strings.ToLower(lastPart) + ":"
 				}
@@ -276,10 +290,10 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 		if isAfterDot(lineText, lineColumn) && isHolder {
 			if firstPart == "shape" {
-				return shapeOptionsContext(m, key)
+				return s.shapeOptionsContext(key.Path, "")
 			}
 			if len(n.MapKey.Edges) == 0 && key != nil {
-				if caption := captionContext(m, key); caption != "" {
+				if caption := s.captionContext(key); caption != "" {
 					return caption
 				}
 			}
@@ -292,7 +306,7 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 // Look up the shape belonging to the label, including declarations split
 // between a dotted path and nested maps. Only frame captions expose a fill.
-func captionContext(m *d2ast.Map, key *d2ast.KeyPath) string {
+func (s completionScope) captionContext(key *d2ast.KeyPath) string {
 	i := len(key.Path) - 1
 	option := "label."
 	if i >= 0 && key.Path[i].Unbox().IsUnquoted() && key.Path[i].ScalarString() == "style" {
@@ -304,7 +318,7 @@ func captionContext(m *d2ast.Map, key *d2ast.KeyPath) string {
 	}
 	// Append to a copy so the incomplete AST key still names the label.
 	path := append(key.Path[:i:i], d2ast.MakeKeyPath([]string{"shape"}).Path[0])
-	if shape := declaredShape(m, path); shape != nil && strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramEdgeGroup) {
+	if shape := declaredShape(s.root, s.qualified(path)); shape != nil && strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramEdgeGroup) {
 		return "edge-group." + option
 	}
 	return option
@@ -312,15 +326,16 @@ func captionContext(m *d2ast.Map, key *d2ast.KeyPath) string {
 
 // Only suggest sequence options after a dot when the local shape declaration
 // identifies a sequence diagram. The cursor may be at an incomplete key.
-func shapeOptionsContext(m *d2ast.Map, key *d2ast.KeyPath) string {
-	shape := declaredShape(m, key.Path)
-	if shape != nil {
-		switch strings.ToLower(shape.ScalarString()) {
-		case d2target.ShapeSequenceDiagramV2:
-			return "sequence-diagram.shape."
-		case d2target.ShapeSequenceDiagramEdgeGroup:
-			return "edge-group.shape."
-		}
+func (s completionScope) shapeOptionsContext(path []*d2ast.StringBox, unspecified string) string {
+	shape := declaredShape(s.root, s.qualified(path))
+	if shape == nil {
+		return unspecified
+	}
+	switch strings.ToLower(shape.ScalarString()) {
+	case d2target.ShapeSequenceDiagramV2:
+		return "sequence-diagram.shape."
+	case d2target.ShapeSequenceDiagramEdgeGroup:
+		return "edge-group.shape."
 	}
 	return ""
 }

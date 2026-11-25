@@ -13,7 +13,7 @@ func TestSequenceV2WASMCompile(t *testing.T) {
 	request, err := json.Marshal(CompileRequest{Opts: &CompileOptions{}, FS: map[string]string{"index": `shape: sequence-diagram {
   mirrored: true; numbered: true
 }
-request: {shape: edge-group; a -> b.work: Start; b.work -> a: Done}
+request: {shape: edge-group {branched: true}; label.style.fill: red; enter: {a -> b.work: Start}; leave: {b.work -> a: Done}}
 b.work: Processing
 `}})
 	if err != nil {
@@ -30,11 +30,26 @@ b.work: Processing
 	if response.Error != nil {
 		t.Fatal(response.Error)
 	}
+	if root := response.Data.Graph.Root; root == nil || root.Sequence == nil || !root.Sequence.Mirrored || !root.Sequence.Numbered {
+		t.Fatal("missing graph sequence options")
+	}
+	frame := false
+	for _, obj := range response.Data.Graph.Objects {
+		if obj.ID == "request" {
+			frame = obj.Sequence != nil && obj.Sequence.Branched && obj.LabelFill != nil && obj.LabelFill.Value == "red"
+		}
+	}
+	if !frame {
+		t.Fatal("missing frame options or caption fill")
+	}
 	shapes := make(map[string]bool)
 	for _, s := range response.Data.Diagram.Shapes {
 		shapes[s.ID] = true
+		if s.ID == "request.enter" && s.SequenceRole != "branch" {
+			t.Fatalf("branch shape role = %q", s.SequenceRole)
+		}
 	}
-	for _, id := range []string{"a", "b", "b.work", "a.mirror", "b.mirror", "request"} {
+	for _, id := range []string{"a", "b", "b.work", "a.mirror", "b.mirror", "request", "request.enter"} {
 		if !shapes[id] {
 			t.Errorf("missing shape %q", id)
 		}
@@ -42,6 +57,9 @@ b.work: Processing
 	messages := 0
 	for _, c := range response.Data.Diagram.Connections {
 		if c.Label == "1. Start" || c.Label == "2. Done" {
+			if c.SequenceRole != "message" {
+				t.Fatalf("message connection role = %q", c.SequenceRole)
+			}
 			messages++
 		}
 	}

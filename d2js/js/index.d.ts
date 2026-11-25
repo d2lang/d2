@@ -153,6 +153,8 @@ export interface Legend {
 export type Shape = (Class | SQLTable | Text) & ShapeBase;
 
 export interface ShapeBase {
+  /** Timeline role for an opt-in sequence diagram. */
+  sequenceRole?: "container" | "actor" | "group" | "branch" | "span" | "note" | "event" | "repeat";
   motionClip?: MotionClip;
   motionLabelTopLeft?: Point;
   /** Authored body bounds for an anchored label during a node entrance. */
@@ -260,6 +262,7 @@ export interface Text {
 }
 
 export interface Connection extends Text {
+  sequenceRole?: "message" | "lifeline" | "divider";
   motionClip?: MotionClip;
   motionLabel?: Point & { opacity: number };
   motionDashOffset?: number;
@@ -318,10 +321,10 @@ export interface Graph {
    */
   isFolderOnly: boolean;
   ast?: any /* d2ast.Map */;
-  root?: Object;
+  root?: GraphObject;
   legend?: Legend;
   edges: (Edge | undefined)[];
-  objects: (Object | undefined)[];
+  objects: (GraphObject | undefined)[];
   layers?: (Graph | undefined)[];
   scenarios?: (Graph | undefined)[];
   steps?: (Graph | undefined)[];
@@ -334,6 +337,13 @@ export interface Graph {
    * Data embedded from source configuration variables, including layout options.
    */
   data?: { [key: string]: any };
+}
+
+export interface GraphObject {
+  id: string;
+  id_val: string;
+  attributes: Attributes;
+  labelFill?: Scalar;
 }
 
 export interface Edge {
@@ -357,6 +367,9 @@ export interface Edge {
 }
 
 export interface Attributes {
+  sequence?: { numbered?: boolean; mirrored?: boolean; branched?: boolean };
+  sequenceOrder?: number[];
+  sequenceDeclarationIndex?: number;
   label: Scalar;
   labelDimensions: TextDimensions;
   style: Style;

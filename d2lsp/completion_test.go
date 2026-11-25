@@ -14,6 +14,21 @@ func TestGetCompletionItems(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			name: "sequence options across reopened maps",
+			text: "a.shape: sequence-diagram\na: {\n  shape.\n}",
+			line: 2, column: len("  shape."), want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "frame caption across reopened maps",
+			text: "a.b.shape: edge-group\na: {b: {\n  label.style.\n}}",
+			line: 2, column: len("  label.style."), want: []CompletionItem{{Label: "fill", Kind: StyleCompletion, Detail: "frame caption background", InsertText: "fill: "}},
+		},
+		{
+			name: "ordinary shape does not accept branched",
+			text: "a.shape: rectangle\na.shape.branched:",
+			line: 1, column: len("a.shape.branched:"),
+		},
+		{
 			name: "quoted frame caption",
 			text: "\"payment.result\": {shape: edge-group}\n\"payment.result\".label.",
 			line: 1, column: len("\"payment.result\".label."), want: frameLabelCompletions(),
