@@ -17,8 +17,7 @@ import (
 )
 
 func TestSequenceV2IsometricRoles(t *testing.T) {
-	const timeline = `shape: sequence-diagram
-vars: {mirror: true}
+	const timeline = `shape: sequence-diagram {mirrored: true}
 system: {shape: actor-group; api}
 "client.app"
 request: {shape: edge-group; "client.app" -> system.api.work: Start}
@@ -80,8 +79,7 @@ func TestSequenceV2RepeatedActorAppearance(t *testing.T) {
 	for _, theme := range []int64{0, 303} {
 		ruler, err := textmeasure.NewRuler()
 		require.NoError(t, err)
-		source := `shape: sequence-diagram
-vars: {mirror: true}
+		source := `shape: sequence-diagram {mirrored: true}
 a: Person {shape: person}
 group: {shape: actor-group; b: Service}
 a -> group.b
@@ -113,7 +111,7 @@ group.b -> a
 			require.Equal(t, original, repeated, "theme %d repeat %s", theme, obj.AbsID())
 		}
 		require.Equal(t, 3, count)
-		plain, _, err := d2lib.Compile(context.Background(), strings.Replace(source, "mirror: true", "mirror: false", 1), opts, &d2svg.RenderOpts{ThemeID: &theme})
+		plain, _, err := d2lib.Compile(context.Background(), strings.Replace(source, "mirrored: true", "mirrored: false", 1), opts, &d2svg.RenderOpts{ThemeID: &theme})
 		require.NoError(t, err)
 		for _, original := range plain.Shapes {
 			if original.ID != "group.b" {

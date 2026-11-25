@@ -10,8 +10,9 @@ import (
 func TestSequenceV2WASMCompile(t *testing.T) {
 	call := wrapWASMCall(Compile)
 	defer call.Release()
-	request, err := json.Marshal(CompileRequest{Opts: &CompileOptions{}, FS: map[string]string{"index": `shape: sequence-diagram
-vars: {mirror: true; numbered: true}
+	request, err := json.Marshal(CompileRequest{Opts: &CompileOptions{}, FS: map[string]string{"index": `shape: sequence-diagram {
+  mirrored: true; numbered: true
+}
 request: {shape: edge-group; a -> b.work: Start; b.work -> a: Done}
 b.work: Processing
 `}})

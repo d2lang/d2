@@ -798,7 +798,7 @@ func (d *diagram) finishActors() {
 		b := objectBounds(a)
 		x := a.Center().X
 		lineEnd := end
-		if d.graph.Root.Sequence != nil && d.graph.Root.Sequence.Mirror {
+		if d.graph.Root.Sequence != nil && d.graph.Root.Sequence.Mirrored {
 			// Structured shapes consume their field children during compilation.
 			// Repetitions are graph objects and need a new child map in that case.
 			if a.Children == nil {

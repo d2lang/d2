@@ -490,6 +490,26 @@ func (c *compiler) errorf(n d2ast.Node, f string, v ...interface{}) {
 }
 
 func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
+	// Classes can supply the shape and its options independently. Apply the
+	// collected options in class order once the object's final shape is known.
+	var shapeOptions []*d2ir.Field
+	c.compileMapFields(obj, m, &shapeOptions)
+	if obj.IsSequenceDiagramV2() {
+		obj.Sequence = &d2graph.SequenceOptions{}
+	}
+	for _, shape := range shapeOptions {
+		if c.stopped() {
+			return
+		}
+		if !obj.IsSequenceDiagramV2() || shape.Map() == nil {
+			c.errorf(shape.LastRef().Context().Key, "reserved field shape does not accept composite")
+			continue
+		}
+		c.compileSequenceOptions(obj.Sequence, shape.Map())
+	}
+}
+
+func (c *compiler) compileMapFields(obj *d2graph.Object, m *d2ir.Map, shapeOptions *[]*d2ir.Field) {
 	if c.stopped() {
 		return
 	}
@@ -525,7 +545,7 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 						c.endClass(classMap)
 						return
 					}
-					c.compileMap(obj, classMap)
+					c.compileMapFields(obj, classMap, shapeOptions)
 					c.endClass(classMap)
 				}
 			} else {
@@ -549,16 +569,15 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 			}
 		}
 	}
-	shape := m.GetField(d2ast.FlatUnquotedString("shape"))
-	if shape != nil {
+	if shape := m.GetField(d2ast.FlatUnquotedString("shape")); shape != nil {
 		if shape.Composite != nil {
-			c.errorf(shape.LastPrimaryKey(), "reserved field shape does not accept composite")
+			*shapeOptions = append(*shapeOptions, shape)
+			if shape.Primary() != nil {
+				c.compileShape(&obj.Attributes, shape)
+			}
 		} else {
 			c.compileField(obj, shape)
 		}
-	}
-	if obj.IsSequenceDiagramV2() {
-		c.compileSequenceOptions(obj, m)
 	}
 	for _, f := range m.Fields {
 		if c.stopped() {
@@ -932,7 +951,27 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 	}
 }
 
+func (c *compiler) compileShape(attrs *d2graph.Attributes, f *d2ir.Field) {
+	scalar := f.Primary().Value
+	shapeVal := strings.ToLower(scalar.ScalarString())
+	_, isArrowhead := d2target.Arrowheads[shapeVal]
+	if !d2target.IsShape(shapeVal) && !isArrowhead {
+		c.errorf(scalar, "unknown shape %q", scalar.ScalarString())
+		return
+	}
+	attrs.Shape.Value = shapeVal
+	if shapeVal == d2target.ShapeCode {
+		// Explicit code shape is plaintext.
+		attrs.Language = d2target.ShapeText
+	}
+	attrs.Shape.MapKey = f.LastPrimaryKey()
+}
+
 func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
+	if f.Name.ScalarString() == "shape" && f.Composite != nil {
+		c.errorf(f.LastRef().AST(), "shape options can only be used on sequence-diagram objects")
+		return
+	}
 	if strings.EqualFold(f.Name.ScalarString(), "elk-layer-constraint") {
 		c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
 		return
@@ -983,19 +1022,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 		c.compileLabel(attrs, f)
 		c.compilePosition(attrs, f)
 	case "shape":
-		shapeVal := strings.ToLower(scalar.ScalarString())
-		in := d2target.IsShape(shapeVal)
-		_, isArrowhead := d2target.Arrowheads[shapeVal]
-		if !in && !isArrowhead {
-			c.errorf(scalar, "unknown shape %q", scalar.ScalarString())
-			return
-		}
-		attrs.Shape.Value = shapeVal
-		if strings.EqualFold(attrs.Shape.Value, d2target.ShapeCode) {
-			// Explicit code shape is plaintext.
-			attrs.Language = d2target.ShapeText
-		}
-		attrs.Shape.MapKey = f.LastPrimaryKey()
+		c.compileShape(attrs, f)
 	case "icon":
 		iconURL, err := url.Parse(scalar.ScalarString())
 		if err != nil {

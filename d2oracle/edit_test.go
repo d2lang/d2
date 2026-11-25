@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/d2lang/util-go/assert"
 	"github.com/d2lang/util-go/diff"
@@ -2861,6 +2862,94 @@ scenarios: {
 				assertions: tc.assertions,
 			}
 			et.run(t)
+		})
+	}
+}
+
+func TestEditSequenceShapeOption(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		text      string
+		boardPath []string
+		key       string
+		value     *string // nil deletes the option
+		exp       string
+	}{
+		{
+			name:  "new",
+			text:  "shape: sequence-diagram\nnumbered -> mirrored",
+			key:   "shape.numbered",
+			value: go2.Pointer("true"),
+			exp:   "shape: sequence-diagram\nnumbered -> mirrored\nshape.numbered: true\n",
+		},
+		{
+			name:  "in_block",
+			text:  "s: {shape: sequence-diagram {numbered: true; mirrored: true}}",
+			key:   "s.shape.mirrored",
+			value: go2.Pointer("false"),
+			exp:   "s: {shape: sequence-diagram {numbered: true; mirrored: false}}\n",
+		},
+		{
+			name:  "from_variable",
+			text:  "vars: {v: {shape: sequence-diagram {mirrored: true}}}\ns: ${v}",
+			key:   "s.shape.mirrored",
+			value: go2.Pointer("false"),
+			exp:   "vars: {v: {shape: sequence-diagram {mirrored: true}}}\ns: ${v}\ns.shape.mirrored: false\n",
+		},
+		{
+			name:      "on_board",
+			text:      "shape: sequence-diagram {numbered: true}\nscenarios: {demo: {}}",
+			boardPath: []string{"demo"},
+			key:       "shape.numbered",
+			value:     go2.Pointer("false"),
+			exp:       "shape: sequence-diagram {numbered: true}\n\nscenarios: {demo: {shape.numbered: false}}\n",
+		},
+		{
+			name:      "delete_board_override",
+			text:      "s.shape: sequence-diagram {numbered: true}\nscenarios: {demo: {s.shape.numbered: false}}",
+			boardPath: []string{"demo"},
+			key:       "s.shape.numbered",
+			exp:       "s.shape: sequence-diagram {numbered: true}\n\nscenarios: {demo}\n",
+		},
+		{
+			name: "preserves_names_and_sibling",
+			text: "vars: {numbered: chapter}\nshape: sequence-diagram {numbered: true; mirrored: true}\nnumbered -> mirrored: ${numbered}",
+			key:  "shape.numbered",
+			exp:  "vars: {numbered: chapter}\nshape: sequence-diagram {mirrored: true}\nnumbered -> mirrored: ${numbered}\n",
+		},
+		{
+			name: "dotted_and_block",
+			text: "s: {shape: sequence-diagram {mirrored: true}}\ns.shape.mirrored: false",
+			key:  "s.shape.mirrored",
+			exp:  "s: {shape: sequence-diagram}\n",
+		},
+		{
+			name: "from_class",
+			text: "classes: {trace: {shape: sequence-diagram {numbered: true}}}\na.class: trace\nb.class: trace",
+			key:  "a.shape.numbered",
+			exp:  "classes: {trace: {shape: sequence-diagram {numbered: true}}}\na.class: trace\nb.class: trace\na.shape.numbered: false\n",
+		},
+		{
+			name: "from_import",
+			text: "...@trace",
+			key:  "s.shape.mirrored",
+			exp:  "...@trace\ns.shape.mirrored: false\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := fstest.MapFS{"trace.d2": {Data: []byte("s.shape: sequence-diagram {mirrored: true}")}}
+			g, _, err := d2compiler.Compile("root.d2", strings.NewReader(tc.text), &d2compiler.CompileOptions{FS: fs})
+			assert.Success(t, err)
+			if tc.value == nil {
+				g, err = d2oracle.Delete(g, tc.boardPath, tc.key)
+			} else {
+				g, err = d2oracle.Set(g, tc.boardPath, tc.key, nil, tc.value)
+			}
+			assert.Success(t, err)
+			if got := d2format.Format(g.AST); got != tc.exp {
+				t.Fatalf("expected:\n%s\ngot:\n%s", tc.exp, got)
+			}
 		})
 	}
 }

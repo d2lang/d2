@@ -14,6 +14,45 @@ func TestGetCompletionItems(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			name: "sequence option block",
+			text: "a.shape: sequence-diagram {\n  \n}",
+			line: 1, column: 2,
+			want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "sequence option boolean",
+			text: "shape: sequence-diagram {\n  numbered: \n}",
+			line: 1, column: len("  numbered: "),
+			want: getBooleanCompletions(),
+		},
+		{
+			name: "dotted sequence option",
+			text: "a.shape: sequence-diagram\na.shape.",
+			line: 1, column: len("a.shape."),
+			want: getSequenceOptionCompletions(),
+		},
+		{
+			name: "ordinary shape has no dotted options",
+			text: "a.shape: rectangle\na.shape.",
+			line: 1, column: len("a.shape."),
+		},
+		{
+			name:   "dotted sequence option boolean",
+			text:   "a.shape.mirrored:",
+			column: len("a.shape.mirrored:"),
+			want:   getBooleanCompletions(),
+		},
+		{
+			name:   "ordinary variable named mirrored",
+			text:   "vars.mirrored:",
+			column: len("vars.mirrored:"),
+		},
+		{
+			name: "legacy sequence shape has no option block",
+			text: "shape: sequence_diagram {\n  \n}",
+			line: 1, column: 2,
+		},
+		{
 			name:   "style dot suggestions",
 			text:   "a.style.",
 			line:   0,

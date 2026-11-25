@@ -122,7 +122,7 @@ func TestSelfMessagesNestedSpansAndNotes(t *testing.T) {
 	finiteBounds(t, g)
 }
 func TestGroupsMirrorsAndIdentity(t *testing.T) {
-	g := compile(t, `vars: {mirror: true}
+	g := compile(t, `shape.mirrored: true
  participants: {shape: actor-group; a; b}
  exchange: {shape: edge-group; participants.a -> participants.b: start; nested: {shape: edge-group; participants.b -> participants.a: done}}
  participants.a.again: {shape: actor}
@@ -201,7 +201,7 @@ func TestRepeatedStructuredActor(t *testing.T) {
 }
 
 func TestQuotedMirrorIdentity(t *testing.T) {
-	g := compile(t, `vars: {mirror: true}
+	g := compile(t, `shape.mirrored: true
  "a.b" -> "with spaces": message`)
 	if obj(t, g, `"a.b".mirror`).IDVal != "mirror" {
 		t.Fatal("quoted actor mirror ID is not escaped")
@@ -333,7 +333,7 @@ func TestDefaultNestedSpanLabelIsVisibleAboveEvents(t *testing.T) {
 }
 
 func TestMirroredSQLTableRecreatesChildMap(t *testing.T) {
-	g := compile(t, `vars: {mirror: true}
+	g := compile(t, `shape.mirrored: true
  a: {shape: sql_table; id: int}
  a -> b`)
 	a, mirror := obj(t, g, "a"), obj(t, g, "a.mirror")

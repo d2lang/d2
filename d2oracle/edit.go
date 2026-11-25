@@ -53,9 +53,9 @@ func Create(g *d2graph.Graph, boardPath []string, key string) (_ *d2graph.Graph,
 	}
 
 	if edge {
-		err = _set(boardG, baseAST, key, nil, nil)
+		err = _set(boardG, boardPath, baseAST, key, nil, nil)
 	} else {
-		err = _set(boardG, baseAST, newKey, nil, nil)
+		err = _set(boardG, boardPath, baseAST, newKey, nil, nil)
 	}
 
 	if len(boardPath) > 0 {
@@ -106,7 +106,7 @@ func Set(g *d2graph.Graph, boardPath []string, key string, tag, value *string) (
 		}
 	}
 
-	err = _set(boardG, baseAST, key, tag, value)
+	err = _set(boardG, boardPath, baseAST, key, tag, value)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +324,7 @@ func recompile(g *d2graph.Graph) (*d2graph.Graph, error) {
 }
 
 // TODO merge flat styles
-func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) error {
+func _set(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, key string, tag, value *string) error {
 	if tag != nil {
 		if hasSpace(*tag) {
 			return fmt.Errorf("spaces are not allowed in blockstring tags")
@@ -350,6 +350,10 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			Tag:   *tag,
 			Value: *value,
 		})
+	}
+
+	if handled, err := editSequenceShapeOption(g, boardPath, baseAST, mk, false); handled || err != nil {
+		return err
 	}
 
 	scope := baseAST
@@ -679,7 +683,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			}
 			switch reservedKey {
 			case "shape":
-				if inlined(&attrs.Shape) {
+				if len(mk.Key.Path[reservedIndex:]) == 1 && inlined(&attrs.Shape) {
 					attrs.Shape.MapKey.SetScalar(mk.Value.ScalarBox())
 					return nil
 				}
@@ -901,6 +905,74 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 	return nil
 }
 
+// editSequenceShapeOption edits a local declaration when possible. Options
+// supplied by another board, an import, a glob, or a class need a local override.
+func editSequenceShapeOption(board *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk *d2ast.Key, remove bool) (bool, error) {
+	if len(mk.Edges) != 0 || mk.Key == nil || len(mk.Key.Path) < 2 {
+		return false, nil
+	}
+	path := mk.Key.IDA()
+	shapeIndex := len(path) - 2
+	if !path[shapeIndex].IsUnquoted() || !strings.EqualFold(path[shapeIndex].ScalarString(), "shape") {
+		return false, nil
+	}
+	for _, part := range path[:shapeIndex] {
+		if _, reserved := d2ast.ReservedKeywords[strings.ToLower(part.ScalarString())]; reserved && part.IsUnquoted() {
+			return false, nil
+		}
+	}
+	obj, _ := board.Root.HasChild(d2graph.Key(mk.Key)[:shapeIndex])
+	if !obj.IsSequenceDiagramV2() {
+		return false, nil
+	}
+	var enabled bool
+	switch strings.ToLower(path[shapeIndex+1].ScalarString()) {
+	case "numbered":
+		enabled = obj.Sequence.Numbered
+	case "mirrored":
+		enabled = obj.Sequence.Mirrored
+	default:
+		return false, nil
+	}
+	root := board.RootBoard()
+	ir, _, err := d2ir.Compile(root.AST, &d2ir.CompileOptions{FS: root.FS})
+	if err != nil {
+		return true, err
+	}
+	boardIR := ir.FindBoardRoot(boardPath)
+	if boardIR == nil {
+		return true, fmt.Errorf("board %v not found", boardPath)
+	}
+	field := boardIR.GetField(path...)
+	removed := false
+	if field != nil {
+		last := field.LastPrimaryKey()
+		for _, ref := range field.References {
+			ctx := ref.Context_
+			if !ref.Primary() || ctx.ScopeAST != baseAST || ctx.Key.Range.Path != baseAST.Range.Path ||
+				ref.DueToGlob_ || ctx.ScopeMap == nil || d2ir.IsVar(ctx.ScopeMap) {
+				continue
+			}
+			if remove {
+				if deleteFromMap(ctx.Scope, ctx.Key) {
+					removed = true
+				}
+			} else if ctx.Key == last {
+				ctx.Key.SetScalar(mk.Value.ScalarBox())
+				return true, nil
+			}
+		}
+	}
+	if remove {
+		if removed || !enabled {
+			return true, nil
+		}
+		mk.Value = d2ast.MakeValueBox(&d2ast.Boolean{Value: false})
+	}
+	appendMapKey(baseAST, mk)
+	return true, nil
+}
+
 func appendUniqueMapKey(m *d2ast.Map, mk *d2ast.Key) {
 	for _, n := range m.Nodes {
 		if n.MapKey != nil && n.MapKey.D2OracleEquals(mk) {
@@ -964,6 +1036,13 @@ func Delete(g *d2graph.Graph, boardPath []string, key string) (_ *d2graph.Graph,
 		if baseAST == nil {
 			return nil, fmt.Errorf("board %v cannot be modified through this file", boardPath)
 		}
+	}
+
+	if handled, err := editSequenceShapeOption(boardG, boardPath, baseAST, mk, true); handled || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return recompile(g)
 	}
 
 	g2, err := deleteReserved(g, boardPath, baseAST, mk)

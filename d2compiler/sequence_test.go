@@ -27,8 +27,9 @@ func sequenceObject(t *testing.T, g *d2graph.Graph, path string) *d2graph.Object
 
 func TestSequenceV2Groups(t *testing.T) {
 	t.Parallel()
-	g := compileSequence(t, `shape: sequence-diagram
-vars: {mirror: true; numbered: true}
+	g := compileSequence(t, `shape: sequence-diagram {
+  mirrored: true; numbered: true
+}
 team: {shape: actor-group; a}
 first: {
   shape: edge-group
@@ -42,7 +43,7 @@ first: {
 }
 `)
 	require.Len(t, g.Objects, 8)
-	require.True(t, g.Root.Sequence.Mirror)
+	require.True(t, g.Root.Sequence.Mirrored)
 	require.True(t, g.Root.Sequence.Numbered)
 	a := sequenceObject(t, g, "a")
 	b := sequenceObject(t, g, "b")
@@ -90,11 +91,46 @@ a.a -> a.named
 	require.True(t, sequenceObject(t, g, "a.note").IsSequenceDiagramNote())
 }
 
+func TestSequenceV2ShapeOptions(t *testing.T) {
+	t.Parallel()
+	g := compileSequence(t, `plain: {
+  shape: sequence-diagram
+  vars: {numbered: chapter; mirror: true; mirrored: true}
+  numbered -> mirrored: ${numbered}
+}
+configured: {
+  vars: {enabled: true}
+  shape.numbered: ${enabled}
+  shape: sequence-diagram {mirrored: true}
+  numbered -> mirror: chapter
+}
+scenarios: {unmirrored: {configured.shape.mirrored: false}}
+`)
+	plain := sequenceObject(t, g, "plain")
+	configured := sequenceObject(t, g, "configured")
+	require.Equal(t, &d2graph.SequenceOptions{}, plain.Sequence)
+	require.Equal(t, &d2graph.SequenceOptions{Numbered: true, Mirrored: true}, configured.Sequence)
+	require.Len(t, g.Edges, 2)
+	require.Equal(t, "chapter", g.Edges[0].Label.Value)
+	require.Equal(t, "1. chapter", g.Edges[1].Label.Value)
+	require.True(t, sequenceObject(t, g, "plain.numbered").IsSequenceDiagramActor())
+	require.True(t, sequenceObject(t, g, "plain.mirrored").IsSequenceDiagramActor())
+	require.Len(t, g.Scenarios, 1)
+	require.Equal(t, &d2graph.SequenceOptions{Numbered: true}, sequenceObject(t, g.Scenarios[0], "configured").Sequence)
+}
+
 func TestSequenceV2Invalid(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct{ source, want string }{
-		{`shape: sequence-diagram; vars: {mirror: maybe}`, "vars.mirror must be true or false"},
-		{`shape: sequence-diagram; vars: {numbered: {yes}}`, "vars.numbered must be true or false"},
+		{`shape: sequence-diagram {mirrored: maybe}`, "shape.mirrored must be true or false"},
+		{`shape: sequence-diagram; shape.numbered: {yes}`, "shape.numbered must be true or false"},
+		{`shape: sequence-diagram; shape.mirror: true`, "unknown sequence diagram shape option \"mirror\""},
+		{`shape: sequence-diagram {numbering: true}`, "unknown sequence diagram shape option \"numbering\""},
+		{`shape: sequence-diagram {a -> b}`, "cannot contain connections"},
+		{`shape: rectangle {mirrored: true}`, "shape does not accept composite"},
+		{`shape: sequence_diagram; shape.numbered: true`, "shape does not accept composite"},
+		{`a -> b: {shape: sequence-diagram {numbered: true}}`, "shape options can only be used on sequence-diagram objects"},
+		{`a -> b: {target-arrowhead.shape: diamond {mirrored: true}}`, "shape options can only be used on sequence-diagram objects"},
 		{`shape: sequence-diagram; a.note.shape: page; a.note -> b`, "can only connect actors or spans"},
 		{`shape: sequence-diagram; a.event.shape: diamond; a.event -> b`, "can only connect actors or spans"},
 		{`shape: sequence-diagram; a.again.shape: actor; a.again -> b`, "can only connect actors or spans"},
@@ -172,15 +208,18 @@ func TestSequenceV2HoistedAttributeOrder(t *testing.T) {
 func TestSequenceV2ClassShapes(t *testing.T) {
 	t.Parallel()
 	g := compileSequence(t, `classes: {
- diagram: {shape: sequence-diagram}
+ diagram: {shape: sequence-diagram {mirrored: true}}
+ numbered: {shape.numbered: true}
  messages: {shape: edge-group}
  participants: {shape: actor-group}
 }
-class: diagram
+class: [diagram; numbered]
+shape.mirrored: false
 team: {class: participants; a}
 handshake: {class: messages; team.a -> b}
 `)
 	require.True(t, g.Root.IsSequenceDiagramV2())
+	require.Equal(t, &d2graph.SequenceOptions{Numbered: true}, g.Root.Sequence)
 	require.True(t, sequenceObject(t, g, "handshake").IsSequenceDiagramGroup())
 	require.True(t, sequenceObject(t, g, "team.a").IsSequenceDiagramActor())
 	require.Same(t, sequenceObject(t, g, "team.a"), g.Edges[0].Src)
@@ -205,7 +244,7 @@ second: {shape: edge-group; a: {work -> _.b: second}}
 func TestSequenceV2ImportOrder(t *testing.T) {
 	t.Parallel()
 	g, _, err := d2compiler.Compile("root.d2", strings.NewReader(`shape: sequence-diagram
-vars: {numbered: true}
+shape.numbered: true
 a -> b: Before
 ...@messages
 c -> a: After

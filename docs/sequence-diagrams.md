@@ -18,14 +18,13 @@ The following example also demonstrates an event and messages that share a row.
 Save it as `sequence.d2` and run `d2 sequence.d2 sequence.svg`:
 
 ```d2
-shape: sequence-diagram
+shape: sequence-diagram {
+  mirrored: true
+  numbered: true
+}
 grid-gap: 40
 horizontal-gap: 120
 vertical-gap: 56
-vars: {
-  mirror: true
-  numbered: true
-}
 
 client: Client {shape: person}
 service: Service {
@@ -52,7 +51,7 @@ client -> service.api: Next request
 `service` groups two actors. `request` groups messages and may introduce actors
 or spans through its connections. `service.api.work` is a labeled activation
 span. The note and diamond are events on the client's timeline. `client.again`
-repeats the client actor partway down, and `mirror` repeats actors at the bottom.
+repeats the client actor partway down, and `shape.mirrored` repeats all actors at the bottom.
 
 ## Actors and actor groups
 
@@ -135,9 +134,22 @@ share a row.
 
 ## Repeating actors and numbering messages
 
-Set `mirror: true` in the sequence diagram's `vars` map to repeat actors at the bottom.
-To repeat one actor midway, declare a child with `shape: actor` where that repeat
-belongs in the source:
+Set `shape.mirrored: true` to repeat every actor at the bottom of the diagram.
+Set `shape.numbered: true` to number messages in sequence order. Both options
+default to `false` and can be set separately on each v2 sequence diagram.
+
+```d2
+shape: sequence-diagram
+shape.mirrored: true
+shape.numbered: true
+alice -> bob: Hello
+bob -> alice: Welcome
+```
+
+The two messages appear as `1. Hello` and `2. Welcome`. You can also put both
+options inside `shape: sequence-diagram { … }`, as shown in the opening example.
+To repeat an individual actor midway, add a child with `shape: actor` at the
+point where you want the repeat.
 
 ```d2
 shape: sequence-diagram
@@ -145,18 +157,6 @@ alice -> bob: First exchange
 alice.reminder: {shape: actor}
 bob.reminder: {shape: actor}
 alice -> bob: Later exchange
-```
-
-Set `numbered: true` in the same map to prefix messages with consecutive numbers
-in sequence order. These options default to `false`:
-
-```d2
-shape: sequence-diagram
-vars: {
-  mirror: true
-  numbered: true
-}
-alice -> bob: Hello
 ```
 
 ## Migrating an existing diagram

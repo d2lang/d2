@@ -241,7 +241,7 @@ func (obj *Object) MarkLayoutFontSize() {
 }
 
 type SequenceOptions struct {
-	Mirror   bool `json:"mirror,omitempty"`
+	Mirrored bool `json:"mirrored,omitempty"`
 	Numbered bool `json:"numbered,omitempty"`
 }
 

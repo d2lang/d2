@@ -256,25 +256,34 @@ func (c *compiler) sequenceScope(m *d2ir.Map) []d2ast.String {
 	return path
 }
 
-func (c *compiler) compileSequenceOptions(obj *d2graph.Object, m *d2ir.Map) {
-	obj.Sequence = &d2graph.SequenceOptions{}
-	for _, option := range []struct {
-		name  string
-		value *bool
-	}{
-		{"mirror", &obj.Sequence.Mirror},
-		{"numbered", &obj.Sequence.Numbered},
-	} {
-		f := m.GetField(d2ast.FlatUnquotedString("vars"), d2ast.FlatUnquotedString(option.name))
-		if f == nil {
+func (c *compiler) compileSequenceOptions(options *d2graph.SequenceOptions, m *d2ir.Map) {
+	if len(m.Edges) > 0 {
+		c.errorf(m.Edges[0].LastRef().AST(), "sequence diagram shape options cannot contain connections")
+		return
+	}
+	for _, f := range m.Fields {
+		if c.stopped() {
+			return
+		}
+		name := strings.ToLower(f.Name.ScalarString())
+		var option *bool
+		switch name {
+		case "mirrored":
+			option = &options.Mirrored
+		case "numbered":
+			option = &options.Numbered
+		default:
+			c.errorf(f.LastRef().AST(), "unknown sequence diagram shape option %q", f.Name.ScalarString())
 			continue
 		}
-		if f.Primary() == nil || f.Composite != nil ||
-			(f.Primary().Value.ScalarString() != "true" && f.Primary().Value.ScalarString() != "false") {
-			c.errorf(f.LastRef().AST(), "sequence diagram vars.%s must be true or false", option.name)
-			continue
+		if f.Primary() != nil && f.Composite == nil {
+			switch f.Primary().Value.ScalarString() {
+			case "true", "false":
+				*option = f.Primary().Value.ScalarString() == "true"
+				continue
+			}
 		}
-		*option.value = f.Primary().Value.ScalarString() == "true"
+		c.errorf(f.LastRef().AST(), "sequence diagram shape.%s must be true or false", name)
 	}
 }
 

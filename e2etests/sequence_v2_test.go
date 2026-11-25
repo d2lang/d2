@@ -38,8 +38,9 @@ request: {
 		},
 		{
 			name: "labels_events_and_repeated_actors",
-			script: `shape: sequence-diagram
-vars: {mirror: true; numbered: true}
+			script: `shape: sequence-diagram {
+  mirrored: true; numbered: true
+}
 client: Client {shape: person}
 server: Service
 client -> server.work: Start
@@ -101,8 +102,7 @@ app.consumer -> app.producer: Acknowledge
 			script: `direction: right
 legacy: {shape: sequence_diagram; a -> b: Legacy}
 modern: {
-  shape: sequence-diagram
-  vars: {mirror: true}
+  shape: sequence-diagram {mirrored: true}
   group: {shape: edge-group; x -> y: V2}
 }
 legacy -> modern
@@ -112,7 +112,7 @@ legacy -> modern
 			name: "nested_grid_and_near",
 			script: `grid: {
   grid-columns: 2
-  first: {shape: sequence-diagram; vars: {mirror: true}; a -> b: First}
+  first: {shape: sequence-diagram {mirrored: true}; a -> b: First}
   second: {shape: sequence-diagram; x -> y: Second}
 }
 legend: {shape: sequence-diagram; near: bottom-center; p -> q: Legend}
@@ -120,8 +120,7 @@ legend: {shape: sequence-diagram; near: bottom-center; p -> q: Legend}
 		},
 		{
 			name: "structured_actor_repetition",
-			script: `shape: sequence-diagram
-vars: {mirror: true}
+			script: `shape: sequence-diagram {mirrored: true}
 table: Accounts {shape: sql_table; id: int}
 service: Service {shape: class; +send(): bool}
 table -> service: Query
@@ -146,8 +145,7 @@ service -> table: Result
 		},
 		{
 			name: "boards",
-			script: `shape: sequence-diagram
-vars: {mirror: true}
+			script: `shape: sequence-diagram {mirrored: true}
 a -> b: Request
 scenarios: {response: {b -> a: Reply}}
 `,

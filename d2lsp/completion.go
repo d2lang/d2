@@ -57,6 +57,10 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		return getStyleCompletions(), nil
 	case "shape", "shape:":
 		return getShapeCompletions(), nil
+	case "shape.":
+		return getSequenceOptionCompletions(), nil
+	case "shape.numbered:", "shape.mirrored:":
+		return getBooleanCompletions(), nil
 	case "shadow", "3d", "multiple", "animated", "bold", "italic", "underline", "filled", "double-border",
 		"shadow:", "3d:", "multiple:", "animated:", "bold:", "italic:", "underline:", "filled:", "double-border:",
 		"style.shadow:", "style.3d:", "style.multiple:", "style.animated:", "style.bold:", "style.italic:", "style.underline:", "style.filled:", "style.double-border:":
@@ -158,7 +162,10 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 					keyRange := n.MapKey.Range
 					lineText := lines[keyRange.End.Line]
 					dotColumn := columnByteOffset(lineText, column, utf16Pos)
-					if isHolderLast && isAfterDot(lineText, dotColumn) {
+					if isHolderLast && keyRange.End.Line == line && isAfterDot(lineText, dotColumn) {
+						if lastPart == "shape" {
+							return shapeOptionsContext(m, key)
+						}
 						return lastPart + "."
 					}
 				}
@@ -178,6 +185,14 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 		// Check nested map
 		if n.MapKey.Value.Map != nil && isPositionInMap(line, column, n.MapKey.Value.Map) {
+			if key != nil && len(key.Path) > 0 && key.Last().Unbox().IsUnquoted() && strings.EqualFold(key.Last().Unbox().ScalarString(), "shape") {
+				shape := n.MapKey.Primary.Unbox()
+				if shape == nil || !strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramV2) {
+					return ""
+				}
+				nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos)
+				return "shape." + strings.ToLower(nested)
+			}
 			if nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos); nested != "" {
 				if isHolder {
 					// If we got a direct key completion from inside a holder's map,
@@ -215,6 +230,10 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 		if isAfterColon(lineText, lineColumn) {
 			if key != nil && len(key.Path) > 1 {
+				parent := key.Path[len(key.Path)-2].Unbox()
+				if parent.IsUnquoted() && strings.EqualFold(parent.ScalarString(), "shape") {
+					return "shape." + strings.ToLower(lastPart) + ":"
+				}
 				if isHolder && (firstPart == "source-arrowhead" || firstPart == "target-arrowhead") {
 					return firstPart + "." + lastPart + ":"
 				}
@@ -228,10 +247,35 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		}
 
 		if isAfterDot(lineText, lineColumn) && isHolder {
+			if firstPart == "shape" {
+				return shapeOptionsContext(m, key)
+			}
 			return firstPart
 		}
 	}
 
+	return ""
+}
+
+// Only suggest sequence options after a dot when the local shape declaration
+// identifies a sequence diagram. The cursor may be at an incomplete key.
+func shapeOptionsContext(m *d2ast.Map, key *d2ast.KeyPath) string {
+	for i := len(m.Nodes) - 1; i >= 0; i-- {
+		k := m.Nodes[i].MapKey
+		if k == nil || len(k.Edges) != 0 || k.Key == nil || !k.Key.Equals(key) {
+			continue
+		}
+		shape := k.Primary.Unbox()
+		if shape == nil {
+			shape = k.Value.ScalarBox().Unbox()
+		}
+		if shape != nil {
+			if strings.EqualFold(shape.ScalarString(), d2target.ShapeSequenceDiagramV2) {
+				return "shape."
+			}
+			break
+		}
+	}
 	return ""
 }
 
@@ -303,6 +347,13 @@ func getShapeCompletions() []CompletionItem {
 		items = append(items, item)
 	}
 	return items
+}
+
+func getSequenceOptionCompletions() []CompletionItem {
+	return []CompletionItem{
+		{Label: "numbered", Kind: KeywordCompletion, Detail: "Number sequence messages", InsertText: "numbered: "},
+		{Label: "mirrored", Kind: KeywordCompletion, Detail: "Repeat actors at the bottom of the sequence", InsertText: "mirrored: "},
+	}
 }
 
 func getValueCompletions(property string) []CompletionItem {
