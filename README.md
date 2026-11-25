@@ -151,6 +151,7 @@ For animated SVG and GIF, set `animate-interval` and `animate-duration` in
 `vars.d2-config`. With TALA, newly appended SQL rows can drop into place
 while existing rows and connections stay anchored. Appending a sequence message can
 extend the activation bar and draw the arrow from sender to recipient.
+[Animated TALA example](./docs/examples/tala-step-motion/dispatch.gif) · [D2 source](./docs/examples/tala-step-motion/dispatch.d2)
 
 ## Layout engines
 
