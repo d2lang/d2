@@ -1158,6 +1158,9 @@ func invalidField(object, field string, value any, requirement string) error {
 }
 
 func validateShapeNumbers(object string, targetShape d2target.Shape) error {
+	if p := targetShape.OutlineProgress; p != nil && !(*p >= 0 && *p <= 1) {
+		return fmt.Errorf("scene: %s outlineProgress must be finite and within [0,1]", object)
+	}
 	for _, field := range []struct {
 		name  string
 		value int

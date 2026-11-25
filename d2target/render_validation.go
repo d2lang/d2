@@ -305,6 +305,11 @@ func validateMotionClip(c *MotionClip, path string) error {
 }
 
 func validateRenderShapeNumbers(targetShape Shape, path string) error {
+	if p := targetShape.OutlineProgress; p != nil {
+		if err := validateInkProgress(path, "outlineProgress", *p); err != nil {
+			return err
+		}
+	}
 	if t := targetShape.SketchFillTransition; t != nil {
 		if !validSketchFillPaint(t.From) || !validSketchFillPaint(t.To) {
 			return fmt.Errorf("render target %s sketchFillTransition requires solid fills", path)

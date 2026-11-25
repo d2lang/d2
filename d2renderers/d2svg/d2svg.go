@@ -1835,6 +1835,30 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 
 	// TODO should standardize "" to rectangle
 	case d2target.ShapeRectangle, d2target.ShapeSequenceDiagram, d2target.ShapeHierarchy, "":
+		if !sketch && targetShape.DrawingOutline() {
+			body := d2themes.NewThemableElement("rect", inlineTheme)
+			body.X, body.Y, body.Width, body.Height = tl.X, tl.Y, width, height
+			body.Fill, body.Stroke = fill, "none"
+			writer.element(body)
+			points := targetShape.DrawnOutline()
+			if len(points) > 0 {
+				var d strings.Builder
+				for i, p := range points {
+					if i == 0 {
+						d.WriteString("M ")
+					} else {
+						d.WriteString(" L ")
+					}
+					d.WriteString(svg.FormatFloat(p.X))
+					d.WriteByte(' ')
+					d.WriteString(svg.FormatFloat(p.Y))
+				}
+				line := d2themes.NewThemableElement("path", inlineTheme)
+				line.D, line.Fill, line.Stroke, line.Style = d.String(), "none", stroke, style
+				writer.element(line)
+			}
+			break
+		}
 		borderRadius := math.MaxFloat64
 		if targetShape.BorderRadius != 0 {
 			borderRadius = float64(targetShape.BorderRadius)

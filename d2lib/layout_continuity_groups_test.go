@@ -149,8 +149,7 @@ steps: {reverse: {(a -> b)[0]: null; b -> a}}`
 	}
 }
 
-func TestTALABoardContinuityNestedContainment(t *testing.T) {
-	const source = `direction: right
+const nestedContinuityExample = `direction: right
 platform: Platform {
   api: API
   telemetry: Telemetry {ingest: Collector; index: Search index; ingest -> index}
@@ -179,7 +178,9 @@ steps: {
     }
   }
 }`
-	d, _ := compileContinuity(t, source, d2talalayout.ContinueBoard)
+
+func TestTALABoardContinuityNestedContainment(t *testing.T) {
+	d, _ := compileContinuity(t, nestedContinuityExample, d2talalayout.ContinueBoard)
 	for _, frame := range d.Steps {
 		for _, s := range frame.Shapes {
 			index := strings.LastIndexByte(s.ID, '.')

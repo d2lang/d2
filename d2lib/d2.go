@@ -139,7 +139,8 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 			animated = *compileOpts.AnimateTweens
 		}
 		if animated {
-			if err := sampleBoardTransitions(ctx, d, g, int(*config.AnimateDuration), d2target.MaxRenderTargetBoards, *renderOpts.Sketch); err != nil {
+			structural := !*renderOpts.Isometric && compileOpts.Layout != nil && strings.EqualFold(*compileOpts.Layout, "tala")
+			if err := sampleBoardTransitions(ctx, d, g, int(*config.AnimateDuration), d2target.MaxRenderTargetBoards, *renderOpts.Sketch, structural); err != nil {
 				return nil, nil, err
 			}
 		}

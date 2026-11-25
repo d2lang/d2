@@ -824,6 +824,8 @@ type Shape struct {
 	MotionScale        float64     `json:"motionScale,omitempty"`
 	MotionClip         *MotionClip `json:"motionClip,omitempty"`
 	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
+	// OutlineProgress traces an incoming container frame in a transition sample.
+	OutlineProgress *float64 `json:"outlineProgress,omitempty"`
 
 	Pos    Point `json:"pos"`
 	Width  int   `json:"width"`

@@ -31,6 +31,14 @@ The adapter exposes local, in-process entry points:
   layout. The CLI and JavaScript compiler enable board continuity for TALA.
   Go callers can register `ContinueBoard` under `"tala"` in
   `d2lib.CompileOptions.LayoutContinuations`.
+- In animated exports, a positive `animate-duration` can draw new connections
+  along their routes and grow each new node from the port where its first
+  connection arrives. A new rectangular container can trace its outline around
+  its contents. When one identifiable service or intact team changes parents,
+  its external connections can fade while it travels between them. These
+  effects use cumulative steps that share layout coordinates. Complex edits
+  can keep the ordinary transition. Set `animate-duration: 0` for an
+  immediate change between boards.
 - `Options.Seeds` controls deterministic layout attempts. Diagram data
   under `tala-seeds` takes precedence, seeds are de-duplicated in first-seen
   order, and one layout is capped at 16 attempts. Inputs are capped at 64 raw
