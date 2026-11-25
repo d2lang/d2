@@ -1041,7 +1041,7 @@ type Connection struct {
 
 	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
 	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`
-	// MotionDashOffset pins a return message's dashes to the stationary sender.
+	// MotionDashOffset pins a backward trace’s dashes to its stationary end.
 	MotionDashOffset float64 `json:"motionDashOffset,omitempty"`
 
 	Classes []string `json:"classes,omitempty"`

@@ -21,14 +21,13 @@ type sequenceTrace struct {
 	lines      map[string]*d2target.Connection // previous vertical lifelines
 	messages   map[string]*sequenceMessage
 	prepare    float64
-	dashShapes map[string]d2target.Shape // stroke widths at the ends of a rounded return route
+	dashWidths traceDashWidths // stroke widths of stationary sequence actors
 }
 
 type sequenceMessage struct {
-	target     *d2target.Connection
-	wire       *boardTrace
-	caption    d2target.Point
-	dashLength float64
+	target  *d2target.Connection
+	wire    *boardTrace
+	caption d2target.Point
 }
 
 func planSequenceTrace(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph) *sequenceTrace {
@@ -151,46 +150,11 @@ func planSequenceTrace(prev, next *d2target.Diagram, prevGraph, nextGraph *d2gra
 	// A batch of messages follows the visual reading order of the sequence.
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].target.Route[0].Y < ordered[j].target.Route[0].Y })
 	for i, msg := range ordered {
-		if msg.wire.backwards && msg.target.StrokeDash > 0 && !msg.target.Animated {
-			if m.dashShapes == nil {
-				m.dashShapes = make(map[string]d2target.Shape, len(next.Shapes))
-				for _, shape := range next.Shapes {
-					m.dashShapes[shape.ID] = shape
-				}
-			}
-			msg.dashLength = sequenceDashLength(msg.target, m.dashShapes)
-		}
+		msg.wire.measureDashes(msg.target, next.Shapes, &m.dashWidths)
 		msg.wire.start = m.prepare + (1-m.prepare)*float64(i)/float64(len(ordered))
 		msg.wire.end = m.prepare + (1-m.prepare)*float64(i+1)/float64(len(ordered))
 	}
 	return m
-}
-
-// Measure the rendered centerline after rounding its corners and trimming for
-// its markers. A reverse-declared return starts at its moving arrowhead, so
-// the missing length is the dash phase at the start of the shorter path.
-func sequenceDashLength(e *d2target.Connection, shapes map[string]d2target.Shape) float64 {
-	src, dst := e.ArrowheadAdjustments(shapes)
-	var prev geo.Point
-	var length float64
-	for cmd := range e.PathCommands(src, dst) {
-		switch cmd.Kind {
-		case 'C', 'S':
-			// Sequence bends are short. Subdivide the cubic to subpixel
-			// precision in the same world-space units as the dash pattern.
-			curve := geo.NewBezierCurve([]*geo.Point{&prev, &cmd.Control1, &cmd.Control2, &cmd.End})
-			for j := 1; j < 16; j++ {
-				p := curve.At(float64(j) / 16)
-				length += math.Hypot(p.X-prev.X, p.Y-prev.Y)
-				prev = *p
-			}
-			fallthrough
-		case 'L':
-			length += math.Hypot(cmd.End.X-prev.X, cmd.End.Y-prev.Y)
-		}
-		prev = cmd.End
-	}
-	return length
 }
 
 func newSequenceMessage(e *d2target.Connection) *sequenceMessage {
@@ -253,9 +217,7 @@ func (m *sequenceTrace) apply(frame *d2target.Diagram, t float64) {
 				if len(e.Route) < 2 {
 					continue
 				}
-				if msg.dashLength > 0 {
-					e.MotionDashOffset = msg.dashLength - sequenceDashLength(&e, m.dashShapes)
-				}
+				w.pinDashes(&e, frame.Shapes, &m.dashWidths)
 				if e.Label != "" {
 					e.MotionLabel = &d2target.MotionLabel{Point: msg.caption, Opacity: gridPhase(u, .45, .92)}
 				}

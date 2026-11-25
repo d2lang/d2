@@ -13,35 +13,28 @@ type gifViewport struct {
 }
 
 // Related frames must agree on the screen position of a world coordinate.
-// Layers and independently laid out steps can still fit on their own. Grid
-// animations already share a viewport across the full playback sequence.
+// Independent layers and re-laid-out steps can fit on their own.
 func gifViewports(root *d2target.Diagram, boards []*d2target.Diagram) map[*d2target.Diagram]*gifViewport {
-	grid := slices.ContainsFunc(boards, func(b *d2target.Diagram) bool { return b.GridMotion })
-	if !grid && !slices.ContainsFunc(boards, func(b *d2target.Diagram) bool { return b.LayoutContinuity }) {
+	if !slices.ContainsFunc(boards, func(b *d2target.Diagram) bool { return b.GridMotion || b.LayoutContinuity }) {
 		return nil
 	}
 	viewports := make(map[*d2target.Diagram]*gifViewport)
-	if grid {
-		v := new(gifViewport)
-		for _, board := range boards {
-			viewports[board] = v
-			for _, sample := range board.TweenFrames {
-				viewports[sample] = v
-			}
+	share := func(board *d2target.Diagram, v *gifViewport) {
+		viewports[board] = v
+		for _, sample := range board.TweenFrames {
+			viewports[sample] = v
 		}
-		return viewports
 	}
-	link := func(base, child *d2target.Diagram) {
-		if child.LayoutContinuity && !base.IsFolderOnly {
+	// A selected subtree can start at the incoming transition itself.
+	if (root.LayoutContinuity || root.GridMotion) && len(root.TweenFrames) > 0 {
+		share(root, new(gifViewport))
+	}
+	link := func(base, child *d2target.Diagram, gridSteps bool) {
+		if !base.IsFolderOnly && (child.LayoutContinuity || child.GridMotion || gridSteps && sameGIFPlacements(base, child)) {
 			if viewports[base] == nil {
 				viewports[base] = new(gifViewport)
 			}
-			viewports[child] = viewports[base]
-			// Samples belong to the incoming transition. A board that only
-			// anchors a later step can have independent incoming samples.
-			for _, sample := range child.TweenFrames {
-				viewports[sample] = viewports[base]
-			}
+			share(child, viewports[base])
 		}
 	}
 	var visit func(*d2target.Diagram)
@@ -50,16 +43,37 @@ func gifViewports(root *d2target.Diagram, boards []*d2target.Diagram) map[*d2tar
 			visit(layer)
 		}
 		for _, scenario := range b.Scenarios {
-			link(b, scenario)
+			link(b, scenario, false)
 			visit(scenario)
 		}
+		// Paint-only steps and holds in a grid sequence keep the same camera
+		// after a reflow (including one that removed the largest cell).
+		gridSteps := slices.ContainsFunc(b.Steps, func(s *d2target.Diagram) bool { return s.GridMotion })
 		base := b
 		for _, step := range b.Steps {
-			link(base, step)
+			link(base, step, gridSteps)
 			visit(step)
 			base = step
 		}
 	}
 	visit(root)
 	return viewports
+}
+
+// A stationary grid may have an incoming style tween. Verify each sample
+// before using its endpoint's world coordinates for the whole step.
+func sameGIFPlacements(base, step *d2target.Diagram) bool {
+	matches := func(board *d2target.Diagram) bool {
+		if len(base.Shapes) != len(board.Shapes) {
+			return false
+		}
+		for i := range base.Shapes {
+			a, b := &base.Shapes[i], &board.Shapes[i]
+			if a.ID != b.ID || a.Pos != b.Pos || a.Width != b.Width || a.Height != b.Height {
+				return false
+			}
+		}
+		return true
+	}
+	return matches(step) && !slices.ContainsFunc(step.TweenFrames, func(b *d2target.Diagram) bool { return !matches(b) })
 }
