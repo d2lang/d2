@@ -6,10 +6,12 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/util-go/go2"
 )
 
 type SerializedGraph struct {
+	Theme     *d2themes.Theme        `json:"theme,omitempty"`
 	Root      SerializedObject       `json:"root"`
 	Edges     []SerializedEdge       `json:"edges"`
 	Objects   []SerializedObject     `json:"objects"`
@@ -31,6 +33,10 @@ func DeserializeGraph(bytes []byte, g *Graph) error {
 	}
 
 	g.Data = sg.Data
+	// Older payloads omit the theme and may rely on a configured receiver.
+	if sg.Theme != nil {
+		g.Theme = sg.Theme
+	}
 	var root Object
 	Convert(sg.Root, &root)
 	g.Root = &root
@@ -108,6 +114,7 @@ func SerializeGraph(g *Graph) ([]byte, error) {
 	sg.IsPartialLayout = g.IsPartialLayout
 	sg.RootLevel = g.RootLevel
 	sg.Data = g.Data
+	sg.Theme = g.Theme
 
 	var sobjects []SerializedObject
 	for _, o := range g.Objects {

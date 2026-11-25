@@ -8,6 +8,7 @@ import (
 
 	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2themes"
 )
 
 func TestSerialization(t *testing.T) {
@@ -105,4 +106,32 @@ func TestWholeLayoutRecognizesLegacyNestedGraphs(t *testing.T) {
 	restored.RootLevel = 0
 	restored.IsPartialLayout = true
 	assert.False(t, restored.IsWholeLayout())
+}
+
+func TestSerializationPreservesLayoutTheme(t *testing.T) {
+	source := d2graph.NewGraph()
+	source.Theme = &d2themes.Theme{ID: 302, SpecialRules: d2themes.SpecialRules{AllPaper: true}}
+	data, err := d2graph.SerializeGraph(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := d2graph.NewGraph()
+	if err := d2graph.DeserializeGraph(data, decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Theme == nil || *decoded.Theme != *source.Theme || decoded.Theme == source.Theme {
+		t.Fatalf("theme did not round-trip independently: %+v", decoded.Theme)
+	}
+	source.Theme = nil
+	legacy, err := d2graph.SerializeGraph(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := decoded.Theme
+	if err := d2graph.DeserializeGraph(legacy, decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Theme != configured {
+		t.Fatal("omitted theme overwrote the receiver's configuration")
+	}
 }
