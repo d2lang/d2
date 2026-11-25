@@ -31,7 +31,8 @@ func (obj *Object) IsSequenceDiagramGroup() bool {
 	}
 	for _, ch := range obj.ChildrenArray {
 		// if the child contains a message, it's a span, not a note
-		if !ch.ContainsAnyEdge(obj.Graph.Edges) {
+		// a child that is itself a group (e.g. a nested group holding only a note) is also fine
+		if !ch.ContainsAnyEdge(obj.Graph.Edges) && !ch.IsSequenceDiagramGroup() {
 			return false
 		}
 	}
