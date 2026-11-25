@@ -88,3 +88,27 @@ func TestCompareSerializedCompatibility(t *testing.T) {
 	assert.NoError(t, d2graph.CompareSerializedObject(g.Root, roundTrip.Root))
 	assert.NoError(t, d2graph.CompareSerializedEdge(g.Edges[0], roundTrip.Edges[0]))
 }
+
+func TestWholeLayoutRecognizesLegacyNestedGraphs(t *testing.T) {
+	g := d2graph.NewGraph()
+	assert.True(t, g.IsWholeLayout())
+	g.RootLevel = 1
+	assert.False(t, g.IsWholeLayout())
+
+	// An older core recorded the nesting level without an explicit partial flag.
+	data, err := d2graph.SerializeGraph(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "isPartialLayout") {
+		t.Fatal("expected a legacy payload with only rootLevel")
+	}
+	var restored d2graph.Graph
+	if err := d2graph.DeserializeGraph(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	assert.False(t, restored.IsWholeLayout())
+	restored.RootLevel = 0
+	restored.IsPartialLayout = true
+	assert.False(t, restored.IsWholeLayout())
+}

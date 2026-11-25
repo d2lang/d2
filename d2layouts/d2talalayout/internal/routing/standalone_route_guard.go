@@ -510,5 +510,8 @@ func traceToShapeBorderGuarded(edge *layoutgraph.Edge, guard *routeWorkGuard) (e
 		}
 	}()
 	traceToShapeBorder(edge)
+	if len(edge.Points) == 2 && edge.Points[0].Equals(edge.Points[1]) {
+		routeTouchingPins(edge)
+	}
 	return guard.step()
 }

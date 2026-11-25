@@ -330,7 +330,7 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 			return err
 		}
 	}
-	if !graph.IsPartialLayout {
+	if graph.IsWholeLayout() {
 		tightenPinnedNear(graph, best)
 		clearPinnedFrameNeighbor(graph, best.graph)
 		clearIsolatedFrameDecoration(graph, best.graph)

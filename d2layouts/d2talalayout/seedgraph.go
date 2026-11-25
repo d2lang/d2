@@ -41,7 +41,7 @@ func newSeedInput(ctx context.Context, graph *d2graph.Graph) (seedInput, error) 
 }
 
 func hasPlainTextLoop(graph *d2graph.Graph) bool {
-	if graph.IsPartialLayout || len(graph.Objects) != 1 || len(graph.Edges) != 1 || graph.Root.Shape.Value == d2target.ShapeHierarchy {
+	if !graph.IsWholeLayout() || len(graph.Objects) != 1 || len(graph.Edges) != 1 || graph.Root.Shape.Value == d2target.ShapeHierarchy {
 		return false
 	}
 	obj, e := graph.Objects[0], graph.Edges[0]

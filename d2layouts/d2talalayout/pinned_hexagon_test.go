@@ -36,3 +36,31 @@ func TestPinned3DHexagonKeepsShortVerticalConnector(t *testing.T) {
 		})
 	}
 }
+
+func TestTouchingPinnedModifiersHaveAnExteriorConnector(t *testing.T) {
+	for _, tc := range []struct {
+		shape, style, link string
+		x, y               int
+		vertical           bool
+	}{
+		{"hexagon", "3d", "a -> b", 230, 121, true},
+		{"rectangle", "multiple", "b -> a", 320, 190, false},
+	} {
+		source := fmt.Sprintf("a: A {shape: %s; left: 180; top: 160; width: 130; height: 90; style.%s: true}\nb: B {left: %d; top: %d; width: 52; height: 32}\n%s: active", tc.shape, tc.style, tc.x, tc.y, tc.link)
+		diag := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+		if len(diag.Connections) != 1 || diag.Connections[0].Label != "active" || len(diag.Connections[0].Route) != 4 {
+			t.Fatalf("%s: missing exterior labeled route", tc.shape)
+		}
+		route := diag.Connections[0].Route
+		if tc.vertical {
+			if route[1].X != route[2].X || route[1].X >= 180 || route[0].Y != route[1].Y || route[2].Y != route[3].Y {
+				t.Fatalf("vertical touching pair lacks a clear left lane: %v", route)
+			}
+		} else if route[1].Y != route[2].Y || route[1].Y <= 250 || route[0].X != route[1].X || route[2].X != route[3].X {
+			t.Fatalf("horizontal touching pair lacks a clear lower lane: %v", route)
+		}
+		if _, err := d2svg.Render(diag, &d2svg.RenderOpts{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

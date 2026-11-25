@@ -77,6 +77,12 @@ type Graph struct {
 	Data map[string]interface{} `json:"data,omitempty"`
 }
 
+// IsWholeLayout reports whether all surrounding objects and edges are present.
+// Older serialized subgraphs record their nesting only in RootLevel.
+func (g *Graph) IsWholeLayout() bool {
+	return g.RootLevel == 0 && !g.IsPartialLayout
+}
+
 type Legend struct {
 	Label   string    `json:"label,omitempty"`
 	Objects []*Object `json:"objects,omitempty"`
