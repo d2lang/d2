@@ -127,32 +127,31 @@ func (p *printer) blockComment(bc *d2ast.BlockComment) {
 }
 
 func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString bool) {
-	for i, b := range boxes {
+	wholeToken := len(boxes) == 1
+	for _, b := range boxes {
 		if b.Substitution != nil {
 			p.substitution(b.Substitution)
 			continue
 		}
-		if b.StringRaw == nil {
-			var s string
-			if isDoubleString {
-				s = escapeDoubledQuotedValue(*b.String, p.inKey)
-			} else {
-				s = escapeUnquotedValue(*b.String, p.inKey)
-			}
-			b.StringRaw = &s
-		} else if i > 0 && boxes[i-1].Substitution != nil {
-			// If this string follows a substitution, we need to make sure to use
-			// the actual string content, not the raw value which might be incorrect
-			s := *b.String
-			b.StringRaw = &s
+
+		var text string
+		switch {
+		case isDoubleString && (!wholeToken || b.StringRaw == nil):
+			// In parsed double-quoted strings, the raw suffix can include text
+			// from before a substitution. Each decoded fragment is independent.
+			text = escapeDoubledQuotedValue(*b.String, p.inKey)
+		case b.StringRaw != nil:
+			text = *b.StringRaw
+		default:
+			text = escapeUnquotedValue(*b.String, p.inKey, wholeToken)
 		}
-		if !isDoubleString {
-			if _, ok := d2ast.ReservedKeywords[strings.ToLower(*b.StringRaw)]; ok {
-				s := strings.ToLower(*b.StringRaw)
-				b.StringRaw = &s
+		if wholeToken && !isDoubleString {
+			lower := strings.ToLower(text)
+			if _, ok := d2ast.ReservedKeywords[lower]; ok {
+				text = lower
 			}
 		}
-		p.sb.WriteString(*b.StringRaw)
+		p.sb.WriteString(text)
 	}
 }
 

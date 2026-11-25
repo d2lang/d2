@@ -72,6 +72,10 @@
 
 #### Bugfixes ⛑️
 
+- A lone hyphen after a quoted name now reports a syntax error. Change `"build" - server` to `"build" -- server`. An unquoted name such as `build-server` still names one object.
+- Unquoted labels such as `10${unit}` resolve their substitutions even when the prefix looks like a number, boolean, or other special value. An undefined variable in that position now reports an error.
+- `d2 fmt` preserves escaped label text after a substitution, including the literal hash in `before${v}\#tag`.
+
 - Grids retain cell order across repeated dimensions, imports and variable spreads. [#2115](https://github.com/d2lang/d2/issues/2115)
 - Grid cells preserve shape proportions and keep nested children, routed connections and their captions inside the container. Border icons and labels fit in zero-padding exports. [#1405](https://github.com/d2lang/d2/issues/1405)
 - Grid connections retain SQL row attachments as cells move, separate reciprocal captions, and make room for self-loops between neighboring cells. TALA routes around intervening cells and accepts a grid container as a `near` target. [#1741](https://github.com/d2lang/d2/issues/1741)

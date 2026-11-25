@@ -995,6 +995,10 @@ func (p *parser) parseEdges(mk *d2ast.Key, src *d2ast.KeyPath) {
 func (p *parser) parseEdge(e *d2ast.Edge) (ok bool) {
 	defer e.Range.End.From(&p.pos)
 
+	// parseEdges has consumed the first arrow character. An unheaded
+	// connection starting with '-' needs at least one more hyphen.
+	firstCharEnd := p.pos
+	singleHyphen := e.SrcArrow == ""
 	for {
 		r, eof := p.peek()
 		if eof {
@@ -1025,8 +1029,12 @@ func (p *parser) parseEdge(e *d2ast.Edge) (ok bool) {
 			p.replay(r)
 		case '-':
 			p.commit()
+			singleHyphen = false
 		default:
 			p.rewind()
+			if singleHyphen {
+				p.errorf(firstCharEnd.Subtract('-', p.utf16Pos), firstCharEnd, "use -- for an undirected connection")
+			}
 			return true
 		}
 	}
@@ -1767,20 +1775,26 @@ func (p *parser) parseValue() d2ast.ValueBox {
 	}
 
 	s := sb.UnquotedString
-	if strings.EqualFold(s.ScalarString(), "null") {
+	if len(s.Value) != 1 || s.Value[0].String == nil {
+		box.UnquotedString = s
+		return box
+	}
+
+	literal := *s.Value[0].String
+	if strings.EqualFold(literal, "null") {
 		box.Null = &d2ast.Null{
 			Range: s.Range,
 		}
 		return box
 	}
-	if strings.EqualFold(s.ScalarString(), "suspend") {
+	if strings.EqualFold(literal, "suspend") {
 		box.Suspension = &d2ast.Suspension{
 			Range: s.Range,
 			Value: true,
 		}
 		return box
 	}
-	if strings.EqualFold(s.ScalarString(), "unsuspend") {
+	if strings.EqualFold(literal, "unsuspend") {
 		box.Suspension = &d2ast.Suspension{
 			Range: s.Range,
 			Value: false,
@@ -1788,7 +1802,7 @@ func (p *parser) parseValue() d2ast.ValueBox {
 		return box
 	}
 
-	if strings.EqualFold(s.ScalarString(), "true") {
+	if strings.EqualFold(literal, "true") {
 		box.Boolean = &d2ast.Boolean{
 			Range: s.Range,
 			Value: true,
@@ -1796,7 +1810,7 @@ func (p *parser) parseValue() d2ast.ValueBox {
 		return box
 	}
 
-	if strings.EqualFold(s.ScalarString(), "false") {
+	if strings.EqualFold(literal, "false") {
 		box.Boolean = &d2ast.Boolean{
 			Range: s.Range,
 			Value: false,
@@ -1805,11 +1819,11 @@ func (p *parser) parseValue() d2ast.ValueBox {
 	}
 
 	// TODO: only if matches regex
-	rat, ok := big.NewRat(0, 1).SetString(s.ScalarString())
+	rat, ok := big.NewRat(0, 1).SetString(literal)
 	if ok {
 		box.Number = &d2ast.Number{
 			Range: s.Range,
-			Raw:   s.ScalarString(),
+			Raw:   literal,
 			Value: rat,
 		}
 		return box

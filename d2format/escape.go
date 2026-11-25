@@ -42,12 +42,12 @@ func escapeDoubledQuotedValue(s string, inKey bool) string {
 	return b.String()
 }
 
-func escapeUnquotedValue(s string, inKey bool) string {
-	if len(s) == 0 {
+func escapeUnquotedValue(s string, inKey, wholeToken bool) string {
+	if wholeToken && s == "" {
 		return `""`
 	}
 
-	if strings.EqualFold(s, "null") {
+	if wholeToken && strings.EqualFold(s, "null") {
 		return `'null'`
 	}
 

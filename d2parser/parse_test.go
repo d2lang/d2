@@ -52,6 +52,40 @@ func TestParseNestingDepthBoundary(t *testing.T) {
 	}
 }
 
+func TestParseValueWithTypedLiteralPrefix(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		literal string
+		kind    string
+	}{
+		{"10", "number"},
+		{"true", "boolean"},
+		{"false", "boolean"},
+		{"null", "null"},
+		{"suspend", "suspension"},
+		{"unsuspend", "suspension"},
+	} {
+		t.Run(tc.literal, func(t *testing.T) {
+			literal, err := d2parser.ParseValue(tc.literal)
+			assert.Success(t, err)
+			assert.Equal(t, tc.kind, literal.Type())
+
+			value, err := d2parser.ParseValue(tc.literal + "${unit}")
+			assert.Success(t, err)
+			s, ok := value.(*d2ast.UnquotedString)
+			if !ok {
+				t.Fatalf("expected an interpolated string, got %T", value)
+			}
+			assert.Equal(t, 2, len(s.Value))
+			assert.True(t, s.Value[0].String != nil)
+			assert.Equal(t, tc.literal, *s.Value[0].String)
+			assert.True(t, s.Value[1].Substitution != nil)
+			assert.Equal(t, "unit", strings.Join(s.Value[1].Substitution.IDA(), "."))
+		})
+	}
+}
+
 type testCase struct {
 	name   string
 	text   string

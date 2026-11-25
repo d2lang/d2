@@ -1414,6 +1414,18 @@ layers: {
 			},
 		},
 		{
+			name: "fmt-single-hyphen-connection",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				const source = "\"build\" - server\n"
+				assert.WriteFile(t, filepath.Join(dir, "invalid.d2"), []byte(source), 0644)
+				err := runTestMainPersist(t, ctx, dir, env, "fmt", "invalid.d2")
+				if err == nil || !strings.Contains(err.Error(), "--") {
+					t.Fatalf("expected a diagnostic suggesting --, got %v", err)
+				}
+				assert.Equal(t, source, string(readFile(t, dir, "invalid.d2")))
+			},
+		},
+		{
 			name: "fmt-multiple-files",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				writeFile(t, dir, "foo.d2", `a ---> b`)
