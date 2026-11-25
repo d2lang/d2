@@ -37,15 +37,16 @@ func TestWrapTimedClipsBetweenSamples(t *testing.T) {
 	}
 }
 
-func TestShortSVGLoopKeepsLastBoardVisible(t *testing.T) {
+func TestShortSVGSwitchesOnlyAtBoardBoundaries(t *testing.T) {
 	frames := [][]byte{[]byte("<g></g>"), []byte("<g></g>")}
 	out, err := Wrap(d2target.NewDiagram(), frames, d2svg.RenderOpts{}, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"-0{0%,0%{opacity:0}0%,48.75%{opacity:1}50%,100%{opacity:0}}",
-		"-1{0%,48.75%{opacity:0}50%,100%{opacity:1}}",
+		"-0{0%{opacity:1}50%,100%{opacity:0}}",
+		"-1{0%{opacity:0}50%{opacity:1}100%{opacity:1}}",
+		"80ms steps(1,end) infinite",
 	} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("missing frame boundary %q", want)

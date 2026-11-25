@@ -595,6 +595,22 @@ func motionGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
 	return append(samples, end)
 }
 
+// gifBoardFrames schedules an authored step for GIF playback. Supply its
+// predecessor only when the two pictures use the same camera.
+func gifBoardFrames(scratch []d2animate.Frame, board, previous *d2target.Diagram, intervalMS int) []d2animate.Frame {
+	frames := d2animate.AppendBoardFrames(scratch[:0], board, intervalMS)
+	// The last sample can split its hold with the endpoint even at 25fps.
+	denseMotion := board.LayoutContinuity && len(frames) > 2 &&
+		slices.ContainsFunc(frames[:len(frames)-2], func(f d2animate.Frame) bool { return f.DurationMS < 20 })
+	if board.GridMotion || denseMotion {
+		return motionGIFFrames(frames)
+	}
+	if len(board.TweenFrames) > 0 {
+		return paintGIFFrames(frames, previous)
+	}
+	return frames
+}
+
 func gifStepDelay(frame d2animate.Frame) int {
 	return xgif.StepDelay(time.Duration(frame.ElapsedMS)*time.Millisecond, time.Duration(frame.DurationMS)*time.Millisecond, frame.TweenSample)
 }
@@ -702,20 +718,11 @@ func renderGIFWithSession(
 	totalFrames := 0
 	var boardFrames []d2animate.Frame
 	for i, board := range boards {
-		boardFrames = d2animate.AppendBoardFrames(boardFrames[:0], board, intervalMs)
-		// The timeline can split the last sample with its endpoint, even
-		// for ordinary 25fps paint. Identify dense motion from earlier samples.
-		denseMotion := board.LayoutContinuity && len(boardFrames) > 2 &&
-			slices.ContainsFunc(boardFrames[:len(boardFrames)-2], func(f d2animate.Frame) bool { return f.DurationMS < 20 })
-		if board.GridMotion || denseMotion {
-			boardFrames = motionGIFFrames(boardFrames)
-		} else if len(board.TweenFrames) > 0 {
-			var previous *d2target.Diagram
-			if i > 0 && viewports[boards[i-1]] == viewports[board] {
-				previous = boards[i-1]
-			}
-			boardFrames = paintGIFFrames(boardFrames, previous)
+		var previous *d2target.Diagram
+		if i > 0 && viewports[boards[i-1]] == viewports[board] {
+			previous = boards[i-1]
 		}
+		boardFrames = gifBoardFrames(boardFrames, board, previous, intervalMs)
 		for _, segment := range boardFrames {
 			delay := gifStepDelay(segment)
 			if delay == 0 {

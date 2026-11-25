@@ -15,25 +15,9 @@ import (
 	"github.com/d2lang/d2/lib/version"
 )
 
-var transitionDurationMS = 1
-
 // Match the existing keyframe precision and omit only insignificant zeros.
 func percentage(v float64, precision int) string {
 	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', precision, 64), "0"), ".") + "%"
-}
-
-func makeKeyframe(delayMS, durationMS, totalMS, identifier int, diagramHash, hidden, visible string) string {
-	before := math.Max(0, float64(delayMS-transitionDurationMS)) / float64(totalMS) * 100
-	start := float64(delayMS) / float64(totalMS) * 100
-	end := float64(delayMS+durationMS-transitionDurationMS) / float64(totalMS) * 100
-	css := fmt.Sprintf("@keyframes d2Transition-%s-%d{0%%,%s%s%s,", diagramHash, identifier, percentage(before, 6), hidden, percentage(start, 6))
-	// The first board takes over at the loop boundary. Keep the final board
-	// visible until then, including when the whole loop is 100ms or shorter.
-	if delayMS+durationMS == totalMS {
-		return css + "100%" + visible + "}"
-	}
-	after := float64(delayMS+durationMS) / float64(totalMS) * 100
-	return css + percentage(end, 6) + visible + percentage(after, 6) + ",100%" + hidden + "}"
 }
 
 func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, intervalMS int) ([]byte, error) {
@@ -141,9 +125,8 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	}
 
 	fmt.Fprint(buf, `<style type="text/css"><![CDATA[`)
-	fade := uniform && len(svgs) <= 100
 	hidden, visible := "{opacity:0", "{opacity:1"
-	if !fade {
+	if !uniform || len(svgs) > 100 {
 		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"
 	}
 	if strings.Contains(svgsStr, "<a ") || strings.Contains(svgsStr, "<title>") {
@@ -158,34 +141,25 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	visible += "}"
 	startMS := 0
 	for i, duration := range durationsMS {
-		if fade {
-			fmt.Fprint(buf, makeKeyframe(startMS, duration, totalMS, i, diagramHash, hidden, visible))
-		} else {
-			// Cut between samples without giving every frame its own opacity
-			// layer. An empty clip also leaves shared paint resources usable
-			// and descendant animations running while the frame is offscreen.
-			fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d{", diagramHash, i)
-			if startMS > 0 {
-				buf.WriteString("0%" + hidden)
-			}
-			buf.WriteString(percentage(100*float64(startMS)/float64(totalMS), 9) + visible)
-			if endMS := startMS + duration; endMS < totalMS {
-				buf.WriteString(percentage(100*float64(endMS)/float64(totalMS), 9) + ",100%" + hidden)
-			} else {
-				buf.WriteString("100%" + visible)
-			}
-			fmt.Fprint(buf, "}")
+		// Switch whole frames on their authored boundary. Overlapping two
+		// partially transparent frames makes even identical artwork flash.
+		fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d{", diagramHash, i)
+		if startMS > 0 {
+			buf.WriteString("0%" + hidden)
 		}
+		buf.WriteString(percentage(100*float64(startMS)/float64(totalMS), 9) + visible)
+		if endMS := startMS + duration; endMS < totalMS {
+			buf.WriteString(percentage(100*float64(endMS)/float64(totalMS), 9) + ",100%" + hidden)
+		} else {
+			buf.WriteString("100%" + visible)
+		}
+		buf.WriteString("}")
 		startMS += duration
 	}
 	fmt.Fprint(buf, `]]></style>`)
 
-	timing := ""
-	if !fade {
-		timing = " steps(1,end)"
-	}
 	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"
-	styleSuffix := " " + strconv.Itoa(totalMS) + "ms" + timing + ` infinite"`
+	styleSuffix := " " + strconv.Itoa(totalMS) + `ms steps(1,end) infinite"`
 	// Reserve room for the artwork and its timing attributes before copying
 	// multi-megabyte frames into the final output buffer.
 	attributeSize := len(stylePrefix) + len(strconv.Itoa(len(svgs))) + len(styleSuffix)

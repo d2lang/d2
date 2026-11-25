@@ -16,12 +16,12 @@ func TestAnimateIntervalSourcePrecedence(t *testing.T) {
 		env, args []string
 		svgTiming string
 	}{
-		{"source", nil, nil, "160ms infinite"},
-		{"environment", []string{"D2_ANIMATE_INTERVAL=120"}, nil, "240ms infinite"},
-		{"flag over environment", []string{"D2_ANIMATE_INTERVAL=120"}, []string{"--animate-interval=50"}, "100ms infinite"},
+		{"source", nil, nil, "160ms steps(1,end) infinite"},
+		{"environment", []string{"D2_ANIMATE_INTERVAL=120"}, nil, "240ms steps(1,end) infinite"},
+		{"flag over environment", []string{"D2_ANIMATE_INTERVAL=120"}, []string{"--animate-interval=50"}, "100ms steps(1,end) infinite"},
 		{"explicit zero flag", []string{"D2_ANIMATE_INTERVAL=120"}, []string{"--animate-interval=0"}, ""},
 		{"explicit zero environment", []string{"D2_ANIMATE_INTERVAL=0"}, nil, ""},
-		{"selected board", nil, []string{"--target=steps.next"}, "80ms infinite"},
+		{"selected board", nil, []string{"--target=steps.next"}, "80ms steps(1,end) infinite"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, dir, err := isometricCLI(t, source, tc.env, append(tc.args, "out.svg")...)
