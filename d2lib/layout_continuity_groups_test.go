@@ -149,6 +149,27 @@ steps: {reverse: {(a -> b)[0]: null; b -> a}}`
 	}
 }
 
+func TestTALABoardContinuityKeepsThinPortsAttached(t *testing.T) {
+	const src = `direction: up
+n0: "" {width: 63; height: 1}
+n1: "" {width: 2; height: 5}
+n2: "" {width: 1; height: 63}
+n3: "" {width: 151; height: 63}
+n0 -> n1 -> n2 -> n3
+steps: {change: {n3 -> add0; n0 -> add1 -> n2}}`
+	diagram, _ := compileContinuity(t, src, d2talalayout.ContinueBoard)
+	board := diagram.Steps[0]
+	target := continuityRect(t, board, "n1")
+	wire := continuityWire(t, board, "n0", "n1")
+	port := wire.Route[len(wire.Route)-1]
+	// A prior route can miss the narrow face by much more than the stroke
+	// width. The new step can reroute it or keep the ordinary, attached port.
+	if port.X < float64(target.Min.X-1) || port.X > float64(target.Max.X+1) ||
+		port.Y < float64(target.Min.Y-1) || port.Y > float64(target.Max.Y+1) {
+		t.Fatalf("destination port %v misses its %v target", port, target)
+	}
+}
+
 const nestedContinuityExample = `direction: right
 platform: Platform {
   api: API

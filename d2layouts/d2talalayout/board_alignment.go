@@ -175,12 +175,17 @@ func visibleBoardAnchor(n *d2graph.Object, g *d2graph.Graph) bool {
 	return alpha != 0 && strings.TrimSpace(n.Label.Value) != ""
 }
 
-// Use the centers of the exported boxes so a resized label or container can
-// retain its visual center. All other geometry uses the same integer shift.
+// Use the center of the exported box, or the top of a table when appended
+// fields leave all existing row baselines and column ports in place.
 func anchorOffset(a boardAnchor) geo.Point {
+	old, current := a.old, a.current
+	dy := float64(int(old.TopLeft.Y) - int(current.TopLeft.Y))
+	if int(old.Width) != int(current.Width) || !current.SQLTable.AppendsRowsTo(old.SQLTable, int(old.Height), int(current.Height)) {
+		dy += float64(int(old.Height)-int(current.Height)) / 2
+	}
 	return geo.Point{
-		X: float64(int(a.old.TopLeft.X)-int(a.current.TopLeft.X)) + float64(int(a.old.Width)-int(a.current.Width))/2,
-		Y: float64(int(a.old.TopLeft.Y)-int(a.current.TopLeft.Y)) + float64(int(a.old.Height)-int(a.current.Height))/2,
+		X: float64(int(old.TopLeft.X)-int(current.TopLeft.X)) + float64(int(old.Width)-int(current.Width))/2,
+		Y: dy,
 	}
 }
 
@@ -203,6 +208,9 @@ func selectBoardOffset(anchors []boardAnchor, bounds offsetRange) (dx, dy float6
 		offsets = append(offsets, p)
 		xs, ys = append(xs, p.X), append(ys, p.Y)
 		original += math.Abs(p.X) + math.Abs(p.Y)
+	}
+	if original == 0 {
+		return 0, 0
 	}
 	slices.Sort(xs)
 	slices.Sort(ys)

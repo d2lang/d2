@@ -126,6 +126,17 @@ func TestBoardAlignmentRejectsMalformedGeometry(t *testing.T) {
 	}
 }
 
+func TestContinueBoardRejectsNilContext(t *testing.T) {
+	old, _ := newD2TransactionGraph(false)
+	current, _ := newD2TransactionGraph(false)
+	before := snapshotD2Graph(t, current)
+	//lint:ignore SA1012 Verify rejection of an invalid public API argument.
+	if ok, err := ContinueBoard(nil, old, current); ok || err == nil {
+		t.Fatal("ContinueBoard accepted a nil context")
+	}
+	before.assertUnchanged(t, current)
+}
+
 func TestBoardAlignmentRestoresGeometryWhenLocalSearchIsCanceled(t *testing.T) {
 	old, _ := newD2TransactionGraph(false)
 	current, edge := newD2TransactionGraph(false)

@@ -84,6 +84,27 @@ steps: {timing: {tracks.seconds: int {constraint: foreign_key}; tracks.plays: in
 	}
 }
 
+func TestStandaloneSQLRowsGrowFromTheSameHeader(t *testing.T) {
+	const src = `vars: {d2-config: {animate-interval: 300ms; animate-duration: 200ms}}
+catalog: {shape: sql_table; catalog_id: int; title: text}
+steps: {
+  pages: {catalog.pages: int}
+  copies: {catalog.copies: int}
+}`
+	d, _ := compileContinuity(t, src, d2talalayout.ContinueBoard)
+	origin := d.Shapes[0].Pos
+	for _, board := range d.Steps {
+		if len(board.TweenFrames) < 2 || board.Shapes[0].Pos != origin {
+			t.Fatalf("table moved or skipped its row drop on %q", board.Name)
+		}
+		for _, frame := range board.TweenFrames {
+			if frame.Shapes[0].Pos != origin {
+				t.Fatalf("header drifted on %q", board.Name)
+			}
+		}
+	}
+}
+
 func TestSQLRowRevealRequiresStableLayout(t *testing.T) {
 	prev := d2target.NewDiagram()
 	table := d2target.BaseShape()

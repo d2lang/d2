@@ -2,6 +2,7 @@ package d2talalayout
 
 import (
 	"context"
+	"errors"
 	"math"
 	"reflect"
 	"slices"
@@ -18,6 +19,9 @@ import (
 // A single leaf edit can retain every old box and route. More complex edits
 // start from ordinary layout and align to the preceding board when possible.
 func ContinueBoard(ctx context.Context, previous, current *d2graph.Graph) (bool, error) {
+	if ctx == nil {
+		return false, errors.New("TALA board continuation requires a context")
+	}
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -169,7 +173,8 @@ func boardLeafSupported(g *d2graph.Graph) bool {
 		}
 	}
 	for _, e := range g.Edges {
-		if e.SrcArrowhead != nil || e.DstArrowhead != nil || e.Label.Value != "" || e.IsCurve || continuityHidden(e.Style) {
+		if e.SrcArrowhead != nil || e.DstArrowhead != nil || e.Label.Value != "" || e.IsCurve || continuityHidden(e.Style) ||
+			!boardPortTouches(e.Src.Box, e.Route[0]) || !boardPortTouches(e.Dst.Box, e.Route[len(e.Route)-1]) {
 			return false
 		}
 		if e.Style.StrokeWidth != nil && e.Style.StrokeWidth.TweenOffset != 0 {
@@ -180,6 +185,18 @@ func boardLeafSupported(g *d2graph.Graph) bool {
 		}
 	}
 	return supportsRefinementStyles(g)
+}
+
+// Compare the port with the rectangular body the exporter actually paints.
+// A default two-pixel outline extends one pixel to each side of its face.
+func boardPortTouches(b *geo.Box, p *geo.Point) bool {
+	if p == nil {
+		return false
+	}
+	r := decorationPixels(b)
+	dx := max(float64(r.Min.X)-p.X, p.X-float64(r.Max.X))
+	dy := max(float64(r.Min.Y)-p.Y, p.Y-float64(r.Max.Y))
+	return math.Abs(max(dx, dy)) <= 1
 }
 
 func continuityHidden(style d2graph.Style) bool {

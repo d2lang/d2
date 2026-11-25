@@ -38,11 +38,18 @@ func improveBoardGroups(ctx context.Context, previous, current *d2graph.Graph, a
 	if !groupBoardSupported(current) || !groupBoardSupported(previous) || ctx.Err() != nil {
 		return false
 	}
+	moved, movedWires := movedBoardPanels(previous, current)
+	// With every landmark already in place, the only remaining improvement
+	// is to restore the internal spacing of a transferred panel.
+	if len(moved) == 0 && !slices.ContainsFunc(anchors, func(a boardAnchor) bool {
+		return anchorOffset(a) != (geo.Point{})
+	}) {
+		return false
+	}
 	old := make(map[string]*d2graph.Object, len(previous.Objects))
 	for _, n := range previous.Objects {
 		old[strings.ToLower(n.AbsID())] = n
 	}
-	moved, movedWires := movedBoardPanels(previous, current)
 	var tried [][][4]float64
 	flows := boardFlow(current)
 	candidates := []boardPlacement{{side: geo.NONE}}
@@ -509,7 +516,8 @@ func routeBoardPlan(ctx context.Context, previous, current *d2graph.Graph, plan 
 		edge := edges[bindings.edgeIDs[e]]
 		from, to := plan[e.Src], plan[e.Dst]
 		preserve := func(ref *d2graph.Edge) bool {
-			if ref == nil || ref.Src.Width != from.Width || ref.Src.Height != from.Height || ref.Dst.Width != to.Width || ref.Dst.Height != to.Height {
+			if ref == nil || ref.Src.Width != from.Width || ref.Src.Height != from.Height || ref.Dst.Width != to.Width || ref.Dst.Height != to.Height ||
+				!boardPortTouches(ref.Src.Box, ref.Route[0]) || !boardPortTouches(ref.Dst.Box, ref.Route[len(ref.Route)-1]) {
 				return false
 			}
 			x, y := from.TopLeft.X-ref.Src.TopLeft.X, from.TopLeft.Y-ref.Src.TopLeft.Y
@@ -531,6 +539,11 @@ func routeBoardPlan(ctx context.Context, previous, current *d2graph.Graph, plan 
 		}
 	}
 	acceptable := func() bool {
+		for _, e := range trial.Edges {
+			if len(e.Points) < 2 || !boardPortTouches(&e.From.Box, e.SourcePort()) || !boardPortTouches(&e.To.Box, e.TargetPort()) {
+				return false
+			}
+		}
 		m, err := quality.Inspect(ctx, trial)
 		return err == nil && m.NodeOverlaps <= baseline.NodeOverlaps && m.RouteObstructions <= baseline.RouteObstructions &&
 			m.TextOcclusions <= baseline.TextOcclusions && m.InteriorCrossings <= baseline.InteriorCrossings && m.Crossings <= baseline.Crossings &&

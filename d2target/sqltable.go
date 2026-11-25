@@ -1,6 +1,9 @@
 package d2target
 
-import "strings"
+import (
+	"reflect"
+	"strings"
+)
 
 const (
 	NamePadding       = 10
@@ -15,6 +18,33 @@ const (
 
 type SQLTable struct {
 	Columns []SQLColumn `json:"columns"`
+}
+
+// AppendsRowsTo reports whether adding fields preserves existing row spacing
+// and the horizontal alignment of the type column.
+func (t *SQLTable) AppendsRowsTo(old *SQLTable, oldHeight, newHeight int) bool {
+	if t == nil || old == nil || len(t.Columns) <= len(old.Columns) || oldHeight <= 0 {
+		return false
+	}
+	if float64(oldHeight)/float64(len(old.Columns)+1) != float64(newHeight)/float64(len(t.Columns)+1) {
+		return false
+	}
+	if len(old.Columns) == 0 {
+		return true
+	}
+	if !reflect.DeepEqual(old.Columns, t.Columns[:len(old.Columns)]) {
+		return false
+	}
+	widest := 0
+	for _, col := range old.Columns {
+		widest = max(widest, col.Name.LabelWidth)
+	}
+	for _, col := range t.Columns[len(old.Columns):] {
+		if col.Name.LabelWidth > widest {
+			return false
+		}
+	}
+	return true
 }
 
 // SQLRowReveal fixes row spacing at the authored height while the table's

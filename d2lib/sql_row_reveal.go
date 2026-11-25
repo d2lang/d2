@@ -22,13 +22,9 @@ func planSQLRowReveal(prev, next *d2target.Diagram) *sqlRowReveal {
 		if to.Type != d2target.ShapeSQLTable || len(to.Columns) <= len(from.Columns) {
 			continue
 		}
-		if from.Type != to.Type || from.Pos != to.Pos || from.Width != to.Width || from.Width <= 0 || from.Height <= 0 ||
-			from.SQLRowHeight() != to.SQLRowHeight() || from.Icon != nil ||
+		if from.Type != to.Type || from.Pos != to.Pos || from.Width != to.Width || from.Width <= 0 || from.Icon != nil ||
 			len(from.Columns) == 0 && from.BorderRadius > 0 ||
-			len(from.Columns) > 0 && !reflect.DeepEqual(from.Columns, to.Columns[:len(from.Columns)]) {
-			return nil
-		}
-		if len(from.Columns) > 0 && widestColumnName(from.Columns) != widestColumnName(to.Columns) {
+			!to.SQLTable.AppendsRowsTo(&from.SQLTable, from.Height, to.Height) {
 			return nil
 		}
 		if plan == nil {
@@ -49,14 +45,6 @@ func planSQLRowReveal(prev, next *d2target.Diagram) *sqlRowReveal {
 		}
 	}
 	return plan
-}
-
-func widestColumnName(cols []d2target.SQLColumn) int {
-	width := 0
-	for _, c := range cols {
-		width = max(width, c.Name.LabelWidth)
-	}
-	return width
 }
 
 func (p *sqlRowReveal) apply(frame *d2target.Diagram, t float64) {
