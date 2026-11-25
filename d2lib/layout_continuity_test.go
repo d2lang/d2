@@ -75,13 +75,17 @@ layers: {
 	}
 }
 
-func TestTALABoardContinuityUsesOrdinaryLayoutForUnsupportedEdits(t *testing.T) {
+func TestTALABoardContinuityAlignsFreshGeometryForComplexEdits(t *testing.T) {
+	// The diamond deliberately exercises rigid alignment. The optional
+	// local placement pass handles plain rectangles with simpler geometry.
 	const src = `direction: right
+A.shape: diamond
 A -> B -> C -> D
 scenarios: {
   two: {B -> E; B -> F}
   replacement: {C: null; B -> E}
   pinned: {E: {left: 17; top: 40}; B -> E}
+  grid: {panel: {grid-columns: 2; E; F}}
   wider: {B.width: 250; B -> E}
   new-caption: {B -> E: Notify}
   changed-caption: {B.label: Z; B -> E}
@@ -89,14 +93,47 @@ scenarios: {
   hidden: {E.style.opacity: 0.0; B -> E}
   unpainted: {E.style.fill: transparent; E.style.stroke: transparent; E.style.font-color: transparent; B -> E}
   map: {group: {E -> F}; B -> group.E}
+  rewire: {(B -> C)[0]: null; A -> C}
+  reparent: {B: null; A -> group.B -> C}
   independent: {E}
 }`
 	board, _ := compileContinuity(t, src, d2talalayout.ContinueBoard)
 	fresh, _ := compileContinuity(t, src, nil)
+	translations := 0
 	for i, scenario := range board.Scenarios {
-		if !reflect.DeepEqual(scenario, fresh.Scenarios[i]) {
-			t.Errorf("scenario %s differs from ordinary layout", scenario.Name)
+		ordinary := fresh.Scenarios[i]
+		switch scenario.Name {
+		case "pinned", "changed-flow", "grid":
+			if !reflect.DeepEqual(scenario, ordinary) {
+				t.Errorf("scenario %s changed constrained geometry", scenario.Name)
+			}
+			continue
 		}
+		if !scenario.LayoutContinuity {
+			t.Errorf("scenario %s lost its shared frame", scenario.Name)
+		}
+		got, want := diagramGeometryOf(scenario), diagramGeometryOf(ordinary)
+		dx := got.shapes[0].pos.X - want.shapes[0].pos.X
+		dy := got.shapes[0].pos.Y - want.shapes[0].pos.Y
+		if dx != 0 || dy != 0 {
+			translations++
+		}
+		for j := range want.shapes {
+			want.shapes[j].pos.X += dx
+			want.shapes[j].pos.Y += dy
+		}
+		for _, e := range want.connections {
+			for j := range e.route {
+				e.route[j].X += float64(dx)
+				e.route[j].Y += float64(dy)
+			}
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("scenario %s changed native shape or route geometry", scenario.Name)
+		}
+	}
+	if translations == 0 {
+		t.Fatal("fixtures no longer exercise a nonzero rigid translation")
 	}
 }
 

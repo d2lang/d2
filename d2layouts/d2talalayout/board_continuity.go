@@ -14,25 +14,33 @@ import (
 	"github.com/d2lang/d2/lib/label"
 )
 
-// ContinueBoard keeps the geometry of familiar nodes and connections across
-// one edit to a board. Both inputs have completed ordinary layout. If the edit
-// needs more than one local placement, the current board keeps that layout.
+// ContinueBoard uses familiar objects to align two completed board layouts.
+// A single leaf edit can retain every old box and route. More complex edits
+// start from ordinary layout and align to the preceding board when possible.
 func ContinueBoard(ctx context.Context, previous, current *d2graph.Graph) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if previous == nil || current == nil || previous == current || previous.Root == nil || current.Root == nil ||
+	if previous == nil || current == nil || previous.Root == nil || current.Root == nil || previous.Root == current.Root ||
 		previous.Root.Direction.Value != current.Root.Direction.Value ||
-		!reflect.DeepEqual(previous.Data["tala-seeds"], current.Data["tala-seeds"]) {
+		!reflect.DeepEqual(previous.Data["tala-seeds"], current.Data["tala-seeds"]) ||
+		!boardCanAlign(previous) || !boardCanAlign(current) {
 		return false, nil
 	}
+	if ok, err := continueBoardLeaf(ctx, previous, current); ok || err != nil {
+		return ok, err
+	}
+	return alignBoard(ctx, previous, current)
+}
+
+func continueBoardLeaf(ctx context.Context, previous, current *d2graph.Graph) (bool, error) {
 	small, large := previous, current
 	if len(small.Objects) > len(large.Objects) {
 		small, large = large, small
 	}
 	added := len(large.Objects) - len(small.Objects)
 	if added > 1 || len(large.Edges)-len(small.Edges) != added ||
-		!continuityBoardSupported(previous) || !continuityBoardSupported(current) {
+		!boardLeafSupported(previous) || !boardLeafSupported(current) {
 		return false, nil
 	}
 	// Index by D2's actual identifiers. Declaration order may differ between
@@ -104,12 +112,7 @@ func ContinueBoard(ctx context.Context, previous, current *d2graph.Graph) (bool,
 	}
 	if translated {
 		if dx != 0 || dy != 0 {
-			for _, n := range current.Objects {
-				n.Box = geo.NewBox(geo.NewPoint(n.TopLeft.X+dx, n.TopLeft.Y+dy), n.Width, n.Height)
-			}
-			for _, e := range current.Edges {
-				e.Route = translatedBoardRoute(e.Route, dx, dy)
-			}
+			shiftBoardObjects(current.Objects, current.Edges, dx, dy)
 		}
 		return true, nil
 	}
@@ -146,20 +149,14 @@ func continuityEdges(g *d2graph.Graph) map[string]*d2graph.Edge {
 	return edges
 }
 
-func continuityBoardSupported(g *d2graph.Graph) bool {
+func boardLeafSupported(g *d2graph.Graph) bool {
 	r := g.Root
-	if !g.IsWholeLayout() || g.Legend != nil || len(g.Objects) == 0 || len(g.Objects) > 256 || len(g.Edges) > 256 ||
-		r.Shape.Value != "" && r.Shape.Value != d2target.ShapeRectangle || r.GridRows != nil || r.GridColumns != nil ||
-		r.WidthAttr != nil || r.HeightAttr != nil || r.Top != nil || r.Left != nil || r.NearKey != nil ||
-		len(r.Children) != len(g.Objects) {
+	if r.Shape.Value != "" && r.Shape.Value != d2target.ShapeRectangle || len(r.Children) != len(g.Objects) {
 		return false
 	}
 	for _, n := range g.Objects {
-		if n == nil || n.Parent != r || r.Children[strings.ToLower(n.ID)] != n || n.IsContainer() ||
-			n.Shape.Value != "" && n.Shape.Value != d2target.ShapeRectangle && n.Shape.Value != d2target.ShapeSquare ||
-			n.Left != nil || n.Top != nil || n.NearKey != nil || n.GridRows != nil || n.GridColumns != nil ||
+		if n.Shape.Value != "" && n.Shape.Value != d2target.ShapeRectangle && n.Shape.Value != d2target.ShapeSquare ||
 			n.Direction.Value != "" || n.Language != "" || n.ZIndex != 0 || continuityHidden(n.Style) ||
-			n.Box == nil || !boardLeafPoint(n.TopLeft) || !boardLeafDimension(n.Width) || !boardLeafDimension(n.Height) ||
 			n.LabelPosition != nil && label.FromString(*n.LabelPosition) != label.InsideMiddleCenter ||
 			float64(n.LabelDimensions.Width) > n.Width || float64(n.LabelDimensions.Height) > n.Height {
 			return false
@@ -171,11 +168,8 @@ func continuityBoardSupported(g *d2graph.Graph) bool {
 			}
 		}
 	}
-	points := 0
 	for _, e := range g.Edges {
-		if e == nil || e.Src == nil || e.Dst == nil || r.Children[strings.ToLower(e.Src.ID)] != e.Src ||
-			r.Children[strings.ToLower(e.Dst.ID)] != e.Dst || e.SrcArrowhead != nil || e.DstArrowhead != nil ||
-			e.Label.Value != "" || e.IsCurve || continuityHidden(e.Style) || len(e.Route) < 2 || len(e.Route) > 4096-points {
+		if e.SrcArrowhead != nil || e.DstArrowhead != nil || e.Label.Value != "" || e.IsCurve || continuityHidden(e.Style) {
 			return false
 		}
 		if e.Style.StrokeWidth != nil && e.Style.StrokeWidth.TweenOffset != 0 {
@@ -183,12 +177,6 @@ func continuityBoardSupported(g *d2graph.Graph) bool {
 		}
 		if _, alpha := paintAlphaRange(e.Style.Stroke); alpha == 0 {
 			return false
-		}
-		points += len(e.Route)
-		for _, p := range e.Route {
-			if !boardLeafPoint(p) {
-				return false
-			}
 		}
 	}
 	return supportsRefinementStyles(g)
@@ -223,23 +211,8 @@ func boardTranslation(previous, current *d2graph.Graph, oldEdges map[string]*d2g
 			}
 		}
 	}
-	// Shape coordinates are truncated to integers at export. A fractional
-	// position crossing zero can otherwise change its port by one pixel.
-	for _, n := range current.Objects {
-		p := n.TopLeft
-		if !boardLeafPoint(geo.NewPoint(p.X+dx, p.Y+dy)) ||
-			float64(int(p.X+dx)-int(p.X)) != dx || float64(int(p.Y+dy)-int(p.Y)) != dy {
-			return 0, 0, false
-		}
-	}
-	if dx != 0 || dy != 0 {
-		for _, e := range current.Edges {
-			for _, p := range e.Route {
-				if !boardLeafPoint(geo.NewPoint(p.X+dx, p.Y+dy)) {
-					return 0, 0, false
-				}
-			}
-		}
+	if !canShiftBoardObjects(current.Objects, current.Edges, dx, dy) {
+		return 0, 0, false
 	}
 	return dx, dy, ok
 }
