@@ -310,3 +310,34 @@ H -> N1: {source-arrowhead: Hold for financial reconciliation}`
 		}
 	}
 }
+
+func TestTreePortSearchPreservesStraightenedBranches(t *testing.T) {
+	const source = `direction: right
+H: Main {width: 80; height: 110}
+N0: Task {width: 98; height: 75}
+H -> N0
+N1: Finish {width: 80; height: 50}
+N1 <- H: {target-arrowhead: 3.1}
+N2: Finish {width: 64; height: 50}
+H -> N2: {source-arrowhead: 3.1}
+N3: Finish {shape: oval; width: 80; height: 98}
+H -> N3`
+	d := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	var captions []geo.Box
+	bends := 0
+	for _, e := range d.Connections {
+		if e.SrcLabel == nil && e.DstLabel == nil {
+			continue
+		}
+		target := e.DstLabel != nil
+		caption := e.SrcLabel
+		if target {
+			caption = e.DstLabel
+		}
+		captions = append(captions, *geo.NewBox(e.GetArrowheadLabelPosition(target), float64(caption.LabelWidth), float64(caption.LabelHeight)))
+		bends += len(e.Route) - 2
+	}
+	if len(captions) != 2 || captions[0].Overlaps(captions[1]) || bends > 1 {
+		t.Fatalf("wanted two readable captions and at most one bend, got %v and %d bends", captions, bends)
+	}
+}

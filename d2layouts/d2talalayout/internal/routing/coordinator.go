@@ -679,6 +679,11 @@ func obscuresOpposingTreeCaptions(ctx context.Context, ready, selected []*Route,
 				return false, err
 			}
 			points := r.createSegmentEndpoints()
+			// Straightening and segment balancing can still move doglegs and
+			// centered ports. Only compare two off-center, one-bend exits.
+			if pass == 0 && len(points) != 3 {
+				return false, nil
+			}
 			target := e.To == parent
 			caption := labeling.PositionArrowheadLabel(e, target, points)
 			if caption == nil || caption.Width <= 0 || caption.Height <= 0 {
@@ -694,7 +699,11 @@ func obscuresOpposingTreeCaptions(ctx context.Context, ready, selected []*Route,
 			}
 			overlap := first.Box.Overlaps(caption.Box)
 			if pass == 0 {
-				if !overlap {
+				center := parent.Center()
+				straddle := func(a, b, mid float64) bool { return min(a, b) < mid-1 && max(a, b) > mid+1 }
+				sameFace := port.X == firstPort.X && straddle(port.Y, firstPort.Y, center.Y) ||
+					port.Y == firstPort.Y && straddle(port.X, firstPort.X, center.X)
+				if !sameFace || !overlap {
 					return false, nil
 				}
 				break

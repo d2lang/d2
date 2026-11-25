@@ -96,15 +96,9 @@ func TestWholeLayoutRecognizesLegacyNestedGraphs(t *testing.T) {
 	assert.False(t, g.IsWholeLayout())
 
 	// An older core recorded the nesting level without an explicit partial flag.
-	data, err := d2graph.SerializeGraph(g)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "isPartialLayout") {
-		t.Fatal("expected a legacy payload with only rootLevel")
-	}
+	const nested = `{"root":{"AbsID":"","attributes":{}},"edges":[],"objects":[],"rootLevel":1}`
 	var restored d2graph.Graph
-	if err := d2graph.DeserializeGraph(data, &restored); err != nil {
+	if err := d2graph.DeserializeGraph([]byte(nested), &restored); err != nil {
 		t.Fatal(err)
 	}
 	assert.False(t, restored.IsWholeLayout())
