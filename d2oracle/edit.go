@@ -153,6 +153,7 @@ func ReconnectEdge(g *d2graph.Graph, boardPath []string, edgeKey string, srcKey,
 		}
 	}
 
+	mk = sequenceGraphKey(boardG, mk)
 	obj := boardG.Root
 	if mk.Key != nil {
 		var ok bool
@@ -206,6 +207,16 @@ func ReconnectEdge(g *d2graph.Graph, boardPath []string, edgeKey string, srcKey,
 		}
 	}
 
+	if edge.SequenceKey != nil {
+		if err := validateSequenceReconnect(edge, src, dst); err != nil {
+			return nil, err
+		}
+		for _, r := range edge.References {
+			if r.MapKey.EdgeIndex == nil && (r.IsVar || r.ScopeAST != baseAST || r.MapKey.Range.Path != baseAST.Range.Path || r.MapKey.HasGlob()) {
+				return nil, OutsideScopeError{}
+			}
+		}
+	}
 	refs := edge.References
 	if baseAST != g.AST {
 		refs = GetWriteableEdgeRefs(edge, baseAST)
@@ -223,16 +234,22 @@ func ReconnectEdge(g *d2graph.Graph, boardPath []string, edgeKey string, srcKey,
 			refEdges = append(refEdges, ref.Edge)
 		}
 
-		if srcKey != nil {
+		if srcKey != nil && (edge.SequenceKey == nil || !hasOtherReference(edge.Src, refEdges)) {
 			ensureNode(g, refEdges, ref.ScopeObj, ref.Scope, ref.MapKey, ref.MapKey.Edges[ref.MapKeyEdgeIndex].Src, true)
 		}
-		if dstKey != nil {
+		if dstKey != nil && (edge.SequenceKey == nil || !hasOtherReference(edge.Dst, refEdges)) {
 			ensureNode(g, refEdges, ref.ScopeObj, ref.Scope, ref.MapKey, ref.MapKey.Edges[ref.MapKeyEdgeIndex].Dst, false)
 		}
 	}
 
+	if edge.SequenceKey != nil {
+		reconnectSequenceIndexes(boardG, baseAST, edge, src, dst)
+	}
 	for i := range refs {
 		ref := refs[i]
+		if edge.SequenceKey != nil && (ref.MapKey.HasGlob() || ref.IsVar || ref.ScopeAST != baseAST) {
+			continue
+		}
 		// it's a chain
 		if len(ref.MapKey.Edges) > 1 && ref.MapKey.EdgeIndex == nil {
 			splitChain := true
@@ -260,6 +277,10 @@ func ReconnectEdge(g *d2graph.Graph, boardPath []string, edgeKey string, srcKey,
 			}
 		}
 
+		if edge.SequenceKey != nil {
+			reconnectSequencePaths(ref.Edge, edge, src, dst)
+			continue
+		}
 		if src != nil {
 			srcmk, _ := d2parser.ParseMapKey(*srcKey)
 			ref.Edge.Src = srcmk.Key
@@ -358,6 +379,18 @@ func _set(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, key string, 
 
 	scope := baseAST
 	edgeTrimCommon(mk)
+	edge := sequenceEditEdge(g, mk)
+	if edge != nil {
+		if variableSequenceMessage(edge) {
+			return OutsideScopeError{}
+		}
+		if !localSequenceDeclaration(edge, baseAST) {
+			writeSequenceOverride(baseAST, edge, mk)
+			return nil
+		}
+		scope = edge.References[0].Scope
+		mk.Key = nil
+	}
 	obj := g.Root
 	toSkip := 1
 
@@ -546,16 +579,17 @@ func _set(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, key string, 
 		return err
 	}
 	attrs := obj.Attributes
-	var edge *d2graph.Edge
 	if len(mk.Edges) == 1 {
 		if mk.EdgeIndex == nil {
 			appendMapKey(scope, mk)
 			return nil
 		}
-		var ok bool
-		edge, ok = obj.HasEdge(mk)
-		if !ok {
-			return errors.New("edge not found")
+		if edge == nil {
+			var ok bool
+			edge, ok = obj.HasEdge(mk)
+			if !ok {
+				return errors.New("edge not found")
+			}
 		}
 		imported = IsImportedEdge(baseAST, edge)
 		refs := edge.References
@@ -1087,6 +1121,29 @@ func Delete(g *d2graph.Graph, boardPath []string, key string) (_ *d2graph.Graph,
 			return nil, err
 		}
 		return recompile(g)
+	}
+
+	if edge := sequenceEditEdge(boardG, mk); edge != nil {
+		isVariable := variableSequenceMessage(edge)
+		if isVariable && mk.EdgeKey != nil {
+			return nil, OutsideScopeError{}
+		}
+		previous := baseAST.Nodes
+		deleteSequenceMessage(boardG, baseAST, edge, mk)
+		if len(boardPath) > 0 && !ReplaceBoardNode(g.AST, baseAST, boardPath) {
+			return nil, fmt.Errorf("board %v AST not found", boardPath)
+		}
+		g2, err := recompile(g)
+		if isVariable {
+			// Indexed deletion works after a spread, but a direct map substitution
+			// resolves later and can silently restore the edge. Keep the source
+			// intact when this occurrence cannot be edited independently.
+			baseAST.Nodes = previous
+			if err == nil && len(GetBoardGraph(g2, boardPath).Edges) == len(boardG.Edges) {
+				return nil, OutsideScopeError{}
+			}
+		}
+		return g2, err
 	}
 
 	g2, err := deleteReserved(g, boardPath, baseAST, mk)
@@ -1782,25 +1839,8 @@ func ensureNode(g *d2graph.Graph, excludedEdges []*d2ast.Edge, scopeObj *d2graph
 	}
 
 	obj, ok := scopeObj.HasChild(d2graph.Key(k))
-	if ok {
-		// If this key only exists as part of excludedEdges (edges that'll be deleted), we need to make a new one
-		hasPersistingRef := false
-		for _, ref := range obj.References {
-			if !ref.InEdge() {
-				hasPersistingRef = true
-				break
-			}
-			if len(ref.MapKey.Edges) == 0 {
-				continue
-			}
-			if !go2.Contains(excludedEdges, ref.MapKey.Edges[ref.MapKeyEdgeIndex]) {
-				hasPersistingRef = true
-				break
-			}
-		}
-		if hasPersistingRef {
-			return
-		}
+	if ok && hasOtherReference(obj, excludedEdges) {
+		return
 	}
 	mk := &d2ast.Key{
 		Key: k,
@@ -1817,6 +1857,16 @@ func ensureNode(g *d2graph.Graph, excludedEdges []*d2ast.Edge, scopeObj *d2graph
 	} else {
 		scope.InsertAfter(cursor, mk)
 	}
+}
+
+// An endpoint survives an edit if it has a declaration or is still used by another edge.
+func hasOtherReference(obj *d2graph.Object, excluded []*d2ast.Edge) bool {
+	for _, ref := range obj.References {
+		if !ref.InEdge() || len(ref.MapKey.Edges) > 0 && !go2.Contains(excluded, ref.MapKey.Edges[ref.MapKeyEdgeIndex]) {
+			return true
+		}
+	}
+	return false
 }
 
 func Rename(g *d2graph.Graph, boardPath []string, key, newName string) (_ *d2graph.Graph, newKey string, err error) {
@@ -2657,6 +2707,7 @@ func ReconnectEdgeIDDeltas(g *d2graph.Graph, boardPath []string, edgeKey string,
 		}
 	}
 
+	mk = sequenceGraphKey(boardG, mk)
 	obj := boardG.Root
 	if mk.Key != nil {
 		var ok bool
@@ -2713,6 +2764,11 @@ func ReconnectEdgeIDDeltas(g *d2graph.Graph, boardPath []string, edgeKey string,
 		newDst = dst
 	}
 
+	if edge.SequenceKey != nil {
+		if err := validateSequenceReconnect(edge, src, dst); err != nil {
+			return nil, err
+		}
+	}
 	// The first ref is always the definition
 	firstRef := edge.References[0]
 	line := firstRef.MapKey.Range.Start.Line
@@ -2726,7 +2782,11 @@ func ReconnectEdgeIDDeltas(g *d2graph.Graph, boardPath []string, edgeKey string,
 	for _, otherEdge := range boardG.Edges {
 		if !sameEquivalentEdge && otherEdge.IsEquivalent(newSrc, edge.SrcArrow, newDst, edge.DstArrow) {
 			firstRef := otherEdge.References[0]
-			if firstRef.MapKey.Range.Start.Line <= line {
+			before := firstRef.MapKey.Range.Start.Line <= line
+			if edge.SequenceKey != nil && otherEdge.SequenceKey != nil {
+				before = otherEdge.SequenceGraphOrder < edge.SequenceGraphOrder
+			}
+			if before {
 				newIndex++
 			}
 		}
@@ -2739,7 +2799,7 @@ func ReconnectEdgeIDDeltas(g *d2graph.Graph, boardPath []string, edgeKey string,
 		}
 	}
 
-	for _, otherEdge := range g.Edges {
+	for _, otherEdge := range boardG.Edges {
 		if !sameEquivalentEdge && otherEdge.IsEquivalent(newSrc, edge.SrcArrow, newDst, edge.DstArrow) {
 			if otherEdge.Index >= newIndex {
 				before := otherEdge.AbsID()
@@ -2798,7 +2858,7 @@ func generateUniqueKey(g *d2graph.Graph, prefix string, ignored *d2graph.Object,
 		}
 		for {
 			_, ok := obj.HasEdge(mk)
-			if !ok {
+			if !ok && sequenceEditEdge(g, mk) == nil {
 				return d2format.Format(mk), true, nil
 			}
 			mk.EdgeIndex.Int = go2.Pointer(*mk.EdgeIndex.Int + 1)
@@ -3111,6 +3171,7 @@ func DeleteIDDeltas(g *d2graph.Graph, boardPath []string, key string) (deltas ma
 		}
 	}
 
+	mk = sequenceGraphKey(boardG, mk)
 	obj := boardG.Root
 	conflictNewIDs := make(map[*d2graph.Object]string)
 	conflictOldIDs := make(map[*d2graph.Object]string)

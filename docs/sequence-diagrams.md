@@ -84,6 +84,11 @@ Indexed message overrides still use the group that defines the message. For
 example, `handshake.(alice -> bob)[0].style.stroke: blue` styles the first message
 in `handshake`. Inside that group, use `(alice -> bob)[0].style.stroke: blue`.
 
+For a group assigned from a map variable such as `handshake: ${template}`,
+D2 resolves indexed message styles before expanding the variable. Put the
+style in the template, or import the group from a D2 file when each instance
+needs its own indexed override.
+
 ### Branches
 
 Set `branched: true` on the **edge-group’s shape** to draw alternatives in one

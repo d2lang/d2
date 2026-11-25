@@ -175,6 +175,11 @@ func GetEdge(g *d2graph.Graph, boardPath []string, absID string) *d2graph.Edge {
 			return e
 		}
 	}
+	mk, err := d2parser.ParseMapKey(absID)
+	if err == nil {
+		edgeTrimCommon(mk)
+		return sequenceEditEdge(g, mk)
+	}
 	return nil
 }
 
