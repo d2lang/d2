@@ -1216,7 +1216,14 @@ func (c *compiler) compileStyleField(styles *d2graph.Style, f *d2ir.Field) {
 	}
 	compileStyleFieldInit(styles, f, keyword)
 	scalar := f.Primary().Value
-	err := styles.Apply(keyword, scalar.ScalarString())
+	value := scalar.ScalarString()
+	if keyword == "opacity" && f.Primary().TweenOffset != 0 {
+		// A variable can also be used in a counter with coarser precision.
+		// Opacity is continuous, including during the zero-visibility check.
+		rounded, _ := strconv.ParseFloat(value, 64)
+		value = strconv.FormatFloat(rounded+f.Primary().TweenOffset, 'g', -1, 64)
+	}
+	err := styles.Apply(keyword, value)
 	if err != nil {
 		c.errorf(scalar, err.Error())
 		return

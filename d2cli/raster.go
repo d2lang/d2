@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -594,6 +595,78 @@ func motionGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
 	return append(samples, end)
 }
 
+// gifBoardFrames schedules an authored step for GIF playback. Supply its
+// predecessor only when the two pictures use the same camera.
+func gifBoardFrames(scratch []d2animate.Frame, board, previous *d2target.Diagram, intervalMS int) []d2animate.Frame {
+	frames := d2animate.AppendBoardFrames(scratch[:0], board, intervalMS)
+	// The last sample can split its hold with the endpoint even at 25fps.
+	denseMotion := board.LayoutContinuity && len(frames) > 2 &&
+		slices.ContainsFunc(frames[:len(frames)-2], func(f d2animate.Frame) bool { return f.DurationMS < 20 })
+	if board.GridMotion || denseMotion {
+		return motionGIFFrames(frames)
+	}
+	if len(board.TweenFrames) > 0 {
+		return paintGIFFrames(frames, previous)
+	}
+	return frames
+}
+
+func gifStepDelay(frame d2animate.Frame) int {
+	return xgif.StepDelay(time.Duration(frame.ElapsedMS)*time.Millisecond, time.Duration(frame.DurationMS)*time.Millisecond, frame.TweenSample)
+}
+
+// Paint samples normally last around 40ms, but a short authored endpoint
+// hold can quantize to a single centisecond. Keep the original boundaries
+// wherever two centiseconds fit on both sides.
+func paintGIFFrames(frames []d2animate.Frame, previous *d2target.Diagram) []d2animate.Frame {
+	if !slices.ContainsFunc(frames, func(f d2animate.Frame) bool { return gifStepDelay(f) == 1 }) {
+		return frames
+	}
+	end := frames[len(frames)-1]
+	slot := end.ElapsedMS + end.DurationMS
+	ticks := (slot + 9) / 10
+	capacity := max(1, ticks/2)
+	frames = slices.DeleteFunc(frames, func(f d2animate.Frame) bool { return gifStepDelay(f) == 0 })
+	if capacity == 1 {
+		end.ElapsedMS, end.DurationMS = 0, slot
+		return append(frames[:0], end)
+	}
+	if len(frames) > capacity && previous != nil && sameGIFAppearance(previous, frames[0].Diagram) {
+		// Its starting picture already had a full board slot. Spend the scarce
+		// time on the intermediate paint, including on a two-sample tween.
+		frames = frames[1:]
+	}
+	if len(frames) > capacity {
+		// A selected step may have no preceding picture. Keep both ends and
+		// the intermediate samples nearest evenly spaced indices.
+		for i := range capacity {
+			index := (i*(len(frames)-1) + (capacity-1)/2) / (capacity - 1)
+			frames[i] = frames[index]
+		}
+		frames = frames[:capacity]
+	}
+	start := 0
+	for i := range frames {
+		next := slot
+		if remaining := len(frames) - i - 1; remaining > 0 {
+			native := frames[i+1].ElapsedMS / 10
+			next = 10 * max(start/10+2, min(native, ticks-2*remaining))
+		}
+		frames[i].ElapsedMS, frames[i].DurationMS = start, next-start
+		start = next
+	}
+	return frames
+}
+
+func sameGIFAppearance(a, b *d2target.Diagram) bool {
+	// Root.Label names the board in paged exports and is absent from GIF.
+	root := a.Root
+	root.Label = b.Root.Label
+	return reflect.DeepEqual(root, b.Root) && reflect.DeepEqual(a.Shapes, b.Shapes) &&
+		reflect.DeepEqual(a.Connections, b.Connections) && reflect.DeepEqual(a.Legend, b.Legend) &&
+		reflect.DeepEqual(a.FontFamily, b.FontFamily) && reflect.DeepEqual(a.MonoFontFamily, b.MonoFontFamily)
+}
+
 func renderGIFWithSession(
 	ctx context.Context,
 	inputPath string,
@@ -644,15 +717,14 @@ func renderGIFWithSession(
 	var timeline []gifSegment
 	totalFrames := 0
 	var boardFrames []d2animate.Frame
-	for _, board := range boards {
-		boardFrames = d2animate.AppendBoardFrames(boardFrames[:0], board, intervalMs)
-		motionTicks := board.GridMotion || board.LayoutContinuity && len(board.TweenFrames) > 0 &&
-			slices.ContainsFunc(boardFrames, func(f d2animate.Frame) bool { return f.DurationMS < 20 })
-		if motionTicks {
-			boardFrames = motionGIFFrames(boardFrames)
+	for i, board := range boards {
+		var previous *d2target.Diagram
+		if i > 0 && viewports[boards[i-1]] == viewports[board] {
+			previous = boards[i-1]
 		}
+		boardFrames = gifBoardFrames(boardFrames, board, previous, intervalMs)
 		for _, segment := range boardFrames {
-			delay := xgif.StepDelay(time.Duration(segment.ElapsedMS)*time.Millisecond, time.Duration(segment.DurationMS)*time.Millisecond, segment.TweenSample)
+			delay := gifStepDelay(segment)
 			if delay == 0 {
 				continue
 			}
@@ -663,7 +735,7 @@ func renderGIFWithSession(
 					return summary, err
 				}
 			}
-			if motionTicks {
+			if len(board.TweenFrames) > 0 || board.GridMotion {
 				// A short endpoint hold can otherwise be split into 1cs frames.
 				count = min(count, max(1, delay/2))
 			}

@@ -472,10 +472,13 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 }
 
 func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
+	if animateInterval < 0 {
+		return xmain.UsageErrorf("--animate-interval must be non-negative")
+	}
 	if int64(int(animateInterval)) != animateInterval {
 		return xmain.UsageErrorf("animate-interval exceeds the supported range on this platform")
 	}
-	if ext.isIsometric() && (animateInterval < 0 || animateInterval > 600000 || animateInterval > 0 && ext != isometricGIF) {
+	if ext.isIsometric() && (animateInterval > 600000 || animateInterval > 0 && ext != isometricGIF) {
 		return xmain.UsageErrorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
 	}
 	if animateInterval > 0 && !ext.supportsAnimation() {
@@ -605,6 +608,9 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	renderOpts := *renderOptions
 	cancel()
 
+	if ext == GIF && strings.EqualFold(*opts.Layout, "tala") {
+		markPinnedGIFBoards(rootDiagram, g)
+	}
 	diagram := rootDiagram.GetBoard(boardPath)
 	if diagram == nil {
 		return nil, false, fmt.Errorf(`render target "%s" not found`, strings.Join(boardPath, "."))

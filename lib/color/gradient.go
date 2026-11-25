@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Gradient struct {
@@ -128,20 +129,36 @@ func parseColorStops(params []string) ([]ColorStop, error) {
 	var colorStops []ColorStop
 	for i, p := range params {
 		p = strings.TrimSpace(p)
-		parts := strings.Fields(p)
-
-		switch len(parts) {
-		case 1:
-			colorStops = append(colorStops, ColorStop{Color: parts[0]})
-		case 2:
-			position, err := canonicalGradientStopPosition(parts[1])
-			if err != nil {
-				return nil, fmt.Errorf("color stop %d position %q: %w", i, parts[1], err)
-			}
-			colorStops = append(colorStops, ColorStop{Color: parts[0], Position: position})
-		default:
+		if p == "" {
 			return nil, fmt.Errorf("invalid color stop %d %q", i, p)
 		}
+		stop := ColorStop{Color: p}
+		// Only whitespace outside a color function separates its offset.
+		depth := 0
+		for j, r := range p {
+			if depth == 0 && unicode.IsSpace(r) {
+				position := strings.TrimSpace(p[j:])
+				canonical, err := canonicalGradientStopPosition(position)
+				if err != nil {
+					return nil, fmt.Errorf("color stop %d position %q: %w", i, position, err)
+				}
+				stop.Color, stop.Position = p[:j], canonical
+				break
+			}
+			switch r {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth < 0 {
+					return nil, fmt.Errorf("unbalanced color function in stop %d %q", i, p)
+				}
+			}
+		}
+		if depth != 0 {
+			return nil, fmt.Errorf("unbalanced color function in stop %d %q", i, p)
+		}
+		colorStops = append(colorStops, stop)
 	}
 	return colorStops, nil
 }

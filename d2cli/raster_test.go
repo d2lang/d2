@@ -456,7 +456,8 @@ func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
 		delays                      []int
 	}{
 		{"duration exceeds interval", 30, 101, 3, []int{3, 3, 3, 2, 3}},
-		{"one millisecond hold", 102, 101, 3, []int{2, 3, 3, 3, 3, 3, 4, 1}},
+		// Preserve the total duration, with an endpoint delay browsers play as authored.
+		{"one millisecond hold", 102, 101, 3, []int{2, 3, 3, 3, 3, 3, 3, 2}},
 		{"sub-centisecond transition", 4, 5, 1, []int{1, 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -483,6 +484,49 @@ func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
 			endpoint := animation.Image[len(animation.Image)-1].At(5, 5)
 			if got := color.NRGBAModel.Convert(endpoint).(color.NRGBA); got != (color.NRGBA{B: 255, A: 255}) {
 				t.Fatalf("last frame has color %v, want authored blue endpoint", got)
+			}
+		})
+	}
+}
+
+func TestShortGIFPaintTransition(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: %dms; animate-interval: %dms; pad: 0}}
+swatch: "" {width: 40; height: 40; style: {stroke-width: 0; fill: red}}
+steps: {change: {swatch.style.fill: blue}}`
+	red, purple, blue := color.RGBA{255, 0, 0, 255}, color.RGBA{128, 0, 128, 255}, color.RGBA{0, 0, 255, 255}
+	for _, tc := range []struct {
+		name, target       string
+		duration, interval int
+		want               []color.RGBA
+		ticks              int
+	}{
+		{"lone midpoint", "*", 41, 50, []color.RGBA{red, purple, blue}, 10},
+		{"selected endpoints", "steps.change.*", 41, 50, []color.RGBA{red, blue}, 5},
+		{"all samples fit", "*", 101, 102, []color.RGBA{red, {170, 0, 85, 255}, {85, 0, 170, 255}, blue}, 22},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := imageCLI(t, t.TempDir(), fmt.Sprintf(source, tc.duration, tc.interval), "--target="+tc.target, "--stdout-format=gif", "-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			g, err := gif.DecodeAll(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []color.RGBA
+			ticks := 0
+			for i, img := range g.Image {
+				paint := color.RGBAModel.Convert(img.At(img.Rect.Dx()/2, img.Rect.Dy()/2)).(color.RGBA)
+				if len(got) == 0 || got[len(got)-1] != paint {
+					got = append(got, paint)
+				}
+				if g.Delay[i] < 2 {
+					t.Fatalf("frame %d lasts %dcs", i, g.Delay[i])
+				}
+				ticks += g.Delay[i]
+			}
+			if !slices.Equal(got, tc.want) || ticks != tc.ticks {
+				t.Fatalf("paints %v in %dcs; want %v in %dcs", got, ticks, tc.want, tc.ticks)
 			}
 		})
 	}

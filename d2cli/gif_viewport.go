@@ -3,13 +3,63 @@ package d2cli
 import (
 	"image"
 	"slices"
+	"strconv"
 
+	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 )
 
 type gifViewport struct {
 	bounds image.Rectangle // unpadded world coordinates
 	canvas image.Rectangle // actual rendered extents in pixels, including decorations
+}
+
+// TALA leaves explicitly pinned boards in the author's coordinate system.
+// Record that relationship after layout and transition planning, before --target
+// selects a subtree. Independent layers always start with their own camera.
+func markPinnedGIFBoards(board *d2target.Diagram, graph *d2graph.Graph) {
+	for i, layer := range board.Layers {
+		markPinnedGIFBoards(layer, graph.Layers[i])
+	}
+	for i, scenario := range board.Scenarios {
+		child := graph.Scenarios[i]
+		scenario.LayoutContinuity = scenario.LayoutContinuity || sharePinnedCoordinates(graph, child)
+		markPinnedGIFBoards(scenario, child)
+	}
+	previous := graph
+	for i, step := range board.Steps {
+		child := graph.Steps[i]
+		step.LayoutContinuity = step.LayoutContinuity || sharePinnedCoordinates(previous, child)
+		markPinnedGIFBoards(step, child)
+		previous = child
+	}
+}
+
+func sharePinnedCoordinates(from, to *d2graph.Graph) bool {
+	// One honored top-level pin establishes the author's coordinate system,
+	// even if successive boards replace every object, including the pin.
+	hasAbsolutePin := func(g *d2graph.Graph) bool {
+		for _, obj := range g.Root.Children {
+			if obj.Left == nil || obj.Top == nil || obj.Box == nil || obj.TopLeft == nil {
+				continue
+			}
+			x, errX := strconv.Atoi(obj.Left.Value)
+			y, errY := strconv.Atoi(obj.Top.Value)
+			if errX == nil && errY == nil && obj.TopLeft.X == float64(x) && obj.TopLeft.Y == float64(y) {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasAbsolutePin(from) || !hasAbsolutePin(to) {
+		return false
+	}
+	for _, sample := range to.TweenFrames {
+		if !hasAbsolutePin(sample) {
+			return false
+		}
+	}
+	return true
 }
 
 // Related frames must agree on the screen position of a world coordinate.

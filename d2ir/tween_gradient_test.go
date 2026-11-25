@@ -99,3 +99,21 @@ steps: {change: {meter.style.fill: "linear-gradient(blue 0.2, blue, white 80%)"}
 		previous = offset
 	}
 }
+
+func TestTweenGradientWithSpacedColorFunctions(t *testing.T) {
+	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 120ms}}
+bar.style.fill: "linear-gradient(to right, rgb(90, 130, 210) 20%, white 20%)"
+steps: {loaded: {bar.style.fill: "linear-gradient(to right, rgba(90, 130, 210, 0.5) 80%, white 80%)"}}`
+	m, err := compileTween(t, source, d2ir.CompileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "loaded").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d frames, want 2", len(step.TweenFrames))
+	}
+	got := tweenText(t, step.TweenFrames[1], "bar", "style", "fill")
+	if want := "linear-gradient(to right, #5a82d2c0 50%, #ffffff 50%)"; got != want {
+		t.Errorf("midpoint = %q, want %q", got, want)
+	}
+}

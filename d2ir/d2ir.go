@@ -151,8 +151,8 @@ type Scalar struct {
 	binding *tweenBinding
 	parent  Node
 	Value   d2ast.Scalar `json:"value"`
-	// TweenOffset retains the fractional part lost when formatting an integer
-	// sample. Consumers such as stroke-width can paint it at subpixel precision.
+	// TweenOffset retains precision lost when formatting a numeric sample for
+	// text. Continuous paint properties can use it for the unrounded value.
 	TweenOffset float64 `json:"-"`
 }
 
@@ -189,8 +189,9 @@ type Map struct {
 	Fields            []*Field `json:"fields"`
 	Edges             []*Edge  `json:"edges"`
 
-	globs          []*globContext
-	pendingSpreads []*Field
+	globs             []*globContext
+	edgePropertyRules *spreadEdgeRule
+	pendingSpreads    []*Field
 
 	// Fields and Edges retain source order. These indexes are derived lookup
 	// accelerators only; they never determine iteration order.
@@ -482,6 +483,7 @@ func (m *Map) Copy(newParent Node) Node {
 	}
 	tmp := *m
 	m = &tmp
+	m.edgePropertyRules = m.edgePropertyRules.fork()
 	m.fieldIndex = nil
 	m.fieldIndexSize = 0
 	m.edgeIndex = nil
@@ -562,6 +564,11 @@ func (m *Map) CopyBase(newParent Node) *Map {
 }
 
 func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrder) {
+	// An edge attribute can refer to the edge selector that assigned it, but
+	// it is never an endpoint whose removal should delete that connection.
+	if ParentEdge(m) != nil {
+		return
+	}
 	for _, fr := range refs {
 		if cutoff != nil && (!fr.InEdge() || cutoff.before(fr.order)) {
 			continue
