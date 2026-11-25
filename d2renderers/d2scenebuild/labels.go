@@ -103,10 +103,9 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}, nil
 }
 
-// A crossing only cuts the back connection's stroke. Labels, markers and the
-// foreground connection keep their own paint and opacity.
-func crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap) *d2scene.Mask {
-	if len(gaps) == 0 {
+// These openings affect only the individual connection stroke.
+func connectionStrokeMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap, labelGaps []d2target.SequenceLabelGap) *d2scene.Mask {
+	if len(gaps) == 0 && len(labelGaps) == 0 {
 		return nil
 	}
 	root := d2scene.NewNode(nil)
@@ -119,6 +118,14 @@ func crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap) *d2scene.M
 			RadiusX: gap.Radius, RadiusY: gap.Radius,
 			Fill: d2scene.SolidPaint{Color: color.NRGBA{A: 255}},
 		}))
+	}
+	for _, gap := range labelGaps {
+		hole := d2scene.NewNode(d2scene.Rect{
+			Box:  d2scene.Box{X: gap.TopLeft.X, Y: gap.TopLeft.Y, Width: gap.Width, Height: gap.Height},
+			Fill: d2scene.SolidPaint{Color: color.NRGBA{A: 255}},
+		})
+		hole.Opacity = gap.Opacity
+		root.Children = append(root.Children, hole)
 	}
 	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}
 }
@@ -153,27 +160,8 @@ func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth,
 }
 
 func shapeLabelPlacement(targetShape d2target.Shape) (*geo.Box, *geo.Point) {
-	geometry := targetGeometry(targetShape)
 	position := label.FromString(targetShape.LabelPosition)
-	var box *geo.Box
-	if position.IsOutside() || position.IsBorder() {
-		box = geometry.GetBox().Copy()
-		if targetShape.ThreeDee {
-			offsetY := d2target.THREE_DEE_OFFSET
-			if targetShape.Type == d2target.ShapeHexagon {
-				offsetY /= 2
-			}
-			box.TopLeft.Y -= float64(offsetY)
-			box.Height += float64(offsetY)
-			box.Width += float64(d2target.THREE_DEE_OFFSET)
-		} else if targetShape.Multiple {
-			box.TopLeft.Y -= float64(d2target.MULTIPLE_OFFSET)
-			box.Height += float64(d2target.MULTIPLE_OFFSET)
-			box.Width += float64(d2target.MULTIPLE_OFFSET)
-		}
-	} else {
-		box = geometry.GetInnerBox()
-	}
+	box := targetShape.LabelBox(position, targetShape.Geometry())
 	return box, targetShape.LabelTopLeft(position, box)
 }
 

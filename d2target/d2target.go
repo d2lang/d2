@@ -891,6 +891,14 @@ func (s *Shape) geometry(pos Point, width, height int) shape.Shape {
 	return g
 }
 
+// LabelBox is the outline or inner content box anchoring an ordinary caption.
+func (s *Shape) LabelBox(position label.Position, outline shape.Shape) *geo.Box {
+	if position.IsOutside() || position.IsBorder() {
+		return s.OuterLabelBox(outline.GetBox())
+	}
+	return outline.GetInnerBox()
+}
+
 // LabelTopLeft resolves both ordinary captions and intermediate animation anchors.
 func (s *Shape) LabelTopLeft(position label.Position, box *geo.Box) *geo.Point {
 	if p := s.MotionLabelTopLeft; p != nil {

@@ -374,6 +374,7 @@ func (b *meshBuilder) prepareEdges(edges []d2isometric.Edge, placer *routeCaptio
 
 func (b *meshBuilder) drawEdges(edges []d2isometric.Edge, placer *routeCaptionPlacer, scene *d2isometric.Scene, routes nativeConnectionPaths) []packetRoute {
 	var packets []packetRoute
+	b.indexSequenceText()
 	lanePaths, paths := routes.lanes, routes.wires
 	captionPaint := nativeCaptionPaint(scene)
 	for edgeIndex, edge := range edges {

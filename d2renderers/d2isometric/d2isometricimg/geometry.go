@@ -64,6 +64,8 @@ type meshBuilder struct {
 	links             []nativeLink
 	linkBytes         int
 	gradientTextures  map[string]*image.RGBA
+	sequencePrints    []sequenceNodePrint
+	sequenceText      []sequenceTextArea
 }
 type labelSurface struct {
 	center              Vec
@@ -340,17 +342,21 @@ func (b *meshBuilder) shapeLabel(original d2target.Shape, s labelSurface, ink st
 	if b.err != nil || s.width <= 0 || s.depth <= 0 || opacity <= 0 {
 		return
 	}
+	first := len(b.triangles)
 	if !isRichLabel(original) {
 		b.label(original.Label, s, original.Text, ink, opacity, kind)
-		return
+	} else {
+		tex, err := b.rich.texture(original, b.printStyle(s, original.Text, ink, opacity, kind))
+		if err != nil {
+			b.err = err
+			return
+		}
+		b.surfaceTexture(tex, s, 1)
+		b.addDocumentLinks(b.rich.lastDocument, s)
 	}
-	tex, err := b.rich.texture(original, b.printStyle(s, original.Text, ink, opacity, kind))
-	if err != nil {
-		b.err = err
-		return
+	if original.SequenceRole != "" && original.Label != "" && len(b.triangles) > first && libcolor.PaintVisibleThroughout(ink) {
+		b.sequencePrints = append(b.sequencePrints, sequenceNodePrint{first, opacity})
 	}
-	b.surfaceTexture(tex, s, 1)
-	b.addDocumentLinks(b.rich.lastDocument, s)
 }
 
 func (b *meshBuilder) shapeIcon(original d2target.Shape, s labelSurface, opacity float64, kind string, radius ...float64) labelSurface {

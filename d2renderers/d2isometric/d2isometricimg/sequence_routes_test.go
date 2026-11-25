@@ -304,3 +304,57 @@ func TestSequenceCaptionKnockoutPreservesDashPhaseAndPartialAlpha(t *testing.T) 
 		t.Fatal("caption mask did not intersect the diagonal dashed message")
 	}
 }
+
+func TestMessageCaptionCutsProjectedLifelineWithoutShiftingDashes(t *testing.T) {
+	wire := sequenceTestEdge("actor", "lifeline", nv(0, .08, 0), nv(0, .08, 4))
+	wire.Metadata.Original.SequenceRole = "lifeline"
+	wire.Stroke, wire.StrokeExplicit, wire.StrokeDash = "#249558", true, 6
+	message := sequenceTestEdge("message", "message", nv(-1, .08, 2), nv(1, .08, 2))
+	message.Metadata.Original.SequenceRole = "message"
+	message.Label = "Middle actor"
+	message.Metadata.Original.Text = d2target.Text{Label: message.Label, LabelWidth: 170, LabelHeight: 48, FontSize: 24}
+	captions, _ := nativeSequenceCaptionData(message, .01)
+	center := captionProjection(captions[0].surface.center)
+	wireOffset := captionProjection(nv(0, nativeSequenceLifelineY, 0))
+	captionZ := center.z - wireOffset.z
+	ink := nativePaint(wire.Stroke, "")
+	build := func(edges ...d2isometric.Edge) func(float64) bool {
+		painter, err := newTextPainter(context.Background(), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := &meshBuilder{ctx: context.Background(), scale: .01, text: painter}
+		b.edges(edges, newRouteCaptionPlacer())
+		if b.err != nil {
+			t.Fatal(b.err)
+		}
+		return func(z float64) bool {
+			for _, tri := range b.triangles {
+				if tri.Material.Color == ink {
+					lo, hi := solidTestBounds([]Triangle{tri})
+					if lo.Z < z && z < hi.Z {
+						return true
+					}
+				}
+			}
+			return false
+		}
+	}
+	before, after := build(wire), build(wire, message)
+	removed, preserved := 0, 0
+	for z := .0005; z < 4; z += .003 {
+		inMask := math.Abs(z-captionZ) < captions[0].surface.depth/2+.02
+		was := before(z)
+		if got := after(z); got != (was && !inMask) {
+			t.Fatalf("lifeline dash at z=%v: before=%v, after=%v, in projected caption=%v", z, was, got, inMask)
+		}
+		if inMask && was {
+			removed++
+		} else if was {
+			preserved++
+		}
+	}
+	if removed == 0 || preserved == 0 {
+		t.Fatal("fixture failed to exercise both masked and unaffected dashes")
+	}
+}

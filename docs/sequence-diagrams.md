@@ -90,7 +90,8 @@ Set `branched: true` on the **edge-group’s shape** to draw alternatives in one
 frame. Each direct child map provides a branch and its label. The branches
 appear in source order, separated by dashed lines. Keep the timeline items of
 each branch together. An indexed override can still style a message from an
-earlier branch. The frame title is ordinary text.
+earlier branch. The frame title is ordinary text. A lifeline leaves a gap
+where it passes behind a branch label or other sequence text.
 
 ```d2
 shape: sequence-diagram

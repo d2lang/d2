@@ -6,6 +6,7 @@ import (
 
 	"github.com/d2lang/d2/d2renderers/d2isometric"
 	"github.com/d2lang/d2/d2target"
+	libcolor "github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/svg"
@@ -97,6 +98,13 @@ type nativeSequenceCaption struct {
 	main    bool
 }
 
+func (c nativeSequenceCaption) opacity(edge d2isometric.Edge) float64 {
+	if c.main && edge.Metadata.Original.MotionLabel != nil {
+		return edge.Opacity * edge.Metadata.Original.MotionLabel.Opacity
+	}
+	return edge.Opacity
+}
+
 func nativeSequenceCaptionData(edge d2isometric.Edge, scale float64) ([]nativeSequenceCaption, labelSurface) {
 	if scale <= 0 || !captionFinite(scale) || len(edge.Points) < 2 {
 		return nil, labelSurface{}
@@ -165,6 +173,13 @@ func (b *meshBuilder) reserveSequenceEdge(edge d2isometric.Edge, points []Vec, p
 	}
 	captions, icon := nativeSequenceCaptionData(edge, b.scale)
 	for _, caption := range captions {
+		color := caption.style.Color
+		if caption.main && edge.FontExplicit {
+			color = edge.FontColor
+		}
+		if edge.Metadata.Original.SequenceRole == "message" && (color == "" || libcolor.PaintVisibleThroughout(color)) {
+			b.addSequenceText(caption.surface, caption.opacity(edge))
+		}
 		placer.reserve(captionRect(caption.surface, true))
 	}
 	if icon.width > 0 && icon.depth > 0 {
@@ -184,16 +199,17 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 	total := lengths[len(lengths)-1]
 	first := len(b.triangles)
 	if radius > 0 && total > 0 {
-		wire := points
+		wire, wireLengths := points, lengths
 		start, end := nativeArrowClearance(edge.SourceArrow, edge.RenderedStrokeWidth())/total, 1-nativeArrowClearance(edge.TargetArrow, edge.RenderedStrokeWidth())/total
 		if start > 0 || end < 1 {
 			wire = nativeRouteSection(points, lengths, start, end)
+			wireLengths = routeLengths(wire)
 		}
+		draw := b.sequenceWirePainter(edge, wire, wireLengths, radius, mat)
 		dashStyle := edge.StrokeDash
 		if dashStyle <= 0 {
-			b.routeInk(wire, radius, mat)
+			draw(0, 1)
 		} else {
-			wireLengths := routeLengths(wire)
 			if len(wireLengths) > 1 {
 				length := wireLengths[len(wireLengths)-1]
 				dash, gap := svg.GetStrokeDashAttributes(edge.RenderedStrokeWidth(), dashStyle)
@@ -206,7 +222,7 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 					return nil
 				}
 				for at := 0.; at < length; at += dash + gap {
-					b.routeInk(nativeRouteSection(wire, wireLengths, at/length, min(1, (at+dash)/length)), radius, mat)
+					draw(at/length, min(1, (at+dash)/length))
 					if b.err != nil {
 						return nil
 					}
@@ -251,7 +267,7 @@ func (b *meshBuilder) sequenceEdge(edge d2isometric.Edge, points []Vec, scene *d
 		if caption.main {
 			b.addSurfaceLink(edge.Link, edge.Tooltip, caption.surface)
 		}
-		b.label(caption.style.Label, caption.surface, caption.style, ink, edge.Opacity, "edge")
+		b.label(caption.style.Label, caption.surface, caption.style, ink, caption.opacity(edge), "edge")
 	}
 	if icon.width > 0 && icon.depth > 0 {
 		b.shapeIcon(d2target.Shape{ID: edge.ID, Icon: edge.Metadata.Original.Icon}, icon, edge.Opacity, "edge", edge.Metadata.Original.IconBorderRadius)
