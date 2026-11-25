@@ -60,7 +60,7 @@ func newPackingFrame(root *layoutgraph.Node, children layoutgraph.Nodes, edgeles
 			}
 			if l := n.Label; l != nil && !l.PositionFixed() && (l.Width > n.Width || l.Height > n.Height) {
 				unplaced++
-				if unplaced > 1 || n.Icon != nil && n.Icon.PositionFixed() && n.Icon.Position.IsOutside() {
+				if unplaced > 1 || n.HasIconDecoration() && n.Icon.PositionFixed() && n.Icon.Position.IsOutside() {
 					frame.decoratedCanvas = false
 					break
 				}
@@ -230,7 +230,7 @@ func (frame packingFrame) newDecorationGroup(nodes layoutgraph.Nodes, root *layo
 		if n.Label != nil && n.Label.PositionFixed() && n.Label.Position.IsOutside() {
 			add(n.Label.Position, n.Label.Width, n.Label.Height)
 		}
-		if n.Icon != nil && n.Icon.PositionFixed() && n.Icon.Position.IsOutside() {
+		if n.HasIconDecoration() && n.Icon.PositionFixed() && n.Icon.Position.IsOutside() {
 			size := math.Ceil(n.IconSize(n.Icon.Position))
 			add(n.Icon.Position, size, size)
 		}

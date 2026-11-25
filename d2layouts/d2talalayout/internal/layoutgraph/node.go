@@ -1021,7 +1021,7 @@ func (n *Node) UpdateSpacing() {
 		}
 	}
 
-	if n.Icon != nil && n.Icon.PositionFixed() {
+	if n.HasIconDecoration() && n.Icon.PositionFixed() {
 		iconSize := float64(MaxIconSize + 2*label.PADDING)
 		if n.Icon.Position.IsOutside() {
 			iconSize = n.OutsideIconReserve() + 2*label.PADDING
@@ -2275,7 +2275,7 @@ func (frame *Node) NeedsAutomaticCaptionRoom(nodes Nodes) bool {
 }
 
 func (n *Node) HasWideCaptionWithFixedIcon() bool {
-	return n != nil && n.Icon != nil && n.Icon.PositionFixed() && n.Label != nil && !n.Label.PositionFixed() && n.Label.Width > n.Width
+	return n.HasIconDecoration() && n.Icon.PositionFixed() && n.Label != nil && !n.Label.PositionFixed() && n.Label.Width > n.Width
 }
 
 func (n *Node) NeedsCenteredLabelWidth(wideAutomatic bool) bool {

@@ -39,6 +39,28 @@ func TestCalculateTooltipBoundsUsesDiagramFonts(t *testing.T) {
 	}
 }
 
+func TestOutsideIconBoundsFollowShapeType(t *testing.T) {
+	const x, y, w, h = 100, 75, 96, 96
+	for _, tc := range []struct {
+		shape string
+		left  int
+	}{
+		{ShapeImage, x},
+		{ShapeRectangle, x - 5 - 48}, // 5 px gap and a 48 px icon
+	} {
+		t.Run(tc.shape, func(t *testing.T) {
+			d := Diagram{Shapes: []Shape{{
+				Type: tc.shape, Pos: Point{x, y}, Width: w, Height: h,
+				Icon: &url.URL{Path: "photo.svg"}, IconPosition: "OUTSIDE_LEFT_MIDDLE",
+			}}}
+			tl, br := d.BoundingBox()
+			if tl != (Point{tc.left, y}) || br != (Point{x + w, y + h}) {
+				t.Fatalf("bounds = %v ... %v", tl, br)
+			}
+		})
+	}
+}
+
 func TestHashIDStableAcrossURLFieldOrder(t *testing.T) {
 	icon := &url.URL{
 		Scheme:      "https",

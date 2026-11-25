@@ -531,7 +531,7 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 			x2 = go2.Max(x2, targetShape.Pos.X+MULTIPLE_OFFSET+targetShape.Width+stroke)
 		}
 
-		if targetShape.Icon != nil && label.FromString(targetShape.IconPosition).IsOutside() {
+		if targetShape.Icon != nil && targetShape.Type != ShapeImage && label.FromString(targetShape.IconPosition).IsOutside() {
 			contentBox := geo.NewBox(geo.NewPoint(0, 0), float64(targetShape.Width), float64(targetShape.Height))
 			s := shape.NewShape(targetShape.Type, contentBox)
 			size := GetIconSize(s.GetInnerBox(), targetShape.IconPosition)

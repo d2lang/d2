@@ -2,6 +2,7 @@ package d2talalayout_test
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/d2lang/d2/lib/geo"
@@ -216,5 +217,30 @@ func TestFramePreservesTilePositionWhenNestedLayoutHidesAnEdge(t *testing.T) {
 		if len(d.Connections) != 1 || workerX-parentX != 292 {
 			t.Fatalf("external connection count %d, worker x offset %d", len(d.Connections), workerX-parentX)
 		}
+	}
+}
+
+func TestTreeImageUsesItsBodyForIcon(t *testing.T) {
+	const source = `direction: down
+camera: Photo {shape: image; icon: camera.svg; width: 96; height: 96}
+a -> camera
+a -> b`
+	plain := compileRoutingDiagram(t, t.Context(), source, 1, nil)
+	for _, side := range []string{"outside-top-center", "outside-left-center"} {
+		t.Run(side, func(t *testing.T) {
+			hinted := compileRoutingDiagram(t, t.Context(), source+"\ncamera.icon.near: "+side, 1, nil)
+			if len(hinted.Shapes) != len(plain.Shapes) || !reflect.DeepEqual(hinted.Connections, plain.Connections) {
+				t.Fatal("image icon position changed the tree routes")
+			}
+			for i, s := range hinted.Shapes {
+				if s.Pos != plain.Shapes[i].Pos || s.Width != plain.Shapes[i].Width || s.Height != plain.Shapes[i].Height {
+					t.Fatalf("image icon position changed the geometry of %s", s.ID)
+				}
+			}
+			tl, br := plain.BoundingBox()
+			if a, b := hinted.BoundingBox(); a != tl || b != br {
+				t.Fatalf("image icon position changed tree bounds from %v ... %v to %v ... %v", tl, br, a, b)
+			}
+		})
 	}
 }

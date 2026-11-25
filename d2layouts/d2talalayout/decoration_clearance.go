@@ -42,7 +42,7 @@ func renderedDecorationBoxes(n *layoutgraph.Node) nodeDecorationBoxes {
 		w, h := math.Trunc(l.Width), math.Trunc(l.Height)
 		item.caption = geo.NewBox(l.Position.GetPointOnBox(anchorBox(l.Position.IsOutside() || l.Position.IsBorder()), label.PADDING, w, h), w, h)
 	}
-	if n.Icon != nil {
+	if n.HasIconDecoration() {
 		pos := n.Icon.Position
 		box := anchorBox(pos.IsOutside())
 		size := float64(d2target.GetIconSize(box, pos.String()))
@@ -105,7 +105,7 @@ func clearCrowdedCaptions(source *d2graph.Graph, g *layoutgraph.Graph) {
 		return
 	}
 	if !slices.ContainsFunc(g.Nodes, func(n *layoutgraph.Node) bool {
-		return n.Sequence != nil || n.Icon != nil && n.Icon.PositionFixed()
+		return n.Sequence != nil || n.HasIconDecoration() && n.Icon.PositionFixed()
 	}) {
 		return
 	}

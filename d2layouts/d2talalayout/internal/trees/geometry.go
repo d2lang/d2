@@ -174,7 +174,7 @@ type decorationOverhang struct {
 func treeDecorationOverhang(t *layoutgraph.Tree) decorationOverhang {
 	n := t.Node
 	hasLabel := n.Label != nil && n.Label.Position.IsOutside()
-	hasIcon := n.Icon != nil && n.Icon.Position.IsOutside()
+	hasIcon := n.HasIconDecoration() && n.Icon.Position.IsOutside()
 	if !hasLabel && !hasIcon {
 		return decorationOverhang{}
 	}
