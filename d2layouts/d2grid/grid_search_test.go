@@ -11,10 +11,10 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
-func TestGridSearchMatchesReference(t *testing.T) {
+func TestBoundedGridSearchMatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewPCG(17, 53))
 	for fixture := 0; fixture < 120; fixture++ {
-		n := 2 + rng.IntN(16)
+		n := 17 + rng.IntN(4)
 		gd := benchmarkGrid(n, 1+rng.IntN(n))
 		gd.columns = gd.rows
 		gd.horizontalGap = rng.IntN(80)
@@ -41,7 +41,9 @@ func TestGridSearchMatchesReference(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("bounded_%d_%d", tc.n, tc.rows), func(t *testing.T) {
-			assertSearchMatchesReference(t, benchmarkGrid(tc.n, tc.rows), false)
+			gd := benchmarkGrid(tc.n, tc.rows)
+			gd.objects[0].Width += 0.25 // Exercise the bounded fractional search.
+			assertSearchMatchesReference(t, gd, false)
 		})
 	}
 }

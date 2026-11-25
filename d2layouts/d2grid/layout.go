@@ -567,8 +567,15 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 	} else {
 		nCuts = gd.rows - 1
 	}
-	if nCuts == 0 {
+	if nCuts <= 0 {
 		return GenLayout(gd.objects, nil)
+	}
+	if nCuts == len(gd.objects)-1 {
+		cuts := make([]int, nCuts)
+		for i := range cuts {
+			cuts[i] = i
+		}
+		return GenLayout(gd.objects, cuts)
 	}
 
 	var bestLayout [][]*d2graph.Object
@@ -604,13 +611,16 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 		size := getSize(obj)
 		sizes = append(sizes, size)
 	}
+	measurements := newGridRowMeasurements(sizes, gap)
+	if cuts := measurements.integralCuts(nCuts + 1); cuts != nil {
+		return GenLayout(gd.objects, cuts)
+	}
 	sd := stddev(sizes)
 
 	skipCount := 0
 	count := 0
 	// quickly eliminate bad row groupings
 	startingCache := make(map[int]bool)
-	measurements := newGridRowMeasurements(sizes, gap)
 	// Note: we want a low threshold to explore good options within attemptLimit,
 	// but the best option may require a few rows that are far from the target size.
 	okThreshold := STARTING_THRESHOLD
@@ -678,6 +688,13 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 		count++
 		// with few objects we can try all options to get best result but this won't scale, so only try up to 100k options
 		return count >= ATTEMPT_LIMIT || skipCount >= SKIP_LIMIT
+	}
+
+	// Small fractional grids can afford every partition (at most C(15,7)
+	// candidates). Score them in their original floating-point addition order.
+	if len(sizes) <= 16 {
+		iterDivisions(len(sizes), nCuts, tryDivision, func(_, _ int, _ bool) bool { return true })
+		return bestLayout
 	}
 
 	// try number of different okThresholds depending on std deviation of sizes
