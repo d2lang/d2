@@ -10,7 +10,9 @@ dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 # shellcheck disable=SC2086 # wasm_flags is a list of flags.
 tinygo build $(printf '%s' "$wasm_flags" | sed 's/ -tags=goroutines.inert//') -buildmode=c-shared \
-  -o "$dir/d2.wasm" ./d2js >"$dir/build.txt" 2>&1 || true
+  -o "$dir/d2.wasm" ./d2js >"$dir/out.txt" 2>&1 || true
+# The go command reports module downloads on the same stream.
+grep -v '^go: downloading ' "$dir/out.txt" >"$dir/build.txt" || true
 message=': attempted to start a goroutine without a scheduler'
 if grep -v "$message\$" "$dir/build.txt" >&2; then
   echo "ci/test-wasm.sh: listing the module's go statements failed" >&2
