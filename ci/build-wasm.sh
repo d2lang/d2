@@ -16,3 +16,5 @@ tinygo build $wasm_flags -buildmode=c-shared \
   -o "$out" ./d2js
 # -no-debug leaves the function names in the module.
 go run ./ci/wasm-strip "$out"
+# Fails if the module outgrows ci/wasm-size-budget.txt.
+go run ./ci/wasm-size "$out"
