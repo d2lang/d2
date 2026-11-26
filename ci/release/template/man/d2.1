@@ -14,7 +14,10 @@
 .Nm d2
 .Ar layout Op Ar name
 .Nm d2
-.Ar fmt Ar file.d2 ...
+.Cm fmt
+.Op Fl -check
+.Op Fl -diff
+.Ar file.d2 | file.md | - ...
 .Nm d2
 .Ar play Ar file.d2
 .Nm d2
@@ -239,8 +242,10 @@ In watch mode, images used in icons are cached for subsequent compilations. This
 The maximum number of seconds that D2 runs for before timing out and exiting. When rendering a large diagram, it is recommended to increase this value
 .Ns .
 .It Fl -check Ar false
-Check that the specified files are formatted correctly
-.Ns .
+With fmt, exit with status 1 if an input needs formatting.
+.It Fl -diff Ar false
+With fmt, print a unified diff instead of writing formatted input.
+Combine with --check to fail if changes are needed.
 .It Fl -salt Ar string
 Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate id's do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output.
 .Ns .
@@ -274,8 +279,10 @@ Display long help for a particular layout engine, including its configuration op
 .It Ar themes
 Lists available themes
 .Ns .
-.It Ar fmt Ar file.d2 ...
-Format all passed files
+.It Ar fmt Ar file.d2 | file.md | - ...
+Format D2 source files in place.
+For .md and .markdown files, format only fenced code blocks marked d2.
+Pass - to read D2 from stdin and always print the formatted source on success.
 .It Ar play Ar file.d2
 Opens the file in playground, an online web viewer (https://play.d2lang.com)
 .It Ar validate Ar file.d2
