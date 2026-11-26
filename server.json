@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.d2lang/d2",
+  "title": "D2",
+  "description": "Look up D2 syntax, check diagrams, and render them locally.",
+  "websiteUrl": "https://d2lang.com/tour/mcp/",
+  "repository": {
+    "url": "https://github.com/d2lang/d2",
+    "source": "github"
+  },
+  "version": "0.10.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "d2lang",
+      "version": "0.10.0",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [{ "type": "positional", "value": "mcp" }]
+    }
+  ]
+}
