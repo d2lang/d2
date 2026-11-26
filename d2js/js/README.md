@@ -195,7 +195,6 @@ All [RenderOptions](#renderoptions) properties in addition to:
 ### `RenderOptions`
 
 - `sketch`: Enable sketch mode (default `false`). In an animated diagram, changed solid fills shade in with pencil strokes. You can enable sketch when compiling or when rendering an already compiled diagram.
-- `isometric`: Enable native isometric SVG rendering [default: false]. The compiled layout is preserved. Icons and images must be embedded as data URLs; the JavaScript renderer does not fetch external image URLs. Set this in compile options or `vars.d2-config.isometric`, then pass the returned `renderOptions` to `render`, just like sketch. This mode currently cannot be combined with sketch, ASCII, `darkThemeID`, `forceAppendix`, or `animateInterval`.
 - `themeID`: Theme ID to use [default: 0]
 - `darkThemeID`: Theme ID to use when client is in dark mode
 - `center`: Center the SVG in the containing viewbox [default: false]

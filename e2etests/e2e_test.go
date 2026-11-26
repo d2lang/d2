@@ -455,7 +455,6 @@ func run(t *testing.T, tc testCase) {
 		if os.Getenv("SKIP_SVG_CHECK") == "" {
 			err2 = testdata(filepath.Join(dataPath, "sketch"), ".svg", svgBytes)
 		}
-		renderIsometric(t, ctx, diagram, fixtureName, dataPath, renderOpts)
 
 		assert.Success(t, err)
 		assert.Success(t, err2)

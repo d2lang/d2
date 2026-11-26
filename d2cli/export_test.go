@@ -1,13 +1,19 @@
 package d2cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/d2lang/util-go/xmain"
+	"github.com/d2lang/util-go/xos"
 )
 
 func TestOutputFormat(t *testing.T) {
@@ -126,4 +132,31 @@ func TestUnknownOutputExtensionUsesSVG(t *testing.T) {
 			}
 		})
 	}
+}
+
+func imageCLI(t *testing.T, dir, source string, args ...string) ([]byte, error) {
+	t.Helper()
+	return imageCLIWithEnv(t, dir, source, nil, args...)
+}
+
+func imageCLIWithEnv(t *testing.T, dir, source string, env []string, args ...string) ([]byte, error) {
+	t.Helper()
+	input := filepath.Join(dir, "input.d2")
+	if err := os.WriteFile(input, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	state := &xmain.TestState{
+		Run:    Run,
+		Args:   append([]string{"d2", input}, args...),
+		PWD:    dir,
+		Stdout: &stdout,
+		Env:    xos.NewEnv(append([]string{"PATH="}, env...)),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	state.Start(t, ctx)
+	defer state.Cleanup(t)
+	err := state.Wait(ctx)
+	return stdout.Bytes(), err
 }

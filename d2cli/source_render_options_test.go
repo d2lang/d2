@@ -24,7 +24,7 @@ func TestSourceRenderOptionsPrecedence(t *testing.T) {
 		{"environment resets source scale", []string{"SCALE=-1"}, nil, -1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, _, err := isometricCLI(t, source, tc.env, append(tc.args, "--stdout-format=svg", "-")...)
+			out, err := imageCLIWithEnv(t, t.TempDir(), source, tc.env, append(tc.args, "--stdout-format=svg", "-")...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -58,38 +58,17 @@ func TestSourceRenderOptionsPrecedence(t *testing.T) {
 
 func TestSourceRenderOptionsPNG(t *testing.T) {
 	const shape = "a: {tooltip: First release}"
-	for _, tc := range []struct {
-		name   string
-		config string
-		flags  []string
-	}{
-		{"ordinary", "scale: 0.2", nil},
-		{"isometric", "scale: 0.2; isometric: true", []string{"--isometric"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			source := "vars: {d2-config: {" + tc.config + "}}\n" + shape
-			fromFile, err := imageCLI(t, t.TempDir(), source, "--stdout-format=png", "-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			fromFlag, err := imageCLI(t, t.TempDir(), shape, append(tc.flags, "--scale=.2", "--stdout-format=png", "-")...)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(fromFile, fromFlag) {
-				t.Fatal("source scaling differs from --scale in PNG")
-			}
-		})
+	source := "vars: {d2-config: {scale: 0.2}}\n" + shape
+	fromFile, err := imageCLI(t, t.TempDir(), source, "--stdout-format=png", "-")
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestIsometricSourceAppendix(t *testing.T) {
-	const source = "vars: {d2-config: {isometric: true; force-appendix: true}}\na"
-	if _, err := imageCLI(t, t.TempDir(), source, "--stdout-format=svg", "-"); err == nil || !strings.Contains(err.Error(), "--force-appendix") {
-		t.Fatalf("got %v, want isometric appendix error", err)
+	fromFlag, err := imageCLI(t, t.TempDir(), shape, "--scale=.2", "--stdout-format=png", "-")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := imageCLI(t, t.TempDir(), source, "--force-appendix=false", "--stdout-format=svg", "-"); err != nil {
-		t.Fatalf("explicitly disabling the source appendix: %v", err)
+	if !bytes.Equal(fromFile, fromFlag) {
+		t.Fatal("source scaling differs from --scale in PNG")
 	}
 }
 
