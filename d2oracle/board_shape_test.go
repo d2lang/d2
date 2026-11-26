@@ -62,3 +62,76 @@ func TestEditNestedBoardNames(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteQuotedPropertyName(t *testing.T) {
+	for _, source := range []string{
+		`box: {WIDTH: 130; "width": Port; marker}`,
+		`box.WIDTH: 130; box."width": Port; box.marker`,
+	} {
+		for _, key := range []string{`box."width"`, "box.WIDTH"} {
+			g, _, err := d2compiler.Compile("test.d2", strings.NewReader(source+`; box."width" -> external`), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g, err = d2oracle.Delete(g, nil, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			quoted := key == `box."width"`
+			box := d2oracle.GetObj(g, nil, "box")
+			port := d2oracle.GetObj(g, nil, `box."width"`)
+			if box == nil || (box.WidthAttr != nil) != quoted || (port == nil) != quoted || (len(g.Edges) == 0) != quoted {
+				t.Fatalf("deleting %s from %s changed the wrong object, property, or edge", key, source)
+			}
+		}
+	}
+}
+
+func TestSetLiteralControlWords(t *testing.T) {
+	for _, label := range []string{"SUSPEND", "sUsPeNd", "UnSuspend", "NULL", "suspend"} {
+		g, _, err := d2compiler.Compile("test.d2", strings.NewReader("job -> worker"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, err = d2oracle.Set(g, nil, "job", nil, &label)
+		if err != nil {
+			t.Fatal(err)
+		}
+		job := d2oracle.GetObj(g, nil, "job")
+		if job == nil || job.Label.Value != label || len(g.Edges) != 1 {
+			t.Fatalf("setting %q lost the label or its connection", label)
+		}
+	}
+}
+
+func TestDeleteScopedPropertyPreservesChild(t *testing.T) {
+	for _, src := range []string{
+		"panel.steps.style.fill: blue; panel.steps.tip",
+		"panel.steps: {style.fill: blue; tip}",
+		"panel: {steps: {style.fill: blue; tip}}",
+	} {
+		g, _, err := d2compiler.Compile("main.d2", strings.NewReader("panel.style.fill: red; "+src), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, err = d2oracle.Delete(g, nil, "panel.style.fill")
+		if err != nil {
+			t.Fatal(err)
+		}
+		child := d2oracle.GetObj(g, nil, "panel.steps")
+		if d2oracle.GetObj(g, nil, "panel").Style.Fill != nil || child == nil || child.Style.Fill == nil || child.Style.Fill.Value != "blue" {
+			t.Fatalf("deleting the parent fill also changed %q", src)
+		}
+	}
+}
+
+func TestDeletingQuotedEdgeFieldKeepsEdge(t *testing.T) {
+	g, _, err := d2compiler.Compile("main.d2", strings.NewReader("a -> b: works"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err = d2oracle.Delete(g, nil, `(a -> b)[0]."width"`)
+	if err != nil || len(g.Edges) != 1 || g.Edges[0].Label.Value != "works" {
+		t.Fatalf("deleting an absent field affected its edge: %v", err)
+	}
+}
