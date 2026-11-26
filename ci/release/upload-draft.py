@@ -28,7 +28,17 @@ def digest(path):
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def local_assets(version, archives, msi, sbom, provenance):
+def debian_packages(version, directory):
+    # Keep the release tag's prerelease suffix in asset names; GitHub rewrites tildes.
+    names = [f"d2_{version[1:]}_{arch}.deb" for arch in ("amd64", "arm64")]
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("Debian package directory must be a real directory")
+    if {path.name for path in directory.iterdir()} != set(names):
+        raise ValueError(f"Debian package directory must contain exactly {', '.join(names)}")
+    return [directory / name for name in names]
+
+
+def local_assets(version, archives, msi, sbom, provenance, debs):
     names = {f"d2-{version}-{target}.tar.gz" for target in TARGETS}
     if archives.is_symlink() or not archives.is_dir():
         raise ValueError("archive directory must be a real directory")
@@ -53,6 +63,7 @@ def local_assets(version, archives, msi, sbom, provenance):
         raise ValueError("unexpected provenance bundle filename")
     user_msi = msi.with_name(f"d2-{version}-windows-amd64-user.msi")
     paths = [archives / name for name in sorted(names)] + [manifest, msi, user_msi, sbom, provenance]
+    paths.extend(debian_packages(version, debs))
     return [(path, digest(path), path.stat().st_size) for path in paths]
 
 
@@ -169,12 +180,12 @@ def upload(repository, version, commit, assets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("repository", "version", "commit", "archives", "msi", "sbom", "provenance"):
+    for name in ("repository", "version", "commit", "archives", "msi", "sbom", "provenance", "debs"):
         parser.add_argument(f"--{name}", required=True)
     args = parser.parse_args()
     if not VERSION.fullmatch(args.version) or not re.fullmatch(r"[0-9a-f]{40}", args.commit) or not re.fullmatch(r"[\w.-]+/[\w.-]+", args.repository):
         parser.error("invalid repository, version, or commit")
-    assets = local_assets(args.version, Path(args.archives), Path(args.msi), Path(args.sbom), Path(args.provenance))
+    assets = local_assets(args.version, Path(args.archives), Path(args.msi), Path(args.sbom), Path(args.provenance), Path(args.debs))
     upload(args.repository, args.version, args.commit, assets)
 
 
