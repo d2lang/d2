@@ -16,7 +16,7 @@ D2 source is Unicode. The file parser reads UTF-8 and also recognizes UTF-16 lit
 
 ## Comments
 
-A line comment starts at `#` and consumes everything up to LF or end of input. It can follow a map entry or array item on the same line. A hash inside a quoted string, a block string, or an escape is literal. In the syntax tree, the Go parser groups consecutive comment lines separated by a single LF and optional indentation. It drops at most one ASCII space immediately after each opening hash.
+A line comment starts at `#` and consumes everything up to LF or end of input. It can follow a map entry or array item on the same line. A semicolon or closing brace on the comment line belongs to the comment. In `x: {a # }`, the map still needs a closing brace on a later line. A hash inside a quoted string, a block string, or an escape is literal. In the syntax tree, the Go parser groups consecutive comment lines separated by a single LF and optional indentation. It drops at most one ASCII space immediately after each opening hash.
 
 A block comment starts with three consecutive double quotes at the start of a map or array item. The first subsequent triple quote closes it, including on the same line. One or two quotes within the body remain literal. Its contents are literal. Another item may follow its closing delimiter on that line. At a scalar value position after a colon, the string rules apply instead. The parser strips opening whitespace through at most the first LF and applies the final-line and indentation rules for blocks below.
 

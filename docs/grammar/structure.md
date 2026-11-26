@@ -19,12 +19,26 @@ separators and a trailing separator are valid.
 | `api -> db: writes` | Connection with source `api`, destination `db` and a scalar value |
 | `svc.(api -> db)[0].style.stroke: red` | Key path `svc`, a grouped connection, index `0`, property path `style.stroke` and scalar value `red` |
 
-Horizontal space may surround the dot between key segments. A quoted or
-escaped dot belongs to its segment. Between segments, a newline ends the path.
-A block string used as a segment can itself contain newlines.
-An initial `&` or `!&` marks a filter on the whole entry. Unescaped stars in
-unquoted key segments preserve glob patterns, including `*`, `**` and `***`.
+Horizontal space may surround the dot between key segments. Within a key path,
+each separator dot requires another segment on the same logical line. This
+applies to paths in imports, substitutions and edge properties. For example, `service.`, `${service.}`,
+`@theme.` and `(a -> b)[0].style.` are incomplete. A quoted or escaped dot
+belongs to its segment. `"service."` and `service\.` both name a single
+object ending in a literal dot. In a label such as `x: service.` the final
+dot is ordinary text. A block string used as a segment can itself contain
+newlines.
+
+An initial `&` or `!&` marks a filter on the following entry key. Supply a
+condition, as in `*: {&shape: circle; label: selected}`. A bare marker
+before a separator, closing brace or end of input is a syntax error. Unescaped
+stars in unquoted key segments preserve glob patterns, including `*`, `**` and
+`***`.
 The compiler applies filters and expands globs in their enclosing scope.
+
+The tree retains quoting and capitalization. In a property position the compiler
+recognizes unquoted reserved names in any letter case. For example,
+`box.STYLE.fill: red` sets the fill, `"STYLE": thing` declares an object, and
+`heading: STYLE` preserves the uppercase label.
 
 An assignment without a colon takes a map value. A colon requires a value on the same
 logical line. When a scalar is followed by a map on that line, preserve both
@@ -45,7 +59,10 @@ connection requires at least two hyphens. A chain such as
 Parentheses allow an index, a property path, or both to follow a chain.
 A group must contain a connection and end with `)`. For example, `(a -> b); c`
 is a connection followed by a separate key. `()` and `(a)` are invalid. A
-preceding path scopes the group, as in `svc.(a -> b)[*]`.
+preceding path scopes the group, as in `svc.(a -> b)[*]`. The scope and
+opening parenthesis require a separating dot, including after a quoted name.
+For an object named `svc.`, write `"svc.".(a -> b)[0]`. The first dot belongs
+to the name and the second introduces the group.
 
 An index is either `*` for all matching connections or a nonnegative integer
 written with consecutive ASCII digits. Horizontal space may surround the index
@@ -107,12 +124,16 @@ particular context are determined during compilation.
 
 ## Reference parser compatibility
 
-At the [baseline revision](README.md), the parser accepts `a.` as `a` and
-allows a quoted scope without the separating dot, as in `"svc"(a -> b)[0]`.
-These spellings are outside the reference and remain outside the runtime
-changes tracked in [D2 #3043](https://github.com/d2lang/d2/pull/3043).
+The [pinned baseline](README.md) accepted the following incomplete forms.
+The parser fixes and their conformance cases are in [D2 #3043](https://github.com/d2lang/d2/pull/3043).
 
-The following examples record baseline behavior addressed by that runtime PR.
+| Source | Baseline behavior | Valid spelling |
+| --- | --- | --- |
+| `a.` or `${service.}` | Dropped the trailing dot from the path. | `a` or `${service}` |
+| `"svc"(a -> b)[0]` | Used the quoted name as a scope despite the missing separator. | `"svc".(a -> b)[0]` |
+| `*: {&; label: selected}` | Discarded the empty filter and applied the label to every matching object. A bare `!&` also disappeared. | `*: {&shape: circle; label: selected}` |
+
+The same change addressed these other baseline behaviors.
 
 | Input | Baseline behavior |
 | --- | --- |

@@ -1,11 +1,13 @@
 package d2parser_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -39,32 +41,8 @@ func TestGrammarConformance(t *testing.T) {
 			}
 		}
 	})
-	f, err := os.Open("../docs/grammar/testdata/conformance.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-
-	var cases []struct {
-		Name              string  `json:"name"`
-		Source            *string `json:"source"`
-		Nodes             []any   `json:"nodes"`
-		Reject            bool    `json:"reject"`
-		LexicalConstraint string  `json:"lexicalConstraint"`
-	}
-	decoder := json.NewDecoder(f)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cases); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		t.Fatal("unexpected data after the conformance cases")
-	}
-	if len(cases) == 0 {
-		t.Fatal("empty conformance corpus")
-	}
 	names := map[string]bool{}
-	for _, c := range cases {
+	for _, c := range readConformanceCases(t) {
 		if c.Name == "" || names[c.Name] || c.Source == nil || (c.Nodes != nil) == c.Reject {
 			t.Fatalf("invalid conformance case %q: require a unique name, source, and either nodes or reject", c.Name)
 		}
@@ -98,6 +76,40 @@ func TestGrammarConformance(t *testing.T) {
 			checkGrammarFields(t, "nodes", c.Nodes, got)
 		})
 	}
+}
+
+type conformanceCase struct {
+	Name              string  `json:"name"`
+	Source            *string `json:"source"`
+	Nodes             []any   `json:"nodes"`
+	Reject            bool    `json:"reject"`
+	LexicalConstraint string  `json:"lexicalConstraint"`
+}
+
+func readConformanceCases(t *testing.T) []conformanceCase {
+	t.Helper()
+	files, err := filepath.Glob("../docs/grammar/testdata/*.json")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("could not find grammar conformance files: %v", err)
+	}
+	var cases []conformanceCase
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var group []conformanceCase
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&group); err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		if _, err := dec.Token(); err != io.EOF || len(group) == 0 {
+			t.Fatalf("%s: expected one nonempty array of conformance cases", file)
+		}
+		cases = append(cases, group...)
+	}
+	return cases
 }
 
 // Fixtures select the object fields that discriminate a particular syntax form.

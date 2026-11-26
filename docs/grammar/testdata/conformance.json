@@ -629,6 +629,36 @@
       {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]}}}
     ]
   },
+  {
+    "name": "quoted-scope-and-literal-property-dot",
+    "source": "\"svc.\".(a -> b)[0].label\\.: done",
+    "nodes": [{"map_key": {
+      "key": {"path": [{"double_quoted_string": {"value": [{"string": "svc."}]}}]},
+      "edges": [{
+        "src": {"path": [{"unquoted_string": {"value": [{"string": "a"}]}}]},
+        "dst": {"path": [{"unquoted_string": {"value": [{"string": "b"}]}}]},
+        "dst_arrow": ">"
+      }],
+      "edge_index": {"int": 0},
+      "edge_key": {"path": [{"unquoted_string": {"value": [{"string": "label."}]}}]},
+      "value": {"unquoted_string": {"value": [{"string": "done"}]}}
+    }}]
+  },
+  {
+    "name": "literal-dots-in-references-and-values",
+    "source": "x: ${service\\.}; y: @theme.\"field.\"; z: literal.",
+    "nodes": [
+      {"map_key": {"value": {"unquoted_string": {"value": [
+        {"substitution": {"path": [{"unquoted_string": {"value": [{"string": "service."}]}}]}}
+      ]}}}},
+      {"map_key": {"value": {"import": {"path": [
+        {"unquoted_string": {"value": [{"string": "theme"}]}},
+        {"double_quoted_string": {"value": [{"string": "field."}]}}
+      ]}}}},
+      {"map_key": {"value": {"unquoted_string": {"value": [{"string": "literal."}]}}}}
+    ]
+  },
+  {"name": "map-close-inside-line-comment", "source": "x: {a # }", "reject": true, "lexicalConstraint": "lineComment"},
   {"name": "newline-after-colon", "source": "a:\n  b", "reject": true},
   {"name": "unexpected-map-close", "source": "}", "reject": true},
   {"name": "unterminated-map", "source": "a: {b", "reject": true},

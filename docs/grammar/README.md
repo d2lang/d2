@@ -45,8 +45,8 @@ variables and applying styles.
 
 ## Checking an implementation
 
-The [conformance corpus](testdata/conformance.json) is a UTF-8 JSON array.
-Parse each record's `source` as a whole D2 file.
+Each JSON file in the [conformance corpus](testdata/) contains a UTF-8 array
+of cases. Parse each record's `source` as a whole D2 file.
 
 - `nodes` gives the expected top-level nodes in source order. Every listed
   object field must match. Arrays match in full, in order. Omitted fields
