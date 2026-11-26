@@ -89,3 +89,32 @@ func TestSegmentIntersectionMatchesIntersectionPoint(t *testing.T) {
 		t.Fatalf("only %d intersections, %d of them NaN", found, nans)
 	}
 }
+
+// The Linux/amd64 race build used different NaN operands for the right-hand
+// corners of this box. Compare against the reference on the current platform.
+func TestFirstBoxIntersectionNaNCornerPayload(t *testing.T) {
+	topLeft := geo.Point{
+		X: math.Float64frombits(0xffff4f9fe5ef50b3),
+		Y: math.Float64frombits(0xc07483a6b0f006bc),
+	}
+	box := geo.NewBox(&topLeft, math.Float64frombits(0x7ffbb3f890482d83), math.Float64frombits(0x7ff836bedcdfea45))
+	start := geo.Point{
+		X: math.Float64frombits(0x7ffbb3f890482d83),
+		Y: math.Float64frombits(0x7ff8dfd964686250),
+	}
+	end := geo.Point{
+		X: math.Float64frombits(0x4053d0b5e5698306),
+		Y: math.Float64frombits(0x4059000000000000),
+	}
+
+	points := box.Intersections(geo.Segment{Start: &start, End: &end})
+	if len(points) == 0 {
+		t.Fatal("expected the reference to find an intersection")
+	}
+	x, y, hit := FirstBoxIntersection(topLeft.X, topLeft.Y, box.Width, box.Height, start.X, start.Y, end.X, end.Y)
+	gotX, gotY := math.Float64bits(x), math.Float64bits(y)
+	wantX, wantY := math.Float64bits(points[0].X), math.Float64bits(points[0].Y)
+	if !hit || gotX != wantX || gotY != wantY {
+		t.Fatalf("FirstBoxIntersection = (%016x, %016x, %t), want (%016x, %016x, true)", gotX, gotY, hit, wantX, wantY)
+	}
+}

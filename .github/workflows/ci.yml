@@ -96,8 +96,8 @@ jobs:
           # Disable chat notifications from the shared CI helper.
           CI_MAKE_ROOT: "0"
           GITHUB_TOKEN: ${{ github.token }}
-      - name: Test TALA with the race detector
-        run: go test -race ./d2layouts/d2talalayout/... -count=1 -timeout=15m
+      - name: Test TALA and geometry with the race detector
+        run: go test -race ./d2layouts/d2talalayout/... ./internal/geomath -count=1 -timeout=15m
       - name: Test the dagre adapter with its TinyGo-only shadow maps compiled in
         run: go test -tags dagre_shadowmaps ./d2layouts/d2dagrelayout -count=1
       - name: Verify representative release archive and size budget
