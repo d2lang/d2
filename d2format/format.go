@@ -195,7 +195,7 @@ func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleStr
 		case b.StringRaw != nil && (wholeToken || matchesUnquotedFragment(*b.StringRaw, *b.String, i == len(boxes)-1)):
 			text = *b.StringRaw
 			if !isDoubleString {
-				text = escapeRawInContext(text, pos, wholeToken, i == len(boxes)-1)
+				text = escapeRawInContext(text, pos, wholeToken && !p.inKey, i == len(boxes)-1)
 			}
 		default:
 			text = escapeUnquotedValue(*b.String, p.inKey, wholeToken)

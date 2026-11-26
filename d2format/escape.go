@@ -92,8 +92,8 @@ func escapeUnquotedValue(s string, inKey, wholeToken bool) string {
 
 // A parsed bare string can be moved into a position with different delimiters.
 // Preserve its source spelling, escaping only characters that gain meaning.
-func escapeRawInContext(raw string, pos tokenPosition, wholeToken, last bool) string {
-	if (pos == arrayItem || !wholeToken) && strings.HasPrefix(raw, "#") {
+func escapeRawInContext(raw string, pos tokenPosition, wholeValue, last bool) string {
+	if (pos == arrayItem || !wholeValue) && strings.HasPrefix(raw, "#") {
 		raw = `\` + raw
 	}
 	brackets := pos == arrayItem && strings.Contains(raw, "]")

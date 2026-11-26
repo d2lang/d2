@@ -74,3 +74,19 @@ func TestMoveParsedValueIntoArray(t *testing.T) {
 		}
 	}
 }
+
+func TestHexColorMovedIntoKey(t *testing.T) {
+	color, err := d2parser.ParseValue("#abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := &d2ast.KeyPath{Path: []*d2ast.StringBox{d2ast.MakeValueBox(color).StringBox()}}
+	formatted := d2format.Format(&d2ast.Key{Key: key})
+	m, err := d2parser.Parse("test.d2", strings.NewReader(formatted), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Nodes) != 1 || m.Nodes[0].MapKey == nil || m.Nodes[0].MapKey.Key.StringIDA()[0] != "#abc" {
+		t.Fatalf("expected a shape named #abc after formatting %q", formatted)
+	}
+}
