@@ -18,7 +18,6 @@ import (
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2target"
-	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
@@ -473,14 +472,8 @@ func (c *compiler) validateConfigs(configs *Field) {
 				continue
 			}
 		case "theme-id", "dark-theme-id":
-			valInt, err := strconv.Atoi(val)
-			if err != nil {
-				c.errorf(f.LastRef().AST(), `expected an integer for "%s", got "%s"`, f.Name.ScalarString(), val)
-				continue
-			}
-			if d2themescatalog.Find(int64(valInt)) == (d2themes.Theme{}) {
-				c.errorf(f.LastRef().AST(), `%d is not a valid theme ID`, valInt)
-				continue
+			if _, err := d2themescatalog.Resolve(val); err != nil {
+				c.errorf(f.LastRef().AST(), "%s: %v", f.Name.ScalarString(), err)
 			}
 		case "pad":
 			_, err := strconv.Atoi(val)
