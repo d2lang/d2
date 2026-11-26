@@ -22,9 +22,6 @@ concurrency:
   group: pypi-${{ github.event.pull_request.number || inputs.version || github.event.release.tag_name }}
   cancel-in-progress: false
 
-env:
-  UV_VERSION: "0.13.9"
-
 jobs:
   build:
     if: >-
@@ -88,21 +85,33 @@ jobs:
         with:
           name: d2lang-wheels
           path: dist
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - &setup-python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          version: ${{ env.UV_VERSION }}
-          require-checksums: true
-          enable-cache: false
+          python-version: "3.13"
+      - &install-uv
+        name: Install verified uv for this platform
+        shell: bash
+        run: |
+          cat > uv-requirements.txt <<'REQUIREMENTS'
+          uv==0.13.9 \
+            --hash=sha256:c16ed11e013557536b3e60065f1b912f6407bd6518e041b961e23ef9e6b4fbf5 \
+            --hash=sha256:66c512266d633bef48384a1f53003f41f2a8e7b36fe6e7fbfd3e0fd52d96fa63 \
+            --hash=sha256:d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19 \
+            --hash=sha256:5435c5ce14a56431208ca0996416d310f1598e8c2c8ba707688985a16bb82dbe \
+            --hash=sha256:ecb6028d79dc96fbeafffe5c8af62a7099487ebc05a701e76714eebcffd06375 \
+            --hash=sha256:6a44b2ed8111d2f60d2b92627c5dccda3f7ed7570b18ce115e569cd68c28246b \
+            --hash=sha256:eeb92051c2123b9730c46b04cc843cfa4bc7d7b0aec56df431a2215ef4cb0273
+          REQUIREMENTS
+          python -m pip install --require-hashes --force-reinstall --no-deps --only-binary=:all: -r uv-requirements.txt
 
       - name: Install with pip and render with uvx
         shell: bash
         env:
           VERSION: ${{ needs.build.outputs.version }}
-          UV_PYTHON: "3.13"
-          UV_MANAGED_PYTHON: "true"
         run: |
           set -euo pipefail
-          uv venv --seed pip-smoke
+          python -m venv pip-smoke
           python=pip-smoke/bin/python
           if [[ "$RUNNER_OS" == Windows ]]; then python=pip-smoke/Scripts/python.exe; fi
           "$python" -m pip install --no-index --find-links dist d2lang
@@ -141,10 +150,7 @@ jobs:
         with:
           name: d2lang-wheels
           path: dist
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          require-checksums: true
-          enable-cache: false
+      - *setup-python
+      - *install-uv
       - name: Publish the tested wheels with PyPI Trusted Publishing
         run: uv publish --trusted-publishing always dist/*.whl
