@@ -55,10 +55,13 @@
   function apply() {
     img.style.transform = "translate(" + view.x + "px," + view.y + "px) scale(" + view.k + ")";
   }
+  function fitScale() {
+    return Math.min(1, (stage.clientWidth || natural.w) / natural.w, maxHeight / natural.h);
+  }
   function fit() {
     if (!natural.w) { return; }
     var w = stage.clientWidth || natural.w;
-    view.k = Math.min(1, w / natural.w);
+    view.k = fitScale();
     view.x = Math.max(0, (w - natural.w * view.k) / 2);
     view.y = 0;
     stage.style.height = Math.max(80, Math.min(maxHeight, Math.ceil(natural.h * view.k))) + "px";
@@ -66,7 +69,8 @@
     reportSize();
   }
   function zoom(factor, cx, cy) {
-    var k = Math.min(8, Math.max(0.05, view.k * factor));
+    if (!natural.w) { return; }
+    var k = Math.min(8, Math.max(Math.min(0.05, fitScale()), view.k * factor));
     view.x = cx - (cx - view.x) * (k / view.k);
     view.y = cy - (cy - view.y) * (k / view.k);
     view.k = k;

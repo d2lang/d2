@@ -88,6 +88,7 @@ func TestMCPDiscover(t *testing.T) {
 	require.Len(t, replies, 1)
 	var result struct {
 		ResultType        string
+		Capabilities      mcp.ServerCapabilities
 		SupportedVersions []string
 		Meta              struct {
 			ServerInfo mcp.Implementation `json:"io.modelcontextprotocol/serverInfo"`
@@ -95,6 +96,7 @@ func TestMCPDiscover(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(replies[1], &result))
 	require.Equal(t, "complete", result.ResultType)
+	require.Equal(t, mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}, Resources: &mcp.ResourceCapabilities{}}, result.Capabilities)
 	require.Equal(t, "d2", result.Meta.ServerInfo.Name)
 	require.Contains(t, result.SupportedVersions, "2026-07-28")
 	require.Contains(t, result.SupportedVersions, "2025-06-18")
@@ -106,6 +108,9 @@ func TestMCPEnvironment(t *testing.T) {
 	env := []string{"D2_MCP_ROOT=" + dir, "D2_MCP_NO_UI=true", "D2_MCP_TIMEOUT=600"}
 	const check = `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"check","arguments":{"path":"example.d2"}}}`
 	replies := mcpTranscript(t, dir, env, legacyMCPHandshake+mcpListTools+"\n"+check)
+	var init mcp.InitializeResult
+	require.NoError(t, json.Unmarshal(replies[1], &init))
+	require.Equal(t, &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, init.Capabilities)
 	var tools mcp.ListToolsResult
 	require.NoError(t, json.Unmarshal(replies[2], &tools))
 	require.Len(t, tools.Tools, 3)

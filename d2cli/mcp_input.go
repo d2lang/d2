@@ -3,18 +3,54 @@
 package d2cli
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/text/encoding/unicode"
 
 	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/lib/localfile"
 )
 
 const mcpMaxSourceBytes = 1 << 20
+
+// Decode D2's supported UTF-16LE BOM before parsing. The parser otherwise
+// switches its columns to UTF-16 code units, while MCP reports UTF-8 bytes.
+func mcpUTF8Reader(r io.Reader) io.Reader {
+	buf := bufio.NewReaderSize(r, 2)
+	if bom, _ := buf.Peek(2); string(bom) == "\xff\xfe" {
+		return unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder().Reader(buf)
+	}
+	return buf
+}
+
+type mcpSourceFiles struct{ localfile.Policy }
+
+func (s mcpSourceFiles) openRaw(name string) (fs.File, error) {
+	return s.FilesWithExtension(".d2").Open(name)
+}
+
+// Imports use the same decoding and native import paths as the entry file.
+func (s mcpSourceFiles) Open(name string) (fs.File, error) {
+	f, err := s.openRaw(name)
+	if err != nil {
+		return nil, err
+	}
+	return &mcpSourceFile{File: f, reader: mcpUTF8Reader(f)}, nil
+}
+
+type mcpSourceFile struct {
+	fs.File
+	reader io.Reader
+}
+
+func (f *mcpSourceFile) Read(b []byte) (int, error) { return f.reader.Read(b) }
 
 func (s *mcpServer) resolveInput(source, path *string) (text, inputPath, msg string) {
 	switch {
@@ -35,16 +71,17 @@ func (s *mcpServer) resolveInput(source, path *string) (text, inputPath, msg str
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(s.cfg.root, p)
 	}
-	f, err := s.sources.Open(p)
+	f, err := s.sources.openRaw(p)
 	if err != nil {
 		return "", "", fmt.Sprintf("cannot read %s: %v", *path, err)
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, mcpMaxSourceBytes+1))
+	limited := &io.LimitedReader{R: f, N: mcpMaxSourceBytes + 1}
+	b, err := io.ReadAll(mcpUTF8Reader(limited))
 	if err != nil {
 		return "", "", fmt.Sprintf("cannot read %s: %v", *path, err)
 	}
-	if len(b) > mcpMaxSourceBytes {
+	if limited.N == 0 {
 		return "", "", "file is larger than 1 MiB"
 	}
 	return string(b), p, ""

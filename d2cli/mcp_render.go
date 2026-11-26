@@ -4,6 +4,7 @@ package d2cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -30,7 +31,10 @@ import (
 	"github.com/d2lang/d2/lib/urlenc"
 )
 
-const mcpSVGMetaKey = "com.d2lang/svg"
+const (
+	mcpSVGMetaKey     = "com.d2lang/svg"
+	mcpMaxViewerBytes = 2 << 20
+)
 
 type renderInfo struct {
 	mcpStatus
@@ -68,17 +72,18 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in rende
 		return mcpFailure(msg)
 	}
 	opts := d2svg.RenderOpts{ThemeID: in.Theme, Sketch: in.Sketch}
-	root, layout, err := s.compileForRender(ctx, path, source, in.Layout, format, &opts)
+	root, graph, layout, err := s.compileForRender(ctx, path, source, in.Layout, format, &opts)
 	if err != nil {
 		return mcpCompileFailure(err, "render")
 	}
 	selected := root.GetBoard(target)
+	boards, selectedGraph := mcpBoardDetails(root, graph, selected)
 	boardName := in.Target
 	if len(target) == 0 {
 		boardName = "root"
 	}
 	if selected == nil || selected.IsFolderOnly {
-		names := strings.Join(mcpOtherBoards(root, nil), ", ")
+		names := strings.Join(boards, ", ")
 		if names == "" {
 			names = "(none)"
 		}
@@ -87,11 +92,14 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in rende
 		}
 		return mcpFailure(fmt.Sprintf("board %q has no shapes of its own. Boards: %s", boardName, names))
 	}
+	if err := d2layoutfeatures.Check(layout, selectedGraph); err != nil {
+		return mcpFailure(err.Error())
+	}
 	board := *selected
 	board.Layers, board.Scenarios, board.Steps, board.TweenFrames = nil, nil, nil, nil
 	info := renderInfo{
 		mcpStatus: mcpStatus{OK: true, Diagnostics: []mcpDiagnostic{}, Warnings: []string{}},
-		Format:    format, Layout: layout, Board: boardName, Boards: mcpOtherBoards(root, selected),
+		Format:    format, Layout: layout, Board: boardName, Boards: boards,
 		Shapes: len(board.Shapes), Connections: len(board.Connections),
 	}
 	res := &mcp.CallToolResult{}
@@ -124,20 +132,26 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in rende
 			return mcpFailure(err.Error())
 		}
 	}
-	if s.cfg.ui || format == "svg" {
-		svg, warning, err := s.renderSVG(ctx, path, &board, opts, pngAssets)
+	var viewerSVG string
+	if format == "svg" {
+		svg, warning, err := s.renderSVG(ctx, path, &board, opts)
 		if err != nil {
 			return mcpFailure(err.Error())
 		}
 		if warning != "" {
 			info.Warnings = append(info.Warnings, warning)
 		}
-		if format == "svg" {
-			drawing = mcpText(svg)
+		drawing = mcpText(svg)
+		viewerSVG = svg
+	} else if s.cfg.ui {
+		viewerSVG, err = mcpViewerPreview(ctx, path, &board, opts, pngAssets)
+		if err != nil {
+			// Hosts can still show the PNG or text returned by the tool.
+			info.Warnings = append(info.Warnings, "could not create the inline SVG preview: "+err.Error())
 		}
-		if s.cfg.ui && len(svg) <= 2<<20 {
-			res.Meta = mcp.Meta{mcpSVGMetaKey: svg}
-		}
+	}
+	if s.cfg.ui && len(viewerSVG) > 0 && len(viewerSVG) <= mcpMaxViewerBytes {
+		res.Meta = mcp.Meta{mcpSVGMetaKey: viewerSVG}
 	}
 	if in.Source != nil {
 		if encoded, err := urlenc.Encode(source); err == nil {
@@ -150,10 +164,10 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in rende
 	return res, info, nil
 }
 
-func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, format string, render *d2svg.RenderOpts) (*d2target.Diagram, string, error) {
+func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, format string, render *d2svg.RenderOpts) (*d2target.Diagram, *d2graph.Graph, string, error) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	// The compiler resolves the layout from the argument, source (including
 	// imports), or default, in that order. Substitute ELK for text only after
@@ -176,34 +190,23 @@ func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, 
 	}
 	diagram, graph, err := d2lib.Compile(ctx, source, opts, render)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	layout = engine(*opts.Layout)
 	if !isBuiltinLayout(layout) {
-		return nil, "", layoutNotFound(layout)
-	}
-	if err := d2layoutfeatures.Check(layout, graph); err != nil {
-		return nil, "", err
+		return nil, nil, "", layoutNotFound(layout)
 	}
 	if render.Scale != nil && !(*render.Scale > 0) {
 		render.Scale = nil
 	}
-	return diagram, layout, nil
+	return diagram, graph, layout, nil
 }
 
-func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts, pngAssets *d2scenebuild.AssetOptions) (svg, warning string, err error) {
+func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts) (svg, warning string, err error) {
 	opts.Scale = nil
-	data, err := d2svg.Render(board, &opts)
+	data, err := d2svg.RenderContext(ctx, board, &opts)
 	if err != nil {
 		return "", "", err
-	}
-	if pngAssets != nil {
-		// Use the same resources and missing-image placeholders as the PNG.
-		preview, err := bundleRasterPreview(ctx, pngAssets, data)
-		if err != nil {
-			return string(data), "could not bundle images: " + err.Error(), nil
-		}
-		return string(preview), "", nil
 	}
 	resolver, err := svgBundleResolver(ctx, path, false)
 	if err == nil {
@@ -215,6 +218,33 @@ func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.
 		return string(data), "could not bundle images: " + err.Error(), nil
 	}
 	return string(data), "", nil
+}
+
+// The preview is optional. Keep its budget independent of the requested
+// drawing; use an existing PNG resolver to reuse its images and placeholders.
+func mcpViewerPreview(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts, assets *d2scenebuild.AssetOptions) (string, error) {
+	opts.Scale = nil
+	svg, err := d2svg.RenderContext(ctx, board, &opts)
+	if err != nil {
+		return "", err
+	}
+	if len(svg) > mcpMaxViewerBytes {
+		return "", nil
+	}
+	if assets == nil {
+		resolver, err := svgBundleResolver(ctx, path, false)
+		if err != nil {
+			return "", err
+		}
+		defer resolver.CloseIdleConnections()
+		assets = &d2scenebuild.AssetOptions{Resolver: resolver}
+	}
+	svg, err = bundleRasterPreviewWithLimit(ctx, assets, svg, mcpMaxViewerBytes)
+	var tooLarge *rasterPreviewSizeError
+	if errors.As(err, &tooLarge) {
+		return "", nil
+	}
+	return string(svg), err
 }
 
 func mcpPNG(ctx context.Context, assets *d2scenebuild.AssetOptions, board *d2target.Diagram, opts d2svg.RenderOpts, maxDim int, info *renderInfo) (*mcp.ImageContent, error) {
@@ -310,28 +340,33 @@ func (info renderInfo) summary() string {
 	return b.String()
 }
 
-// Collect authored boards in D2's navigation order, excluding the selected
-// board by identity so alternative quoting of a target cannot list it twice.
-func mcpOtherBoards(root, selected *d2target.Diagram) []string {
-	out := []string{}
-	var walk func(*d2target.Diagram, []string)
-	walk = func(board *d2target.Diagram, path []string) {
+// D2 compiles the exported diagrams and their source graphs in the same
+// navigation order. Match by diagram identity to honor every GetBoard spelling.
+func mcpBoardDetails(root *d2target.Diagram, graph *d2graph.Graph, selected *d2target.Diagram) ([]string, *d2graph.Graph) {
+	boards := []string{}
+	var selectedGraph *d2graph.Graph
+	var walk func(*d2target.Diagram, *d2graph.Graph, []string)
+	walk = func(board *d2target.Diagram, g *d2graph.Graph, path []string) {
+		if board == selected {
+			selectedGraph = g
+		}
 		for _, group := range []struct {
 			kind     string
 			children []*d2target.Diagram
-		}{{"layers", board.Layers}, {"scenarios", board.Scenarios}, {"steps", board.Steps}} {
-			for _, child := range group.children {
-				if len(out) == 50 {
+			graphs   []*d2graph.Graph
+		}{{"layers", board.Layers, g.Layers}, {"scenarios", board.Scenarios, g.Scenarios}, {"steps", board.Steps, g.Steps}} {
+			for i, child := range group.children {
+				if len(boards) == 50 && (selectedGraph != nil || selected == nil) {
 					return
 				}
 				childPath := append(path, group.kind, child.Name)
-				if child != selected {
-					out = append(out, d2format.Format(d2ast.MakeKeyPath(childPath)))
+				if len(boards) < 50 && (child != selected || child.IsFolderOnly) {
+					boards = append(boards, d2format.Format(d2ast.MakeKeyPath(childPath)))
 				}
-				walk(child, childPath)
+				walk(child, group.graphs[i], childPath)
 			}
 		}
 	}
-	walk(root, nil)
-	return out
+	walk(root, graph, nil)
+	return boards, selectedGraph
 }

@@ -217,6 +217,9 @@ func (a *ASCIIartist) calculateExtendedBounds(diagram *d2target.Diagram) (tl, br
 }
 
 func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if opts == nil {
 		opts = &RenderOpts{}
 	}
@@ -273,6 +276,9 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 
 	log.Debug(ctx, "processing shapes", slog.Int("count", len(diagram.Shapes)), slog.Int("xOffset", xOffset), slog.Int("yOffset", yOffset))
 	for i, shape := range diagram.Shapes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		log.Debug(ctx, "processing shape", slog.Int("index", i), slog.String("id", shape.ID), slog.String("type", shape.Type), slog.Float64("x", float64(shape.Pos.X)), slog.Float64("y", float64(shape.Pos.Y)), slog.Float64("width", float64(shape.Width)), slog.Float64("height", float64(shape.Height)))
 
 		originalX, originalY := shape.Pos.X, shape.Pos.Y
@@ -375,6 +381,9 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 		}
 	}
 	for _, conn := range diagram.Connections {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		adjustedRoute := make([]*geo.Point, len(conn.Route))
 		for i, r := range conn.Route {
 			adjustedRoute[i] = &geo.Point{
@@ -391,6 +400,9 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 		}
 	}
 	for _, conn := range diagram.Connections {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if conn.DstArrow != d2target.NoArrowhead || conn.SrcArrow != d2target.NoArrowhead {
 			adjustedRoute := make([]*geo.Point, len(conn.Route))
 			for i, r := range conn.Route {
@@ -406,7 +418,7 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 			asciiroute.DrawRoute(a, tempConn)
 		}
 	}
-	return a.canvas.ToByteArray(a.chars), nil
+	return a.canvas.ToByteArrayContext(ctx, a.chars, opts.MaxCells)
 }
 
 func (a *ASCIIartist) calibrateXY(x, y float64) (float64, float64) {

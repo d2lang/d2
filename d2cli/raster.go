@@ -963,6 +963,16 @@ type rasterPreviewResource struct {
 // bundleRasterPreview embeds the scene's resolved images and any placeholders
 // recorded for the previewed board.
 func bundleRasterPreview(ctx context.Context, assets *d2scenebuild.AssetOptions, sourceSVG []byte) ([]byte, error) {
+	return bundleRasterPreviewWithLimit(ctx, assets, sourceSVG, rasterPreviewMaxOutputBytes)
+}
+
+type rasterPreviewSizeError struct{ limit int64 }
+
+func (err *rasterPreviewSizeError) Error() string {
+	return fmt.Sprintf("expanded output bytes exceed limit %d", err.limit)
+}
+
+func bundleRasterPreviewWithLimit(ctx context.Context, assets *d2scenebuild.AssetOptions, sourceSVG []byte, maxOutput int64) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1029,13 +1039,13 @@ func bundleRasterPreview(ctx context.Context, assets *d2scenebuild.AssetOptions,
 			resources[reference.source] = previewResource
 		}
 		delta := int64(previewResource.uriBytes) - int64(reference.end-reference.start)
-		if delta > rasterPreviewMaxOutputBytes-outputBytes {
-			return nil, fmt.Errorf("expanded output bytes exceed limit %d", rasterPreviewMaxOutputBytes)
+		if delta > maxOutput-outputBytes {
+			return nil, &rasterPreviewSizeError{maxOutput}
 		}
 		outputBytes += delta
 	}
-	if outputBytes < 0 || outputBytes > rasterPreviewMaxOutputBytes {
-		return nil, fmt.Errorf("expanded output bytes %d exceed limit %d", outputBytes, rasterPreviewMaxOutputBytes)
+	if outputBytes < 0 || outputBytes > maxOutput {
+		return nil, &rasterPreviewSizeError{maxOutput}
 	}
 
 	for source, previewResource := range resources {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,7 +39,7 @@ type mcpServer struct {
 	ms      *xmain.State
 	cfg     mcpConfig
 	files   localfile.Policy
-	sources fs.FS
+	sources mcpSourceFiles
 	layouts func(string) (d2graph.LayoutGraph, error)
 	routers func(string) (d2graph.RouteEdges, error)
 	sem     chan struct{}
@@ -121,8 +120,14 @@ func newMCPServer(ctx context.Context, ms *xmain.State, cfg mcpConfig) (*mcp.Ser
 		cleanup = func() { _ = policy.Close() }
 	}
 
-	s.sources = s.files.FilesWithExtension(".d2")
+	s.sources = mcpSourceFiles{s.files}
 
+	// Both lists are fixed at startup. Declaring them explicitly prevents
+	// clients from subscribing to list-change notifications.
+	capabilities := &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}
+	if cfg.ui {
+		capabilities.Resources = &mcp.ResourceCapabilities{}
+	}
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:       "d2",
 		Title:      "D2",
@@ -130,6 +135,7 @@ func newMCPServer(ctx context.Context, ms *xmain.State, cfg mcpConfig) (*mcp.Ser
 		WebsiteURL: "https://d2lang.com",
 	}, &mcp.ServerOptions{
 		Instructions: mcpInstructions,
+		Capabilities: capabilities,
 		Logger:       slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 	})
 
@@ -170,7 +176,10 @@ func mcpText(s string) mcp.Content { return &mcp.TextContent{Text: s} }
 func mcpErrorContent(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		res, err := next(ctx, method, req)
-		if r, ok := res.(*mcp.CallToolResult); ok && r.IsError && r.StructuredContent == nil {
+		if err != nil {
+			return nil, err
+		}
+		if r, ok := res.(*mcp.CallToolResult); ok && r != nil && r.IsError && r.StructuredContent == nil {
 			r.StructuredContent = mcpStatus{Diagnostics: []mcpDiagnostic{}, Warnings: []string{}}
 		}
 		return res, err

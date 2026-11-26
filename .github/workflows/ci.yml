@@ -125,6 +125,8 @@ jobs:
           go-version-file: ./go.mod
       - name: Test native and virtual import paths
         run: go test -v -run '^(TestImportRelativeToNativeInputPath|TestImportVirtualDirectoryWithBackslash|TestResolveImportPathOnWindows)$' ./d2ir ./lib/localfile
+      - name: Test rooted MCP file input and diagnostics
+        run: go test -v -run '^TestMCP(DiagramPaths|UTF16Diagram|Root)$' ./d2cli
       - name: Render a diagram from outside its directory
         run: go test -v -run '^TestCLI_E2E$/^import_from_another_directory$' ./e2etests-cli
   wasm:

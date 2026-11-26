@@ -4,9 +4,11 @@ package d2cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +23,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+
+	"github.com/d2lang/d2/d2renderers/d2ascii"
+	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2target"
 )
 
 func TestMCPRenderPNG(t *testing.T) {
@@ -245,4 +251,64 @@ func TestMCPRenderTextCanvasLimit(t *testing.T) {
 	})
 	require.True(t, r.IsError)
 	require.Contains(t, r.Content[0].(*mcp.TextContent).Text, "text canvas exceeds limit")
+}
+
+func TestMCPRenderSelectedBoardLayoutFeatures(t *testing.T) {
+	s := newTestMCP(t, mcpConfig{})
+	for _, target := range []string{"layers.detail", "detail"} {
+		r := callMCP(t, s, "render", map[string]any{
+			"source": "root_shape\nlayers: {detail: {box: {left: 20}}}", "target": target, "format": "svg",
+		})
+		require.True(t, r.IsError)
+		require.Contains(t, r.Content[0].(*mcp.TextContent).Text, "does not support locked positions")
+	}
+	// An unrelated board's unsupported geometry should not prevent selecting the layer.
+	r := callMCP(t, s, "render", map[string]any{
+		"source": "box: {left: 20}\nlayers: {detail: {root_shape}}", "target": "layers.detail", "format": "svg",
+	})
+	require.False(t, r.IsError, "%v", r.Content)
+}
+
+func TestMCPRenderPrimarySurvivesPreviewFailure(t *testing.T) {
+	s := newTestMCP(t, mcpConfig{ui: true})
+	// Text output has no page padding. The same padding produces an invalid SVG viewport.
+	source := "vars.d2-config.pad: -500\nx -> y"
+	r := callMCP(t, s, "render", map[string]any{"source": source, "format": "txt"})
+	require.False(t, r.IsError)
+	require.Contains(t, r.Content[0].(*mcp.TextContent).Text, "x")
+	require.NotContains(t, r.Meta, mcpSVGMetaKey)
+	warnings := mcpFields(t, r)["warnings"].([]any)
+	require.Len(t, warnings, 1)
+	require.True(t, strings.HasPrefix(warnings[0].(string), "could not create the inline SVG preview"))
+
+	r = callMCP(t, s, "render", map[string]any{"source": source, "format": "svg"})
+	require.True(t, r.IsError)
+}
+
+func TestMCPViewerPreviewBundleLimit(t *testing.T) {
+	dir := t.TempDir()
+	asset := testSolidPNG(t, color.NRGBA{A: 255})
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "icon.png"), asset, 0o600))
+	assets, err := sceneAssetOptions(t.Context(), filepath.Join(dir, "input.d2"), false)
+	require.NoError(t, err)
+	t.Cleanup(assets.Resolver.CloseIdleConnections)
+	raw := []byte(`<svg><image href="icon.png"/><image href="icon.png"/></svg>`)
+	want := strings.ReplaceAll(string(raw), "icon.png", "data:image/png;base64,"+base64.StdEncoding.EncodeToString(asset))
+	exact, err := bundleRasterPreviewWithLimit(t.Context(), assets, raw, int64(len(want)))
+	require.NoError(t, err)
+	require.Equal(t, want, string(exact))
+	small, err := bundleRasterPreviewWithLimit(t.Context(), assets, raw, int64(len(want)-1))
+	var tooLarge *rasterPreviewSizeError
+	require.ErrorAs(t, err, &tooLarge)
+	require.Nil(t, small)
+}
+
+func TestMCPDrawingStopsWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	board := d2target.NewDiagram()
+	_, err := d2ascii.NewASCIIartist().Render(ctx, board, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = d2svg.RenderContext(ctx, board, nil)
+	require.ErrorIs(t, err, context.Canceled)
 }

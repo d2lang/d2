@@ -138,3 +138,13 @@ func (w startingWrite) Write(p []byte) (int, error) {
 	close(w.started)
 	return w.WriteCloser.Write(p)
 }
+
+func TestMCPErrorContentPreservesProtocolErrors(t *testing.T) {
+	session := newTestMCP(t, mcpConfig{})
+	_, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "unavailable"})
+	var protocolErr *jsonrpc.Error
+	require.ErrorAs(t, err, &protocolErr)
+	require.EqualValues(t, jsonrpc.CodeInvalidParams, protocolErr.Code)
+	require.Contains(t, protocolErr.Message, "unavailable")
+	require.False(t, callMCP(t, session, "check", map[string]any{"source": "a -> b"}).IsError)
+}
