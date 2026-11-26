@@ -17,7 +17,7 @@ func help(ms *xmain.State) {
 Usage:
   %[1]s [--watch=false] [--theme=0] file.d2 [file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt]
   %[1]s layout [name]
-  %[1]s fmt file.d2 ...
+  %[1]s fmt [--check] [--diff] file.d2|file.md|- ...
   %[1]s play [--theme=0] [--sketch] file.d2
   %[1]s validate file.d2
 
@@ -37,7 +37,7 @@ Subcommands:
   %[1]s layout - Lists available layout engine options with short help
   %[1]s layout [name] - Display long help for a particular layout engine, including its configuration options
   %[1]s themes - Lists available themes
-  %[1]s fmt file.d2 ... - Format passed files
+  %[1]s fmt file.d2|file.md|- ... - Format D2 files, D2 code fences in Markdown, or D2 from stdin
 	%[1]s play file.d2 - Opens the file in playground, an online web viewer (https://play.d2lang.com)
   %[1]s validate file.d2  - Validates file.d2
 
