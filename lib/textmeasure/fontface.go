@@ -3,6 +3,7 @@ package textmeasure
 import (
 	"encoding/binary"
 	"fmt"
+	"image"
 	"sort"
 
 	"golang.org/x/image/font"
@@ -73,7 +74,7 @@ func (f *parsedFont) newFace(size float64) font.Face {
 	}
 
 	return &metricPreservingFace{
-		Face:         base,
+		base:         base,
 		font:         f.font,
 		scale:        fixed.Int26_6(0.5 + size*64),
 		unitsPerEm:   f.unitsPerEm,
@@ -84,7 +85,10 @@ func (f *parsedFont) newFace(size float64) font.Face {
 }
 
 type metricPreservingFace struct {
-	font.Face
+	// base is a named field. Embedded, it would give the struct value, not
+	// only its pointer, the font.Face method set, and TinyGo would then add a
+	// case that copies this struct to every dynamic call of a font.Face method.
+	base         font.Face
 	font         *sfnt.Font
 	buffer       sfnt.Buffer
 	scale        fixed.Int26_6
@@ -224,4 +228,10 @@ func sfntTable(src []byte, tag string) ([]byte, error) {
 		return src[offset : offset+length], nil
 	}
 	return nil, nil
+}
+
+func (f *metricPreservingFace) Close() error { return f.base.Close() }
+
+func (f *metricPreservingFace) Glyph(dot fixed.Point26_6, r rune) (image.Rectangle, image.Image, image.Point, fixed.Int26_6, bool) {
+	return f.base.Glyph(dot, r)
 }
