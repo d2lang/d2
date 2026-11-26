@@ -4,6 +4,16 @@
 
 The server provides diagnostics as you type, formatting, completion, hover, document outline, folding, color pickers, and links for imports and URLs. Go to definition, find references, and shape rename follow imports, including unsaved changes in open files.
 
+## Visual Studio Code
+
+Install [d2lang, the official D2 extension](https://marketplace.visualstudio.com/items?itemName=d2lang.d2lang), from the Marketplace or with this command.
+
+```sh
+code --install-extension d2lang.d2lang
+```
+
+Open a `.d2` file to start the server. The extension uses the `d2` executable on your `PATH`, which must support `d2 lsp`. To use a different build, set `D2.execPath` to its executable path in VS Code.
+
 ## Neovim (0.11 or later)
 
 ```lua
