@@ -10,8 +10,8 @@ import (
 //go:embed markdowntest.md
 var testMarkdown string
 
-func testStable(t *testing.T) {
-	tcs := []testCase{
+func stableCases(t *testing.T) []testCase {
+	return []testCase{
 		{
 			name: "legend_with_near_key",
 			script: `
@@ -2917,6 +2917,4 @@ y: profits {
 		loadFromFile(t, "grid_label_positions"),
 		loadFromFile(t, "cross_arrowhead"),
 	}
-
-	runa(t, tcs)
 }

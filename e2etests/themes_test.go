@@ -7,8 +7,8 @@ import (
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 )
 
-func testThemes(t *testing.T) {
-	tcs := []testCase{
+func themeCases(t *testing.T) []testCase {
+	return []testCase{
 		{
 			name:    "dark terrastruct flagship",
 			themeID: &d2themescatalog.DarkFlagshipTerrastruct.ID,
@@ -361,6 +361,4 @@ beats: Beats {
 `,
 		},
 	}
-
-	runa(t, tcs)
 }

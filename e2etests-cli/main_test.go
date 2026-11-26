@@ -26,6 +26,8 @@ import (
 	"github.com/d2lang/util-go/xos"
 
 	"github.com/d2lang/d2/d2cli"
+	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/internal/grammartest"
 	"github.com/d2lang/d2/internal/testutil"
 	"github.com/d2lang/d2/lib/compression"
 	"github.com/d2lang/d2/lib/pptx"
@@ -1019,6 +1021,7 @@ bank.Equities.app14522 -> bank.Fixed Income.app14500: security reference
 			name: "stdin",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				stdin := bytes.NewBufferString(`x -> y`)
+				grammartest.Check(t, grammartest.Load(t), stdin.String())
 				stdout := &bytes.Buffer{}
 				tms := testMain(dir, env, "-")
 				tms.Stdin = stdin
@@ -1766,7 +1769,14 @@ c
 		{
 			name: "validate-against-incorrect-d2",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
-				writeFile(t, dir, "incorrect.d2", `x > y`)
+				const source = `x > y`
+				if grammartest.Recognizes(t, grammartest.Load(t), source) {
+					t.Fatal("EBNF accepted malformed connection")
+				}
+				if _, err := d2parser.Parse("incorrect.d2", strings.NewReader(source), nil); err == nil {
+					t.Fatal("Go parser accepted malformed connection")
+				}
+				assert.WriteFile(t, filepath.Join(dir, "incorrect.d2"), []byte(source), 0644)
 				err := runTestMainPersist(t, ctx, dir, env, "validate", "incorrect.d2")
 				assert.Error(t, err)
 			},
@@ -1867,6 +1877,9 @@ func runTestMainPersist(tb testing.TB, ctx context.Context, dir string, env *xos
 
 func writeFile(tb testing.TB, dir, fp, data string) {
 	tb.Helper()
+	if filepath.Ext(fp) == ".d2" {
+		grammartest.Check(tb, grammartest.Load(tb), data)
+	}
 	err := os.MkdirAll(filepath.Dir(filepath.Join(dir, fp)), 0755)
 	assert.Success(tb, err)
 	assert.WriteFile(tb, filepath.Join(dir, fp), []byte(data), 0644)

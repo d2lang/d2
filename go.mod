@@ -22,6 +22,7 @@ require (
 	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
 	github.com/yuin/goldmark/v2 v2.1.16
+	golang.org/x/exp v0.0.0-20261120182113-8801fbdfac81
 	golang.org/x/image v0.48.0
 	golang.org/x/net v0.63.0
 	golang.org/x/sync v0.25.0
@@ -35,7 +36,6 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
-	golang.org/x/exp v0.0.0-20261120182113-8801fbdfac81 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

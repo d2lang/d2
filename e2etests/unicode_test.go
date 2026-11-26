@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func testUnicode(t *testing.T) {
-	tcs := []testCase{
+func unicodeCases(t *testing.T) []testCase {
+	return []testCase{
 		{
 			name: "japanese-basic",
 			script: `a: ああああああああああ
@@ -134,6 +134,4 @@ m -> n -> o -> p
 `,
 		},
 	}
-
-	runa(t, tcs)
 }

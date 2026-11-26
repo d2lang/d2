@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func testPatterns(t *testing.T) {
+func patternCases(t *testing.T) []testCase {
 	tcs := []testCase{
 		{
 			name: "root-dots",
@@ -258,6 +258,5 @@ costumes.monster -> monsters.id
 	for i := range tcs {
 		tcs[i].justDagre = true
 	}
-
-	runa(t, tcs)
+	return tcs
 }

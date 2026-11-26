@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// testRoot tests things that affect the root, like background color
-func testRoot(t *testing.T) {
-	tcs := []testCase{
+// rootCases covers properties of the root, such as its background color.
+func rootCases(t *testing.T) []testCase {
+	return []testCase{
 		{
 			name: "fill",
 			script: `we all live; in a LightSteelBlue; submarine
@@ -65,6 +65,4 @@ style.double-border: true
 `,
 		},
 	}
-
-	runa(t, tcs)
 }
