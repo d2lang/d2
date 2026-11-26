@@ -52,7 +52,7 @@ var mcpConfigKeys = []string{
 	"animate-interval", "animate-duration", "force-appendix", "theme-overrides", "dark-theme-overrides", "data",
 }
 
-func (s *mcpServer) guide(_ context.Context, _ *mcp.CallToolRequest, in guideInput) (*mcp.CallToolResult, any, error) {
+func (s *mcpServer) guide(_ context.Context, _ *mcp.CallToolRequest, in *guideInput) (*mcp.CallToolResult, any, error) {
 	var guide string
 	if in.Topic == "reference" {
 		guide = mcpReference()

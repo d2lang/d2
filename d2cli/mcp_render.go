@@ -51,7 +51,7 @@ type renderInfo struct {
 	PlaygroundURL string   `json:"playground_url,omitempty"`
 }
 
-func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in renderInput) (*mcp.CallToolResult, any, error) {
+func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in *renderInput) (*mcp.CallToolResult, any, error) {
 	format := in.Format
 	if format == "" {
 		format = "png"

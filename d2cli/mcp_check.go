@@ -22,7 +22,7 @@ type checkInfo struct {
 	Changed     *bool   `json:"changed,omitempty"`
 }
 
-func (s *mcpServer) check(ctx context.Context, _ *mcp.CallToolRequest, in checkInput) (*mcp.CallToolResult, any, error) {
+func (s *mcpServer) check(ctx context.Context, _ *mcp.CallToolRequest, in *checkInput) (*mcp.CallToolResult, any, error) {
 	source, path, msg := s.resolveInput(in.Source, in.Path)
 	if msg != "" {
 		return mcpFailure(msg)
