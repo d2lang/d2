@@ -145,7 +145,7 @@ func TestParserBufferEquivalence(t *testing.T) {
 }
 
 func TestUnquotedRawStringOwnership(t *testing.T) {
-	for _, source := range []string{"ordinary", `escaped\ttext`, `before${variable} after`, `before\t${variable} after`} {
+	for _, source := range []string{"ordinary", "#abe", `escaped\ttext`, `before${variable} after`, `before\t${variable} after`} {
 		value, err := d2parser.ParseValue(source)
 		if err != nil {
 			t.Fatal(err)

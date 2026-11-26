@@ -96,3 +96,26 @@ LaYeRs: {WIDTH: {item.LABEL: LABEL}; "STEPS"}
 		}
 	}
 }
+
+func TestBoardKeywordsInContainer(t *testing.T) {
+	const source = `service: {
+  Queue
+  LaYeRs -> STEPS
+}
+service.STEPS -> service.ScEnArIoS
+service.ScEnArIoS.STYLE.FILL: green
+LaYeRs: {Live: {StEpS: {First: {service.LaYeRs}}}}
+`
+	const want = `service: {
+  Queue
+  LaYeRs -> STEPS
+}
+service.STEPS -> service.ScEnArIoS
+service.ScEnArIoS.style.fill: green
+
+layers: {Live: {steps: {First: {service.LaYeRs}}}}
+`
+	m, err := d2parser.Parse("test.d2", strings.NewReader(source), nil)
+	assert.Success(t, err)
+	assert.String(t, want, d2format.Format(m))
+}

@@ -58,7 +58,7 @@ func replaceBoardNodeInMap(ast, ast2 *d2ast.Map, boardPath []string, boardType s
 
 	for _, n := range ast.Nodes {
 		if n.MapKey != nil && n.MapKey.Key != nil &&
-			n.MapKey.Key.Path[0].Unbox().ScalarString() == boardType &&
+			d2ast.Keyword(n.MapKey.Key.Path[0].Unbox()) == boardType &&
 			n.MapKey.Value.Map != nil {
 			matches = append(matches, n.MapKey.Value.Map)
 		}

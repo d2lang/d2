@@ -37,9 +37,7 @@ func TestLiteralHyphenAtBoundary(t *testing.T) {
 
 func TestIncompleteSubstitutionAndImport(t *testing.T) {
 	for _, tc := range []struct{ source, diagnostic string }{
-		{"x: amount$", "substitutions must begin"},
-		{"x: amount$\nnext", "substitutions must begin"},
-		{"...$", "substitutions must begin"},
+		{"...$", "invalid text beginning unquoted key"},
 		{"x: ${}", "substitution requires a variable name"},
 		{"x: [${ }]", "substitution requires a variable name"},
 		{"x: @", "import requires a path"},

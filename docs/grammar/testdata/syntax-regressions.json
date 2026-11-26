@@ -44,8 +44,8 @@
       {"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "end-"}]}}]}}}
     ]
   },
-  {"name": "bare-filter", "source": "*: {&; label: selected}", "reject": true},
-  {"name": "bare-negated-filter", "source": "!&", "reject": true},
+  {"name": "bare-filter", "source": "*: {&; label: selected}", "reject": true, "lexicalConstraint": "Filter"},
+  {"name": "bare-negated-filter", "source": "!&", "reject": true, "lexicalConstraint": "Filter"},
   {"name": "dangling-key-dot", "source": "a.", "reject": true},
   {"name": "dangling-substitution-dot", "source": "x: ${service.}", "reject": true},
   {"name": "missing-edge-property-path", "source": "(a -> b)[0].", "reject": true},
@@ -56,8 +56,35 @@
   {"name": "unterminated-edge-group", "source": "(a -> b", "reject": true},
   {"name": "group-without-connection", "source": "(x)", "reject": true},
   {"name": "split-edge-index", "source": "(a -> b)[1 2]", "reject": true},
-  {"name": "empty-substitution", "source": "x: ${}", "reject": true},
+  {"name": "empty-substitution", "source": "x: ${}", "reject": true, "lexicalConstraint": "substitution"},
   {"name": "import-prefix-without-filename", "source": "x: @../", "reject": true, "lexicalConstraint": "Import"},
-  {"name": "bare-dollar-at-eof", "source": "x: text$", "reject": true},
+  {
+    "name": "bare-dollar-at-eof",
+    "source": "x: text$",
+    "nodes": [{"map_key": {"value": {"unquoted_string": {"value": [{"string": "text$"}]}}}}]
+  },
+  {
+    "name": "literal-and-interpolated-dollar",
+    "source": "price: $5 per ${unit}",
+    "nodes": [{"map_key": {"value": {"unquoted_string": {"value": [
+      {"string": "$5 per "}, {"substitution": {"path": [{"unquoted_string": {"value": [{"string": "unit"}]}}]}}
+    ]}}}}]
+  },
+  {
+    "name": "punctuation-in-endpoints",
+    "source": "<stdin> -> R&D -> rows[0]",
+    "nodes": [{"map_key": {"edges": [
+      {"src": {"path": [{"unquoted_string": {"value": [{"string": "<stdin>"}]}}]}, "dst": {"path": [{"unquoted_string": {"value": [{"string": "R&D"}]}}]}},
+      {"dst": {"path": [{"unquoted_string": {"value": [{"string": "rows[0]"}]}}]}}
+    ]}}]
+  },
+  {
+    "name": "hex-colour-and-comment",
+    "source": "style.fill: #c0FFee # fill",
+    "nodes": [
+      {"map_key": {"value": {"unquoted_string": {"value": [{"string": "#c0FFee"}]}}}},
+      {"comment": {"value": "fill"}}
+    ]
+  },
   {"name": "wrong-mixed-fence", "source": "x: |!#md\nhello\n##|", "reject": true, "lexicalConstraint": "blockString"}
 ]

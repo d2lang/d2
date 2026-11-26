@@ -20,26 +20,33 @@ func Format(n d2ast.Node) string {
 type keyScope int
 
 const (
-	diagramKeys     keyScope = iota
-	definitionNames          // each child names a board or class
-	variableKeys             // arbitrary variable names and data, including plugin configuration
+	boardKeys keyScope = iota // keys at the root of a diagram or board
+	shapeKeys
+	boardNames
+	classNames
+	variableKeys // arbitrary variable names and data, including plugin configuration
 )
 
 func (scope keyScope) child(keyword string) keyScope {
 	switch scope {
 	case variableKeys:
 		return variableKeys
-	case definitionNames:
-		return diagramKeys
+	case boardNames:
+		return boardKeys
+	case classNames:
+		return shapeKeys
 	}
 	switch keyword {
 	case "vars":
 		return variableKeys
-	case "layers", "scenarios", "steps", "classes":
-		return definitionNames
-	default:
-		return diagramKeys
+	case "classes":
+		return classNames
+	case "layers", "scenarios", "steps":
+		if scope == boardKeys {
+			return boardNames
+		}
 	}
+	return shapeKeys
 }
 
 type printer struct {
@@ -63,6 +70,18 @@ func (p *printer) newline() {
 }
 
 func (p *printer) node(n d2ast.Node) {
+	p.nodeAt(n, standalone)
+}
+
+type tokenPosition int
+
+const (
+	standalone tokenPosition = iota
+	arrayItem
+	beforeMap
+)
+
+func (p *printer) nodeAt(n d2ast.Node, pos tokenPosition) {
 	switch n := n.(type) {
 	case *d2ast.Comment:
 		p.comment(n)
@@ -81,10 +100,10 @@ func (p *printer) node(n d2ast.Node) {
 	case *d2ast.Number:
 		p.sb.WriteString(n.Raw)
 	case *d2ast.UnquotedString:
-		p.interpolationBoxes(n.Value, false)
+		p.interpolationBoxes(n.Value, false, pos)
 	case *d2ast.DoubleQuotedString:
 		p.sb.WriteByte('"')
-		p.interpolationBoxes(n.Value, true)
+		p.interpolationBoxes(n.Value, true, pos)
 		p.sb.WriteByte('"')
 	case *d2ast.SingleQuotedString:
 		p.sb.WriteByte('\'')
@@ -98,7 +117,7 @@ func (p *printer) node(n d2ast.Node) {
 	case *d2ast.Substitution:
 		p.substitution(n)
 	case *d2ast.Import:
-		p._import(n)
+		p._import(n, pos)
 	case *d2ast.Array:
 		p.array(n)
 	case *d2ast.Map:
@@ -159,7 +178,7 @@ func (p *printer) blockLines(value string, oneLine bool) {
 	}
 }
 
-func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString bool) {
+func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString bool, pos tokenPosition) {
 	wholeToken := len(boxes) == 1
 	for i, b := range boxes {
 		if b.Substitution != nil {
@@ -175,12 +194,16 @@ func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleStr
 			text = escapeDoubledQuotedValue(*b.String, p.inKey)
 		case b.StringRaw != nil && (wholeToken || matchesUnquotedFragment(*b.StringRaw, *b.String, i == len(boxes)-1)):
 			text = *b.StringRaw
+			if !isDoubleString {
+				text = escapeRawInContext(text, pos, wholeToken && !p.inKey, i == len(boxes)-1)
+			}
 		default:
 			text = escapeUnquotedValue(*b.String, p.inKey, wholeToken)
 		}
-		if p.inKey && p.keyScope == diagramKeys && wholeToken && !isDoubleString {
+		if p.inKey && (p.keyScope == boardKeys || p.keyScope == shapeKeys) && wholeToken && !isDoubleString {
 			lower := strings.ToLower(text)
-			if _, ok := d2ast.ReservedKeywords[lower]; ok {
+			_, board := d2ast.BoardKeywords[lower]
+			if _, ok := d2ast.ReservedKeywords[lower]; ok && (!board || p.keyScope == boardKeys) {
 				text = lower
 			}
 		}
@@ -224,9 +247,9 @@ func (p *printer) blockString(bs *d2ast.BlockString) {
 	p.sb.WriteString(quote + "|")
 }
 
-func (p *printer) path(els []*d2ast.StringBox) {
+func (p *printer) path(els []*d2ast.StringBox, pos tokenPosition) {
 	for i, s := range els {
-		p.node(s.Unbox())
+		p.nodeAt(s.Unbox(), pos)
 		if i < len(els)-1 {
 			p.sb.WriteByte('.')
 		}
@@ -238,11 +261,11 @@ func (p *printer) substitution(s *d2ast.Substitution) {
 		p.sb.WriteString("...")
 	}
 	p.sb.WriteString("${")
-	p.path(s.Path)
+	p.path(s.Path, standalone)
 	p.sb.WriteByte('}')
 }
 
-func (p *printer) _import(i *d2ast.Import) {
+func (p *printer) _import(i *d2ast.Import, pos tokenPosition) {
 	if i.Spread {
 		p.sb.WriteString("...")
 	}
@@ -264,7 +287,7 @@ func (p *printer) _import(i *d2ast.Import) {
 	}
 	if len(i.Path) > 1 {
 		p.sb.WriteByte('.')
-		p.path(i.Path[1:])
+		p.path(i.Path[1:], pos)
 	}
 }
 
@@ -299,7 +322,7 @@ func (p *printer) array(a *d2ast.Array) {
 			p.sb.WriteString("; ")
 		}
 
-		p.node(n)
+		p.nodeAt(n, arrayItem)
 		prev = n
 	}
 
@@ -336,7 +359,7 @@ func (p *printer) _map(m *d2ast.Map) {
 			if prev != m {
 				// Scenarios and steps inherit the state at their declaration.
 				// Separate board sections visually without changing their order.
-				if n.GetRange().Start.Line-prev.GetRange().End.Line > 1 || (p.keyScope == diagramKeys && nb.IsBoardNode()) {
+				if n.GetRange().Start.Line-prev.GetRange().End.Line > 1 || (p.keyScope == boardKeys && nb.IsBoardNode()) {
 					p.sb.WriteByte('\n')
 				}
 			}
@@ -385,6 +408,9 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 		if grouped {
 			p.sb.WriteByte('(')
 		}
+		// Edge endpoints always name shapes.
+		parent := p.keyScope
+		p.keyScope = shapeKeys
 		if mk.Edges[0].Src != nil {
 			p.key(mk.Edges[0].Src)
 			p.sb.WriteByte(' ')
@@ -395,6 +421,7 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 				p.sb.WriteByte(' ')
 			}
 		}
+		p.keyScope = parent
 		if grouped {
 			p.sb.WriteByte(')')
 		}
@@ -410,7 +437,7 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 
 	if mk.Primary.Unbox() != nil {
 		p.sb.WriteString(": ")
-		p.node(mk.Primary.Unbox())
+		p.nodeAt(mk.Primary.Unbox(), beforeMap)
 	}
 	if mk.Value.Unbox() != nil {
 		if mk.Primary.Unbox() == nil {
@@ -446,7 +473,7 @@ func (p *printer) fieldPath(k *d2ast.KeyPath) keyScope {
 func (p *printer) key(k *d2ast.KeyPath) {
 	p.inKey = true
 	if k != nil {
-		p.path(k.Path)
+		p.path(k.Path, standalone)
 	}
 	p.inKey = false
 }

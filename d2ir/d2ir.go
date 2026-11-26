@@ -594,6 +594,21 @@ func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrde
 	}
 }
 
+// Inside a shape, board keywords have the same meaning as their quoted names.
+// Use that literal representation in the IR; references retain their source AST.
+func (m *Map) fieldName(name d2ast.String) d2ast.String {
+	if _, board := d2ast.BoardKeywords[d2ast.Keyword(name)]; !board || m == nil {
+		return name
+	}
+	parent, ok := m.parent.(*Field)
+	if !ok || NodeBoardKind(m) != "" || d2ast.Keyword(parent.Name) != "" {
+		return name
+	}
+	literal := d2ast.FlatDoubleQuotedString(name.ScalarString())
+	literal.Range = name.GetRange()
+	return literal
+}
+
 // Root reports whether the Map is the root of the D2 tree.
 func (m *Map) Root() bool {
 	// m.parent exists even on the root map as we store the root AST in
@@ -1151,7 +1166,7 @@ func (c *compiler) IsContainer(m *Map) bool {
 					return true
 				}
 				if n.MapKey.Key != nil {
-					if d2ast.Keyword(n.MapKey.Key.Path[0].Unbox()) == "" {
+					if d2ast.Keyword(m.fieldName(n.MapKey.Key.Path[0].Unbox())) == "" {
 						return true
 					}
 				}
@@ -1214,7 +1229,7 @@ func (m *Map) getFieldLinear(ida []d2ast.String) *Field {
 		return nil
 	}
 
-	s := ida[0]
+	s := m.fieldName(ida[0])
 	rest := ida[1:]
 
 	if s.ScalarString() == "_" && s.IsUnquoted() {
@@ -1250,7 +1265,7 @@ func (m *Map) getFieldIndexed(ida ...d2ast.String) *Field {
 	if len(ida) == 0 {
 		return nil
 	}
-	f := m.lookupField(ida[0])
+	f := m.lookupField(m.fieldName(ida[0]))
 	if f == nil || len(ida) == 1 {
 		return f
 	}
@@ -1420,7 +1435,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		return nil
 	}
 
-	head := kp.Path[i].Unbox()
+	head := m.fieldName(kp.Path[i].Unbox())
 	keyword := d2ast.Keyword(head)
 
 	if keyword != "" {
@@ -1437,8 +1452,13 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", keyword)
 	}
 
-	if _, board := d2ast.BoardKeywords[keyword]; board && NodeBoardKind(m) == "" {
-		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", keyword)
+	if _, board := d2ast.BoardKeywords[keyword]; board {
+		if NodeBoardKind(m) == "" {
+			return d2parser.Errorf(head, "%s must be declared at a board root scope", keyword)
+		}
+		if i == len(kp.Path)-1 && refctx != nil && refctx.Edge != nil && (kp == refctx.Edge.Src || kp == refctx.Edge.Dst) {
+			return d2parser.Errorf(head, "edge with board keyword alone doesn't make sense")
+		}
 	}
 
 	var existing *Field
@@ -1497,7 +1517,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 	}
 	f := &Field{
 		parent: m,
-		Name:   kp.Path[i].Unbox(),
+		Name:   head,
 	}
 	defer func() {
 		if c == nil || i < kp.FirstGlob() {
@@ -1872,18 +1892,10 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 	if ij != -1 {
 		return d2parser.Errorf(refctx.Edge.Src.Path[ij].Unbox(), "reserved keywords are prohibited in edges")
 	}
-	ij = findBoardKeyword(eid.SrcPath...)
-	if ij == len(eid.SrcPath)-1 {
-		return d2parser.Errorf(refctx.Edge.Src.Path[ij].Unbox(), "edge with board keyword alone doesn't make sense")
-	}
 
 	ij = findProhibitedEdgeKeyword(eid.DstPath...)
 	if ij != -1 {
 		return d2parser.Errorf(refctx.Edge.Dst.Path[ij].Unbox(), "reserved keywords are prohibited in edges")
-	}
-	ij = findBoardKeyword(eid.DstPath...)
-	if ij == len(eid.DstPath)-1 {
-		return d2parser.Errorf(refctx.Edge.Dst.Path[ij].Unbox(), "edge with board keyword alone doesn't make sense")
 	}
 
 	srcFA, err := refctx.ScopeMap.ensureFieldMode(refctx.Edge.Src, refctx, true, c, indexed)
@@ -2265,15 +2277,6 @@ func countUnderscores(p []d2ast.String) int {
 		}
 	}
 	return 0
-}
-
-func findBoardKeyword(ida ...d2ast.String) int {
-	for i := range ida {
-		if _, ok := d2ast.BoardKeywords[d2ast.Keyword(ida[i])]; ok {
-			return i
-		}
-	}
-	return -1
 }
 
 func findProhibitedEdgeKeyword(ida ...d2ast.String) int {

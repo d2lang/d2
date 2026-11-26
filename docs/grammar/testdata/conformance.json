@@ -672,7 +672,7 @@
     "lexicalConstraint": "blockString"
   },
   {"name": "unterminated-block-comment", "source": "\"\"\" note", "reject": true},
-  {"name": "missing-edge-endpoint", "source": "a ->", "reject": true},
+  {"name": "missing-edge-endpoint", "source": "a ->", "reject": true, "lexicalConstraint": "unquotedKey"},
   {"name": "non-numeric-edge-index", "source": "(a -> b)[one].label: x", "reject": true},
   {"name": "unterminated-substitution", "source": "label: ${user.name", "reject": true},
   {"name": "standalone-import", "source": "@file", "reject": true},

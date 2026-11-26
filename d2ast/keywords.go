@@ -227,7 +227,8 @@ var FillPatterns = []string{
 
 var TextTransforms = []string{"none", "uppercase", "lowercase", "capitalize"}
 
-// BoardKeywords contains the keywords that create new boards.
+// BoardKeywords contains the keywords that declare boards at a board root.
+// These names identify ordinary shapes inside a container.
 var BoardKeywords = map[string]struct{}{
 	"layers":    {},
 	"scenarios": {},

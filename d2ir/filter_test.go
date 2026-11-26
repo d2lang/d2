@@ -252,19 +252,11 @@ jeremy: {
 			{
 				name: "bad-syntax",
 				run: func(t testing.TB) {
-					_, err := compile(t, `jacob.style: {
-	fill: red
-	multiple: true
-}
-
-*.&style: {
-		fill: red
-		multiple: true
-}
-`)
-					assert.ErrorString(t, err, `TestCompile/filters/errors/bad-syntax.d2:6:2: expected a key segment after .
-TestCompile/filters/errors/bad-syntax.d2:6:3: unexpected text after map key
-TestCompile/filters/errors/bad-syntax.d2:9:1: unexpected map termination character } in file map`)
+					_, err := compile(t, `*: {
+	&;
+	style.fill: red
+}`)
+					assert.ErrorString(t, err, `TestCompile/filters/errors/bad-syntax.d2:2:2: filter requires a key or connection`)
 				},
 			},
 			{
