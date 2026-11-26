@@ -41,7 +41,7 @@ func orZero(r int32) int32 {
 // order whatever order they come in, and sorting the objects stably by
 // coordinate gives the same groups (+0 and -0 are one key and one group) in
 // that order, each in g.Objects order. With a NaN coordinate the ranks are
-// numbered as the original numbered them (getRanksMapOrder).
+// numbered in one of the ways the original numbered them (getRanksMapOrder).
 func getRanks(g *d2graph.Graph, ix *objectIndex, isHorizontal bool, orders mapOrders) objectRanks {
 	type aligned = rankItem
 	items := ix.sc.rankItems[:0]
@@ -131,31 +131,30 @@ func (r *objectRanks) setParentRanks(g *d2graph.Graph, ix *objectIndex) {
 // got no rank (it reads as rank 0). The keys were sorted with sort.Slice,
 // to which NaN is neither less nor greater than anything, so where the
 // empty ranks landed, and in what order the ranks around them came, depended
-// on the order of the keys (see map_order.go). The ranks are numbered here
-// by ranging over the same map, filled in the same order, and sorting its
-// keys the same way.
+// on the order of the keys (see map_order.go). Here the keys come in the
+// order the objects first had them (in tests, in the order orders gives),
+// and are sorted the same way.
 func getRanksMapOrder(g *d2graph.Graph, ix *objectIndex, isHorizontal bool, orders mapOrders) objectRanks {
 	alignedObjects := make(map[float64][]*d2graph.Object)
+	var levels []float64
 	for _, obj := range g.Objects {
 		if !obj.IsContainer() {
+			var level float64
 			if !isHorizontal {
-				y := math.Ceil(obj.TopLeft.Y + obj.Height/2)
-				alignedObjects[y] = append(alignedObjects[y], obj)
+				level = math.Ceil(obj.TopLeft.Y + obj.Height/2)
 			} else {
-				x := math.Ceil(obj.TopLeft.X + obj.Width/2)
-				alignedObjects[x] = append(alignedObjects[x], obj)
+				level = math.Ceil(obj.TopLeft.X + obj.Width/2)
 			}
+			if _, ok := alignedObjects[level]; !ok {
+				// A new coordinate, or NaN, which no lookup finds.
+				levels = append(levels, level)
+			}
+			alignedObjects[level] = append(alignedObjects[level], obj)
 		}
 	}
 
-	var levels []float64
 	if orders != nil {
 		levels = orders.levels(alignedObjects)
-	} else {
-		levels = make([]float64, 0, len(alignedObjects))
-		for l := range alignedObjects {
-			levels = append(levels, l)
-		}
 	}
 	sort.Slice(levels, func(i, j int) bool {
 		return levels[i] < levels[j]
@@ -424,47 +423,42 @@ func adjustRankSpacingWith(g *d2graph.Graph, ix *objectIndex, rankSep float64, i
 // and over the ending map and sorted their keys with sort.Slice.
 //
 // When a side's positions are distinct and none is NaN, every order of its
-// keys sorts to the same result, which a stable sort gives. When either side
-// has ties, the order of its tied ancestors came from its map's iteration
-// and from sort.Slice, so both maps are made, filled, ranged over and sorted
-// as the original did (see map_order.go). The other side's map is part of
-// it: under TinyGo, every map creation, growth and iteration start draws
-// from one random stream whose nearby draws are related, so the order in
-// which a map is iterated depends on the draws between its creation and its
-// iteration, which in the original were the other map's. Only TinyGo tests
-// check that, and no CI job runs them: crossRankShifter.originalMaps gives
-// the command to run after changing these maps.
+// keys sorts to the same result. When positions tie, the order of the tied
+// ancestors came from the map's iteration and from sort.Slice. A stable sort
+// of the keys in the order the rank first reached them gives the result of
+// an iteration that starts at the map's first slot (see map_order.go).
+//
+// In tests, orders gives the orders instead: then both maps are made, filled,
+// ranged over and sorted as the original did.
 func sortAncestors(ix *objectIndex, starting, ending *ancestorPositions, orders mapOrders) {
+	if orders == nil {
+		sortStableByPosition(starting.keys, starting.pos, false)
+		sortStableByPosition(ending.keys, ending.pos, true)
+		return
+	}
 	first := append(append(ix.sc.ancestorOrder[:0], starting.keys...), ending.keys...)
 	ix.sc.ancestorOrder = first
 	startingFirst, endingFirst := first[:len(starting.keys)], first[len(starting.keys):]
 	startingTied := sortStableByPosition(starting.keys, starting.pos, false)
 	endingTied := sortStableByPosition(ending.keys, ending.pos, true)
 	if !startingTied && !endingTied {
-		if orders != nil {
-			orders.ancestors(nil)
-			orders.ancestors(nil)
-		}
+		orders.ancestors(nil)
+		orders.ancestors(nil)
 		return
 	}
 
 	startingPositions := ancestorMap(ix, startingFirst, starting.pos, math.Inf(1))
 	endingPositions := ancestorMap(ix, endingFirst, ending.pos, math.Inf(-1))
 	var startingOrder, endingOrder []*d2graph.Object
-	if orders != nil {
-		if startingTied {
-			startingOrder = orders.ancestors(startingPositions)
-		} else {
-			orders.ancestors(nil)
-		}
-		if endingTied {
-			endingOrder = orders.ancestors(endingPositions)
-		} else {
-			orders.ancestors(nil)
-		}
+	if startingTied {
+		startingOrder = orders.ancestors(startingPositions)
 	} else {
-		startingOrder = ancestorMapOrder(startingPositions, startingTied)
-		endingOrder = ancestorMapOrder(endingPositions, endingTied)
+		orders.ancestors(nil)
+	}
+	if endingTied {
+		endingOrder = orders.ancestors(endingPositions)
+	} else {
+		orders.ancestors(nil)
 	}
 	if startingTied {
 		sortAncestorMapOrder(ix, starting.keys, startingOrder, startingPositions, false)
@@ -512,22 +506,6 @@ func ancestorMap(ix *objectIndex, firstReached []int32, pos []float64, inf float
 		positions[o] = pos[k]
 	}
 	return positions
-}
-
-// ancestorMapOrder ranges over positions as the original did and returns its
-// keys in the iteration's order when keep is set (only the iteration happens
-// otherwise: the order of an untied side sorts to one result).
-func ancestorMapOrder(positions map[*d2graph.Object]float64, keep bool) []*d2graph.Object {
-	if !keep {
-		for range positions {
-		}
-		return nil
-	}
-	order := make([]*d2graph.Object, 0, len(positions))
-	for ancestor := range positions {
-		order = append(order, ancestor)
-	}
-	return order
 }
 
 // sortAncestorMapOrder sorts order, the keys of positions in the order the

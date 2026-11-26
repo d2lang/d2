@@ -79,7 +79,7 @@ type crossRankShifter struct {
 	useAxis bool
 	axis    *axisOrder
 
-	// orders replaces the grow pass's range over seenSet in tests.
+	// orders, in tests, gives the grow pass's order (see growContainers).
 	orders mapOrders
 
 	// The shift in progress.
@@ -91,37 +91,13 @@ type crossRankShifter struct {
 	head     int
 	// seenOrder holds the seen objects in the order they were seen, which
 	// is the order the original inserted them into its map of seen
-	// objects. While the grow pass runs, seenSet is that map, and the
-	// objects seen meanwhile are inserted into it too.
+	// objects. While a grow pass with orders runs, seenSet is that map, and
+	// the objects seen meanwhile are inserted into it too.
 	seenOrder  []int32
 	seenSet    map[*d2graph.Object]struct{}
 	movedOrder []int32
 	increased  []int32
-
-	// With shadowMaps, writes records what the original's processQueue
-	// wrote into its maps before the grow pass (see wrote), and shadow
-	// holds the original's other maps while the pass runs (originalMaps).
-	recordWrites bool
-	writes       []int32
-	shadow       originalShiftMaps
 }
-
-// originalShiftMaps are the maps the original's shift
-// (shiftReachableDownIndexed) made besides its map of seen objects.
-type originalShiftMaps struct {
-	needsMove, shifted, grown map[*d2graph.Object]struct{}
-	shiftedEdges              map[*d2graph.Edge]struct{}
-}
-
-// The maps a write recorded in crossRankShifter.writes went to: a write is
-// the index of the object (of the edge in g.Edges for wroteShiftedEdge)
-// shifted left by two, or'ed with one of these.
-const (
-	wroteShifted int32 = iota
-	wroteSeen
-	wroteShiftedEdge
-	wroteNeedsMove
-)
 
 const crossRankThreshold = 100.
 
@@ -153,7 +129,6 @@ func newCrossRankShifter(g *d2graph.Graph, ix *objectIndex, isHorizontal, scanAl
 		seenOrder:    sc.seenOrder[:0],
 		movedOrder:   sc.movedOrder[:0],
 		increased:    sc.increased[:0],
-		writes:       sc.writes[:0],
 	}
 	return &sc.shifter
 }
@@ -162,15 +137,6 @@ func newCrossRankShifter(g *d2graph.Graph, ix *objectIndex, isHorizontal, scanAl
 func (s *crossRankShifter) keepStorage() {
 	sc := s.ix.sc
 	sc.queue, sc.seenOrder, sc.movedOrder, sc.increased = s.queue[:0], s.seenOrder[:0], s.movedOrder[:0], s.increased[:0]
-	sc.writes = s.writes[:0]
-}
-
-// wrote records, while recordWrites is set, that the original's
-// processQueue wrote k into the map what.
-func (s *crossRankShifter) wrote(what, k int32) {
-	if shadowMaps && s.recordWrites {
-		s.writes = append(s.writes, k<<2|what)
-	}
 }
 
 func (s *crossRankShifter) enqueue(o int32) {
@@ -281,7 +247,6 @@ func (s *crossRankShifter) processQueue() {
 				c.TopLeft.X += distance
 				m.shifted = epoch
 				s.movedOrder = append(s.movedOrder, curr)
-				s.wrote(wroteShifted, curr)
 			}
 		} else {
 			if !shift {
@@ -295,12 +260,10 @@ func (s *crossRankShifter) processQueue() {
 				c.TopLeft.Y += distance
 				m.shifted = epoch
 				s.movedOrder = append(s.movedOrder, curr)
-				s.wrote(wroteShifted, curr)
 			}
 		}
 		m.seen = epoch
 		s.seenOrder = append(s.seenOrder, curr)
-		s.wrote(wroteSeen, curr)
 		if s.seenSet != nil {
 			s.seenSet[c] = struct{}{}
 		}
@@ -330,7 +293,6 @@ func (s *crossRankShifter) processQueue() {
 					}
 				}
 				s.edgeShifted[ei] = epoch
-				s.wrote(wroteShiftedEdge, ei)
 				continue
 			} else if src == curr {
 				last := e.Route[len(e.Route)-1]
@@ -338,13 +300,11 @@ func (s *crossRankShifter) processQueue() {
 					if start <= last.X &&
 						e.Dst.TopLeft.X+e.Dst.Width < last.X+distance {
 						s.marks[dst].needsMove = epoch
-						s.wrote(wroteNeedsMove, dst)
 					}
 				} else {
 					if start <= last.Y &&
 						e.Dst.TopLeft.Y+e.Dst.Height < last.Y+distance {
 						s.marks[dst].needsMove = epoch
-						s.wrote(wroteNeedsMove, dst)
 					}
 				}
 				s.enqueue(dst)
@@ -375,20 +335,17 @@ func (s *crossRankShifter) processQueue() {
 					}
 				}
 				s.edgeShifted[ei] = epoch
-				s.wrote(wroteShiftedEdge, ei)
 			} else if dst == curr {
 				first := e.Route[0]
 				if isHorizontal {
 					if start <= first.X &&
 						e.Src.TopLeft.X+e.Src.Width < first.X+distance {
 						s.marks[src].needsMove = epoch
-						s.wrote(wroteNeedsMove, src)
 					}
 				} else {
 					if start <= first.Y &&
 						e.Src.TopLeft.Y+e.Src.Height < first.Y+distance {
 						s.marks[src].needsMove = epoch
-						s.wrote(wroteNeedsMove, src)
 					}
 				}
 				s.enqueue(src)
@@ -419,7 +376,6 @@ func (s *crossRankShifter) processQueue() {
 					}
 				}
 				s.edgeShifted[ei] = epoch
-				s.wrote(wroteShiftedEdge, ei)
 			}
 		}
 
@@ -445,10 +401,7 @@ func (s *crossRankShifter) shift(obj int32, start, distance float64, isMargin bo
 		s.buildAxisOrder()
 	}
 
-	s.writes = s.writes[:0]
-	s.recordWrites = shadowMaps
 	s.processQueue()
-	s.recordWrites = false
 	s.growContainers()
 	s.moveShifted()
 
@@ -512,98 +465,44 @@ func (s *crossRankShifter) shift(obj int32, start, distance float64, isMargin bo
 //
 //	for o := range seen { ... }
 //
-// Which of those the loop visits, and the order of all visits, are the map
-// iteration's (see map_order.go), so the pass ranges over a map of the same
-// type with the same keys, inserted in the same order: the original
-// inserted every object as processQueue saw it, which is seenOrder's order,
-// and processQueue inserts the objects it sees during the pass.
+// so the objects the pass visited and their order, and with them the layout,
+// could change from run to run. The pass takes one of the orders that loop
+// took under gc: that of an iteration starting at the map's first slot (see
+// map_order.go). It visits the objects in the order they were seen
+// (seenOrder), including those seen during the pass while the map fits in
+// one group of mapGroupSlots, whose slots fill in insertion order, and no
+// object seen after the map outgrew it, nor any seen during the pass if it
+// started out larger.
 //
 // Until the pass grows a container it only reads, so if no seen object can
-// lead it to grow one (mayGrow), it changes nothing in any order, and the
-// map is not built.
+// lead it to grow one (mayGrow), it changes nothing in any order.
 //
-// Under TinyGo (shadowMaps), the original's other maps of the shift are made
-// and filled too (originalMaps).
+// In tests, orders gives the order instead, over a map of the seen objects
+// like the original's (seenSet).
 func (s *crossRankShifter) growContainers() {
 	if !s.mayGrow() {
 		if s.orders != nil {
-			s.orders.growPass(nil, nil, nil, nil)
+			s.orders.growPass(nil, nil, nil)
 		}
 		return
 	}
-	var seen map[*d2graph.Object]struct{}
-	if shadowMaps {
-		seen = s.originalMaps()
-	} else {
-		seen = make(map[*d2graph.Object]struct{})
+	if s.orders != nil {
+		seen := make(map[*d2graph.Object]struct{})
 		for _, k := range s.seenOrder {
 			seen[s.ix.objs[k]] = struct{}{}
 		}
+		s.seenSet = seen
+		s.orders.growPass(seen, s.growFrom, s.insertedObjects)
+		s.seenSet = nil
+		return
 	}
-	s.seenSet = seen
-	if s.orders != nil {
-		s.orders.growPass(seen, s.growFrom, s.insertedObjects, s.writes)
-	} else {
-		for o := range seen {
-			s.growFrom(o)
-		}
+	visits := len(s.seenOrder)
+	if visits <= mapGroupSlots {
+		visits = mapGroupSlots
 	}
-	s.seenSet = nil
-	s.shadow = originalShiftMaps{}
-}
-
-// originalMaps makes the original shift's maps (needsMove, seen, shifted and
-// shiftedEdges, in that order), writes into them what its processQueue wrote
-// before the grow pass, in the same order (writes), makes its map of grown
-// containers, and returns the map of seen objects, over which the grow pass
-// then ranges. Under TinyGo, every map creation and growth draws from the
-// random stream that also starts every map iteration, and nearby draws are
-// related, so the order in which the pass visits the seen objects depends on
-// the draws between the creation of their map and the start of the pass,
-// which in the original came from these maps too. This repeats the
-// original's draws within the shift, not those of the steps before it, so a
-// whole layout's results can still come at other frequencies than the
-// original's (see map_order.go). The other maps stay in s.shadow until the
-// pass ends: TinyGo's compiler removes a map that is only written to
-// (transform.OptimizeMaps).
-//
-// It runs only under TinyGo, or under gc with -tags dagre_shadowmaps, with
-// which CI runs this package's tests: TestShadowWritesMatchLegacy checks
-// that it repeats the original's writes. No CI job checks its effect on
-// TinyGo's map orders: d2's ci/test-wasm.sh does not run this package, and
-// the one TinyGo test that fails without it, TestGrowPassVisitOrder, is slow
-// and gated. After changing it, the grow pass, what processQueue records in
-// s.writes, or sortAncestors' tie maps, run from the module root, with
-// TinyGo 0.44 and node on PATH:
-//
-//	tinygo test -target=wasm -stack-size=1MB -no-debug -tags slowtests -run 'TieOrderDistribution|GrowPassVisitOrder' -v ./d2layouts/d2dagrelayout
-//
-// It takes 2 to 3 minutes on an Apple M4 (about one of them the tests, the
-// rest the TinyGo build) and fails if the grow pass ranges over a map made
-// without these maps (GrowPassVisitOrder, z about 15) or if sortAncestors'
-// tie maps are not the original's (TieOrderDistribution, z up to 60).
-func (s *crossRankShifter) originalMaps() map[*d2graph.Object]struct{} {
-	ix := s.ix
-	needsMove := make(map[*d2graph.Object]struct{})
-	seen := make(map[*d2graph.Object]struct{})
-	shifted := make(map[*d2graph.Object]struct{})
-	shiftedEdges := make(map[*d2graph.Edge]struct{})
-	s.shadow = originalShiftMaps{needsMove: needsMove, shifted: shifted, shiftedEdges: shiftedEdges}
-	for _, w := range s.writes {
-		k := w >> 2
-		switch w & 3 {
-		case wroteShifted:
-			shifted[ix.objs[k]] = struct{}{}
-		case wroteSeen:
-			seen[ix.objs[k]] = struct{}{}
-		case wroteShiftedEdge:
-			shiftedEdges[s.g.Edges[k]] = struct{}{}
-		default:
-			needsMove[ix.objs[k]] = struct{}{}
-		}
+	for i := 0; i < visits && i < len(s.seenOrder); i++ {
+		s.growFrom(s.ix.objs[s.seenOrder[i]])
 	}
-	s.shadow.grown = make(map[*d2graph.Object]struct{})
-	return seen
 }
 
 // mayGrow reports whether the grow pass can grow a container: whether

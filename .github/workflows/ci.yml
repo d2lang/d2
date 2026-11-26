@@ -108,8 +108,6 @@ jobs:
         run: go test -race ./d2layouts/d2talalayout/... ./internal/geomath -count=1 -timeout=15m
       - name: Test language server with the race detector
         run: go test -race ./d2lsp/lspserver -count=1
-      - name: Test the dagre adapter with its TinyGo-only shadow maps compiled in
-        run: go test -tags dagre_shadowmaps ./d2layouts/d2dagrelayout -count=1
       - name: Test TALA with the goroutine-free variants the WebAssembly module runs
         run: go test -tags scheduler.none ./d2layouts/d2talalayout/... -count=1 -timeout=15m
       - name: Test the sort callers with the TinyGo-only shared sorter compiled in

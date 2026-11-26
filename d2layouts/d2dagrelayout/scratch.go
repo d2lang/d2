@@ -48,7 +48,6 @@ type layoutScratch struct {
 	seenOrder   []int32
 	movedOrder  []int32
 	increased   []int32
-	writes      []int32
 	axis        axisOrder
 	crossIndex  crossRankIndex
 	shifter     crossRankShifter
@@ -98,7 +97,6 @@ func (s *layoutScratch) release() bool {
 	s.seenOrder = atMost(s.seenOrder, scratchMaxList)
 	s.movedOrder = atMost(s.movedOrder, scratchMaxList)
 	s.increased = atMost(s.increased, scratchMaxList)
-	s.writes = atMost(s.writes, scratchMaxList)
 	ix := &s.ix
 	clear(ix.objs)
 	*ix = objectIndex{objs: ix.objs[:0], at: ix.at[:0], lastAt: ix.lastAt[:0]}
