@@ -2114,14 +2114,33 @@ func (f *Field) AST() d2ast.Node {
 	return k
 }
 
+// A flattened board can be compiled again by the editor. Quoted property names
+// and the parent marker must still refer to shapes in its edge endpoints.
+func edgeEndpointAST(path []d2ast.String) *d2ast.KeyPath {
+	kp := &d2ast.KeyPath{}
+	for _, part := range path {
+		name := part.ScalarString()
+		if !part.IsUnquoted() {
+			_, keyword := d2ast.ReservedKeywords[strings.ToLower(name)]
+			if keyword || name == "_" {
+				kp.Path = append(kp.Path, d2ast.MakeValueBox(part).StringBox())
+				continue
+			}
+		}
+		part = d2ast.RawString(name, true)
+		kp.Path = append(kp.Path, d2ast.MakeValueBox(part).StringBox())
+	}
+	return kp
+}
+
 func (e *Edge) AST() d2ast.Node {
 	astEdge := &d2ast.Edge{}
 
-	astEdge.Src = d2ast.MakeKeyPathString(e.ID.SrcPath)
+	astEdge.Src = edgeEndpointAST(e.ID.SrcPath)
 	if e.ID.SrcArrow {
 		astEdge.SrcArrow = "<"
 	}
-	astEdge.Dst = d2ast.MakeKeyPathString(e.ID.DstPath)
+	astEdge.Dst = edgeEndpointAST(e.ID.DstPath)
 	if e.ID.DstArrow {
 		astEdge.DstArrow = ">"
 	}

@@ -135,3 +135,29 @@ func TestDeletingQuotedEdgeFieldKeepsEdge(t *testing.T) {
 		t.Fatalf("deleting an absent field affected its edge: %v", err)
 	}
 }
+
+func TestDeleteInheritedQuotedEndpoint(t *testing.T) {
+	for _, tc := range []struct{ key, edge string }{
+		{`"width"`, `"width" -> db`},
+		{`"WIDTH"`, `db -> "WIDTH"`},
+		{`box."style"`, `box."style" -> db`},
+		{`box."_"`, `box."_" -> db`},
+	} {
+		source := tc.key + ": Port; " + tc.edge + "; steps: {one: {k}}"
+		g, _, err := d2compiler.Compile("main.d2", strings.NewReader(source), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		board := []string{"one"}
+		g, err = d2oracle.Delete(g, board, tc.key)
+		if err != nil {
+			t.Fatalf("deleting %s from step: %v", tc.key, err)
+		}
+		step := d2oracle.GetBoardGraph(g, board)
+		if d2oracle.GetObj(g, nil, tc.key) == nil || len(g.Edges) != 1 ||
+			step == nil || len(step.Edges) != 0 || d2oracle.GetObj(g, board, tc.key) != nil ||
+			d2oracle.GetObj(g, board, "k") == nil || d2oracle.GetObj(g, board, "db") == nil {
+			t.Fatalf("unexpected base or step after deleting %s", tc.key)
+		}
+	}
+}
