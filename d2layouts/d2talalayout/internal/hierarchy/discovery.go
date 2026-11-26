@@ -10,6 +10,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 const (
@@ -553,7 +554,7 @@ func makeSimpleDAG(ctx context.Context, g *layoutgraph.Graph) (*layoutgraph.Grap
 	if err := chargeHierarchySort(guard, len(dag.Edges)); err != nil {
 		return nil, err
 	}
-	slices.SortFunc(dag.Edges, func(a, b *layoutgraph.Edge) int {
+	xsort.Func(dag.Edges, func(a, b *layoutgraph.Edge) int {
 		if order := cmp.Compare(a.From.ID, b.From.ID); order != 0 {
 			return order
 		}

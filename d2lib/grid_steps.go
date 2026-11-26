@@ -8,6 +8,7 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // A single source may have many large steps. Bound the total geometry copied
@@ -154,7 +155,7 @@ func inkBoundaries(board *d2target.Diagram, duration, count int) []int {
 			bounds = append(bounds, end)
 		}
 	}
-	slices.Sort(bounds)
+	xsort.Ordered(bounds)
 	bounds = slices.Compact(bounds)
 	if len(bounds) <= d2target.MaxTweenFrames+1 {
 		return bounds
@@ -177,7 +178,7 @@ func inkBoundaries(board *d2target.Diagram, duration, count int) []int {
 		for i := 0; i < keep; i++ {
 			anchors = append(anchors, missing[i*len(missing)/keep])
 		}
-		slices.Sort(anchors)
+		xsort.Ordered(anchors)
 	}
 	addWithinBudget(board.TweenFrameEndsMS)
 	addWithinBudget(uniform)
@@ -334,7 +335,7 @@ func (m *gridMotion) sampleBoundaries(duration, paintCount int) []int {
 	for _, w := range windows {
 		events = append(events, w[0], w[1])
 	}
-	slices.Sort(events)
+	xsort.Ordered(events)
 	events = slices.Compact(events)
 	var times []int
 	for i, start := range events[:len(events)-1] {
@@ -358,7 +359,7 @@ func (m *gridMotion) sampleBoundaries(duration, paintCount int) []int {
 		paintIndex := j * paintCount / count
 		times = append(times, paintIndex*duration/paintCount)
 	}
-	slices.Sort(times)
+	xsort.Ordered(times)
 	times = slices.Compact(times)
 	if !m.moves {
 		return append(times, endMS)

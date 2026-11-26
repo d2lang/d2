@@ -3,6 +3,7 @@ package d2isometricimg
 import (
 	"context"
 	"fmt"
+	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
 	"slices"
@@ -431,7 +432,7 @@ func (scene *svgVisibilityScene) rankOccluders() {
 		scene.ranked[i] = int32(i)
 	}
 	polygons, faces := scene.polygons, scene.faces
-	slices.SortFunc(scene.ranked, func(a, b int32) int {
+	xsort.Func(scene.ranked, func(a, b int32) int {
 		if polygons[a].area != polygons[b].area {
 			if polygons[a].area > polygons[b].area {
 				return -1
@@ -579,7 +580,7 @@ func (w *svgVisibilityWorker) visible(index, maxFragments, maxVertices int) ([][
 	if err := budget.spend(len(candidates) * bits.Len(uint(len(candidates)))); err != nil {
 		return nil, err
 	}
-	slices.Sort(candidates)
+	xsort.Ordered(candidates)
 
 	w.pool.reset()
 	indexed := len(candidates) > 64

@@ -15,6 +15,7 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 const (
@@ -1124,8 +1125,8 @@ func (node *Node) overlapArea(otherNode *Node) float64 {
 	ys = append(ys, otherNode.TopLeft.Y)
 	ys = append(ys, otherNode.TopLeft.Y+otherNode.Height)
 
-	slices.Sort(xs)
-	slices.Sort(ys)
+	xsort.Ordered(xs)
+	xsort.Ordered(ys)
 
 	width := xs[2] - xs[1]
 	height := ys[2] - ys[1]

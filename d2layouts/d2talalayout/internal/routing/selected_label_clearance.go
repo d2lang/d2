@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // labelInk indexes the same part of an edge before and after a trial. This
@@ -266,7 +267,7 @@ func labelPortLanes(e *layoutgraph.Edge) [][]*geo.Point {
 				slots = append(slots, slot+lo-b-label.PADDING, slot+hi-a+label.PADDING)
 			}
 		}
-		slices.Sort(slots)
+		xsort.Ordered(slots)
 		for _, s := range slices.Compact(slots) {
 			lane := math.Round(s)
 			lo, hi := fanFaceSpan(n, face)

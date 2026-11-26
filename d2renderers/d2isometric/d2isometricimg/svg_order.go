@@ -4,9 +4,9 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
-	"slices"
 	"sort"
 )
 
@@ -227,7 +227,7 @@ func svgNewOrderTree(polygons []svgOrderPolygon, budget *svgVisibilityBudget) (*
 		}
 		x := box.maxX-box.minX >= box.maxY-box.minY
 		// Indices are distinct, so this is a total order.
-		slices.SortFunc(tree.indices[start:end], func(ai, bi int) int {
+		xsort.Func(tree.indices[start:end], func(ai, bi int) int {
 			a, b := &polygons[ai].box, &polygons[bi].box
 			av, bv := a.minY+a.maxY, b.minY+b.maxY
 			if x {

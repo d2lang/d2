@@ -2,9 +2,9 @@ package routing
 
 import (
 	"cmp"
+	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
-	"slices"
 	"sort"
 )
 
@@ -80,7 +80,7 @@ func indexGridLines(lines map[float64][]*OVGEdge, vertical bool, guard *routeSea
 			}
 			intervals[i] = gridInterval{edge: edge, start: min(a, b), end: max(a, b)}
 		}
-		slices.SortFunc(intervals, func(a, b gridInterval) int { return cmp.Compare(a.start, b.start) })
+		xsort.Func(intervals, func(a, b gridInterval) int { return cmp.Compare(a.start, b.start) })
 		maxEnd := math.Inf(-1)
 		for i := range intervals {
 			if err := guard.step(); err != nil {
@@ -91,7 +91,7 @@ func indexGridLines(lines map[float64][]*OVGEdge, vertical bool, guard *routeSea
 		}
 		index = append(index, gridLine{coordinate, intervals})
 	}
-	slices.SortFunc(index, func(a, b gridLine) int { return cmp.Compare(a.coordinate, b.coordinate) })
+	xsort.Func(index, func(a, b gridLine) int { return cmp.Compare(a.coordinate, b.coordinate) })
 	return index, guard.check()
 }
 

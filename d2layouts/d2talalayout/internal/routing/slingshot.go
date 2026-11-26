@@ -37,6 +37,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // launch simulates the route blasting off from source, going around the anchor, and landing on target
@@ -1045,7 +1046,7 @@ func (router *ovgEdgeRouter) findSShapedRoute(
 		if err := router.work.reserveSort(len(sAnchorOrder)); err != nil {
 			return nil, 0, err
 		}
-		slices.SortStableFunc(sAnchorOrder, func(a, b *OVGNode) int {
+		xsort.StableFunc(sAnchorOrder, func(a, b *OVGNode) int {
 			var aDistance, bDistance float64
 			if isVerticalLaunch {
 				aDistance = math.Abs(a.Y - idealTurnAxes[1].val)

@@ -4,13 +4,13 @@ package d2fonts
 import (
 	"encoding/base64"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 
 	"github.com/d2lang/d2/internal/bundledfont"
 	"github.com/d2lang/d2/lib/font"
 	"github.com/d2lang/d2/lib/syncmap"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type FontFamily string
@@ -75,7 +75,7 @@ func (f Font) GetEncodedSubset(corpus string) string {
 	}
 	// The subsetter orders glyphs by ID. Share the result across boards
 	// that rearrange labels while using the same characters.
-	slices.Sort(chars)
+	xsort.Ordered(chars)
 	uniqueChars := string(chars)
 
 	FontFamiliesMu.Lock()

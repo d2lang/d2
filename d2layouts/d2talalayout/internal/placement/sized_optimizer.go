@@ -7,9 +7,9 @@ import (
 	"math"
 	"math/bits"
 	"math/rand"
-	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -1173,7 +1173,7 @@ func (optim *sizedOptimizer) generatePlacementTail(
 		if err := charge.addSort(len(neighbors)); err != nil {
 			return err
 		}
-		slices.SortFunc(neighbors, func(a, b *layoutgraph.Node) int {
+		xsort.Func(neighbors, func(a, b *layoutgraph.Node) int {
 			return cmp.Compare(a.IDValue(), b.IDValue())
 		})
 

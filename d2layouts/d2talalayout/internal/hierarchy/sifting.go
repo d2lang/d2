@@ -3,9 +3,9 @@ package hierarchy
 import (
 	"cmp"
 	"fmt"
-	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // The routines below implement the algorithm described in `Fig. 1`, and section
@@ -66,7 +66,7 @@ func nodesInDescendingDegreeOrder(byLevel map[int][]*placementNode) []*placement
 	for level := 0; level < len(byLevel); level++ {
 		nodes = append(nodes, allDescendants(byLevel[level], true)...)
 	}
-	slices.SortStableFunc(nodes, func(a, b *placementNode) int {
+	xsort.StableFunc(nodes, func(a, b *placementNode) int {
 		if order := cmp.Compare(b.degree(), a.degree()); order != 0 {
 			return order
 		}

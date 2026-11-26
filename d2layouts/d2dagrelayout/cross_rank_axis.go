@@ -2,8 +2,8 @@ package d2dagrelayout
 
 import (
 	"cmp"
+	"github.com/d2lang/d2/lib/xsort"
 	"math"
-	"slices"
 )
 
 // axisOrder keeps the objects of g.Objects sorted by their coordinate along
@@ -74,7 +74,7 @@ func (s *crossRankShifter) buildAxisOrder() {
 			a.order = append(a.order, int32(i))
 		}
 	}
-	slices.SortStableFunc(a.order, func(x, y int32) int {
+	xsort.StableFunc(a.order, func(x, y int32) int {
 		return cmp.Compare(a.key[x], a.key[y])
 	})
 	s.axis = a
@@ -108,7 +108,7 @@ func (s *crossRankShifter) queueInWindow(lo, hi float64, crossTest func(i int) b
 			cands = append(cands, i)
 		}
 	}
-	slices.Sort(cands)
+	xsort.Ordered(cands)
 	for _, i := range cands {
 		s.enqueue(i)
 	}

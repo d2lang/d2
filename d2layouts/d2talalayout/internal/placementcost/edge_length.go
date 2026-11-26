@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // EdgeLengthOptions controls which geometric penalties contribute to edge length.
@@ -296,7 +297,7 @@ func prepareNodeEdgeLength(p *scoringPoll, node *layoutgraph.Node, options EdgeL
 		// Same order as layoutgraph.SortNodesByID (vessels have distinct IDs,
 		// so the ascending order is unique) without sort.Slice's reflection
 		// allocation on every preparation.
-		slices.SortFunc(s.clusterOrder, func(a, b *layoutgraph.Node) int {
+		xsort.Func(s.clusterOrder, func(a, b *layoutgraph.Node) int {
 			return cmp.Compare(a.IDValue(), b.IDValue())
 		})
 

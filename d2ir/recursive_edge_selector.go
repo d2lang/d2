@@ -2,10 +2,10 @@ package d2ir
 
 import (
 	"cmp"
-	"slices"
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2format"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 func sameRecursiveEndpoints(edge *d2ast.Edge) bool {
@@ -170,7 +170,7 @@ func (m *Map) selectRecursiveEdges(id *EdgeID, ref *RefContext, glob *globContex
 				}
 			}
 		}
-		slices.SortStableFunc(candidates, func(a, b match) int {
+		xsort.StableFunc(candidates, func(a, b match) int {
 			return cmp.Or(cmp.Compare(order[a.src], order[b.src]), cmp.Compare(order[a.dst], order[b.dst]))
 		})
 	}

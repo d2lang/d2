@@ -2,9 +2,9 @@ package d2isometricimg
 
 import (
 	"fmt"
+	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
-	"slices"
 	"sync"
 	"unsafe"
 )
@@ -211,7 +211,7 @@ func (s *svgVisibleFragmentSet) query(box svgBox) ([]int32, error) {
 	if err := s.budget.spend(len(s.ids) * bits.Len(uint(len(s.ids)))); err != nil {
 		return nil, err
 	}
-	slices.Sort(s.ids)
+	xsort.Ordered(s.ids)
 	return s.ids, nil
 }
 

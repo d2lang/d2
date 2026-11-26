@@ -3,10 +3,10 @@ package quality
 import (
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -345,8 +345,8 @@ func boxCovers(outer, inner geo.Box) bool {
 func boxOverlapArea(first, second geo.Box) float64 {
 	xs := []float64{first.TopLeft.X, first.TopLeft.X + first.Width, second.TopLeft.X, second.TopLeft.X + second.Width}
 	ys := []float64{first.TopLeft.Y, first.TopLeft.Y + first.Height, second.TopLeft.Y, second.TopLeft.Y + second.Height}
-	slices.Sort(xs)
-	slices.Sort(ys)
+	xsort.Ordered(xs)
+	xsort.Ordered(ys)
 	return (xs[2] - xs[1]) * (ys[2] - ys[1])
 }
 

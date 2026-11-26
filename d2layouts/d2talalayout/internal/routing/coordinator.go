@@ -15,6 +15,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/loops"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type GenerateRouteResponse struct {
@@ -129,7 +130,7 @@ func collectRouteFlavorResponses(ctx context.Context, responseChan <-chan routeF
 			if !ok {
 				// Worker completion order is scheduler-dependent. Restore the declared
 				// router order before selecting either failures or successes.
-				slices.SortStableFunc(results, func(a, b routeFlavorResult) int {
+				xsort.StableFunc(results, func(a, b routeFlavorResult) int {
 					return cmp.Compare(a.index, b.index)
 				})
 				for _, result := range results {

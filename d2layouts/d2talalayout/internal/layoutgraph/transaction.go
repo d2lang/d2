@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -738,7 +738,7 @@ func (g *Graph) buildExistingOverlapSetInto(set *existingOverlapSet, guard *limi
 		}
 		node.overlapSlot = int32(i)
 	}
-	slices.SortStableFunc(placed, func(left, right transactionSweepNode) int {
+	xsort.StableFunc(placed, func(left, right transactionSweepNode) int {
 		if left.node.TopLeft.X != right.node.TopLeft.X {
 			switch {
 			case left.node.TopLeft.X < right.node.TopLeft.X:
@@ -995,7 +995,7 @@ func (t *Transaction) containerCheckOrder() []*Node {
 	for container := range t.Graph.Containers {
 		keys = append(keys, container)
 	}
-	slices.SortFunc(keys, compareNodeKeys)
+	xsort.Func(keys, compareNodeKeys)
 	t.containerKeys = keys
 	return keys
 }
@@ -1063,7 +1063,9 @@ func (t *Transaction) repositionContainers(poll *contextPoll) error {
 	// (both are generated from one template and consult the order only as
 	// "less"), so this cmp, negative exactly when the former less holds,
 	// gives the same order without sort.Slice's reflection allocation.
-	slices.SortFunc(smallestToLargest, func(a, b *Node) int {
+	// xsort.Func is slices.SortFunc in native builds; WebAssembly builds
+	// share one sort.Slice sorter instead (see lib/xsort).
+	xsort.Func(smallestToLargest, func(a, b *Node) int {
 		less := a.area() < b.area()
 		if a.area() == b.area() {
 			less = a.ID < b.ID
@@ -1474,7 +1476,7 @@ func (t *Transaction) buildPostStateOverlapCandidates(poll *contextPoll, dirtyOn
 				t.overlapSweepNodes = append(t.overlapSweepNodes, transactionSweepNode{node: node, index: index})
 			}
 		}
-		slices.SortStableFunc(t.overlapSweepNodes, func(left, right transactionSweepNode) int {
+		xsort.StableFunc(t.overlapSweepNodes, func(left, right transactionSweepNode) int {
 			if left.node.TopLeft.X != right.node.TopLeft.X {
 				switch {
 				case left.node.TopLeft.X < right.node.TopLeft.X:
@@ -1552,7 +1554,7 @@ func (t *Transaction) buildPostStateOverlapCandidates(poll *contextPoll, dirtyOn
 
 	// Visit the filled lists in g.Nodes order (Commit's overlap loop reads
 	// candidateLists in this order).
-	slices.Sort(t.candidateLists)
+	xsort.Ordered(t.candidateLists)
 	for _, index := range t.candidateLists {
 		if candidates := t.overlapCandidates[index]; len(candidates) > 1 {
 			sort.Ints(candidates)

@@ -1,9 +1,9 @@
 package d2isometricimg
 
 import (
+	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
-	"slices"
 )
 
 type svgVisibilityTreeNode struct {
@@ -62,7 +62,7 @@ func svgNewVisibilityTree(polygons []svgVisibilityPolygon, faces []svgVisibility
 			return 0, err
 		}
 		// Indices are distinct, so this is a total order.
-		slices.SortFunc(tree.indices[start:end], func(a, b int) int {
+		xsort.Func(tree.indices[start:end], func(a, b int) int {
 			ca, cb := center(a), center(b)
 			switch {
 			case ca < cb:

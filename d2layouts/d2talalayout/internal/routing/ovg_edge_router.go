@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
@@ -15,6 +14,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // Map pools for reducing allocations in hot paths
@@ -213,7 +213,7 @@ func newSharingOVGEdgeRouter(
 func sortEdges(flavor RouteGenerationFlavor, edges []*layoutgraph.Edge, clusterNodes map[*layoutgraph.Node]struct{}) {
 	switch flavor {
 	case ShortestToLongest:
-		slices.SortStableFunc(edges, func(a, b *layoutgraph.Edge) int {
+		xsort.StableFunc(edges, func(a, b *layoutgraph.Edge) int {
 			aDistance := a.EuclideanDistance()
 			bDistance := b.EuclideanDistance()
 			switch {
@@ -226,7 +226,7 @@ func sortEdges(flavor RouteGenerationFlavor, edges []*layoutgraph.Edge, clusterN
 			}
 		})
 	case LongestToShortest:
-		slices.SortStableFunc(edges, func(a, b *layoutgraph.Edge) int {
+		xsort.StableFunc(edges, func(a, b *layoutgraph.Edge) int {
 			aDistance := a.EuclideanDistance()
 			bDistance := b.EuclideanDistance()
 			switch {
@@ -239,7 +239,7 @@ func sortEdges(flavor RouteGenerationFlavor, edges []*layoutgraph.Edge, clusterN
 			}
 		})
 	case TopDownLeftRight:
-		slices.SortStableFunc(edges, func(a, b *layoutgraph.Edge) int {
+		xsort.StableFunc(edges, func(a, b *layoutgraph.Edge) int {
 			// Ensure that edge.From is above edge.To for both edges.
 			aFrom := a.From
 			aTo := a.To
@@ -297,7 +297,7 @@ func sortEdges(flavor RouteGenerationFlavor, edges []*layoutgraph.Edge, clusterN
 	}
 
 	// Clusters go first, looks best
-	slices.SortStableFunc(edges, func(a, b *layoutgraph.Edge) int {
+	xsort.StableFunc(edges, func(a, b *layoutgraph.Edge) int {
 		connectedA := false
 		connectedB := false
 
