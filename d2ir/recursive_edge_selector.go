@@ -20,19 +20,15 @@ func skipRecursiveGlobField(name d2ast.String, triple bool) bool {
 	if name == nil {
 		return true
 	}
-	if !name.IsUnquoted() {
-		return false
-	}
-	key := name.ScalarString()
-	_, reserved := d2ast.ReservedKeywords[key]
-	return reserved && skipRecursiveGlobSubtree(key, triple)
+	key := d2ast.Keyword(name)
+	return key != "" && skipRecursiveGlobSubtree(key, triple)
 }
 
 func (m *Map) recursiveGlobContains(f *Field, triple bool) bool {
 	if f == nil || f.Name == nil || NodeBoardKind(f) != "" {
 		return false
 	}
-	if _, reserved := d2ast.ReservedKeywords[f.Name.ScalarString()]; reserved && f.Name.IsUnquoted() {
+	if d2ast.Keyword(f.Name) != "" {
 		return false
 	}
 	path := m.pathToField(f)

@@ -1579,7 +1579,7 @@
       "underline": false,
       "labelWidth": 14,
       "labelHeight": 13,
-      "labelPosition": "INSIDE_MIDDLE_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "labelPercentage": 0,
       "link": "",
       "route": [
@@ -1621,7 +1621,7 @@
       "underline": false,
       "labelWidth": 12,
       "labelHeight": 13,
-      "labelPosition": "INSIDE_MIDDLE_CENTER",
+      "labelPosition": "OUTSIDE_TOP_CENTER",
       "labelPercentage": 0,
       "link": "",
       "route": [

@@ -22,6 +22,8 @@ import (
 	"github.com/d2lang/util-go/xmain"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2renderers/d2animate"
@@ -114,7 +116,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate step changes to numeric properties, solid colors, compatible gradients, variables, and grid layouts (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
+	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate step changes to numeric properties, solid colors, compatible gradients, variables, grid layouts, and supported TALA structural edits (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
 	if err != nil {
 		return err
 	}
@@ -470,10 +472,13 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 }
 
 func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
+	if animateInterval < 0 {
+		return xmain.UsageErrorf("--animate-interval must be non-negative")
+	}
 	if int64(int(animateInterval)) != animateInterval {
 		return xmain.UsageErrorf("animate-interval exceeds the supported range on this platform")
 	}
-	if ext.isIsometric() && (animateInterval < 0 || animateInterval > 600000 || animateInterval > 0 && ext != isometricGIF) {
+	if ext.isIsometric() && (animateInterval > 600000 || animateInterval > 0 && ext != isometricGIF) {
 		return xmain.UsageErrorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
 	}
 	if animateInterval > 0 && !ext.supportsAnimation() {
@@ -519,6 +524,8 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		FS:              fs,
 		LayoutReuse:     true,
 		AnimateDuration: animateDurationFlag,
+
+		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
 	}
 
 	// With no SVG interval override, compilation reads the interval from d2-config.
@@ -601,6 +608,9 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	renderOpts := *renderOptions
 	cancel()
 
+	if ext == GIF && strings.EqualFold(*opts.Layout, "tala") {
+		markPinnedGIFBoards(rootDiagram, g)
+	}
 	diagram := rootDiagram.GetBoard(boardPath)
 	if diagram == nil {
 		return nil, false, fmt.Errorf(`render target "%s" not found`, strings.Join(boardPath, "."))

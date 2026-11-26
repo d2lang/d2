@@ -171,6 +171,9 @@ In grids, cells with the same ID move to their new positions.
 New cells grow in and removed cells shrink away.
 D2 also animates complete row or column changes, replacements in a fixed slot,
 and cells that expand or collapse a nested grid.
+In TALA steps, connections can draw toward arriving nodes, containers can form
+around their contents, and services can move between containers.
+Appended SQL rows can drop into place and sequence messages can trace from sender to receiver.
 The flag takes milliseconds. The file also accepts durations, for example
 .Li "vars: {d2-config: {animate-interval: 800ms; animate-duration: 300ms}}" .
 All interpolated values change together for 300ms, then hold their values for the remaining 500ms.

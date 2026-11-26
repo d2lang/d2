@@ -521,6 +521,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			}
 			objK.Primary = objK.Value.ScalarBox()
 			objK.Value = d2ast.MakeValueBox(m2)
+			defer discardUnusedEditMap(objK, m2)
 			scope = m2
 
 			mk.Key.Path = mk.Key.Path[toSkip-1:]
@@ -653,6 +654,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 					Range: d2ast.MakeRange(",1:0:0-1:0:0"),
 				}
 				attrs.Label.MapKey.Value = d2ast.MakeValueBox(edgeMap)
+				defer discardUnusedEditMap(attrs.Label.MapKey, edgeMap)
 				scope = edgeMap
 			}
 		}
@@ -899,6 +901,15 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 	}
 	appendMapKey(scope, mk)
 	return nil
+}
+
+// Setting an inline label can reuse its original key without writing any child
+// into the map allocated for the edit. Keep that key scalar in this case.
+func discardUnusedEditMap(key *d2ast.Key, m *d2ast.Map) {
+	if key.Value.Map == m && len(m.Nodes) == 0 {
+		key.Value = d2ast.MakeValueBox(key.Primary.Unbox())
+		key.Primary = d2ast.ScalarBox{}
+	}
 }
 
 func appendUniqueMapKey(m *d2ast.Map, mk *d2ast.Key) {
@@ -2326,7 +2337,10 @@ func filterReserved(value d2ast.ValueBox) (with, without d2ast.ValueBox) {
 // updateNear updates all the Near fields
 // prevG is the graph before the update (i.e. deletion, rename, move)
 func updateNear(prevG, g *d2graph.Graph, from, to *string, includeDescendants bool) error {
-	mk, _ := d2parser.ParseMapKey(*from)
+	mk, err := d2parser.ParseMapKey(*from)
+	if err != nil {
+		return err
+	}
 	if len(mk.Edges) > 0 {
 		return nil
 	}

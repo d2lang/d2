@@ -323,6 +323,14 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 			}
 			clearPackedTreeTile(graph, best.graph)
 		}
+		best, err = considerHandoffs(workCtx, graph, input, best)
+		if err != nil {
+			return err
+		}
+		best, err = considerCenteredBranches(workCtx, graph, input, best)
+		if err != nil {
+			return err
+		}
 	}
 	return applySeedResult(workCtx, graph, best)
 }

@@ -1,17 +1,13 @@
 name: Docker image smoke
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/docker-image-smoke.yml
-      - .github/workflows/docker-publish.yml
-      - ci/release/docker/**
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: docker-smoke-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:

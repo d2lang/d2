@@ -75,7 +75,7 @@ func markdownShapeLabelTopLeft(targetShape d2target.Shape) *geo.Point {
 		position = label.InsideMiddleCenter
 	}
 	box := shapeLabelBox(targetShape, position)
-	return position.GetPointOnBox(box, label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
+	return targetShape.LabelTopLeft(position, box)
 }
 
 func (b *builder) buildMarkdownLabel(

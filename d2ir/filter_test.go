@@ -262,7 +262,8 @@ jeremy: {
 		multiple: true
 }
 `)
-					assert.ErrorString(t, err, `TestCompile/filters/errors/bad-syntax.d2:6:3: unexpected text after map key
+					assert.ErrorString(t, err, `TestCompile/filters/errors/bad-syntax.d2:6:2: expected a key segment after .
+TestCompile/filters/errors/bad-syntax.d2:6:3: unexpected text after map key
 TestCompile/filters/errors/bad-syntax.d2:9:1: unexpected map termination character } in file map`)
 				},
 			},

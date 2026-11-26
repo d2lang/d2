@@ -147,6 +147,10 @@ type Diagram struct {
 	TweenFrameEndsMS []int `json:"tweenFrameEndsMS,omitempty"`
 	// GridMotion keeps a common coordinate system for raster playback as cells reflow.
 	GridMotion bool `json:"gridMotion,omitempty"`
+	// LayoutContinuity means the board shares layout coordinates with its
+	// parent scenario base or the preceding step. Independent layers start
+	// their own coordinate system.
+	LayoutContinuity bool `json:"layoutContinuity,omitempty"`
 }
 
 type Legend struct {
@@ -531,51 +535,36 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 			x2 = go2.Max(x2, targetShape.Pos.X+MULTIPLE_OFFSET+targetShape.Width+stroke)
 		}
 
-		if targetShape.Icon != nil && targetShape.Type != ShapeImage && label.FromString(targetShape.IconPosition).IsOutside() {
-			contentBox := geo.NewBox(geo.NewPoint(0, 0), float64(targetShape.Width), float64(targetShape.Height))
-			s := shape.NewShape(targetShape.Type, contentBox)
-			size := GetIconSize(s.GetInnerBox(), targetShape.IconPosition)
-
-			if strings.HasPrefix(targetShape.IconPosition, "OUTSIDE_TOP") {
-				y1 = go2.Min(y1, targetShape.Pos.Y-label.PADDING-size)
-			} else if strings.HasPrefix(targetShape.IconPosition, "OUTSIDE_BOTTOM") {
-				y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+label.PADDING+size)
-			} else if strings.HasPrefix(targetShape.IconPosition, "OUTSIDE_LEFT") {
-				x1 = go2.Min(x1, targetShape.Pos.X-label.PADDING-size)
-			} else if strings.HasPrefix(targetShape.IconPosition, "OUTSIDE_RIGHT") {
-				x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+label.PADDING+size)
+		iconPosition := label.FromString(targetShape.IconPosition)
+		if targetShape.Icon != nil && targetShape.Type != ShapeImage && (iconPosition.IsOutside() || iconPosition.IsBorder()) {
+			box := geo.NewBox(geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)), float64(targetShape.Width), float64(targetShape.Height))
+			s := shape.NewShape(DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type], box)
+			if targetShape.Type == ShapeCloud && targetShape.ContentAspectRatio != nil {
+				s.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
 			}
+			icon := targetShape.IconBounds(s)
+			x1 = min(x1, int(math.Floor(icon.TopLeft.X)))
+			y1 = min(y1, int(math.Floor(icon.TopLeft.Y)))
+			x2 = max(x2, int(math.Ceil(icon.TopLeft.X+icon.Width)))
+			y2 = max(y2, int(math.Ceil(icon.TopLeft.Y+icon.Height)))
 		}
 
 		if targetShape.Label != "" {
-			labelPosition := label.FromString(targetShape.LabelPosition)
-
-			shapeType := DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type]
-			s := shape.NewShape(shapeType,
-				geo.NewBox(
-					geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)),
-					float64(targetShape.Width),
-					float64(targetShape.Height),
-				),
-			)
-
-			labelTL := labelPosition.GetPointOnBox(s.GetBox(), label.PADDING, float64(targetShape.LabelWidth), float64(targetShape.LabelHeight))
-			if targetShape.ThreeDee {
-				offset := THREE_DEE_OFFSET
-				if targetShape.Type == ShapeHexagon {
-					offset /= 2
-				}
-				if strings.HasPrefix(targetShape.LabelPosition, "OUTSIDE_RIGHT") {
-					labelTL.X += float64(offset)
-				}
-				if strings.HasPrefix(targetShape.LabelPosition, "OUTSIDE_TOP") {
-					labelTL.Y -= float64(offset)
-				}
+			position := label.FromString(targetShape.LabelPosition)
+			box := geo.NewBox(geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)), float64(targetShape.Width), float64(targetShape.Height))
+			if position.IsOutside() || position.IsBorder() {
+				box = targetShape.OuterLabelBox(box)
 			}
-			x1 = go2.Min(x1, int(labelTL.X))
-			y1 = go2.Min(y1, int(labelTL.Y))
-			x2 = go2.Max(x2, int(labelTL.X)+targetShape.LabelWidth)
-			y2 = go2.Max(y2, int(labelTL.Y)+targetShape.LabelHeight)
+			labelTL := targetShape.LabelTopLeft(position, box)
+			left, top := int(labelTL.X), int(labelTL.Y)
+			right, bottom := left+targetShape.LabelWidth, top+targetShape.LabelHeight
+			if position.IsBorder() {
+				left, top = int(math.Floor(labelTL.X)), int(math.Floor(labelTL.Y))
+				right = int(math.Ceil(labelTL.X + float64(targetShape.LabelWidth)))
+				bottom = int(math.Ceil(labelTL.Y + float64(targetShape.LabelHeight)))
+			}
+			x1, y1 = min(x1, left), min(y1, top)
+			x2, y2 = max(x2, right), max(y2, bottom)
 		}
 	}
 
@@ -595,6 +584,10 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 			y1 = go2.Min(y1, int(labelTL.Y))
 			x2 = go2.Max(x2, int(labelTL.X)+connection.LabelWidth)
 			y2 = go2.Max(y2, int(labelTL.Y)+connection.LabelHeight)
+		}
+		if icon := connection.GetIconPosition(); icon != nil {
+			x1, y1 = min(x1, int(math.Floor(icon.X))), min(y1, int(math.Floor(icon.Y)))
+			x2, y2 = max(x2, int(math.Ceil(icon.X))+DEFAULT_ICON_SIZE), max(y2, int(math.Ceil(icon.Y))+DEFAULT_ICON_SIZE)
 		}
 		if connection.SrcLabel != nil && connection.SrcLabel.Label != "" {
 			labelTL := connection.GetArrowheadLabelPosition(false)
@@ -803,6 +796,9 @@ type MotionClip struct {
 	Height int `json:"height"`
 }
 
+// MotionBox holds reference bounds in diagram coordinates during an animation.
+type MotionBox = MotionClip
+
 // SketchFillTransition describes the pencil shading on one sampled frame.
 type SketchFillTransition struct {
 	From     string  `json:"from"`
@@ -820,6 +816,11 @@ type Shape struct {
 	MotionScale        float64     `json:"motionScale,omitempty"`
 	MotionClip         *MotionClip `json:"motionClip,omitempty"`
 	MotionLabelTopLeft *Point      `json:"motionLabelTopLeft,omitempty"`
+	// MotionLabelBox holds the authored body bounds for a stationary inside label.
+	MotionLabelBox *MotionBox    `json:"motionLabelBox,omitempty"`
+	RowReveal      *SQLRowReveal `json:"rowReveal,omitempty"`
+	// OutlineProgress traces an incoming container frame in a transition sample.
+	OutlineProgress *float64 `json:"outlineProgress,omitempty"`
 
 	Pos    Point `json:"pos"`
 	Width  int   `json:"width"`
@@ -872,6 +873,31 @@ type Shape struct {
 	PrimaryAccentColor   string `json:"primaryAccentColor,omitempty"`
 	SecondaryAccentColor string `json:"secondaryAccentColor,omitempty"`
 	NeutralAccentColor   string `json:"neutralAccentColor,omitempty"`
+}
+
+// Geometry returns the same outline and inner content box used for rendering.
+func (s *Shape) Geometry() shape.Shape {
+	return s.geometry(s.Pos, s.Width, s.Height)
+}
+
+func (s *Shape) geometry(pos Point, width, height int) shape.Shape {
+	g := shape.NewShape(DSL_SHAPE_TO_SHAPE_TYPE[s.Type], geo.NewBox(
+		geo.NewPoint(float64(pos.X), float64(pos.Y)), float64(width), float64(height)))
+	if s.Type == ShapeCloud && s.ContentAspectRatio != nil {
+		g.SetInnerBoxAspectRatio(*s.ContentAspectRatio)
+	}
+	return g
+}
+
+// LabelTopLeft resolves both ordinary captions and intermediate animation anchors.
+func (s *Shape) LabelTopLeft(position label.Position, box *geo.Box) *geo.Point {
+	if p := s.MotionLabelTopLeft; p != nil {
+		return geo.NewPoint(float64(p.X), float64(p.Y))
+	}
+	if b := s.MotionLabelBox; b != nil {
+		box = s.geometry(b.Point, b.Width, b.Height).GetInnerBox()
+	}
+	return position.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
 }
 
 func (s Shape) RenderedStrokeWidth() float64 {
@@ -1004,10 +1030,29 @@ func BaseShape() *Shape {
 	}
 }
 
+// MotionLabel anchors the caption and its mask while a partial route is drawn.
+type MotionLabel struct {
+	Point
+	Opacity float64 `json:"opacity"`
+}
+
+// TraceEndpoint identifies which end of an animated polyline is still being drawn.
+type TraceEndpoint string
+
+const (
+	TraceSource      TraceEndpoint = "source"
+	TraceDestination TraceEndpoint = "destination"
+)
+
 type Connection struct {
 	ID string `json:"id"`
 
-	MotionClip *MotionClip `json:"motionClip,omitempty"`
+	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
+	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`
+	// MotionTip marks the free end of a partially drawn connection.
+	MotionTip TraceEndpoint `json:"motionTip,omitempty"`
+	// MotionDashOffset pins a backward trace’s dashes to its stationary end.
+	MotionDashOffset float64 `json:"motionDashOffset,omitempty"`
 
 	Classes []string `json:"classes,omitempty"`
 
@@ -1112,6 +1157,10 @@ func (c Connection) CSSStyle() string {
 		dashSize, gapSize := svg.GetStrokeDashAttributes(c.RenderedStrokeWidth(), strokeDash)
 		out += "stroke-dasharray:" + svg.FormatFloat(dashSize) + "," + svg.FormatFloat(gapSize) + ";"
 
+		if c.MotionDashOffset != 0 {
+			out += "stroke-dashoffset:" + svg.FormatFloat(c.MotionDashOffset) + ";"
+		}
+
 		if c.Animated {
 			dashOffset := -10
 			if c.SrcArrow != NoArrowhead && c.DstArrow == NoArrowhead {
@@ -1125,6 +1174,9 @@ func (c Connection) CSSStyle() string {
 }
 
 func (c *Connection) GetLabelTopLeft() *geo.Point {
+	if p := c.MotionLabel; p != nil {
+		return geo.NewPoint(float64(p.X), float64(p.Y))
+	}
 	point, _ := label.FromString(c.LabelPosition).GetPointOnRoute(
 		c.Route,
 		c.RenderedStrokeWidth(),
@@ -1494,6 +1546,35 @@ func init() {
 	}
 	// SQUARE_TYPE is defined twice in the map, make sure it doesn't get set to the empty string one
 	SHAPE_TYPE_TO_DSL_SHAPE[shape.SQUARE_TYPE] = ShapeRectangle
+}
+
+// OuterLabelBox is the painted outline used to place outside and border labels.
+func (s *Shape) OuterLabelBox(box *geo.Box) *geo.Box {
+	var dx, dy int
+	if s.ThreeDee {
+		dx, dy = THREE_DEE_OFFSET, THREE_DEE_OFFSET
+		if s.Type == ShapeHexagon {
+			dy /= 2
+		}
+	} else if s.Multiple {
+		dx, dy = MULTIPLE_OFFSET, MULTIPLE_OFFSET
+	} else {
+		return box
+	}
+	return geo.NewBox(geo.NewPoint(box.TopLeft.X, box.TopLeft.Y-float64(dy)), box.Width+float64(dx), box.Height+float64(dy))
+}
+
+// IconBounds returns the rendered icon rectangle for a shape with an icon.
+func (s *Shape) IconBounds(outline shape.Shape) *geo.Box {
+	position := label.FromString(s.IconPosition)
+	var box *geo.Box
+	if position.IsOutside() {
+		box = outline.GetBox()
+	} else {
+		box = outline.GetInnerBox()
+	}
+	size := float64(GetIconSize(box, s.IconPosition))
+	return geo.NewBox(position.GetPointOnBox(box, label.PADDING, size, size), size, size)
 }
 
 func GetIconSize(box *geo.Box, position string) int {

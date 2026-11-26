@@ -270,6 +270,9 @@ func variableExpansionNodeUnits(n Node) int64 {
 
 	switch n := n.(type) {
 	case *Map:
+		for r := n.edgePropertyRules; r != nil; r = r.next {
+			addVariableExpansionUnits(&units, 1)
+		}
 		addVariableExpansionUnits(&units, len(n.Fields))
 		addVariableExpansionUnits(&units, len(n.Edges))
 	case *Field:

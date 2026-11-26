@@ -1042,15 +1042,7 @@ func (b *builder) buildShapeText(targetShape d2target.Shape) ([]*d2scene.Node, e
 }
 
 func targetGeometry(targetShape d2target.Shape) shape.Shape {
-	shapeType := d2target.DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type]
-	geometry := shape.NewShape(shapeType, geo.NewBox(
-		geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)),
-		float64(targetShape.Width), float64(targetShape.Height),
-	))
-	if targetShape.Type == d2target.ShapeCloud && targetShape.ContentAspectRatio != nil {
-		geometry.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
-	}
-	return geometry
+	return targetShape.Geometry()
 }
 
 func scenePath(commands []svg.PathCommand, fill d2scene.Paint, stroke *d2scene.Stroke) (d2scene.Path, error) {
@@ -1144,6 +1136,9 @@ func invalidField(object, field string, value any, requirement string) error {
 }
 
 func validateShapeNumbers(object string, targetShape d2target.Shape) error {
+	if p := targetShape.OutlineProgress; p != nil && !(*p >= 0 && *p <= 1) {
+		return fmt.Errorf("scene: %s outlineProgress must be finite and within [0,1]", object)
+	}
 	for _, field := range []struct {
 		name  string
 		value int

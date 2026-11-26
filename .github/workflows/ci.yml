@@ -13,7 +13,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      jobs: ${{ steps.plan.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - run: python3 -B ci/checks_test.py
+      - id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 ci/checks.py plan
+
+  native:
     permissions:
       actions: read
       attestations: read
@@ -23,7 +38,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          # The shared CI helper walks history to find the formatting base.
+          fetch-depth: 0
+          filter: blob:none
       - name: Authenticate new installer checksum manifests
         if: github.event_name == 'pull_request'
         env:
@@ -48,8 +65,6 @@ jobs:
         with:
           go-version-file: ./go.mod
           cache: true
-      - name: Install TinyGo and Binaryen
-        run: ./ci/install-wasm-tools.sh
       - name: Install verified Pandoc formatter
         shell: bash
         run: |
@@ -76,7 +91,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/d2-ci-bin"
           go build -trimpath -o "$RUNNER_TEMP/d2-ci-bin/d2" .
           echo "$RUNNER_TEMP/d2-ci-bin" >> "$GITHUB_PATH"
-      - run: COLOR=1 ./make.sh
+      - run: COLOR=1 ./make.sh ci
         env:
           # Disable chat notifications from the shared CI helper.
           CI_MAKE_ROOT: "0"
@@ -106,12 +121,66 @@ jobs:
         run: go test -v -run '^(TestImportRelativeToNativeInputPath|TestImportVirtualDirectoryWithBackslash|TestResolveImportPathOnWindows)$' ./d2ir ./lib/localfile
       - name: Render a diagram from outside its directory
         run: go test -v -run '^TestCLI_E2E$/^import_from_another_directory$' ./e2etests-cli
+  wasm:
+    needs: select
+    if: fromJSON(needs.select.outputs.jobs).wasm
+    uses: ./.github/workflows/wasm.yml
   signed:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Signature checks need the commit history and the shared CI scripts.
+          fetch-depth: 0
+          sparse-checkout: ci/sub
       - run: git submodule update --init
       - run: COLOR=1 ./ci/sub/bin/ensure_signed.sh
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+  archives:
+    needs: select
+    if: fromJSON(needs.select.outputs.jobs).archives
+    uses: ./.github/workflows/archive-checks.yml
+    with:
+      full: ${{ fromJSON(needs.select.outputs.jobs).archives == 'full' }}
+
+  browser:
+    needs: select
+    if: fromJSON(needs.select.outputs.jobs).browser
+    uses: ./.github/workflows/browser-smoke.yml
+    with:
+      packed: ${{ fromJSON(needs.select.outputs.jobs).browser == 'packed' }}
+
+  docker:
+    needs: select
+    if: fromJSON(needs.select.outputs.jobs).docker
+    uses: ./.github/workflows/docker-image-smoke.yml
+
+  fuzz:
+    needs: select
+    if: fromJSON(needs.select.outputs.jobs).fuzz
+    uses: ./.github/workflows/tala-fuzz.yml
+
+  windows-installer:
+    needs: select
+    if: fromJSON(needs.select.outputs.jobs)['windows-installer']
+    uses: ./.github/workflows/windows-installer.yml
+
+  # Keep the check name required by master. Only deliberately unselected jobs may skip.
+  ci:
+    if: always()
+    needs: [select, native, signed, windows-imports, archives, browser, docker, fuzz, wasm, windows-installer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: ci/checks.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify results against the selected jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 ci/checks.py verify

@@ -3,7 +3,7 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestDelete/only_delete_edge_reserved.d2,0:0:0-3:0:38",
+      "range": "d2/testdata/d2oracle/TestDelete/only_delete_edge_reserved.d2,0:0:0-3:0:42",
       "nodes": [
         {
           "map_key": {
@@ -103,7 +103,7 @@
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestDelete/only_delete_edge_reserved.d2,2:0:31-2:6:37",
+            "range": "d2/testdata/d2oracle/TestDelete/only_delete_edge_reserved.d2,2:0:31-2:10:41",
             "edges": [
               {
                 "range": "d2/testdata/d2oracle/TestDelete/only_delete_edge_reserved.d2,2:0:31-2:6:37",
@@ -144,7 +144,12 @@
               }
             ],
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestDelete/only_delete_edge_reserved.d2,2:8:39-2:10:41",
+                "nodes": null
+              }
+            }
           }
         }
       ]

@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,0:0:0-2:0:15",
+      "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,0:0:0-2:0:19",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,0:0:0-0:3:3",
+            "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,0:0:0-0:7:7",
             "key": {
               "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,0:0:0-0:3:3",
               "path": [
@@ -36,18 +36,23 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,0:5:5-0:7:7",
+                "nodes": null
+              }
+            }
           }
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:10:14",
+            "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:10:18",
             "key": {
-              "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:10:14",
+              "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:10:18",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:1:5",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:1:9",
                     "value": [
                       {
                         "string": "x",
@@ -58,7 +63,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:2:6-1:3:7",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:2:10-1:3:11",
                     "value": [
                       {
                         "string": "y",
@@ -69,7 +74,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:4:8-1:10:14",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:4:12-1:10:18",
                     "value": [
                       {
                         "string": "jingle",
@@ -149,11 +154,11 @@
           },
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:10:14",
+              "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:10:18",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:1:5",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:1:9",
                     "value": [
                       {
                         "string": "x",
@@ -164,7 +169,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:2:6-1:3:7",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:2:10-1:3:11",
                     "value": [
                       {
                         "string": "y",
@@ -175,7 +180,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:4:8-1:10:14",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:4:12-1:10:18",
                     "value": [
                       {
                         "string": "jingle",
@@ -248,11 +253,11 @@
           },
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:10:14",
+              "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:10:18",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:1:5",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:1:9",
                     "value": [
                       {
                         "string": "x",
@@ -263,7 +268,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:2:6-1:3:7",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:2:10-1:3:11",
                     "value": [
                       {
                         "string": "y",
@@ -274,7 +279,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:4:8-1:10:14",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:4:12-1:10:18",
                     "value": [
                       {
                         "string": "jingle",
@@ -316,11 +321,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:10:14",
+              "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:10:18",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:4-1:1:5",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:0:8-1:1:9",
                     "value": [
                       {
                         "string": "x",
@@ -331,7 +336,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:2:6-1:3:7",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:2:10-1:3:11",
                     "value": [
                       {
                         "string": "y",
@@ -342,7 +347,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:4:8-1:10:14",
+                    "range": "d2/testdata/d2oracle/TestDelete/nested_reserved.d2,1:4:12-1:10:18",
                     "value": [
                       {
                         "string": "jingle",

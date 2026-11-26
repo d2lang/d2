@@ -1,12 +1,15 @@
 package d2format_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/d2lang/util-go/assert"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2format"
+	"github.com/d2lang/d2/d2parser"
 )
 
 func TestEscapeSingleQuoted(t *testing.T) {
@@ -292,3 +295,88 @@ func TestEscapeBlockString(t *testing.T) {
 }
 
 // TODO: chaos test each
+
+func TestParsedInterpolation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, value, label string }{
+		{"unquoted-delimiters", `before${v}\#tag\;end`, `beforeX#tag;end`},
+		{"unquoted-spelling", `before${v}\*literal*active`, `beforeX*literal*active`},
+		{"escaped-trailing-whitespace", `before${v}\*literal\n`, `beforeX*literal`},
+		{"adjacent-substitutions", `STYLE${v}${v}FILL`, `STYLEXXFILL`},
+		{"quoted-escapes", `"\"${v}\"mid${v}\\tail\nend"`, "\"X\"midX\\tail\nend"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := d2parser.Parse("test.d2", strings.NewReader("x: "+tc.value), nil)
+			assert.Success(t, err)
+			formatted := d2format.Format(ast.Nodes[0].MapKey.Value.Unbox())
+			assert.String(t, tc.value, formatted)
+			checkFormattedInterpolation(t, formatted, tc.label)
+		})
+	}
+}
+
+func TestEditedInterpolation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, raw, edit, want string }{
+		{"plain", `old`, `new`, `new`},
+		{"escaped", `\#old`, `#;new`, `\#\;new`},
+		{"edit-to-raw-spelling", `\#old`, `\#old`, `\\\#old`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value, err := d2parser.ParseValue(`before${v}` + tc.raw)
+			assert.Success(t, err)
+			*value.(*d2ast.UnquotedString).Value[2].String = tc.edit
+			formatted := d2format.Format(value)
+			assert.String(t, `before${v}`+tc.want, formatted)
+			checkFormattedInterpolation(t, formatted, "beforeX"+tc.edit)
+		})
+	}
+}
+
+func TestConstructedInterpolation(t *testing.T) {
+	t.Parallel()
+
+	literal := func(s string) d2ast.InterpolationBox { return d2ast.InterpolationBox{String: &s} }
+	variable := d2ast.InterpolationBox{Substitution: &d2ast.Substitution{Path: d2ast.MakeKeyPath([]string{"v"}).Path}}
+	for _, tc := range []struct {
+		name  string
+		value d2ast.Node
+		want  string
+		label string
+	}{
+		{
+			name: "unquoted",
+			value: &d2ast.UnquotedString{Value: []d2ast.InterpolationBox{
+				literal("@start"), variable, literal("#;"), literal("${literal}"), variable, literal("null"), literal(""),
+			}},
+			want: `\@start${v}\#\;\$\{literal\}${v}null`, label: `@startX#;${literal}Xnull`,
+		},
+		{
+			name: "quoted",
+			value: &d2ast.DoubleQuotedString{Value: []d2ast.InterpolationBox{
+				literal(`"`), variable, literal("\n"), variable, literal(`\${literal}"`),
+			}},
+			want: `"\"${v}\n${v}\\\${literal}\""`, label: "\"X\nX\\${literal}\"",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			formatted := d2format.Format(tc.value)
+			assert.String(t, tc.want, formatted)
+			checkFormattedInterpolation(t, formatted, tc.label)
+		})
+	}
+}
+
+func checkFormattedInterpolation(t *testing.T, value, label string) {
+	t.Helper()
+	source := "vars: {v: X}\nx: " + value + "\n"
+	ast, err := d2parser.Parse("test.d2", strings.NewReader(source), nil)
+	assert.Success(t, err)
+	assert.String(t, source, d2format.Format(ast))
+	g, _, err := d2compiler.Compile("test.d2", strings.NewReader(source), nil)
+	assert.Success(t, err)
+	assert.Equal(t, 1, len(g.Objects))
+	assert.String(t, label, g.Objects[0].Label.Value)
+}

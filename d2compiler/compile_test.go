@@ -285,6 +285,19 @@ b: ${x}`), nil)
 	assert.String(t, "b.child", g.Objects[3].AbsID())
 }
 
+func TestNumericLabelWithSubstitution(t *testing.T) {
+	t.Parallel()
+
+	const label = "x.label: 10${unit}"
+	g, _, err := d2compiler.Compile("label.d2", strings.NewReader("vars: {unit: px}\n"+label), nil)
+	assert.Success(t, err)
+	assert.Equal(t, 1, len(g.Objects))
+	assert.Equal(t, "10px", g.Objects[0].Label.Value)
+
+	_, _, err = d2compiler.Compile("label.d2", strings.NewReader(label), nil)
+	tassert.ErrorContains(t, err, `could not resolve variable "unit"`)
+}
+
 func TestCompositeVariableSpreadsRemainValid(t *testing.T) {
 	t.Parallel()
 

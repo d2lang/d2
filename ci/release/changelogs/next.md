@@ -4,6 +4,8 @@
 
 - Animate grid edits between steps with the same `animate-duration` setting. Cells slide to their new positions, arrivals grow in, and departures shrink away. An inserted row or column opens as a group. A replacement can hand off in place, and a summary cell can unfold to show a nested grid.
 
+- TALA keeps familiar nodes and links in place across compatible edits to steps and scenarios. With `animate-duration`, new connections can draw toward arriving nodes, containers can form around their contents, services can move between containers, SQL rows can drop into place, and sequence messages can travel to their receivers.
+
 - Set `scale` and `force-appendix` in `vars.d2-config`. Scaled SVGs and raster exports now retain their requested display size when tooltips or links add an appendix.
 - Configure Dagre's node and edge spacing in `vars.d2-config.data` with `dagre-nodesep` and `dagre-edgesep`.
 
@@ -16,6 +18,10 @@
 - renders: add native isometric SVG, PNG, GIF, PDF, and PPTX exports with `--isometric`, source configuration, and Go options
 
 #### Improvements 🧹
+
+- Parser authors can use the [D2 syntax reference](https://github.com/d2lang/d2/tree/master/docs/grammar) and its shared conformance cases to check their implementations.
+
+- Grids with one specified axis choose more evenly sized rows or columns. For common integral cell sizes the partition search finds the minimum total deviation from the average track length.
 
 - Standalone installs check the archive against a SHA-256 verified during release review. Use `--verify-provenance` to also check the signed build provenance locally. [#315](https://github.com/d2lang/d2/issues/315)
 
@@ -71,6 +77,24 @@
     outside the selected tree. [#2908](https://github.com/d2lang/d2/pull/2908)
 
 #### Bugfixes ⛑️
+
+- `d2 fmt` preserves imported boards, board declaration order, explicit empty maps, block comments in arrays, and the parentheses around connections such as `("api" *- "db")`.
+- A file ending in the object name `!` parses with or without a final newline. Standalone key and value parsers reject trailing input, including an editor target such as `a; b`.
+- Empty filters (`&` or `!&`) now report an error. Supply a condition such as `&shape: circle`. A trailing dot needs a path segment. Write `a` for the object or `"a."` for a name ending in a literal dot. Use `"svc".(a -> b)[0]` to scope a connection.
+- A lone hyphen after a quoted name now reports a syntax error. Change `"build" - server` to `"build" -- server`. An unquoted name such as `build-server` still names one object.
+- Reserved keys work in any letter case. For example, `service.STYLE.Stroke: blue` sets the stroke color when you compile the diagram directly. To keep an object named `STYLE`, write `"STYLE"`.
+- Unquoted labels such as `10${unit}` resolve their substitutions even when the prefix looks like a number, boolean, or other special value. An undefined variable in that position now reports an error.
+- `d2 fmt` preserves escaped label text after a substitution, including the literal hash in `before${v}\#tag`.
+- Grouped connections require a closing `)` and at least one connection. A semicolon can follow the group, and names such as `call()` work in its property path. Invalid or oversized edge indices report errors.
+- Block strings close at the exact opening fence followed by a pipe, including mixed and Unicode fences. For an opener of `|!#md`, use `!#|` to close. Block strings and comments preserve Unicode text when removing indentation.
+- A name ending in `-` keeps its final hyphen before punctuation or end of file. An incomplete substitution or empty import now gives a diagnostic. Write `\$` for a literal dollar in a label.
+- Formatting preserves label capitalization, quoted objects named `"layers"`, `"scenarios"`, or `"steps"`, case-sensitive import filenames, and imports selecting a field named `d2`. Arrays retain `suspend` and `unsuspend` elements.
+
+- `d2 fmt` puts top-level entries on separate lines on the first pass, including files with no final newline. Nested maps can still use semicolons.
+
+- Grids retain cell order across repeated dimensions, imports and variable spreads. [#2115](https://github.com/d2lang/d2/issues/2115)
+- Grid cells preserve shape proportions and keep nested children, routed connections and their captions inside the container. Border icons and labels fit in zero-padding exports. [#1405](https://github.com/d2lang/d2/issues/1405)
+- Grid connections retain SQL row attachments as cells move, separate reciprocal captions, and make room for self-loops between neighboring cells. TALA routes around intervening cells and accepts a grid container as a `near` target. [#1741](https://github.com/d2lang/d2/issues/1741)
 
 - Standalone upgrades and forced reinstalls preserve the working installation if the replacement fails. The installer rejects install-only flags with `--uninstall` and falls back to the GitHub API when the latest-release redirect fails. [#84](https://github.com/d2lang/d2/issues/84)
 
@@ -161,6 +185,7 @@
     label is available (e.g. `link: _` in a scenario). [#2961](https://github.com/d2lang/d2/issues/2961)
   - Render forced appendices inside their animated SVG frames and size the
     animation to include every board's footnotes.
+- sequence diagrams: fix a compile error ("invalid position with infinity value") when a group nested in another group contains only a note. [#2750](https://github.com/d2lang/d2/issues/2750)
 
 ---
 

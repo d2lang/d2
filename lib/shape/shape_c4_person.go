@@ -13,6 +13,8 @@ const (
 	HEAD_RADIUS_FACTOR   = 0.22
 	BODY_TOP_FACTOR      = 0.8
 	CORNER_RADIUS_FACTOR = 0.175
+	c4VerticalPadding    = 0.03
+	c4MinimumHeightRatio = 0.95
 )
 
 var c4PersonKind = shapeKind{
@@ -41,7 +43,7 @@ func c4PersonInnerBox(s *shape) *geo.Box {
 	// Horizontal padding = 5% of width
 	horizontalPadding := width * 0.05
 	// Vertical padding = 3% of height
-	verticalPadding := height * 0.03
+	verticalPadding := height * c4VerticalPadding
 
 	tl := s.Box.TopLeft.Copy()
 	tl.X += horizontalPadding
@@ -149,11 +151,23 @@ func c4PersonDimensionsToFit(width, height, paddingX, paddingY float64) (float64
 	totalHeight := contentHeight + bodyTop + verticalPadding
 
 	// Calculate minimum height
-	minHeight := totalWidth * 0.95
+	minHeight := totalWidth * c4MinimumHeightRatio
 	if totalHeight < minHeight {
 		totalHeight = minHeight
 	}
 
 	totalWidth, totalHeight = LimitAR(totalWidth, totalHeight, C4_PERSON_AR_LIMIT)
 	return math.Ceil(totalWidth), math.Ceil(totalHeight)
+}
+
+// FitC4PersonBody enlarges a grid container to keep its content below the
+// head after applying authored minimum dimensions. The available body height
+// is (1 - 2*padding)*height - headFraction*width.
+func FitC4PersonBody(width, height, contentHeight float64) (float64, float64) {
+	const usableHeight = 1 - 2*c4VerticalPadding
+	const headFraction = HEAD_RADIUS_FACTOR * (1 + BODY_TOP_FACTOR)
+	// Widen tall containers enough to enclose the body at the aspect limit.
+	width = math.Ceil(max(width, height/C4_PERSON_AR_LIMIT, contentHeight/(usableHeight*C4_PERSON_AR_LIMIT-headFraction)))
+	height = math.Ceil(max(height, width*c4MinimumHeightRatio, (contentHeight+headFraction*width)/usableHeight))
+	return width, height
 }

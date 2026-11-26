@@ -695,7 +695,7 @@ func structuredSketchHeaderHeight(targetShape d2target.Shape) float64 {
 		rowHeight := float64(targetShape.Height) / float64(rows)
 		return math.Max(2*rowHeight, float64(targetShape.LabelHeight)+2*label.PADDING)
 	case d2target.ShapeSQLTable:
-		return float64(targetShape.Height) / float64(1+len(targetShape.Columns))
+		return targetShape.SQLRowHeight()
 	default:
 		return 0
 	}

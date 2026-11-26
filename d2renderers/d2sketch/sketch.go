@@ -485,7 +485,7 @@ func Table(shape d2target.Shape) (string, error) {
 		float64(shape.Width),
 		float64(shape.Height),
 	)
-	rowHeight := box.Height / float64(1+len(shape.SQLTable.Columns))
+	rowHeight := shape.SQLRowHeight()
 	headerBox := geo.NewBox(box.TopLeft, box.Width, rowHeight)
 
 	paths, err = computeRoughPathData(g, g.Rectangle(0, 0, float64(shape.Width), rowHeight, baseOptions(1)))
@@ -529,7 +529,14 @@ func Table(shape d2target.Shape) (string, error) {
 
 	rowBox := geo.NewBox(box.TopLeft.Copy(), box.Width, rowHeight)
 	rowBox.TopLeft.Y += headerBox.Height
-	for _, f := range shape.Columns {
+	for index, f := range shape.Columns {
+		visible := shape.SQLRowVisibleHeight(rowBox.TopLeft.Y, rowHeight)
+		if shape.RowReveal != nil && visible <= 0 {
+			break
+		}
+		if visible < rowHeight {
+			output += svg.OpenClippedViewport(rowBox.TopLeft.X, rowBox.TopLeft.Y, rowBox.Width, visible, rowBox.TopLeft.Y+(rowHeight-visible))
+		}
 		nameTL := label.InsideMiddleLeft.GetPointOnBox(
 			rowBox,
 			d2target.NamePadding,
@@ -563,8 +570,11 @@ func Table(shape d2target.Shape) (string, error) {
 		textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx;letter-spacing:2px", "end", float64(shape.FontSize))
 		textEl.SetText(f.ConstraintAbbr())
 		output += textEl.Render()
-
-		rowBox.TopLeft.Y += rowHeight
+		if visible < rowHeight {
+			output += "</svg>"
+		}
+		y, _, last := shape.SQLRowDivider(index, rowBox.TopLeft.Y+rowHeight, 0)
+		rowBox.TopLeft.Y = y
 
 		paths, err = computeRoughPathData(g, g.Line(
 			rowBox.TopLeft.X, rowBox.TopLeft.Y,
@@ -579,6 +589,9 @@ func Table(shape d2target.Shape) (string, error) {
 		for _, p := range paths {
 			pathEl.D = p
 			output += pathEl.Render()
+		}
+		if last {
+			break
 		}
 	}
 

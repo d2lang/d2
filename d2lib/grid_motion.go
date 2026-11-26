@@ -127,7 +127,7 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 			m.hasExit = true
 		}
 	}
-	if !m.moves && !m.hasEnter && !m.hasExit {
+	if !m.moves && !m.hasEnter && !m.hasExit && !m.paintReflowsSlots(from, to, next) {
 		return nil
 	}
 	m.bands = planGridBands(old, next)
@@ -161,6 +161,47 @@ func newGridMotion(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph
 	}
 	m.edges = newGridMotionEdges(from, to, fromGraph, toGraph, moving)
 	return m
+}
+
+// An intermediate counter or label can shrink briefly, even when both
+// endpoint grids occupy identical slots. Keep those slots only if each
+// sampled shape still fits, so a wider intermediate label can use its space.
+func (m *gridMotion) paintReflowsSlots(from, to *d2target.Diagram, next map[string]*gridNode) bool {
+	if len(to.TweenFrames) == 0 || len(from.Shapes) != len(to.Shapes) || len(from.Connections) != len(to.Connections) {
+		return false
+	}
+	// Leave independent membership or layout edits to their own planner.
+	for i := range from.Shapes {
+		s := &from.Shapes[i]
+		if n := next[s.ID]; n == nil || !sameSlot(s, n.shape) {
+			return false
+		}
+	}
+	for i := range from.Connections {
+		if from.Connections[i].ID != to.Connections[i].ID {
+			return false
+		}
+	}
+	drift := false
+	for _, frame := range to.TweenFrames {
+		for i := range frame.Shapes {
+			s := &frame.Shapes[i]
+			item := m.items[s.ID]
+			if item == nil {
+				if n := next[s.ID]; n == nil || !sameSlot(s, n.shape) {
+					return false
+				}
+				continue
+			}
+			if s.Width > item.to.Width || s.Height > item.to.Height {
+				return false
+			}
+			if !sameSlot(s, item.to) {
+				drift = true
+			}
+		}
+	}
+	return drift
 }
 
 // A reflow can resize containers enclosing a grid and displace their neighbors.
@@ -364,6 +405,11 @@ func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel floa
 		x += float64(pos.X - offset.X)
 		y += float64(pos.Y - offset.Y)
 	}
+	return scaleMotionShape(s, x, y, scale, opacity)
+}
+
+// Scale the body, text and decorations together at a sampled top-left point.
+func scaleMotionShape(s d2target.Shape, x, y, scale, opacity float64) d2target.Shape {
 	s.Pos = d2target.Point{X: int(math.Round(x)), Y: int(math.Round(y))}
 	scaled := func(v int) int {
 		if v == 0 {

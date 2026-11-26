@@ -3,7 +3,7 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,0:0:0-4:0:18",
+      "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,0:0:0-5:0:19",
       "nodes": [
         {
           "map_key": {
@@ -30,13 +30,13 @@
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,1:0:2-3:1:17",
+            "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,2:0:3-4:1:18",
             "key": {
-              "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,1:0:2-1:6:8",
+              "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,2:0:3-2:6:9",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,1:0:2-1:6:8",
+                    "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,2:0:3-2:6:9",
                     "value": [
                       {
                         "string": "layers",
@@ -50,17 +50,17 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,1:8:10-3:1:17",
+                "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,2:8:11-4:1:18",
                 "nodes": [
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,2:2:14-2:3:15",
+                      "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,3:2:15-3:3:16",
                       "key": {
-                        "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,2:2:14-2:3:15",
+                        "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,3:2:15-3:3:16",
                         "path": [
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,2:2:14-2:3:15",
+                              "range": "d2/testdata/d2oracle/TestCreate/add_layer/1.d2,3:2:15-3:3:16",
                               "value": [
                                 {
                                   "string": "c",

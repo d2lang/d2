@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestDelete/label-near/1.d2,0:0:0-1:0:4",
+      "range": "d2/testdata/d2oracle/TestDelete/label-near/1.d2,0:0:0-1:0:8",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestDelete/label-near/1.d2,0:0:0-0:3:3",
+            "range": "d2/testdata/d2oracle/TestDelete/label-near/1.d2,0:0:0-0:7:7",
             "key": {
               "range": "d2/testdata/d2oracle/TestDelete/label-near/1.d2,0:0:0-0:3:3",
               "path": [
@@ -25,7 +25,12 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestDelete/label-near/1.d2,0:5:5-0:7:7",
+                "nodes": null
+              }
+            }
           }
         }
       ]

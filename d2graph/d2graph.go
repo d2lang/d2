@@ -170,6 +170,11 @@ func (g *Graph) IDA() []string {
 	return parts
 }
 
+// LayoutContinuation may refine a completed layout relative to its preceding
+// board. It may change current geometry only and reports whether the boards
+// share coordinates for playback. Both graphs are local to one compilation.
+type LayoutContinuation func(ctx context.Context, previous, current *Graph) (bool, error)
+
 type LayoutGraph func(context.Context, *Graph) error
 type RouteEdges func(context.Context, *Graph, []*Edge) error
 
@@ -261,8 +266,10 @@ type Attributes struct {
 	Direction  Scalar   `json:"direction"`
 	Constraint []string `json:"constraint"`
 
-	GridRows      *Scalar `json:"gridRows,omitempty"`
-	GridColumns   *Scalar `json:"gridColumns,omitempty"`
+	GridRows    *Scalar `json:"gridRows,omitempty"`
+	GridColumns *Scalar `json:"gridColumns,omitempty"`
+	// GridRowsFirst records declaration order in the merged map when both axes exist.
+	GridRowsFirst *bool   `json:"gridRowsFirst,omitempty"`
 	GridGap       *Scalar `json:"gridGap,omitempty"`
 	VerticalGap   *Scalar `json:"verticalGap,omitempty"`
 	HorizontalGap *Scalar `json:"horizontalGap,omitempty"`
@@ -745,8 +752,20 @@ func (obj *Object) Text() *d2target.MText {
 	}
 }
 
-func (obj *Object) newObject(ids d2ast.String) *Object {
-	id := d2format.FormatKeyPath([]d2ast.String{ids})
+func objectID(name d2ast.String) string {
+	id := d2format.FormatKeyPath([]d2ast.String{name})
+	// Formatting an unquoted key folds reserved words. A quoted object keeps
+	// its spelling, while IDs containing syntax still need their usual escapes.
+	value := name.ScalarString()
+	if !name.IsUnquoted() && id != value {
+		if _, reserved := d2ast.ReservedKeywords[id]; reserved && id == strings.ToLower(value) {
+			return value
+		}
+	}
+	return id
+}
+
+func (obj *Object) newObject(id string) *Object {
 	idval := id
 	k, _ := d2parser.ParseKey(id)
 	if k != nil && len(k.Path) > 0 {
@@ -792,6 +811,15 @@ func (obj *Object) HasChild(ids []string) (*Object, bool) {
 	ids = ids[1:]
 
 	child, ok := obj.Children[strings.ToLower(id)]
+	if !ok && len(id) > 1 && id[0] == '"' {
+		// Key preserves quotes when a literal would otherwise name a property.
+		if value, err := strconv.Unquote(id); err == nil {
+			key := strings.ToLower(value)
+			if _, reserved := d2ast.ReservedKeywords[key]; reserved {
+				child, ok = obj.Children[key]
+			}
+		}
+	}
 	if !ok {
 		return nil, false
 	}
@@ -866,11 +894,11 @@ func (obj *Object) FindEdges(mk *d2ast.Key) ([]*Edge, bool) {
 	}
 	ae := mk.Edges[0]
 
-	srcObj, srcID, err := ResolveUnderscoreKey(Key(ae.Src), obj)
+	srcObj, srcID, err := ResolveUnderscoreKey(graphKey(ae.Src, false), obj)
 	if err != nil {
 		return nil, false
 	}
-	dstObj, dstID, err := ResolveUnderscoreKey(Key(ae.Dst), obj)
+	dstObj, dstID, err := ResolveUnderscoreKey(graphKey(ae.Dst, false), obj)
 	if err != nil {
 		return nil, false
 	}
@@ -940,12 +968,9 @@ func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
 		return obj
 	}
 
-	_, is := d2ast.ReservedKeywordHolders[ida[0].ScalarString()]
-	is = is && ida[0].IsUnquoted()
-	if len(ida) == 1 && !is {
-		_, ok := d2ast.ReservedKeywords[ida[0].ScalarString()]
-		ok = ok && ida[0].IsUnquoted()
-		if ok {
+	if len(ida) == 1 {
+		keyword := d2ast.Keyword(ida[0])
+		if _, holder := d2ast.ReservedKeywordHolders[keyword]; keyword != "" && !holder {
 			return obj
 		}
 	}
@@ -957,10 +982,10 @@ func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
 		return obj.Parent.EnsureChild(ida)
 	}
 
-	head := d2format.FormatKeyPath([]d2ast.String{id})
+	head := objectID(id)
 	child, ok := obj.Children[strings.ToLower(head)]
 	if !ok {
-		child = obj.newObject(id)
+		child = obj.newObject(head)
 	}
 
 	if len(ida) >= 1 {
@@ -1178,7 +1203,10 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 	s := shape.NewShape(shapeType, geo.NewBox(geo.NewPoint(0, 0), contentWidth, contentHeight))
 
 	var fitWidth, fitHeight float64
-	if shapeType == shape.PERSON_TYPE {
+	gridContainer := obj.IsGridDiagram() && len(obj.ChildrenArray) > 0
+	if gridContainer {
+		fitWidth, fitHeight = shape.GridDimensionsToFit(s, contentWidth, contentHeight, paddingX, paddingY)
+	} else if shapeType == shape.PERSON_TYPE {
 		fitWidth = contentWidth + paddingX
 		fitHeight = contentHeight + paddingY
 	} else {
@@ -1201,9 +1229,15 @@ func (obj *Object) SizeToContent(contentWidth, contentHeight, paddingX, paddingY
 		obj.Height = fitHeight
 	}
 
-	if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" {
+	// A grid must reserve enough space for its children even when an authored
+	// dimension is smaller than the shape needed to enclose them.
+	if obj.SQLTable != nil || obj.Class != nil || obj.Language != "" || gridContainer {
 		obj.Width = math.Max(float64(desiredWidth), fitWidth)
 		obj.Height = math.Max(float64(desiredHeight), fitHeight)
+	}
+
+	if gridContainer && shapeType == shape.C4_PERSON_TYPE {
+		obj.Width, obj.Height = shape.FitC4PersonBody(obj.Width, obj.Height, contentHeight+paddingY)
 	}
 
 	if s.AspectRatio1() {
@@ -1415,7 +1449,7 @@ func appendAbsIDArray(ids []string, obj *Object) []string {
 func (obj *Object) Connect(srcID, dstID []d2ast.String, srcArrow, dstArrow bool, label string) (*Edge, error) {
 	for _, id := range [][]d2ast.String{srcID, dstID} {
 		for _, p := range id {
-			if _, ok := d2ast.ReservedKeywords[p.ScalarString()]; ok && p.IsUnquoted() {
+			if d2ast.Keyword(p) != "" {
 				return nil, errors.New("cannot connect to reserved keyword")
 			}
 		}
@@ -1873,7 +1907,22 @@ func (g *Graph) Texts() []*d2target.MText {
 }
 
 func Key(k *d2ast.KeyPath) []string {
-	return d2format.KeyPath(k)
+	return graphKey(k, true)
+}
+
+func graphKey(k *d2ast.KeyPath, quoteKeywords bool) []string {
+	var ids []string
+	for _, box := range k.Path {
+		name := box.Unbox()
+		id := objectID(name)
+		if quoteKeywords && !name.IsUnquoted() && id == name.ScalarString() {
+			if _, reserved := d2ast.ReservedKeywords[strings.ToLower(id)]; reserved {
+				id = strconv.Quote(id)
+			}
+		}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (g *Graph) GetBoard(name string) *Graph {

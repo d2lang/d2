@@ -1391,7 +1391,9 @@ func (router *ovgEdgeRouter) quickRoute(ctx context.Context, gEdge *layoutgraph.
 	gTarget := gEdge.To
 	source := g.Centers[gSource]
 	target := g.Centers[gTarget]
-	if !overlap && !fromOrientation.IsDiagonal() && gSource.DistanceTo(gTarget, true) < 2*(layoutgraph.MinRouteNodeClearance+1) && (gSource.DistanceTo(gTarget, true) > layoutgraph.MinArrowheadClearance) {
+	// The shortcut considers every facing port. A column-bound SQL edge
+	// must use the specified row even when another port is directly across.
+	if !gEdge.HasTableColumn() && !overlap && !fromOrientation.IsDiagonal() && gSource.DistanceTo(gTarget, true) < 2*(layoutgraph.MinRouteNodeClearance+1) && (gSource.DistanceTo(gTarget, true) > layoutgraph.MinArrowheadClearance) {
 		edges := make([]*layoutgraph.Edge, 0)
 		for _, route := range router.routes {
 			if err := router.work.add(uint64(len(route.OVGNodes)) + 1); err != nil {

@@ -17,6 +17,10 @@ func supportsRouteRefinements(g *d2graph.Graph) bool {
 	if len(g.Edges) == 0 || len(g.Edges) > 256 || len(g.Objects) > 256 {
 		return false
 	}
+	return supportsRefinementStyles(g)
+}
+
+func supportsRefinementStyles(g *d2graph.Graph) bool {
 	for _, n := range g.Objects {
 		if n.Icon != nil || n.Link != nil || n.Tooltip != nil || n.Style.BorderRadius != nil ||
 			n.Style.DoubleBorder != nil || n.Style.StrokeWidth != nil || n.Style.Shadow != nil ||

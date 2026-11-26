@@ -77,8 +77,7 @@ func _doubleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool
 	if visit != nil && !visit(f) {
 		return false
 	}
-	name := f.Name.ScalarString()
-	if _, reserved := d2ast.ReservedKeywords[name]; reserved && f.Name.IsUnquoted() {
+	if name := d2ast.Keyword(f.Name); name != "" {
 		if skipRecursiveGlobSubtree(name, false) {
 			return true
 		}
@@ -112,8 +111,7 @@ func _tripleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool
 	if visit != nil && !visit(f) {
 		return false
 	}
-	name := f.Name.ScalarString()
-	if _, reserved := d2ast.ReservedKeywords[name]; reserved && f.Name.IsUnquoted() {
+	if name := d2ast.Keyword(f.Name); name != "" {
 		if skipRecursiveGlobSubtree(name, true) {
 			return true
 		}
@@ -139,8 +137,7 @@ func (m *Map) _doubleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 		if f.Name == nil {
 			continue
 		}
-		name := f.Name.ScalarString()
-		if _, ok := d2ast.ReservedKeywords[name]; ok && f.Name.IsUnquoted() {
+		if name := d2ast.Keyword(f.Name); name != "" {
 			if skipRecursiveGlobSubtree(name, false) {
 				continue
 			}
@@ -171,8 +168,8 @@ func (m *Map) _tripleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 		if f == nil || f.Name == nil {
 			continue
 		}
-		if _, ok := d2ast.ReservedKeywords[f.Name.ScalarString()]; ok && f.Name.IsUnquoted() {
-			if skipRecursiveGlobSubtree(f.Name.ScalarString(), true) {
+		if name := d2ast.Keyword(f.Name); name != "" {
+			if skipRecursiveGlobSubtree(name, true) {
 				continue
 			}
 			// We don't ever want to append layers, scenarios or steps directly.
@@ -199,10 +196,6 @@ func matchPattern(s string, pattern []string) bool {
 	if len(pattern) == 0 {
 		return true
 	}
-	if _, ok := d2ast.ReservedKeywords[s]; ok {
-		return false
-	}
-
 	for i := 0; i < len(pattern); i++ {
 		if pattern[i] == "*" {
 			if i == len(pattern)-1 {

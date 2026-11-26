@@ -94,7 +94,7 @@ func discoverTests(testdata string, opts discoveryOptions) ([]TestItem, error) {
 		caseParts := parts[1:]
 		if setName != "asciitxtar" && len(caseParts) > 1 {
 			switch caseParts[len(caseParts)-1] {
-			case "dagre", "elk":
+			case "dagre", "elk", "tala":
 				caseParts = caseParts[:len(caseParts)-1]
 			}
 		}

@@ -3,11 +3,13 @@ package d2grid
 import (
 	"context"
 	"math"
+	"strings"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/shape"
 	"github.com/d2lang/util-go/go2"
 )
 
@@ -16,18 +18,53 @@ const (
 	DEFAULT_GAP       = 40
 )
 
-// Layout runs the grid layout on containers with rows/columns
-// Note: children are not allowed edges or descendants
-// 1. Run grid layout on the graph root
-// 2. Set the resulting dimensions to the graph root
+// Layout places the grid and routes connections using straight joins between cells.
 func Layout(ctx context.Context, g *d2graph.Graph) error {
-	obj := g.Root
-
-	gd, err := layoutGrid(g, obj)
+	fit, err := PlaceCells(ctx, g, RouteEdges)
 	if err != nil {
 		return err
 	}
+	fit(nil)
+	return nil
+}
 
+// PlaceCells positions the cells and routes their direct edges. After nested
+// diagrams have been restored and their cross-cell edges routed, call the
+// returned function with those edges to size the container around the result.
+func PlaceCells(ctx context.Context, g *d2graph.Graph, router d2graph.RouteEdges) (fit func([]*d2graph.Edge), err error) {
+	obj := g.Root
+	gd, err := layoutGrid(g, obj)
+	if err != nil {
+		return nil, err
+	}
+
+	var direct []*d2graph.Edge
+	for _, e := range g.Edges {
+		if e.Src.Parent == obj && e.Dst.Parent == obj {
+			direct = append(direct, e)
+		}
+	}
+	if len(direct) != 0 {
+		if router == nil {
+			router = RouteEdges
+		}
+		if err := gd.routeCells(ctx, g, direct, router); err != nil {
+			return nil, err
+		}
+	}
+	return func(cross []*d2graph.Edge) {
+		// All child diagrams now use this grid's coordinate system. Shift their
+		// routes with their owners when adding container padding or label space.
+		gd.edges = g.Edges
+		if g.RootLevel > 0 {
+			gd.fitRoutes(append(direct, cross...))
+		}
+		gd.fitContainer(g)
+	}, nil
+}
+
+func (gd *gridDiagram) fitContainer(g *d2graph.Graph) {
+	obj := g.Root
 	if obj.HasLabel() && obj.LabelPosition == nil {
 		obj.LabelPosition = go2.Pointer(label.InsideTopCenter.String())
 	}
@@ -66,12 +103,18 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 			labelHeight = float64(obj.LabelDimensions.Height) + 2*label.PADDING
 		}
 
+		labelPosition.ReserveBorderHalf(&padding, labelWidth, labelHeight)
+		if obj.HasIcon() {
+			iconPosition.ReserveBorderHalf(&padding, d2target.MAX_ICON_SIZE, d2target.MAX_ICON_SIZE)
+		}
 		if labelWidth > 0 {
 			switch labelPosition {
 			case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight,
 				label.InsideTopLeft, label.InsideTopCenter, label.InsideTopRight,
 				label.InsideBottomLeft, label.InsideBottomCenter, label.InsideBottomRight,
-				label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight:
+				label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight,
+				label.BorderTopLeft, label.BorderTopCenter, label.BorderTopRight,
+				label.BorderBottomLeft, label.BorderBottomCenter, label.BorderBottomRight:
 				overflow := labelWidth - contentWidth
 				if overflow > 0 {
 					padding.Left += overflow / 2
@@ -83,7 +126,9 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 			switch labelPosition {
 			case label.OutsideLeftTop, label.OutsideLeftMiddle, label.OutsideLeftBottom,
 				label.InsideMiddleLeft, label.InsideMiddleCenter, label.InsideMiddleRight,
-				label.OutsideRightTop, label.OutsideRightMiddle, label.OutsideRightBottom:
+				label.OutsideRightTop, label.OutsideRightMiddle, label.OutsideRightBottom,
+				label.BorderLeftTop, label.BorderLeftMiddle, label.BorderLeftBottom,
+				label.BorderRightTop, label.BorderRightMiddle, label.BorderRightBottom:
 				overflow := labelHeight - contentHeight
 				if overflow > 0 {
 					padding.Top += overflow / 2
@@ -113,16 +158,18 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 		padding.Left = math.Max(padding.Left, float64(horizontalPadding))
 		padding.Right = math.Max(padding.Right, float64(horizontalPadding))
 
+		shapeType := d2target.DSL_SHAPE_TO_SHAPE_TYPE[strings.ToLower(obj.Shape.Value)]
+		shape.ReserveGridPadding(shapeType, contentHeight, &padding)
+
 		totalWidth := padding.Left + contentWidth + padding.Right
 		totalHeight := padding.Top + contentHeight + padding.Bottom
 		obj.SizeToContent(totalWidth, totalHeight, 0, 0)
 
 		// compute where the grid should be placed inside shape
-		s := obj.ToShape()
-		innerTL := s.GetInsidePlacement(totalWidth, totalHeight, 0, 0)
+		innerBox := obj.LayoutInnerBox()
+		innerTL := innerBox.TopLeft
 		// depending on the shape innerBox may be larger than totalWidth, totalHeight
 		// if this is the case, we want to center the cells within the larger innerBox
-		innerBox := s.GetInnerBox()
 		var resizeDx, resizeDy float64
 		if innerBox.Width > totalWidth {
 			resizeDx = (innerBox.Width - totalWidth) / 2
@@ -137,25 +184,6 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 		dy := -float64(verticalPadding) + innerTL.Y + padding.Top + resizeDy
 		if dx != 0 || dy != 0 {
 			gd.shift(dx, dy)
-		}
-	}
-
-	// simple straight line edge routing between grid objects
-	for _, e := range g.Edges {
-		if !e.Src.Parent.IsDescendantOf(obj) && !e.Dst.Parent.IsDescendantOf(obj) {
-			continue
-		}
-		// if edge is within grid, remove it from outer layout
-		gd.edges = append(gd.edges, e)
-
-		if e.Src.Parent != obj || e.Dst.Parent != obj {
-			continue
-		}
-		// if edge is grid child, use simple routing
-		e.Route = []*geo.Point{e.Src.Center(), e.Dst.Center()}
-		e.TraceToShape(e.Route, 0, 1)
-		if e.Label.Value != "" {
-			e.LabelPosition = go2.Pointer(label.InsideMiddleCenter.String())
 		}
 	}
 
@@ -178,7 +206,6 @@ func Layout(ctx context.Context, g *d2graph.Graph) error {
 			obj.TopLeft.Y+float64(verticalPadding),
 		)
 	}
-	return nil
 }
 
 func layoutGrid(g *d2graph.Graph, obj *d2graph.Object) (*gridDiagram, error) {
@@ -217,7 +244,7 @@ func layoutGrid(g *d2graph.Graph, obj *d2graph.Object) (*gridDiagram, error) {
 
 	// to handle objects with outside labels, we adjust their dimensions before layout and
 	// after layout, we remove the label adjustment and reposition TopLeft if needed
-	revertAdjustments := gd.sizeForOutsideLabels()
+	placeWithinCells := gd.reserveCellMargins()
 
 	if gd.rows != 0 && gd.columns != 0 {
 		gd.layoutEvenly(g, obj)
@@ -225,7 +252,7 @@ func layoutGrid(g *d2graph.Graph, obj *d2graph.Object) (*gridDiagram, error) {
 		gd.layoutDynamic(g, obj)
 	}
 
-	revertAdjustments()
+	placeWithinCells()
 
 	return gd, nil
 }
@@ -372,6 +399,7 @@ func (gd *gridDiagram) layoutDynamic(g *d2graph.Graph, obj *d2graph.Object) {
 	}
 
 	cursor := geo.NewPoint(0, 0)
+	gd.tracks = layout
 	var maxY, maxX float64
 	if gd.rowDirected {
 		// measure row widths
@@ -567,8 +595,15 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 	} else {
 		nCuts = gd.rows - 1
 	}
-	if nCuts == 0 {
+	if nCuts <= 0 {
 		return GenLayout(gd.objects, nil)
+	}
+	if nCuts == len(gd.objects)-1 {
+		cuts := make([]int, nCuts)
+		for i := range cuts {
+			cuts[i] = i
+		}
+		return GenLayout(gd.objects, cuts)
 	}
 
 	var bestLayout [][]*d2graph.Object
@@ -604,13 +639,16 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 		size := getSize(obj)
 		sizes = append(sizes, size)
 	}
+	measurements := newGridRowMeasurements(sizes, gap)
+	if cuts := measurements.integralCuts(nCuts + 1); cuts != nil {
+		return GenLayout(gd.objects, cuts)
+	}
 	sd := stddev(sizes)
 
 	skipCount := 0
 	count := 0
 	// quickly eliminate bad row groupings
 	startingCache := make(map[int]bool)
-	measurements := newGridRowMeasurements(sizes, gap)
 	// Note: we want a low threshold to explore good options within attemptLimit,
 	// but the best option may require a few rows that are far from the target size.
 	okThreshold := STARTING_THRESHOLD
@@ -678,6 +716,13 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 		count++
 		// with few objects we can try all options to get best result but this won't scale, so only try up to 100k options
 		return count >= ATTEMPT_LIMIT || skipCount >= SKIP_LIMIT
+	}
+
+	// When every cut is cheap to check, score fractional rows in their
+	// original floating-point addition order without heuristic pruning.
+	if affordablePartitions(len(sizes), nCuts) {
+		iterDivisions(len(sizes), nCuts, tryDivision, func(_, _ int, _ bool) bool { return true })
+		return bestLayout
 	}
 
 	// try number of different okThresholds depending on std deviation of sizes
@@ -831,12 +876,15 @@ func getDistToTarget(layout [][]*d2graph.Object, targetSize float64, horizontalG
 	return totalDelta
 }
 
-func (gd *gridDiagram) sizeForOutsideLabels() (revert func()) {
-	margins := make(map[*d2graph.Object]geo.Spacing)
-
-	for _, o := range gd.objects {
+func (gd *gridDiagram) reserveCellMargins() (placeWithinCells func()) {
+	type measuredCell struct {
+		margin        geo.Spacing
+		width, height float64
+	}
+	cells := make([]measuredCell, len(gd.objects))
+	for i, o := range gd.objects {
 		margin := o.GetMargin()
-		margins[o] = margin
+		cells[i] = measuredCell{margin, o.Width, o.Height}
 
 		o.Height += margin.Top + margin.Bottom
 		o.Width += margin.Left + margin.Right
@@ -908,11 +956,10 @@ func (gd *gridDiagram) sizeForOutsideLabels() (revert func()) {
 	// .           ├───mr────┤ margin.right is still needed
 
 	return func() {
-		for _, o := range gd.objects {
-			m, has := margins[o]
-			if !has {
-				continue
-			}
+		for i, o := range gd.objects {
+			cell := cells[i]
+			slotWidth, slotHeight := o.Width, o.Height
+			m := cell.margin
 			dy := m.Top + m.Bottom
 			dx := m.Left + m.Right
 			o.Height -= dy
@@ -932,9 +979,44 @@ func (gd *gridDiagram) sizeForOutsideLabels() (revert func()) {
 				o.Height += dy - marginY
 			}
 
-			if margin.Left > 0 || margin.Top > 0 {
+			// A track can stretch independently along either axis. Fit constrained
+			// shapes inside it, preserving their measured minimum dimensions.
+			if fitGridAspectRatio(o, cell.width, cell.height) {
+				margin = o.GetMargin()
+				// Center the shape and its outside decorations as a unit.
+				margin.Left += (slotWidth - o.Width - margin.Left - margin.Right) / 2
+				margin.Top += (slotHeight - o.Height - margin.Top - margin.Bottom) / 2
+			}
+			if margin.Left != 0 || margin.Top != 0 {
 				o.MoveWithDescendants(margin.Left, margin.Top)
 			}
 		}
 	}
+}
+
+// fitGridAspectRatio leaves the track intact and fits the painted shape inside it.
+func fitGridAspectRatio(o *d2graph.Object, measuredWidth, measuredHeight float64) bool {
+	var ratio float64
+	switch strings.ToLower(o.Shape.Value) {
+	case d2target.ShapeCircle, d2target.ShapeSquare:
+		ratio = 1
+	case d2target.ShapePerson:
+		ratio = shape.PERSON_AR_LIMIT
+	case d2target.ShapeOval:
+		ratio = shape.OVAL_AR_LIMIT
+	case d2target.ShapeC4Person:
+		// The head radius is proportional to the outer width. Preserve the
+		// measured proportions so the body retains room for its contents.
+		if measuredWidth <= 0 || measuredHeight <= 0 {
+			return false
+		}
+		scale := min(o.Width/measuredWidth, o.Height/measuredHeight)
+		o.Width, o.Height = measuredWidth*scale, measuredHeight*scale
+		return true
+	default:
+		return false
+	}
+	o.Width = min(o.Width, max(measuredWidth, ratio*o.Height))
+	o.Height = min(o.Height, max(measuredHeight, ratio*o.Width))
+	return true
 }

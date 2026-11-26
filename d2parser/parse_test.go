@@ -13,6 +13,7 @@ import (
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/internal/grammartest"
 )
 
 func TestParseContextCanceled(t *testing.T) {
@@ -49,6 +50,40 @@ func TestParseNestingDepthBoundary(t *testing.T) {
 	input := strings.Repeat("a:{", d2parser.MaxNestingDepth) + strings.Repeat("}", d2parser.MaxNestingDepth)
 	if _, err := d2parser.Parse("deep.d2", strings.NewReader(input), nil); err != nil {
 		t.Fatalf("expected maximum supported nesting depth to parse, got %v", err)
+	}
+}
+
+func TestParseValueWithTypedLiteralPrefix(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		literal string
+		kind    string
+	}{
+		{"10", "number"},
+		{"true", "boolean"},
+		{"false", "boolean"},
+		{"null", "null"},
+		{"suspend", "suspension"},
+		{"unsuspend", "suspension"},
+	} {
+		t.Run(tc.literal, func(t *testing.T) {
+			literal, err := d2parser.ParseValue(tc.literal)
+			assert.Success(t, err)
+			assert.Equal(t, tc.kind, literal.Type())
+
+			value, err := d2parser.ParseValue(tc.literal + "${unit}")
+			assert.Success(t, err)
+			s, ok := value.(*d2ast.UnquotedString)
+			if !ok {
+				t.Fatalf("expected an interpolated string, got %T", value)
+			}
+			assert.Equal(t, 2, len(s.Value))
+			assert.True(t, s.Value[0].String != nil)
+			assert.Equal(t, tc.literal, *s.Value[0].String)
+			assert.True(t, s.Value[1].Substitution != nil)
+			assert.Equal(t, "unit", strings.Join(s.Value[1].Substitution.IDA(), "."))
+		})
 	}
 }
 
@@ -553,6 +588,7 @@ func testImport(t *testing.T) {
 }
 
 func runa(t *testing.T, tca []testCase) {
+	grammar := grammartest.Load(t)
 	for _, tc := range tca {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
@@ -561,6 +597,9 @@ func runa(t *testing.T, tca []testCase) {
 			d2Path := fmt.Sprintf("d2/testdata/d2parser/%v.d2", t.Name())
 			opts := &d2parser.ParseOptions{}
 			ast, err := d2parser.Parse(d2Path, strings.NewReader(tc.text), opts)
+			if err == nil {
+				grammartest.CheckSyntax(t, grammar, tc.text)
+			}
 
 			if tc.assert != nil {
 				tc.assert(t, ast, err)

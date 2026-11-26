@@ -132,9 +132,12 @@ the uploader deletes only that zero-byte placeholder and retries its upload. Cha
 completed assets are never deleted. Artifacts are retained for 30 days; recover failures
 within that window. Run recovery without another uploader modifying the same draft.
 
-Release-related PRs exercise the same archive and native smoke jobs and, when the WiX gate
-below is enabled, the MSI build. PRs never attest or write release assets. CI is called
-directly by the tag workflow, so it does not depend on another token-generated event.
+For layout and dependency changes, CI cross-builds the six archives once on Linux and checks
+their binary and compressed sizes. Packaging, installer, platform-specific source and Go
+toolchain changes also exercise reproducibility and the six native smoke tests. When the WiX
+gate below is enabled, these PRs build both Windows installers and test upgrading and
+uninstalling them. Release tags run the full archive workflow and CI on the tagged source.
+Only the tag workflow attests and attaches release assets.
 
 After publishing a release, update `manifests/t/Terrastruct/D2/<version>/Terrastruct.D2.installer.yaml`
 in `microsoft/winget-pkgs`. Add both x64 installers, each with its own URL, SHA-256,
@@ -163,9 +166,9 @@ The installer uses WiX 7. Before the workflow can install or run WiX 7, a reposi
 must review the [WiX Open Source Maintenance Fee and EULA terms](https://docs.firegiant.com/wix/osmf/),
 confirm that any required sponsorship is in place, and set the `WIX7_EULA_ACCEPTED`
 repository variable to exactly `true`. That explicit owner-controlled gate enables the
-workflow to pass `-acceptEula wix7`. Pull requests still build and smoke-test their release
-archives when the variable is absent, but skip MSI packaging. Tag-triggered builds fail
-closed when the variable is absent; no draft is uploaded.
+workflow to pass `-acceptEula wix7`. Full archive checks on pull requests build and smoke-test
+their release archives even when the variable is absent. Tag-triggered builds require WiX
+acceptance before the draft can be uploaded.
 
 ## build.sh
 

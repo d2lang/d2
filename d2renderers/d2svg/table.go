@@ -19,25 +19,25 @@ func clipPathForBorderRadius(diagramHash string, shape d2target.Shape) string {
 		float64(shape.Height),
 	)
 	topX, topY := box.TopLeft.X+box.Width, box.TopLeft.Y
+	radius := d2themes.ClampBorderRadius(float64(shape.BorderRadius), box.Width, box.Height)
 
 	id := borderRadiusClipPathID(diagramHash, shape.ID)
 	out := svg.OpenElement("clipPath", svg.Attr("id", id.String()))
-	out += fmt.Sprintf(`<path d="M %s %s L %s %s S %s %s %s %s `, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y), svg.FormatFloat(box.TopLeft.X+float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.Y))
-	out += fmt.Sprintf(`L %s %s L %s %s `, svg.FormatFloat(box.TopLeft.X+box.Width-float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.Y), svg.FormatFloat(topX-float64(shape.BorderRadius)), svg.FormatFloat(topY))
+	out += fmt.Sprintf(`<path d="M %s %s L %s %s S %s %s %s %s `, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+radius), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+radius), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y), svg.FormatFloat(box.TopLeft.X+radius), svg.FormatFloat(box.TopLeft.Y))
+	out += fmt.Sprintf(`L %s %s L %s %s `, svg.FormatFloat(box.TopLeft.X+box.Width-radius), svg.FormatFloat(box.TopLeft.Y), svg.FormatFloat(topX-radius), svg.FormatFloat(topY))
 
-	out += fmt.Sprintf(`S %s %s %s %s `, svg.FormatFloat(topX), svg.FormatFloat(topY), svg.FormatFloat(topX), svg.FormatFloat(topY+float64(shape.BorderRadius)))
-	out += fmt.Sprintf(`L %s %s `, svg.FormatFloat(topX), svg.FormatFloat(topY+box.Height-float64(shape.BorderRadius)))
+	out += fmt.Sprintf(`S %s %s %s %s `, svg.FormatFloat(topX), svg.FormatFloat(topY), svg.FormatFloat(topX), svg.FormatFloat(topY+radius))
+	out += fmt.Sprintf(`L %s %s `, svg.FormatFloat(topX), svg.FormatFloat(topY+box.Height-radius))
 
 	if len(shape.Columns) != 0 {
 		out += fmt.Sprintf(`L %s %s L %s %s`, svg.FormatFloat(topX), svg.FormatFloat(topY+box.Height), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+box.Height))
 	} else {
-		out += fmt.Sprintf(`S %s  %s %s %s `, svg.FormatFloat(topX), svg.FormatFloat(topY+box.Height), svg.FormatFloat(topX-float64(shape.BorderRadius)), svg.FormatFloat(topY+box.Height))
-		out += fmt.Sprintf(`L %s %s `, svg.FormatFloat(box.TopLeft.X+float64(shape.BorderRadius)), svg.FormatFloat(box.TopLeft.Y+box.Height))
-		out += fmt.Sprintf(`S %s %s %s %s`, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+box.Height), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+box.Height-float64(shape.BorderRadius)))
-		out += fmt.Sprintf(`L %s %s`, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+float64(shape.BorderRadius)))
+		out += fmt.Sprintf(`S %s  %s %s %s `, svg.FormatFloat(topX), svg.FormatFloat(topY+box.Height), svg.FormatFloat(topX-radius), svg.FormatFloat(topY+box.Height))
+		out += fmt.Sprintf(`L %s %s `, svg.FormatFloat(box.TopLeft.X+radius), svg.FormatFloat(box.TopLeft.Y+box.Height))
+		out += fmt.Sprintf(`S %s %s %s %s`, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+box.Height), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+box.Height-radius))
+		out += fmt.Sprintf(`L %s %s`, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+radius))
 	}
-	out += fmt.Sprintf(`Z %s %s" `, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y))
-	return out + `fill="none" /> </clipPath>`
+	return out + `Z" fill="none" /> </clipPath>`
 }
 
 func borderRadiusClipPathID(diagramHash, shapeID string) svg.ID {
@@ -126,7 +126,8 @@ func drawTable(writer *objectWriter, diagramHash string, targetShape d2target.Sh
 		float64(targetShape.Width),
 		float64(targetShape.Height),
 	)
-	rowHeight := box.Height / float64(1+len(targetShape.SQLTable.Columns))
+	radius := d2themes.ClampBorderRadius(float64(targetShape.BorderRadius), box.Width, box.Height)
+	rowHeight := targetShape.SQLRowHeight()
 	headerBox := geo.NewBox(box.TopLeft, box.Width, rowHeight)
 
 	tableHeader(writer, diagramHash, targetShape, headerBox, targetShape.Label,
@@ -142,20 +143,29 @@ func drawTable(writer *objectWriter, diagramHash string, targetShape d2target.Sh
 	rowBox := geo.NewBox(box.TopLeft.Copy(), box.Width, rowHeight)
 	rowBox.TopLeft.Y += headerBox.Height
 	for idx, f := range targetShape.Columns {
+		visible := targetShape.SQLRowVisibleHeight(rowBox.TopLeft.Y, rowHeight)
+		if targetShape.RowReveal != nil && visible <= 0 {
+			break
+		}
+		if visible < rowHeight {
+			fmt.Fprint(writer.buf, svg.OpenClippedViewport(rowBox.TopLeft.X, rowBox.TopLeft.Y, rowBox.Width, visible, rowBox.TopLeft.Y+(rowHeight-visible)))
+		}
 		tableRow(writer, targetShape, rowBox, f.Name.Label, f.Type.Label, f.ConstraintAbbr(), float64(targetShape.FontSize), float64(longestNameWidth), float64(longestTypeWidth), inlineTheme)
-		rowBox.TopLeft.Y += rowHeight
+		if visible < rowHeight {
+			writer.buf.WriteString("</svg>")
+		}
+		y, inset, last := targetShape.SQLRowDivider(idx, rowBox.TopLeft.Y+rowHeight, radius)
+		rowBox.TopLeft.Y = y
 
 		lineEl := d2themes.NewThemableElement("line", inlineTheme)
-		if idx == len(targetShape.Columns)-1 && targetShape.BorderRadius != 0 {
-			lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X+float64(targetShape.BorderRadius), rowBox.TopLeft.Y
-			lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width-float64(targetShape.BorderRadius), rowBox.TopLeft.Y
-		} else {
-			lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X, rowBox.TopLeft.Y
-			lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width, rowBox.TopLeft.Y
-		}
+		lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X+inset, y
+		lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width-inset, y
 		lineEl.Stroke = targetShape.Fill
 		lineEl.Style = "stroke-width:2"
 		writer.element(lineEl)
+		if last {
+			break
+		}
 	}
 
 	if targetShape.Icon != nil && targetShape.Type != d2target.ShapeImage {

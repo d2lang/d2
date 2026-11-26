@@ -167,8 +167,5 @@ func latexShapeLabelTopLeft(targetShape d2target.Shape) *geo.Point {
 	if position.IsOutside() {
 		box = geometry.GetBox()
 	}
-	return position.GetPointOnBox(
-		box, label.PADDING,
-		float64(targetShape.LabelWidth), float64(targetShape.LabelHeight),
-	)
+	return targetShape.LabelTopLeft(position, box)
 }

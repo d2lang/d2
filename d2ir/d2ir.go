@@ -5,6 +5,7 @@ package d2ir
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -145,12 +146,13 @@ func (r *FieldReference) DueToLazyGlob() bool  { return r.DueToLazyGlob_ }
 func (r *EdgeReference) DueToLazyGlob() bool   { return r.DueToLazyGlob_ }
 
 type Scalar struct {
+	order fieldOrder // Occurrence that supplied this primary value.
 	// binding retains a step expression for interpolation after its endpoint resolves.
 	binding *tweenBinding
 	parent  Node
 	Value   d2ast.Scalar `json:"value"`
-	// TweenOffset retains the fractional part lost when formatting an integer
-	// sample. Consumers such as stroke-width can paint it at subpixel precision.
+	// TweenOffset retains precision lost when formatting a numeric sample for
+	// text. Continuous paint properties can use it for the unrounded value.
 	TweenOffset float64 `json:"-"`
 }
 
@@ -187,7 +189,9 @@ type Map struct {
 	Fields            []*Field `json:"fields"`
 	Edges             []*Edge  `json:"edges"`
 
-	globs []*globContext
+	globs             []*globContext
+	edgePropertyRules *spreadEdgeRule
+	pendingSpreads    []*Field
 
 	// Fields and Edges retain source order. These indexes are derived lookup
 	// accelerators only; they never determine iteration order.
@@ -374,6 +378,9 @@ func (f *Field) setComposite(value Composite) {
 }
 
 func (m *Map) appendField(f *Field) {
+	if f.Name == nil {
+		m.pendingSpreads = append(m.pendingSpreads, f)
+	}
 	oldLen := len(m.Fields)
 	m.Fields = append(m.Fields, f)
 	if m.fieldIndex != nil && m.fieldIndexSize == oldLen && f != nil && f.Name != nil {
@@ -392,29 +399,13 @@ func (m *Map) appendField(f *Field) {
 	m.markStructureChanged()
 }
 
-func (m *Map) insertField(index int, f *Field) {
-	oldLen := len(m.Fields)
-	m.Fields = append(m.Fields, nil)
-	copy(m.Fields[index+1:], m.Fields[index:])
-	m.Fields[index] = f
-	if m.fieldIndex != nil && m.fieldIndexSize == oldLen && f != nil && f.Name != nil {
-		key := makeFieldIndexKey(f.Name)
-		if _, exists := m.fieldIndex[key]; !exists {
-			m.fieldIndex[key] = f
-		}
-		m.fieldIndexSize++
-	} else {
-		m.fieldIndex = nil
-		m.fieldIndexSize = 0
-	}
-	if f.Map().mayHaveEdges() {
-		f.noteEdges()
-	}
-	m.markStructureChanged()
-}
-
 func (m *Map) removeField(index int) *Field {
 	f := m.Fields[index]
+	if f.Name == nil {
+		if j := slices.Index(m.pendingSpreads, f); j >= 0 {
+			m.pendingSpreads = slices.Delete(m.pendingSpreads, j, j+1)
+		}
+	}
 	if f != nil && f.inEdgeFields {
 		for link := &m.firstEdgeField; *link != nil; link = &(*link).nextEdgeField {
 			if *link == f {
@@ -492,18 +483,23 @@ func (m *Map) Copy(newParent Node) Node {
 	}
 	tmp := *m
 	m = &tmp
+	m.edgePropertyRules = m.edgePropertyRules.fork()
 	m.fieldIndex = nil
 	m.fieldIndexSize = 0
 	m.edgeIndex = nil
 	m.edgeIndexSize = 0
 	m.structureVersion = 0
 	m.firstEdgeField = nil
+	m.pendingSpreads = nil
 
 	m.parent = newParent
 	pfields := m.Fields
 	m.Fields = make([]*Field, 0, len(pfields))
 	for _, f := range pfields {
 		field := f.Copy(m).(*Field)
+		if field.Name == nil {
+			m.pendingSpreads = append(m.pendingSpreads, field)
+		}
 		m.Fields = append(m.Fields, field)
 		if field.Map().mayHaveEdges() {
 			m.addEdgeField(field)
@@ -550,7 +546,7 @@ func (m *Map) CopyBase(newParent Node) *Map {
 	}
 	for _, board := range []*Field{layers, scenarios, steps} {
 		if board != nil {
-			m.deleteEdgesForFieldReferences(board)
+			m.deleteEdgesForReferences(board.References, nil)
 		}
 	}
 	base := *m
@@ -567,14 +563,25 @@ func (m *Map) CopyBase(newParent Node) *Map {
 	return copy
 }
 
-func (m *Map) deleteEdgesForFieldReferences(f *Field) {
-	for _, fr := range f.References {
+func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrder) {
+	// An edge attribute can refer to the edge selector that assigned it, but
+	// it is never an endpoint whose removal should delete that connection.
+	if ParentEdge(m) != nil {
+		return
+	}
+	for _, fr := range refs {
+		if cutoff != nil && (!fr.InEdge() || cutoff.before(fr.order)) {
+			continue
+		}
 		currM := m
 		for currM != nil {
-			for _, edge := range currM.Edges {
+			for i := len(currM.Edges) - 1; i >= 0; i-- {
+				edge := currM.Edges[i]
 				for _, er := range edge.References {
 					if er.Context_ == fr.Context_ {
-						currM.DeleteEdge(edge.ID)
+						if cutoff == nil || !edge.recreatedAfter(*cutoff) {
+							currM.removeEdge(i)
+						}
 						break
 					}
 				}
@@ -638,7 +645,7 @@ func NodeBoardKind(n Node) BoardKind {
 	if f == nil {
 		return ""
 	}
-	switch f.Name.ScalarString() {
+	switch d2ast.Keyword(f.Name) {
 	case "layers":
 		return BoardLayer
 	case "scenarios":
@@ -660,6 +667,11 @@ var _ Importable = &Field{}
 var _ Importable = &Map{}
 
 type Field struct {
+	templateNull    *fieldOrder // Last null assigned in a map variable, retained through later edits.
+	spreadDeletions *spreadDeletion
+	declaration     fieldOrder
+	compositeOrder  fieldOrder // Occurrence that supplied the map or array.
+	mapReset        fieldOrder // Last array replacement, even when the map was subsequently reopened.
 	// *Map.
 	parent        Node
 	importAST     d2ast.Node
@@ -689,6 +701,7 @@ func (f *Field) SetImportAST(node d2ast.Node) {
 }
 
 func (f *Field) Copy(newParent Node) Node {
+	old := f
 	tmp := *f
 	f = &tmp
 
@@ -699,7 +712,9 @@ func (f *Field) Copy(newParent Node) Node {
 	if f.Primary_ != nil {
 		f.Primary_ = f.Primary_.Copy(f).(*Scalar)
 	}
-	if f.Composite != nil {
+	if old.Map() != nil && old.Map().Parent() != old {
+		f.Composite = old.copyAliasMap(f)
+	} else if f.Composite != nil {
 		f.Composite = f.Composite.Copy(f).(Composite)
 	}
 	return f
@@ -926,6 +941,7 @@ func (a *Array) Copy(newParent Node) Node {
 }
 
 type FieldReference struct {
+	order   fieldOrder
 	String  d2ast.String   `json:"string"`
 	KeyPath *d2ast.KeyPath `json:"key_path"`
 
@@ -940,6 +956,7 @@ type FieldReference struct {
 // (context, key-path element) prevents glob evaluation order from inflating
 // reference lists quadratically while preserving every distinct source.
 func (f *Field) appendReference(ref *FieldReference) {
+	ref.order = ref.Context_.order
 	if ref.DueToLazyGlob_ {
 		for _, existing := range f.References {
 			if sameReferenceContext(existing.Context_, ref.Context_) &&
@@ -991,12 +1008,14 @@ func (fr *FieldReference) AST() d2ast.Node {
 }
 
 type EdgeReference struct {
+	order          fieldOrder
 	Context_       *RefContext `json:"context"`
 	DueToGlob_     bool        `json:"due_to_glob"`
 	DueToLazyGlob_ bool        `json:"due_to_lazy_glob"`
 }
 
 func (e *Edge) appendReference(ref *EdgeReference) {
+	ref.order = ref.Context_.order
 	if ref.DueToLazyGlob_ {
 		for _, existing := range e.References {
 			if sameReferenceContext(existing.Context_, ref.Context_) &&
@@ -1026,6 +1045,7 @@ func (er *EdgeReference) Primary() bool {
 }
 
 type RefContext struct {
+	order    fieldOrder  // Original key position, including its lazy glob applications.
 	Edge     *d2ast.Edge `json:"edge"`
 	Key      *d2ast.Key  `json:"key"`
 	Scope    *d2ast.Map  `json:"-"`
@@ -1119,8 +1139,7 @@ func (c *compiler) IsContainer(m *Map) bool {
 						impn, ok := c.peekImport(n.Import)
 						if ok {
 							for _, f := range impn.Fields {
-								_, isReserved := d2ast.ReservedKeywords[f.Name.ScalarString()]
-								if !(isReserved && f.Name.IsUnquoted()) {
+								if d2ast.Keyword(f.Name) == "" {
 									return true
 								}
 							}
@@ -1132,8 +1151,7 @@ func (c *compiler) IsContainer(m *Map) bool {
 					return true
 				}
 				if n.MapKey.Key != nil {
-					_, isReserved := d2ast.ReservedKeywords[n.MapKey.Key.Path[0].Unbox().ScalarString()]
-					if !(isReserved && f.Name.IsUnquoted()) {
+					if d2ast.Keyword(n.MapKey.Key.Path[0].Unbox()) == "" {
 						return true
 					}
 				}
@@ -1141,8 +1159,7 @@ func (c *compiler) IsContainer(m *Map) bool {
 		}
 	}
 	for _, f := range m.Fields {
-		_, isReserved := d2ast.ReservedKeywords[f.Name.ScalarString()]
-		if !(isReserved && f.Name.IsUnquoted()) {
+		if d2ast.Keyword(f.Name) == "" {
 			return true
 		}
 	}
@@ -1381,7 +1398,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			if f.Name == nil {
 				continue
 			}
-			if matchPattern(f.Name.ScalarString(), us.Pattern) {
+			if d2ast.Keyword(f.Name) == "" && matchPattern(f.Name.ScalarString(), us.Pattern) {
 				if i == len(kp.Path)-1 {
 					faAppend(f)
 				} else {
@@ -1404,25 +1421,24 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 	}
 
 	head := kp.Path[i].Unbox()
-	headString := head.ScalarString()
+	keyword := d2ast.Keyword(head)
 
-	if _, ok := d2ast.ReservedKeywords[strings.ToLower(head.ScalarString())]; ok && head.IsUnquoted() {
-		headString = strings.ToLower(head.ScalarString())
-		if _, ok := d2ast.CompositeReservedKeywords[headString]; !ok && i < len(kp.Path)-1 {
-			return d2parser.Errorf(kp.Path[i].Unbox(), fmt.Sprintf(`"%s" must be the last part of the key`, headString))
+	if keyword != "" {
+		if _, ok := d2ast.CompositeReservedKeywords[keyword]; !ok && i < len(kp.Path)-1 {
+			return d2parser.Errorf(kp.Path[i].Unbox(), fmt.Sprintf(`"%s" must be the last part of the key`, keyword))
 		}
 	}
 
-	if headString == "_" && head.IsUnquoted() {
+	if head.ScalarString() == "_" && head.IsUnquoted() {
 		return d2parser.Errorf(kp.Path[i].Unbox(), `parent "_" can only be used in the beginning of paths, e.g. "_.x"`)
 	}
 
-	if headString == "classes" && head.IsUnquoted() && NodeBoardKind(m) == "" {
-		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", headString)
+	if keyword == "classes" && NodeBoardKind(m) == "" {
+		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", keyword)
 	}
 
-	if findBoardKeyword(head) != -1 && head.IsUnquoted() && NodeBoardKind(m) == "" {
-		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", headString)
+	if _, board := d2ast.BoardKeywords[keyword]; board && NodeBoardKind(m) == "" {
+		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", keyword)
 	}
 
 	var existing *Field
@@ -1466,7 +1482,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 	if !create {
 		return nil
 	}
-	if _, ok := d2ast.ReservedKeywords[strings.ToLower(head.ScalarString())]; !(ok && head.IsUnquoted()) && c != nil && len(c.globRefContextStack) > 0 {
+	if keyword == "" && c != nil && len(c.globRefContextStack) > 0 {
 		shape := ParentShape(m)
 		if shape == d2target.ShapeClass || shape == d2target.ShapeSQLTable {
 			return nil
@@ -1517,6 +1533,9 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		if !c.reserveGlobField(globSource) {
 			return nil
 		}
+	}
+	if c != nil {
+		f.declaration = c.nextFieldOrder()
 	}
 	m.appendField(f)
 	*created = append(*created, f)
@@ -1570,27 +1589,11 @@ func (m *Map) DeleteField(ida ...string) *Field {
 	rest := ida[1:]
 
 	for i, f := range m.Fields {
-		if !strings.EqualFold(f.Name.ScalarString(), s) {
+		if f.Name == nil || !strings.EqualFold(f.Name.ScalarString(), s) {
 			continue
 		}
 		if len(rest) == 0 {
-			m.deleteEdgesForFieldReferences(f)
-			m.removeField(i)
-
-			// If a field was deleted from a keyword-holder keyword and that holder is empty,
-			// then that holder becomes meaningless and should be deleted too
-			parent := ParentField(f)
-			for keywordHolder := range d2ast.ReservedKeywordHolders {
-				if parent != nil && parent.Name.ScalarString() == keywordHolder && parent.Name.IsUnquoted() && len(parent.Map().Fields) == 0 {
-					keywordHolderParentMap := ParentMap(parent)
-					for i, f := range keywordHolderParentMap.Fields {
-						if f.Name.ScalarString() == keywordHolder && f.Name.IsUnquoted() {
-							keywordHolderParentMap.removeField(i)
-							break
-						}
-					}
-				}
-			}
+			m.deleteFieldAt(i)
 			return f
 		}
 		if f.Map() != nil {
@@ -1598,6 +1601,31 @@ func (m *Map) DeleteField(ida ...string) *Field {
 		}
 	}
 	return nil
+}
+
+func (m *Map) deleteField(f *Field) {
+	if i := slices.Index(m.Fields, f); i >= 0 {
+		m.deleteFieldAt(i)
+	}
+}
+
+func (m *Map) deleteFieldAt(i int) {
+	f := m.Fields[i]
+	m.deleteEdgesForReferences(f.References, nil)
+	m.removeField(i)
+	// An empty keyword holder has no independent meaning.
+	parent := ParentField(f)
+	if parent == nil || parent.Name == nil || !parent.Name.IsUnquoted() || len(m.Fields) != 0 {
+		return
+	}
+	if _, ok := d2ast.ReservedKeywordHolders[d2ast.Keyword(parent.Name)]; ok {
+		holder := ParentMap(parent)
+		if holder != nil {
+			if i := slices.Index(holder.Fields, parent); i >= 0 {
+				holder.removeField(i)
+			}
+		}
+	}
 }
 
 func (m *Map) GetEdges(eid *EdgeID, refctx *RefContext, c *compiler) []*Edge {
@@ -1986,6 +2014,7 @@ func (m *Map) createEdge2(eid *EdgeID, refctx *RefContext, gctx *globContext, c 
 		parent: m,
 		ID:     eid,
 		References: []*EdgeReference{{
+			order:          refctx.order,
 			Context_:       refctx,
 			DueToGlob_:     len(c.globRefContextStack) > 0,
 			DueToLazyGlob_: c.lazyGlobBeingApplied,
@@ -2177,7 +2206,7 @@ func IsVar(n Node) bool {
 		if NodeBoardKind(n) != "" {
 			return false
 		}
-		if f, ok := n.(*Field); ok && f.Name.ScalarString() == "vars" && f.Name.IsUnquoted() {
+		if f, ok := n.(*Field); ok && d2ast.Keyword(f.Name) == "vars" {
 			return true
 		}
 		if n == (*Map)(nil) {
@@ -2240,7 +2269,7 @@ func countUnderscores(p []d2ast.String) int {
 
 func findBoardKeyword(ida ...d2ast.String) int {
 	for i := range ida {
-		if _, ok := d2ast.BoardKeywords[strings.ToLower(ida[i].ScalarString())]; ok && ida[i].IsUnquoted() {
+		if _, ok := d2ast.BoardKeywords[d2ast.Keyword(ida[i])]; ok {
 			return i
 		}
 	}
@@ -2249,10 +2278,11 @@ func findBoardKeyword(ida ...d2ast.String) int {
 
 func findProhibitedEdgeKeyword(ida ...d2ast.String) int {
 	for i := range ida {
-		if _, ok := d2ast.SimpleReservedKeywords[ida[i].ScalarString()]; ok && ida[i].IsUnquoted() {
+		keyword := d2ast.Keyword(ida[i])
+		if _, ok := d2ast.SimpleReservedKeywords[keyword]; ok {
 			return i
 		}
-		if _, ok := d2ast.ReservedKeywordHolders[ida[i].ScalarString()]; ok && ida[i].IsUnquoted() {
+		if _, ok := d2ast.ReservedKeywordHolders[keyword]; ok {
 			return i
 		}
 	}

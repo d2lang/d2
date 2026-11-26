@@ -56,7 +56,7 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 
 	diagram.Connections = make([]d2target.Connection, len(g.Edges))
 	for i := range g.Edges {
-		diagram.Connections[i] = toConnection(g.Edges[i], g.Theme)
+		diagram.Connections[i] = ToConnection(g.Edges[i], g.Theme)
 	}
 
 	if g.Legend != nil {
@@ -74,7 +74,7 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 		if len(g.Legend.Edges) > 0 {
 			legend.Connections = make([]d2target.Connection, len(g.Legend.Edges))
 			for i, edge := range g.Legend.Edges {
-				legend.Connections[i] = toConnection(edge, g.Theme)
+				legend.Connections[i] = ToConnection(edge, g.Theme)
 			}
 		}
 
@@ -343,7 +343,8 @@ func toPrettyLink(g *d2graph.Graph, link string) string {
 	return link
 }
 
-func toConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection {
+// ToConnection builds the render-target representation of a routed edge.
+func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection {
 	connection := d2target.BaseConnection()
 	connection.ID = edge.AbsID()
 	connection.Classes = edge.Classes

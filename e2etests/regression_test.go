@@ -4,9 +4,9 @@ import (
 	"testing"
 )
 
-func testRegression(t *testing.T) {
+func regressionCases(t *testing.T) []testCase {
 	terminalThemeID := int64(300)
-	tcs := []testCase{
+	return []testCase{
 		{
 			// https://github.com/terrastruct/d2/issues/919
 			name: "hex-fill",
@@ -783,6 +783,19 @@ b
 }
 `,
 		},
+		{
+			name: "sequence-note-in-nested-group",
+			script: `shape: sequence_diagram
+
+actor: Actor
+
+outer group: {
+  inner group: {
+    actor."Think about life"
+  }
+}
+`,
+		},
 		loadFromFile(t, "unconnected"),
 		{
 			name: "straight_hierarchy_container_direction_right",
@@ -1145,6 +1158,4 @@ cf many required: {
 		loadFromFileWithOptions(t, "nested_layout_bug", testCase{testSerialization: true}),
 		loadFromFile(t, "disconnect_direction_right"),
 	}
-
-	runa(t, tcs)
 }

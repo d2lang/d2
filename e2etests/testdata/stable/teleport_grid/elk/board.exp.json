@@ -332,10 +332,10 @@
       "id": "users.Machines",
       "type": "oval",
       "pos": {
-        "x": 72,
+        "x": 74,
         "y": 448
       },
-      "width": 182,
+      "width": 178,
       "height": 178,
       "opacity": 1,
       "strokeDash": 0,

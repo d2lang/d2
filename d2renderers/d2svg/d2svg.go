@@ -884,9 +884,17 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		if label.FromString(maskPosition).IsOnEdge() {
 			opacity = 1
 		}
+		if p := connection.MotionLabel; p != nil && connection.Label != "" {
+			opacity *= p.Opacity
+		}
 		labelMask = makeLabelMask(maskTL, maskWidth, maskHeight, opacity)
 	}
 
+	// An invisible caption or icon must not erase an unrelated stroke. A
+	// visible caption keeps its usual contrast even on a translucent wire.
+	if connection.Opacity == 0 {
+		labelMask = ""
+	}
 	path := pathData(connection, srcAdj, dstAdj)
 	mask := svg.Attr("mask", svg.LocalIRI(svg.LiteralID(diagramHash)))
 	if crossingMask != "" {
@@ -948,6 +956,9 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 	}
 
 	if connection.Label != "" {
+		if p := connection.MotionLabel; p != nil {
+			fmt.Fprint(writer, svg.OpenElement("g", svg.FloatAttr("opacity", p.Opacity)))
+		}
 		richLabelLink := connection.Link != "" && connection.Language != ""
 		if richLabelLink {
 			fmt.Fprint(writer, svg.OpenElement("a", svg.HrefAttributes(connection.Link)...))
@@ -1017,6 +1028,9 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		}
 		if richLabelLink {
 			fmt.Fprint(writer, "</a>")
+		}
+		if connection.MotionLabel != nil {
+			fmt.Fprint(writer, "</g>")
 		}
 	}
 
@@ -1407,12 +1421,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	height := float64(targetShape.Height)
 	fill, stroke := d2themes.ShapeTheme(targetShape)
 	style := targetShape.CSSStyle()
-	shapeType := d2target.DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type]
-
-	s := shape.NewShape(shapeType, geo.NewBox(tl, width, height))
-	if shapeType == shape.CLOUD_TYPE && targetShape.ContentAspectRatio != nil {
-		s.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
-	}
+	s := targetShape.Geometry()
 
 	var shadowAttr string
 	if targetShape.Shadow {
@@ -1495,6 +1504,30 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 
 	// TODO should standardize "" to rectangle
 	case d2target.ShapeRectangle, d2target.ShapeSequenceDiagram, d2target.ShapeHierarchy, "":
+		if !sketch && targetShape.DrawingOutline() {
+			body := d2themes.NewThemableElement("rect", inlineTheme)
+			body.X, body.Y, body.Width, body.Height = tl.X, tl.Y, width, height
+			body.Fill, body.Stroke = fill, "none"
+			writer.element(body)
+			points := targetShape.DrawnOutline()
+			if len(points) > 0 {
+				var d strings.Builder
+				for i, p := range points {
+					if i == 0 {
+						d.WriteString("M ")
+					} else {
+						d.WriteString(" L ")
+					}
+					d.WriteString(svg.FormatFloat(p.X))
+					d.WriteByte(' ')
+					d.WriteString(svg.FormatFloat(p.Y))
+				}
+				line := d2themes.NewThemableElement("path", inlineTheme)
+				line.D, line.Fill, line.Stroke, line.Style = d.String(), "none", stroke, style
+				writer.element(line)
+			}
+			break
+		}
 		if targetShape.ThreeDee {
 			fmt.Fprint(writer, render3DRect(resourceHash, targetShape, inlineTheme))
 			break
@@ -1558,7 +1591,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		el.Stroke = stroke
 		el.Style = style
 		if targetShape.Multiple {
-			writer.paths(el, shape.NewShape(shapeType, geo.NewBox(multipleTL, width, height)).GetSVGPathData())
+			writer.paths(el, shape.NewShape(s.GetType(), geo.NewBox(multipleTL, width, height)).GetSVGPathData())
 		}
 		if sketch {
 			if err := writer.sketch(d2sketch.Paths(targetShape, resourceHash, s.GetSVGPathData())); err != nil {
@@ -1587,16 +1620,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	writer.buf.WriteString(`</g>`)
 
 	if targetShape.Icon != nil && targetShape.Type != d2target.ShapeImage && targetShape.Opacity != 0 {
-		iconPosition := label.FromString(targetShape.IconPosition)
-		var box *geo.Box
-		if iconPosition.IsOutside() {
-			box = s.GetBox()
-		} else {
-			box = s.GetInnerBox()
-		}
-		iconSize := d2target.GetIconSize(box, targetShape.IconPosition)
-
-		tl := iconPosition.GetPointOnBox(box, label.PADDING, float64(iconSize), float64(iconSize))
+		icon := targetShape.IconBounds(s)
+		tl := icon.TopLeft
+		iconSize := int(icon.Width)
 
 		attributes := []svg.Attribute{
 			svg.Attr("href", targetShape.Icon.String()),
@@ -1621,32 +1647,11 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		}
 		var box *geo.Box
 		if labelPosition.IsOutside() || labelPosition.IsBorder() {
-			box = s.GetBox().Copy()
-			// if it is 3d/multiple, place label using box around those
-			if targetShape.ThreeDee {
-				offsetY := d2target.THREE_DEE_OFFSET
-				if targetShape.Type == d2target.ShapeHexagon {
-					offsetY /= 2
-				}
-				box.TopLeft.Y -= float64(offsetY)
-				box.Height += float64(offsetY)
-				box.Width += d2target.THREE_DEE_OFFSET
-			} else if targetShape.Multiple {
-				box.TopLeft.Y -= d2target.MULTIPLE_OFFSET
-				box.Height += d2target.MULTIPLE_OFFSET
-				box.Width += d2target.MULTIPLE_OFFSET
-			}
+			box = targetShape.OuterLabelBox(s.GetBox())
 		} else {
 			box = s.GetInnerBox()
 		}
-		labelTL := labelPosition.GetPointOnBox(box, label.PADDING,
-			float64(targetShape.LabelWidth),
-			float64(targetShape.LabelHeight),
-		)
-
-		if p := targetShape.MotionLabelTopLeft; p != nil {
-			labelTL = geo.NewPoint(float64(p.X), float64(p.Y))
-		}
+		labelTL := targetShape.LabelTopLeft(labelPosition, box)
 		if labelPosition.IsBorder() {
 			if sketch {
 				labelMask = makeBorderLabelMask(labelPosition, labelTL, targetShape.LabelWidth, targetShape.LabelHeight, box, targetShape.RenderedStrokeWidth(), 1.0, tl)
@@ -1669,10 +1674,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			} else {
 				box = s.GetInnerBox()
 			}
-			latexTL := labelPosition.GetPointOnBox(box, label.PADDING,
-				float64(targetShape.LabelWidth),
-				float64(targetShape.LabelHeight),
-			)
+			latexTL := targetShape.LabelTopLeft(labelPosition, box)
 			gEl, err := latexLabel(targetShape.Label, latexTL, targetShape.GetFontColor(), inlineTheme)
 			if err != nil {
 				return labelMask, err
