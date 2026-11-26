@@ -37,20 +37,7 @@ func supportedClipGeometry(name string) bool {
 // deliberate: d2scene.Clip stores one path, and concatenating independently
 // styled SVG clip children would turn their union into winding interaction.
 func (i *svgImporter) validateClipTree(root *svgElement) error {
-	type entry struct {
-		element *svgElement
-		parent  *svgElement
-	}
-	stack := []entry{{element: root}}
-	for len(stack) != 0 {
-		if err := i.ctx.Err(); err != nil {
-			return err
-		}
-		current := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		element := current.element
-		parent := current.parent
-
+	return i.walkElements(root, func(element, parent *svgElement) error {
 		if element.name == "clipPath" {
 			if parent == nil || (parent.name != "svg" && parent.name != "g" && parent.name != "defs") {
 				return i.errorf("element <clipPath> is only supported under <svg>, <g>, or <defs>")
@@ -72,22 +59,12 @@ func (i *svgImporter) validateClipTree(root *svgElement) error {
 				return i.errorf("element <clipPath> has unsupported child <%s>", displayXMLName(child.name))
 			}
 		}
-
-		for index := len(element.children) - 1; index >= 0; index-- {
-			stack = append(stack, entry{element: element.children[index], parent: element})
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (i *svgImporter) compileClipPathResources(root *svgElement) error {
-	stack := []*svgElement{root}
-	for len(stack) != 0 {
-		if err := i.ctx.Err(); err != nil {
-			return err
-		}
-		element := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
+	return i.walkElements(root, func(element, _ *svgElement) error {
 		if element.name == "clipPath" {
 			compiled, err := i.compileClipPathResource(element)
 			if err != nil {
@@ -95,11 +72,8 @@ func (i *svgImporter) compileClipPathResources(root *svgElement) error {
 			}
 			element.clipPath = compiled
 		}
-		for index := len(element.children) - 1; index >= 0; index-- {
-			stack = append(stack, element.children[index])
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (i *svgImporter) compileClipPathResource(element *svgElement) (*compiledClipPath, error) {

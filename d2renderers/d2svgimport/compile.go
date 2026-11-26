@@ -74,19 +74,11 @@ func (i *svgImporter) compile(root *svgElement) error {
 	if err := i.compileStylesheets(root); err != nil {
 		return err
 	}
-	stack := []*svgElement{root}
-	for len(stack) != 0 {
-		if err := i.ctx.Err(); err != nil {
-			return err
-		}
-		element := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if err := i.compileElement(element); err != nil {
-			return err
-		}
-		for index := len(element.children) - 1; index >= 0; index-- {
-			stack = append(stack, element.children[index])
-		}
+	err := i.walkElements(root, func(element, _ *svgElement) error {
+		return i.compileElement(element)
+	})
+	if err != nil {
+		return err
 	}
 	if err := i.compileGradientResources(root); err != nil {
 		return err
@@ -101,6 +93,28 @@ func (i *svgImporter) compile(root *svgElement) error {
 		return err
 	}
 	return i.compileClipPathResources(root)
+}
+
+// walkElements visits the element tree under root in document order, passing
+// each element with its parent (nil for root), and stops at the first error.
+// The context is checked before every visit.
+func (i *svgImporter) walkElements(root *svgElement, visit func(element, parent *svgElement) error) error {
+	type entry struct{ element, parent *svgElement }
+	stack := []entry{{element: root}}
+	for len(stack) != 0 {
+		if err := i.ctx.Err(); err != nil {
+			return err
+		}
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if err := visit(current.element, current.parent); err != nil {
+			return err
+		}
+		for index := len(current.element.children) - 1; index >= 0; index-- {
+			stack = append(stack, entry{current.element.children[index], current.element})
+		}
+	}
+	return nil
 }
 
 func (i *svgImporter) validateUseGraph(root *svgElement) error {

@@ -65,20 +65,7 @@ func hasRenderingChildren(element *svgElement) bool {
 // structures found in the renderer corpus. Recognized namespace names are not
 // enough by themselves: foreign elements in any other position remain errors.
 func (i *svgImporter) validateNonRenderingTree(root *svgElement) error {
-	type entry struct {
-		element *svgElement
-		parent  *svgElement
-	}
-	stack := []entry{{element: root}}
-	for len(stack) != 0 {
-		if err := i.ctx.Err(); err != nil {
-			return err
-		}
-		current := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		element := current.element
-		parent := current.parent
-
+	err := i.walkElements(root, func(element, parent *svgElement) error {
 		if parent != nil {
 			switch parent.name {
 			case "metadata":
@@ -125,9 +112,10 @@ func (i *svgImporter) validateNonRenderingTree(root *svgElement) error {
 				return i.errorf("element <dc:format> has unsupported metadata text")
 			}
 		}
-		for index := len(element.children) - 1; index >= 0; index-- {
-			stack = append(stack, entry{element: element.children[index], parent: element})
-		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	cardinalityStack := []*svgElement{root}
 	for len(cardinalityStack) != 0 {
