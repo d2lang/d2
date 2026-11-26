@@ -347,7 +347,7 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		compileOpts.Layout = input.Opts.Layout
 	}
 
-	if input.Opts != nil && input.Opts.ASCII != nil && *input.Opts.ASCII {
+	if input.Opts.ASCII != nil && *input.Opts.ASCII {
 		if compileOpts.Layout == nil || *compileOpts.Layout == "dagre" {
 			compileOpts.Layout = go2.Pointer("elk")
 		}
@@ -497,43 +497,22 @@ func render(input RenderRequest) ([]byte, error) {
 		diagram.TweenDurationMS = 0
 	}
 
-	renderOpts := &d2svg.RenderOpts{Scale: scale}
-
-	if input.Opts != nil && input.Opts.Salt != nil {
-		renderOpts.Salt = input.Opts.Salt
+	renderOpts := &d2svg.RenderOpts{
+		Scale:              scale,
+		Salt:               input.Opts.Salt,
+		Sketch:             input.Opts.Sketch,
+		Isometric:          input.Opts.Isometric,
+		Pad:                input.Opts.Pad,
+		Center:             input.Opts.Center,
+		ThemeID:            input.Opts.ThemeID,
+		DarkThemeID:        input.Opts.DarkThemeID,
+		ThemeOverrides:     input.Opts.ThemeOverrides,
+		DarkThemeOverrides: input.Opts.DarkThemeOverrides,
+		NoXMLTag:           input.Opts.NoXMLTag,
 	}
-
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err.Error()), Code: 500}
-	}
-
-	if input.Opts != nil && input.Opts.Sketch != nil {
-		renderOpts.Sketch = input.Opts.Sketch
-	}
-	if input.Opts != nil && input.Opts.Isometric != nil {
-		renderOpts.Isometric = input.Opts.Isometric
-	}
-	if input.Opts != nil && input.Opts.Pad != nil {
-		renderOpts.Pad = input.Opts.Pad
-	}
-	if input.Opts != nil && input.Opts.Center != nil {
-		renderOpts.Center = input.Opts.Center
-	}
-	if input.Opts != nil && input.Opts.ThemeID != nil {
-		renderOpts.ThemeID = input.Opts.ThemeID
-	}
-	if input.Opts != nil && input.Opts.DarkThemeID != nil {
-		renderOpts.DarkThemeID = input.Opts.DarkThemeID
-	}
-	if input.Opts != nil && input.Opts.ThemeOverrides != nil {
-		renderOpts.ThemeOverrides = input.Opts.ThemeOverrides
-	}
-	if input.Opts != nil && input.Opts.DarkThemeOverrides != nil {
-		renderOpts.DarkThemeOverrides = input.Opts.DarkThemeOverrides
-	}
-	if input.Opts != nil && input.Opts.NoXMLTag != nil {
-		renderOpts.NoXMLTag = input.Opts.NoXMLTag
 	}
 
 	if renderOpts.Isometric != nil && *renderOpts.Isometric {
@@ -548,7 +527,7 @@ func render(input RenderRequest) ([]byte, error) {
 		}
 	}
 
-	if input.Opts != nil && input.Opts.ASCII != nil && *input.Opts.ASCII {
+	if input.Opts.ASCII != nil && *input.Opts.ASCII {
 		if !noChildren && animateInterval > 0 {
 			return nil, &WASMError{Message: "ASCII rendering does not support multi-board animation", Code: 400}
 		}

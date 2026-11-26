@@ -40,7 +40,6 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 	"github.com/d2lang/d2/lib/textmeasure"
 	"github.com/d2lang/d2/lib/version"
-	"github.com/d2lang/util-go/go2"
 )
 
 const (
@@ -189,84 +188,94 @@ func dimensions(diagram *d2target.Diagram, pad int, tl, br d2target.Point) (left
 	top = tl.Y - pad
 	width = br.X - tl.X + pad*2
 	height = br.Y - tl.Y + pad*2
-
 	// Account for legend dimensions if present
-	if diagram.Legend != nil && (len(diagram.Legend.Shapes) > 0 || len(diagram.Legend.Connections) > 0) {
-		totalHeight := LEGEND_PADDING + LEGEND_FONT_SIZE + LEGEND_ITEM_SPACING
-		maxLabelWidth := 0
-		itemCount := 0
-
+	if hasLegend(diagram) {
 		ruler, err := textmeasure.NewRuler()
 		if err == nil && ruler != nil {
-			for _, s := range diagram.Legend.Shapes {
-				if s.Label == "" {
-					continue
-				}
-				mtext := &d2target.MText{
-					Text:     s.Label,
-					FontSize: LEGEND_FONT_SIZE,
-				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
-				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-				itemCount++
-			}
-
-			for _, c := range diagram.Legend.Connections {
-				if c.Label == "" {
-					continue
-				}
-				mtext := &d2target.MText{
-					Text:     c.Label,
-					FontSize: LEGEND_FONT_SIZE,
-				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
-				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-				itemCount++
-			}
-
-			if itemCount > 0 {
-				totalHeight -= LEGEND_ITEM_SPACING / 2
-			}
-
-			if itemCount > 0 && len(diagram.Legend.Connections) > 0 {
-				totalHeight += LEGEND_PADDING * 1.5
-			} else {
-				totalHeight += LEGEND_PADDING * 1.2
-			}
-
-			if totalHeight > 0 && maxLabelWidth > 0 {
-				legendWidth := LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
-				legendY := br.Y - totalHeight
-				if legendY < tl.Y {
-					legendY = tl.Y
-				}
-
-				legendRight := br.X + LEGEND_CORNER_PADDING + legendWidth
-				if left+width < legendRight {
-					width = legendRight - left + pad/2
-				}
-
-				if legendY < top {
-					diffY := top - legendY
-					top -= diffY
-					height += diffY
-				}
-
-				legendBottom := legendY + totalHeight
-				if top+height < legendBottom {
-					height = legendBottom - top + pad/2
-				}
-			}
+			legendHeight, maxLabelWidth, rows := measureLegend(diagram.Legend, ruler)
+			left, top, width, height = fitLegend(left, top, width, height, pad, tl, br, legendBoxHeight(diagram.Legend, legendHeight, rows), maxLabelWidth)
 		}
 	}
+	return left, top, width, height
+}
 
+func hasLegend(diagram *d2target.Diagram) bool {
+	return diagram.Legend != nil && (len(diagram.Legend.Shapes) > 0 || len(diagram.Legend.Connections) > 0)
+}
+
+// legendLabelSize measures one legend label.
+func legendLabelSize(ruler *textmeasure.Ruler, text, fontFamily string) *d2target.TextDimensions {
+	mtext := &d2target.MText{
+		Text:     text,
+		FontSize: LEGEND_FONT_SIZE,
+	}
+	return d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(fontFamily))
+}
+
+// measureLegend returns the height of a legend's title and labeled rows
+// (without bottom padding), its widest label and its number of labeled rows.
+func measureLegend(legend *d2target.Legend, ruler *textmeasure.Ruler) (height, maxLabelWidth, rows int) {
+	height = LEGEND_PADDING + LEGEND_FONT_SIZE + LEGEND_ITEM_SPACING
+	row := func(text, fontFamily string) {
+		if text == "" {
+			return
+		}
+		dims := legendLabelSize(ruler, text, fontFamily)
+		maxLabelWidth = max(maxLabelWidth, dims.Width)
+		height += max(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
+		rows++
+	}
+	for _, s := range legend.Shapes {
+		row(s.Label, s.FontFamily)
+	}
+	for _, c := range legend.Connections {
+		row(c.Label, c.FontFamily)
+	}
+	if rows > 0 {
+		height -= LEGEND_ITEM_SPACING / 2
+	}
+	return height, maxLabelWidth, rows
+}
+
+// legendBoxHeight adds the bottom padding RenderLegend draws below the rows.
+func legendBoxHeight(legend *d2target.Legend, height, rows int) int {
+	if rows > 0 && len(legend.Connections) > 0 {
+		return height + LEGEND_PADDING*1.5
+	}
+	return height + LEGEND_PADDING*1.2
+}
+
+func legendWidth(maxLabelWidth int) int {
+	return LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
+}
+
+// legendY is the top of a legend of the given height, bottom-aligned with the
+// diagram but never above it.
+func legendY(tl, br d2target.Point, legendHeight int) int {
+	return max(br.Y-legendHeight, tl.Y)
+}
+
+// fitLegend grows the viewport to include a legend right of the diagram.
+func fitLegend(left, top, width, height, pad int, tl, br d2target.Point, legendHeight, maxLabelWidth int) (int, int, int, int) {
+	if legendHeight <= 0 || maxLabelWidth <= 0 {
+		return left, top, width, height
+	}
+	y := legendY(tl, br, legendHeight)
+	if legendRight := br.X + LEGEND_CORNER_PADDING + legendWidth(maxLabelWidth); left+width < legendRight {
+		width = legendRight - left + pad/2
+	}
+	if y < top {
+		height += top - y
+		top = y
+	}
+	if legendBottom := y + legendHeight; top+height < legendBottom {
+		height = legendBottom - top + pad/2
+	}
 	return left, top, width, height
 }
 
 func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash string, theme *d2themes.Theme) error {
-	if diagram.Legend == nil || (len(diagram.Legend.Shapes) == 0 && len(diagram.Legend.Connections) == 0) {
+	if !hasLegend(diagram) {
 		return nil
 	}
 	for _, targetShape := range diagram.Legend.Shapes {
@@ -275,88 +284,32 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 		}
 	}
 
-	_, br := diagram.BoundingBox()
+	tl, br := diagram.BoundingBox()
 
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		return err
 	}
 
-	totalHeight := LEGEND_PADDING + LEGEND_FONT_SIZE + LEGEND_ITEM_SPACING
-	maxLabelWidth := 0
-
-	itemCount := 0
-
-	for _, s := range diagram.Legend.Shapes {
-		if s.Label == "" {
-			continue
-		}
-
-		mtext := &d2target.MText{
-			Text:     s.Label,
-			FontSize: LEGEND_FONT_SIZE,
-		}
-
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
-		maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-		totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-		itemCount++
-	}
-
-	for _, c := range diagram.Legend.Connections {
-		if c.Label == "" {
-			continue
-		}
-
-		mtext := &d2target.MText{
-			Text:     c.Label,
-			FontSize: LEGEND_FONT_SIZE,
-		}
-
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
-		maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-		totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-		itemCount++
-	}
-
-	if itemCount > 0 {
-		totalHeight -= LEGEND_ITEM_SPACING / 2
-	}
-
-	if itemCount > 0 && len(diagram.Legend.Connections) > 0 {
-		totalHeight += LEGEND_PADDING * 1.5
-	} else {
-		totalHeight += LEGEND_PADDING * 1.2
-	}
-
-	legendWidth := LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
+	totalHeight, maxLabelWidth, rows := measureLegend(diagram.Legend, ruler)
+	totalHeight = legendBoxHeight(diagram.Legend, totalHeight, rows)
+	legendWidth := legendWidth(maxLabelWidth)
 	legendX := br.X + LEGEND_CORNER_PADDING
-	tl, _ := diagram.BoundingBox()
-	legendY := br.Y - totalHeight
-	if legendY < tl.Y {
-		legendY = tl.Y
-	}
-
-	shadowEl := d2themes.NewThemableElement("rect", theme)
-	shadowEl.Fill = "#F7F7FA"
-	shadowEl.Stroke = "#DEE1EB"
-	shadowEl.Style = "stroke-width: 1px; filter: drop-shadow(0px 2px 3px rgba(0, 0, 0, 0.1))"
-	shadowEl.X = float64(legendX)
-	shadowEl.Y = float64(legendY)
-	shadowEl.Width = float64(legendWidth)
-	shadowEl.Height = float64(totalHeight)
-	shadowEl.Rx = 4
-	fmt.Fprint(buf, shadowEl.Render())
+	legendY := legendY(tl, br, totalHeight)
 
 	legendEl := d2themes.NewThemableElement("rect", theme)
-	legendEl.Fill = "#ffffff"
+	legendEl.Fill = "#F7F7FA"
 	legendEl.Stroke = "#DEE1EB"
-	legendEl.Style = "stroke-width: 1px"
+	legendEl.Style = "stroke-width: 1px; filter: drop-shadow(0px 2px 3px rgba(0, 0, 0, 0.1))"
 	legendEl.X = float64(legendX)
 	legendEl.Y = float64(legendY)
 	legendEl.Width = float64(legendWidth)
 	legendEl.Height = float64(totalHeight)
 	legendEl.Rx = 4
+	// The shadow is drawn under the same rect filled white.
+	fmt.Fprint(buf, legendEl.Render())
+	legendEl.Fill = "#ffffff"
+	legendEl.Style = "stroke-width: 1px"
 	fmt.Fprint(buf, legendEl.Render())
 
 	legendLabel := "Legend"
@@ -367,37 +320,30 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 		legendX+LEGEND_PADDING, legendY+LEGEND_PADDING+LEGEND_FONT_SIZE, LEGEND_FONT_SIZE+2, html.EscapeString(legendLabel))
 
 	currentY := legendY + LEGEND_PADDING*2 + LEGEND_FONT_SIZE
+	iconX := legendX + LEGEND_PADDING
+	// row writes one labeled legend row; baseline places the text below the
+	// row's middle by that fraction of the text height.
+	row := func(text, fontFamily, icon string, baseline float64) {
+		fmt.Fprint(buf, icon)
+		dims := legendLabelSize(ruler, text, fontFamily)
+		rowHeight := max(dims.Height, LEGEND_ICON_SIZE)
+		textY := currentY + rowHeight/2 + int(float64(dims.Height)*baseline)
+		fmt.Fprintf(buf, `<text class="text" x="%d" y="%d" style="font-size: %dpx;">%s</text>`,
+			iconX+LEGEND_ICON_SIZE+LEGEND_PADDING, textY, LEGEND_FONT_SIZE,
+			html.EscapeString(text))
+		currentY += rowHeight + LEGEND_ITEM_SPACING
+	}
 
 	shapeCount := 0
 	for _, s := range diagram.Legend.Shapes {
 		if s.Label == "" {
 			continue
 		}
-
-		iconX := legendX + LEGEND_PADDING
-		iconY := currentY
-
-		shapeIcon, err := renderLegendShapeIcon(s, iconX, iconY, diagramHash, theme)
+		shapeIcon, err := renderLegendShapeIcon(s, iconX, currentY, diagramHash, theme)
 		if err != nil {
 			return err
 		}
-		fmt.Fprint(buf, shapeIcon)
-
-		mtext := &d2target.MText{
-			Text:     s.Label,
-			FontSize: LEGEND_FONT_SIZE,
-		}
-
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
-
-		rowHeight := go2.IntMax(dims.Height, LEGEND_ICON_SIZE)
-		textY := currentY + rowHeight/2 + int(float64(dims.Height)*0.3)
-
-		fmt.Fprintf(buf, `<text class="text" x="%d" y="%d" style="font-size: %dpx;">%s</text>`,
-			iconX+LEGEND_ICON_SIZE+LEGEND_PADDING, textY, LEGEND_FONT_SIZE,
-			html.EscapeString(s.Label))
-
-		currentY += rowHeight + LEGEND_ITEM_SPACING
+		row(s.Label, s.FontFamily, shapeIcon, 0.3)
 		shapeCount++
 	}
 
@@ -420,31 +366,11 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 		if c.Label == "" {
 			continue
 		}
-
-		iconX := legendX + LEGEND_PADDING
-		iconY := currentY + LEGEND_ICON_SIZE/2
-
-		connIcon, err := renderLegendConnectionIcon(c, iconX, iconY, theme)
+		connIcon, err := renderLegendConnectionIcon(c, iconX, currentY+LEGEND_ICON_SIZE/2, theme)
 		if err != nil {
 			return err
 		}
-		fmt.Fprint(buf, connIcon)
-
-		mtext := &d2target.MText{
-			Text:     c.Label,
-			FontSize: LEGEND_FONT_SIZE,
-		}
-
-		dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
-
-		rowHeight := go2.IntMax(dims.Height, LEGEND_ICON_SIZE)
-		textY := currentY + rowHeight/2 + int(float64(dims.Height)*0.2)
-
-		fmt.Fprintf(buf, `<text class="text" x="%d" y="%d" style="font-size: %dpx;">%s</text>`,
-			iconX+LEGEND_ICON_SIZE+LEGEND_PADDING, textY, LEGEND_FONT_SIZE,
-			html.EscapeString(c.Label))
-
-		currentY += rowHeight + LEGEND_ITEM_SPACING
+		row(c.Label, c.FontFamily, connIcon, 0.2)
 	}
 
 	return nil
@@ -538,6 +464,15 @@ func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Co
 	)))
 }
 
+// markerPoints formats coordinate pairs as an SVG points list ("x,y x,y ...").
+func markerPoints(xy ...float64) string {
+	pairs := make([]string, 0, len(xy)/2)
+	for i := 0; i+1 < len(xy); i += 2 {
+		pairs = append(pairs, svg.FormatFloat(xy[i])+","+svg.FormatFloat(xy[i+1]))
+	}
+	return strings.Join(pairs, " ")
+}
+
 func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, inlineTheme *d2themes.Theme, gradient *connectionGradient, worldToMarker d2scene.Matrix) string {
 	arrowhead := connection.DstArrow
 	if !isTarget {
@@ -574,333 +509,150 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		connection.Stroke = gradient.paint(worldToMarker)
 	}
 
-	var path string
+	// stroked creates an element drawn in the connection's stroke width. Solid
+	// elements are filled with the stroke paint; outlined ones are stroked with
+	// it over the background color.
+	stroked := func(tag string, solid bool) *d2themes.ThemableElement {
+		el := d2themes.NewThemableElement(tag, inlineTheme)
+		el.ClassName = "connection"
+		if solid {
+			el.Fill = connection.Stroke
+		} else {
+			el.Fill = d2target.BG_COLOR
+			el.Stroke = connection.Stroke
+		}
+		el.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
+		return el
+	}
+
+	var el *d2themes.ThemableElement
 	switch arrowhead {
 	case d2target.ArrowArrowhead:
-		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
-		polygonEl.Fill = connection.Stroke
-		polygonEl.ClassName = "connection"
-		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
+		el = stroked("polygon", true)
 		if isTarget {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(0.), svg.FormatFloat(0.),
-				svg.FormatFloat(width), svg.FormatFloat(height/2),
-				svg.FormatFloat(0.), svg.FormatFloat(height),
-				svg.FormatFloat(width/4), svg.FormatFloat(height/2),
-			)
+			el.Points = markerPoints(0, 0, width, height/2, 0, height, width/4, height/2)
 		} else {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(0.), svg.FormatFloat(height/2),
-				svg.FormatFloat(width), svg.FormatFloat(0.),
-				svg.FormatFloat(width*3/4), svg.FormatFloat(height/2),
-				svg.FormatFloat(width), svg.FormatFloat(height),
-			)
+			el.Points = markerPoints(0, height/2, width, 0, width*3/4, height/2, width, height)
 		}
-		path = polygonEl.Render()
-	case d2target.UnfilledTriangleArrowhead:
-		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
-		polygonEl.Fill = d2target.BG_COLOR
-		polygonEl.Stroke = connection.Stroke
-		polygonEl.ClassName = "connection"
-		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
-		inset := strokeWidth / 2
+	case d2target.TriangleArrowhead, d2target.UnfilledTriangleArrowhead, d2target.LineArrowhead:
+		// Outlined triangles and lines are inset by half the stroke to stay inside the marker.
+		tag, inset := "polygon", 0.
+		if arrowhead != d2target.TriangleArrowhead {
+			inset = strokeWidth / 2
+		}
+		if arrowhead == d2target.LineArrowhead {
+			tag = "polyline"
+		}
+		el = stroked(tag, arrowhead == d2target.TriangleArrowhead)
+		if arrowhead == d2target.LineArrowhead {
+			el.Fill = color.None
+		}
 		if isTarget {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s",
-				svg.FormatFloat(inset), svg.FormatFloat(inset),
-				svg.FormatFloat(width-inset), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(inset), svg.FormatFloat(height-inset),
-			)
+			el.Points = markerPoints(inset, inset, width-inset, height/2, inset, height-inset)
 		} else {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s",
-				svg.FormatFloat(width-inset), svg.FormatFloat(inset),
-				svg.FormatFloat(inset), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width-inset), svg.FormatFloat(height-inset),
-			)
+			el.Points = markerPoints(width-inset, inset, inset, height/2, width-inset, height-inset)
 		}
-		path = polygonEl.Render()
-
-	case d2target.TriangleArrowhead:
-		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
-		polygonEl.Fill = connection.Stroke
-		polygonEl.ClassName = "connection"
-		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
-		if isTarget {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s",
-				svg.FormatFloat(0.), svg.FormatFloat(0.),
-				svg.FormatFloat(width), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(0.), svg.FormatFloat(height),
-			)
-		} else {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s",
-				svg.FormatFloat(width), svg.FormatFloat(0.),
-				svg.FormatFloat(0.), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width), svg.FormatFloat(height),
-			)
-		}
-		path = polygonEl.Render()
-	case d2target.LineArrowhead:
-		polylineEl := d2themes.NewThemableElement("polyline", inlineTheme)
-		polylineEl.Fill = color.None
-		polylineEl.ClassName = "connection"
-		polylineEl.Stroke = connection.Stroke
-		polylineEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
-		if isTarget {
-			polylineEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s",
-				svg.FormatFloat(strokeWidth/2), svg.FormatFloat(strokeWidth/2),
-				svg.FormatFloat(width-strokeWidth/2), svg.FormatFloat(height/2),
-				svg.FormatFloat(strokeWidth/2), svg.FormatFloat(height-strokeWidth/2),
-			)
-		} else {
-			polylineEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s",
-				svg.FormatFloat(width-strokeWidth/2), svg.FormatFloat(strokeWidth/2),
-				svg.FormatFloat(strokeWidth/2), svg.FormatFloat(height/2),
-				svg.FormatFloat(width-strokeWidth/2), svg.FormatFloat(height-strokeWidth/2),
-			)
-		}
-		path = polylineEl.Render()
 	case d2target.FilledDiamondArrowhead:
-		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
-		polygonEl.ClassName = "connection"
-		polygonEl.Fill = connection.Stroke
-		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
-		if isTarget {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(0.), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width/2.0), svg.FormatFloat(0.),
-				svg.FormatFloat(width), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width/2.0), svg.FormatFloat(height),
-			)
-		} else {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(0.), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width/2.0), svg.FormatFloat(0.),
-				svg.FormatFloat(width), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width/2.0), svg.FormatFloat(height),
-			)
-		}
-		path = polygonEl.Render()
+		el = stroked("polygon", true)
+		el.Points = markerPoints(0, height/2, width/2, 0, width, height/2, width/2, height)
 	case d2target.DiamondArrowhead:
-		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
-		polygonEl.ClassName = "connection"
-		polygonEl.Fill = d2target.BG_COLOR
-		polygonEl.Stroke = connection.Stroke
-		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
+		el = stroked("polygon", false)
 		if isTarget {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(0.), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width/2), svg.FormatFloat(height/8),
-				svg.FormatFloat(width), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width/2.0), svg.FormatFloat(height*0.9),
-			)
+			el.Points = markerPoints(0, height/2, width/2, height/8, width, height/2, width/2, height*0.9)
 		} else {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(width/8), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width*0.6), svg.FormatFloat(height/8),
-				svg.FormatFloat(width*1.1), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width*0.6), svg.FormatFloat(height*7/8),
-			)
+			el.Points = markerPoints(width/8, height/2, width*0.6, height/8, width*1.1, height/2, width*0.6, height*7/8)
 		}
-		path = polygonEl.Render()
-	case d2target.FilledCircleArrowhead:
+	case d2target.FilledCircleArrowhead, d2target.CircleArrowhead:
 		radius := width / 2
-
-		circleEl := d2themes.NewThemableElement("circle", inlineTheme)
-		circleEl.Cy = radius
-		circleEl.R = radius - strokeWidth/2
-		circleEl.Fill = connection.Stroke
-		circleEl.ClassName = "connection"
-		circleEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
-		if isTarget {
-			circleEl.Cx = radius + strokeWidth/2
-		} else {
-			circleEl.Cx = radius - strokeWidth/2
+		el = stroked("circle", arrowhead == d2target.FilledCircleArrowhead)
+		el.Cy = radius
+		el.R = radius - strokeWidth/2
+		if arrowhead == d2target.CircleArrowhead {
+			el.ClassName = ""
+			el.R = radius - strokeWidth
 		}
-
-		path = circleEl.Render()
-	case d2target.CircleArrowhead:
-		radius := width / 2
-
-		circleEl := d2themes.NewThemableElement("circle", inlineTheme)
-		circleEl.Cy = radius
-		circleEl.R = radius - strokeWidth
-		circleEl.Fill = d2target.BG_COLOR
-		circleEl.Stroke = connection.Stroke
-		circleEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
 		if isTarget {
-			circleEl.Cx = radius + strokeWidth/2
+			el.Cx = radius + strokeWidth/2
 		} else {
-			circleEl.Cx = radius - strokeWidth/2
+			el.Cx = radius - strokeWidth/2
 		}
-
-		path = circleEl.Render()
+	case d2target.FilledBoxArrowhead, d2target.BoxArrowhead:
+		inset := 0.
+		el = stroked("polygon", arrowhead == d2target.FilledBoxArrowhead)
+		if arrowhead == d2target.BoxArrowhead {
+			el.Style = "stroke-linejoin:miter;"
+			inset = strokeWidth / 2
+		}
+		el.Points = markerPoints(inset, inset, inset, height-inset, width-inset, height-inset, width-inset, inset)
 	case d2target.CrossArrowhead:
 		inset := strokeWidth / 8
 		rotationAngle := math.Pi / 4
 		origin := geo.NewPoint(width/2, height/2)
 		newOrigin := geo.NewPoint(math.Cos(rotationAngle)*origin.X-math.Sin(rotationAngle)*origin.Y, math.Sin(rotationAngle)*origin.X+math.Cos(rotationAngle)*origin.Y)
-
 		crossEl := d2themes.NewThemableElement("polygon", inlineTheme)
-		crossEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s, %s,%s %s,%s %s,%s %s,%s %s,%s %s,%s %s,%s %s,%s",
-			svg.FormatFloat(0.), svg.FormatFloat(height/2+inset),
-			svg.FormatFloat(width/2-inset), svg.FormatFloat(height/2+inset),
-			svg.FormatFloat(width/2-inset), svg.FormatFloat(height),
-			svg.FormatFloat(width/2+inset), svg.FormatFloat(height),
-			svg.FormatFloat(width/2+inset), svg.FormatFloat(height/2+inset),
-			svg.FormatFloat(width), svg.FormatFloat(height/2+inset),
-			svg.FormatFloat(width), svg.FormatFloat(height/2-inset),
-			svg.FormatFloat(width/2+inset), svg.FormatFloat(height/2-inset),
-			svg.FormatFloat(width/2+inset), svg.FormatFloat(0.),
-			svg.FormatFloat(width/2-inset), svg.FormatFloat(0.),
-			svg.FormatFloat(width/2-inset), svg.FormatFloat(height/2-inset),
-			svg.FormatFloat(0.), svg.FormatFloat(height/2-inset),
+		// The comma after the fourth point is historical output.
+		crossEl.Points = markerPoints(
+			0, height/2+inset,
+			width/2-inset, height/2+inset,
+			width/2-inset, height,
+			width/2+inset, height,
+		) + ", " + markerPoints(
+			width/2+inset, height/2+inset,
+			width, height/2+inset,
+			width, height/2-inset,
+			width/2+inset, height/2-inset,
+			width/2+inset, 0,
+			width/2-inset, 0,
+			width/2-inset, height/2-inset,
+			0, height/2-inset,
 		)
 		crossEl.Transform = fmt.Sprintf("translate(%s, %s) rotate(45)", svg.FormatFloat(-newOrigin.X+width/2), svg.FormatFloat(-newOrigin.Y+height/2))
-
 		if gradient != nil {
 			crossEl.Stroke = gradient.paint(d2scene.RotateAround(-rotationAngle, width/2, height/2).Mul(worldToMarker))
 		}
-
+		tailX := 0.
+		if isTarget {
+			tailX = width
+		}
 		childPathEl := d2themes.NewThemableElement("path", inlineTheme)
-		if isTarget {
-			childPathEl.D = fmt.Sprintf("M%s,%s %s,%s",
-				svg.FormatFloat(width/2), svg.FormatFloat(height/2),
-				svg.FormatFloat(width), svg.FormatFloat(height/2),
-			)
-		} else {
-			childPathEl.D = fmt.Sprintf("M%s,%s %s,%s",
-				svg.FormatFloat(width/2), svg.FormatFloat(height/2),
-				svg.FormatFloat(0.), svg.FormatFloat(height/2),
-			)
-		}
-
-		gEl := d2themes.NewThemableElement("g", inlineTheme)
-		gEl.Fill = d2target.BG_COLOR
-		gEl.Stroke = connection.Stroke
-		gEl.ClassName = "connection"
-		gEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-		gEl.SetInnerSVG(svg.Join(svg.TrustedFragment(crossEl.Render()), svg.TrustedFragment(childPathEl.Render())))
-		path = gEl.Render()
-	case d2target.FilledBoxArrowhead:
-		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
-		polygonEl.ClassName = "connection"
-		polygonEl.Fill = connection.Stroke
-		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-
-		if isTarget {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(0.), svg.FormatFloat(0.),
-				svg.FormatFloat(0.), svg.FormatFloat(height),
-				svg.FormatFloat(width), svg.FormatFloat(height),
-				svg.FormatFloat(width), svg.FormatFloat(0.),
-			)
-		} else {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(0.), svg.FormatFloat(0.),
-				svg.FormatFloat(0.), svg.FormatFloat(height),
-				svg.FormatFloat(width), svg.FormatFloat(height),
-				svg.FormatFloat(width), svg.FormatFloat(0.),
-			)
-		}
-
-		path = polygonEl.Render()
-	case d2target.BoxArrowhead:
-		polygonEl := d2themes.NewThemableElement("polygon", inlineTheme)
-		polygonEl.ClassName = "connection"
-		polygonEl.Fill = d2target.BG_COLOR
-		polygonEl.Stroke = connection.Stroke
-		polygonEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-		polygonEl.Style = fmt.Sprintf("%sstroke-linejoin:miter;", polygonEl.Style)
-
-		inset := strokeWidth / 2
-		if isTarget {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(inset), svg.FormatFloat(inset),
-				svg.FormatFloat(inset), svg.FormatFloat(height-inset),
-				svg.FormatFloat(width-inset), svg.FormatFloat(height-inset),
-				svg.FormatFloat(width-inset), svg.FormatFloat(inset),
-			)
-		} else {
-			polygonEl.Points = fmt.Sprintf("%s,%s %s,%s %s,%s %s,%s",
-				svg.FormatFloat(inset), svg.FormatFloat(inset),
-				svg.FormatFloat(inset), svg.FormatFloat(height-inset),
-				svg.FormatFloat(width-inset), svg.FormatFloat(height-inset),
-				svg.FormatFloat(width-inset), svg.FormatFloat(inset),
-			)
-		}
-		path = polygonEl.Render()
+		childPathEl.D = "M" + markerPoints(width/2, height/2, tailX, height/2)
+		el = stroked("g", false)
+		el.SetInnerSVG(svg.Join(svg.TrustedFragment(crossEl.Render()), svg.TrustedFragment(childPathEl.Render())))
 	case d2target.CfOne, d2target.CfMany, d2target.CfOneRequired, d2target.CfManyRequired:
 		offset := 3.0 + strokeWidth*1.8
-
 		var modifierEl *d2themes.ThemableElement
 		if arrowhead == d2target.CfOneRequired || arrowhead == d2target.CfManyRequired {
-			modifierEl = d2themes.NewThemableElement("path", inlineTheme)
-			modifierEl.D = fmt.Sprintf("M%s,%s %s,%s",
-				svg.FormatFloat(offset), svg.FormatFloat(0.),
-				svg.FormatFloat(offset), svg.FormatFloat(height),
-			)
-			modifierEl.Fill = d2target.BG_COLOR
-			modifierEl.Stroke = connection.Stroke
-			modifierEl.ClassName = "connection"
-			modifierEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
+			modifierEl = stroked("path", false)
+			modifierEl.D = "M" + markerPoints(offset, 0, offset, height)
 		} else {
-			modifierEl = d2themes.NewThemableElement("circle", inlineTheme)
+			modifierEl = stroked("circle", false)
 			modifierEl.Cx = offset/2.0 + 2.0
 			modifierEl.Cy = height / 2.0
 			modifierEl.R = offset / 2.0
-			modifierEl.Fill = d2target.BG_COLOR
-			modifierEl.Stroke = connection.Stroke
-			modifierEl.ClassName = "connection"
-			modifierEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
 		}
-
 		childPathEl := d2themes.NewThemableElement("path", inlineTheme)
+		childPathEl.D = "M" + markerPoints(width-3.0, height/2.0, width+offset, height/2.0)
 		if arrowhead == d2target.CfMany || arrowhead == d2target.CfManyRequired {
-			childPathEl.D = fmt.Sprintf("M%s,%s %s,%s M%s,%s %s,%s M%s,%s %s,%s",
-				svg.FormatFloat(width-3.0), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width+offset), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(offset+3.0), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width+offset), svg.FormatFloat(0.),
-				svg.FormatFloat(offset+3.0), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width+offset), svg.FormatFloat(height),
-			)
+			childPathEl.D += " M" + markerPoints(offset+3.0, height/2.0, width+offset, 0) +
+				" M" + markerPoints(offset+3.0, height/2.0, width+offset, height)
 		} else {
-			childPathEl.D = fmt.Sprintf("M%s,%s %s,%s M%s,%s %s,%s",
-				svg.FormatFloat(width-3.0), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(width+offset), svg.FormatFloat(height/2.0),
-				svg.FormatFloat(offset*2.0), svg.FormatFloat(0.),
-				svg.FormatFloat(offset*2.0), svg.FormatFloat(height),
-			)
+			childPathEl.D += " M" + markerPoints(offset*2.0, 0, offset*2.0, height)
 		}
-
-		gEl := d2themes.NewThemableElement("g", inlineTheme)
+		el = stroked("g", false)
 		if !isTarget {
-			gEl.Transform = fmt.Sprintf("scale(-1) translate(-%s, -%s)", svg.FormatFloat(width), svg.FormatFloat(height))
+			el.Transform = fmt.Sprintf("scale(-1) translate(-%s, -%s)", svg.FormatFloat(width), svg.FormatFloat(height))
 		}
-		gEl.Fill = d2target.BG_COLOR
-		gEl.Stroke = connection.Stroke
-		gEl.ClassName = "connection"
-		gEl.AddAttributes(svg.FloatAttr("stroke-width", strokeWidth))
-		gEl.SetInnerSVG(svg.Join(svg.TrustedFragment(modifierEl.Render()), svg.TrustedFragment(childPathEl.Render())))
-		path = gEl.Render()
+		el.SetInnerSVG(svg.Join(svg.TrustedFragment(modifierEl.Render()), svg.TrustedFragment(childPathEl.Render())))
 	default:
 		return ""
 	}
-
 	return strings.Join([]string{
 		fmt.Sprintf(`<marker id="%s" markerWidth="%s" markerHeight="%s" refX="%s" refY="%s"`,
 			id, svg.FormatFloat(markerWidth), svg.FormatFloat(height), svg.FormatFloat(refX), svg.FormatFloat(refY),
 		),
 		fmt.Sprintf(`viewBox="%s %s %s %s"`, svg.FormatFloat(0.), svg.FormatFloat(0.), svg.FormatFloat(markerWidth), svg.FormatFloat(height)),
 		`orient="auto" markerUnits="userSpaceOnUse">`,
-		path,
+		el.Render(),
 		"</marker>",
 	}, " ")
 }
@@ -1109,39 +861,30 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		}
 	}
 
-	var labelTL *geo.Point
+	var labelTL, maskTL *geo.Point
+	maskWidth, maskHeight := d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE
+	maskPosition := connection.IconPosition
 	if connection.Label != "" {
 		labelTL = connection.GetLabelTopLeft()
 		labelTL.X = math.Round(labelTL.X)
 		labelTL.Y = math.Round(labelTL.Y)
 
-		maskTL := labelTL.Copy()
-		width := connection.LabelWidth
-		height := connection.LabelHeight
-
+		maskTL = labelTL.Copy()
+		maskWidth, maskHeight = connection.LabelWidth, connection.LabelHeight
+		maskPosition = connection.LabelPosition
 		if connection.Icon != nil {
-			width += d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE
+			maskWidth += d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE
 			maskTL.X -= float64(d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE)
 		}
-
-		if label.FromString(connection.LabelPosition).IsOnEdge() {
-			labelMask = makeLabelMask(maskTL, width, height, 1)
-		} else {
-			labelMask = makeLabelMask(maskTL, width, height, 0.75)
+	} else if iconPos := connection.GetIconPosition(); iconPos != nil {
+		maskTL = &geo.Point{X: iconPos.X, Y: iconPos.Y}
+	}
+	if maskTL != nil {
+		opacity := 0.75
+		if label.FromString(maskPosition).IsOnEdge() {
+			opacity = 1
 		}
-	} else if connection.Icon != nil {
-		iconPos := connection.GetIconPosition()
-		if iconPos != nil {
-			maskTL := &geo.Point{
-				X: iconPos.X,
-				Y: iconPos.Y,
-			}
-			if label.FromString(connection.IconPosition).IsOnEdge() {
-				labelMask = makeLabelMask(maskTL, d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE, 1)
-			} else {
-				labelMask = makeLabelMask(maskTL, d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE, 0.75)
-			}
-		}
+		labelMask = makeLabelMask(maskTL, maskWidth, maskHeight, opacity)
 	}
 
 	path := pathData(connection, srcAdj, dstAdj)
@@ -1172,48 +915,31 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		}
 		fmt.Fprint(writer, arrowPaths)
 	} else {
-		animatedClass := ""
+		className := "connection"
 		if connection.Animated {
-			animatedClass = " animated-connection"
+			className += " animated-connection"
 		}
-
+		stroke := func(d, extraStyle string, attrs ...svg.Attribute) {
+			pathEl := d2themes.NewThemableElement("path", inlineTheme)
+			pathEl.D = d
+			pathEl.Fill = color.None
+			pathEl.Stroke = connection.Stroke
+			pathEl.ClassName = className
+			pathEl.Style = connection.CSSStyle() + extraStyle
+			pathEl.AddAttributes(append(attrs, mask)...)
+			writer.element(pathEl)
+		}
 		// If connection is animated and bidirectional
-		if connection.Animated && ((connection.DstArrow == d2target.NoArrowhead && connection.SrcArrow == d2target.NoArrowhead) || (connection.DstArrow != d2target.NoArrowhead && connection.SrcArrow != d2target.NoArrowhead)) {
+		if connection.Animated && (connection.DstArrow == d2target.NoArrowhead) == (connection.SrcArrow == d2target.NoArrowhead) {
 			// There is no pure CSS way to animate bidirectional connections in two directions, so we split it up
 			path1, path2, err := svg.SplitPath(path, 0.5)
-
 			if err != nil {
 				return "", err
 			}
-
-			pathEl1 := d2themes.NewThemableElement("path", inlineTheme)
-			pathEl1.D = path1
-			pathEl1.Fill = color.None
-			pathEl1.Stroke = connection.Stroke
-			pathEl1.ClassName = fmt.Sprintf("connection%s", animatedClass)
-			pathEl1.Style = connection.CSSStyle()
-			pathEl1.Style += "animation-direction: reverse;"
-			pathEl1.AddAttributes(append(markerStart, mask)...)
-			writer.element(pathEl1)
-
-			pathEl2 := d2themes.NewThemableElement("path", inlineTheme)
-			pathEl2.D = path2
-			pathEl2.Fill = color.None
-			pathEl2.Stroke = connection.Stroke
-			pathEl2.ClassName = fmt.Sprintf("connection%s", animatedClass)
-			pathEl2.Style = connection.CSSStyle()
-			pathEl2.AddAttributes(append(markerEnd, mask)...)
-			writer.element(pathEl2)
+			stroke(path1, "animation-direction: reverse;", markerStart...)
+			stroke(path2, "", markerEnd...)
 		} else {
-			pathEl := d2themes.NewThemableElement("path", inlineTheme)
-			pathEl.D = path
-			pathEl.Fill = color.None
-			pathEl.Stroke = connection.Stroke
-			pathEl.ClassName = fmt.Sprintf("connection%s", animatedClass)
-			pathEl.Style = connection.CSSStyle()
-			pathAttributes := append(append([]svg.Attribute{}, markerStart...), markerEnd...)
-			pathEl.AddAttributes(append(pathAttributes, mask)...)
-			writer.element(pathEl)
+			stroke(path, "", append(markerStart, markerEnd...)...)
 		}
 	}
 
@@ -1227,19 +953,10 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 			fmt.Fprint(writer, svg.OpenElement("a", svg.HrefAttributes(connection.Link)...))
 		}
 		if connection.Language == "latex" {
-			render, err := d2latex.Render(connection.Label)
+			gEl, err := latexLabel(connection.Label, labelTL, connection.Color, inlineTheme)
 			if err != nil {
 				return labelMask, err
 			}
-			// Remove XML declaration and DOCTYPE from LaTeX SVG output
-			xmlDecl := `<?xml version="1.0" encoding="UTF-8"?>`
-			doctype := `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">`
-			render = strings.ReplaceAll(render, xmlDecl, "")
-			render = strings.ReplaceAll(render, doctype, "")
-			gEl := d2themes.NewThemableElement("g", inlineTheme)
-			gEl.SetTranslate(labelTL.X, labelTL.Y)
-			gEl.Color = connection.Color
-			gEl.SetInnerSVG(svg.TrustedFragment(render))
 			fmt.Fprint(writer, gEl.Render())
 		} else if connection.Language == "markdown" {
 			layout, err := markdown.layout(connection.Label, connection.FontFamily, connection.FontSize, connection.MarkdownStrike)
@@ -1258,65 +975,11 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 				connection.Underline, connection.UnderlineProgress,
 			))
 		} else if connection.Language != "" {
-			lexer := lexers.Get(connection.Language)
-			if lexer == nil {
-				lexer = lexers.Fallback
-			}
-			for _, isLight := range []bool{true, false} {
-				theme := codestyle.Light
-				if !isLight {
-					theme = codestyle.Dark
-				}
-				style := codestyle.Get(theme)
-				if style == nil {
-					return labelMask, errors.New(`code snippet style "github" not found`)
-				}
-				iterator, err := lexer.Tokenise(nil, connection.Label)
-				if err != nil {
-					return labelMask, err
-				}
-
-				svgStyles := styleToSVG(style)
-				class := "light-code"
-				if !isLight {
-					class = "dark-code"
-				}
-				var fontSize string
-				if connection.FontSize != d2fonts.FONT_SIZE_M {
-					fontSize = fmt.Sprintf(` style="font-size:%v"`, connection.FontSize)
-				}
-				fmt.Fprintf(writer, `<g transform="translate(%s %s)" class="%s"%s>`,
-					svg.FormatFloat(labelTL.X), svg.FormatFloat(labelTL.Y), class, fontSize,
-				)
-
-				lineHeight := textmeasure.CODE_LINE_HEIGHT
-				for index, tokens := range chroma.SplitTokensIntoLines(iterator.Tokens()) {
-					fmt.Fprintf(writer, "<text class=\"text-mono\" x=\"0\" y=\"%sem\">", svg.FormatFloat(1+float64(index)*lineHeight))
-					for _, token := range tokens {
-						text := svgEscaper.Replace(token.String())
-						attr := styleAttr(svgStyles, token.Type)
-						if attr != "" {
-							text = fmt.Sprintf("<tspan %s>%s</tspan>", attr, text)
-						}
-						fmt.Fprint(writer, text)
-					}
-					fmt.Fprint(writer, "</text>")
-				}
-				fmt.Fprint(writer, "</g>")
+			if err := writeCode(writer, connection.Language, connection.Label, connection.FontSize, labelTL, nil, inlineTheme); err != nil {
+				return labelMask, err
 			}
 		} else {
-			fontClass := "text"
-			if connection.FontFamily == "mono" {
-				fontClass = "text-mono"
-			}
-			if connection.Bold {
-				fontClass += "-bold"
-			} else if connection.Italic {
-				fontClass += "-italic"
-			}
-			if connection.Underline {
-				fontClass += " text-underline"
-			}
+			fontClass := textClass(connection.Text)
 			if connection.Fill != color.Empty {
 				rectEl := d2themes.NewThemableElement("rect", inlineTheme)
 				rectEl.Rx = 10
@@ -1365,6 +1028,109 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 	}
 	writer.buf.WriteString(`</g>`)
 	return
+}
+
+// textClass is the font class of a plain text label.
+func textClass(t d2target.Text) string {
+	class := "text"
+	if t.FontFamily == "mono" {
+		class = "text-mono"
+	}
+	if t.Bold {
+		class += "-bold"
+	} else if t.Italic {
+		class += "-italic"
+	}
+	if t.Underline {
+		class += " text-underline"
+	}
+	return class
+}
+
+// latexLabel renders a LaTeX label as a group translated to tl, without the
+// XML declaration and DOCTYPE of the LaTeX renderer's SVG document.
+func latexLabel(src string, tl *geo.Point, fontColor string, inlineTheme *d2themes.Theme) (*d2themes.ThemableElement, error) {
+	render, err := d2latex.Render(src)
+	if err != nil {
+		return nil, err
+	}
+	render = strings.ReplaceAll(render, `<?xml version="1.0" encoding="UTF-8"?>`, "")
+	render = strings.ReplaceAll(render, `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">`, "")
+	gEl := d2themes.NewThemableElement("g", inlineTheme)
+	gEl.SetTranslate(tl.X, tl.Y)
+	gEl.Color = fontColor
+	gEl.SetInnerSVG(svg.TrustedFragment(render))
+	return gEl, nil
+}
+
+// writeCode writes syntax-highlighted code at tl, once for the light and once
+// for the dark code theme. A code shape (frame) also gets a background rect
+// and padding of half its font size.
+func writeCode(writer *objectWriter, language, code string, fontSize int, tl *geo.Point, frame *d2target.Shape, inlineTheme *d2themes.Theme) error {
+	lexer := lexers.Get(language)
+	if lexer == nil {
+		lexer = lexers.Fallback
+	}
+	for _, isLight := range []bool{true, false} {
+		theme := codestyle.Light
+		if !isLight {
+			theme = codestyle.Dark
+		}
+		style := codestyle.Get(theme)
+		if style == nil {
+			return errors.New(`code snippet style "github" not found`)
+		}
+		iterator, err := lexer.Tokenise(nil, code)
+		if err != nil {
+			return err
+		}
+
+		svgStyles := styleToSVG(style)
+		class := "light-code"
+		if !isLight {
+			class = "dark-code"
+		}
+		var fontSizeStyle string
+		if fontSize != d2fonts.FONT_SIZE_M {
+			fontSizeStyle = fmt.Sprintf(` style="font-size:%v"`, fontSize)
+		}
+		fmt.Fprintf(writer, `<g transform="translate(%s %s)" class="%s"%s>`,
+			svg.FormatFloat(tl.X), svg.FormatFloat(tl.Y), class, fontSizeStyle,
+		)
+		closing := "</g>"
+		if frame != nil {
+			rectEl := d2themes.NewThemableElement("rect", inlineTheme)
+			rectEl.Width = float64(frame.Width)
+			rectEl.Height = float64(frame.Height)
+			rectEl.Stroke = frame.Stroke
+			rectEl.ClassName = "shape"
+			rectEl.Style = fmt.Sprintf(`fill:%s;stroke-width:%s;`,
+				style.Get(chroma.Background).Background.String(),
+				svg.FormatFloat(frame.RenderedStrokeWidth()),
+			)
+			writer.element(rectEl)
+			// Padding = 0.5em
+			padding := float64(frame.FontSize) / 2.
+			fmt.Fprintf(writer, `<g transform="translate(%s %s)">`, svg.FormatFloat(padding), svg.FormatFloat(padding))
+			closing = "</g></g>"
+		}
+
+		lineHeight := textmeasure.CODE_LINE_HEIGHT
+		for index, tokens := range chroma.SplitTokensIntoLines(iterator.Tokens()) {
+			fmt.Fprintf(writer, "<text class=\"text-mono\" x=\"0\" y=\"%sem\">", svg.FormatFloat(1+float64(index)*lineHeight))
+			for _, token := range tokens {
+				text := svgEscaper.Replace(token.String())
+				attr := styleAttr(svgStyles, token.Type)
+				if attr != "" {
+					text = fmt.Sprintf("<tspan %s>%s</tspan>", attr, text)
+				}
+				fmt.Fprint(writer, text)
+			}
+			fmt.Fprint(writer, "</text>")
+		}
+		fmt.Fprint(writer, closing)
+	}
+	return nil
 }
 
 func renderArrowheadLabel(connection d2target.Connection, text string, isDst bool, inlineTheme *d2themes.Theme) string {
@@ -1443,182 +1209,122 @@ func defineShadowFilter(writer io.Writer) {
 </defs>`)
 }
 
+// pathPoints formats points relative to the shape at pos, each prefixed with cmd.
+func pathPoints(cmd string, pos d2target.Point, points ...d2target.Point) []string {
+	out := make([]string, len(points))
+	for i, p := range points {
+		out[i] = fmt.Sprintf("%s%d,%d", cmd, p.X+pos.X, p.Y+pos.Y)
+	}
+	return out
+}
+
 func render3DRect(diagramHash string, targetShape d2target.Shape, inlineTheme *d2themes.Theme) string {
-	moveTo := func(p d2target.Point) string {
-		return fmt.Sprintf("M%d,%d", p.X+targetShape.Pos.X, p.Y+targetShape.Pos.Y)
-	}
-	lineTo := func(p d2target.Point) string {
-		return fmt.Sprintf("L%d,%d", p.X+targetShape.Pos.X, p.Y+targetShape.Pos.Y)
-	}
-
+	w, h, o := targetShape.Width, targetShape.Height, d2target.THREE_DEE_OFFSET
+	pos := targetShape.Pos
 	// draw border all in one path to prevent overlapping sections
-	var borderSegments []string
-	borderSegments = append(borderSegments,
-		moveTo(d2target.Point{X: 0, Y: 0}),
-	)
-	for _, v := range []d2target.Point{
-		{X: d2target.THREE_DEE_OFFSET, Y: -d2target.THREE_DEE_OFFSET},
-		{X: targetShape.Width + d2target.THREE_DEE_OFFSET, Y: -d2target.THREE_DEE_OFFSET},
-		{X: targetShape.Width + d2target.THREE_DEE_OFFSET, Y: targetShape.Height - d2target.THREE_DEE_OFFSET},
-		{X: targetShape.Width, Y: targetShape.Height},
-		{X: 0, Y: targetShape.Height},
-		{X: 0, Y: 0},
-		{X: targetShape.Width, Y: 0},
-		{X: targetShape.Width, Y: targetShape.Height},
-	} {
-		borderSegments = append(borderSegments, lineTo(v))
-	}
+	border := pathPoints("M", pos, d2target.Point{X: 0, Y: 0})
+	border = append(border, pathPoints("L", pos,
+		d2target.Point{X: o, Y: -o},
+		d2target.Point{X: w + o, Y: -o},
+		d2target.Point{X: w + o, Y: h - o},
+		d2target.Point{X: w, Y: h},
+		d2target.Point{X: 0, Y: h},
+		d2target.Point{X: 0, Y: 0},
+		d2target.Point{X: w, Y: 0},
+		d2target.Point{X: w, Y: h},
+	)...)
 	// move to top right to draw last segment without overlapping
-	borderSegments = append(borderSegments,
-		moveTo(d2target.Point{X: targetShape.Width, Y: 0}),
-	)
-	borderSegments = append(borderSegments,
-		lineTo(d2target.Point{X: targetShape.Width + d2target.THREE_DEE_OFFSET, Y: -d2target.THREE_DEE_OFFSET}),
-	)
-	border := d2themes.NewThemableElement("path", inlineTheme)
-	border.D = strings.Join(borderSegments, " ")
-	border.Fill = color.None
-	_, borderStroke := d2themes.ShapeTheme(targetShape)
-	border.Stroke = borderStroke
-	borderStyle := targetShape.CSSStyle()
-	border.Style = borderStyle
-	renderedBorder := border.Render()
+	border = append(border, pathPoints("M", pos, d2target.Point{X: w, Y: 0})...)
+	border = append(border, pathPoints("L", pos, d2target.Point{X: w + o, Y: -o})...)
 
-	// create mask from border stroke, to cut away from the shape fills
-	maskID := svg.ScopedID("border-mask-"+diagramHash+"-", targetShape.ID, "")
-	borderMask := strings.Join([]string{
-		svg.OpenElement("defs") + svg.OpenElement("mask",
-			svg.Attr("id", maskID.String()),
-			svg.Attr("maskUnits", "userSpaceOnUse"),
-			svg.IntAttr("x", targetShape.Pos.X),
-			svg.IntAttr("y", targetShape.Pos.Y-d2target.THREE_DEE_OFFSET),
-			svg.IntAttr("width", targetShape.Width+d2target.THREE_DEE_OFFSET),
-			svg.IntAttr("height", targetShape.Height+d2target.THREE_DEE_OFFSET),
-		),
-		svg.OpenElement("rect",
-			svg.IntAttr("x", targetShape.Pos.X),
-			svg.IntAttr("y", targetShape.Pos.Y-d2target.THREE_DEE_OFFSET),
-			svg.IntAttr("width", targetShape.Width+d2target.THREE_DEE_OFFSET),
-			svg.IntAttr("height", targetShape.Height+d2target.THREE_DEE_OFFSET),
-			svg.Attr("fill", "white"),
-		) + svg.CloseElement("rect"),
-		svg.CompactEmptyElement("path",
-			svg.Attr("d", strings.Join(borderSegments, "")),
-			svg.Attr("style", borderStyle+";stroke:#000;fill:none;opacity:1;"),
-		) + svg.CloseElement("mask") + svg.CloseElement("defs"),
-	}, "\n")
+	// the main rectangle
+	face := d2themes.NewThemableElement("rect", inlineTheme)
+	face.X = float64(pos.X)
+	face.Y = float64(pos.Y)
+	face.Width = float64(w)
+	face.Height = float64(h)
 
-	// render the main rectangle without stroke and the border mask
-	mainShape := d2themes.NewThemableElement("rect", inlineTheme)
-	mainShape.X = float64(targetShape.Pos.X)
-	mainShape.Y = float64(targetShape.Pos.Y)
-	mainShape.Width = float64(targetShape.Width)
-	mainShape.Height = float64(targetShape.Height)
-	mainShape.SetMaskID(maskID)
-	mainShapeFill, _ := d2themes.ShapeTheme(targetShape)
-	mainShape.Fill = mainShapeFill
-	mainShape.FillPattern = targetShape.FillPattern
-	mainShape.Stroke = color.None
-	mainShape.Style = targetShape.CSSStyle()
-	mainShapeRendered := mainShape.Render()
-
-	// render the side shapes in the darkened color without stroke and the border mask
-	var sidePoints []string
-	for _, v := range []d2target.Point{
+	return render3D(diagramHash, targetShape, inlineTheme, face, border, []d2target.Point{
 		{X: 0, Y: 0},
-		{X: d2target.THREE_DEE_OFFSET, Y: -d2target.THREE_DEE_OFFSET},
-		{X: targetShape.Width + d2target.THREE_DEE_OFFSET, Y: -d2target.THREE_DEE_OFFSET},
-		{X: targetShape.Width + d2target.THREE_DEE_OFFSET, Y: targetShape.Height - d2target.THREE_DEE_OFFSET},
-		{X: targetShape.Width, Y: targetShape.Height},
-		{X: targetShape.Width, Y: 0},
-	} {
-		sidePoints = append(sidePoints,
-			fmt.Sprintf("%d,%d", v.X+targetShape.Pos.X, v.Y+targetShape.Pos.Y),
-		)
-	}
-	darkerColor, err := color.Darken(targetShape.Fill)
-	if err != nil {
-		darkerColor = targetShape.Fill
-	}
-	sideShape := d2themes.NewThemableElement("polygon", inlineTheme)
-	sideShape.Fill = darkerColor
-	sideShape.Points = strings.Join(sidePoints, " ")
-	sideShape.SetMaskID(maskID)
-	sideShape.Style = targetShape.CSSStyle()
-	renderedSides := sideShape.Render()
-
-	return borderMask + mainShapeRendered + renderedSides + renderedBorder
+		{X: o, Y: -o},
+		{X: w + o, Y: -o},
+		{X: w + o, Y: h - o},
+		{X: w, Y: h},
+		{X: w, Y: 0},
+	})
 }
 
 func render3DHexagon(diagramHash string, targetShape d2target.Shape, inlineTheme *d2themes.Theme) string {
-	moveTo := func(p d2target.Point) string {
-		return fmt.Sprintf("M%d,%d", p.X+targetShape.Pos.X, p.Y+targetShape.Pos.Y)
-	}
-	lineTo := func(p d2target.Point) string {
-		return fmt.Sprintf("L%d,%d", p.X+targetShape.Pos.X, p.Y+targetShape.Pos.Y)
-	}
 	scale := func(n int, f float64) int {
 		return int(float64(n) * f)
 	}
 	halfYFactor := 43.6 / 87.3
+	w, h, o := targetShape.Width, targetShape.Height, d2target.THREE_DEE_OFFSET
+	yo := d2target.THREE_DEE_OFFSET / 2
+	pos := targetShape.Pos
+	left, right, midY := scale(w, 0.25), scale(w, 0.75), scale(h, halfYFactor)
 
 	// draw border all in one path to prevent overlapping sections
-	var borderSegments []string
 	// start from the top-left
-	borderSegments = append(borderSegments,
-		moveTo(d2target.Point{X: scale(targetShape.Width, 0.25), Y: 0}),
-	)
-	Y_OFFSET := d2target.THREE_DEE_OFFSET / 2
+	border := pathPoints("M", pos, d2target.Point{X: left, Y: 0})
 	// The following iterates through the sidepoints in clockwise order from top-left, then the main points in clockwise order from bottom-right
-	for _, v := range []d2target.Point{
-		{X: scale(targetShape.Width, 0.25) + d2target.THREE_DEE_OFFSET, Y: -Y_OFFSET},
-		{X: scale(targetShape.Width, 0.75) + d2target.THREE_DEE_OFFSET, Y: -Y_OFFSET},
-		{X: targetShape.Width + d2target.THREE_DEE_OFFSET, Y: scale(targetShape.Height, halfYFactor) - Y_OFFSET},
-		{X: scale(targetShape.Width, 0.75) + d2target.THREE_DEE_OFFSET, Y: targetShape.Height - Y_OFFSET},
-		{X: scale(targetShape.Width, 0.75), Y: targetShape.Height},
-		{X: scale(targetShape.Width, 0.25), Y: targetShape.Height},
-		{X: 0, Y: scale(targetShape.Height, halfYFactor)},
-		{X: scale(targetShape.Width, 0.25), Y: 0},
-		{X: scale(targetShape.Width, 0.75), Y: 0},
-		{X: targetShape.Width, Y: scale(targetShape.Height, halfYFactor)},
-		{X: scale(targetShape.Width, 0.75), Y: targetShape.Height},
-	} {
-		borderSegments = append(borderSegments, lineTo(v))
-	}
-	for _, v := range []d2target.Point{
-		{X: scale(targetShape.Width, 0.75), Y: 0},
-		{X: targetShape.Width, Y: scale(targetShape.Height, halfYFactor)},
-		{X: scale(targetShape.Width, 0.75), Y: targetShape.Height},
-	} {
-		borderSegments = append(borderSegments, moveTo(v))
-		borderSegments = append(borderSegments, lineTo(
-			d2target.Point{X: v.X + d2target.THREE_DEE_OFFSET, Y: v.Y - Y_OFFSET},
-		))
-	}
-	border := d2themes.NewThemableElement("path", inlineTheme)
-	border.D = strings.Join(borderSegments, " ")
-	border.Fill = color.None
-	_, borderStroke := d2themes.ShapeTheme(targetShape)
-	border.Stroke = borderStroke
-	borderStyle := targetShape.CSSStyle()
-	border.Style = borderStyle
-	renderedBorder := border.Render()
-
-	var mainPoints []string
-	for _, v := range []d2target.Point{
-		{X: scale(targetShape.Width, 0.25), Y: 0},
-		{X: scale(targetShape.Width, 0.75), Y: 0},
-		{X: targetShape.Width, Y: scale(targetShape.Height, halfYFactor)},
-		{X: scale(targetShape.Width, 0.75), Y: targetShape.Height},
-		{X: scale(targetShape.Width, 0.25), Y: targetShape.Height},
-		{X: 0, Y: scale(targetShape.Height, halfYFactor)},
-	} {
-		mainPoints = append(mainPoints,
-			fmt.Sprintf("%d,%d", v.X+targetShape.Pos.X, v.Y+targetShape.Pos.Y),
-		)
+	border = append(border, pathPoints("L", pos,
+		d2target.Point{X: left + o, Y: -yo},
+		d2target.Point{X: right + o, Y: -yo},
+		d2target.Point{X: w + o, Y: midY - yo},
+		d2target.Point{X: right + o, Y: h - yo},
+		d2target.Point{X: right, Y: h},
+		d2target.Point{X: left, Y: h},
+		d2target.Point{X: 0, Y: midY},
+		d2target.Point{X: left, Y: 0},
+		d2target.Point{X: right, Y: 0},
+		d2target.Point{X: w, Y: midY},
+		d2target.Point{X: right, Y: h},
+	)...)
+	for _, v := range []d2target.Point{{X: right, Y: 0}, {X: w, Y: midY}, {X: right, Y: h}} {
+		border = append(border, pathPoints("M", pos, v)...)
+		border = append(border, pathPoints("L", pos, d2target.Point{X: v.X + o, Y: v.Y - yo})...)
 	}
 
-	mainPointsPoly := strings.Join(mainPoints, " ")
+	// the main hexagon
+	face := d2themes.NewThemableElement("polygon", inlineTheme)
+	face.X = float64(pos.X)
+	face.Y = float64(pos.Y)
+	face.Points = strings.Join(pathPoints("", pos,
+		d2target.Point{X: left, Y: 0},
+		d2target.Point{X: right, Y: 0},
+		d2target.Point{X: w, Y: midY},
+		d2target.Point{X: right, Y: h},
+		d2target.Point{X: left, Y: h},
+		d2target.Point{X: 0, Y: midY},
+	), " ")
+
+	return render3D(diagramHash, targetShape, inlineTheme, face, border, []d2target.Point{
+		{X: left + o, Y: -yo},
+		{X: right + o, Y: -yo},
+		{X: w + o, Y: midY - yo},
+		{X: right + o, Y: h - yo},
+		{X: right, Y: h},
+		{X: w, Y: midY},
+		{X: right, Y: 0},
+		{X: left, Y: 0},
+	})
+}
+
+// render3D draws a 3D shape: its face and its sides in a darker color, both
+// without stroke and cut by a mask of the border, which is drawn on top in
+// one path. border holds path commands; sides holds polygon points relative
+// to the shape.
+func render3D(diagramHash string, targetShape d2target.Shape, inlineTheme *d2themes.Theme, face *d2themes.ThemableElement, border []string, sides []d2target.Point) string {
+	fill, stroke := d2themes.ShapeTheme(targetShape)
+	style := targetShape.CSSStyle()
+
+	borderEl := d2themes.NewThemableElement("path", inlineTheme)
+	borderEl.D = strings.Join(border, " ")
+	borderEl.Fill = color.None
+	borderEl.Stroke = stroke
+	borderEl.Style = style
+
 	// create mask from border stroke, to cut away from the shape fills
 	maskID := svg.ScopedID("border-mask-"+diagramHash+"-", targetShape.ID, "")
 	borderMask := strings.Join([]string{
@@ -1638,52 +1344,29 @@ func render3DHexagon(diagramHash string, targetShape d2target.Shape, inlineTheme
 			svg.Attr("fill", "white"),
 		) + svg.CloseElement("rect"),
 		svg.CompactEmptyElement("path",
-			svg.Attr("d", strings.Join(borderSegments, "")),
-			svg.Attr("style", borderStyle+";stroke:#000;fill:none;opacity:1;"),
+			svg.Attr("d", strings.Join(border, "")),
+			svg.Attr("style", style+";stroke:#000;fill:none;opacity:1;"),
 		) + svg.CloseElement("mask") + svg.CloseElement("defs"),
 	}, "\n")
-	// render the main hexagon without stroke and the border mask
-	mainShape := d2themes.NewThemableElement("polygon", inlineTheme)
-	mainShape.X = float64(targetShape.Pos.X)
-	mainShape.Y = float64(targetShape.Pos.Y)
-	mainShape.Points = mainPointsPoly
-	mainShape.SetMaskID(maskID)
-	mainShapeFill, _ := d2themes.ShapeTheme(targetShape)
-	mainShape.FillPattern = targetShape.FillPattern
-	mainShape.Fill = mainShapeFill
-	mainShape.Stroke = color.None
-	mainShape.Style = targetShape.CSSStyle()
-	mainShapeRendered := mainShape.Render()
 
-	// render the side shapes in the darkened color without stroke and the border mask
-	var sidePoints []string
-	for _, v := range []d2target.Point{
-		{X: scale(targetShape.Width, 0.25) + d2target.THREE_DEE_OFFSET, Y: -Y_OFFSET},
-		{X: scale(targetShape.Width, 0.75) + d2target.THREE_DEE_OFFSET, Y: -Y_OFFSET},
-		{X: targetShape.Width + d2target.THREE_DEE_OFFSET, Y: scale(targetShape.Height, halfYFactor) - Y_OFFSET},
-		{X: scale(targetShape.Width, 0.75) + d2target.THREE_DEE_OFFSET, Y: targetShape.Height - Y_OFFSET},
-		{X: scale(targetShape.Width, 0.75), Y: targetShape.Height},
-		{X: targetShape.Width, Y: scale(targetShape.Height, halfYFactor)},
-		{X: scale(targetShape.Width, 0.75), Y: 0},
-		{X: scale(targetShape.Width, 0.25), Y: 0},
-	} {
-		sidePoints = append(sidePoints,
-			fmt.Sprintf("%d,%d", v.X+targetShape.Pos.X, v.Y+targetShape.Pos.Y),
-		)
-	}
+	face.SetMaskID(maskID)
+	face.Fill = fill
+	face.FillPattern = targetShape.FillPattern
+	face.Stroke = color.None
+	face.Style = style
+
 	// TODO make darker color part of the theme? or just keep this bypass
 	darkerColor, err := color.Darken(targetShape.Fill)
 	if err != nil {
 		darkerColor = targetShape.Fill
 	}
-	sideShape := d2themes.NewThemableElement("polygon", inlineTheme)
-	sideShape.Fill = darkerColor
-	sideShape.Points = strings.Join(sidePoints, " ")
-	sideShape.SetMaskID(maskID)
-	sideShape.Style = targetShape.CSSStyle()
-	renderedSides := sideShape.Render()
+	sideEl := d2themes.NewThemableElement("polygon", inlineTheme)
+	sideEl.Fill = darkerColor
+	sideEl.Points = strings.Join(pathPoints("", targetShape.Pos, sides...), " ")
+	sideEl.SetMaskID(maskID)
+	sideEl.Style = style
 
-	return borderMask + mainShapeRendered + renderedSides + renderedBorder
+	return borderMask + face.Render() + sideEl.Render() + borderEl.Render()
 }
 
 func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, resourceHash string, targetShape d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, err error) {
@@ -1755,31 +1438,20 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		multipleTL = tl.AddVector(multipleOffset)
 	}
 
+	borderLabelMask := targetShape.Label != "" && label.FromString(targetShape.LabelPosition).IsBorder()
 	switch targetShape.Type {
-	case d2target.ShapeClass:
+	case d2target.ShapeClass, d2target.ShapeSQLTable:
+		isClass := targetShape.Type == d2target.ShapeClass
 		if sketch {
-			out, err := d2sketch.Class(targetShape)
-			if err != nil {
+			sketchTable := d2sketch.Table
+			if isClass {
+				sketchTable = d2sketch.Class
+			}
+			if err := writer.sketch(sketchTable(targetShape)); err != nil {
 				return "", err
 			}
-			fmt.Fprint(writer, out)
-		} else {
+		} else if isClass {
 			drawClass(writer, resourceHash, targetShape, inlineTheme)
-		}
-		err := addAppendixItems(appendixWriter, diagramHash, targetShape, s, markdown)
-		if err != nil {
-			return "", err
-		}
-		writer.buf.WriteString(`</g>`)
-		writer.buf.WriteString(closingTag)
-		return labelMask, nil
-	case d2target.ShapeSQLTable:
-		if sketch {
-			out, err := d2sketch.Table(targetShape)
-			if err != nil {
-				return "", err
-			}
-			fmt.Fprint(writer, out)
 		} else {
 			drawTable(writer, resourceHash, targetShape, inlineTheme)
 		}
@@ -1791,32 +1463,19 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		writer.buf.WriteString(closingTag)
 		return labelMask, nil
 	case d2target.ShapeOval:
+		draw, sketchOval := drawOval, d2sketch.Oval
 		if targetShape.DoubleBorder {
-			if targetShape.Multiple {
-				drawDoubleOval(writer, multipleTL, width, height, fill, "", stroke, style, inlineTheme)
-			}
-			if sketch {
-				out, err := d2sketch.DoubleOval(targetShape, resourceHash)
-				if err != nil {
-					return "", err
-				}
-				fmt.Fprint(writer, out)
-			} else {
-				drawDoubleOval(writer, tl, width, height, fill, targetShape.FillPattern, stroke, style, inlineTheme)
+			draw, sketchOval = drawDoubleOval, d2sketch.DoubleOval
+		}
+		if targetShape.Multiple {
+			draw(writer, multipleTL, width, height, fill, "", stroke, style, inlineTheme)
+		}
+		if sketch {
+			if err := writer.sketch(sketchOval(targetShape, resourceHash)); err != nil {
+				return "", err
 			}
 		} else {
-			if targetShape.Multiple {
-				drawOval(writer, multipleTL, width, height, fill, "", stroke, style, inlineTheme)
-			}
-			if sketch {
-				out, err := d2sketch.Oval(targetShape, resourceHash)
-				if err != nil {
-					return "", err
-				}
-				fmt.Fprint(writer, out)
-			} else {
-				drawOval(writer, tl, width, height, fill, targetShape.FillPattern, stroke, style, inlineTheme)
-			}
+			draw(writer, tl, width, height, fill, targetShape.FillPattern, stroke, style, inlineTheme)
 		}
 
 	case d2target.ShapeImage:
@@ -1836,177 +1495,82 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 
 	// TODO should standardize "" to rectangle
 	case d2target.ShapeRectangle, d2target.ShapeSequenceDiagram, d2target.ShapeHierarchy, "":
+		if targetShape.ThreeDee {
+			fmt.Fprint(writer, render3DRect(resourceHash, targetShape, inlineTheme))
+			break
+		}
 		borderRadius := math.MaxFloat64
 		if targetShape.BorderRadius != 0 {
 			borderRadius = float64(targetShape.BorderRadius)
 		}
-		if targetShape.ThreeDee {
-			fmt.Fprint(writer, render3DRect(resourceHash, targetShape, inlineTheme))
-		} else {
-			if !targetShape.DoubleBorder {
-				if targetShape.Multiple {
-					el := d2themes.NewThemableElement("rect", inlineTheme)
-					el.X = float64(targetShape.Pos.X + 10)
-					el.Y = float64(targetShape.Pos.Y - 10)
-					el.Width = float64(targetShape.Width)
-					el.Height = float64(targetShape.Height)
-					el.Fill = fill
-					el.Stroke = stroke
-					el.Style = style
-					el.Rx = borderRadius
-					writer.element(el)
-				}
-				if sketch {
-					out, err := d2sketch.Rect(targetShape, resourceHash)
-					if err != nil {
-						return "", err
-					}
-					fmt.Fprint(writer, out)
-				} else {
-					el := d2themes.NewThemableElement("rect", inlineTheme)
-					el.X = float64(targetShape.Pos.X)
-					el.Y = float64(targetShape.Pos.Y)
-					el.Width = float64(targetShape.Width)
-					el.Height = float64(targetShape.Height)
-					el.Fill = fill
-					el.FillPattern = targetShape.FillPattern
-					el.Stroke = stroke
-					el.Style = style
-					el.Rx = borderRadius
-
-					if targetShape.Label != "" && label.FromString(targetShape.LabelPosition).IsBorder() {
-						el.SetMaskID(svg.LiteralID(resourceHash))
-					}
-
-					writer.element(el)
-				}
-			} else {
-				if targetShape.Multiple {
-					el := d2themes.NewThemableElement("rect", inlineTheme)
-					el.X = float64(targetShape.Pos.X + 10)
-					el.Y = float64(targetShape.Pos.Y - 10)
-					el.Width = float64(targetShape.Width)
-					el.Height = float64(targetShape.Height)
-					el.Fill = fill
-					el.FillPattern = targetShape.FillPattern
-					el.Stroke = stroke
-					el.Style = style
-					el.Rx = borderRadius
-					writer.element(el)
-
-					el = d2themes.NewThemableElement("rect", inlineTheme)
-					el.X = float64(targetShape.Pos.X + 10 + d2target.INNER_BORDER_OFFSET)
-					el.Y = float64(targetShape.Pos.Y - 10 + d2target.INNER_BORDER_OFFSET)
-					el.Width = float64(targetShape.Width - 2*d2target.INNER_BORDER_OFFSET)
-					el.Height = float64(targetShape.Height - 2*d2target.INNER_BORDER_OFFSET)
-					el.Fill = fill
-					el.Stroke = stroke
-					el.Style = style
-					el.Rx = borderRadius
-					writer.element(el)
-				}
-				if sketch {
-					out, err := d2sketch.DoubleRect(targetShape, resourceHash)
-					if err != nil {
-						return "", err
-					}
-					fmt.Fprint(writer, out)
-				} else {
-					el := d2themes.NewThemableElement("rect", inlineTheme)
-					el.X = float64(targetShape.Pos.X)
-					el.Y = float64(targetShape.Pos.Y)
-					el.Width = float64(targetShape.Width)
-					el.Height = float64(targetShape.Height)
-					el.Fill = fill
-					el.FillPattern = targetShape.FillPattern
-					el.Stroke = stroke
-					el.Style = style
-					el.Rx = borderRadius
-					writer.element(el)
-
-					el = d2themes.NewThemableElement("rect", inlineTheme)
-					el.X = float64(targetShape.Pos.X + d2target.INNER_BORDER_OFFSET)
-					el.Y = float64(targetShape.Pos.Y + d2target.INNER_BORDER_OFFSET)
-					el.Width = float64(targetShape.Width - 2*d2target.INNER_BORDER_OFFSET)
-					el.Height = float64(targetShape.Height - 2*d2target.INNER_BORDER_OFFSET)
-					el.Fill = "transparent"
-					el.Stroke = stroke
-					el.Style = style
-					el.Rx = borderRadius
-					writer.element(el)
-				}
+		// rect is the shape's rectangle moved by (dx, dy) and shrunk by inset on every side.
+		rect := func(dx, dy, inset int, fill, fillPattern string) *d2themes.ThemableElement {
+			el := d2themes.NewThemableElement("rect", inlineTheme)
+			el.X = float64(targetShape.Pos.X + dx + inset)
+			el.Y = float64(targetShape.Pos.Y + dy + inset)
+			el.Width = float64(targetShape.Width - 2*inset)
+			el.Height = float64(targetShape.Height - 2*inset)
+			el.Fill, el.FillPattern, el.Stroke, el.Style, el.Rx = fill, fillPattern, stroke, style, borderRadius
+			return el
+		}
+		double := targetShape.DoubleBorder
+		if targetShape.Multiple {
+			// Only a double-bordered copy repeats the fill pattern.
+			pattern := ""
+			if double {
+				pattern = targetShape.FillPattern
+			}
+			writer.element(rect(10, -10, 0, fill, pattern))
+			if double {
+				writer.element(rect(10, -10, d2target.INNER_BORDER_OFFSET, fill, ""))
 			}
 		}
+		if sketch {
+			sketchRect := d2sketch.Rect
+			if double {
+				sketchRect = d2sketch.DoubleRect
+			}
+			if err := writer.sketch(sketchRect(targetShape, resourceHash)); err != nil {
+				return "", err
+			}
+			break
+		}
+		el := rect(0, 0, 0, fill, targetShape.FillPattern)
+		if !double && borderLabelMask {
+			el.SetMaskID(svg.LiteralID(resourceHash))
+		}
+		writer.element(el)
+		if double {
+			writer.element(rect(0, 0, d2target.INNER_BORDER_OFFSET, "transparent", ""))
+		}
+	case d2target.ShapeText, d2target.ShapeCode:
 	case d2target.ShapeHexagon:
 		if targetShape.ThreeDee {
 			fmt.Fprint(writer, render3DHexagon(resourceHash, targetShape, inlineTheme))
-		} else {
-			if targetShape.Multiple {
-				multiplePathData := shape.NewShape(shapeType, geo.NewBox(multipleTL, width, height)).GetSVGPathData()
-				el := d2themes.NewThemableElement("path", inlineTheme)
-				el.Fill = fill
-				el.Stroke = stroke
-				el.Style = style
-				for _, pathData := range multiplePathData {
-					el.D = pathData
-					writer.element(el)
-				}
-			}
-
-			if sketch {
-				out, err := d2sketch.Paths(targetShape, resourceHash, s.GetSVGPathData())
-				if err != nil {
-					return "", err
-				}
-				fmt.Fprint(writer, out)
-			} else {
-				el := d2themes.NewThemableElement("path", inlineTheme)
-				el.Fill = fill
-				el.FillPattern = targetShape.FillPattern
-				el.Stroke = stroke
-				el.Style = style
-				for _, pathData := range s.GetSVGPathData() {
-					el.D = pathData
-					writer.element(el)
-				}
-			}
+			break
 		}
-	case d2target.ShapeText, d2target.ShapeCode:
+		// Hexagons do not mask border labels.
+		borderLabelMask = false
+		fallthrough
 	default:
+		el := d2themes.NewThemableElement("path", inlineTheme)
+		el.Fill = fill
+		el.Stroke = stroke
+		el.Style = style
 		if targetShape.Multiple {
-			multiplePathData := shape.NewShape(shapeType, geo.NewBox(multipleTL, width, height)).GetSVGPathData()
-			el := d2themes.NewThemableElement("path", inlineTheme)
-			el.Fill = fill
-			el.Stroke = stroke
-			el.Style = style
-			for _, pathData := range multiplePathData {
-				el.D = pathData
-				writer.element(el)
-			}
+			writer.paths(el, shape.NewShape(shapeType, geo.NewBox(multipleTL, width, height)).GetSVGPathData())
 		}
-
 		if sketch {
-			out, err := d2sketch.Paths(targetShape, resourceHash, s.GetSVGPathData())
-			if err != nil {
+			if err := writer.sketch(d2sketch.Paths(targetShape, resourceHash, s.GetSVGPathData())); err != nil {
 				return "", err
 			}
-			fmt.Fprint(writer, out)
-		} else {
-			el := d2themes.NewThemableElement("path", inlineTheme)
-			el.Fill = fill
-			el.FillPattern = targetShape.FillPattern
-			el.Stroke = stroke
-			el.Style = style
-
-			if targetShape.Label != "" && label.FromString(targetShape.LabelPosition).IsBorder() {
-				el.SetMaskID(svg.LiteralID(resourceHash))
-			}
-
-			for _, pathData := range s.GetSVGPathData() {
-				el.D = pathData
-				writer.element(el)
-			}
+			break
 		}
+		el.FillPattern = targetShape.FillPattern
+		if borderLabelMask {
+			el.SetMaskID(svg.LiteralID(resourceHash))
+		}
+		writer.paths(el, s.GetSVGPathData())
 	}
 
 	// // to examine shape's innerBox
@@ -2091,31 +1655,10 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			}
 		}
 
-		fontClass := "text"
-		if targetShape.FontFamily == "mono" {
-			fontClass = "text-mono"
-		}
-		if targetShape.Bold {
-			fontClass += "-bold"
-		} else if targetShape.Italic {
-			fontClass += "-italic"
-		}
-		if targetShape.Underline {
-			fontClass += " text-underline"
-		}
+		fontClass := textClass(targetShape.Text)
 
 		if targetShape.Language == "latex" {
-			render, err := d2latex.Render(targetShape.Label)
-			if err != nil {
-				return labelMask, err
-			}
-			// Remove XML declaration and DOCTYPE from LaTeX SVG output
-			xmlDecl := `<?xml version="1.0" encoding="UTF-8"?>`
-			doctype := `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">`
-			render = strings.ReplaceAll(render, xmlDecl, "")
-			render = strings.ReplaceAll(render, doctype, "")
-			gEl := d2themes.NewThemableElement("g", inlineTheme)
-
+			// LaTeX labels default to the middle of the shape.
 			labelPosition := label.FromString(targetShape.LabelPosition)
 			if labelPosition == label.Unset {
 				labelPosition = label.InsideMiddleCenter
@@ -2126,17 +1669,17 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			} else {
 				box = s.GetInnerBox()
 			}
-			labelTL := labelPosition.GetPointOnBox(box, label.PADDING,
+			latexTL := labelPosition.GetPointOnBox(box, label.PADDING,
 				float64(targetShape.LabelWidth),
 				float64(targetShape.LabelHeight),
 			)
-			gEl.SetTranslate(labelTL.X, labelTL.Y)
+			gEl, err := latexLabel(targetShape.Label, latexTL, targetShape.GetFontColor(), inlineTheme)
+			if err != nil {
+				return labelMask, err
+			}
 			if targetShape.MotionScale != 0 {
 				gEl.Transform += fmt.Sprintf(" scale(%s)", svg.FormatFloat(targetShape.MotionScale))
 			}
-
-			gEl.Color = targetShape.GetFontColor()
-			gEl.SetInnerSVG(svg.TrustedFragment(render))
 			fmt.Fprint(writer, gEl.Render())
 		} else if targetShape.Language == "markdown" {
 			layout, err := markdown.layout(targetShape.Label, targetShape.FontFamily, targetShape.FontSize, targetShape.MarkdownStrike)
@@ -2155,64 +1698,8 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 				targetShape.Underline, targetShape.UnderlineProgress,
 			))
 		} else if targetShape.Language != "" {
-			lexer := lexers.Get(targetShape.Language)
-			if lexer == nil {
-				lexer = lexers.Fallback
-			}
-			for _, isLight := range []bool{true, false} {
-				theme := codestyle.Light
-				if !isLight {
-					theme = codestyle.Dark
-				}
-				style := codestyle.Get(theme)
-				if style == nil {
-					return labelMask, errors.New(`code snippet style "github" not found`)
-				}
-				iterator, err := lexer.Tokenise(nil, targetShape.Label)
-				if err != nil {
-					return labelMask, err
-				}
-
-				svgStyles := styleToSVG(style)
-				class := "light-code"
-				if !isLight {
-					class = "dark-code"
-				}
-				var fontSize string
-				if targetShape.FontSize != d2fonts.FONT_SIZE_M {
-					fontSize = fmt.Sprintf(` style="font-size:%v"`, targetShape.FontSize)
-				}
-				fmt.Fprintf(writer, `<g transform="translate(%s %s)" class="%s"%s>`,
-					svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y), class, fontSize,
-				)
-				rectEl := d2themes.NewThemableElement("rect", inlineTheme)
-				rectEl.Width = float64(targetShape.Width)
-				rectEl.Height = float64(targetShape.Height)
-				rectEl.Stroke = targetShape.Stroke
-				rectEl.ClassName = "shape"
-				rectEl.Style = fmt.Sprintf(`fill:%s;stroke-width:%s;`,
-					style.Get(chroma.Background).Background.String(),
-					svg.FormatFloat(targetShape.RenderedStrokeWidth()),
-				)
-				writer.element(rectEl)
-				// Padding = 0.5em
-				padding := float64(targetShape.FontSize) / 2.
-				fmt.Fprintf(writer, `<g transform="translate(%s %s)">`, svg.FormatFloat(padding), svg.FormatFloat(padding))
-
-				lineHeight := textmeasure.CODE_LINE_HEIGHT
-				for index, tokens := range chroma.SplitTokensIntoLines(iterator.Tokens()) {
-					fmt.Fprintf(writer, "<text class=\"text-mono\" x=\"0\" y=\"%sem\">", svg.FormatFloat(1+float64(index)*lineHeight))
-					for _, token := range tokens {
-						text := svgEscaper.Replace(token.String())
-						attr := styleAttr(svgStyles, token.Type)
-						if attr != "" {
-							text = fmt.Sprintf("<tspan %s>%s</tspan>", attr, text)
-						}
-						fmt.Fprint(writer, text)
-					}
-					fmt.Fprint(writer, "</text>")
-				}
-				fmt.Fprint(writer, "</g></g>")
+			if err := writeCode(writer, targetShape.Language, targetShape.Label, targetShape.FontSize, box.TopLeft, &targetShape, inlineTheme); err != nil {
+				return labelMask, err
 			}
 		} else {
 			if targetShape.LabelFill != "" {
@@ -3070,7 +2557,7 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	// add all appendix items afterwards so they are always on top
 	fmt.Fprint(writer, appendixItemBuf)
 
-	if diagram.Legend != nil && (len(diagram.Legend.Shapes) > 0 || len(diagram.Legend.Connections) > 0) {
+	if hasLegend(diagram) {
 		legendBuf := &bytes.Buffer{}
 		err := RenderLegend(legendBuf, diagram, diagramHash, inlineTheme)
 		if err != nil {
@@ -3082,70 +2569,12 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 
 	left, top, w, h := dimensions(diagram, pad, tl, br)
 
-	if diagram.Legend != nil && (len(diagram.Legend.Shapes) > 0 || len(diagram.Legend.Connections) > 0) {
-		totalHeight := LEGEND_PADDING + LEGEND_FONT_SIZE + LEGEND_ITEM_SPACING
-		maxLabelWidth := 0
-		itemCount := 0
+	if hasLegend(diagram) {
+		// The viewport also fits the legend without its bottom padding.
 		ruler, _ := textmeasure.NewRuler()
 		if ruler != nil {
-			for _, s := range diagram.Legend.Shapes {
-				if s.Label == "" {
-					continue
-				}
-				mtext := &d2target.MText{
-					Text:     s.Label,
-					FontSize: LEGEND_FONT_SIZE,
-				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(s.FontFamily))
-				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-				itemCount++
-			}
-
-			for _, c := range diagram.Legend.Connections {
-				if c.Label == "" {
-					continue
-				}
-				mtext := &d2target.MText{
-					Text:     c.Label,
-					FontSize: LEGEND_FONT_SIZE,
-				}
-				dims := d2graph.GetTextDimensions(nil, ruler, mtext, fontToFamily(c.FontFamily))
-				maxLabelWidth = go2.IntMax(maxLabelWidth, dims.Width)
-				totalHeight += go2.IntMax(dims.Height, LEGEND_ICON_SIZE) + LEGEND_ITEM_SPACING
-				itemCount++
-			}
-
-			if itemCount > 0 {
-				totalHeight -= LEGEND_ITEM_SPACING / 2
-			}
-
-			totalHeight += LEGEND_PADDING
-
-			if totalHeight > 0 && maxLabelWidth > 0 {
-				legendWidth := LEGEND_PADDING*2 + LEGEND_ICON_SIZE + LEGEND_PADDING + maxLabelWidth
-
-				legendY := br.Y - totalHeight
-				if legendY < tl.Y {
-					legendY = tl.Y
-				}
-
-				legendRight := br.X + LEGEND_CORNER_PADDING + legendWidth
-				if left+w < legendRight {
-					w = legendRight - left + pad/2
-				}
-
-				if legendY < top {
-					diffY := top - legendY
-					top -= diffY
-					h += diffY
-				}
-
-				legendBottom := legendY + totalHeight
-				if top+h < legendBottom {
-					h = legendBottom - top + pad/2
-				}
-			}
+			legendHeight, maxLabelWidth, _ := measureLegend(diagram.Legend, ruler)
+			left, top, w, h = fitLegend(left, top, w, h, pad, tl, br, legendHeight+LEGEND_PADDING, maxLabelWidth)
 		}
 	}
 	if w < 0 || h < 0 {
