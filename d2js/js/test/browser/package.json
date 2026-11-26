@@ -1,0 +1,9 @@
+{
+  "name": "d2-browser-smoke",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "playwright-core": "1.65.1",
+    "pngjs": "7.0.0"
+  }
+}

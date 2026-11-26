@@ -332,7 +332,8 @@ func run(t *testing.T, tc testCase) {
 	}
 
 	layoutsTested := []string{"dagre"}
-	if !tc.justDagre {
+	// Explicit text measurements only need the default layout.
+	if !tc.justDagre && tc.mtexts == nil {
 		layoutsTested = append(layoutsTested, "elk", "tala")
 	}
 	talaOpts := d2talalayout.DefaultOptions()
@@ -380,13 +381,8 @@ func run(t *testing.T, tc testCase) {
 		return nil, nil
 	}
 
-	for _, layoutName := range layoutsTested {
-		// If measured texts exist, we are specifically exercising text
-		// measurements, so the default layout is sufficient.
-		if tc.mtexts != nil && layoutName != "dagre" {
-			continue
-		}
-
+	fixtureName := strings.TrimPrefix(t.Name(), "TestE2E/")
+	runLayout := func(t *testing.T, layoutName string) {
 		compileOpts := &d2lib.CompileOptions{
 			Ruler:          ruler,
 			MeasuredTexts:  tc.mtexts,
@@ -439,7 +435,7 @@ func run(t *testing.T, tc testCase) {
 			})
 		}
 
-		dataPath := filepath.Join("testdata", strings.TrimPrefix(t.Name(), "TestE2E/"), layoutName)
+		dataPath := filepath.Join("testdata", fixtureName, layoutName)
 		pathGotSVG := filepath.Join(dataPath, "sketch.got.svg")
 
 		if len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0 {
@@ -474,10 +470,16 @@ func run(t *testing.T, tc testCase) {
 		if os.Getenv("SKIP_SVG_CHECK") == "" {
 			err2 = testdata(filepath.Join(dataPath, "sketch"), ".svg", svgBytes)
 		}
-		renderIsometric(t, ctx, diagram, dataPath, renderOpts)
+		renderIsometric(t, ctx, diagram, fixtureName, dataPath, renderOpts)
 
 		assert.Success(t, err)
 		assert.Success(t, err2)
+	}
+
+	for _, layoutName := range layoutsTested {
+		t.Run(layoutName, func(t *testing.T) {
+			runLayout(t, layoutName)
+		})
 	}
 }
 
