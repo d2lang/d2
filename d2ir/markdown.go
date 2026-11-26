@@ -48,8 +48,9 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 		return value
 	}
 	resolve := func(key string) (string, bool) {
-		if text, captured := replay.lookup(key); captured {
-			return text, true
+		previous, captured := replay.lookup(key)
+		if captured && !replay.retry {
+			return previous, true
 		}
 		text, exists := names[key]
 		outer := outerNames[key]
@@ -57,19 +58,24 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 		parsed, err := d2parser.ParseValue(token)
 		if s, ok := parsed.(*d2ast.UnquotedString); err == nil && ok && len(s.Value) == 1 && s.Value[0].Substitution != nil {
 			field, scope := c.resolveVariable(scopes, node, s.Value[0].Substitution)
-			if field == nil && exists {
-				// A literal pattern may spell an unavailable D2 path, including a
-				// self-reference. Do not substitute an unrelated flattened value.
-				return token, true
-			}
-			if field != nil {
-				if field.Primary() == nil {
-					// Markdown keeps placeholders with no scalar value as prose.
+			if field == nil {
+				replay.missing = true
+				if captured {
+					return previous, true
+				}
+				if exists {
+					// A literal pattern can spell an unavailable path or a self-reference.
 					return token, true
 				}
-				text, exists = field.Primary().Value.ScalarString(), true
-				outer = outerStart >= 0 && scope >= outerStart
+				return "", false
 			}
+			if field.Primary() == nil {
+				// A local map or empty declaration shadows an outer scalar.
+				replay.missing = true
+				return token, true
+			}
+			text, exists = field.Primary().Value.ScalarString(), true
+			outer = outerStart >= 0 && scope >= outerStart
 		}
 		if exists {
 			replay.record(key, text)

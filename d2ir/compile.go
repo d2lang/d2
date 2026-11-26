@@ -643,8 +643,15 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 						if !c.reserveVariableExpansion(box.Substitution, int64(len(resolvedField.Primary().Value.ScalarString()))) {
 							return
 						}
-						node.Primary().Value = resolvedField.Primary().Value
-						node.Primary().TweenOffset = resolvedField.Primary().TweenOffset
+						value := resolvedField.Primary()
+						node.Primary().Value = value.Value
+						if block, ok := value.Value.(*d2ast.BlockString); ok {
+							// The two labels can resolve again in different import scopes.
+							copy := *block
+							node.Primary().Value = &copy
+						}
+						node.Primary().markdown = value.markdown
+						node.Primary().TweenOffset = value.TweenOffset
 					} else {
 						s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
 						subbed = true

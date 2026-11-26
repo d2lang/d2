@@ -12,13 +12,17 @@ import (
 type markdownBinding struct {
 	source string
 	bound  map[string]string
+	// Like regular string interpolation, a partially resolved group of
+	// references can be resolved again when its importer supplies a scope.
+	retry bool
 }
 
 type markdownReplay struct {
 	markdownBinding
 	primary  *Scalar
 	inImport bool
-	added    map[string]string
+	missing  bool
+	updated  map[string]string
 }
 
 func newMarkdownReplay(primary *Scalar, value string, inImport bool) markdownReplay {
@@ -40,10 +44,11 @@ func (r *markdownReplay) record(key, value string) {
 	if !r.inImport {
 		return
 	}
-	if r.added == nil {
-		r.added = make(map[string]string)
+	if r.updated == nil {
+		r.updated = make(map[string]string, len(r.bound)+1)
+		maps.Copy(r.updated, r.bound)
 	}
-	r.added[key] = value
+	r.updated[key] = value
 }
 
 func (r *markdownReplay) finish(rendered string) {
@@ -51,9 +56,11 @@ func (r *markdownReplay) finish(rendered string) {
 		r.primary.markdown = nil
 		return
 	}
-	if len(r.added) == 0 {
+	if r.updated == nil && (len(r.bound) == 0 || r.retry == r.missing) {
 		return
 	}
-	maps.Copy(r.added, r.bound)
-	r.primary.markdown = &markdownBinding{source: r.source, bound: r.added}
+	if r.updated != nil {
+		r.bound = r.updated
+	}
+	r.primary.markdown = &markdownBinding{source: r.source, bound: r.bound, retry: r.missing}
 }
