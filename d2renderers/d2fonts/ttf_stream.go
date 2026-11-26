@@ -2,6 +2,7 @@ package d2fonts
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 
@@ -25,25 +26,27 @@ type bundledTTFStreamFace struct {
 // gen_ttf_stream.go, keyed by file name. It fails unless the stream holds
 // exactly the bytes that bundledTTFStreamFaces describes.
 func decodeBundledTTFStream(stream []byte) (map[string][]byte, error) {
-	total := 0
-	for _, face := range bundledTTFStreamFaces {
-		total += face.size
-	}
-	// One byte more than expected: a stream of the right length ends the
-	// read early, exactly at total.
-	buf := make([]byte, total+1)
-	n, err := io.ReadFull(brotli.NewReader(bytes.NewReader(stream)), buf)
-	if err != io.ErrUnexpectedEOF || n != total {
-		return nil, fmt.Errorf("bundled TTF stream: read %d of %d bytes: %v", n, total, err)
-	}
+	r := brotli.NewReader(bytes.NewReader(stream))
 	faces := make(map[string][]byte, len(bundledTTFStreamFaces))
-	offset := 0
 	for _, face := range bundledTTFStreamFaces {
-		end := offset + face.size
-		// The capacity ends with the face, so appending to one face cannot
-		// write into the next.
-		faces[face.name] = buf[offset:end:end]
-		offset = end
+		// Each face gets an allocation of its own. On every collection, for
+		// every pointer, TinyGo's collector finds the object pointed into by
+		// walking forward to the object's last block. D2 keeps pointers to
+		// the first byte of each face, so in one shared buffer each of those
+		// walks would cross every later face as well.
+		ttf := make([]byte, face.size)
+		if n, err := io.ReadFull(r, ttf); err != nil {
+			return nil, fmt.Errorf("bundled TTF stream: read %d of %d bytes of %s: %v", n, face.size, face.name, err)
+		}
+		faces[face.name] = ttf
 	}
-	return faces, nil
+	var extra [1]byte
+	switch _, err := io.ReadFull(r, extra[:]); err {
+	case io.EOF:
+		return faces, nil
+	case nil:
+		return nil, errors.New("bundled TTF stream: longer than its faces")
+	default:
+		return nil, fmt.Errorf("bundled TTF stream: %v", err)
+	}
 }
