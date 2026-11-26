@@ -27,6 +27,8 @@
 
 - Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer.
 
+- D2.js: the WebAssembly module is about 12 MB (47%) smaller, and 2.0 MB (30%) smaller when compressed with Brotli, and runs D2's end-to-end corpus in about half the time, with identical output. D2.js calls into the module and every call runs to completion, so the module is now built without a goroutine scheduler, which on WebAssembly made every function that could be running when a goroutine is switched out about two thirds larger. The build needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases). The module also drops its function names, a second HTML entity table, two unused Unicode segmentation tables and four separately encoded copies of bundled fonts, stores the tables of the formula renderer and of the ELK layout engine as constant data, keeps its bundled fonts compressed until it starts, and sorts with one shared routine.
+
 - The d2 binary is about 3 MB smaller: PPTX export writes its XML parts without `text/template`, whose method lookups by name kept unused methods throughout the program. [#3000](https://github.com/d2lang/d2/pull/3000)
 
 - Native isometric GIFs with animated shapes render faster by sampling only texture opacity for shadows.
