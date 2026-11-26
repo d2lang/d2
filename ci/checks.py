@@ -60,7 +60,7 @@ def select_jobs(event, tag=False, paths=(), toolchain_changed=False):
         ) or wasm_specific:
             jobs["browser"] = "packed"
         elif jobs["browser"] != "packed" and path.startswith((
-            "d2lib/", "d2ir/tween", "d2renderers/d2svg/", "d2renderers/d2animate/", "d2cli/", "d2target/",
+            "d2compiler/", "d2ir/", "d2lib/", "d2renderers/d2svg/", "d2renderers/d2animate/", "d2cli/", "d2target/",
             "d2renderers/internal/svgframe/", "d2layouts/d2sequence/",
             "d2layouts/d2talalayout/board_", "d2layouts/d2talalayout/step_",
         )):
