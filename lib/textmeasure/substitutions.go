@@ -5,8 +5,11 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/text"
 )
 
 func ReplaceSubstitutionsMarkdown(mdText string, variables map[string]string) string {
@@ -21,6 +24,15 @@ func ReplaceSubstitutionsMarkdown(mdText string, variables map[string]string) st
 // spans and blocks while bounding candidate-match work and bytes inserted by
 // replacements. It checks the bound before each allocating replacement.
 func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, variables map[string]string, maxExpansion int64) (string, int64, error) {
+	return ResolveSubstitutionsMarkdownBounded(ctx, mdText, variables, maxExpansion, nil)
+}
+
+// ResolveSubstitutionsMarkdownBounded resolves D2 references in Markdown prose
+// and link destinations and titles.
+// The callback receives the original spelling between the braces. Literal names
+// in variables also match, including historical names with an unquoted closing
+// brace. The longest match wins, and resolve can override its stored value.
+func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, variables map[string]string, maxExpansion int64, resolve func(key string) (string, bool)) (string, int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -30,13 +42,14 @@ func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	if err := ctx.Err(); err != nil {
 		return "", 0, err
 	}
-	if len(variables) == 0 || !strings.Contains(mdText, "${") {
+	if (len(variables) == 0 && resolve == nil) || !strings.Contains(mdText, "${") {
 		return mdText, 0, nil
 	}
 	matcher, err := newMarkdownSubstitutionMatcher(ctx, variables)
 	if err != nil {
 		return "", 0, err
 	}
+	matcher.resolve = resolve
 	source := []byte(mdText)
 	doc := markdownParser.Parse(source)
 
@@ -47,7 +60,33 @@ func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	}
 	var substitutions []substitution
 	var expansion int64
-	var walkErr error
+	replace := func(segment text.Index, escapes *markdownEscapes) error {
+		// Owned and empty values have no source text to edit.
+		if segment.Start == segment.Stop {
+			return nil
+		}
+		original := mdText[segment.Start:segment.Stop]
+		value, used, err := matcher.replaceBounded(ctx, original, maxExpansion-expansion, escapes)
+		if err != nil {
+			return err
+		}
+		expansion += used
+		if value != original {
+			substitutions = append(substitutions, substitution{start: segment.Start, stop: segment.Stop, newVal: value})
+		}
+		return nil
+	}
+	replaceLink := func(dest text.SingleLineValue, title text.MultiLineValue) error {
+		if err := replace(dest.Index(), &destinationEscapes); err != nil {
+			return err
+		}
+		for _, segment := range title.Indices() {
+			if err := replace(segment, &titleEscapes); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 
 	err = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if err := ctx.Err(); err != nil {
@@ -61,31 +100,26 @@ func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 			return ast.WalkSkipChildren, nil
 		}
 
-		// Replacements need byte offsets in the original Markdown source.
-		if textNode, ok := n.(*ast.Text); ok && !textNode.Value.IsOwned() {
-			segment := textNode.Value.Index()
-			originalText := textNode.Value.Str(source)
-			newText, used, err := matcher.replaceBounded(ctx, originalText, maxExpansion-expansion)
-			if err != nil {
-				walkErr = err
-				return ast.WalkStop, err
+		switch n := n.(type) {
+		case *ast.Text:
+			return ast.WalkContinue, replace(n.Value.Index(), nil)
+		case *ast.AutoLink:
+			return ast.WalkContinue, replace(n.Text.Index(), &autolinkEscapes)
+		case *ast.Link:
+			if n.Reference == nil {
+				return ast.WalkContinue, replaceLink(n.Destination, n.Title)
 			}
-			expansion += used
-
-			if originalText != newText {
-				substitutions = append(substitutions, substitution{
-					start:  segment.Start,
-					stop:   segment.Stop,
-					newVal: newText,
-				})
+		case *ast.Image:
+			if n.Reference == nil {
+				return ast.WalkContinue, replaceLink(n.Destination, n.Title)
 			}
+		case *ast.LinkReferenceDefinition:
+			// Every use shares these source offsets. Edit the definition once.
+			return ast.WalkContinue, replaceLink(n.Destination, n.Title)
 		}
 		return ast.WalkContinue, nil
 	})
 	if err != nil {
-		if walkErr != nil {
-			return "", 0, walkErr
-		}
 		return "", 0, err
 	}
 
@@ -122,6 +156,54 @@ func isCodeNode(n ast.Node) bool {
 	return false
 }
 
+// An interpolated URL or title is data inside Markdown syntax. Escape only
+// the inserted bytes, leaving the author's delimiters and escapes intact.
+type markdownEscapes [256]string
+
+var destinationEscapes = markdownEscapes{
+	' ': "%20", '\t': "%09", '\n': "%0A", '\r': "%0D",
+	'(': `\(`, ')': `\)`, '<': `\<`, '>': `\>`, '\\': `\\`, '&': `\&`,
+}
+
+var titleEscapes = markdownEscapes{
+	'"': `\"`, '\'': `\'`, '(': `\(`, ')': `\)`, '\\': `\\`, '&': `\&`,
+	'\n': "&#10;", '\r': "&#13;",
+}
+
+// CommonMark autolinks do not interpret backslash escapes.
+var autolinkEscapes = markdownEscapes{
+	' ': "%20", '\t': "%09", '\n': "%0A", '\r': "%0D", '<': "%3C", '>': "%3E",
+}
+
+func (escapes *markdownEscapes) escape(ctx context.Context, value string, remaining int64) (string, error) {
+	var result strings.Builder
+	start := 0
+	remaining -= int64(len(value))
+	for i := 0; i < len(value); i++ {
+		if i&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		escaped := escapes[value[i]]
+		if escaped == "" {
+			continue
+		}
+		remaining -= int64(len(escaped) - 1)
+		if remaining < 0 {
+			return "", errors.New("Markdown substitution expansion limit exceeded")
+		}
+		result.WriteString(value[start:i])
+		result.WriteString(escaped)
+		start = i + 1
+	}
+	if start == 0 {
+		return value, nil
+	}
+	result.WriteString(value[start:])
+	return result.String(), nil
+}
+
 type markdownSubstitutionState struct {
 	next          map[byte]int
 	fail          int
@@ -132,7 +214,8 @@ type markdownSubstitutionState struct {
 }
 
 type markdownSubstitutionMatcher struct {
-	states []markdownSubstitutionState
+	states  []markdownSubstitutionState
+	resolve func(string) (string, bool)
 }
 
 func newMarkdownSubstitutionMatcher(ctx context.Context, vars map[string]string) (*markdownSubstitutionMatcher, error) {
@@ -210,7 +293,7 @@ func newMarkdownSubstitutionMatcher(ctx context.Context, vars map[string]string)
 	return matcher, nil
 }
 
-func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, s string, maxExpansion int64) (string, int64, error) {
+func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, s string, maxExpansion int64, escapes *markdownEscapes) (string, int64, error) {
 	type replacement struct {
 		start int
 		stop  int
@@ -281,23 +364,55 @@ func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, 
 	}
 
 	var replacements []replacement
+	var nextReference int
 	for i := 0; i < len(s); {
 		if i&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return "", 0, err
 			}
 		}
-		replacement, ok := bestAtStart[i]
-		if !ok {
+		match, found := bestAtStart[i]
+		legacyEnd := match.stop
+		if matcher.resolve != nil && i >= nextReference && strings.HasPrefix(s[i:], "${") {
+			end, next, err := markdownReferenceEnd(ctx, s, i+2)
+			if err != nil {
+				return "", 0, err
+			}
+			nextReference = next
+			if end > match.stop {
+				if value, ok := matcher.resolve(s[i+2 : end-1]); ok {
+					if used >= maxExpansion {
+						return "", 0, errors.New("Markdown substitution expansion limit exceeded")
+					}
+					used++
+					match = replacement{start: i, stop: end, value: value}
+					found = true
+				}
+			}
+		}
+		if !found {
 			i++
 			continue
 		}
-		if int64(len(replacement.value)) > maxExpansion-used {
+		// Exact literal matches already paid their candidate cost above.
+		if matcher.resolve != nil && match.stop == legacyEnd {
+			if value, ok := matcher.resolve(s[i+2 : match.stop-1]); ok {
+				match.value = value
+			}
+		}
+		if int64(len(match.value)) > maxExpansion-used {
 			return "", 0, errors.New("Markdown substitution expansion limit exceeded")
 		}
-		used += int64(len(replacement.value))
-		replacements = append(replacements, replacement)
-		i = replacement.stop
+		if escapes != nil && match.value != s[match.start:match.stop] {
+			var err error
+			match.value, err = escapes.escape(ctx, match.value, maxExpansion-used)
+			if err != nil {
+				return "", 0, err
+			}
+		}
+		used += int64(len(match.value))
+		replacements = append(replacements, match)
+		i = match.stop
 	}
 	if len(replacements) == 0 {
 		return s, 0, nil
@@ -325,4 +440,63 @@ func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, 
 	}
 	result.WriteString(s[written:])
 	return result.String(), used, nil
+}
+
+// markdownReferenceEnd locates a closing brace outside quoted or escaped key
+// segments. The resolver validates the key path. next lets the caller continue
+// in one forward pass even when the candidate is incomplete.
+func markdownReferenceEnd(ctx context.Context, s string, start int) (end, next int, err error) {
+	var quote byte
+	segmentStart := true
+	nextCheck := start
+	for i := start; i < len(s); i++ {
+		if i >= nextCheck {
+			nextCheck = i + 1024
+			if err := ctx.Err(); err != nil {
+				return 0, 0, err
+			}
+		}
+		c := s[i]
+		if c == '\n' {
+			return 0, i + 1, nil
+		}
+		if c == '\\' && quote != '\'' {
+			i++
+			segmentStart = false
+			continue
+		}
+		if quote != 0 {
+			if c == quote {
+				if quote == '\'' && i+1 < len(s) && s[i+1] == '\'' {
+					i++
+				} else {
+					quote = 0
+				}
+			}
+			continue
+		}
+		switch c {
+		case '}':
+			return i + 1, i + 1, nil
+		case '{':
+			if i > start && s[i-1] == '$' {
+				return 0, i - 1, nil
+			}
+			return 0, i + 1, nil
+		case '.':
+			segmentStart = true
+		case '"', '\'':
+			if segmentStart {
+				quote = c
+			}
+			segmentStart = false
+		default:
+			if segmentStart {
+				r, size := utf8.DecodeRuneInString(s[i:])
+				segmentStart = unicode.IsSpace(r)
+				i += size - 1
+			}
+		}
+	}
+	return 0, len(s), nil
 }
