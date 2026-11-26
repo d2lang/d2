@@ -54,12 +54,12 @@ func TestBuildConnectionLabelsAndDiagramWideMask(t *testing.T) {
 	assertChildIDs(t, maskRoot, []string{"connection-label-mask:base", "a-b:label-mask-hole"})
 	hole := maskRoot.Children[1]
 	holeRect := hole.Primitive.(d2scene.Rect)
-	if holeRect.Box != (d2scene.Box{X: 28, Y: -10, Width: 44, Height: 40}) || hole.Opacity != 1 {
+	if holeRect.Box != (d2scene.Box{X: 20, Y: -10, Width: 60, Height: 40}) || hole.Opacity != 1 {
 		t.Fatalf("connection label mask hole = %+v opacity %v", holeRect.Box, hole.Opacity)
 	}
 
 	background := node.Children[1].Primitive.(d2scene.Rect)
-	if background.Box != (d2scene.Box{X: 26, Y: -13, Width: 48, Height: 46}) || background.RadiusX != 10 || background.RadiusY != 10 {
+	if background.Box != (d2scene.Box{X: 18, Y: -13, Width: 64, Height: 46}) || background.RadiusX != 10 || background.RadiusY != 10 {
 		t.Fatalf("connection label fill = %+v", background)
 	}
 	first := node.Children[2].Primitive.(d2scene.TextRun)
@@ -206,7 +206,7 @@ func TestConnectionTraceKeepsLabelAndMaskTogether(t *testing.T) {
 	}
 	hole := n.Children[0].Mask.Root.Children[1]
 	box := hole.Primitive.(d2scene.Rect).Box
-	if hole.Opacity != .35 || box != (d2scene.Box{X: 30, Y: 11, Width: 50, Height: 20}) {
+	if hole.Opacity != .35 || box != (d2scene.Box{X: 22, Y: 11, Width: 66, Height: 20}) {
 		t.Fatalf("label mask %+v opacity %v", box, hole.Opacity)
 	}
 }

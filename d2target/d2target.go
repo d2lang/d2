@@ -1018,6 +1018,25 @@ type Text struct {
 	LabelFill   string `json:"labelFill,omitempty"`
 }
 
+// EdgeLabelHorizontalPadding returns the horizontal mask padding applied to an
+// edge label so its horizontal clearance matches a single line's height.
+func (t Text) EdgeLabelHorizontalPadding() int {
+	if t.Label == "" {
+		return 0
+	}
+	var lineHeight float64
+	if t.Language == "" && t.LabelHeight > 0 {
+		lines := 1 + strings.Count(t.Label, "\n")
+		lineHeight = float64(t.LabelHeight) / float64(lines)
+	} else {
+		lineHeight = float64(t.FontSize)
+	}
+	if lineHeight <= 0 {
+		return 4
+	}
+	return go2.Max(4, int(math.Round(lineHeight)))
+}
+
 func BaseShape() *Shape {
 	return &Shape{
 		Opacity:     1,

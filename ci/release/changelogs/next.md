@@ -19,6 +19,8 @@
 
 #### Improvements 🧹
 
+- renders: add single-line-height horizontal padding around edge label masks and filled label pills so edge strokes do not crowd labels. [#2097](https://github.com/d2lang/d2/issues/2097)
+
 - Parser authors can use the [D2 syntax reference](https://github.com/d2lang/d2/tree/master/docs/grammar) and its shared conformance cases to check their implementations.
 
 - Grids with one specified axis choose more evenly sized rows or columns. For common integral cell sizes the partition search finds the minimum total deviation from the average track length.

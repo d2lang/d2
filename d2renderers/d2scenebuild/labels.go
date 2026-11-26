@@ -56,8 +56,9 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 			if topLeft == nil {
 				return nil, invalidField(fmt.Sprintf("connection %q", connection.ID), "labelPosition", connection.LabelPosition, "does not resolve on the route")
 			}
-			x := math.Round(topLeft.X) - 2
-			width := connection.LabelWidth + 4
+			maskPad := connection.Text.EdgeLabelHorizontalPadding()
+			x := math.Round(topLeft.X) - float64(maskPad)/2
+			width := connection.LabelWidth + maskPad
 			if connection.Icon != nil {
 				x -= d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE
 				width += d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE
@@ -220,10 +221,11 @@ func (b *builder) buildConnectionLabels(connection d2target.Connection) ([]*d2sc
 				if err != nil {
 					return nil, err
 				}
+				fillPad := float64(connection.Text.EdgeLabelHorizontalPadding() + 4)
 				background := d2scene.NewNode(d2scene.Rect{
 					Box: d2scene.Box{
-						X: topLeft.X - 4, Y: topLeft.Y - 3,
-						Width: float64(connection.LabelWidth + 8), Height: float64(connection.LabelHeight + 6),
+						X: topLeft.X - fillPad/2, Y: topLeft.Y - 3,
+						Width: float64(connection.LabelWidth) + fillPad, Height: float64(connection.LabelHeight + 6),
 					},
 					RadiusX: 10, RadiusY: 10, Fill: fill,
 				})

@@ -205,8 +205,8 @@ func TestBuildConnectionIconAndDiagramWideMask(t *testing.T) {
 	holeRect := hole.Primitive.(d2scene.Rect)
 	labelTopLeft := diagram.Connections[0].GetLabelTopLeft()
 	want := d2scene.Box{
-		X: math.Round(labelTopLeft.X) - 42, Y: math.Round(labelTopLeft.Y),
-		Width: 74, Height: 20,
+		X: math.Round(labelTopLeft.X) - 50, Y: math.Round(labelTopLeft.Y),
+		Width: 90, Height: 20,
 	}
 	if holeRect.Box != want || hole.Opacity != 1 {
 		t.Fatalf("label+icon mask hole = %+v opacity=%v, want %+v/1", holeRect.Box, hole.Opacity, want)

@@ -1114,8 +1114,11 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		labelTL.X = math.Round(labelTL.X)
 		labelTL.Y = math.Round(labelTL.Y)
 
+		maskPad := connection.Text.EdgeLabelHorizontalPadding()
+		extraPad := maskPad - 4
 		maskTL := labelTL.Copy()
-		width := connection.LabelWidth
+		maskTL.X -= float64(extraPad) / 2
+		width := connection.LabelWidth + extraPad
 		height := connection.LabelHeight
 
 		if connection.Icon != nil {
@@ -1328,10 +1331,11 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 				fontClass += " text-underline"
 			}
 			if connection.Fill != color.Empty {
+				fillPad := float64(connection.Text.EdgeLabelHorizontalPadding() + 4)
 				rectEl := d2themes.NewThemableElement("rect", inlineTheme)
 				rectEl.Rx = 10
-				rectEl.X, rectEl.Y = labelTL.X-4, labelTL.Y-3
-				rectEl.Width, rectEl.Height = float64(connection.LabelWidth)+8, float64(connection.LabelHeight)+6
+				rectEl.X, rectEl.Y = labelTL.X-fillPad/2, labelTL.Y-3
+				rectEl.Width, rectEl.Height = float64(connection.LabelWidth)+fillPad, float64(connection.LabelHeight)+6
 				rectEl.Fill = connection.Fill
 				writer.element(rectEl)
 			}

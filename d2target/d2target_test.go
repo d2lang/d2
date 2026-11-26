@@ -146,3 +146,31 @@ func TestBorderDecorationBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestEdgeLabelHorizontalPadding(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text Text
+		want int
+	}{
+		{name: "empty", text: Text{FontSize: 16, LabelHeight: 21}, want: 0},
+		{name: "single-line", text: Text{Label: "true", FontSize: 16, LabelHeight: 21}, want: 21},
+		{name: "multi-line", text: Text{Label: "a\nb", FontSize: 16, LabelHeight: 37}, want: 19},
+		{name: "rich-language-uses-font-size", text: Text{Label: "# H1\nbody", Language: "markdown", FontSize: 16, LabelHeight: 80}, want: 16},
+		{name: "zero-height-falls-back-to-font-size", text: Text{Label: "ok", FontSize: 14}, want: 14},
+		{name: "minimum-floor", text: Text{Label: "tiny", FontSize: 2, LabelHeight: 2}, want: 4},
+		{name: "missing-metrics-fallback", text: Text{Label: "unset"}, want: 4},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.text.EdgeLabelHorizontalPadding(); got != tc.want {
+				t.Fatalf("EdgeLabelHorizontalPadding() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
