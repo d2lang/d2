@@ -80,6 +80,15 @@ gh workflow run pypi-publish.yml --repo d2lang/d2 --ref master -f version=v0.9.0
 After the upload, verify the public package with `uvx d2lang@0.9.0 --version`, substituting
 the published version.
 
+For stable releases starting with `v0.10.0`, the same workflow publishes
+`io.github.d2lang/d2` to the [official MCP Registry](https://registry.modelcontextprotocol.io/).
+The wheel builder sets both versions in [server.json](../../server.json) from the release tag
+and includes the server name in each wheel's PyPI description. The smoke tests start
+`uvx d2lang mcp` on all six platforms. Once the PyPI upload succeeds, the Registry job
+authenticates with the repository's GitHub OIDC token and publishes the matching listing.
+If this job fails, rerun failed jobs in the original workflow run. A matching, already
+published listing passes the check.
+
 ## _install.sh
 
 The template for the install script in the root of the d2 repository.
