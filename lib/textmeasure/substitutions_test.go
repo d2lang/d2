@@ -158,7 +158,7 @@ func TestMarkdownMatcherNoMatchStorageIsSparse(t *testing.T) {
 
 	input := "${unknown} " + strings.Repeat("plain text without matches ", 1<<15)
 	allocations := testing.AllocsPerRun(5, func() {
-		got, used, err := matcher.replaceBounded(context.Background(), input, 32)
+		got, used, err := matcher.replaceBounded(context.Background(), input, 32, nil)
 		if err != nil || got != input || used != 0 {
 			panic("unexpected no-match result")
 		}
@@ -229,4 +229,109 @@ func (c *markdownCancelAfterErrContext) Err() error {
 		return context.Canceled
 	}
 	return nil
+}
+
+func TestResolveSubstitutionsMarkdownBounded(t *testing.T) {
+	t.Parallel()
+	const input = "${ENV} / ${cfg.\"a}b\"} / ${'can''t}stop'} / ${don't} / ${a}b} / ${missing}\n\n`code ${ENV}`\n\n```\n${ENV}\n```"
+	const want = "local / dotted / quoted / bare / longest / ${missing}\n\n`code ${ENV}`\n\n```\n${ENV}\n```"
+	values := map[string]string{"ENV": "local", `cfg."a}b"`: "dotted", "'can''t}stop'": "quoted", "don't": "bare", "a}b": "longest"}
+	visited := map[string]int{}
+	resolve := func(key string) (string, bool) {
+		visited[key]++
+		value, ok := values[key]
+		return value, ok
+	}
+	got, used, err := ResolveSubstitutionsMarkdownBounded(context.Background(), input,
+		map[string]string{"ENV": "outer", "a": "short", "a}b": "legacy"}, 100, resolve)
+	if err != nil || got != want {
+		t.Fatalf("result = %q, %v; want %q", got, err, want)
+	}
+	if used != int64(6+len("localdottedquotedbarelongest")) {
+		t.Errorf("work = %d", used)
+	}
+	if visited["ENV"] != 1 || visited["a"] != 0 || visited["a}b"] != 1 {
+		t.Errorf("resolved keys = %v", visited)
+	}
+}
+
+func TestMarkdownReferenceBoundaries(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ input, want string }{
+		{`${ "some } name" }`, ` "some } name" `},
+		{`${ 'some}name'}`, ` 'some}name'`},
+		{`${its"name}after`, `its"name`},
+		{`${a\}b}`, `a\}b`},
+		{`${"escaped\"}quote"}`, `"escaped\"}quote"`},
+		{`${'slash\'}`, `'slash\'`},
+	} {
+		end, next, err := markdownReferenceEnd(context.Background(), tc.input, 2)
+		if err != nil || end <= 2 || next != end || tc.input[2:end-1] != tc.want {
+			t.Errorf("boundaries of %q = (%d, %d, %v), want %q", tc.input, end, next, err, tc.want)
+		}
+	}
+}
+
+func TestResolveSubstitutionsMarkdownBudgetAndMalformedReferences(t *testing.T) {
+	t.Parallel()
+	resolve := func(key string) (string, bool) { return "value", key == "x" }
+	got, used, err := ResolveSubstitutionsMarkdownBounded(context.Background(), "${unfinished ${x} ${missing}", nil, 6, resolve)
+	if err != nil || got != "${unfinished value ${missing}" || used != 6 {
+		t.Fatalf("result = %q, work %d, error %v", got, used, err)
+	}
+	_, _, err = ResolveSubstitutionsMarkdownBounded(context.Background(), "${x}", nil, 5, resolve)
+	if err == nil {
+		t.Fatal("expected expansion limit")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = ResolveSubstitutionsMarkdownBounded(ctx, "${x}", nil, 6, resolve)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("result error = %v, want context.Canceled", err)
+	}
+}
+
+func TestMarkdownLinkSubstitutions(t *testing.T) {
+	t.Parallel()
+	const input = "[${name}](${url} '${name}')\n\n" +
+		"[first][ref] and ![second][ref]\n\n[ref]: <${url}> \"multi\n${name}\"\n\n" +
+		"![alt](${url}) <https://example.com/${name}> [unknown](${missing})\n\n" +
+		"`[code](${url})`\n\n```\n[code](${url})\n```"
+	const want = "[Guide](https://example.com/guide 'Guide')\n\n" +
+		"[first][ref] and ![second][ref]\n\n[ref]: <https://example.com/guide> \"multi\nGuide\"\n\n" +
+		"![alt](https://example.com/guide) <https://example.com/Guide> [unknown](${missing})\n\n" +
+		"`[code](${url})`\n\n```\n[code](${url})\n```"
+	vars := map[string]string{"url": "https://example.com/guide", "name": "Guide"}
+	// The reference destination and title each cost one substitution even with two uses.
+	budget := int64(3*(1+len(vars["url"])) + 4*(1+len(vars["name"])))
+	got, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, budget)
+	if err != nil || got != want || used != budget {
+		t.Fatalf("result = %q, work = %d, error = %v; want %q, work %d", got, used, err, want, budget)
+	}
+	if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, budget-1); err == nil {
+		t.Fatal("expected link substitutions to honor the expansion limit")
+	}
+}
+
+func TestMarkdownLinkSubstitutionsPreserveURLAndTitle(t *testing.T) {
+	t.Parallel()
+	const input = `[Guide](${url} '${title}')`
+	values := map[string]string{
+		"url":   "https://example.com/My Guide)/v1?q=1&copy;=2",
+		"title": "What's new (v1)",
+	}
+	out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, values, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderMarkdown(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `<a href="https://example.com/My%20Guide)/v1?q=1&amp;copy;=2" title="What's new (v1)">Guide</a>`; !strings.Contains(rendered, want) {
+		t.Errorf("rendered %q, want %q", rendered, want)
+	}
+	if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, values, used-1); err == nil {
+		t.Fatal("escaped bytes must count toward the expansion limit")
+	}
 }
