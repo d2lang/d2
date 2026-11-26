@@ -112,10 +112,14 @@ class DraftUploadTests(unittest.TestCase):
         self.sbom.write_text('{"spdxVersion":"SPDX-2.3"}')
         self.provenance = self.root / f"d2-{VERSION}-provenance.sigstore.json"
         self.provenance.write_bytes(b"verified archive provenance bundle")
+        self.debs = self.root / "debs"
+        self.debs.mkdir()
+        for arch in ("amd64", "arm64"):
+            (self.debs / f"d2_1.2.3_{arch}.deb").write_bytes(f"verified {arch} package".encode())
         self.assets = self.read_assets()
 
     def read_assets(self):
-        return uploader.local_assets(VERSION, self.archives, self.msi, self.sbom, self.provenance)
+        return uploader.local_assets(VERSION, self.archives, self.msi, self.sbom, self.provenance, self.debs)
 
     def run_upload(self, fake):
         with patch.object(uploader, "gh", fake.gh), patch.object(uploader, "api", fake.api), patch.object(uploader.time, "sleep"), patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}):
@@ -147,10 +151,31 @@ class DraftUploadTests(unittest.TestCase):
     def test_upload_and_retry_preserve_exact_bytes(self):
         fake = FakeGitHub()
         self.run_upload(fake)
-        self.assertEqual(len(fake.writes), 11)
-        self.assertIn(self.provenance.name, {asset["name"] for asset in fake.release["assets"]})
+        self.assertEqual(len(fake.writes), 13)
+        remote = {asset["name"]: (asset["digest"], asset["size"]) for asset in fake.release["assets"]}
+        self.assertIn(self.provenance.name, remote)
+        for package in self.debs.iterdir():
+            self.assertEqual(remote[package.name], (uploader.digest(package), package.stat().st_size))
         self.run_upload(fake)
-        self.assertEqual(len(fake.writes), 11)
+        self.assertEqual(len(fake.writes), 13)
+
+    def test_debian_packages_reject_missing_extra_and_empty_files(self):
+        package = self.debs / "d2_1.2.3_arm64.deb"
+        package.unlink()
+        with self.assertRaisesRegex(ValueError, "must contain exactly"):
+            self.read_assets()
+        package.touch()
+        with self.assertRaisesRegex(ValueError, "nonempty regular file"):
+            self.read_assets()
+        (self.debs / "unexpected").touch()
+        with self.assertRaisesRegex(ValueError, "must contain exactly"):
+            self.read_assets()
+
+    def test_debian_prerelease_asset_names(self):
+        for package in self.debs.iterdir():
+            package.rename(package.with_name(package.name.replace("1.2.3", "1.2.3-rc.1")))
+        packages = uploader.debian_packages("v1.2.3-rc.1", self.debs)
+        self.assertEqual([p.name for p in packages], ["d2_1.2.3-rc.1_amd64.deb", "d2_1.2.3-rc.1_arm64.deb"])
 
     def test_requires_provenance_bundle_for_requested_version(self):
         original = self.provenance
@@ -187,7 +212,7 @@ class DraftUploadTests(unittest.TestCase):
         self.run_upload(fake)
         self.assertEqual(fake.writes, writes)
         self.assertEqual(fake.release["assets"][:2], completed)
-        self.assertEqual(len(fake.release["assets"]), 11)
+        self.assertEqual(len(fake.release["assets"]), 13)
         self.assertEqual([call[3] for call in fake.writes if call[:3] == ("api", "--method", "DELETE")],
                          [f"repos/test/repo/releases/assets/{first_id}", f"repos/test/repo/releases/assets/{second_id}"])
 
