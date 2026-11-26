@@ -461,7 +461,7 @@ func (c *compiler) validateConfigs(configs *Field) {
 			if err != nil || math.IsNaN(scale) || math.IsInf(scale, 0) || (scale <= 0 && scale != -1) || f.Composite != nil {
 				c.errorf(f.LastRef().AST(), `expected a finite positive scale or -1 for automatic sizing, got %q`, val)
 			}
-		case "sketch", "isometric", "center", "force-appendix":
+		case "sketch", "center", "force-appendix":
 			_, err := strconv.ParseBool(val)
 			if err != nil || (f.Name.ScalarString() == "force-appendix" && f.Composite != nil) {
 				c.errorf(f.LastRef().AST(), `expected a boolean for "%s", got "%s"`, f.Name.ScalarString(), val)

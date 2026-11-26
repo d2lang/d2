@@ -20,41 +20,31 @@ func fixture(t *testing.T, root, path, content string) string {
 	return path
 }
 
-func TestDiscoverSnapshotsVariantsAndDelta(t *testing.T) {
+func TestDiscoverSnapshotsAndDelta(t *testing.T) {
 	root := t.TempDir()
 	fixture(t, root, "stable/example/dagre/sketch.exp.svg", "same")
 	fixture(t, root, "stable/example/dagre/sketch.got.svg", "same")
-	fixture(t, root, "stable/example/dagre/isometric.exp.svg", "old")
-	fixture(t, root, "stable/example/dagre/isometric.got.svg", "new")
-	fixture(t, root, "stable/example/dagre/isometric.layers.0.steps.1.exp.svg", "child")
-	fixture(t, root, "stable/example/dagre/isometric.layers.1.got.svg", "new board")
+	fixture(t, root, "stable/changed/dagre/sketch.exp.svg", "old")
+	fixture(t, root, "stable/changed/dagre/sketch.got.svg", "new")
+	fixture(t, root, "stable/new/elk/sketch.got.svg", "new snapshot")
 	fixture(t, root, "regression/example/elk/sketch.exp.svg", "other set")
 	fixture(t, root, "stable/example/elk/alternate.exp.svg", "legacy svg")
 	fixture(t, root, "stable/example/dagre/board.exp.json", "{}")
-	fixture(t, root, "stable/example/dagre/raster.exp.png", "not isometric")
-	fixture(t, root, "stable/example/dagre/isometric..exp.png", "empty suffix")
-	fixture(t, root, "stable/example/dagre/isometric..exp.svg", "empty suffix")
+	fixture(t, root, "stable/example/dagre/raster.exp.png", "PNG snapshot")
+	fixture(t, root, "stable/example/dagre/sketch..exp.png", "empty suffix")
+	fixture(t, root, "stable/example/dagre/sketch..exp.svg", "empty suffix")
 	cases := []struct {
 		name  string
 		opts  discoveryOptions
 		names []string
 	}{
-		{"all", discoveryOptions{Variant: "all"}, []string{
-			"regression/example/elk/sketch.svg", "stable/example/dagre/isometric.layers.0.steps.1.svg",
-			"stable/example/dagre/isometric.layers.1.svg", "stable/example/dagre/isometric.svg",
-			"stable/example/dagre/sketch.svg", "stable/example/elk/alternate.svg",
+		{"all", discoveryOptions{}, []string{
+			"regression/example/elk/sketch.svg", "stable/changed/dagre/sketch.svg",
+			"stable/example/dagre/sketch.svg", "stable/example/elk/alternate.svg", "stable/new/elk/sketch.svg",
 		}},
-		{"isometric", discoveryOptions{Variant: "isometric"}, []string{
-			"stable/example/dagre/isometric.layers.0.steps.1.svg", "stable/example/dagre/isometric.layers.1.svg", "stable/example/dagre/isometric.svg",
-		}},
-		{"sketch", discoveryOptions{Variant: "sketch"}, []string{
-			"regression/example/elk/sketch.svg", "stable/example/dagre/sketch.svg", "stable/example/elk/alternate.svg",
-		}},
-		{"delta", discoveryOptions{Variant: "all", Delta: true}, []string{
-			"stable/example/dagre/isometric.layers.1.svg", "stable/example/dagre/isometric.svg",
-		}},
-		{"set and case", discoveryOptions{Variant: "all", TestSet: "^regression$", TestCase: "^example$"}, []string{"regression/example/elk/sketch.svg"}},
-		{"no match", discoveryOptions{Variant: "all", TestCase: "absent"}, nil},
+		{"delta", discoveryOptions{Delta: true}, []string{"stable/changed/dagre/sketch.svg", "stable/new/elk/sketch.svg"}},
+		{"set and case", discoveryOptions{TestSet: "^regression$", TestCase: "^example$"}, []string{"regression/example/elk/sketch.svg"}},
+		{"no match", discoveryOptions{TestCase: "absent"}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -70,10 +60,10 @@ func TestDiscoverSnapshotsVariantsAndDelta(t *testing.T) {
 					t.Errorf("nonunique ID %q", item.ID)
 				}
 				ids[item.ID] = true
-				if strings.Contains(item.Name, "layers.1.svg") && (!item.MissingExpected || item.ExpImage != "" || item.GotLabel != "Got") {
+				if item.Name == "stable/new/elk/sketch.svg" && (!item.MissingExpected || item.ExpImage != "" || item.GotLabel != "Got") {
 					t.Errorf("missing baseline not represented: %+v", item)
 				}
-				if item.Name == "stable/example/dagre/isometric.svg" && (item.ExpImage == "" || item.GotLabel != "Got") {
+				if item.Name == "stable/changed/dagre/sketch.svg" && (item.ExpImage == "" || item.GotLabel != "Got") {
 					t.Errorf("change not paired: %+v", item)
 				}
 				if item.Name == "stable/example/dagre/sketch.svg" && (item.ExpImage != "" || item.GotLabel != "Expected") {
@@ -87,65 +77,13 @@ func TestDiscoverSnapshotsVariantsAndDelta(t *testing.T) {
 	}
 }
 
-func TestDiscoverIgnoresPNGVisualSnapshots(t *testing.T) {
-	root := t.TempDir()
-	for _, ext := range []string{"svg", "png"} {
-		fixture(t, root, "stable/example/elk/isometric.exp."+ext, "same")
-		fixture(t, root, "stable/example/elk/isometric.got."+ext, "same")
-		fixture(t, root, "stable/example/elk/isometric.layers.0.exp."+ext, "before")
-		fixture(t, root, "stable/example/elk/isometric.layers.0.got."+ext, "after")
-		fixture(t, root, "stable/example/elk/isometric.steps.0.got."+ext, "new board")
-	}
-	fixture(t, root, "stable/legacy-only/dagre/isometric.exp.png", "legacy PNG")
-	fixture(t, root, "stable/legacy-only/dagre/isometric.layers.0.got.png", "legacy PNG delta")
-	fixture(t, root, "stable/example/elk/sketch.got.png", "PNG sketch")
-	fixture(t, root, "stable/example/elk/sketch.exp.svg", "ordinary")
-	for _, delta := range []bool{false, true} {
-		items, err := discoverTests(root, discoveryOptions{Variant: "isometric", Delta: delta})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := 3
-		if delta {
-			want = 2
-		}
-		if len(items) != want {
-			t.Fatalf("delta=%v: got %d snapshots, want %d", delta, len(items), want)
-		}
-		for _, item := range items {
-			if item.Variant != "isometric" || strings.Contains(item.Name, "sketch") || filepath.Ext(item.GotImage) != ".svg" {
-				t.Fatalf("misclassified snapshot: %+v", item)
-			}
-		}
-	}
-	items, err := discoverTests(root, discoveryOptions{Variant: "sketch"})
-	if err != nil || len(items) != 1 || items[0].Name != "stable/example/elk/sketch.svg" {
-		t.Fatalf("SVG isometric snapshots leaked into sketch report: %+v %v", items, err)
-	}
-	items, err = discoverTests(root, discoveryOptions{Variant: "all"})
-	if err != nil || len(items) != 4 {
-		t.Fatalf("legacy PNGs leaked into the default report: %+v %v", items, err)
-	}
-	reportPath := filepath.Join(t.TempDir(), "report.html")
-	if err := writeReport(reportPath, items); err != nil {
-		t.Fatal(err)
-	}
-	output, err := os.ReadFile(reportPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(output), ".png") || strings.Contains(string(output), "legacy-only") {
-		t.Fatal("SVG report contains a PNG visual link or legacy PNG-only case")
-	}
-}
-
 func TestDiscoverSnapshotErrors(t *testing.T) {
-	for _, opts := range []discoveryOptions{{Variant: "png"}, {Variant: "all", TestSet: "["}, {Variant: "all", TestCase: "["}} {
+	for _, opts := range []discoveryOptions{{TestSet: "["}, {TestCase: "["}} {
 		if _, err := discoverTests(t.TempDir(), opts); err == nil {
 			t.Errorf("accepted %+v", opts)
 		}
 	}
-	if _, err := discoverTests(filepath.Join(t.TempDir(), "absent"), discoveryOptions{Variant: "all"}); err == nil {
+	if _, err := discoverTests(filepath.Join(t.TempDir(), "absent"), discoveryOptions{}); err == nil {
 		t.Fatal("ignored missing snapshot tree")
 	}
 }
@@ -153,8 +91,8 @@ func TestDiscoverSnapshotErrors(t *testing.T) {
 func TestReportRelativeLinksAndEscaping(t *testing.T) {
 	root := t.TempDir()
 	data := filepath.Join(root, "testdata")
-	fixture(t, data, "stable/space # & <case>/elk/isometric.got.svg", "new")
-	items, err := discoverTests(data, discoveryOptions{Variant: "all", Delta: true})
+	fixture(t, data, "stable/space # & <case>/elk/sketch.got.svg", "new")
+	items, err := discoverTests(data, discoveryOptions{Delta: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +112,7 @@ func TestReportRelativeLinksAndEscaping(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(output)
-	for _, want := range []string{"Missing expected snapshot", "space # &amp; &lt;case&gt;", "../../testdata/stable/space%20%23%20&amp;%20%3Ccase%3E/elk/isometric.got.svg", `id="test-1"`, `alt="Got `} {
+	for _, want := range []string{"Missing expected snapshot", "space # &amp; &lt;case&gt;", "../../testdata/stable/space%20%23%20&amp;%20%3Ccase%3E/elk/sketch.got.svg", `id="test-1"`, `alt="Got `} {
 		if !strings.Contains(html, want) {
 			t.Errorf("missing %q in %s", want, html)
 		}
@@ -198,7 +136,7 @@ func TestDiscoverChangedSVG(t *testing.T) {
 	root := t.TempDir()
 	fixture(t, root, "stable/diagram/dagre/sketch.exp.svg", "old SVG")
 	fixture(t, root, "stable/diagram/dagre/sketch.got.svg", "new SVG")
-	items, err := discoverTests(root, discoveryOptions{Variant: "sketch", Delta: true})
+	items, err := discoverTests(root, discoveryOptions{Delta: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,23 +152,20 @@ func TestDiscoverLayoutFreeAndNestedCases(t *testing.T) {
 	fixture(t, root, "asciitxtar/nested/focused/sketch.exp.svg", "nested ascii")
 	fixture(t, root, "asciitxtar/nested/elk/sketch.exp.svg", "case named elk")
 	fixture(t, root, "stable/group/focused/dagre/sketch.exp.svg", "nested svg")
-	fixture(t, root, "stable/group/focused/dagre/isometric.exp.svg", "nested dagre")
-	fixture(t, root, "stable/group/focused/elk/isometric.exp.svg", "nested elk")
-	fixture(t, root, "stable/group/focused/tala/isometric.exp.svg", "nested tala")
-	fixture(t, root, "stable/group/other/elk/isometric.exp.svg", "other nested case")
+	fixture(t, root, "stable/group/focused/elk/sketch.exp.svg", "nested elk")
+	fixture(t, root, "stable/group/focused/tala/sketch.exp.svg", "nested tala")
+	fixture(t, root, "stable/group/other/elk/sketch.exp.svg", "other nested case")
 	for _, tc := range []struct {
-		set, testcase, variant string
-		names                  []string
+		set, testcase string
+		names         []string
 	}{
-		{"^asciitxtar$", "^focused$", "all", []string{"asciitxtar/focused/sketch.svg"}},
-		{"^asciitxtar$", "^nested/focused$", "sketch", []string{"asciitxtar/nested/focused/sketch.svg"}},
-		{"^asciitxtar$", "^nested/elk$", "sketch", []string{"asciitxtar/nested/elk/sketch.svg"}},
-		{"^asciitxtar$", "", "isometric", nil},
-		{"^stable$", "^group/focused$", "isometric", []string{"stable/group/focused/dagre/isometric.svg", "stable/group/focused/elk/isometric.svg", "stable/group/focused/tala/isometric.svg"}},
-		{"^stable$", "^group/focused$", "sketch", []string{"stable/group/focused/dagre/sketch.svg"}},
+		{"^asciitxtar$", "^focused$", []string{"asciitxtar/focused/sketch.svg"}},
+		{"^asciitxtar$", "^nested/focused$", []string{"asciitxtar/nested/focused/sketch.svg"}},
+		{"^asciitxtar$", "^nested/elk$", []string{"asciitxtar/nested/elk/sketch.svg"}},
+		{"^stable$", "^group/focused$", []string{"stable/group/focused/dagre/sketch.svg", "stable/group/focused/elk/sketch.svg", "stable/group/focused/tala/sketch.svg"}},
 	} {
-		t.Run(tc.set+tc.testcase+tc.variant, func(t *testing.T) {
-			items, err := discoverTests(root, discoveryOptions{Variant: tc.variant, TestSet: tc.set, TestCase: tc.testcase})
+		t.Run(tc.set+tc.testcase, func(t *testing.T) {
+			items, err := discoverTests(root, discoveryOptions{TestSet: tc.set, TestCase: tc.testcase})
 			if err != nil {
 				t.Fatal(err)
 			}

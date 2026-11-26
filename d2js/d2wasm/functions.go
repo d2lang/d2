@@ -369,9 +369,6 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 	if input.Opts != nil && input.Opts.Sketch != nil {
 		renderOpts.Sketch = input.Opts.Sketch
 	}
-	if input.Opts != nil && input.Opts.Isometric != nil {
-		renderOpts.Isometric = input.Opts.Isometric
-	}
 	if input.Opts != nil && input.Opts.Pad != nil {
 		renderOpts.Pad = input.Opts.Pad
 	}
@@ -415,7 +412,6 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 			ThemeOverrides:     renderOpts.ThemeOverrides,
 			DarkThemeOverrides: renderOpts.DarkThemeOverrides,
 			Sketch:             renderOpts.Sketch,
-			Isometric:          renderOpts.Isometric,
 			Pad:                renderOpts.Pad,
 			Center:             renderOpts.Center,
 			Scale:              renderOpts.Scale,
@@ -524,9 +520,6 @@ func render(input RenderRequest) ([]byte, error) {
 	if input.Opts != nil && input.Opts.Sketch != nil {
 		renderOpts.Sketch = input.Opts.Sketch
 	}
-	if input.Opts != nil && input.Opts.Isometric != nil {
-		renderOpts.Isometric = input.Opts.Isometric
-	}
 	if input.Opts != nil && input.Opts.Pad != nil {
 		renderOpts.Pad = input.Opts.Pad
 	}
@@ -547,18 +540,6 @@ func render(input RenderRequest) ([]byte, error) {
 	}
 	if input.Opts != nil && input.Opts.NoXMLTag != nil {
 		renderOpts.NoXMLTag = input.Opts.NoXMLTag
-	}
-
-	if renderOpts.Isometric != nil && *renderOpts.Isometric {
-		if input.Opts.ASCII != nil && *input.Opts.ASCII {
-			return nil, &WASMError{Message: "isometric rendering requires SVG output; ASCII cannot preserve its geometry", Code: 400}
-		}
-		if animateInterval > 0 {
-			return nil, &WASMError{Message: "isometric rendering does not yet support multi-board SVG animation", Code: 400}
-		}
-		if forceAppendix {
-			return nil, &WASMError{Message: "isometric rendering does not yet support an SVG appendix", Code: 400}
-		}
 	}
 
 	if input.Opts != nil && input.Opts.ASCII != nil && *input.Opts.ASCII {

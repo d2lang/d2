@@ -29,24 +29,19 @@ type TemplateData struct {
 }
 
 type TestItem struct {
-	ID, Name, Variant  string
+	ID, Name           string
 	ExpImage, GotImage string
 	GotLabel           string
 	MissingExpected    bool
 }
 
 type discoveryOptions struct {
-	Delta                      bool
-	Variant, TestSet, TestCase string
+	Delta             bool
+	TestSet, TestCase string
 }
 
-// Discover each SVG snapshot independently, including multiple isometric boards.
-// PNG coverage lives in a separate test bundle. Got-only images are useful
-// before admitting goldens.
+// Include new snapshots that have no expected golden yet.
 func discoverTests(testdata string, opts discoveryOptions) ([]TestItem, error) {
-	if opts.Variant != "all" && opts.Variant != "sketch" && opts.Variant != "isometric" {
-		return nil, fmt.Errorf("invalid variant %q: use all, sketch or isometric", opts.Variant)
-	}
 	setRE, err := regexp.Compile(opts.TestSet)
 	if err != nil {
 		return nil, fmt.Errorf("invalid test-set: %w", err)
@@ -59,7 +54,7 @@ func discoverTests(testdata string, opts discoveryOptions) ([]TestItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	type pair struct{ name, variant, exp, got string }
+	type pair struct{ name, exp, got string }
 	pairs := make(map[string]*pair)
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -70,13 +65,6 @@ func discoverTests(testdata string, opts discoveryOptions) ([]TestItem, error) {
 		}
 		stem, kind, ext, ok := snapshotName(entry.Name())
 		if !ok {
-			return nil
-		}
-		variant := "sketch"
-		if stem == "isometric" || strings.HasPrefix(stem, "isometric.") {
-			variant = "isometric"
-		}
-		if opts.Variant != "all" && opts.Variant != variant {
 			return nil
 		}
 		dir := filepath.Dir(path)
@@ -104,7 +92,7 @@ func discoverTests(testdata string, opts discoveryOptions) ([]TestItem, error) {
 		key := filepath.Join(dir, stem+ext)
 		item := pairs[key]
 		if item == nil {
-			item = &pair{name: filepath.ToSlash(filepath.Join(relative, stem+ext)), variant: variant}
+			item = &pair{name: filepath.ToSlash(filepath.Join(relative, stem+ext))}
 			pairs[key] = item
 		}
 		if kind == "exp" {
@@ -134,7 +122,7 @@ func discoverTests(testdata string, opts discoveryOptions) ([]TestItem, error) {
 		if opts.Delta && !changed {
 			continue
 		}
-		item := TestItem{Name: pair.name, Variant: pair.variant, MissingExpected: pair.exp == ""}
+		item := TestItem{Name: pair.name, MissingExpected: pair.exp == ""}
 		if changed {
 			item.ExpImage, item.GotImage, item.GotLabel = pair.exp, pair.got, "Got"
 		} else {
@@ -156,7 +144,7 @@ func snapshotName(name string) (stem, kind, ext string, ok bool) {
 			continue
 		}
 		stem := strings.TrimSuffix(name, suffix)
-		if stem == "" || stem == "isometric." {
+		if stem == "" || strings.HasSuffix(stem, ".") {
 			continue
 		}
 		return stem, kind, ".svg", true
@@ -216,7 +204,7 @@ func main() {
 	cpuProfileFlag := false
 	memProfileFlag := false
 	flag.DurationVar(&testTimeout, "timeout", 10*time.Minute, "Timeout for running e2e tests before generating the report.")
-	flag.StringVar(&variantFlag, "variant", "all", "Snapshot variants to display: all, sketch or isometric.")
+	flag.StringVar(&variantFlag, "variant", "all", "Snapshot variants to display: all or sketch.")
 	flag.BoolVar(&deltaFlag, "delta", false, "Generate the report only for cases that changed.")
 	flag.StringVar(&testNameFlag, "test-name", "E2E", "Name of e2e tests. Defaults to E2E")
 	flag.StringVar(&testSetFlag, "test-set", "", "Only run set of tests matching this string. e.g. regressions")
@@ -226,8 +214,8 @@ func main() {
 	skipTests := flag.Bool("skip-tests", false, "Skip running tests first")
 	flag.BoolVar(&vFlag, "v", false, "verbose")
 	flag.Parse()
-	if variantFlag != "all" && variantFlag != "sketch" && variantFlag != "isometric" {
-		stdlog.Fatal("invalid -variant: use all, sketch or isometric")
+	if variantFlag != "all" && variantFlag != "sketch" {
+		stdlog.Fatal("invalid -variant: use all or sketch")
 	}
 
 	vString := ""
@@ -279,7 +267,7 @@ func main() {
 	}
 
 	tests, err := discoverTests(filepath.Join(testDir, "testdata"), discoveryOptions{
-		Delta: deltaFlag, Variant: variantFlag, TestSet: testSetFlag, TestCase: testCaseFlag,
+		Delta: deltaFlag, TestSet: testSetFlag, TestCase: testCaseFlag,
 	})
 	if err != nil {
 		stdlog.Fatal(err)

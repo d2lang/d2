@@ -24,7 +24,8 @@ func TestAnimateIntervalSourcePrecedence(t *testing.T) {
 		{"selected board", nil, []string{"--target=steps.next"}, "80ms steps(1,end) infinite"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, dir, err := isometricCLI(t, source, tc.env, append(tc.args, "out.svg")...)
+			dir := t.TempDir()
+			_, err := imageCLIWithEnv(t, dir, source, tc.env, append(tc.args, "out.svg")...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,7 +56,6 @@ func TestAnimateIntervalSourceGIF(t *testing.T) {
 		durationCS int
 	}{
 		{"source", nil, 16},
-		{"isometric", []string{"--isometric", "--scale=.15"}, 16},
 		{"zero uses GIF default", []string{"--animate-interval=0", "--scale=.15"}, 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,8 +83,6 @@ func TestAnimateIntervalSourceUnsupportedFormat(t *testing.T) {
 	for _, args := range [][]string{
 		{"out.png"},
 		{"--stdout-format=png", "-"},
-		{"--isometric", "out.svg"},
-		{"--isometric", "out.pdf"},
 	} {
 		data, err := imageCLI(t, t.TempDir(), source, args...)
 		if err == nil || !strings.Contains(err.Error(), "animate-interval") || len(data) != 0 {

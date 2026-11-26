@@ -2250,11 +2250,6 @@
       "zIndex": 0
     }
   ],
-  "explicitDefaultStrokeWidths": {
-    "cluster.left_column.router-namespace": true,
-    "cluster.right_column.operator-namespace": true,
-    "cluster.right_column.workspace-namespace": true
-  },
   "root": {
     "id": "",
     "type": "",
