@@ -1,5 +1,4 @@
-// Character boundaries, priority rules, and delimiter matching are defined
-// alongside these productions in lexical.md. No whitespace is implicit.
+// Productions match decoded Unicode scalar values. Whitespace is explicit.
 sourceChar = "\u0000" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
 nonLF = "\u0000" … "\t" | "\v" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
 newline = "\n" .
@@ -8,16 +7,22 @@ horizontalSpace = "\t" | "\v" … "\r" | " " | "\u0085" | "\u00A0" | "\u1680"
                 | "\u205F" | "\u3000" .
 decimalDigit = "0" … "9" .
 
+// Consume line comments through the last character before LF or EOF.
 lineComment = "#" { nonLF } .
+// At entry start, three quotes begin a block comment. The next triple closes it.
 blockComment = "\"\"\"" { [ "\"" [ "\"" ] ] nonQuote } "\"\"\"" .
 nonQuote = "\u0000" … "!" | "#" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
 
 keyString = singleQuotedString | doubleQuotedKey | blockString | unquotedKey .
 valueString = singleQuotedString | doubleQuotedValue | blockString | unquotedValue .
 
+// Scan the longest bare string, trimming trailing whitespace from its final text
+// segment. It must yield text or a substitution. An unescaped "--", "->" or "-*"
+// ends a bare key before the hyphen. A decoded bare key cannot start with "@".
 unquotedKey = keyStart { keyUnit } .
 keyStart = commonBareStart | "$" | "*" | "-" | escape | continuedLine .
 keyUnit = commonBareChar | "$" | "*" | "-" | escape | continuedLine .
+// The raw prefix "...@" is reserved for a spread and cannot start a bare value.
 unquotedValue = valueStart { valueUnit } .
 valueStart = commonBareStart | "(" | "&" | "*" | "-" | "." | ":" | "<" | ">"
            | substitution | escape | continuedLine .
@@ -46,7 +51,8 @@ doubleQuotedValue = "\"" { doubleChar | substitution | escape | "\\" newline } "
 doubleChar = "\u0000" … "\t" | "\v" … "!" | "#" | "%" … "["
            | "]" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
 
-// Capture the opening fence, then scan to its corresponding closing fence.
+// Capture the longest opening fence. The first copy of that fence followed
+// immediately by "|" closes the block, even mid-line.
 blockString = "|" { fenceChar } [ blockTag ] ( horizontalSpace | newline )
               { sourceChar } { fenceChar } "|" .
 fenceChar = "\u0000" … "\b" | "\u000E" … "\u001F" | "!" … "/" | ":" … "@"
