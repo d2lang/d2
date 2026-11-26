@@ -85,7 +85,7 @@ func (c *compiler) _import(imp *d2ast.Import, importer Node) (Node, bool) {
 func (c *compiler) selectImport(ir *Map, imp *d2ast.Import) (Node, bool) {
 	nilScopeMap(ir)
 	if ida := imp.IDA(); len(ida) > 0 {
-		f := ir.getFieldIndexed(ida...)
+		f := ir.getFieldIndexedMode(ida, true)
 		if f == nil {
 			c.errorf(imp, "import key %q doesn't exist inside import", ida)
 			return nil, false
@@ -117,7 +117,7 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 		if template := c.importTemplates[impPath]; template != nil {
 			c.seenImports[impPath] = struct{}{}
 			if ida := imp.IDA(); fieldImport && !imp.Spread && len(ida) > 0 && template.canSelect() {
-				selected := template.ir.getFieldIndexed(ida...)
+				selected := template.ir.getFieldIndexedMode(ida, true)
 				if selected == nil {
 					c.errorf(imp, "import key %q doesn't exist inside import", ida)
 					return nil, false

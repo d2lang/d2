@@ -7,10 +7,10 @@ horizontalSpace = "\t" | "\v" … "\r" | " " | "\u0085" | "\u00A0" | "\u1680"
                 | "\u205F" | "\u3000" .
 decimalDigit = "0" … "9" .
 
-// After a colon, accept a complete three- or six-digit hex colour as a scalar.
-// At entry start (including in arrays) and after a value, "#" starts a comment.
-hexColour = "#" hexDigit hexDigit hexDigit [ hexDigit hexDigit hexDigit ] .
-hexDigit = decimalDigit | "a" … "f" | "A" … "F" .
+// After a colon, a hash attached to text starts a bare scalar (including hex
+// colours). A hash at the start of a map or array entry or after a value starts
+// a comment.
+hashValue = "#" ( valueStart | "[" | "'" | "\"" | "@" | "|" ) { valueUnit } .
 // Consume line comments through the last character before LF or EOF.
 lineComment = "#" { nonLF } .
 // At entry start, three quotes begin a block comment. The next triple closes it.

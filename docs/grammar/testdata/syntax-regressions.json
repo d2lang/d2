@@ -86,5 +86,14 @@
       {"comment": {"value": "fill"}}
     ]
   },
+  {
+    "name": "hash-labels-and-comments",
+    "source": "queue: #oncall team; task: #42# note",
+    "nodes": [
+      {"map_key": {"value": {"unquoted_string": {"value": [{"string": "#oncall team"}]}}}},
+      {"map_key": {"value": {"unquoted_string": {"value": [{"string": "#42"}]}}}},
+      {"comment": {"value": "note"}}
+    ]
+  },
   {"name": "wrong-mixed-fence", "source": "x: |!#md\nhello\n##|", "reject": true, "lexicalConstraint": "blockString"}
 ]

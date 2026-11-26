@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	tunicode "golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
@@ -1197,6 +1198,9 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 	// TODO: fix unquoted end whitespace handling to peekNotSpace
 	lastNonSpace := p.pos
 	defer s.Range.End.From(&lastNonSpace)
+	// Hash-prefixed values include complete substitutions and escapes in their
+	// token range. Other bare strings retain their existing source positions.
+	hashPrefixed := false
 
 	var sb strings.Builder
 	var rawb strings.Builder
@@ -1206,7 +1210,17 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 		sv := strings.TrimRightFunc(sb.String(), unicode.IsSpace)
 		rawv := sv
 		if hasRaw {
-			rawv = strings.TrimRightFunc(rawb.String(), unicode.IsSpace)
+			raw := rawb.String()
+			rawv = strings.TrimRightFunc(raw, unicode.IsSpace)
+			// Keep an escape's operand so the formatter cannot turn the last
+			// backslash into a line continuation that consumes the next key.
+			if len(rawv) < len(raw) && strings.HasSuffix(rawv, `\`) {
+				backslashes := len(rawv) - len(strings.TrimRight(rawv, `\`))
+				if backslashes%2 == 1 {
+					_, size := utf8.DecodeRuneInString(raw[len(rawv):])
+					rawv = raw[:len(rawv)+size]
+				}
+			}
 		}
 		if s.Pattern != nil {
 			if lastPatternIndex < len(sv) {
@@ -1267,9 +1281,23 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 		}
 
 		switch r {
-		case '\n', ';', '#', '{', '}':
+		case '\n', ';', '{', '}':
 			p.rewind()
 			return s
+		case '#':
+			// After a colon the first hash can introduce a label. At other
+			// positions it begins a comment, including at array-entry start.
+			if ctx.inKey || ctx.inArray || p.pos != s.Range.Start {
+				p.rewind()
+				return s
+			}
+			next, eof := p.peek()
+			p.rewind()
+			if eof || unicode.IsSpace(next) || strings.ContainsRune("#;{}", next) {
+				return s
+			}
+			hashPrefixed = true
+			p.peek()
 		case ']':
 			if ctx.inArray {
 				p.rewind()
@@ -1306,6 +1334,11 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 			if sb.Len() == 0 {
 				s.Pattern = append(s.Pattern, "*")
 			} else {
+				// An interpolation can start a shorter text fragment between
+				// wildcards. A prior offset outside it belongs to the old fragment.
+				if lastPatternIndex > sb.Len() {
+					lastPatternIndex = 0
+				}
 				s.Pattern = append(s.Pattern, sb.String()[lastPatternIndex:], "*")
 			}
 			lastPatternIndex = len(sb.String()) + 1
@@ -1333,6 +1366,9 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 				}
 				subst := p.parseSubstitution(start, false)
 				s.Value = append(s.Value, d2ast.InterpolationBox{Substitution: subst})
+				if hashPrefixed {
+					lastNonSpace = p.pos
+				}
 				continue
 			}
 		}
@@ -1371,6 +1407,9 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 		sb.WriteRune(d2string.DecodeEscape(r2))
 		rawb.WriteByte('\\')
 		rawb.WriteRune(r2)
+		if hashPrefixed {
+			lastNonSpace = p.pos
+		}
 	}
 }
 
@@ -1734,9 +1773,6 @@ func (p *parser) parseValue(inArray bool) d2ast.ValueBox {
 	p.commit()
 
 	switch r {
-	case '#':
-		box.UnquotedString = p.parseHexColor()
-		return box
 	case '[':
 		box.Array = p.parseArray()
 		return box
@@ -1824,33 +1860,6 @@ func (p *parser) parseValue(inArray bool) d2ast.ValueBox {
 
 	box.UnquotedString = s
 	return box
-}
-
-// The opening # has been consumed in a value position. Put it back for
-// comment parsing if the following digits don't spell a D2 hex color.
-func (p *parser) parseHexColor() *d2ast.UnquotedString {
-	digits := 0
-	for digits <= 6 {
-		r, eof := p.peek()
-		if eof || !strings.ContainsRune("0123456789abcdefABCDEF", r) {
-			break
-		}
-		digits++
-	}
-	p.rewind()
-	if digits != 3 && digits != 6 {
-		p.replay('#')
-		return nil
-	}
-
-	start := p.pos.Subtract('#', p.utf16Pos)
-	hex, _ := p.peekn(digits)
-	p.commit()
-	literal := "#" + hex
-	return &d2ast.UnquotedString{
-		Range: d2ast.Range{Path: p.path, Start: start, End: p.pos},
-		Value: []d2ast.InterpolationBox{{String: &literal, StringRaw: go2.Pointer(literal)}},
-	}
 }
 
 // The dollar sign is already consumed or part of a peeked spread prefix.

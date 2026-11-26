@@ -530,7 +530,6 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 		markdownOuterStart = c.saveTweenBinding(node, varsStack)
 	}
 	var subbed bool
-	var resolvedField *Field
 
 	switch s := node.Primary().Value.(type) {
 	case *d2ast.UnquotedString:
@@ -539,18 +538,10 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				return
 			}
 			if box.Substitution != nil {
-				for i, vars := range varsStack {
-					if c.stopped() {
-						return
-					}
-					resolvedField = c.resolveSubstitution(vars, node, box.Substitution, i == 0)
-					if resolvedField != nil {
-						if resolvedField.Primary() != nil {
-							if _, ok := resolvedField.Primary().Value.(*d2ast.Null); ok {
-								resolvedField = nil
-							}
-						}
-						break
+				resolvedField, _ := c.resolveVariable(varsStack, node, box.Substitution)
+				if resolvedField != nil && resolvedField.Primary() != nil {
+					if _, ok := resolvedField.Primary().Value.(*d2ast.Null); ok {
+						resolvedField = nil
 					}
 				}
 				if resolvedField == nil {
@@ -698,26 +689,24 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				return
 			}
 			if box.Substitution != nil {
-				for i, vars := range varsStack {
-					if c.stopped() {
-						return
-					}
-					resolvedField = c.resolveSubstitution(vars, node, box.Substitution, i == 0)
-					if resolvedField != nil {
-						break
-					}
-				}
+				resolvedField, _ := c.resolveVariable(varsStack, node, box.Substitution)
 				if resolvedField == nil {
 					c.errorf(node.LastRef().AST(), `could not resolve variable "%s"`, strings.Join(box.Substitution.IDA(), "."))
 					return
 				}
-				if resolvedField.Primary() == nil && resolvedField.Composite != nil {
-					c.errorf(node.LastRef().AST(), `cannot substitute map variable "%s" in quotes`, strings.Join(box.Substitution.IDA(), "."))
+				primary := resolvedField.Primary()
+				if primary == nil {
+					name := strings.Join(box.Substitution.IDA(), ".")
+					if resolvedField.Composite == nil {
+						c.errorf(node.LastRef().AST(), `cannot substitute variable without value: "%s"`, name)
+					} else {
+						c.errorf(node.LastRef().AST(), `cannot substitute map variable "%s" in quotes`, name)
+					}
 					return
 				}
-				s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
+				s.Value[i].String = go2.Pointer(primary.Value.ScalarString())
 				if len(s.Value) == 1 {
-					node.Primary().TweenOffset = resolvedField.Primary().TweenOffset
+					node.Primary().TweenOffset = primary.TweenOffset
 				}
 				subbed = true
 			}
@@ -850,15 +839,9 @@ func (c *compiler) spreadCompositeReferencesNode(composite Composite, target Nod
 				if box.Substitution == nil || !box.Substitution.Spread {
 					continue
 				}
-				for i, vars := range varsStack {
-					resolved := c.resolveSubstitution(vars, candidate, box.Substitution, i == 0)
-					if resolved == nil {
-						continue
-					}
-					if resolved.Composite != nil {
-						stack = append(stack, resolved.Composite)
-					}
-					break
+				resolved, _ := c.resolveVariable(varsStack, candidate, box.Substitution)
+				if resolved != nil && resolved.Composite != nil {
+					stack = append(stack, resolved.Composite)
 				}
 			}
 		}
@@ -1009,7 +992,24 @@ func joinedVariableNameBytes(prefix, suffix string) int64 {
 	return total + 1 + int64(len(suffix))
 }
 
-func (c *compiler) resolveSubstitution(vars *Map, node Node, substitution *d2ast.Substitution, isCurrentScopeVars bool) *Field {
+// Reserved keys historically allowed distinct quoted and unquoted bindings.
+// Search every lexical scope for the original spelling before accepting the
+// other spelling. This preserves both shadowing and existing templates.
+func (c *compiler) resolveVariable(scopes []*Map, node Node, sub *d2ast.Substitution) (*Field, int) {
+	for _, fallback := range []bool{false, true} {
+		for i, scope := range scopes {
+			if c.stopped() {
+				return nil, -1
+			}
+			if f := resolveSubstitution(scope, node, sub, i == 0, fallback); f != nil {
+				return f, i
+			}
+		}
+	}
+	return nil, -1
+}
+
+func resolveSubstitution(vars *Map, node Node, substitution *d2ast.Substitution, isCurrentScopeVars, fallback bool) *Field {
 	if vars == nil {
 		return nil
 	}
@@ -1018,7 +1018,16 @@ func (c *compiler) resolveSubstitution(vars *Map, node Node, substitution *d2ast
 	parent := ParentField(node)
 
 	for i, p := range substitution.Path {
-		f := vars.getFieldIndexed(p.Unbox())
+		name := p.Unbox()
+		f := vars.getFieldIndexed(name)
+		if f == nil && vars != nil && fallback {
+			if _, reserved := d2ast.ReservedKeywords[strings.ToLower(name.ScalarString())]; reserved {
+				key := makeFieldIndexKey(vars.fieldName(name, false))
+				key.unquotedReserved = !key.unquotedReserved
+				vars.ensureFieldIndex()
+				f = vars.fieldIndex[key]
+			}
+		}
 		if f == nil {
 			return nil
 		}
