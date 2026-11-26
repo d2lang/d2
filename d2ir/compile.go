@@ -3,7 +3,6 @@ package d2ir
 import (
 	"context"
 	"errors"
-	"html"
 	"io/fs"
 	"math"
 	"net/url"
@@ -20,6 +19,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	"github.com/d2lang/d2/internal/htmlentity"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
@@ -2030,7 +2030,7 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 			}
 			val := f.Primary().Value.ScalarString()
 
-			u, err := url.Parse(html.UnescapeString(val))
+			u, err := url.Parse(htmlentity.Unescape(val))
 			isRemote := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
 			if isRemote {
 				continue
@@ -2068,7 +2068,7 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 			if val == "" {
 				continue
 			}
-			u, err := url.Parse(html.UnescapeString(val))
+			u, err := url.Parse(htmlentity.Unescape(val))
 			isRemoteImg := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
 			if isRemoteImg {
 				continue

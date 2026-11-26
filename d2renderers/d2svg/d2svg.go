@@ -32,6 +32,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	"github.com/d2lang/d2/internal/htmlentity"
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
@@ -2530,7 +2531,7 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 	// diagrams never contain; skip scanning the whole document for those.
 	if strings.Contains(source, "md-text") {
 		for _, match := range nativeMarkdownTextPattern.FindAllStringSubmatch(source, -1) {
-			corpus += html.UnescapeString(match[1])
+			corpus += htmlentity.Unescape(match[1])
 		}
 	}
 	corpora = restrictFontCorpora(corpora, corpus)

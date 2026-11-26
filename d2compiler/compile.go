@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"html"
 	"io"
 	"io/fs"
 	"net/url"
@@ -21,6 +20,7 @@ import (
 	"github.com/d2lang/d2/d2ir"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/internal/htmlentity"
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -1793,7 +1793,7 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 			continue
 		}
 
-		u, err := url.Parse(html.UnescapeString(obj.Link.Value))
+		u, err := url.Parse(htmlentity.Unescape(obj.Link.Value))
 		isRemote := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
 		if isRemote {
 			continue
