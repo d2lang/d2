@@ -6,6 +6,7 @@ You may install `d2` through any of the following methods.
 - [install.sh](#installsh)
   - [Security](#security)
 - [uv and uvx](#uv-and-uvx)
+- [GitHub Actions](#github-actions)
 - [macOS (Homebrew)](#macos-homebrew)
 - [Linux](#linux)
   - [Void Linux](#void-linux)
@@ -114,6 +115,21 @@ The `d2lang` package on PyPI includes the D2 release executable for Linux, macOS
 Windows on x86-64 and ARM64. Pass D2 flags directly, for example
 `uvx d2lang --watch input.d2`. To install the `d2` command on your PATH, run
 `uv tool install d2lang`.
+
+## GitHub Actions
+
+Use [`d2lang/setup-d2`](https://github.com/d2lang/setup-d2) to put the native
+`d2` CLI on a Linux, macOS, or Windows runner. After checking out your repository,
+add these steps to render a diagram:
+
+```yaml
+- uses: d2lang/setup-d2@v1
+  with:
+    version: v0.9.0
+- run: d2 architecture.d2 architecture.svg
+```
+
+Omit `version` to use the latest stable D2 release.
 
 ## macOS (Homebrew)
 
