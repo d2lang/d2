@@ -13,7 +13,7 @@ include changes to the main d2 project.**
 - Support `forceAppendix` with `animateInterval` to show each board's numbered tooltips and links in its animation frame.
 - Fix WebAssembly startup in Safari 27.2 workers. `D2.ready` now reports the startup error if Go exits before registering the API.
 - Build the browser and Node WebAssembly module with TinyGo, reducing the Brotli-compressed WASM payload by about 40%.
-- Build that module without a goroutine scheduler and store its tables more compactly: it is a further 49.7% smaller, 32.6% when compressed with Brotli, and takes 55% of the time, with identical output. Building from source needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases).
+- Build that module without a goroutine scheduler and store its tables more compactly: it is a further 50.2% smaller, 32.7% when compressed with Brotli, and takes about half the time, with identical output. Building from source needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases).
 
 ## [0.1.34]
 ### September 7, 2026
