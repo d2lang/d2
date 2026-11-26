@@ -21,6 +21,7 @@ import (
 	"github.com/d2lang/d2/d2ir"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -1949,14 +1950,14 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 
 	f = configMap.GetField(d2ast.FlatUnquotedString("theme-id"))
 	if f != nil {
-		val, _ := strconv.Atoi(f.Primary().Value.ScalarString())
-		config.ThemeID = go2.Pointer(int64(val))
+		theme, _ := d2themescatalog.Resolve(f.Primary().Value.ScalarString())
+		config.ThemeID = go2.Pointer(theme.ID)
 	}
 
 	f = configMap.GetField(d2ast.FlatUnquotedString("dark-theme-id"))
 	if f != nil {
-		val, _ := strconv.Atoi(f.Primary().Value.ScalarString())
-		config.DarkThemeID = go2.Pointer(int64(val))
+		theme, _ := d2themescatalog.Resolve(f.Primary().Value.ScalarString())
+		config.DarkThemeID = go2.Pointer(theme.ID)
 	}
 
 	f = configMap.GetField(d2ast.FlatUnquotedString("pad"))
