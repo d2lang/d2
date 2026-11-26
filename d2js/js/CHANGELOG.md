@@ -5,7 +5,7 @@ include changes to the main d2 project.**
 
 ## Next
 
-- Build the WebAssembly module without a goroutine scheduler and store its tables more compactly: it is 50.2% smaller than in 0.2.0, 32.7% when compressed with Brotli, and takes about half the time, with identical output. Building from source needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases).
+- Build the WebAssembly module without a goroutine scheduler and store its tables more compactly: it is about half the size of 0.2.0's, a third smaller when compressed with Brotli, and takes a little over half the time, with identical output on D2's end-to-end corpus. Building from source needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases).
 
 ## [0.2.0]
 ### November 26, 2026
