@@ -20,7 +20,8 @@ Assignment  = Map | ":" spaces ( Scalar [ spaces Map ] | Map | Array | Import ) 
 Value       = Scalar | Map | Array | Import .
 Scalar      = valueString .
 
-// The key scanner determines where an unquoted endpoint stops. See structure.md.
+// Inside an EdgeGroup, ")" ends an unquoted endpoint when followed, after any
+// horizontal space, by LF, end of input, or one of ";#{}[]:.".
 EdgeChain   = keyPath spaces FirstArrow EdgeTargets .
 EdgeGroup   = "(" spaces keyPath spaces Arrow EdgeTargets spaces ")"
               [ spaces "[" spaces EdgeIndex spaces "]" ] [ spaces "." spaces keyPath ] .
@@ -30,10 +31,12 @@ EdgeIndex   = "*" | decimalDigit { decimalDigit } .
 
 FirstArrow       = "<" ArrowTail | "-" { EdgeContinuation } ( "-" ArrowTail | ">" | "*" ) .
 Arrow            = FirstArrow | "*" ArrowTail .
+// Consume the full shaft before reading the destination mark or key.
 ArrowTail        = { "-" | EdgeContinuation } [ ">" | "*" ] .
 EdgeContinuation = "\\" spaces newline spaces .
 
-// The prefix and its sigil must touch. Paths use the same key quoting as entries.
+// At entry start, "...@" and "...$" introduce a spread.
 Spread       = "..." ( Import | substitution ) .
+// Consume the longest run of dots and slashes after "@" before reading keyPath.
 Import       = "@" { "." | "/" } spaces keyPath .
 substitution = "$" spaces "{" spaces keyPath spaces "}" .

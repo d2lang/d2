@@ -186,7 +186,8 @@ For a comparison against other popular text-to-diagram tools, see
 ## Contributing
 
 Contributions are welcome! See [./docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md).
-For work on parsers and editor tools, see the [D2 syntax reference and conformance cases](./docs/grammar).
+Parser and editor authors can use the [structural grammar](./docs/grammar/structure.ebnf),
+[lexical grammar](./docs/grammar/lexical.ebnf), and [conformance cases](./docs/grammar/testdata/).
 
 D2 is an independent open-source project fiscally sponsored by Hack Club.
 [Sponsor D2](https://d2lang.com/sponsor/)
