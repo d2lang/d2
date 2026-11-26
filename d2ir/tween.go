@@ -353,9 +353,11 @@ func (c *compiler) sampleTween(template *Map, changes stepChanges, outerVars []*
 				return true
 			}
 			p.Value = cloneASTScalar(p.binding.source)
+			p.markdown = nil
 			if len(p.binding.markdownOuter) > 0 {
-				block := p.Value.(*d2ast.BlockString)
-				block.Value = c.replaceMarkdownVariables(n, block.Value, p.binding.markdownOuter)
+				// Keep module bindings and resolve live step variables together.
+				// Each replacement is inserted once, even if it contains ${...}.
+				p.markdown = &markdownBinding{source: p.Value.ScalarString(), bound: p.binding.markdownOuter}
 			}
 			p.binding = nil
 		}

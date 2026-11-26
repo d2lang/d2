@@ -230,3 +230,63 @@ func (c *markdownCancelAfterErrContext) Err() error {
 	}
 	return nil
 }
+
+func TestResolveSubstitutionsMarkdownBounded(t *testing.T) {
+	t.Parallel()
+	const input = "${ENV} / ${cfg.\"a}b\"} / ${'can''t}stop'} / ${don't} / ${a}b} / ${missing}\n\n`code ${ENV}`\n\n```\n${ENV}\n```"
+	const want = "local / dotted / quoted / bare / longest / ${missing}\n\n`code ${ENV}`\n\n```\n${ENV}\n```"
+	values := map[string]string{"ENV": "local", `cfg."a}b"`: "dotted", "'can''t}stop'": "quoted", "don't": "bare", "a}b": "longest"}
+	visited := map[string]int{}
+	resolve := func(key string) (string, bool) {
+		visited[key]++
+		value, ok := values[key]
+		return value, ok
+	}
+	got, used, err := ResolveSubstitutionsMarkdownBounded(context.Background(), input,
+		map[string]string{"ENV": "outer", "a": "short", "a}b": "legacy"}, 100, resolve)
+	if err != nil || got != want {
+		t.Fatalf("result = %q, %v; want %q", got, err, want)
+	}
+	if used != int64(6+len("localdottedquotedbarelongest")) {
+		t.Errorf("work = %d", used)
+	}
+	if visited["ENV"] != 1 || visited["a"] != 0 || visited["a}b"] != 1 {
+		t.Errorf("resolved keys = %v", visited)
+	}
+}
+
+func TestMarkdownReferenceBoundaries(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ input, want string }{
+		{`${ "some } name" }`, ` "some } name" `},
+		{`${ 'some}name'}`, ` 'some}name'`},
+		{`${its"name}after`, `its"name`},
+		{`${a\}b}`, `a\}b`},
+		{`${"escaped\"}quote"}`, `"escaped\"}quote"`},
+		{`${'slash\'}`, `'slash\'`},
+	} {
+		end, next, err := markdownReferenceEnd(context.Background(), tc.input, 2)
+		if err != nil || end <= 2 || next != end || tc.input[2:end-1] != tc.want {
+			t.Errorf("boundaries of %q = (%d, %d, %v), want %q", tc.input, end, next, err, tc.want)
+		}
+	}
+}
+
+func TestResolveSubstitutionsMarkdownBudgetAndMalformedReferences(t *testing.T) {
+	t.Parallel()
+	resolve := func(key string) (string, bool) { return "value", key == "x" }
+	got, used, err := ResolveSubstitutionsMarkdownBounded(context.Background(), "${unfinished ${x} ${missing}", nil, 6, resolve)
+	if err != nil || got != "${unfinished value ${missing}" || used != 6 {
+		t.Fatalf("result = %q, work %d, error %v", got, used, err)
+	}
+	_, _, err = ResolveSubstitutionsMarkdownBounded(context.Background(), "${x}", nil, 5, resolve)
+	if err == nil {
+		t.Fatal("expected expansion limit")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = ResolveSubstitutionsMarkdownBounded(ctx, "${x}", nil, 6, resolve)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("result error = %v, want context.Canceled", err)
+	}
+}
