@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/aymanbagabas/go-udiff"
+
 	"github.com/d2lang/util-go/xdefer"
 	"github.com/d2lang/util-go/xmain"
 
