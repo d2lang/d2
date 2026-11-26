@@ -1,5 +1,7 @@
 #### Features 🚀
 
+- Run the native D2 CLI with `uvx d2lang input.d2 output.svg` on Linux, macOS, and Windows.
+
 - Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with board or container variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
 
 - Animate grid edits between steps with the same `animate-duration` setting. Cells slide to their new positions, arrivals grow in, and departures shrink away. An inserted row or column opens as a group. A replacement can hand off in place, and a summary cell can unfold to show a nested grid.

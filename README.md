@@ -120,6 +120,8 @@ Save `x -> y -> z` in a file named `hello.d2`, then run the following command to
 d2 hello.d2
 ```
 
+With [uv](https://docs.astral.sh/uv/), run the native CLI directly with `uvx d2lang hello.d2`.
+
 For a live preview in your browser, run `d2 --watch hello.d2` and edit the file.
 
 ## D2 as a library

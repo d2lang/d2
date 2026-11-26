@@ -5,6 +5,7 @@ You may install `d2` through any of the following methods.
 <!-- toc -->
 - [install.sh](#installsh)
   - [Security](#security)
+- [uv and uvx](#uv-and-uvx)
 - [macOS (Homebrew)](#macos-homebrew)
 - [Linux](#linux)
   - [Void Linux](#void-linux)
@@ -100,6 +101,19 @@ gh attestation verify d2-v0.9.0-linux-amd64.tar.gz --repo d2lang/d2 \
   --signer-workflow d2lang/d2/.github/workflows/release-archives.yml \
   --source-ref refs/tags/v0.9.0
 ```
+
+## uv and uvx
+
+With [uv](https://docs.astral.sh/uv/), render a diagram with the native D2 CLI:
+
+```sh
+uvx d2lang input.d2 output.svg
+```
+
+The `d2lang` package on PyPI includes the D2 release executable for Linux, macOS, or
+Windows on x86-64 and ARM64. Pass D2 flags directly, for example
+`uvx d2lang --watch input.d2`. To install the `d2` command on your PATH, run
+`uv tool install d2lang`.
 
 ## macOS (Homebrew)
 
