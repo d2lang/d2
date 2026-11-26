@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -198,6 +199,25 @@ func TestIsometricImageAtomicReplacement(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 2 {
 		t.Fatal("temporary output leaked")
+	}
+}
+
+func TestIsometricGIFKeepsShortPaintEndpoint(t *testing.T) {
+	const src = `vars: {d2-config: {animate-interval: 102ms; animate-duration: 101ms}}
+a: "" {width: 40; height: 40; style.fill: red}
+steps: {change: {a.style.fill: blue}}`
+	data, err := imageCLI(t, t.TempDir(), src, "--isometric", "--scale=.12", "--stdout-format=gif", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	anim, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The static first board rounds to 10cs. Preserve every paint sample and
+	// give the endpoint at least 2cs so browsers honor the authored timing.
+	if !slices.Equal(anim.Delay, []int{10, 3, 3, 3, 2}) {
+		t.Fatalf("GIF delays = %v", anim.Delay)
 	}
 }
 

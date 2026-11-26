@@ -99,9 +99,9 @@ steps: {empty: {vars: {charge: 0%}}}`
 		{"source", nil, nil, "200ms steps(1,end) infinite", true},
 		{"environment", []string{"D2_ANIMATE_DURATION=160"}, nil, "260ms steps(1,end) infinite", true},
 		{"flag over environment", []string{"D2_ANIMATE_DURATION=0"}, []string{"--animate-duration=80"}, "200ms steps(1,end) infinite", true},
-		{"disable with flag", []string{"D2_ANIMATE_DURATION=160"}, []string{"--animate-duration=0"}, "200ms infinite", false},
-		{"disable with environment", []string{"D2_ANIMATE_DURATION=0"}, nil, "200ms infinite", false},
-		{"single board", nil, []string{"--target=steps.empty"}, "100ms infinite", false},
+		{"disable with flag", []string{"D2_ANIMATE_DURATION=160"}, []string{"--animate-duration=0"}, "200ms steps(1,end) infinite", false},
+		{"disable with environment", []string{"D2_ANIMATE_DURATION=0"}, nil, "200ms steps(1,end) infinite", false},
+		{"single board", nil, []string{"--target=steps.empty"}, "100ms steps(1,end) infinite", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, _, err := isometricCLI(t, source, tc.env, append(tc.args, "--stdout-format=svg", "-")...)

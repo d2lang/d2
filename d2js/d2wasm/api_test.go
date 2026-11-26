@@ -93,10 +93,25 @@ func TestSourceAnimateInterval(t *testing.T) {
 				if strings.Contains(svg, "d2Transition-") {
 					t.Fatal("expected static SVG with an explicit zero interval")
 				}
-			} else if !strings.Contains(svg, fmt.Sprintf(" %dms infinite", 2*tc.want)) || !strings.Contains(svg, ">second</text>") {
+			} else if !strings.Contains(svg, fmt.Sprintf(" %dms steps(1,end) infinite", 2*tc.want)) || !strings.Contains(svg, ">second</text>") {
 				t.Fatalf("expected two animated boards displayed for %dms each", tc.want)
 			}
 		})
+	}
+}
+
+func TestNegativeAnimateInterval(t *testing.T) {
+	opts := RenderOptions{AnimateInterval: go2.Pointer(int64(-1))}
+	compile := wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": "a"}, Opts: &CompileOptions{RenderOptions: opts}})
+	for _, run := range []func([]js.Value) (interface{}, error){Compile, RenderSVG} {
+		_, err := run(compile)
+		if e, ok := err.(*WASMError); !ok || e.Code != 400 || !strings.Contains(e.Message, "animateInterval") {
+			t.Fatalf("negative interval: %v", err)
+		}
+	}
+	response := invokeRenderRequest(t, RenderRequest{Diagram: d2target.NewDiagram(), Opts: &opts})
+	if response.Error == nil || response.Error.Code != 400 || !strings.Contains(response.Error.Message, "animateInterval") {
+		t.Fatalf("negative interval at render: %#v", response.Error)
 	}
 }
 
@@ -290,7 +305,7 @@ steps: {empty: {vars: {charge: 0%}}}`
 	}{
 		{"source", nil, "200ms steps(1,end) infinite", true},
 		{"longer override", go2.Pointer(int64(160)), "260ms steps(1,end) infinite", true},
-		{"zero override", go2.Pointer(int64(0)), "200ms infinite", false},
+		{"zero override", go2.Pointer(int64(0)), "200ms steps(1,end) infinite", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := RenderSVG(wasmJSONArgument(t, CompileRequest{

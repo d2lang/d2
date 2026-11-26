@@ -16,12 +16,12 @@ func TestAnimateIntervalSourcePrecedence(t *testing.T) {
 		env, args []string
 		svgTiming string
 	}{
-		{"source", nil, nil, "160ms infinite"},
-		{"environment", []string{"D2_ANIMATE_INTERVAL=120"}, nil, "240ms infinite"},
-		{"flag over environment", []string{"D2_ANIMATE_INTERVAL=120"}, []string{"--animate-interval=50"}, "100ms infinite"},
+		{"source", nil, nil, "160ms steps(1,end) infinite"},
+		{"environment", []string{"D2_ANIMATE_INTERVAL=120"}, nil, "240ms steps(1,end) infinite"},
+		{"flag over environment", []string{"D2_ANIMATE_INTERVAL=120"}, []string{"--animate-interval=50"}, "100ms steps(1,end) infinite"},
 		{"explicit zero flag", []string{"D2_ANIMATE_INTERVAL=120"}, []string{"--animate-interval=0"}, ""},
 		{"explicit zero environment", []string{"D2_ANIMATE_INTERVAL=0"}, nil, ""},
-		{"selected board", nil, []string{"--target=steps.next"}, "80ms infinite"},
+		{"selected board", nil, []string{"--target=steps.next"}, "80ms steps(1,end) infinite"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, dir, err := isometricCLI(t, source, tc.env, append(tc.args, "out.svg")...)
@@ -89,6 +89,15 @@ func TestAnimateIntervalSourceUnsupportedFormat(t *testing.T) {
 		data, err := imageCLI(t, t.TempDir(), source, args...)
 		if err == nil || !strings.Contains(err.Error(), "animate-interval") || len(data) != 0 {
 			t.Errorf("%v: got %d bytes, %v", args, len(data), err)
+		}
+	}
+}
+
+func TestNegativeAnimationInterval(t *testing.T) {
+	for _, format := range []string{"svg", "gif"} {
+		data, err := imageCLI(t, t.TempDir(), "a\nsteps: {next: {b}}", "--animate-interval=-1", "--stdout-format="+format, "-")
+		if err == nil || !strings.Contains(err.Error(), "--animate-interval") || len(data) != 0 {
+			t.Errorf("%s: got %d bytes, %v", format, len(data), err)
 		}
 	}
 }

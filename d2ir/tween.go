@@ -269,13 +269,15 @@ func (v tweenNumericValue) at(fraction float64) string {
 }
 
 func setTweenValue(s *Scalar, value tweenValue, fraction float64) {
-	s.Value = d2ast.FlatUnquotedString(value.at(fraction))
+	sample := value.at(fraction)
+	s.Value = d2ast.FlatUnquotedString(sample)
 	s.TweenOffset = 0
-	if number, ok := value.(tweenNumericValue); ok && number.precision == 0 && number.unit == "" {
-		// Keep the variable text integral for labels and styles that require
-		// integers. Use the same ties-to-even rounding as FormatFloat above.
+	if number, ok := value.(tweenNumericValue); ok && number.precision >= 0 && number.unit == "" && fraction != 0 && fraction != 1 {
+		// Labels preserve the authored precision. Continuous paint properties
+		// can recover the unrounded value, even through a variable alias.
 		exact := (1-fraction)*number.from + fraction*number.to
-		s.TweenOffset = exact - math.RoundToEven(exact)
+		rounded, _ := strconv.ParseFloat(sample, 64)
+		s.TweenOffset = exact - rounded
 	}
 }
 

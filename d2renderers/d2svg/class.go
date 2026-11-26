@@ -116,13 +116,12 @@ func drawClass(writer *objectWriter, diagramHash string, targetShape d2target.Sh
 
 	lineEl := d2themes.NewThemableElement("line", inlineTheme)
 
-	if targetShape.BorderRadius != 0 && len(targetShape.Methods) == 0 {
-		lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X+float64(targetShape.BorderRadius), rowBox.TopLeft.Y
-		lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width-float64(targetShape.BorderRadius), rowBox.TopLeft.Y
-	} else {
-		lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X, rowBox.TopLeft.Y
-		lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width, rowBox.TopLeft.Y
+	var inset float64
+	if len(targetShape.Methods) == 0 {
+		inset = d2themes.ClampBorderRadius(float64(targetShape.BorderRadius), box.Width, box.Height)
 	}
+	lineEl.X1, lineEl.Y1 = rowBox.TopLeft.X+inset, rowBox.TopLeft.Y
+	lineEl.X2, lineEl.Y2 = rowBox.TopLeft.X+rowBox.Width-inset, rowBox.TopLeft.Y
 
 	lineEl.Stroke = targetShape.Fill
 	lineEl.Style = "stroke-width:1"

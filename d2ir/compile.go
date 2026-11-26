@@ -39,6 +39,8 @@ type compiler struct {
 	hasTemplateNull     bool
 	spreadNulls         []spreadNull
 	hasMapSpread        bool
+	hasEdgePropertyGlob bool
+	spreadRuleCopies    map[spreadRuleScope]*globContext
 	fieldOrder          uint64
 	err                 *d2parser.ParseError
 	ctx                 context.Context
@@ -618,10 +620,14 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 							}
 						}
 
-						if removedField && len(m.globs) > 0 && !c.lazyGlobBeingApplied {
+						if removedField && !c.lazyGlobBeingApplied {
+							globs := m.globs
+							if c.hasEdgePropertyGlob && m.shouldReplayEdgeProperties(resolvedField.Map()) {
+								globs = c.edgePropertyGlobsForSpread(m, box.Substitution)
+							}
 							origGlobStack := c.globContextStack
-							c.globContextStack = append(c.globContextStack, m.globs)
-							for _, gctx := range m.globs {
+							c.globContextStack = append(c.globContextStack, globs)
+							for _, gctx := range globs {
 								old := c.lazyGlobBeingApplied
 								priorReplay := c.replayingSpreadGlobs
 								c.lazyGlobBeingApplied, c.replayingSpreadGlobs = true, true
@@ -1333,6 +1339,12 @@ func (c *compiler) compileKey(refctx *RefContext) {
 		refctx.order = c.assignmentOrder()
 	}
 	if refctx.Key.HasGlob() {
+		// Replaying a property may first create its style map. Finish that
+		// write before evaluating the next deferred selector in source order.
+		if stack := c.globRefContextStack; c.replayingSpreadGlobs && len(stack) != 0 &&
+			replaysEdgeProperties(stack[len(stack)-1].Key) && replaysEdgeProperties(refctx.Key) {
+			return
+		}
 		for _, refctx2 := range c.globRefContextStack {
 			if refctx.Equal(refctx2) {
 				// Break the infinite loop.
@@ -1343,7 +1355,11 @@ func (c *compiler) compileKey(refctx *RefContext) {
 		defer func() {
 			c.globRefContextStack = c.globRefContextStack[:len(c.globRefContextStack)-1]
 		}()
-		c.ensureGlobContext(refctx)
+		g := c.ensureGlobContext(refctx)
+		if !c.lazyGlobBeingApplied && replaysEdgeProperties(refctx.Key) {
+			refctx.ScopeMap.addEdgeRule(g)
+			c.hasEdgePropertyGlob = true
+		}
 	}
 	oldVersion := refctx.ScopeMap.structureVersion
 	if len(refctx.Key.Edges) == 0 {
@@ -1887,7 +1903,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		}
 	}
 
-	if len(refctx.Key.Edges) == 0 && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
+	if (len(refctx.Key.Edges) == 0 || refctx.Key.EdgeKey != nil) && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
 		// For vars, if we delete the field, it may just resolve to an outer scope var of the same name
 		// Instead we keep it around, so that resolveSubstitutions can find it
 		if !IsVar(ParentMap(f)) {
@@ -2271,11 +2287,19 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 		return
 	}
 	eida := NewEdgeIDs(refctx.Key)
+	// A null selector with a property suffix clears only that edge field.
+	clearing := refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil
+	deleteEdge := clearing && refctx.Key.EdgeKey == nil
 	for i, eid := range eida {
 		if c.stopped() {
 			return
 		}
-		if !eid.Glob && (refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil) {
+		if clearing && eid.Glob && refctx.Key.EdgeKey != nil {
+			// A pending spread can add matching parallel edges after this
+			// selector has already processed the ones currently in scope.
+			c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
+		}
+		if !eid.Glob && deleteEdge {
 			c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
 			refctx.ScopeMap.DeleteEdge(eid)
 			continue
@@ -2285,10 +2309,12 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 		refctx.Edge = refctx.Key.Edges[i]
 
 		var ea []*Edge
-		if eid.Index != nil || eid.Glob {
+		if eid.Index != nil || eid.Glob || clearing {
 			ea = refctx.ScopeMap.getEdgesForCompile(eid, refctx, c)
 			if len(ea) == 0 {
-				if !eid.Glob {
+				if clearing && !eid.Glob {
+					c.recordSpreadEdgeDeletion(refctx.ScopeMap, eid, refctx.Key)
+				} else if !eid.Glob {
 					c.errorf(refctx.Edge, "indexed edge does not exist")
 				}
 				continue
@@ -2297,7 +2323,7 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 				if c.stopped() {
 					return
 				}
-				if refctx.Key.Primary.Null != nil || refctx.Key.Value.Null != nil {
+				if deleteEdge {
 					c.recordSpreadDeletion(ParentMap(e), &spreadMember{edge: e.ID}, refctx.Key)
 					refctx.ScopeMap.DeleteEdge(e.ID)
 					continue

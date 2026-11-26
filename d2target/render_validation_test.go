@@ -31,6 +31,26 @@ func TestAnimatedStrokeBounds(t *testing.T) {
 	}
 }
 
+func TestValidateTraceEndpoint(t *testing.T) {
+	c := *BaseConnection()
+	for _, test := range []struct {
+		tip   TraceEndpoint
+		curve bool
+		valid bool
+	}{
+		{TraceSource, false, true},
+		{TraceDestination, false, true},
+		{"arbitrary", false, false},
+		{TraceDestination, true, false},
+	} {
+		c.MotionTip, c.IsCurve = test.tip, test.curve
+		err := validateRenderConnectionNumbers(c, "edge")
+		if (err == nil) != test.valid {
+			t.Fatalf("endpoint %q, curve %t: %v", test.tip, test.curve, err)
+		}
+	}
+}
+
 func TestValidateSQLRowReveal(t *testing.T) {
 	d := NewDiagram()
 	s := BaseShape()

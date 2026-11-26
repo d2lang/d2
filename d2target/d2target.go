@@ -1036,11 +1036,21 @@ type MotionLabel struct {
 	Opacity float64 `json:"opacity"`
 }
 
+// TraceEndpoint identifies which end of an animated polyline is still being drawn.
+type TraceEndpoint string
+
+const (
+	TraceSource      TraceEndpoint = "source"
+	TraceDestination TraceEndpoint = "destination"
+)
+
 type Connection struct {
 	ID string `json:"id"`
 
 	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
 	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`
+	// MotionTip marks the free end of a partially drawn connection.
+	MotionTip TraceEndpoint `json:"motionTip,omitempty"`
 	// MotionDashOffset pins a backward trace’s dashes to its stationary end.
 	MotionDashOffset float64 `json:"motionDashOffset,omitempty"`
 

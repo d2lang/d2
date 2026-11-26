@@ -571,6 +571,7 @@ func cloneGlobContexts(src, dst Node, mapCopies map[*Map]*Map, cloneContext func
 	}
 
 	for srcMap, dstMap := range mapCopies {
+		dstMap.edgePropertyRules = srcMap.edgePropertyRules.clone(cloneGlob)
 		dstMap.globs = make([]*globContext, len(srcMap.globs))
 		for i, glob := range srcMap.globs {
 			dstMap.globs[i] = cloneGlob(glob)

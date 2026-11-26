@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -136,18 +137,35 @@ func renderIsometricImages(ctx context.Context, ms *xmain.State, diagram *d2targ
 			return nil, false, err
 		}
 		defer o.Assets.Resolver.CloseIdleConnections()
-		timeline, err := d2animate.Timeline(diagram, int(intervalMS))
-		if err != nil {
+		if err := d2target.ValidateRenderTarget(diagram); err != nil {
 			return nil, false, err
 		}
-		frames := make([]*d2target.Diagram, len(timeline))
-		timings := make([]d2isometricimg.BoardTiming, len(timeline))
-		for i, frame := range timeline {
-			frames[i] = frame.Diagram
-			timings[i] = d2isometricimg.BoardTiming{
-				Duration:    time.Duration(frame.DurationMS) * time.Millisecond,
-				Elapsed:     time.Duration(frame.ElapsedMS) * time.Millisecond,
-				TweenSample: frame.TweenSample,
+		var frames []*d2target.Diagram
+		var timings []d2isometricimg.BoardTiming
+		var scratch []d2animate.Frame
+		for i, board := range boards {
+			var previous *d2target.Diagram
+			if i > 0 && len(board.TweenFrames) > 0 {
+				first := board.TweenFrames[0]
+				prev := boards[i-1]
+				// The isometric camera is shared across all boards. Its scene
+				// also paints board captions, descriptions and crease weights.
+				if prev.Root.Label == first.Root.Label && prev.Description == first.Description &&
+					maps.Equal(prev.ExplicitDefaultStrokeWidths, first.ExplicitDefaultStrokeWidths) {
+					previous = prev
+				}
+			}
+			scratch = gifBoardFrames(scratch, board, previous, int(intervalMS))
+			if len(scratch) > d2isometricimg.MaxTimelineBoards-len(frames) {
+				return nil, false, fmt.Errorf("isometric timeline exceeds %d boards", d2isometricimg.MaxTimelineBoards)
+			}
+			for _, frame := range scratch {
+				frames = append(frames, frame.Diagram)
+				timings = append(timings, d2isometricimg.BoardTiming{
+					Duration:    time.Duration(frame.DurationMS) * time.Millisecond,
+					Elapsed:     time.Duration(frame.ElapsedMS) * time.Millisecond,
+					TweenSample: frame.TweenSample,
+				})
 			}
 		}
 		data, err := d2isometricimg.RenderTimedTimeline(ctx, frames, &o, timings)

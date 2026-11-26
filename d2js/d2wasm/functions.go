@@ -259,10 +259,20 @@ func parseCompileRequest(args []js.Value) (*CompileRequest, error) {
 	if input.Opts == nil {
 		input.Opts = &CompileOptions{}
 	}
+	if err := validateAnimateInterval(input.Opts.AnimateInterval); err != nil {
+		return nil, err
+	}
 	if duration := input.Opts.AnimateDuration; duration != nil && (*duration < 0 || *duration > d2target.MaxTweenDurationMS) {
 		return nil, &WASMError{Message: fmt.Sprintf("animateDuration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS), Code: 400}
 	}
 	return &input, nil
+}
+
+func validateAnimateInterval(interval *int64) error {
+	if interval != nil && (*interval < 0 || *interval > math.MaxInt) {
+		return &WASMError{Message: "animateInterval must be non-negative and fit in the supported range", Code: 400}
+	}
+	return nil
 }
 
 func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, error) {
@@ -444,9 +454,9 @@ func render(input RenderRequest) ([]byte, error) {
 		input.Opts = &RenderOptions{}
 	}
 	animateInterval := 0
-	if interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval); interval != nil && *interval > 0 {
-		if *interval > math.MaxInt {
-			return nil, &WASMError{Message: "animation interval exceeds the supported range", Code: 400}
+	if interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval); interval != nil {
+		if err := validateAnimateInterval(interval); err != nil {
+			return nil, err
 		}
 		animateInterval = int(*interval)
 	}

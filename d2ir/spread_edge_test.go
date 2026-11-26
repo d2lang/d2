@@ -1,6 +1,7 @@
 package d2ir
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2ast"
@@ -69,5 +70,62 @@ func TestMapSpreadGlobDeletionOrder(t *testing.T) {
 				t.Fatalf("spread produced\n%s\nwant inline result\n%s", got, want)
 			}
 		})
+	}
+}
+
+func TestClearEdgeSelectorProperty(t *testing.T) {
+	const pair = "a -> b: first {style.opacity: 0.4; style.stroke: blue}; a -> b: second {style.opacity: 0.6}"
+	for _, tc := range []struct{ name, source, want string }{
+		{"indexed property", pair + "; (a -> b)[0].style.opacity: null", "a -> b: first {style.stroke: blue}; a -> b: second {style.opacity: 0.6}"},
+		{"all parallel properties", pair + "; (a -> b)[*].style.opacity: null", "a -> b: first {style.stroke: blue}; a -> b: second"},
+		{"whole edge", pair + "; (a -> b)[1]: null", "a -> b: first {style.opacity: 0.4; style.stroke: blue}"},
+		{"missing edge", "a; b; (a -> b)[0].style.opacity: null", "a; b"},
+		{"property of spread", "vars: {t: {" + pair + "}}; ...${t}; (a -> b)[0].style.opacity: null", "vars: {t: {" + pair + "}}; a -> b: first {style.stroke: blue}; a -> b: second {style.opacity: 0.6}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := compileIndexTestSource(t, tc.source)
+			want := compileIndexTestSource(t, tc.want)
+			if len(got.Edges) != len(want.Edges) {
+				t.Fatalf("got %d edges; want %d", len(got.Edges), len(want.Edges))
+			}
+			for i, edge := range got.Edges {
+				if edge.Primary().Value.ScalarString() != want.Edges[i].Primary().Value.ScalarString() {
+					t.Fatalf("wrong edge %d label", i)
+				}
+				for _, key := range []string{"opacity", "stroke"} {
+					read := func(e *Edge) string {
+						if f := e.Map().getFieldIndexed(d2ast.FlatUnquotedString("style"), d2ast.FlatUnquotedString(key)); f != nil && f.Primary() != nil {
+							return f.Primary().Value.ScalarString()
+						}
+						return ""
+					}
+					if value, expected := read(edge), read(want.Edges[i]); value != expected {
+						t.Errorf("edge %d %s: got %q, want %q", i, key, value, expected)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestClearPropertiesOnScopedParallelSpreadEdges(t *testing.T) {
+	const links = `a -> b: Alpha {style.opacity: 0.2}; a -> b: Beta {style.opacity: 0.3}; q -> z: Other {style.opacity: 0.7}`
+	const prefix = "vars: {t: {" + links + "}}\n"
+	const use = "scope: {...${t}}; other: {...${t}}; "
+	for _, sel := range []string{
+		"scope.(a -> b)[*]", "(scope.a -> scope.b)[*]", "scope.(a -> *)[*]", "scope.(* -> b)[*]",
+		"scope.(** -> **)[*]", "(scope.a -> scope.*)[*]", "scope.(a -> *)[0]", "(** -> **)[1]",
+	} {
+		source := prefix + use + sel + ".style.opacity: null"
+		got := compileIndexTestSource(t, source)
+		want := compileIndexTestSource(t, strings.ReplaceAll(source, "...${t}", links))
+		for _, scope := range []string{"scope", "other"} {
+			inScope := func(m *Map) string {
+				return m.getFieldIndexed(d2ast.FlatUnquotedString(scope)).Map().String()
+			}
+			if inScope(got) != inScope(want) {
+				t.Errorf("%s, %s: got\n%s\nwant\n%s", sel, scope, inScope(got), inScope(want))
+			}
+		}
 	}
 }

@@ -153,3 +153,41 @@ steps: {reply: {b -> a: That extraordinarily long response forces the previous m
 		t.Fatal("prior message moved; expected existing fallback")
 	}
 }
+
+func TestSelfMessageTracePointsAroundItsBends(t *testing.T) {
+	for _, arrow := range []string{"->", "<-"} {
+		t.Run(arrow, func(t *testing.T) {
+			const config = "vars: {d2-config: {animate-interval: 1800ms; animate-duration: 1200ms}}\nshape: sequence_diagram\n"
+			message := "agent " + arrow + " agent"
+			board, _ := compileContinuity(t, config+"agent -> peer: Join\n"+message+": Retry {style.opacity: 0}\nsteps: {send: {("+message+")[0].style.opacity: 1}}", d2talalayout.ContinueBoard)
+			bends := 0
+			for _, frame := range board.Steps[0].TweenFrames {
+				for _, e := range frame.Connections {
+					if e.Label != "Retry" || e.Opacity == 0 || len(e.Route) < 3 {
+						continue
+					}
+					actor := shapeByID(t, frame, "agent")
+					src, dst := e.ArrowheadAdjustmentsForWidths(actor.RenderedStrokeWidth(), actor.RenderedStrokeWidth())
+					commands := slices.Collect(e.PathCommands(src, dst))
+					i := len(e.Route) - 1
+					raw := e.Route[i-1].VectorTo(e.Route[i])
+					j := len(commands) - 1
+					tangent := commands[j-1].End.VectorTo(&commands[j].End)
+					if arrow == "<-" {
+						raw = e.Route[0].VectorTo(e.Route[1])
+						tangent = commands[0].End.VectorTo(&commands[1].End)
+					}
+					if raw.Length() < e.BorderRadius {
+						bends++
+						if raw[0]*tangent[0]+raw[1]*tangent[1] <= 0 {
+							t.Fatalf("message head reverses at the bend: route %v, shaft tangent %v", raw, tangent)
+						}
+					}
+				}
+			}
+			if bends == 0 {
+				t.Fatal("expected a sampled tip turning a corner")
+			}
+		})
+	}
+}
