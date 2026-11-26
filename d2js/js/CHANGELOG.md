@@ -14,7 +14,6 @@ include changes to the main d2 project.**
 - Fix WebAssembly startup in Safari 27.2 workers. `D2.ready` now reports the startup error if Go exits before registering the API.
 - Build the browser and Node WebAssembly module with TinyGo, reducing the Brotli-compressed WASM payload by about 40%.
 - Build that module without a goroutine scheduler and store its tables more compactly: it is a further 48% smaller, 31% when compressed with Brotli, and about twice as fast, with identical output. Building from source needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases).
-- D2.js does not render isometric diagrams, which keeps the isometric renderer and its raster and image libraries out of the module: `render` and `renderSVG` reject `isometric: true` (from options or `vars.d2-config.isometric`) with the error "isometric rendering is not available in D2.js". The D2 CLI and Go library still render them.
 
 ## [0.1.34]
 ### September 7, 2026

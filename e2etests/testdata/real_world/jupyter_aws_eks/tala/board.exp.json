@@ -1209,12 +1209,6 @@
       "zIndex": 0
     }
   ],
-  "explicitDefaultStrokeWidths": {
-    "aws.global": true,
-    "aws.global.route53.hosted_zone": true,
-    "aws.region": true,
-    "aws.region.vpc.eks.control_plane": true
-  },
   "root": {
     "id": "",
     "type": "",

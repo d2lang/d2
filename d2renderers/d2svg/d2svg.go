@@ -88,10 +88,8 @@ var dots string
 var lines string
 
 type RenderOpts struct {
-	Pad    *int64
-	Sketch *bool
-	// Isometric uses the native vector renderer with the compiled layout preserved.
-	Isometric          *bool
+	Pad                *int64
+	Sketch             *bool
 	Center             *bool
 	ThemeID            *int64
 	DarkThemeID        *int64
@@ -2426,9 +2424,6 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		return nil, err
 	}
 
-	if opts != nil && opts.Isometric != nil && *opts.Isometric {
-		return renderIsometric(diagram, opts)
-	}
 	sketch := false
 	pad := DEFAULT_PADDING
 	tl, br := diagram.BoundingBox()

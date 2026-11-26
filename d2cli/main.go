@@ -133,10 +133,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	isometricFlag, err := ms.Opts.Bool("D2_ISOMETRIC", "isometric", "", false, "render SVG, PNG, GIF, PDF or PPTX in isometric perspective, preserving the compiled layout; also configurable through vars.d2-config.isometric")
-	if err != nil {
-		return err
-	}
 	stdoutFormatFlag := ms.Opts.String("", "stdout-format", "", "", "output format when writing to stdout (svg, png, ascii, txt, pdf, pptx, gif). Usage: d2 input.d2 --stdout-format svg - > output.svg")
 	if err != nil {
 		return err
@@ -204,10 +200,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		localFiles = localfile.Policy{}
 	}
 	ctx = withLocalFiles(ctx, localFiles)
-	isometricFlag, err = resolveIsometricFlag(ms)
-	if err != nil {
-		return xmain.UsageErrorf("%v", err)
-	}
 
 	fontFamily, monoFontFamily, err := loadFonts(ms, *fontRegularFlag, *fontItalicFlag, *fontBoldFlag, *fontSemiboldFlag, *fontMonoFlag, *fontMonoBoldFlag, *fontMonoItalicFlag, *fontMonoSemiboldFlag)
 	if err != nil {
@@ -224,9 +216,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		case "fmt":
 			return fmtCmd(ctx, ms, *checkFlag)
 		case "play":
-			if isometricFlag != nil && *isometricFlag {
-				return xmain.UsageErrorf("isometric images are local exports; use an output filename instead of play")
-			}
 			return playCmd(ctx, ms)
 		case "validate":
 			return validateCmd(ctx, ms)
@@ -293,31 +282,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	outputFormat, err := getOutputFormat(stdoutFormatFlag, outputPath)
 	if err != nil {
 		return xmain.UsageErrorf("%v", err)
-	}
-	if isometricFlag != nil && *isometricFlag {
-		if outputPath != "-" && *stdoutFormatFlag == "" && outputFormat == SVG && filepath.Ext(outputPath) != ".svg" {
-			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
-		}
-		if *forceAppendixFlag {
-			return xmain.UsageErrorf("--isometric cannot be combined with --force-appendix")
-		}
-		if _, err := isometricImageQualityOptions(outputFormat, *scaleFlag); err != nil {
-			return xmain.UsageErrorf("%v", err)
-		}
-		switch outputFormat {
-		case SVG:
-			outputFormat = isometricSVG
-		case PNG:
-			outputFormat = isometricPNG
-		case GIF:
-			outputFormat = isometricGIF
-		case PDF:
-			outputFormat = isometricPDF
-		case PPTX:
-			outputFormat = isometricPPTX
-		default:
-			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
-		}
 	}
 	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
 		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
@@ -399,7 +363,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	renderOpts := d2svg.RenderOpts{
 		Pad:         padFlag,
 		Sketch:      sketchFlag,
-		Isometric:   isometricFlag,
 		Center:      centerFlag,
 		ThemeID:     themeFlag,
 		DarkThemeID: darkThemeFlag,
@@ -478,9 +441,6 @@ func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
 	if int64(int(animateInterval)) != animateInterval {
 		return xmain.UsageErrorf("animate-interval exceeds the supported range on this platform")
 	}
-	if ext.isIsometric() && (animateInterval > 600000 || animateInterval > 0 && ext != isometricGIF) {
-		return xmain.UsageErrorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
-	}
 	if animateInterval > 0 && !ext.supportsAnimation() {
 		return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG or GIF.\nYou provided: %s", ext)
 	}
@@ -532,7 +492,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	switch {
 	case noChildren || !ext.supportsAnimation():
 		opts.AnimateTweens = go2.Pointer(false)
-	case ext == GIF || ext == isometricGIF:
+	case ext == GIF:
 		opts.AnimateTweens = go2.Pointer(true)
 	case animateIntervalFlag != nil:
 		opts.AnimateTweens = go2.Pointer(*animateIntervalFlag > 0)
@@ -566,16 +526,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	if err != nil {
 		return nil, false, err
 	}
-	if renderOptions.Isometric != nil && *renderOptions.Isometric && !ext.isIsometric() {
-		stdoutFormat, _ := ms.Opts.Flags.GetString("stdout-format")
-		if outputPath != "-" && stdoutFormat == "" && ext == SVG && filepath.Ext(outputPath) != ".svg" {
-			return nil, false, fmt.Errorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
-		}
-		ext, err = isometricExportExtension(ext)
-		if err != nil {
-			return nil, false, err
-		}
-	}
 	var animateInterval int64
 	if interval := rootDiagram.Config.ResolveAnimateInterval(animateIntervalFlag); interval != nil {
 		animateInterval = *interval
@@ -589,21 +539,10 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}
 	appendixOption := rootDiagram.Config.ResolveForceAppendix(forceAppendixFlag)
 	forceAppendix := appendixOption != nil && *appendixOption
-	if ext.isIsometric() && forceAppendix {
-		return nil, false, fmt.Errorf("--isometric cannot be combined with --force-appendix")
-	}
-	if ext.isIsometric() && renderOptions.Scale != nil {
-		if _, err := isometricImageQualityOptions(ext, *renderOptions.Scale); err != nil {
-			return nil, false, err
-		}
-	}
 	// The CLI's automatic scale sentinel must survive source option resolution.
 	// Ordinary exports historically treat nonpositive values and NaN as auto.
 	if renderOptions.Scale != nil && !(*renderOptions.Scale > 0) {
 		renderOptions.Scale = nil
-	}
-	if ext.isIsometric() && renderOptions.Sketch != nil && *renderOptions.Sketch {
-		return nil, false, fmt.Errorf("sketch cannot be combined with isometric output")
 	}
 	renderOpts := *renderOptions
 	cancel()
@@ -638,31 +577,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}
 
 	switch ext {
-	case isometricSVG, isometricPNG, isometricGIF, isometricPDF, isometricPPTX:
-		sourceRootID := strings.Join(append([]string{"root"}, boardPath...), ".")
-		// Prepare the watch preview before publishing files, so a failed
-		// preview cannot leave the last successful output half-updated.
-		var preview []byte
-		if wantPreview {
-			preview, err = renderIsometricPreview(ctx, ms, diagram, renderOpts, inputPath, sourceRootID, rootDiagram)
-			if err != nil {
-				return nil, false, err
-			}
-		}
-		var out []byte
-		var written bool
-		if ext == isometricPDF || ext == isometricPPTX {
-			out, written, err = renderIsometricPaged(ctx, ms, diagram, renderOpts, inputPath, outputPath, ext, sourceRootID)
-		} else {
-			out, written, err = renderIsometricImages(ctx, ms, diagram, renderOpts, inputPath, outputPath, ext, animateInterval, sourceRootID)
-		}
-		if err == nil {
-			if wantPreview {
-				out = preview
-			}
-			ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(outputPath), time.Since(start))
-		}
-		return out, written, err
 	case GIF:
 		cacheImages := ms.Env.Getenv("IMG_CACHE") == "1"
 		out, previewSVG, err := renderGIF(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), wantPreview)
@@ -1080,7 +994,6 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.Rend
 	renderOpts := &d2svg.RenderOpts{
 		Pad:                opts.Pad,
 		Sketch:             opts.Sketch,
-		Isometric:          opts.Isometric,
 		Center:             opts.Center,
 		MasterID:           opts.MasterID,
 		ThemeID:            opts.ThemeID,

@@ -28,7 +28,7 @@ class SelectionTests(unittest.TestCase):
             ([".gitmodules"], {"archives": "full", "browser": "packed"}),
             (["ci/test-wasm.sh", "d2lib/d2.go"], {"wasm": True}),
             ([".github/workflows/wasm.yml", "d2js/js/src/worker.browser.js"], {"wasm": True}),
-            (["d2js/d2wasm/isometric_test.go"], {"wasm": True}),
+            (["d2js/d2wasm/api_test.go"], {"wasm": True}),
             (["d2layouts/d2elklayout/wasm_test.go"], {"archives": "size", "wasm": True}),
             (["install.sh"], {"archives": "full", "windows-installer": True}),
             (["lib/localfile/open_unix.go"], {"archives": "full"}),

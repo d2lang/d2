@@ -51,7 +51,6 @@ type Config struct {
 	Scale              *float64        `json:"scale,omitempty"`
 	ForceAppendix      *bool           `json:"forceAppendix,omitempty"`
 	Sketch             *bool           `json:"sketch"`
-	Isometric          *bool           `json:"isometric,omitempty"`
 	ThemeID            *int64          `json:"themeID"`
 	DarkThemeID        *int64          `json:"darkThemeID"`
 	Pad                *int64          `json:"pad"`
@@ -124,10 +123,6 @@ type Diagram struct {
 
 	Shapes      []Shape      `json:"shapes"`
 	Connections []Connection `json:"connections"`
-
-	// An explicitly chosen default width and an inherited default have the same
-	// 2D appearance. Retain their distinction for isometric crease weights.
-	ExplicitDefaultStrokeWidths map[string]bool `json:"explicitDefaultStrokeWidths,omitempty"`
 
 	Root   Shape   `json:"root"`
 	Legend *Legend `json:"legend,omitempty"`

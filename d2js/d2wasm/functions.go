@@ -369,9 +369,6 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 	if input.Opts != nil && input.Opts.Sketch != nil {
 		renderOpts.Sketch = input.Opts.Sketch
 	}
-	if input.Opts != nil && input.Opts.Isometric != nil {
-		renderOpts.Isometric = input.Opts.Isometric
-	}
 	if input.Opts != nil && input.Opts.Pad != nil {
 		renderOpts.Pad = input.Opts.Pad
 	}
@@ -415,7 +412,6 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 			ThemeOverrides:     renderOpts.ThemeOverrides,
 			DarkThemeOverrides: renderOpts.DarkThemeOverrides,
 			Sketch:             renderOpts.Sketch,
-			Isometric:          renderOpts.Isometric,
 			Pad:                renderOpts.Pad,
 			Center:             renderOpts.Center,
 			Scale:              renderOpts.Scale,
@@ -442,8 +438,6 @@ func Render(args []js.Value) (interface{}, error) {
 	return render(input)
 }
 
-const errIsometric = "isometric rendering is not available in D2.js (the D2 CLI and Go library render it); render with isometric: false"
-
 func render(input RenderRequest) ([]byte, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
@@ -454,10 +448,6 @@ func render(input RenderRequest) ([]byte, error) {
 
 	if input.Opts == nil {
 		input.Opts = &RenderOptions{}
-	}
-	// The module leaves out isometric rendering; the CLI and the Go library have it.
-	if input.Opts.Isometric != nil && *input.Opts.Isometric {
-		return nil, &WASMError{Message: errIsometric, Code: 400}
 	}
 	animateInterval := 0
 	if interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval); interval != nil {

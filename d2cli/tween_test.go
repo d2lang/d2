@@ -61,18 +61,6 @@ steps: {empty: {vars: {charge: 0%}}}
 		t.Fatalf("unexpected red fill coverage at start/midpoint/end: %d/%d/%d", full, halfway, empty)
 	}
 
-	iso, err := imageCLI(t, dir, source, "--isometric", "--scale=.15", "--stdout-format=gif", "-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	isoGIF, err := gif.DecodeAll(bytes.NewReader(iso))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(isoGIF.Delay, []int{10, 4, 4, 2}) {
-		t.Fatalf("isometric GIF delays=%v", isoGIF.Delay)
-	}
-
 	_, err = imageCLI(t, dir, source, "--animate-interval=0", "--target=steps.empty", "endpoint.svg")
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +92,7 @@ steps: {empty: {vars: {charge: 0%}}}`
 		{"single board", nil, []string{"--target=steps.empty"}, "100ms steps(1,end) infinite", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, _, err := isometricCLI(t, source, tc.env, append(tc.args, "--stdout-format=svg", "-")...)
+			out, err := imageCLIWithEnv(t, t.TempDir(), source, tc.env, append(tc.args, "--stdout-format=svg", "-")...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -119,7 +107,8 @@ func TestAnimateDurationAloneKeepsSeparateSVGBoards(t *testing.T) {
 	const source = `vars: {d2-config: {animate-duration: 80ms}; charge: 100%}
 bar: "${charge}"
 steps: {empty: {vars: {charge: 0%}}}`
-	_, dir, err := isometricCLI(t, source, nil, "out.svg")
+	dir := t.TempDir()
+	_, err := imageCLI(t, dir, source, "out.svg")
 	if err != nil {
 		t.Fatal(err)
 	}
