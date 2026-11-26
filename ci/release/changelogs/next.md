@@ -18,7 +18,7 @@
 
 #### Improvements 🧹
 
-- Parser authors can use the [D2 syntax reference](https://github.com/d2lang/d2/tree/master/docs/grammar) and its shared conformance cases to check their implementations.
+- Parser authors can use the [D2 grammar](https://github.com/d2lang/d2/tree/master/docs/grammar) and [conformance cases](https://github.com/d2lang/d2/tree/master/docs/grammar/testdata) to check their implementations.
 
 - Grids with one specified axis choose more evenly sized rows or columns. For common integral cell sizes the partition search finds the minimum total deviation from the average track length.
 
