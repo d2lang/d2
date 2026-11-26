@@ -3,18 +3,25 @@
 package d2fonts
 
 import (
-	"embed"
+	_ "embed"
 	"encoding/base64"
 
 	"github.com/d2lang/d2/lib/syncmap"
 )
 
-//go:embed ttf/*.ttf
-var fontFacesFS embed.FS
+// The files of ttf/ as one brotli stream; see ttf_stream.go.
+//
+//go:embed ttf_stream.br
+var bundledTTFStream []byte
 
 func init() {
 	FontFaces = syncmap.New[Font, []byte]()
 	FontEncodings = syncmap.New[Font, string]()
+
+	faces, err := decodeBundledTTFStream(bundledTTFStream)
+	if err != nil {
+		panic(err)
+	}
 
 	for _, face := range []struct {
 		filename string
@@ -32,9 +39,9 @@ func init() {
 		{"FuzzyBubbles-Regular.ttf", HandDrawn, FONT_STYLE_REGULAR},
 		{"FuzzyBubbles-Bold.ttf", HandDrawn, FONT_STYLE_BOLD},
 	} {
-		ttf, err := fontFacesFS.ReadFile("ttf/" + face.filename)
-		if err != nil {
-			panic(err)
+		ttf, ok := faces[face.filename]
+		if !ok {
+			panic("d2fonts: " + face.filename + " is not in ttf_stream.br")
 		}
 		// SVG embeds a subset cut from the TTF. The whole-font encoding is the
 		// TTF itself under the historical WOFF media type; a WOFF copy of every
