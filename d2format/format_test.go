@@ -151,7 +151,6 @@ meow
     representation: {type: jsonb}
     diagram: int {constraint: foreign_key}
   }
-  meow <- diagrams.id
 
   steps: {
     shape: sql_table
@@ -159,6 +158,7 @@ meow
     representation: {type: jsonb}
     diagram: int {constraint: foreign_key}
   }
+  meow <- diagrams.id
 }
 
 D2 AST Parser: {
@@ -196,7 +196,7 @@ meow: {
   x: |` + "`" + `md
     meow
     meow
-  ` + "`" + `|
+  ` + "`" + `| {}
 }
 
 "meow\t": ok
@@ -591,7 +591,7 @@ hi # Fraud is the homage that force pays to reason.
 			name: "empty_map",
 			in: `x: {}
 `,
-			exp: `x
+			exp: `x: {}
 `,
 		},
 		{
@@ -660,7 +660,7 @@ x: @"x/../file"
 `,
 		},
 		{
-			name: "layers_scenarios_steps_bottom_simple",
+			name: "layers_scenarios_steps_order_simple",
 			in: `layers: {
   b: {
 		e
@@ -685,7 +685,6 @@ x: @"x/../file"
       }
     }
   }
-
   steps: {
     a
   }
@@ -693,7 +692,7 @@ x: @"x/../file"
 `,
 		},
 		{
-			name: "layers_scenarios_steps_bottom_complex",
+			name: "layers_scenarios_steps_order_complex",
 			in: `a
 
 scenarios: {
@@ -753,7 +752,47 @@ only-layers: {
 }
 `,
 			exp: `a
+
+scenarios: {
+  scenario-1: {
+    steps: {
+      step-1: {
+        Test
+      }
+      step-2
+    }
+    non-step
+  }
+}
+
+layers: {
+  Test super nested: {
+    base-layer
+
+    layers: {
+      layers: {
+        grand-child-layer: {
+          grand-child-board
+        }
+      }
+      layer-board
+    }
+    last-layer
+  }
+}
 b
+
+steps: {
+  1: {
+    step-1-content
+  }
+}
+
+scenarios: {
+  scenario-2: {
+    scenario-2-content
+  }
+}
 
 c
 d
@@ -766,48 +805,6 @@ only-layers: {
 
   layers: {
     Z
-  }
-}
-
-scenarios: {
-  scenario-1: {
-    non-step
-
-    steps: {
-      step-1: {
-        Test
-      }
-      step-2
-    }
-  }
-}
-
-layers: {
-  Test super nested: {
-    base-layer
-    last-layer
-
-    layers: {
-      layer-board
-
-      layers: {
-        grand-child-layer: {
-          grand-child-board
-        }
-      }
-    }
-  }
-}
-
-steps: {
-  1: {
-    step-1-content
-  }
-}
-
-scenarios: {
-  scenario-2: {
-    scenario-2-content
   }
 }
 `,
@@ -928,7 +925,7 @@ coop: {
 `,
 		},
 		{
-			name: "remove-empty-boards",
+			name: "preserve-board-values",
 			in: `k
 
 layers
@@ -936,6 +933,12 @@ scenarios: {}
 steps: asdf
 `,
 			exp: `k
+
+layers
+
+scenarios: {}
+
+steps: asdf
 `,
 		},
 		{

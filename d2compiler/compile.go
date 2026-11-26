@@ -1079,6 +1079,10 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			c.errorf(scalar, "link uses an unsafe URL scheme")
 			return
 		}
+		if err := boardLinkSyntax(scalar.ScalarString()); err != nil {
+			c.errorf(scalar, "invalid board link: %v", err)
+			return
+		}
 		attrs.Link = &d2graph.Scalar{}
 		attrs.Link.Value = scalar.ScalarString()
 		attrs.Link.MapKey = f.LastPrimaryKey()
@@ -1793,6 +1797,28 @@ func (c *compiler) validateEdges(g *d2graph.Graph) {
 			continue
 		}
 	}
+}
+
+// Board links and URLs share the link attribute. Only check D2 syntax for
+// paths beginning with an unquoted board namespace, root, or a parent step.
+func boardLinkSyntax(value string) error {
+	head, _, dotted := strings.Cut(value, ".")
+	head = strings.TrimSpace(head)
+	_, board := d2ast.BoardKeywords[strings.ToLower(head)]
+	if !dotted || (!board && head != "root" && head != "_") {
+		return nil
+	}
+	_, err := d2parser.ParseKey(value)
+	if err == nil || strings.IndexFunc(value, unicode.IsSpace) >= 0 {
+		return err
+	}
+	// A URI such as layers.html#intro or layers.example:open can also
+	// start with a board namespace.
+	u, urlErr := url.Parse(html.UnescapeString(value))
+	if urlErr == nil && (u.Scheme != "" || strings.ContainsAny(value, "/?#")) {
+		return nil
+	}
+	return err
 }
 
 func (c *compiler) validateBoardLinks(g *d2graph.Graph) {

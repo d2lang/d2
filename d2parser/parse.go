@@ -101,6 +101,7 @@ func ParseContext(ctx context.Context, path string, r io.Reader, opts *ParseOpti
 	return m, nil
 }
 
+// ParseKey parses a single key path.
 func ParseKey(key string) (*d2ast.KeyPath, error) {
 	p := &parser{
 		reader: strings.NewReader(key),
@@ -108,6 +109,9 @@ func ParseKey(key string) (*d2ast.KeyPath, error) {
 	}
 
 	k := p.parseKey()
+	if k != nil {
+		p.requireEnd("key")
+	}
 	if !p.err.Empty() {
 		return nil, fmt.Errorf("failed to parse key %q: %w", key, p.err)
 	}
@@ -117,6 +121,7 @@ func ParseKey(key string) (*d2ast.KeyPath, error) {
 	return k, nil
 }
 
+// ParseMapKey parses one map entry, including its optional value.
 func ParseMapKey(mapKey string) (*d2ast.Key, error) {
 	p := &parser{
 		reader: strings.NewReader(mapKey),
@@ -124,6 +129,9 @@ func ParseMapKey(mapKey string) (*d2ast.Key, error) {
 	}
 
 	mk := p.parseMapKey()
+	if mk != nil {
+		p.requireEnd("map key")
+	}
 	if !p.err.Empty() {
 		return nil, fmt.Errorf("failed to parse map key %q: %w", mapKey, p.err)
 	}
@@ -133,6 +141,7 @@ func ParseMapKey(mapKey string) (*d2ast.Key, error) {
 	return mk, nil
 }
 
+// ParseValue parses a single scalar, map, array or import.
 func ParseValue(value string) (d2ast.Value, error) {
 	p := &parser{
 		reader: strings.NewReader(value),
@@ -140,6 +149,9 @@ func ParseValue(value string) (d2ast.Value, error) {
 	}
 
 	v := p.parseValue()
+	if v.Unbox() != nil {
+		p.requireEnd("value")
+	}
 	if !p.err.Empty() {
 		return nil, fmt.Errorf("failed to parse value %q: %w", value, p.err)
 	}
@@ -147,6 +159,23 @@ func ParseValue(value string) (d2ast.Value, error) {
 		return nil, fmt.Errorf("empty value: %q", value)
 	}
 	return v.Unbox(), nil
+}
+
+func (p *parser) requireEnd(kind string) {
+	if !p.err.Empty() {
+		return
+	}
+	for {
+		start := p.pos
+		r, eof := p.read()
+		if eof {
+			return
+		}
+		if !unicode.IsSpace(r) {
+			p.errorf(start, p.pos, "unexpected %q after %s", r, kind)
+			return
+		}
+	}
 }
 
 // TODO: refactor parser to keep entire file in memory as []rune
@@ -737,10 +766,7 @@ func (p *parser) parseMapKey() (mk *d2ast.Key) {
 	}
 	if r == '!' {
 		r, eof := p.peek()
-		if eof {
-			return nil
-		}
-		if r == '&' {
+		if !eof && r == '&' {
 			p.commit()
 			mk.NotAmpersand = true
 		} else {

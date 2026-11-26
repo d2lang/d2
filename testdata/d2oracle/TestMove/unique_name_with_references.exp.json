@@ -3,7 +3,7 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestMove/unique_name_with_references.d2,0:0:0-6:0:30",
+      "range": "d2/testdata/d2oracle/TestMove/unique_name_with_references.d2,0:0:0-6:0:34",
       "nodes": [
         {
           "map_key": {
@@ -139,7 +139,7 @@
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/unique_name_with_references.d2,5:0:28-5:1:29",
+            "range": "d2/testdata/d2oracle/TestMove/unique_name_with_references.d2,5:0:28-5:5:33",
             "key": {
               "range": "d2/testdata/d2oracle/TestMove/unique_name_with_references.d2,5:0:28-5:1:29",
               "path": [
@@ -157,7 +157,12 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestMove/unique_name_with_references.d2,5:3:31-5:5:33",
+                "nodes": null
+              }
+            }
           }
         }
       ]

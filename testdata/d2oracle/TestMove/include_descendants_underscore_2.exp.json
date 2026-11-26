@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,0:0:0-4:0:17",
+      "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,0:0:0-4:0:21",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,0:0:0-0:1:1",
+            "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,0:0:0-0:5:5",
             "key": {
               "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,0:0:0-0:1:1",
               "path": [
@@ -25,18 +25,23 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,0:3:3-0:5:5",
+                "nodes": null
+              }
+            }
           }
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:2-3:1:16",
+            "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:6-3:1:20",
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:2-1:1:3",
+              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:6-1:1:7",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:2-1:1:3",
+                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:6-1:1:7",
                     "value": [
                       {
                         "string": "b",
@@ -50,17 +55,17 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:3:5-3:1:16",
+                "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:3:9-3:1:20",
                 "nodes": [
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:9-2:7:14",
+                      "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:13-2:7:18",
                       "key": {
-                        "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:9-2:7:14",
+                        "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:13-2:7:18",
                         "path": [
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:9-2:3:10",
+                              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:13-2:3:14",
                               "value": [
                                 {
                                   "string": "_",
@@ -71,7 +76,7 @@
                           },
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:4:11-2:5:12",
+                              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:4:15-2:5:16",
                               "value": [
                                 {
                                   "string": "a",
@@ -82,7 +87,7 @@
                           },
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:6:13-2:7:14",
+                              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:6:17-2:7:18",
                               "value": [
                                 {
                                   "string": "c",
@@ -156,11 +161,11 @@
           },
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:9-2:7:14",
+              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:13-2:7:18",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:9-2:3:10",
+                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:13-2:3:14",
                     "value": [
                       {
                         "string": "_",
@@ -171,7 +176,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:4:11-2:5:12",
+                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:4:15-2:5:16",
                     "value": [
                       {
                         "string": "a",
@@ -182,7 +187,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:6:13-2:7:14",
+                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:6:17-2:7:18",
                     "value": [
                       {
                         "string": "c",
@@ -224,11 +229,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:2-1:1:3",
+              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:6-1:1:7",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:2-1:1:3",
+                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,1:0:6-1:1:7",
                     "value": [
                       {
                         "string": "b",
@@ -270,11 +275,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:9-2:7:14",
+              "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:13-2:7:18",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:9-2:3:10",
+                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:2:13-2:3:14",
                     "value": [
                       {
                         "string": "_",
@@ -285,7 +290,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:4:11-2:5:12",
+                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:4:15-2:5:16",
                     "value": [
                       {
                         "string": "a",
@@ -296,7 +301,7 @@
                 },
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:6:13-2:7:14",
+                    "range": "d2/testdata/d2oracle/TestMove/include_descendants_underscore_2.d2,2:6:17-2:7:18",
                     "value": [
                       {
                         "string": "c",

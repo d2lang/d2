@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestDelete/singular_map_style.d2,0:0:0-1:0:2",
+      "range": "d2/testdata/d2oracle/TestDelete/singular_map_style.d2,0:0:0-1:0:6",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestDelete/singular_map_style.d2,0:0:0-0:1:1",
+            "range": "d2/testdata/d2oracle/TestDelete/singular_map_style.d2,0:0:0-0:5:5",
             "key": {
               "range": "d2/testdata/d2oracle/TestDelete/singular_map_style.d2,0:0:0-0:1:1",
               "path": [
@@ -25,7 +25,12 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestDelete/singular_map_style.d2,0:3:3-0:5:5",
+                "nodes": null
+              }
+            }
           }
         }
       ]

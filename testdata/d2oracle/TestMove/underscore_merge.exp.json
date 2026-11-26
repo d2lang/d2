@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,0:0:0-6:0:32",
+      "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,0:0:0-6:0:36",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,0:0:0-0:1:1",
+            "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,0:0:0-0:5:5",
             "key": {
               "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,0:0:0-0:1:1",
               "path": [
@@ -25,18 +25,23 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,0:3:3-0:5:5",
+                "nodes": null
+              }
+            }
           }
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:3-5:1:31",
+            "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:7-5:1:35",
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:3-2:1:4",
+              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:7-2:1:8",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:3-2:1:4",
+                    "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:7-2:1:8",
                     "value": [
                       {
                         "string": "c",
@@ -50,17 +55,17 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:3:6-5:1:31",
+                "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:3:10-5:1:35",
                 "nodes": [
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:10-3:9:17",
+                      "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:14-3:9:21",
                       "key": {
-                        "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:10-3:3:11",
+                        "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:14-3:3:15",
                         "path": [
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:10-3:3:11",
+                              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:14-3:3:15",
                               "value": [
                                 {
                                   "string": "b",
@@ -74,7 +79,7 @@
                       "primary": {},
                       "value": {
                         "double_quoted_string": {
-                          "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:5:13-3:9:17",
+                          "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:5:17-3:9:21",
                           "value": [
                             {
                               "string": "yo",
@@ -87,13 +92,13 @@
                   },
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:20-4:11:29",
+                      "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:24-4:11:33",
                       "key": {
-                        "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:20-4:3:21",
+                        "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:24-4:3:25",
                         "path": [
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:20-4:3:21",
+                              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:24-4:3:25",
                               "value": [
                                 {
                                   "string": "b",
@@ -107,7 +112,7 @@
                       "primary": {},
                       "value": {
                         "double_quoted_string": {
-                          "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:5:23-4:11:29",
+                          "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:5:27-4:11:33",
                           "value": [
                             {
                               "string": "what",
@@ -203,11 +208,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:3-2:1:4",
+              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:7-2:1:8",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:3-2:1:4",
+                    "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,2:0:7-2:1:8",
                     "value": [
                       {
                         "string": "c",
@@ -249,11 +254,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:10-3:3:11",
+              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:14-3:3:15",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:10-3:3:11",
+                    "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,3:2:14-3:3:15",
                     "value": [
                       {
                         "string": "b",
@@ -269,11 +274,11 @@
           },
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:20-4:3:21",
+              "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:24-4:3:25",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:20-4:3:21",
+                    "range": "d2/testdata/d2oracle/TestMove/underscore_merge.d2,4:2:24-4:3:25",
                     "value": [
                       {
                         "string": "b",

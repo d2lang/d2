@@ -21,11 +21,11 @@ layers: {release: {child}}
 "layers": visible
 `
 	const want = `heading: STYLE
+
+layers: {release: {child}}
 "steps": WIDTH
 'scenarios': {'layers': SHAPE}
 "layers": visible
-
-layers: {release: {child}}
 `
 	ast, err := d2parser.Parse("labels.d2", strings.NewReader(source), nil)
 	assert.Success(t, err)

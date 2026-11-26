@@ -439,6 +439,19 @@ scenarios: {
 			},
 		},
 		{
+			name: "target-trailing-input",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				writeFile(t, dir, "in.d2", "layers: {overview: {api -> db}}")
+				err := runTestMain(t, ctx, dir, env, "--target", "layers.overview; wrong", "in.d2", "out.svg")
+				if err == nil || !strings.Contains(err.Error(), "invalid target: layers.overview; wrong") {
+					t.Fatalf("expected an invalid target error, got %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(dir, "out.svg")); !os.IsNotExist(err) {
+					t.Fatalf("expected no output for an invalid target, got %v", err)
+				}
+			},
+		},
+		{
 			name: "target-nested-index",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				writeFile(t, dir, "target-nested-index.d2", `a

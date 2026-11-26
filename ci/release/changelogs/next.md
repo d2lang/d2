@@ -72,6 +72,8 @@
 
 #### Bugfixes ⛑️
 
+- `d2 fmt` preserves imported boards, board declaration order, explicit empty maps, block comments in arrays, and the parentheses around connections such as `("api" *- "db")`.
+- A file ending in the object name `!` parses with or without a final newline. Standalone key and value parsers reject trailing input, including an editor target such as `a; b`.
 - Empty filters (`&` or `!&`) now report an error. Supply a condition such as `&shape: circle`. A trailing dot needs a path segment. Write `a` for the object or `"a."` for a name ending in a literal dot. Use `"svc".(a -> b)[0]` to scope a connection.
 - A lone hyphen after a quoted name now reports a syntax error. Change `"build" - server` to `"build" -- server`. An unquoted name such as `build-server` still names one object.
 - Reserved keys work in any letter case. For example, `service.STYLE.Stroke: blue` sets the stroke color when you compile the diagram directly. To keep an object named `STYLE`, write `"STYLE"`.

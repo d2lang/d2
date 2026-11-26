@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/d2lang/util-go/assert"
 	"github.com/d2lang/util-go/diff"
@@ -494,7 +495,7 @@ layers: {
 			exp: `b
 
 layers: {
-  c
+  c: {}
 }
 `,
 		},
@@ -515,7 +516,7 @@ layers: {
   c: {
     x
   }
-  b
+  b: {}
 }
 `,
 		},
@@ -540,7 +541,7 @@ layers: {
     d
 
     layers: {
-      c
+      c: {}
     }
   }
 }
@@ -3903,9 +3904,9 @@ a: {
 			key:    `a.b`,
 			newKey: `b`,
 
-			exp: `a
+			exp: `a: {}
 
-a
+a: {}
 b: {
   shape: cylinder
 }
@@ -4082,7 +4083,7 @@ c
 			key:    `a.b`,
 			newKey: `b`,
 
-			exp: `a
+			exp: `a: {}
 b
 `,
 			assertions: func(t *testing.T, g *d2graph.Graph) {
@@ -4101,7 +4102,7 @@ b
 			key:    `"a\n".b`,
 			newKey: `b`,
 
-			exp: `"a\n"
+			exp: `"a\n": {}
 b
 `,
 		},
@@ -4116,7 +4117,7 @@ a.b
 			key:    `a.b`,
 			newKey: `b`,
 
-			exp: `a
+			exp: `a: {}
 b
 `,
 		},
@@ -4131,7 +4132,7 @@ a.b -> c
 			key:    `a.b`,
 			newKey: `b`,
 
-			exp: `a
+			exp: `a: {}
 b -> c
 b
 `,
@@ -4151,7 +4152,7 @@ a.b.c -> a.d
 			newKey: `c`,
 
 			exp: `a: {
-  b
+  b: {}
   _.c -> d
 }
 c -> a.d
@@ -4173,7 +4174,7 @@ a.b.c
 			newKey: `c`,
 
 			exp: `a: {
-  b
+  b: {}
 }
 c
 `,
@@ -4189,7 +4190,7 @@ a.b.icon: https://icons.terrastruct.com/essentials/142-target.svg
 			key:    `a.b`,
 			newKey: `b`,
 
-			exp: `a
+			exp: `a: {}
 a
 b
 b.icon: https://icons.terrastruct.com/essentials/142-target.svg
@@ -4206,7 +4207,7 @@ c
 			key:    `a.b`,
 			newKey: `c.b`,
 
-			exp: `a
+			exp: `a: {}
 c: {
   b
 }
@@ -4377,7 +4378,7 @@ c: {
 			newKey: `guitar.pipe`,
 
 			exp: `guitar: {
-  books
+  books: {}
   pipe
 }
 `,
@@ -4701,7 +4702,7 @@ c: {
   b 2
 }
 a.b
-c
+c: {}
 `,
 		},
 		{
@@ -4723,7 +4724,7 @@ c: {
   b 2
 }
 d -> a.b 2
-c
+c: {}
 `,
 		},
 		{
@@ -4787,7 +4788,7 @@ c
 			key:    `b`,
 			newKey: `c.b`,
 
-			exp: `a
+			exp: `a: {}
 
 c: {
   b: "yo"
@@ -4825,7 +4826,7 @@ c
 			newKey: `c`,
 
 			exp: `a: {
-  b
+  b: {}
 }
 c
 `,
@@ -5585,7 +5586,7 @@ z
 			newKey:             `a`,
 			includeDescendants: true,
 
-			exp: `x
+			exp: `x: {}
 x
 z
 a: {
@@ -5706,7 +5707,7 @@ b
 			includeDescendants: true,
 
 			exp: `x -> b.z.a
-b
+b: {}
 y
 `,
 		},
@@ -5723,7 +5724,7 @@ y
 
 			exp: `foo: {
   x -> b.z.a
-  b
+  b: {}
   y
 }
 `,
@@ -5802,7 +5803,7 @@ github: {
 
 github: {
   _.local.dev -> workflows
-  _.aws
+  _.aws: {}
   workflows
 }
 `,
@@ -5819,7 +5820,7 @@ github: {
 			newKey:             `b`,
 			includeDescendants: true,
 
-			exp: `a
+			exp: `a: {}
 b: {
   _.a.c
 }
@@ -5838,7 +5839,7 @@ b: {
 			newKey:             `b`,
 			includeDescendants: true,
 
-			exp: `a
+			exp: `a: {}
 b: {
   _.a.c -> d
   _.a.c -> _.a.d
@@ -6309,7 +6310,7 @@ layers: {
 			key: `pipe`,
 
 			exp: `guitar: {
-  books
+  books: {}
 }
 `,
 		},
@@ -6327,7 +6328,7 @@ layers: {
 			key: `pipe`,
 
 			exp: `guitar: {
-  books
+  books: {}
 }
 a
 `,
@@ -6455,7 +6456,7 @@ x
 `,
 			key: `(x -> y)[0].style.stroke`,
 
-			exp: `x -> y
+			exp: `x -> y: {}
 `,
 		},
 		{
@@ -6483,7 +6484,7 @@ x
 `,
 			key: `(x -> y)[0].target-arrowhead`,
 
-			exp: `x -> y
+			exp: `x -> y: {}
 `,
 		},
 		{
@@ -6495,7 +6496,7 @@ x
 `,
 			key: `(x -> y)[0].target-arrowhead.shape`,
 
-			exp: `x -> y
+			exp: `x -> y: {}
 `,
 		},
 		{
@@ -6524,7 +6525,7 @@ x
 `,
 			key: `(x -> y)[0].target-arrowhead.shape`,
 
-			exp: `x -> y
+			exp: `x -> y: {}
 `,
 		},
 		{
@@ -6536,7 +6537,7 @@ x
 `,
 			key: `(x -> y)[0].style.stroke`,
 
-			exp: `x -> y
+			exp: `x -> y: {}
 `,
 		},
 		{
@@ -6617,7 +6618,7 @@ A.style.stroke-dash: 5
 `,
 			key: `x.style.fill`,
 
-			exp: `x
+			exp: `x: {}
 `,
 		},
 		{
@@ -6650,7 +6651,7 @@ A.style.stroke-dash: 5
 `,
 			key: `x.style.fill`,
 
-			exp: `x
+			exp: `x: {}
 `,
 		},
 		{
@@ -6663,7 +6664,7 @@ y
 `,
 			key: `x.near`,
 
-			exp: `x
+			exp: `x: {}
 y
 `,
 		},
@@ -6707,7 +6708,7 @@ no collision.near: collision detected
 `,
 			key: `x.tooltip`,
 
-			exp: `x
+			exp: `x: {}
 `,
 		},
 		{
@@ -6783,7 +6784,7 @@ y
 `,
 			key: `y`,
 
-			exp: `x
+			exp: `x: {}
 `,
 		},
 		{
@@ -7397,7 +7398,7 @@ kang
 			key: `c.y.congo`,
 
 			exp: `c: {
-  y
+  y: {}
 }
 `,
 			assertions: func(t *testing.T, g *d2graph.Graph) {
@@ -7587,7 +7588,7 @@ x.y.jingle
 `,
 			key: "x.y.z",
 
-			exp: `x.y
+			exp: `x.y: {}
 x.y.jingle
 `,
 		},
@@ -7599,7 +7600,7 @@ B
 A -> B: {style.stroke: "#2b50c2"}
 `,
 			key: `A.style.stroke`,
-			exp: `A
+			exp: `A: {}
 B
 A -> B: {style.stroke: "#2b50c2"}
 `,
@@ -7614,7 +7615,7 @@ A -> B: {style.stroke: "#2b50c2"}
 			key: `(A->B)[0].style.stroke`,
 			exp: `A: {style.stroke: "#000e3d"}
 B
-A -> B
+A -> B: {}
 `,
 		},
 		{
@@ -7626,7 +7627,7 @@ A -> B
 `,
 			key: `x.width`,
 
-			exp: `x
+			exp: `x: {}
 `,
 		},
 		{
@@ -7638,7 +7639,7 @@ A -> B
 `,
 			key: `x.left`,
 
-			exp: `x
+			exp: `x: {}
 `,
 		},
 		{
@@ -7715,7 +7716,7 @@ Square
 `,
 			key: `a.b`,
 
-			exp: `a
+			exp: `a: {}
 `,
 		},
 		{
@@ -8017,7 +8018,7 @@ a.label.near: center-center
 			text: `yes: {label.near: center-center}
 `,
 			key: `yes.label.near`,
-			exp: `yes
+			exp: `yes: {}
 `,
 		},
 		{
@@ -8110,7 +8111,7 @@ layers: {
 			boardPath: []string{"x"},
 			key:       `a`,
 			exp: `layers: {
-  x
+  x: {}
 }
 `,
 		},
@@ -9115,6 +9116,21 @@ z
 			}
 		})
 	}
+}
+
+func TestDeleteLastImportedMember(t *testing.T) {
+	t.Parallel()
+	library, _, err := d2compiler.Compile("lib.d2", strings.NewReader("item: {only}"), nil)
+	assert.Success(t, err)
+	library, err = d2oracle.Delete(library, nil, "item.only")
+	assert.Success(t, err)
+	source := d2format.Format(library.AST)
+	assert.String(t, "item: {}\n", source)
+
+	files := fstest.MapFS{"lib.d2": {Data: []byte(source)}}
+	g, _, err := d2compiler.Compile("main.d2", strings.NewReader("...@lib.item"), &d2compiler.CompileOptions{FS: files})
+	assert.Success(t, err)
+	assert.Equal(t, 0, len(g.Objects))
 }
 
 func TestDeleteIDDeltas(t *testing.T) {

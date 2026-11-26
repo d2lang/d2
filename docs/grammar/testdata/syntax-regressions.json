@@ -1,5 +1,10 @@
 [
   {
+    "name": "bang-without-final-newline",
+    "source": "!",
+    "nodes": [{"map_key": {"key": {"path": [{"unquoted_string": {"value": [{"string": "!"}]}}]}}}]
+  },
+  {
     "name": "array-suspensions-and-interpolated-number",
     "source": "x: [suspend; unsuspend; 10${unit}]",
     "nodes": [{"map_key": {"value": {"array": {"nodes": [

@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,0:0:0-3:0:20",
+      "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,0:0:0-3:0:24",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,0:0:0-2:1:19",
+            "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,0:0:0-2:1:23",
             "key": {
               "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,0:0:0-0:6:6",
               "path": [
@@ -27,11 +27,11 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,0:8:8-2:1:19",
+                "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,0:8:8-2:1:23",
                 "nodes": [
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,1:2:12-1:7:17",
+                      "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,1:2:12-1:11:21",
                       "key": {
                         "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,1:2:12-1:7:17",
                         "path": [
@@ -49,7 +49,12 @@
                         ]
                       },
                       "primary": {},
-                      "value": {}
+                      "value": {
+                        "map": {
+                          "range": "d2/testdata/d2oracle/TestDelete/only-underscore.d2,1:9:19-1:11:21",
+                          "nodes": null
+                        }
+                      }
                     }
                   }
                 ]

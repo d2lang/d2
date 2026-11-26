@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,0:0:0-6:0:30",
+      "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,0:0:0-6:0:38",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,0:0:0-0:1:1",
+            "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,0:0:0-0:5:5",
             "key": {
               "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,0:0:0-0:1:1",
               "path": [
@@ -25,18 +25,23 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,0:3:3-0:5:5",
+                "nodes": null
+              }
+            }
           }
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:3-2:1:4",
+            "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:7-2:5:12",
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:3-2:1:4",
+              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:7-2:1:8",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:3-2:1:4",
+                    "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:7-2:1:8",
                     "value": [
                       {
                         "string": "a",
@@ -48,18 +53,23 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:3:10-2:5:12",
+                "nodes": null
+              }
+            }
           }
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:5-5:1:29",
+            "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:13-5:1:37",
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:5-3:1:6",
+              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:13-3:1:14",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:5-3:1:6",
+                    "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:13-3:1:14",
                     "value": [
                       {
                         "string": "b",
@@ -73,17 +83,17 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:3:8-5:1:29",
+                "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:3:16-5:1:37",
                 "nodes": [
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,4:2:12-4:17:27",
+                      "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,4:2:20-4:17:35",
                       "key": {
-                        "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,4:2:12-4:7:17",
+                        "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,4:2:20-4:7:25",
                         "path": [
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,4:2:12-4:7:17",
+                              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,4:2:20-4:7:25",
                               "value": [
                                 {
                                   "string": "shape",
@@ -97,7 +107,7 @@
                       "primary": {},
                       "value": {
                         "unquoted_string": {
-                          "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,4:9:19-4:17:27",
+                          "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,4:9:27-4:17:35",
                           "value": [
                             {
                               "string": "cylinder",
@@ -167,11 +177,11 @@
           },
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:3-2:1:4",
+              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:7-2:1:8",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:3-2:1:4",
+                    "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,2:0:7-2:1:8",
                     "value": [
                       {
                         "string": "a",
@@ -213,11 +223,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:5-3:1:6",
+              "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:13-3:1:14",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:5-3:1:6",
+                    "range": "d2/testdata/d2oracle/TestMove/duplicate.d2,3:0:13-3:1:14",
                     "value": [
                       {
                         "string": "b",

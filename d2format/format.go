@@ -108,7 +108,7 @@ func (p *printer) node(n d2ast.Node) {
 	case *d2ast.KeyPath:
 		p.key(n)
 	case *d2ast.Edge:
-		p.edge(n)
+		p.mapKey(&d2ast.Key{Edges: []*d2ast.Edge{n}})
 	case *d2ast.EdgeIndex:
 		p.edgeIndex(n)
 	}
@@ -279,8 +279,8 @@ func (p *printer) array(a *d2ast.Array) {
 		nb := a.Nodes[i]
 		n := nb.Unbox()
 
-		// Handle inline comments.
-		if i > 0 && (nb.Comment != nil || nb.BlockComment != nil) {
+		// Only a line comment can follow an item without a separator.
+		if i > 0 && nb.Comment != nil {
 			if n.GetRange().Start.Line == prev.GetRange().End.Line && n.GetRange().OneLine() {
 				p.sb.WriteByte(' ')
 				p.node(n)
@@ -311,7 +311,7 @@ func (p *printer) array(a *d2ast.Array) {
 }
 
 func (p *printer) _map(m *d2ast.Map) {
-	oneLine := !m.IsFileMap() && m.Range.OneLine()
+	oneLine := !m.IsFileMap() && (len(m.Nodes) == 0 || m.Range.OneLine())
 	if !m.IsFileMap() {
 		p.sb.WriteByte('{')
 		if !oneLine {
@@ -319,21 +319,10 @@ func (p *printer) _map(m *d2ast.Map) {
 		}
 	}
 
-	boardNodes := []d2ast.MapNodeBox{}
-
 	prev := d2ast.Node(m)
 	for i := 0; i < len(m.Nodes); i++ {
 		nb := m.Nodes[i]
 		n := nb.Unbox()
-		// extract out layer, scenario, and step nodes and skip
-		if p.keyScope != variableKeys && nb.IsBoardNode() {
-			if nb.MapKey.Value.Map != nil && len(nb.MapKey.Value.Map.Nodes) > 0 {
-				boardNodes = append(boardNodes, nb)
-			}
-			prev = n
-			continue
-		}
-
 		// A line comment can follow an entry without a separator.
 		if i > 0 && nb.Comment != nil {
 			if n.GetRange().Start.Line == prev.GetRange().End.Line && n.GetRange().OneLine() {
@@ -345,7 +334,9 @@ func (p *printer) _map(m *d2ast.Map) {
 
 		if !oneLine {
 			if prev != m {
-				if n.GetRange().Start.Line-prev.GetRange().End.Line > 1 {
+				// Scenarios and steps inherit the state at their declaration.
+				// Separate board sections visually without changing their order.
+				if n.GetRange().Start.Line-prev.GetRange().End.Line > 1 || (p.keyScope == diagramKeys && nb.IsBoardNode()) {
 					p.sb.WriteByte('\n')
 				}
 			}
@@ -356,23 +347,6 @@ func (p *printer) _map(m *d2ast.Map) {
 			p.sb.WriteString("; ")
 		}
 
-		p.node(n)
-		prev = n
-	}
-
-	// draw board nodes
-	for i := 0; i < len(boardNodes); i++ {
-		n := boardNodes[i].Unbox()
-		// if this board is the very first line of the file, don't add an extra newline
-		if n.GetRange().Start.Line != 0 {
-			p.sb.WriteByte('\n')
-		}
-		// if scope only has boards, don't newline the first board
-		if i != 0 || len(m.Nodes) > len(boardNodes) {
-			p.sb.WriteByte('\n')
-		}
-
-		p.sb.WriteString(p.indentStr)
 		p.node(n)
 		prev = n
 	}
@@ -406,7 +380,9 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 			p.sb.WriteByte('.')
 		}
 
-		if mk.Key != nil || mk.EdgeIndex != nil || mk.EdgeKey != nil {
+		// A leading * arrow is only recognized inside an edge group.
+		grouped := mk.Key != nil || mk.EdgeIndex != nil || mk.EdgeKey != nil || mk.Edges[0].SrcArrow == "*"
+		if grouped {
 			p.sb.WriteByte('(')
 		}
 		if mk.Edges[0].Src != nil {
@@ -419,7 +395,7 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 				p.sb.WriteByte(' ')
 			}
 		}
-		if mk.Key != nil || mk.EdgeIndex != nil || mk.EdgeKey != nil {
+		if grouped {
 			p.sb.WriteByte(')')
 		}
 
@@ -435,9 +411,6 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 	if mk.Primary.Unbox() != nil {
 		p.sb.WriteString(": ")
 		p.node(mk.Primary.Unbox())
-	}
-	if mk.Value.Map != nil && len(mk.Value.Map.Nodes) == 0 {
-		return
 	}
 	if mk.Value.Unbox() != nil {
 		if mk.Primary.Unbox() == nil {
@@ -476,14 +449,6 @@ func (p *printer) key(k *d2ast.KeyPath) {
 		p.path(k.Path)
 	}
 	p.inKey = false
-}
-
-func (p *printer) edge(e *d2ast.Edge) {
-	if e.Src != nil {
-		p.key(e.Src)
-		p.sb.WriteByte(' ')
-	}
-	p.edgeArrowAndDst(e)
 }
 
 func (p *printer) edgeArrowAndDst(e *d2ast.Edge) {
