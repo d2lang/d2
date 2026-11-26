@@ -594,14 +594,18 @@ func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrde
 	}
 }
 
-// Inside a shape, board keywords have the same meaning as their quoted names.
-// Use that literal representation in the IR; references retain their source AST.
+// Outside their declaration contexts, board keywords can name shapes or
+// variables. A variable can also be named classes. Keep the literal name
+// in the IR and the original spelling in its source references.
 func (m *Map) fieldName(name d2ast.String) d2ast.String {
-	if _, board := d2ast.BoardKeywords[d2ast.Keyword(name)]; !board || m == nil {
+	keyword := d2ast.Keyword(name)
+	_, board := d2ast.BoardKeywords[keyword]
+	if m == nil || (!board && keyword != "classes") || NodeBoardKind(m) != "" {
 		return name
 	}
 	parent, ok := m.parent.(*Field)
-	if !ok || NodeBoardKind(m) != "" || d2ast.Keyword(parent.Name) != "" {
+	inShape := board && ok && d2ast.Keyword(parent.Name) == ""
+	if !inShape && !m.inVariableData() {
 		return name
 	}
 	literal := d2ast.FlatDoubleQuotedString(name.ScalarString())
@@ -1438,8 +1442,8 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 	head := m.fieldName(kp.Path[i].Unbox())
 	keyword := d2ast.Keyword(head)
 
-	if keyword != "" {
-		if _, ok := d2ast.CompositeReservedKeywords[keyword]; !ok && i < len(kp.Path)-1 {
+	if keyword != "" && keyword != "vars" && i < len(kp.Path)-1 {
+		if _, ok := d2ast.CompositeReservedKeywords[keyword]; !ok && !m.inVariableData() {
 			return d2parser.Errorf(kp.Path[i].Unbox(), fmt.Sprintf(`"%s" must be the last part of the key`, keyword))
 		}
 	}
@@ -2226,6 +2230,27 @@ func IsVar(n Node) bool {
 		}
 		n = n.Parent()
 	}
+}
+
+// The immediate entries in vars are variable names. Their composite values
+// can be read as data or used as diagram templates. The configuration and
+// legend are interpreted by their own compilers.
+func (m *Map) inVariableData() bool {
+	var child *Field
+	for f := ParentField(m); f != nil; f = ParentField(f) {
+		if d2ast.Keyword(f.Name) == "vars" {
+			if child != nil && child.Name != nil {
+				name := child.Name.ScalarString()
+				return !strings.EqualFold(name, "d2-config") && !strings.EqualFold(name, "d2-legend")
+			}
+			return true
+		}
+		if NodeBoardKind(f) != "" {
+			break
+		}
+		child = f
+	}
+	return false
 }
 
 func ParentBoard(n Node) Node {
