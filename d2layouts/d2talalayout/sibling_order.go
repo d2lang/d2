@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type branchConnection struct {
@@ -107,7 +108,7 @@ func orderEquivalentBranchSlots(ctx context.Context, source *d2graph.Graph, resu
 			continue
 		}
 		slots := slices.Clone(peers)
-		slices.SortStableFunc(slots, func(a, b branchSlot) int {
+		xsort.StableFunc(slots, func(a, b branchSlot) int {
 			if row {
 				return cmp.Compare(a.position.X, b.position.X)
 			}

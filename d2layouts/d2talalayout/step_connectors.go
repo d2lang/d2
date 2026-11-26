@@ -12,6 +12,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type stepRouteDecoration struct {
@@ -35,7 +36,7 @@ func clearStepConnectorDecorations(source *d2graph.Graph, g *layoutgraph.Graph) 
 	}
 
 	nodes := slices.Clone(g.Nodes)
-	slices.SortFunc(nodes, func(a, b *layoutgraph.Node) int { return cmp.Compare(a.TopLeft.X, b.TopLeft.X) })
+	xsort.Func(nodes, func(a, b *layoutgraph.Node) int { return cmp.Compare(a.TopLeft.X, b.TopLeft.X) })
 	items := make([]nodeDecorationBoxes, len(nodes))
 	index := make(map[*layoutgraph.Node]int, len(nodes))
 	var decorations []*geo.Box

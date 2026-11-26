@@ -38,6 +38,10 @@
 
 - Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer.
 
+- D2.js: the WebAssembly module is built with TinyGo instead of Go, reducing its Brotli-compressed size by about 40%. [#2966](https://github.com/d2lang/d2/pull/2966)
+
+- D2.js: the TinyGo-built WebAssembly module is less than half the size (11.9 MB smaller) and a third smaller when compressed with Brotli (2.0 MB), and runs D2's end-to-end corpus in less than half the time, with identical output on that corpus. D2.js calls into the module and every call runs to completion, so the module is now built without a goroutine scheduler, which on WebAssembly rewrote every function that could be running when a goroutine is switched out and made the code about two thirds larger. The build needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases), which also gives each pointer a garbage-collector stack slot only while a collection can find it in use. The module also drops its function names, a second HTML entity table, two unused Unicode segmentation tables and four separately encoded copies of bundled fonts, stores the tables of the formula renderer and of the ELK layout engine as constant data, keeps the formula renderer's glyph outlines compressed until a formula needs them and its bundled fonts compressed until it starts, and runs D2's own sorts through one shared routine. [#3046](https://github.com/d2lang/d2/pull/3046)
+
 - The d2 binary is about 3 MB smaller: PPTX export writes its XML parts without `text/template`, whose method lookups by name kept unused methods throughout the program. [#3000](https://github.com/d2lang/d2/pull/3000)
 
 - TALA routes larger cross-container diagrams within its existing search budget. It preserves the original hierarchy lanes on compact diagrams and indexes previously routed segments. [#2891](https://github.com/d2lang/d2/issues/2891)

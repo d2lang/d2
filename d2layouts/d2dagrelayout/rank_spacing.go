@@ -3,10 +3,10 @@ package d2dagrelayout
 import (
 	"cmp"
 	"math"
-	"slices"
 	"sort"
 
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // rankItem is an object to be ranked and the coordinate that ranks it.
@@ -65,7 +65,7 @@ func getRanks(g *d2graph.Graph, ix *objectIndex, isHorizontal bool, orders mapOr
 	if orders != nil {
 		orders.levels(nil)
 	}
-	slices.SortStableFunc(items, func(a, b aligned) int {
+	xsort.StableFunc(items, func(a, b aligned) int {
 		return cmp.Compare(a.level, b.level)
 	})
 
@@ -486,7 +486,7 @@ func ancestorLess(a, b float64, descending bool) bool {
 // sortStableByPosition sorts keys stably by their positions pos and reports
 // whether two of them tie (neither is before the other, NaN included).
 func sortStableByPosition(keys []int32, pos []float64, descending bool) (tied bool) {
-	slices.SortStableFunc(keys, func(a, b int32) int {
+	xsort.StableFunc(keys, func(a, b int32) int {
 		return lessToCompare(ancestorLess(pos[a], pos[b], descending), ancestorLess(pos[b], pos[a], descending))
 	})
 	for i := 1; i < len(keys); i++ {

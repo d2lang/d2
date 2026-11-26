@@ -3,10 +3,10 @@ package grouping
 import (
 	"cmp"
 	"fmt"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 const maxEngineNodes = limits.MaxEngineNodes
@@ -410,7 +410,7 @@ func clusterIncidentEdges(
 			break
 		}
 	}
-	slices.SortFunc(edges, func(a, b *layoutgraph.Edge) int {
+	xsort.Func(edges, func(a, b *layoutgraph.Edge) int {
 		return cmp.Compare(edgeOrder[a], edgeOrder[b])
 	})
 	return edges, guard.Finish()

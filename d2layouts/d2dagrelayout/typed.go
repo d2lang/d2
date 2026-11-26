@@ -1,36 +1,30 @@
 package d2dagrelayout
 
 import (
-	"fmt"
-
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/dagro"
 )
 
-// dagroInput returns the dagro.LayoutTyped input for g. dagro guarantees that
-// LayoutTyped(in) produces exactly what Layout produces for the Graph that
-// in.Graph() builds, and in.Graph() makes the calls the original adapter
-// made, in the same order: SetGraph; SetNode and, unless the parent is g.Root,
-// SetParent for each object; SetEdge for each edge, between its resolved
-// endpoints. So node i is g.Objects[i], with the original's node id: the
-// position of the object's last occurrence in g.Objects (as objectMapper
+// dagroInput returns the dagro.LayoutTyped input for g. It describes the
+// graph the original adapter built with dagro's Graph API, with the same calls
+// in the same order (dagro.LayoutTyped produces what dagre produces for that
+// graph): rankdir, ranksep, edgesep and nodesep; a node for each object with,
+// unless the parent is g.Root, its parent; an edge for each edge, between its
+// resolved endpoints. So node i is g.Objects[i], with the original's node id:
+// the position of the object's last occurrence in g.Objects (as objectMapper
 // numbered them), and edge i is g.Edges[i], with the same label values.
 //
-// A parent other than g.Root or a resolved endpoint that is not in g.Objects
-// was the node "" to the original, which the first SetParent or SetEdge call
-// naming it created without a label. Here it is one more node,
-// in.Nodes[len(g.Objects)], with id "". in.Graph() creates it at the same
-// point among the nodes: at that SetParent call or, when only endpoints name
-// it, with SetNode right after the objects' nodes and before any edge. Its
-// label of width 0 and height 0 lays out like no label.
-//
-// It also returns the errors the original returned for g besides those of
-// the layout itself: buildErr, which it returned before it laid out anything
-// (the error of the SetParent call that closes a parent cycle), and readErr,
-// which it returned when it read the result, after it had set the position of
-// every object: the node "" has no label, and edges that share an id are one
-// edge in dagro, so fewer edges come back.
-func dagroInput(g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolvedSrc, resolvedDst []*d2graph.Object, sameWay, bothWays []int) (in dagro.LayoutInput, buildErr, readErr error) {
+// Only a Go caller can break g so that dagro.LayoutTyped rejects the input
+// (with an error wrapping dagro.ErrUnsupportedInput) before laying anything
+// out:
+//   - an object that appears twice in g.Objects gives two nodes with the
+//     same id;
+//   - a parent other than g.Root or a resolved endpoint that is not in
+//     g.Objects becomes one more node, in.Nodes[len(g.Objects)], with the
+//     empty id (the node "" of the original);
+//   - two edges with the same resolved endpoints and AbsID repeat an edge;
+//   - parents that form a cycle (the input then has no edges).
+func dagroInput(g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolvedSrc, resolvedDst []*d2graph.Object, sameWay, bothWays []int) (in dagro.LayoutInput) {
 	// Every graph attribute is set: zero values are not dagro's defaults. The
 	// original set rankdir, ranksep, edgesep and nodesep; a zero MarginX or
 	// MarginY and empty Acyclicer, Ranker and Align mean "not set".
@@ -59,14 +53,15 @@ func dagroInput(g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolved
 			in.Nodes = append(in.Nodes, empty)
 		}
 	}
+	// Edge ids walk the parents (AbsID), which never ends on a cycle; without
+	// edges, dagro.LayoutTyped reports the cycle.
 	ix.sc.cycleState = zeroed(ix.sc.cycleState, len(in.Nodes))
 	if hasParentCycleState(in.Nodes, ix.sc.cycleState) {
-		_, err := in.Graph()
-		return in, err, nil
+		in.Edges = ix.sc.in.Edges[:0]
+		return in
 	}
 
 	in.Edges = grow(ix.sc.in.Edges, len(g.Edges))
-	named := 0
 	for i, edge := range g.Edges {
 		v, w := ix.node(resolvedSrc[i], n), ix.node(resolvedDst[i], n)
 		width := edge.LabelDimensions.Width
@@ -95,7 +90,6 @@ func dagroInput(g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolved
 		e.HasName = true
 		if sameWay[i] > 1 || v == n || w == n {
 			e.Name = edge.AbsID()
-			named++
 		}
 		in.Edges[i] = e
 		if (v == n || w == n) && len(in.Nodes) == n {
@@ -103,17 +97,7 @@ func dagroInput(g *d2graph.Graph, ix *objectIndex, rootAttrs dagreOpts, resolved
 		}
 	}
 
-	edges := len(g.Edges)
-	if named > 1 {
-		edges -= repeatedEdgeIDs(in.Edges, named)
-	}
-	switch {
-	case len(in.Nodes) > n:
-		readErr = fmt.Errorf("dagro returned invalid node label for %q", "")
-	case edges != len(g.Edges):
-		readErr = fmt.Errorf("dagro returned %d edges, expected %d", edges, len(g.Edges))
-	}
-	return in, nil, readErr
+	return in
 }
 
 // hasParentCycleState reports whether following Parent from some node never
@@ -141,49 +125,4 @@ func hasParentCycleState(nodes []dagro.LayoutNode, state []uint8) bool {
 		}
 	}
 	return false
-}
-
-// repeatedEdgeIDs returns the number of edges whose endpoints and name are
-// those of an earlier edge. Only the named edges (named of them) can repeat
-// an id: no other edge has the endpoints of an unnamed one. A name is an
-// AbsID, which is never empty.
-func repeatedEdgeIDs(edges []dagro.LayoutEdge, named int) int {
-	type edgeID struct {
-		v, w int
-		name string
-	}
-	repeated := 0
-	if named <= 32 {
-		var ids [32]edgeID
-		n := 0
-	next:
-		for i := range edges {
-			if edges[i].Name == "" {
-				continue
-			}
-			id := edgeID{edges[i].V, edges[i].W, edges[i].Name}
-			for _, other := range ids[:n] {
-				if other == id {
-					repeated++
-					continue next
-				}
-			}
-			ids[n] = id
-			n++
-		}
-		return repeated
-	}
-	seen := make(map[edgeID]struct{}, named)
-	for i := range edges {
-		if edges[i].Name == "" {
-			continue
-		}
-		id := edgeID{edges[i].V, edges[i].W, edges[i].Name}
-		if _, ok := seen[id]; ok {
-			repeated++
-			continue
-		}
-		seen[id] = struct{}{}
-	}
-	return repeated
 }

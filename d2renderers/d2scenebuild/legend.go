@@ -532,7 +532,7 @@ func (b *builder) buildLegendShapeIcon(index int, targetShape d2target.Shape, x,
 	}
 	geometry.ID = target.ID + ":shape"
 	geometry.Classes = nil
-	if targetShape.Shadow && legendShapePaintsShadow(targetShape.Type) {
+	if targetShape.Shadow && shapeSupportsShadow(targetShape.Type) {
 		geometry.Filters = append(geometry.Filters, d2scene.DropShadow{
 			OffsetX: 3, OffsetY: 5, SigmaX: 1.7, SigmaY: 1.7,
 			Color: color.NRGBA{R: 0x3d, G: 0x45, B: 0x74, A: 102},
@@ -568,15 +568,6 @@ func (b *builder) buildLegendShapeIcon(index int, targetShape d2target.Shape, x,
 	wrapper.Transform = d2scene.Translate(float64(x), float64(y)).Mul(d2scene.Scale(1.0/legendShapeScaleFactor, 1.0/legendShapeScaleFactor))
 	wrapper.Children = []*d2scene.Node{targetNode}
 	return wrapper, nil
-}
-
-func legendShapePaintsShadow(shapeType string) bool {
-	switch shapeType {
-	case d2target.ShapeText, d2target.ShapeCode, d2target.ShapeClass, d2target.ShapeSQLTable:
-		return false
-	default:
-		return true
-	}
 }
 
 func addLegendShapeAnimation(node *d2scene.Node) {

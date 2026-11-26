@@ -1,0 +1,11 @@
+# Size budget for the D2.js WebAssembly module, checked by ci/wasm-size after
+# every ci/build-wasm.sh build: bytes of the stripped module, and bytes once
+# compressed with Brotli at quality 11.
+#
+# Set on 2026-11-26 about 3% above the module built locally from
+# perf/smaller-wasm (10,584,415 raw, 3,580,823 Brotli), since CI's Binaryen and
+# TinyGo release binary differ a little from the local ones. Tighten it to CI's
+# printed sizes plus about 1% once known. Raise it only for a change that is
+# worth the bytes, and say so in that change.
+raw 10900000
+brotli 3690000

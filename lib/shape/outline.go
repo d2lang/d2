@@ -20,10 +20,11 @@ type pathBuilder interface {
 	Z()
 }
 
-// borderOutline is implemented by the shapes whose Perimeter is the Path of
-// one outline: traceBorder draws that outline into t.
+// borderOutline is implemented by the shapes of this package: traceBorder
+// draws the outline whose Path is the shape's Perimeter into t, or reports
+// false if the shape has no such outline.
 type borderOutline interface {
-	traceBorder(t *borderTracer)
+	traceBorder(t *borderTracer) bool
 }
 
 // borderTracer is the loop of TraceToShapeBorder over Perimeter() as a

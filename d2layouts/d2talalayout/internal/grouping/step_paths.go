@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"math"
 	"math/bits"
-	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -12,6 +11,7 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // A fused row of Step shapes replaces each ordinary transition with the
@@ -239,7 +239,7 @@ func compatibleStepGeometry(steps []*layoutgraph.Node, guard *limits.WorkGuard) 
 		if err := guard.Add(int64(len(decorations)) * int64(bits.Len(uint(len(decorations)-1)))); err != nil {
 			return false, err
 		}
-		slices.SortFunc(decorations, func(a, b layoutgraph.StepDecoration) int { return cmp.Compare(a.Box.TopLeft.X, b.Box.TopLeft.X) })
+		xsort.Func(decorations, func(a, b layoutgraph.StepDecoration) int { return cmp.Compare(a.Box.TopLeft.X, b.Box.TopLeft.X) })
 		for i, a := range decorations {
 			for _, b := range decorations[i+1:] {
 				if err := guard.Step(); err != nil {

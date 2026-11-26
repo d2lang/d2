@@ -5,7 +5,6 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/svg"
-	"github.com/d2lang/util-go/go2"
 )
 
 // The percentage values of the cloud's wide inner box
@@ -28,30 +27,31 @@ const CLOUD_SQUARE_INNER_Y = 0.335
 const CLOUD_SQUARE_INNER_WIDTH = 0.663
 const CLOUD_SQUARE_INNER_HEIGHT = 0.663
 
-type shapeCloud struct {
-	*baseShape
-	innerBoxAspectRatio *float64
+var cloudKind = shapeKind{
+	typ:                CLOUD_TYPE,
+	paddingX:           defaultPadding,
+	paddingY:           defaultPadding / 2,
+	innerBox:           cloudInnerBox,
+	innerBoxForContent: cloudInnerBoxForContent,
+	insidePlacement:    cloudInsidePlacement,
+	dimensionsToFit:    cloudDimensionsToFit,
+	path:               cloudPath,
+	trace:              cloudTrace,
 }
 
 func NewCloud(box *geo.Box) Shape {
-	shape := shapeCloud{
-		baseShape:           newShapeBase(CLOUD_TYPE, box),
-		innerBoxAspectRatio: go2.Pointer(0.),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&cloudKind, box)
 }
 
-func (s shapeCloud) GetInnerBox() *geo.Box {
-	if s.innerBoxAspectRatio != nil && *s.innerBoxAspectRatio != 0. {
-		return s.GetInnerBoxForContent(*s.innerBoxAspectRatio, 1)
-	} else {
-		return s.GetInnerBoxForContent(s.Box.Width, s.Box.Height)
+func cloudInnerBox(s *shape) *geo.Box {
+	if s.innerBoxAspectRatio != 0. {
+		return cloudInnerBoxForContent(s, s.innerBoxAspectRatio, 1)
 	}
+	return cloudInnerBoxForContent(s, s.Box.Width, s.Box.Height)
 }
 
 // we need this since the content's aspect ratio determines which placement is used
-func (s shapeCloud) GetInnerBoxForContent(width, height float64) *geo.Box {
+func cloudInnerBoxForContent(s *shape, width, height float64) *geo.Box {
 	insideTL := s.GetInsidePlacement(width, height, 0, 0)
 	aspectRatio := width / height
 	// aspect ratio and position are computed with given dimensions, but final box size is determined by shape size
@@ -69,12 +69,7 @@ func (s shapeCloud) GetInnerBoxForContent(width, height float64) *geo.Box {
 	return geo.NewBox(&insideTL, width, height)
 }
 
-func (s shapeCloud) SetInnerBoxAspectRatio(aspectRatio float64) {
-	// only used for cloud
-	*s.innerBoxAspectRatio = aspectRatio
-}
-
-func (s shapeCloud) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func cloudDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	width += paddingX
 	height += paddingY
 	aspectRatio := width / height
@@ -88,7 +83,7 @@ func (s shapeCloud) GetDimensionsToFit(width, height, paddingX, paddingY float64
 	}
 }
 
-func (s shapeCloud) GetInsidePlacement(width, height, paddingX, paddingY float64) geo.Point {
+func cloudInsidePlacement(s *shape, width, height, paddingX, paddingY float64) geo.Point {
 	r := s.Box
 	width += paddingX
 	height += paddingY
@@ -127,24 +122,6 @@ func cloudOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64,
 	return pc
 }
 
-func (s shapeCloud) Perimeter() []geo.Intersectable {
-	return cloudPath(s.Box).Path
-}
-
-func (s shapeCloud) traceBorder(t *borderTracer) {
-	cloudOutline(s.Box, t.newPath)
-}
-
-func (s shapeCloud) GetSVGPathData() []string {
-	return []string{
-		cloudPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeCloud) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(cloudPath(s.Box))
-}
-
-func (s shapeCloud) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding, defaultPadding / 2
+func cloudTrace(box *geo.Box, t *borderTracer) {
+	cloudOutline(box, t.newPath)
 }

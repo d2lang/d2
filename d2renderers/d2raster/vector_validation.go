@@ -2,7 +2,6 @@ package d2raster
 
 import (
 	"fmt"
-	"math"
 	"math/big"
 
 	"golang.org/x/image/math/fixed"
@@ -132,26 +131,7 @@ func (v *retainedVectorValidator) node(node *d2scene.Node, depth, importDepth in
 	if node == nil {
 		return retainedVectorSummary{}, fmt.Errorf("d2raster: nil retained vector node")
 	}
-	if depth > p.options.MaxDepth {
-		return retainedVectorSummary{}, fmt.Errorf("d2raster: node depth %d exceeds limit %d", depth, p.options.MaxDepth)
-	}
-	if v.nodes[node] {
-		return retainedVectorSummary{}, fmt.Errorf("d2raster: node cycle at %q", node.ID)
-	}
-	p.nodes++
-	if p.nodes > p.options.MaxNodes {
-		return retainedVectorSummary{}, fmt.Errorf("d2raster: node count exceeds limit %d", p.options.MaxNodes)
-	}
-	if !node.Transform.IsFinite() || !finite(node.Opacity) || node.Opacity < 0 || node.Opacity > 1 {
-		return retainedVectorSummary{}, fmt.Errorf("d2raster: node %q has invalid transform or opacity", node.ID)
-	}
-	if !supportedBlendMode(node.Blend) {
-		return retainedVectorSummary{}, fmt.Errorf("d2raster: node %q uses invalid or unsupported blend mode %d", node.ID, node.Blend)
-	}
-	if err := p.chargeFilterWork(node.ID, node.Filters); err != nil {
-		return retainedVectorSummary{}, err
-	}
-	overrides, nodeTransform, err := v.animations(node)
+	nodeTransform, _, overrides, err := p.enterNode(node, depth, v.nodes)
 	if err != nil {
 		return retainedVectorSummary{}, err
 	}
@@ -228,110 +208,30 @@ func mergeRetainedPrimitiveSummary(left, right retainedVectorSummary) retainedVe
 	}
 }
 
-func (v *retainedVectorValidator) animations(node *d2scene.Node) (animationOverrides, d2scene.Matrix, error) {
-	p := v.preflight
-	if err := p.chargeAnimationWork(node.ID, node.Animations); err != nil {
-		return animationOverrides{}, d2scene.Matrix{}, err
-	}
-	var overrides animationOverrides
-	nodeTransform := node.Transform
-	seen := make(map[[2]int]bool, len(node.Animations))
-	for trackIndex, track := range node.Animations {
-		if err := p.ctx.Err(); err != nil {
-			return animationOverrides{}, d2scene.Matrix{}, err
-		}
-		key := [2]int{int(track.Property), track.TargetIndex}
-		if seen[key] {
-			return animationOverrides{}, d2scene.Matrix{}, fmt.Errorf("d2raster: node %q has duplicate animation target property %d index %d", node.ID, track.Property, track.TargetIndex)
-		}
-		seen[key] = true
-		value, err := p.animationValueAt(track)
-		if err != nil {
-			return animationOverrides{}, d2scene.Matrix{}, fmt.Errorf("d2raster: node %q animation %d: %w", node.ID, trackIndex, err)
-		}
-		if track.Property != d2scene.AnimateDropShadow && track.TargetIndex != 0 {
-			return animationOverrides{}, d2scene.Matrix{}, fmt.Errorf("d2raster: node %q animation %d uses non-zero target index for scalar property %d", node.ID, trackIndex, track.Property)
-		}
-		switch track.Property {
-		case d2scene.AnimateOpacity:
-			if value.Number < 0 || value.Number > 1 {
-				return animationOverrides{}, d2scene.Matrix{}, fmt.Errorf("d2raster: node %q animation %d resolves opacity outside [0,1]", node.ID, trackIndex)
-			}
-		case d2scene.AnimateTransform:
-			nodeTransform = value.Transform
-		case d2scene.AnimateStrokeDashOffset:
-			offset := value.Number
-			overrides.dashOffset = &offset
-		case d2scene.AnimateFillColor:
-			animatedColor := value.Color
-			overrides.fillColor = &animatedColor
-		case d2scene.AnimateStrokeColor:
-			animatedColor := value.Color
-			overrides.strokeColor = &animatedColor
-		case d2scene.AnimateDropShadow:
-			if overrides.dropShadows == nil {
-				overrides.dropShadows = make(map[int]d2scene.DropShadow)
-			}
-			overrides.dropShadows[track.TargetIndex] = value.Shadow
-		default:
-			return animationOverrides{}, d2scene.Matrix{}, fmt.Errorf("d2raster: node %q animation %d uses unknown property %d", node.ID, trackIndex, track.Property)
-		}
-	}
-	return overrides, nodeTransform, nil
-}
-
 func (v *retainedVectorValidator) primitive(nodeID string, primitive d2scene.Primitive, animation animationOverrides, depth, importDepth int) (retainedVectorSummary, bool, error) {
-	switch primitive := primitive.(type) {
+	switch primitive := primitiveValue(primitive).(type) {
 	case nil:
 		return retainedVectorSummary{}, false, nil
 	case d2scene.Rect:
 		return v.rect(nodeID, primitive, animation, depth, importDepth)
-	case *d2scene.Rect:
-		if primitive == nil {
-			return retainedVectorSummary{}, false, nil
-		}
-		return v.rect(nodeID, *primitive, animation, depth, importDepth)
 	case d2scene.Ellipse:
 		return v.ellipse(nodeID, primitive, animation, depth, importDepth)
-	case *d2scene.Ellipse:
-		if primitive == nil {
-			return retainedVectorSummary{}, false, nil
-		}
-		return v.ellipse(nodeID, *primitive, animation, depth, importDepth)
 	case d2scene.Path:
 		return v.scenePath(nodeID, primitive, animation, depth, importDepth)
-	case *d2scene.Path:
-		if primitive == nil {
-			return retainedVectorSummary{}, false, nil
-		}
-		return v.scenePath(nodeID, *primitive, animation, depth, importDepth)
 	case d2scene.TextRun:
 		return v.text(nodeID, primitive, animation, depth, importDepth)
-	case *d2scene.TextRun:
-		if primitive == nil {
-			return retainedVectorSummary{}, false, nil
-		}
-		return v.text(nodeID, *primitive, animation, depth, importDepth)
 	case d2scene.Image:
 		return v.image(nodeID, primitive, animation, depth, importDepth)
-	case *d2scene.Image:
-		if primitive == nil {
-			return retainedVectorSummary{}, false, nil
-		}
-		return v.image(nodeID, *primitive, animation, depth, importDepth)
 	default:
 		return retainedVectorSummary{}, false, fmt.Errorf("d2raster: node %q uses unsupported primitive %T", nodeID, primitive)
 	}
 }
 
 func (v *retainedVectorValidator) rect(nodeID string, rect d2scene.Rect, animation animationOverrides, depth, importDepth int) (retainedVectorSummary, bool, error) {
-	if err := validateBox(rect.Box); err != nil {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q rectangle: %w", nodeID, err)
+	objectBounds, err := rectObjectBounds(nodeID, rect)
+	if err != nil {
+		return retainedVectorSummary{}, true, err
 	}
-	if !finite(rect.RadiusX) || !finite(rect.RadiusY) || rect.RadiusX < 0 || rect.RadiusY < 0 {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q rectangle has invalid corner radius", nodeID)
-	}
-	objectBounds := rect.Box
 	fillSummary, _, err := v.paint(rect.Fill, animation.fillColor != nil, &objectBounds, depth, importDepth)
 	if err != nil {
 		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q rectangle fill: %w", nodeID, err)
@@ -344,12 +244,9 @@ func (v *retainedVectorValidator) rect(nodeID string, rect d2scene.Rect, animati
 }
 
 func (v *retainedVectorValidator) ellipse(nodeID string, ellipse d2scene.Ellipse, animation animationOverrides, depth, importDepth int) (retainedVectorSummary, bool, error) {
-	if !finitePoint(ellipse.Center) || !finite(ellipse.RadiusX) || !finite(ellipse.RadiusY) || ellipse.RadiusX < 0 || ellipse.RadiusY < 0 {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q ellipse has invalid geometry", nodeID)
-	}
-	objectBounds := d2scene.Box{
-		X: ellipse.Center.X - ellipse.RadiusX, Y: ellipse.Center.Y - ellipse.RadiusY,
-		Width: 2 * ellipse.RadiusX, Height: 2 * ellipse.RadiusY,
+	objectBounds, err := ellipseObjectBounds(nodeID, ellipse)
+	if err != nil {
+		return retainedVectorSummary{}, true, err
 	}
 	fillSummary, _, err := v.paint(ellipse.Fill, animation.fillColor != nil, &objectBounds, depth, importDepth)
 	if err != nil {
@@ -390,30 +287,9 @@ func (v *retainedVectorValidator) scenePath(nodeID string, path d2scene.Path, an
 }
 
 func (v *retainedVectorValidator) text(nodeID string, text d2scene.TextRun, animation animationOverrides, depth, importDepth int) (retainedVectorSummary, bool, error) {
-	p := v.preflight
-	if !finitePoint(text.Origin) || !finite(text.Font.Size) || text.Font.Size <= 0 || text.Font.Size > float64(math.MaxInt32)/64 {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q text has invalid origin or font size", nodeID)
-	}
-	if text.Anchor > d2scene.AnchorEnd {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q text has invalid anchor %d", nodeID, text.Anchor)
-	}
-	if !text.Ink.IsFinite() {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q text has invalid ink bounds", nodeID)
-	}
-	if text.Font.Asset == "" {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q text has empty font asset ID", nodeID)
-	}
-	_, ok := p.fonts[text.Font.Asset]
-	if !ok {
-		if _, exists := p.document.Assets[text.Font.Asset]; exists {
-			return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q text asset %q is not a usable font", nodeID, text.Font.Asset)
-		}
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q text references missing font asset %q", nodeID, text.Font.Asset)
-	}
-	ppem := fixed.Int26_6(math.Round(text.Font.Size * 64))
-	glyphs, advance, err := p.positionGlyphs(text, ppem)
+	_, ppem, glyphs, advance, err := v.preflight.textGlyphs(nodeID, text)
 	if err != nil {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q text: %w", nodeID, err)
+		return retainedVectorSummary{}, true, err
 	}
 	var objectBounds *d2scene.Box
 	if text.Ink.Valid {
@@ -477,43 +353,25 @@ func (v *retainedVectorValidator) textObjectBounds(text d2scene.TextRun, ppem fi
 }
 
 func (v *retainedVectorValidator) image(nodeID string, image d2scene.Image, animation animationOverrides, depth, importDepth int) (retainedVectorSummary, bool, error) {
-	p := v.preflight
-	if animation.fillColor != nil || animation.strokeColor != nil || animation.dashOffset != nil {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q image cannot be targeted by paint or stroke animation", nodeID)
+	raster, asset, err := v.preflight.imageAsset(nodeID, image, animation)
+	if err != nil || raster != nil {
+		return retainedVectorSummary{}, true, err
 	}
-	if image.Asset == "" {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q image has an empty asset ID", nodeID)
-	}
-	if err := validateBox(image.Box); err != nil {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q image: %w", nodeID, err)
-	}
-	if image.Aspect.Align > d2scene.AlignXMaxYMax || image.Aspect.Fit > d2scene.AspectSlice {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q image has invalid aspect-ratio policy align=%d fit=%d", nodeID, image.Aspect.Align, image.Aspect.Fit)
-	}
-	if _, ok := p.rasters[image.Asset]; ok {
-		return retainedVectorSummary{}, true, nil
-	}
-	if asset, ok := p.vectors[image.Asset]; ok {
-		// AspectRatioMatrix is independent of outer placement and can itself
-		// overflow for incompatible finite source/destination dimensions. Mirror
-		// visible preparation for painting instances; zero-area or singular-CTM
-		// images deliberately use canonical accounting and paint nothing.
-		if image.Box.Width != 0 && image.Box.Height != 0 && v.ancestorsInvertible {
-			mapping, err := d2scene.AspectRatioMatrix(asset.ViewBox, image.Box, image.Aspect)
-			if err != nil {
-				return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q vector asset %q aspect ratio: %w", nodeID, image.Asset, err)
-			}
-			if !finiteLinearTransformInvertible(mapping) {
-				return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q vector asset %q aspect ratio: mapping is singular in the finite numeric domain", nodeID, image.Asset)
-			}
+	// AspectRatioMatrix is independent of outer placement and can itself
+	// overflow for incompatible finite source/destination dimensions. Mirror
+	// visible preparation for painting instances; zero-area or singular-CTM
+	// images deliberately use canonical accounting and paint nothing.
+	if image.Box.Width != 0 && image.Box.Height != 0 && v.ancestorsInvertible {
+		mapping, err := d2scene.AspectRatioMatrix(asset.ViewBox, image.Box, image.Aspect)
+		if err != nil {
+			return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q vector asset %q aspect ratio: %w", nodeID, image.Asset, err)
 		}
-		summary, err := v.asset(image.Asset, importDepth+1, depth+1)
-		return summary, true, err
+		if !finiteLinearTransformInvertible(mapping) {
+			return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q vector asset %q aspect ratio: mapping is singular in the finite numeric domain", nodeID, image.Asset)
+		}
 	}
-	if raw, exists := p.document.Assets[image.Asset]; exists {
-		return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q image asset %q is not a raster or vector asset (got %T)", nodeID, image.Asset, raw)
-	}
-	return retainedVectorSummary{}, true, fmt.Errorf("d2raster: node %q image references missing asset %q", nodeID, image.Asset)
+	summary, err := v.asset(image.Asset, importDepth+1, depth+1)
+	return summary, true, err
 }
 
 func (v *retainedVectorValidator) path(path d2scene.Path) error {
@@ -578,6 +436,10 @@ func (v *retainedVectorValidator) path(path d2scene.Path) error {
 // paint validates intrinsic paint structure only. Device invertibility and
 // objectBoundingBox geometry are checked later for each visible placement.
 func (v *retainedVectorValidator) paint(paint d2scene.Paint, animatedColor bool, objectBounds *d2scene.Box, depth, importDepth int) (retainedVectorSummary, bool, error) {
+	paint, err := paintValue(paint)
+	if err != nil {
+		return retainedVectorSummary{}, false, err
+	}
 	switch paint := paint.(type) {
 	case nil:
 		if animatedColor {
@@ -586,45 +448,22 @@ func (v *retainedVectorValidator) paint(paint d2scene.Paint, animatedColor bool,
 		return retainedVectorSummary{}, false, nil
 	case d2scene.SolidPaint:
 		return retainedVectorSummary{}, true, nil
-	case *d2scene.SolidPaint:
-		if paint == nil {
-			if animatedColor {
-				return retainedVectorSummary{}, false, fmt.Errorf("color animation targets missing paint")
-			}
-			return retainedVectorSummary{}, false, nil
-		}
-		return retainedVectorSummary{}, true, nil
 	case d2scene.LinearGradient:
 		if animatedColor {
 			return retainedVectorSummary{}, false, fmt.Errorf("color animation targets non-solid paint")
 		}
 		return retainedVectorSummary{}, true, v.linearGradient(paint, objectBounds)
-	case *d2scene.LinearGradient:
-		if paint == nil {
-			return retainedVectorSummary{}, false, fmt.Errorf("nil linear gradient")
-		}
-		return v.paint(*paint, animatedColor, objectBounds, depth, importDepth)
 	case d2scene.RadialGradient:
 		if animatedColor {
 			return retainedVectorSummary{}, false, fmt.Errorf("color animation targets non-solid paint")
 		}
 		return retainedVectorSummary{}, true, v.radialGradient(paint, objectBounds)
-	case *d2scene.RadialGradient:
-		if paint == nil {
-			return retainedVectorSummary{}, false, fmt.Errorf("nil radial gradient")
-		}
-		return v.paint(*paint, animatedColor, objectBounds, depth, importDepth)
 	case d2scene.PatternPaint:
 		if animatedColor {
 			return retainedVectorSummary{}, false, fmt.Errorf("color animation targets pattern paint")
 		}
 		summary, err := v.pattern(paint, objectBounds, importDepth)
 		return summary, true, err
-	case *d2scene.PatternPaint:
-		if paint == nil {
-			return retainedVectorSummary{}, false, fmt.Errorf("nil pattern paint")
-		}
-		return v.paint(*paint, animatedColor, objectBounds, depth, importDepth)
 	default:
 		return retainedVectorSummary{}, false, fmt.Errorf("unsupported paint %T", paint)
 	}
@@ -785,36 +624,20 @@ func (v *retainedVectorValidator) stroke(stroke *d2scene.Stroke, animatedColor, 
 	if stroke.Width == 0 || !paint {
 		return paintSummary, nil
 	}
-	switch stroke.Cap {
-	case d2scene.CapButt, d2scene.CapRound, d2scene.CapSquare:
-	default:
-		return retainedVectorSummary{}, fmt.Errorf("unsupported line cap %d", stroke.Cap)
-	}
-	switch stroke.Join {
-	case d2scene.JoinMiter, d2scene.JoinRound, d2scene.JoinBevel:
-	default:
-		return retainedVectorSummary{}, fmt.Errorf("unsupported line join %d", stroke.Join)
-	}
-	if stroke.Join == d2scene.JoinMiter && stroke.MiterLimit != 0 && stroke.MiterLimit < 1 {
-		return retainedVectorSummary{}, fmt.Errorf("invalid miter limit %g", stroke.MiterLimit)
+	if err := strokeStyleError(stroke); err != nil {
+		return retainedVectorSummary{}, err
 	}
 	return paintSummary, nil
 }
 
 func paintUsesObjectBoundingBox(paint d2scene.Paint) bool {
-	switch paint := paint.(type) {
+	switch paint, _ := paintValue(paint); paint := paint.(type) {
 	case d2scene.LinearGradient:
 		return paint.Units == d2scene.ObjectBoundingBox
-	case *d2scene.LinearGradient:
-		return paint != nil && paint.Units == d2scene.ObjectBoundingBox
 	case d2scene.RadialGradient:
 		return paint.Units == d2scene.ObjectBoundingBox
-	case *d2scene.RadialGradient:
-		return paint != nil && paint.Units == d2scene.ObjectBoundingBox
 	case d2scene.PatternPaint:
 		return paint.Units == d2scene.ObjectBoundingBox
-	case *d2scene.PatternPaint:
-		return paint != nil && paint.Units == d2scene.ObjectBoundingBox
 	default:
 		return false
 	}

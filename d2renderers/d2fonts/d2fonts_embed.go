@@ -1,3 +1,8 @@
+//go:build !js || !wasm
+
+// WebAssembly builds load the same TTF faces from ttf_stream.br instead
+// (d2fonts_embed_wasm.go).
+
 package d2fonts
 
 import (

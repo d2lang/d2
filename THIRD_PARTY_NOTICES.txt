@@ -937,7 +937,12 @@ software is freely granted, provided that this notice
 is preserved.
 
 TinyGo (WebAssembly build)
-https://github.com/tinygo-org/tinygo/tree/v0.44.0
+https://github.com/d2lang/tinygo/tree/v0.44.0-d2.3
+
+The TinyGo runtime in the WebAssembly module and wasm_exec.js come from
+d2lang/tinygo v0.44.0-d2.3: TinyGo 0.44.0
+(https://github.com/tinygo-org/tinygo/tree/v0.44.0) with changes to its
+compiler, its runtime and wasm_exec.js.
 
 Copyright (c) 2018-2026 The TinyGo Authors. All rights reserved.
 

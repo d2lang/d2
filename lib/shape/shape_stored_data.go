@@ -7,21 +7,23 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeStoredData struct {
-	*baseShape
-}
-
 const storedDataWedgeWidth = 15.
 
-func NewStoredData(box *geo.Box) Shape {
-	shape := shapeStoredData{
-		baseShape: newShapeBase(STORED_DATA_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+var storedDataKind = shapeKind{
+	typ:             STORED_DATA_TYPE,
+	paddingX:        defaultPadding - 10,
+	paddingY:        defaultPadding,
+	innerBox:        storedDataInnerBox,
+	dimensionsToFit: storedDataDimensionsToFit,
+	path:            storedDataPath,
+	trace:           storedDataTrace,
 }
 
-func (s shapeStoredData) GetInnerBox() *geo.Box {
+func NewStoredData(box *geo.Box) Shape {
+	return newShape(&storedDataKind, box)
+}
+
+func storedDataInnerBox(s *shape) *geo.Box {
 	width := s.Box.Width
 	tl := s.Box.TopLeft.Copy()
 	width -= 2 * storedDataWedgeWidth
@@ -52,29 +54,11 @@ func storedDataOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, flo
 	return pc
 }
 
-func (s shapeStoredData) Perimeter() []geo.Intersectable {
-	return storedDataPath(s.Box).Path
+func storedDataTrace(box *geo.Box, t *borderTracer) {
+	storedDataOutline(box, t.newPath)
 }
 
-func (s shapeStoredData) traceBorder(t *borderTracer) {
-	storedDataOutline(s.Box, t.newPath)
-}
-
-func (s shapeStoredData) GetSVGPathData() []string {
-	return []string{
-		storedDataPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeStoredData) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(storedDataPath(s.Box))
-}
-
-func (s shapeStoredData) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func storedDataDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	totalWidth := width + paddingX + 2*storedDataWedgeWidth
 	return math.Ceil(totalWidth), math.Ceil(height + paddingY)
-}
-
-func (s shapeStoredData) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding - 10, defaultPadding
 }

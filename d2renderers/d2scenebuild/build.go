@@ -622,28 +622,9 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		if !ok || width < 0 || height < 0 {
 			return nil, invalidPaddingError(pad)
 		}
-		outerRadius := clampBorderRadius(float64(b.diagram.Root.BorderRadius), float64(outerWidth), float64(outerHeight))
-		outer := d2scene.NewNode(d2scene.Rect{
-			Box: d2scene.Box{
-				X:      float64(outerLeft),
-				Y:      float64(outerTop),
-				Width:  float64(outerWidth),
-				Height: float64(outerHeight),
-			},
-			RadiusX: outerRadius,
-			RadiusY: outerRadius,
-			Fill:    rootFill,
-			Stroke:  rootStroke,
-		})
-		outer.ID = "root:double-border:outer"
-		root.Children = append(root.Children, outer)
-		appendixBackground = outer
-		if rootPattern != nil {
-			overlay, err := overlayPatternNode(outer, rootPattern, "root:double-border:outer:fill-pattern")
-			if err != nil {
-				return nil, err
-			}
-			root.Children = append(root.Children, overlay)
+		appendixBackground, err = b.addRootRect(root, "root:double-border:outer", outerLeft, outerTop, outerWidth, outerHeight, rootFill, rootStroke, rootPattern)
+		if err != nil {
+			return nil, err
 		}
 		backgroundFill, err = b.paint("transparent", "root double-border inner fill")
 		if err != nil {
@@ -651,30 +632,12 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		}
 	}
 
-	rootRadius := clampBorderRadius(float64(b.diagram.Root.BorderRadius), float64(backgroundWidth), float64(backgroundHeight))
-	background := d2scene.NewNode(d2scene.Rect{
-		Box: d2scene.Box{
-			X:      float64(backgroundLeft),
-			Y:      float64(backgroundTop),
-			Width:  float64(backgroundWidth),
-			Height: float64(backgroundHeight),
-		},
-		RadiusX: rootRadius,
-		RadiusY: rootRadius,
-		Fill:    backgroundFill,
-		Stroke:  rootStroke,
-	})
-	background.ID = "root:background"
-	root.Children = append(root.Children, background)
+	background, err := b.addRootRect(root, "root:background", backgroundLeft, backgroundTop, backgroundWidth, backgroundHeight, backgroundFill, rootStroke, rootPattern)
+	if err != nil {
+		return nil, err
+	}
 	if appendixBackground == nil {
 		appendixBackground = background
-	}
-	if rootPattern != nil {
-		overlay, err := overlayPatternNode(background, rootPattern, "root:background:fill-pattern")
-		if err != nil {
-			return nil, err
-		}
-		root.Children = append(root.Children, overlay)
 	}
 
 	viewBox := d2scene.Box{X: float64(left), Y: float64(top), Width: float64(width), Height: float64(height)}
@@ -835,6 +798,29 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	document.LogicalWidth = math.Ceil(scaledWidth)
 	document.LogicalHeight = math.Ceil(scaledHeight)
 	return document, nil
+}
+
+// addRootRect appends a root border rectangle with the root's corner radius,
+// followed by its fill pattern overlay.
+func (b *builder) addRootRect(root *d2scene.Node, id string, left, top, width, height int, fill d2scene.Paint, stroke *d2scene.Stroke, pattern *builtinPattern) (*d2scene.Node, error) {
+	radius := clampBorderRadius(float64(b.diagram.Root.BorderRadius), float64(width), float64(height))
+	node := d2scene.NewNode(d2scene.Rect{
+		Box:     d2scene.Box{X: float64(left), Y: float64(top), Width: float64(width), Height: float64(height)},
+		RadiusX: radius,
+		RadiusY: radius,
+		Fill:    fill,
+		Stroke:  stroke,
+	})
+	node.ID = id
+	root.Children = append(root.Children, node)
+	if pattern != nil {
+		overlay, err := overlayPatternNode(node, pattern, id+":fill-pattern")
+		if err != nil {
+			return nil, err
+		}
+		root.Children = append(root.Children, overlay)
+	}
+	return node, nil
 }
 
 func clipMotionNode(node *d2scene.Node, c *d2target.MotionClip) *d2scene.Node {

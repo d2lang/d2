@@ -11,6 +11,7 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // A branch shares a flow axis with its fork and join. Dimensions and positions
@@ -76,7 +77,7 @@ func (l *branchLayout) series(node *branchNode) (block branchBlock, join *branch
 			var end *branchNode
 			// Preserve the selected drawing's lane order. Equal coordinates
 			// retain the stable edge order.
-			slices.SortStableFunc(node.next, func(a, b *branchNode) int { return cmp.Compare(a.oldCross, b.oldCross) })
+			xsort.StableFunc(node.next, func(a, b *branchNode) int { return cmp.Compare(a.oldCross, b.oldCross) })
 			for _, next := range node.next {
 				if next.incoming != 1 {
 					return block, nil, false

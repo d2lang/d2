@@ -10,6 +10,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // MarkdownStrikeChanged reports whether only the struck ranges of a Markdown
@@ -229,7 +230,7 @@ func tweenMarkdownStrike(from, to *MarkdownLayout, progress float64) *MarkdownLa
 			edges = append(edges, left, right)
 		}
 	}
-	slices.SortFunc(edges, func(a, b boundary) int {
+	xsort.Func(edges, func(a, b boundary) int {
 		return cmp.Or(cmp.Compare(a.y, b.y), cmp.Compare(a.paint, b.paint), cmp.Compare(a.x, b.x))
 	})
 	base := to

@@ -17,19 +17,22 @@ const (
 	c4MinimumHeightRatio = 0.95
 )
 
-type shapeC4Person struct {
-	*baseShape
+var c4PersonKind = shapeKind{
+	typ:             C4_PERSON_TYPE,
+	paddingX:        10,
+	paddingY:        defaultPadding,
+	innerBox:        c4PersonInnerBox,
+	dimensionsToFit: c4PersonDimensionsToFit,
+	path:            bodyPath,
+	extraPath:       headPath,
+	perimeter:       c4PersonPerimeter,
 }
 
 func NewC4Person(box *geo.Box) Shape {
-	shape := shapeC4Person{
-		baseShape: newShapeBase(C4_PERSON_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&c4PersonKind, box)
 }
 
-func (s shapeC4Person) GetInnerBox() *geo.Box {
+func c4PersonInnerBox(s *shape) *geo.Box {
 	width := s.Box.Width
 	height := s.Box.Height
 
@@ -116,7 +119,7 @@ func headPath(box *geo.Box) *svg.SvgPathContext {
 	return pc
 }
 
-func (s shapeC4Person) Perimeter() []geo.Intersectable {
+func c4PersonPerimeter(s *shape) []geo.Intersectable {
 	width := s.Box.Width
 
 	bodyPerimeter := bodyPath(s.Box).Path
@@ -131,18 +134,7 @@ func (s shapeC4Person) Perimeter() []geo.Intersectable {
 	return append(bodyPerimeter, headEllipse)
 }
 
-func (s shapeC4Person) GetSVGPathData() []string {
-	return []string{
-		bodyPath(s.Box).PathData(),
-		headPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeC4Person) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(bodyPath(s.Box), headPath(s.Box))
-}
-
-func (s shapeC4Person) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func c4PersonDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	contentWidth := width + paddingX
 	contentHeight := height + paddingY
 
@@ -166,10 +158,6 @@ func (s shapeC4Person) GetDimensionsToFit(width, height, paddingX, paddingY floa
 
 	totalWidth, totalHeight = LimitAR(totalWidth, totalHeight, C4_PERSON_AR_LIMIT)
 	return math.Ceil(totalWidth), math.Ceil(totalHeight)
-}
-
-func (s shapeC4Person) GetDefaultPadding() (paddingX, paddingY float64) {
-	return 10, defaultPadding
 }
 
 // FitC4PersonBody enlarges a grid container to keep its content below the

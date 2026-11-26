@@ -152,11 +152,7 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 	sameWay, bothWays := countParallelEdgesInto(sc.counts, resolvedSrc, resolvedDst)
 
 	topLefts := make([]geo.Point, ix.distinct)
-	in, buildErr, readErr := dagroInput(g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays)
-	if buildErr != nil {
-		return buildErr
-	}
-	sc.in = in
+	sc.in = dagroInput(g, ix, rootAttrs, resolvedSrc, resolvedDst, sameWay, bothWays)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -178,11 +174,6 @@ func Layout(ctx context.Context, g *d2graph.Graph, opts *ConfigurableOpts) (err 
 		obj.TopLeft = &topLefts[k]
 		obj.Width = math.Ceil(n.Width)
 		obj.Height = math.Ceil(n.Height)
-	}
-	// The original found these errors reading the result, after it had set
-	// every object's position (see dagroInput).
-	if readErr != nil {
-		return readErr
 	}
 
 	totalPoints := 0

@@ -10,6 +10,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/nodeshape"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 const sharedPortLoopGap = 30.0
@@ -262,7 +263,7 @@ func tableRowRoutes(ordered []*layoutgraph.Edge, selected map[*layoutgraph.Edge]
 				occupied = append(occupied, band{near, far + tableRowLaneWidth(e)})
 			}
 		}
-		slices.SortFunc(occupied, func(a, b band) int { return cmp.Compare(a.near, b.near) })
+		xsort.Func(occupied, func(a, b band) int { return cmp.Compare(a.near, b.near) })
 	}
 	var routes map[*layoutgraph.Edge][]*geo.Point
 	depth, nextFree := sharedPortLoopGap, sharedPortLoopGap
@@ -354,7 +355,7 @@ func edgesInOrder(edges []*layoutgraph.Edge) []*layoutgraph.Edge {
 			return 2
 		}
 	}
-	slices.SortStableFunc(sortedEdges, func(a, b *layoutgraph.Edge) int {
+	xsort.StableFunc(sortedEdges, func(a, b *layoutgraph.Edge) int {
 		// 1st ->
 		// 2nd <->
 		// 3rd --
@@ -425,10 +426,10 @@ func findLoopPortsForEdge(e *layoutgraph.Edge, availablePorts []*loopPorts) *loo
 // and target-only arrows distinct categories in addition to -- and <->.
 func makeLoopPorts(n *layoutgraph.Node) []*loopPorts {
 	ports := n.Ports()
-	topIndices := n.PortIndices(geo.Top)
-	rightIndices := n.PortIndices(geo.Right)
-	bottomIndices := n.PortIndices(geo.Bottom)
-	leftIndices := n.PortIndices(geo.Left)
+	topIndices := n.Shape.PortIndices(geo.Top)
+	rightIndices := n.Shape.PortIndices(geo.Right)
+	bottomIndices := n.Shape.PortIndices(geo.Bottom)
+	leftIndices := n.Shape.PortIndices(geo.Left)
 
 	trTop, trRight := closestPorts(ports, topIndices, rightIndices)
 	blBottom, blLeft := closestPorts(ports, bottomIndices, leftIndices)

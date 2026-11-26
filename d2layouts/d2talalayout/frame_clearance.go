@@ -22,9 +22,9 @@ func clearIsolatedFrameDecoration(source *d2graph.Graph, g *layoutgraph.Graph) {
 		return
 	}
 	child := children[0]
-	oval := frame.GetType() == shape.OVAL_TYPE || frame.GetType() == shape.CIRCLE_TYPE
+	oval := frame.Shape.GetType() == shape.OVAL_TYPE || frame.Shape.GetType() == shape.CIRCLE_TYPE
 	rectangular := func(n *layoutgraph.Node) bool {
-		return n.GetType() == shape.SQUARE_TYPE || n.GetType() == shape.REAL_SQUARE_TYPE
+		return n.Shape.GetType() == shape.SQUARE_TYPE || n.Shape.GetType() == shape.REAL_SQUARE_TYPE
 	}
 	if (!rectangular(frame) && !oval) || !rectangular(child) || frame.ForceHierarchy || child.ForceHierarchy || child.Icon != nil {
 		return

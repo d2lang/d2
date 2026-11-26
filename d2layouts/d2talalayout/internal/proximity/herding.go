@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // AssignHerds chooses a shared container side for siblings whose external
@@ -30,7 +31,7 @@ func AssignHerds(ctx context.Context, graph *layoutgraph.Graph, root *layoutgrap
 			uncleOrder = append(uncleOrder, uncle)
 		}
 	}
-	slices.SortFunc(uncleOrder, func(a, b *layoutgraph.Node) int {
+	xsort.Func(uncleOrder, func(a, b *layoutgraph.Node) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
 

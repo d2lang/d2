@@ -7,10 +7,6 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeDocument struct {
-	*baseShape
-}
-
 const (
 	// the shape is taller than where the bottom of the path ends
 	docPathHeight      = 18.925
@@ -18,15 +14,21 @@ const (
 	docPathBottom      = 16.3
 )
 
-func NewDocument(box *geo.Box) Shape {
-	shape := shapeDocument{
-		baseShape: newShapeBase(DOCUMENT_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+var documentKind = shapeKind{
+	typ:             DOCUMENT_TYPE,
+	paddingX:        defaultPadding,
+	paddingY:        defaultPadding * docPathInnerBottom / docPathHeight,
+	innerBox:        documentInnerBox,
+	dimensionsToFit: documentDimensionsToFit,
+	path:            documentPath,
+	trace:           documentTrace,
 }
 
-func (s shapeDocument) GetInnerBox() *geo.Box {
+func NewDocument(box *geo.Box) Shape {
+	return newShape(&documentKind, box)
+}
+
+func documentInnerBox(s *shape) *geo.Box {
 	height := s.Box.Height * docPathInnerBottom / docPathHeight
 	return geo.NewBox(s.Box.TopLeft.Copy(), s.Box.Width, height)
 }
@@ -48,29 +50,11 @@ func documentOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float
 	return pc
 }
 
-func (s shapeDocument) Perimeter() []geo.Intersectable {
-	return documentPath(s.Box).Path
+func documentTrace(box *geo.Box, t *borderTracer) {
+	documentOutline(box, t.newPath)
 }
 
-func (s shapeDocument) traceBorder(t *borderTracer) {
-	documentOutline(s.Box, t.newPath)
-}
-
-func (s shapeDocument) GetSVGPathData() []string {
-	return []string{
-		documentPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeDocument) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(documentPath(s.Box))
-}
-
-func (s shapeDocument) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func documentDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	baseHeight := (height + paddingY) * docPathHeight / docPathInnerBottom
 	return math.Ceil(width + paddingX), math.Ceil(baseHeight)
-}
-
-func (s shapeDocument) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding, defaultPadding * docPathInnerBottom / docPathHeight
 }

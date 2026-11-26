@@ -4,18 +4,13 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
-type shapeSquare struct {
-	*baseShape
+var squareKind = shapeKind{
+	typ:         SQUARE_TYPE,
+	rectangular: true,
+	paddingX:    defaultPadding,
+	paddingY:    defaultPadding,
 }
 
 func NewSquare(box *geo.Box) Shape {
-	shape := shapeSquare{
-		baseShape: newShapeBase(SQUARE_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
-}
-
-func (s shapeSquare) IsRectangular() bool {
-	return true
+	return newShape(&squareKind, box)
 }

@@ -1,6 +1,10 @@
 package d2ir
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/d2lang/d2/lib/xsort"
+)
 
 // An unresolved later spread can reopen the map before an indexed access.
 type arrayAccessCheck struct {
@@ -63,7 +67,7 @@ func (s *spreadSite) applyArrayReset(f *Field) (keepMap bool) {
 }
 
 func (m *Map) sortFieldsByDeclaration() {
-	slices.SortStableFunc(m.Fields, func(a, b *Field) int {
+	xsort.StableFunc(m.Fields, func(a, b *Field) int {
 		if a.declaration.before(b.declaration) {
 			return -1
 		}

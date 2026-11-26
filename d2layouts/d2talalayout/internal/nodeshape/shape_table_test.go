@@ -6,10 +6,11 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/shape"
 )
 
 func TestSnapPointPercentages(t *testing.T) {
-	table := shapeTable{numColumns: 4}
+	table := newTable(4)
 
 	snapPointsPercentages := table.SnapPointPercentages()
 	assert.Equal(t, 3, len(snapPointsPercentages[0])) // 3 snap points above
@@ -31,7 +32,7 @@ func TestSnapPointPercentages(t *testing.T) {
 }
 
 func TestSnapPointPercentagesWithoutColumns(t *testing.T) {
-	table := shapeTable{numColumns: 0}
+	table := newTable(0)
 
 	snapPointsPercentages := table.SnapPointPercentages()
 	assert.Equal(t, 3, len(snapPointsPercentages[0]))
@@ -49,7 +50,7 @@ func TestSnapPointPercentagesWithoutColumns(t *testing.T) {
 }
 
 func TestCenterPortIndices(t *testing.T) {
-	table := shapeTable{numColumns: 4}
+	table := newTable(4)
 
 	indices := table.CenterPortIndices()
 	assert.Equal(t, 0, len(indices))
@@ -61,7 +62,7 @@ func TestCenterPortIndices(t *testing.T) {
 }
 
 func TestCenterPortIndicesWithoutColumns(t *testing.T) {
-	table := shapeTable{numColumns: 0}
+	table := newTable(0)
 
 	indices := table.CenterPortIndices()
 	assert.Equal(t, 1, indices[0]) // top
@@ -76,13 +77,13 @@ func TestCenterPortIndicesWithoutColumns(t *testing.T) {
 }
 
 func TestMirroredPortIndices(t *testing.T) {
-	table := shapeTable{numColumns: 4}
+	table := newTable(4)
 
 	assert.Equal(t, 0, len(table.MirroredPortIndices()))
 }
 
 func TestMirroredPortIndicesWithoutColumns(t *testing.T) {
-	table := shapeTable{numColumns: 0}
+	table := newTable(0)
 
 	mirrored := table.MirroredPortIndices()
 	assert.Equal(t, 5, mirrored[1])
@@ -92,7 +93,7 @@ func TestMirroredPortIndicesWithoutColumns(t *testing.T) {
 }
 
 func TestPortIndices(t *testing.T) {
-	table := shapeTable{numColumns: 5}
+	table := newTable(5)
 
 	assert.Equal(t, []int{0, 1, 2}, table.PortIndices(geo.Top))
 	assert.Equal(t, []int{3, 4, 5, 6, 7}, table.PortIndices(geo.Left))
@@ -106,10 +107,16 @@ func TestPortIndices(t *testing.T) {
 }
 
 func TestPortIndicesWithoutColumns(t *testing.T) {
-	table := shapeTable{numColumns: 0}
+	table := newTable(0)
 
 	assert.Equal(t, []int{0, 1, 2}, table.PortIndices(geo.Top))
 	assert.Equal(t, []int{3}, table.PortIndices(geo.Left)) // header
 	assert.Equal(t, []int{4, 5, 6}, table.PortIndices(geo.Bottom))
 	assert.Equal(t, []int{7}, table.PortIndices(geo.Right)) // header
+}
+
+func newTable(numColumns int) *Shape {
+	table, _, _ := New(shape.TABLE_TYPE, &geo.Box{})
+	SetNumColumns(table, numColumns)
+	return table
 }

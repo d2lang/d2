@@ -49,7 +49,7 @@ func clearPinnedFrameNeighbor(source *d2graph.Graph, g *layoutgraph.Graph) {
 		return
 	}
 	for _, n := range g.Nodes {
-		if n.GetType() != shape.SQUARE_TYPE || n.IsInvisible || n.Is3D || n.IsMultiple || n.Sequence != nil ||
+		if n.Shape.GetType() != shape.SQUARE_TYPE || n.IsInvisible || n.Is3D || n.IsMultiple || n.Sequence != nil ||
 			n.Width != math.Trunc(n.Width) || n.Height != math.Trunc(n.Height) {
 			return
 		}

@@ -8,7 +8,6 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"sync"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
@@ -16,6 +15,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/loops"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type GenerateRouteResponse struct {
@@ -98,16 +98,11 @@ func generateRouteFlavorResponsesWith(
 	defer cancelWorkers()
 
 	responseChan := make(chan routeFlavorResult, len(routers))
-	var workers sync.WaitGroup
-	for i, router := range routers {
-		workers.Go(func() {
-			responseChan <- runRouteFlavorWorker(workerCtx, i, router, straightLineFallback, worker)
-		})
-	}
-	go func() {
-		workers.Wait()
+	startRouteFlavors(len(routers), func(i int) {
+		responseChan <- runRouteFlavorWorker(workerCtx, i, routers[i], straightLineFallback, worker)
+	}, func() {
 		close(responseChan)
-	}()
+	})
 	return collectRouteFlavorResponses(ctx, responseChan, cancelWorkers)
 }
 
@@ -135,7 +130,7 @@ func collectRouteFlavorResponses(ctx context.Context, responseChan <-chan routeF
 			if !ok {
 				// Worker completion order is scheduler-dependent. Restore the declared
 				// router order before selecting either failures or successes.
-				slices.SortStableFunc(results, func(a, b routeFlavorResult) int {
+				xsort.StableFunc(results, func(a, b routeFlavorResult) int {
 					return cmp.Compare(a.index, b.index)
 				})
 				for _, result := range results {
@@ -1108,26 +1103,33 @@ const (
 	TopDownLeftRight  RouteGenerationFlavor = "TopDownLeftRight"
 )
 
+// unboundedRouteWork is the guard of a routing stage that has no work budget
+// of its own: it polls ctx at every step, with the location prefixed to its
+// errors.
+func unboundedRouteWork(ctx context.Context, location string) (*routeWorkGuard, error) {
+	guard, err := newRouteWorkGuard(ctx, location, math.MaxUint64)
+	if guard != nil {
+		guard.pollAlways = true
+	}
+	return guard, err
+}
+
 func routeLine(ctx context.Context, g *layoutgraph.Graph, edge *layoutgraph.Edge, allEdges []*layoutgraph.Edge, routes []*Route) (*geo.Point, *geo.Point, float64, error) {
-	return routeLineChecked(g, edge, allEdges, routes, func() error {
-		return checkEdgeRoutingCanceled(ctx)
-	}, nil)
-
+	guard, err := unboundedRouteWork(ctx, "EdgeRouting")
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return routeLineGuarded(g, edge, allEdges, routes, guard)
 }
 
-func routeLineGuarded(g *layoutgraph.Graph, edge *layoutgraph.Edge, allEdges []*layoutgraph.Edge, routes []*Route, guard *routeWorkGuard) (*geo.Point, *geo.Point, float64, error) {
-	return routeLineChecked(g, edge, allEdges, routes, guard.step, guard)
-}
-
-func routeLineChecked(
+func routeLineGuarded(
 	g *layoutgraph.Graph,
 	edge *layoutgraph.Edge,
 	allEdges []*layoutgraph.Edge,
 	routes []*Route,
-	checkWork func() error,
 	guard workBudget,
 ) (*geo.Point, *geo.Point, float64, error) {
-	if err := checkWork(); err != nil {
+	if err := guard.step(); err != nil {
 		return nil, nil, 0, err
 	}
 	fromOrientation := edge.From.Orientation(edge.To)
@@ -1142,26 +1144,19 @@ func routeLineChecked(
 	}
 	toPorts := edge.To.PortsByOrientation(toOrientation.GetOpposite())
 
-	var fromPortEdges, toPortEdges map[geo.Point][]*layoutgraph.Edge
-	if guard == nil {
-		fromPortEdges = layoutgraph.Edges(allEdges).PortEdges(edge.From)
-		toPortEdges = layoutgraph.Edges(allEdges).PortEdges(edge.To)
-	} else {
-		var err error
-		fromPortEdges, err = portEdgesGuarded(layoutgraph.Edges(allEdges), edge.From, guard)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		toPortEdges, err = portEdgesGuarded(layoutgraph.Edges(allEdges), edge.To, guard)
-		if err != nil {
-			return nil, nil, 0, err
-		}
+	fromPortEdges, err := portEdgesGuarded(layoutgraph.Edges(allEdges), edge.From, guard)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	toPortEdges, err := portEdgesGuarded(layoutgraph.Edges(allEdges), edge.To, guard)
+	if err != nil {
+		return nil, nil, 0, err
 	}
 	// we filter out the current edge here to keep the logic for arrowhead matching simpler
 	filterEdge := func(portEdges []*layoutgraph.Edge) ([]*layoutgraph.Edge, error) {
 		filteredEdges := make([]*layoutgraph.Edge, 0)
 		for _, e := range portEdges {
-			if err := checkWork(); err != nil {
+			if err := guard.step(); err != nil {
 				return nil, err
 			}
 			if e != edge {
@@ -1193,33 +1188,22 @@ func routeLineChecked(
 	for _, centerPort := range edge.To.CenterPorts() {
 		toNodeCenterPorts[centerPort] = true
 	}
-	var sourceClusterNodes, targetClusterNodes map[*layoutgraph.Node]bool
-	if guard == nil {
-		sourceClusterNodes, targetClusterNodes = sourceAndTargetClusterNodes(g, edge.From, edge.To)
-	} else {
-		var err error
-		sourceClusterNodes, targetClusterNodes, err = sourceAndTargetClusterNodesGuarded(g, edge.From, edge.To, guard)
+	sourceClusterNodes, targetClusterNodes, err := sourceAndTargetClusterNodesGuarded(g, edge.From, edge.To, guard)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	var nonAncestors layoutgraph.Nodes
+	if edge.SourceArrowheadLabel != nil || edge.TargetArrowheadLabel != nil {
+		nonAncestors, err = filterEdgeAncestorsGuarded(edge, g.Nodes, guard)
 		if err != nil {
 			return nil, nil, 0, err
 		}
 	}
 
-	var nonAncestors layoutgraph.Nodes
-	if edge.SourceArrowheadLabel != nil || edge.TargetArrowheadLabel != nil {
-		if guard == nil {
-			nonAncestors = filterEdgeAncestors(edge, g.Nodes)
-		} else {
-			var err error
-			nonAncestors, err = filterEdgeAncestorsGuarded(edge, g.Nodes, guard)
-			if err != nil {
-				return nil, nil, 0, err
-			}
-		}
-	}
-
 	var positionedLabels []labeling.PositionedArrowheadLabel
 	for i, e := range allEdges {
-		if err := checkWork(); err != nil {
+		if err := guard.step(); err != nil {
 			return nil, nil, 0, err
 		}
 		if e == edge {
@@ -1234,10 +1218,8 @@ func routeLineChecked(
 		if len(route) == 0 {
 			continue
 		}
-		if guard != nil {
-			if err := guard.add(uint64(len(route))); err != nil {
-				return nil, nil, 0, err
-			}
+		if err := guard.add(uint64(len(route))); err != nil {
+			return nil, nil, 0, err
 		}
 		if pal := labeling.PositionArrowheadLabel(e, false, route); pal != nil {
 			positionedLabels = append(positionedLabels, *pal)
@@ -1252,22 +1234,16 @@ func routeLineChecked(
 
 	// for each pair, place an edge, get the cost, but multiply it by some penalty factor for being non-orthogonal
 	for fromI, fromPort := range fromPorts {
-		if err := checkWork(); err != nil {
+		if err := guard.step(); err != nil {
 			return nil, nil, 0, err
 		}
 		fromPortCost := 0.0
 		// Note: remove fromPortEdges could be empty if there are no edges after filtering
 		if fromPortEdges, has := fromPortEdges[fromPort]; has && len(fromPortEdges) > 0 {
 			// we don't consider ports used by a duplicate edge
-			var duplicate bool
-			if guard == nil {
-				duplicate = edge.HasDuplicateIn(fromPortEdges)
-			} else {
-				var err error
-				duplicate, err = edgeHasDuplicateInGuarded(edge, fromPortEdges, guard)
-				if err != nil {
-					return nil, nil, 0, err
-				}
+			duplicate, err := edgeHasDuplicateInGuarded(edge, fromPortEdges, guard)
+			if err != nil {
+				return nil, nil, 0, err
 			}
 			if duplicate {
 				// Edge case option: consider ports used by a duplicate edge, as long
@@ -1278,7 +1254,7 @@ func routeLineChecked(
 			// if the port is to be shared, all the edges must match arrowheads
 			allMatch := true
 			for _, otherFromPortEdge := range fromPortEdges {
-				if err := checkWork(); err != nil {
+				if err := guard.step(); err != nil {
 					return nil, nil, 0, err
 				}
 				if otherFromPortEdge.From == edge.From {
@@ -1306,20 +1282,14 @@ func routeLineChecked(
 		}
 
 		for toI, toPort := range toPorts {
-			if err := checkWork(); err != nil {
+			if err := guard.step(); err != nil {
 				return nil, nil, 0, err
 			}
 			toPortCost := 0.0
 			if toPortEdges, has := toPortEdges[toPort]; has && len(toPortEdges) > 0 {
-				var duplicate bool
-				if guard == nil {
-					duplicate = edge.HasDuplicateIn(toPortEdges)
-				} else {
-					var err error
-					duplicate, err = edgeHasDuplicateInGuarded(edge, toPortEdges, guard)
-					if err != nil {
-						return nil, nil, 0, err
-					}
+				duplicate, err := edgeHasDuplicateInGuarded(edge, toPortEdges, guard)
+				if err != nil {
+					return nil, nil, 0, err
 				}
 				if duplicate {
 					continue
@@ -1327,7 +1297,7 @@ func routeLineChecked(
 
 				allMatch := true
 				for _, otherToPortEdge := range toPortEdges {
-					if err := checkWork(); err != nil {
+					if err := guard.step(); err != nil {
 						return nil, nil, 0, err
 					}
 					if otherToPortEdge.To == edge.To {
@@ -1353,15 +1323,9 @@ func routeLineChecked(
 			edgeOption.Points = []*geo.Point{&(fromPorts[fromI]), &(toPorts[toI])}
 
 			// don't consider option if edge crosses over another node
-			var intersectsNode bool
-			if guard == nil {
-				intersectsNode = layoutgraph.Nodes(g.Nodes).IntersectsNode(edgeOption)
-			} else {
-				var err error
-				intersectsNode, err = routeIntersectsNodeGuarded(layoutgraph.Nodes(g.Nodes), edgeOption, guard)
-				if err != nil {
-					return nil, nil, 0, err
-				}
+			intersectsNode, err := routeIntersectsNodeGuarded(layoutgraph.Nodes(g.Nodes), edgeOption, guard)
+			if err != nil {
+				return nil, nil, 0, err
 			}
 			if intersectsNode {
 				continue
@@ -1372,41 +1336,23 @@ func routeLineChecked(
 				return nil, nil, 0, err
 			}
 
-			var overlappingEdges []*layoutgraph.Edge
-			if guard == nil {
-				overlappingEdges = findOverlappingEdges(&fromPorts[fromI], &toPorts[toI], otherEdges)
-			} else {
-				var err error
-				overlappingEdges, err = overlappingEdgesGuarded(&fromPorts[fromI], &toPorts[toI], otherEdges, guard)
-				if err != nil {
-					return nil, nil, 0, err
-				}
+			overlappingEdges, err := overlappingEdgesGuarded(&fromPorts[fromI], &toPorts[toI], otherEdges, guard)
+			if err != nil {
+				return nil, nil, 0, err
 			}
 			if len(overlappingEdges) > 0 {
-				canOverlap := false
-				if guard == nil {
-					canOverlap = edgeCanOverlapEdges(edge, overlappingEdges, sourceClusterNodes, targetClusterNodes)
-				} else {
-					var err error
-					canOverlap, err = edgeCanOverlapEdgesGuarded(edge, overlappingEdges, sourceClusterNodes, targetClusterNodes, guard)
-					if err != nil {
-						return nil, nil, 0, err
-					}
+				canOverlap, err := edgeCanOverlapEdgesGuarded(edge, overlappingEdges, sourceClusterNodes, targetClusterNodes, guard)
+				if err != nil {
+					return nil, nil, 0, err
 				}
 				if !canOverlap {
 					continue
 				}
 			}
 
-			var routeCost float64
-			if guard == nil {
-				routeCost = estimateRouteCost(layoutgraph.Edges(otherEdges), edgeOption)
-			} else {
-				var err error
-				routeCost, err = estimateRouteCostGuarded(layoutgraph.Edges(otherEdges), edgeOption, guard)
-				if err != nil {
-					return nil, nil, 0, err
-				}
+			routeCost, err := estimateRouteCostGuarded(layoutgraph.Edges(otherEdges), edgeOption, guard)
+			if err != nil {
+				return nil, nil, 0, err
 			}
 			cost := fromPortCost + toPortCost + routeCost
 
@@ -1440,31 +1386,17 @@ func routeLineChecked(
 				cost += g.NonCenterPortCost()
 			}
 
-			if l := edge.SourceArrowheadLabel; l != nil {
-				routePoints := []*geo.Point{&(fromPorts[fromI]), &(toPorts[toI])}
-				pal := labeling.PositionArrowheadLabel(edge, false, routePoints)
-				if guard == nil {
-					cost += positionedArrowheadLabelCost(*pal, nonAncestors, positionedLabels, nil, otherEdges)
-				} else {
-					labelCost, err := positionedArrowheadLabelCostGuarded(*pal, nonAncestors, positionedLabels, nil, otherEdges, guard)
-					if err != nil {
-						return nil, nil, 0, err
-					}
-					cost += labelCost
+			for _, isTarget := range [2]bool{false, true} {
+				if (isTarget && edge.TargetArrowheadLabel == nil) || (!isTarget && edge.SourceArrowheadLabel == nil) {
+					continue
 				}
-			}
-			if l := edge.TargetArrowheadLabel; l != nil {
 				routePoints := []*geo.Point{&(fromPorts[fromI]), &(toPorts[toI])}
-				pal := labeling.PositionArrowheadLabel(edge, true, routePoints)
-				if guard == nil {
-					cost += positionedArrowheadLabelCost(*pal, nonAncestors, positionedLabels, nil, otherEdges)
-				} else {
-					labelCost, err := positionedArrowheadLabelCostGuarded(*pal, nonAncestors, positionedLabels, nil, otherEdges, guard)
-					if err != nil {
-						return nil, nil, 0, err
-					}
-					cost += labelCost
+				pal := labeling.PositionArrowheadLabel(edge, isTarget, routePoints)
+				labelCost, err := positionedArrowheadLabelCostGuarded(*pal, nonAncestors, positionedLabels, nil, otherEdges, guard)
+				if err != nil {
+					return nil, nil, 0, err
 				}
+				cost += labelCost
 			}
 
 			// get the best cost of these pairs
@@ -1613,58 +1545,6 @@ func isVerticalOrHorizontalOverlap(start, end, otherStart, otherEnd *geo.Point) 
 	return false
 }
 
-func findOverlappingEdges(start, end *geo.Point, otherEdges []*layoutgraph.Edge) []*layoutgraph.Edge {
-	overlappingEdges := make([]*layoutgraph.Edge, 0)
-	for _, e := range otherEdges {
-		for i := 0; i < len(e.Points)-1; i++ {
-			if isVerticalOrHorizontalOverlap(start, end, e.Points[i], e.Points[i+1]) {
-				overlappingEdges = append(overlappingEdges, e)
-				break
-			}
-		}
-	}
-	return overlappingEdges
-}
-
-func sourceAndTargetClusterNodes(g *layoutgraph.Graph, source, target *layoutgraph.Node) (map[*layoutgraph.Node]bool, map[*layoutgraph.Node]bool) {
-	sourceClusterNodes := make(map[*layoutgraph.Node]bool)
-	targetClusterNodes := make(map[*layoutgraph.Node]bool)
-
-	for _, key := range g.ClusterOrder() {
-		cluster := g.Clusters[key]
-		isSource := false
-		isTarget := false
-		for _, clusterNode := range cluster.Nodes {
-			if clusterNode == source {
-				isSource = true
-			}
-			if clusterNode == target {
-				isTarget = true
-			}
-		}
-
-		if isSource {
-			for _, clusterNode := range cluster.Nodes {
-				if clusterNode == source {
-					continue
-				}
-				sourceClusterNodes[clusterNode] = true
-			}
-		}
-
-		if isTarget {
-			for _, clusterNode := range cluster.Nodes {
-				if clusterNode == target {
-					continue
-				}
-				targetClusterNodes[clusterNode] = true
-			}
-		}
-	}
-	return sourceClusterNodes, targetClusterNodes
-}
-
-// return the length of the side of the node
 // if orientation is on a corner return whichever side is longer
 func maxSideLength(node *layoutgraph.Node, orientation geo.Orientation) float64 {
 	switch {
@@ -1748,17 +1628,18 @@ func isStraightEdgeFallbackCandidate(edge *layoutgraph.Edge, clusterNodes map[*l
 }
 
 func StraightEdgesFallback(ctx context.Context, g *layoutgraph.Graph) error {
-	if err := checkEdgeRoutingCanceled(ctx); err != nil {
+	guard, err := unboundedRouteWork(ctx, "EdgeRouting")
+	if err != nil {
 		return err
 	}
 
 	clusterNodes := make(map[*layoutgraph.Node]bool)
 	for _, cluster := range g.Clusters {
-		if err := checkEdgeRoutingCanceled(ctx); err != nil {
+		if err := guard.step(); err != nil {
 			return err
 		}
 		for _, cn := range cluster.Nodes {
-			if err := checkEdgeRoutingCanceled(ctx); err != nil {
+			if err := guard.step(); err != nil {
 				return err
 			}
 			clusterNodes[cn] = true
@@ -1766,27 +1647,24 @@ func StraightEdgesFallback(ctx context.Context, g *layoutgraph.Graph) error {
 	}
 	isTreeEdge := g.TreeEdgeMap()
 	g.AddIsolatedTreeEdges(isTreeEdge)
-	if err := checkEdgeRoutingCanceled(ctx); err != nil {
-		return err
-	}
 	for index, edge := range g.Edges {
-		if err := checkEdgeRoutingCanceled(ctx); err != nil {
+		if err := guard.step(); err != nil {
 			return err
 		}
 		if !isStraightEdgeFallbackCandidate(edge, clusterNodes, isTreeEdge) {
 			continue
 		}
-		return straightEdgesFallbackFrom(ctx, g, clusterNodes, isTreeEdge, index)
+		return straightEdgesFallbackFrom(g, clusterNodes, isTreeEdge, index, guard)
 	}
 	return nil
 }
 
 func straightEdgesFallbackFrom(
-	ctx context.Context,
 	g *layoutgraph.Graph,
 	clusterNodes map[*layoutgraph.Node]bool,
 	isTreeEdge map[*layoutgraph.Edge]bool,
 	firstIndex int,
+	guard *routeWorkGuard,
 ) error {
 	var rollback straightEdgeFallbackRollback
 	rollback.captureCosts(g)
@@ -1799,7 +1677,7 @@ func straightEdgesFallbackFrom(
 
 	for offset, edge := range g.Edges[firstIndex:] {
 		if offset != 0 {
-			if err := checkEdgeRoutingCanceled(ctx); err != nil {
+			if err := guard.step(); err != nil {
 				return err
 			}
 			if !isStraightEdgeFallbackCandidate(edge, clusterNodes, isTreeEdge) {
@@ -1807,7 +1685,7 @@ func straightEdgesFallbackFrom(
 			}
 		}
 		originalPoints := edge.Points
-		changed, err := tryStraightEdgeFallback(ctx, g, edge)
+		changed, err := tryStraightEdgeFallbackGuarded(g, edge, guard)
 		if changed {
 			rollback.record(edge, originalPoints)
 		}
@@ -1815,50 +1693,11 @@ func straightEdgesFallbackFrom(
 			return err
 		}
 	}
-	if err := checkEdgeRoutingCanceled(ctx); err != nil {
+	if err := guard.finish(); err != nil {
 		return err
 	}
 	complete = true
 	return nil
-}
-
-func tryStraightEdgeFallback(ctx context.Context, g *layoutgraph.Graph, edge *layoutgraph.Edge) (bool, error) {
-	if err := checkEdgeRoutingCanceled(ctx); err != nil {
-		return false, err
-	}
-
-	originalCost := estimateRouteCost(layoutgraph.Edges(g.Edges), edge)
-	fromPort, toPort, lineCost, err := routeLine(ctx, g, edge, g.Edges, nil)
-	if err != nil {
-		if layoutgraph.IsCandidateRejection(err) {
-			// A straight replacement is optional. Keep the original route when
-			// no valid line exists.
-			return false, nil
-		}
-		return false, err
-	}
-
-	// If dejitter fails but the segment is really short, we would prefer a straight line (all else equivalent)
-	if len(edge.Points) == 4 {
-		if geo.EuclideanDistance(
-			edge.Points[1].X,
-			edge.Points[1].Y,
-			edge.Points[2].X,
-			edge.Points[2].Y,
-		) <= lowerJitterThreshold {
-			// remove the straight line penalty from this line
-			lineCost /= nonOrthogonalFactor
-		}
-	}
-
-	if err := checkEdgeRoutingCanceled(ctx); err != nil {
-		return false, err
-	}
-	if lineCost < originalCost {
-		edge.Points = []*geo.Point{fromPort, toPort}
-		return true, nil
-	}
-	return false, nil
 }
 
 // true if angle between line and border (based on orientation) is less than min angle
@@ -1902,17 +1741,8 @@ func hasSharpAngleToBorder(fromPoint, toPoint *geo.Point, orientation geo.Orient
 }
 
 func ReorderDuplicates(ctx context.Context, g *layoutgraph.Graph) error {
-	return reorderDuplicatesInEdges(ctx, g.Edges)
-}
-
-func reorderDuplicatesInEdges(ctx context.Context, edges []*layoutgraph.Edge) error {
-	checkCanceled := func() error {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("ReorderDuplicates: %w", err)
-		}
-		return nil
-	}
-	if err := checkCanceled(); err != nil {
+	guard, err := unboundedRouteWork(ctx, "ReorderDuplicates")
+	if err != nil {
 		return err
 	}
 	type routeSnapshot struct {
@@ -1920,9 +1750,9 @@ func reorderDuplicatesInEdges(ctx context.Context, edges []*layoutgraph.Edge) er
 		points []*geo.Point
 		values []*geo.Point
 	}
-	snapshots := make([]routeSnapshot, 0, len(edges))
-	seen := make(map[*layoutgraph.Edge]struct{}, len(edges))
-	for _, edge := range edges {
+	snapshots := make([]routeSnapshot, 0, len(g.Edges))
+	seen := make(map[*layoutgraph.Edge]struct{}, len(g.Edges))
+	for _, edge := range g.Edges {
 		if _, ok := seen[edge]; ok {
 			continue
 		}
@@ -1943,151 +1773,7 @@ func reorderDuplicatesInEdges(ctx context.Context, edges []*layoutgraph.Edge) er
 			snapshot.edge.Points = snapshot.points
 		}
 	}()
-
-	// look for labeled straight edges that have duplicates
-	for _, e := range edges {
-		if err := checkCanceled(); err != nil {
-			return err
-		}
-		if e.HasTableColumn() {
-			continue
-		}
-		if e.Label == nil || !e.IsStraight() {
-			continue
-		}
-
-		hasOverlappingEnd := e.HasOverlappingEnd()
-
-		duplicates := []int{}
-		for i, other := range edges {
-			if err := checkCanceled(); err != nil {
-				return err
-			}
-			if other == e {
-				continue
-			}
-			if !other.IsDuplicateOf(e) || !other.IsStraight() {
-				continue
-			}
-			// Note: only need to check for matching arrowheads if one of the edges overlaps another edge
-			if hasOverlappingEnd || other.HasOverlappingEnd() {
-				sourceArrow := e.SourceArrowhead
-				targetArrow := e.TargetArrowhead
-				if other.From == e.To {
-					// Note: since other is in opposite direction, we reverse points when swapping below
-					sourceArrow, targetArrow = targetArrow, sourceArrow
-				}
-				if other.TargetArrowhead == targetArrow && other.SourceArrowhead == sourceArrow {
-					duplicates = append(duplicates, i)
-				}
-			} else {
-				duplicates = append(duplicates, i)
-			}
-		}
-
-		if len(duplicates) > 1 {
-			start := e.Points[0]
-			end := e.Points[len(e.Points)-1]
-
-			dx := end.X - start.X
-			dy := end.Y - start.Y
-
-			sourceOrder := make([]*layoutgraph.Edge, 0, len(duplicates)+1)
-			targetOrder := make([]*layoutgraph.Edge, 0, len(duplicates)+1)
-
-			sourceOrder = append(sourceOrder, e)
-			targetOrder = append(targetOrder, e)
-
-			for _, i := range duplicates {
-				dup := edges[i]
-				sourceOrder = append(sourceOrder, dup)
-				targetOrder = append(targetOrder, dup)
-			}
-
-			if dy > dx {
-				// . ┌───────┐
-				// . │       │
-				// . └─┬─┬─┬─┘
-				// .   0 1 2 source order
-				// .   │ │ │
-				// .   0 1 2 target order
-				// . ┌─▼─▼─▼─┐
-				// . │       │
-				// . └───────┘
-				sort.Slice(sourceOrder, func(i, j int) bool {
-					return sourceOrder[i].Points[0].X < sourceOrder[j].Points[0].X
-				})
-				sort.Slice(targetOrder, func(i, j int) bool {
-					ei, ej := targetOrder[i], targetOrder[j]
-					return ei.Points[len(ei.Points)-1].X < ej.Points[len(ej.Points)-1].X
-				})
-			} else {
-				sort.Slice(sourceOrder, func(i, j int) bool {
-					return sourceOrder[i].Points[0].Y < sourceOrder[j].Points[0].Y
-				})
-				sort.Slice(targetOrder, func(i, j int) bool {
-					ei, ej := targetOrder[i], targetOrder[j]
-					return ei.Points[len(ei.Points)-1].Y < ej.Points[len(ej.Points)-1].Y
-				})
-			}
-			if err := checkCanceled(); err != nil {
-				return err
-			}
-
-			consistentOrder := true
-			for i := range sourceOrder {
-				if sourceOrder[i] != targetOrder[i] {
-					consistentOrder = false
-					break
-				}
-			}
-			if !consistentOrder {
-				continue
-			}
-			currentIndex := -1
-			for i := range sourceOrder {
-				if sourceOrder[i] == e {
-					currentIndex = i
-					break
-				}
-			}
-			if currentIndex == 0 || currentIndex == len(sourceOrder)-1 {
-				continue
-			}
-			first := sourceOrder[0]
-			last := sourceOrder[len(sourceOrder)-1]
-			if first.Label != nil && last.Label != nil {
-				continue
-			}
-			if err := checkCanceled(); err != nil {
-				return err
-			}
-
-			if last.Label == nil {
-				e.Points, last.Points = last.Points, e.Points
-				if last.From == e.To {
-					// need to reverse order of points
-					for i, j := 0, len(e.Points)-1; i < j; i, j = i+1, j-1 {
-						e.Points[i], e.Points[j] = e.Points[j], e.Points[i]
-					}
-					for i, j := 0, len(last.Points)-1; i < j; i, j = i+1, j-1 {
-						last.Points[i], last.Points[j] = last.Points[j], last.Points[i]
-					}
-				}
-			} else if first.Label == nil {
-				e.Points, first.Points = first.Points, e.Points
-				if first.From == e.To {
-					for i, j := 0, len(e.Points)-1; i < j; i, j = i+1, j-1 {
-						e.Points[i], e.Points[j] = e.Points[j], e.Points[i]
-					}
-					for i, j := 0, len(first.Points)-1; i < j; i, j = i+1, j-1 {
-						first.Points[i], first.Points[j] = first.Points[j], first.Points[i]
-					}
-				}
-			}
-		}
-	}
-	if err := checkCanceled(); err != nil {
+	if err := reorderDuplicatesInEdgesGuarded(g.Edges, guard); err != nil {
 		return err
 	}
 	complete = true

@@ -7,21 +7,23 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeParallelogram struct {
-	*baseShape
-}
-
 const parallelWedgeWidth = 26.
 
-func NewParallelogram(box *geo.Box) Shape {
-	shape := shapeParallelogram{
-		baseShape: newShapeBase(PARALLELOGRAM_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+var parallelogramKind = shapeKind{
+	typ:             PARALLELOGRAM_TYPE,
+	paddingX:        defaultPadding,
+	paddingY:        defaultPadding,
+	innerBox:        parallelogramInnerBox,
+	dimensionsToFit: parallelogramDimensionsToFit,
+	path:            parallelogramPath,
+	trace:           parallelogramTrace,
 }
 
-func (s shapeParallelogram) GetInnerBox() *geo.Box {
+func NewParallelogram(box *geo.Box) Shape {
+	return newShape(&parallelogramKind, box)
+}
+
+func parallelogramInnerBox(s *shape) *geo.Box {
 	tl := s.Box.TopLeft.Copy()
 	width := s.Box.Width - 2*parallelWedgeWidth
 	tl.X += parallelWedgeWidth
@@ -50,25 +52,11 @@ func parallelogramOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, 
 	return pc
 }
 
-func (s shapeParallelogram) Perimeter() []geo.Intersectable {
-	return parallelogramPath(s.Box).Path
+func parallelogramTrace(box *geo.Box, t *borderTracer) {
+	parallelogramOutline(box, t.newPath)
 }
 
-func (s shapeParallelogram) traceBorder(t *borderTracer) {
-	parallelogramOutline(s.Box, t.newPath)
-}
-
-func (s shapeParallelogram) GetSVGPathData() []string {
-	return []string{
-		parallelogramPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeParallelogram) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(parallelogramPath(s.Box))
-}
-
-func (s shapeParallelogram) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func parallelogramDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	totalWidth := width + paddingX + parallelWedgeWidth*2
 	return math.Ceil(totalWidth), math.Ceil(height + paddingY)
 }

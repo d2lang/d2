@@ -283,7 +283,7 @@ func (t *Ruler) scaleUnicode(w float64, font d2fonts.Font, s string) float64 {
 	if uniseg.GraphemeClusterCount(s) != len(s) {
 		for _, line := range strings.Split(s, "\n") {
 			lineW, _ := t.MeasurePrecise(font, line)
-			graphemes := uniseg.NewGraphemes(line)
+			graphemes := newGraphemes(line)
 
 			mono := d2fonts.SourceCodePro.Font(font.Size, font.Style)
 			for graphemes.Next() {
@@ -338,7 +338,7 @@ func (t *Ruler) scaleUnicodeFallback(w float64, font d2fonts.Font, s string, css
 				w = math.Max(w, originalWidth)
 				continue
 			}
-			gr := uniseg.NewGraphemes(line)
+			gr := newGraphemes(line)
 			lineW = 0
 			for gr.Next() {
 				grapheme := gr.Str()
@@ -466,7 +466,7 @@ func (t *Ruler) scaleUnicodeLegacy(w float64, fontSpec d2fonts.Font, s string) f
 	for _, line := range strings.Split(measurementText, "\n") {
 		lineW, _ := t.MeasurePrecise(fontSpec, line)
 		lineFloor := lineW
-		graphemes := uniseg.NewGraphemes(line)
+		graphemes := newGraphemes(line)
 		mono := d2fonts.SourceCodePro.Font(fontSpec.Size, fontSpec.Style)
 		for graphemes.Next() {
 			if graphemes.Width() == 1 {
@@ -500,7 +500,7 @@ func (t *Ruler) scaleUnicodeLegacy(w float64, fontSpec d2fonts.Font, s string) f
 func legacyMeasurementText(s string) (string, bool) {
 	var out strings.Builder
 	filtered := false
-	graphemes := uniseg.NewGraphemes(s)
+	graphemes := newGraphemes(s)
 	for graphemes.Next() {
 		cluster := graphemes.Str()
 		if isDefaultIgnorableGrapheme(cluster) {

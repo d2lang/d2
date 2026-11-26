@@ -5,20 +5,13 @@ import (
 )
 
 // Class is basically a rectangle
-type shapeClass struct {
-	shapeSquare
+var classKind = shapeKind{
+	typ:         CLASS_TYPE,
+	rectangular: true,
+	paddingX:    0,
+	paddingY:    0,
 }
 
 func NewClass(box *geo.Box) Shape {
-	shape := shapeClass{
-		shapeSquare{
-			baseShape: newShapeBase(CLASS_TYPE, box),
-		},
-	}
-	*shape.FullShape = shape
-	return shape
-}
-
-func (s shapeClass) GetDefaultPadding() (paddingX, paddingY float64) {
-	return 0, 0
+	return newShape(&classKind, box)
 }
