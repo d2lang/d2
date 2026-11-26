@@ -439,6 +439,19 @@ scenarios: {
 			},
 		},
 		{
+			name: "target-trailing-input",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				writeFile(t, dir, "in.d2", "layers: {overview: {api -> db}}")
+				err := runTestMain(t, ctx, dir, env, "--target", "layers.overview; wrong", "in.d2", "out.svg")
+				if err == nil || !strings.Contains(err.Error(), "invalid target: layers.overview; wrong") {
+					t.Fatalf("expected an invalid target error, got %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(dir, "out.svg")); !os.IsNotExist(err) {
+					t.Fatalf("expected no output for an invalid target, got %v", err)
+				}
+			},
+		},
+		{
 			name: "target-nested-index",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				writeFile(t, dir, "target-nested-index.d2", `a
@@ -1411,6 +1424,30 @@ layers: {
 				assert.Success(t, err)
 				got := readFile(t, dir, "hello-world.d2")
 				assert.Equal(t, "x -> y\n", string(got))
+			},
+		},
+		{
+			name: "fmt-invalid-syntax",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				for _, tc := range []struct{ name, source, diagnostic string }{
+					{"empty-filter", "api; db\n*: {&; label: selected}\n", "filter requires"},
+					{"empty-negated-filter", "*: {!&; style.fill: red}", "filter requires"},
+					{"trailing-path-dot", "a.: title", "key segment after ."},
+					{"missing-scope-dot", `"svc"(a -> b)[0]`, "expected . before scoped connection"},
+					{"single-hyphen", "\"build\" - server\n", "use --"},
+					{"unclosed-group", "(a -> b", "terminated with )"},
+					{"wrong-block-fence", "x: |!#md\n  hello\n##|\n", "terminated with !#|"},
+					{"incomplete-variable", "x: amount$\n", "substitutions must begin"},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						assert.WriteFile(t, filepath.Join(dir, "invalid.d2"), []byte(tc.source), 0644)
+						err := runTestMainPersist(t, ctx, dir, env, "fmt", "invalid.d2")
+						if err == nil || !strings.Contains(err.Error(), tc.diagnostic) {
+							t.Fatalf("expected %q, got %v", tc.diagnostic, err)
+						}
+						assert.Equal(t, tc.source, string(readFile(t, dir, "invalid.d2")))
+					})
+				}
 			},
 		},
 		{

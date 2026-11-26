@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,0:0:0-2:0:8",
+      "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,0:0:0-2:0:12",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,0:0:0-0:5:5",
+            "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,0:0:0-0:9:9",
             "key": {
               "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,0:0:0-0:5:5",
               "path": [
@@ -25,18 +25,23 @@
               ]
             },
             "primary": {},
-            "value": {}
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,0:7:7-0:9:9",
+                "nodes": null
+              }
+            }
           }
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:6-1:1:7",
+            "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:10-1:1:11",
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:6-1:1:7",
+              "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:10-1:1:11",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:6-1:1:7",
+                    "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:10-1:1:11",
                     "value": [
                       {
                         "string": "b",
@@ -131,11 +136,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:6-1:1:7",
+              "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:10-1:1:11",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:6-1:1:7",
+                    "range": "d2/testdata/d2oracle/TestMove/out_of_newline_container.d2,1:0:10-1:1:11",
                     "value": [
                       {
                         "string": "b",

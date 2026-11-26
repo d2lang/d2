@@ -90,11 +90,11 @@ func GetChildrenIDs(g *d2graph.Graph, boardPath []string, absID string) (ids []s
 		return nil, fmt.Errorf("board at path %v not found", boardPath)
 	}
 
-	mk, err := d2parser.ParseMapKey(absID)
+	key, err := d2parser.ParseKey(absID)
 	if err != nil {
 		return nil, err
 	}
-	obj, ok := g.Root.HasChild(d2graph.Key(mk.Key))
+	obj, ok := g.Root.HasChild(d2graph.Key(key))
 	if !ok {
 		return nil, fmt.Errorf("%v not found", absID)
 	}
@@ -112,11 +112,11 @@ func GetParentID(g *d2graph.Graph, boardPath []string, absID string) (string, er
 		return "", fmt.Errorf("board at path %v not found", boardPath)
 	}
 
-	mk, err := d2parser.ParseMapKey(absID)
+	key, err := d2parser.ParseKey(absID)
 	if err != nil {
 		return "", err
 	}
-	obj, ok := g.Root.HasChild(d2graph.Key(mk.Key))
+	obj, ok := g.Root.HasChild(d2graph.Key(key))
 	if !ok {
 		return "", fmt.Errorf("%v not found", absID)
 	}
@@ -159,8 +159,11 @@ func GetObj(g *d2graph.Graph, boardPath []string, absID string) *d2graph.Object 
 		return nil
 	}
 
-	mk, _ := d2parser.ParseMapKey(absID)
-	obj, _ := g.Root.HasChild(d2graph.Key(mk.Key))
+	key, err := d2parser.ParseKey(absID)
+	if err != nil {
+		return nil
+	}
+	obj, _ := g.Root.HasChild(d2graph.Key(key))
 	return obj
 }
 

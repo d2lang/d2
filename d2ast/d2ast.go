@@ -1290,12 +1290,8 @@ func (mb MapNodeBox) IsBoardNode() bool {
 	if mb.MapKey == nil || mb.MapKey.Key == nil || len(mb.MapKey.Key.Path) != 1 {
 		return false
 	}
-	switch mb.MapKey.Key.Path[0].Unbox().ScalarString() {
-	case "layers", "scenarios", "steps":
-		return true
-	default:
-		return false
-	}
+	_, ok := BoardKeywords[Keyword(mb.MapKey.Key.Path[0].Unbox())]
+	return ok
 }
 
 // ArrayNodeBox is used to box ArrayNode for JSON persistence.
@@ -1305,6 +1301,7 @@ type ArrayNodeBox struct {
 	Substitution       *Substitution       `json:"substitution,omitempty"`
 	Import             *Import             `json:"import,omitempty"`
 	Null               *Null               `json:"null,omitempty"`
+	Suspension         *Suspension         `json:"suspension,omitempty"`
 	Boolean            *Boolean            `json:"boolean,omitempty"`
 	Number             *Number             `json:"number,omitempty"`
 	UnquotedString     *UnquotedString     `json:"unquoted_string,omitempty"`
@@ -1328,6 +1325,8 @@ func MakeArrayNodeBox(an ArrayNode) ArrayNodeBox {
 		ab.Import = an
 	case *Null:
 		ab.Null = an
+	case *Suspension:
+		ab.Suspension = an
 	case *Boolean:
 		ab.Boolean = an
 	case *Number:
@@ -1360,6 +1359,8 @@ func (ab ArrayNodeBox) Unbox() ArrayNode {
 		return ab.Import
 	case ab.Null != nil:
 		return ab.Null
+	case ab.Suspension != nil:
+		return ab.Suspension
 	case ab.Boolean != nil:
 		return ab.Boolean
 	case ab.Number != nil:

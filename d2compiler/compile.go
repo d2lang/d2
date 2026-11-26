@@ -389,10 +389,10 @@ func (c *compiler) compileBoardsField(g *d2graph.Graph, ir *d2ir.Map, fieldName 
 }
 
 func findFieldAST(ast *d2ast.Map, f *d2ir.Field) *d2ast.Map {
-	path := []string{}
+	var path []d2ast.String
 	curr := f
 	for {
-		path = append([]string{curr.Name.ScalarString()}, path...)
+		path = append([]d2ast.String{curr.Name}, path...)
 		boardKind := d2ir.NodeBoardKind(curr)
 		if boardKind == "" {
 			break
@@ -403,7 +403,7 @@ func findFieldAST(ast *d2ast.Map, f *d2ir.Field) *d2ast.Map {
 	return _findFieldAST(ast, path)
 }
 
-func _findFieldAST(ast *d2ast.Map, path []string) *d2ast.Map {
+func _findFieldAST(ast *d2ast.Map, path []d2ast.String) *d2ast.Map {
 	if len(path) == 0 {
 		return ast
 	}
@@ -416,8 +416,8 @@ func _findFieldAST(ast *d2ast.Map, path []string) *d2ast.Map {
 			continue
 		}
 
-		head2 := ast.Nodes[i].MapKey.Key.Path[0].Unbox().ScalarString()
-		if head == head2 {
+		head2 := ast.Nodes[i].MapKey.Key.Path[0].Unbox()
+		if strings.EqualFold(head.ScalarString(), head2.ScalarString()) && d2ast.Keyword(head) == d2ast.Keyword(head2) {
 			if ast.Nodes[i].MapKey.Value.Map == nil {
 				ast.Nodes[i].MapKey.Value.Map = &d2ast.Map{
 					Range: d2ast.MakeRange(",1:0:0-1:0:0"),
@@ -550,10 +550,10 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 		if c.stopped() {
 			return
 		}
-		if f.Name.ScalarString() == "shape" && f.Name.IsUnquoted() {
+		if d2ast.Keyword(f.Name) == "shape" {
 			continue
 		}
-		if _, ok := d2ast.BoardKeywords[f.Name.ScalarString()]; ok && f.Name.IsUnquoted() {
+		if _, ok := d2ast.BoardKeywords[d2ast.Keyword(f.Name)]; ok {
 			continue
 		}
 		c.compileField(obj, f)
@@ -680,15 +680,14 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 	if c.stopped() {
 		return
 	}
-	keyword := strings.ToLower(f.Name.ScalarString())
+	keyword := d2ast.Keyword(f.Name)
 	_, isStyleReserved := d2ast.StyleKeywords[keyword]
-	if isStyleReserved && f.Name.IsUnquoted() {
+	if isStyleReserved {
 		c.errorf(f.LastRef().AST(), "%v must be style.%v", f.Name.ScalarString(), f.Name.ScalarString())
 		return
 	}
 	_, isReserved := d2ast.SimpleReservedKeywords[keyword]
-	isReserved = isReserved && f.Name.IsUnquoted()
-	if f.Name.ScalarString() == "classes" && f.Name.IsUnquoted() {
+	if keyword == "classes" {
 		if f.Map() != nil {
 			if len(f.Map().Edges) > 0 {
 				c.errorf(f.Map().Edges[0].LastRef().AST(), "classes cannot contain an edge")
@@ -704,19 +703,19 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 					if c.stopped() {
 						return
 					}
-					if _, ok := d2ast.ReservedKeywords[cf.Name.ScalarString()]; !(ok && f.Name.IsUnquoted()) {
+					if d2ast.Keyword(cf.Name) == "" {
 						c.errorf(cf.LastRef().AST(), "%s is an invalid class field, must be reserved keyword", cf.Name.ScalarString())
 					}
-					if cf.Name.ScalarString() == "class" && cf.Name.IsUnquoted() {
+					if d2ast.Keyword(cf.Name) == "class" {
 						c.errorf(cf.LastRef().AST(), `"class" cannot appear within "classes"`)
 					}
 				}
 			}
 		}
 		return
-	} else if f.Name.ScalarString() == "vars" && f.Name.IsUnquoted() {
+	} else if keyword == "vars" {
 		return
-	} else if (f.Name.ScalarString() == "source-arrowhead" || f.Name.ScalarString() == "target-arrowhead") && f.Name.IsUnquoted() {
+	} else if keyword == "source-arrowhead" || keyword == "target-arrowhead" {
 		c.errorf(f.LastRef().AST(), `%#v can only be used on connections`, f.Name.ScalarString())
 		return
 
@@ -740,7 +739,7 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 	} else if isReserved {
 		c.compileReserved(&obj.Attributes, f)
 		return
-	} else if f.Name.ScalarString() == "style" && f.Name.IsUnquoted() {
+	} else if keyword == "style" {
 		if f.Map() == nil || len(f.Map().Fields) == 0 {
 			c.errorf(f.LastRef().AST(), `"style" expected to be set to a map of key-values, or contain an additional keyword like "style.opacity: 0.4"`)
 			return
@@ -853,20 +852,20 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 	if c.stopped() {
 		return
 	}
-	name := f.Name
+	keyword := d2ast.Keyword(f.Name)
 	if f.Map() != nil {
 		for _, f := range f.Map().Fields {
 			if c.stopped() {
 				return
 			}
-			if f.Name.ScalarString() == "near" && f.Name.IsUnquoted() {
+			if d2ast.Keyword(f.Name) == "near" {
 				if f.Primary() == nil {
 					c.errorf(f.LastPrimaryKey(), `invalid "near" field`)
 				} else {
 					scalar := f.Primary().Value
 					switch scalar := scalar.(type) {
 					case *d2ast.Null:
-						switch name.ScalarString() {
+						switch keyword {
 						case "label":
 							attrs.LabelPosition = nil
 						case "icon":
@@ -875,12 +874,12 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 							attrs.TooltipPosition = nil
 						}
 					default:
-						switch name.ScalarString() {
+						switch keyword {
 						case "label", "icon":
 							if _, ok := d2ast.LabelPositions[scalar.ScalarString()]; !ok {
 								c.errorf(f.LastPrimaryKey(), `invalid "near" field`)
 							} else {
-								switch name.ScalarString() {
+								switch keyword {
 								case "label":
 									attrs.LabelPosition = &d2graph.Scalar{}
 									attrs.LabelPosition.Value = scalar.ScalarString()
@@ -915,13 +914,14 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 }
 
 func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
-	if strings.EqualFold(f.Name.ScalarString(), "elk-layer-constraint") {
+	keyword := d2ast.Keyword(f.Name)
+	if keyword == "elk-layer-constraint" {
 		c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
 		return
 	}
 	if f.Primary() == nil {
 		if f.Composite != nil {
-			switch f.Name.ScalarString() {
+			switch keyword {
 			case "class":
 				if arr, ok := f.Composite.(*d2ir.Array); ok {
 					for _, class := range arr.Values {
@@ -960,7 +960,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 		return
 	}
 	scalar := f.Primary().Value
-	switch f.Name.ScalarString() {
+	switch keyword {
 	case "label":
 		c.compileLabel(attrs, f)
 		c.compilePosition(attrs, f)
@@ -991,7 +991,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 				if c.stopped() {
 					return
 				}
-				if ff.Name.ScalarString() == "style" && ff.Name.IsUnquoted() {
+				if d2ast.Keyword(ff.Name) == "style" {
 					if ff.Map() == nil || len(ff.Map().Fields) == 0 {
 						c.errorf(f.LastRef().AST(), `"style" expected to be set to a map of key-values, or contain an additional keyword like "style.opacity: 0.4"`)
 						return
@@ -1077,6 +1077,10 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 	case "link":
 		if textmeasure.IsDangerousLink(scalar.ScalarString()) {
 			c.errorf(scalar, "link uses an unsafe URL scheme")
+			return
+		}
+		if err := boardLinkSyntax(scalar.ScalarString()); err != nil {
+			c.errorf(scalar, "invalid board link: %v", err)
 			return
 		}
 		attrs.Link = &d2graph.Scalar{}
@@ -1206,31 +1210,32 @@ func (c *compiler) compileStyle(styles *d2graph.Style, m *d2ir.Map) {
 }
 
 func (c *compiler) compileStyleField(styles *d2graph.Style, f *d2ir.Field) {
-	if _, ok := d2ast.StyleKeywords[strings.ToLower(f.Name.ScalarString())]; !(ok && f.Name.IsUnquoted()) {
+	keyword := d2ast.Keyword(f.Name)
+	if _, ok := d2ast.StyleKeywords[keyword]; !ok {
 		c.errorf(f.LastRef().AST(), `invalid style keyword: "%s"`, f.Name.ScalarString())
 		return
 	}
 	if f.Primary() == nil {
 		return
 	}
-	compileStyleFieldInit(styles, f)
+	compileStyleFieldInit(styles, f, keyword)
 	scalar := f.Primary().Value
 	value := scalar.ScalarString()
-	if f.Name.ScalarString() == "opacity" && f.Primary().TweenOffset != 0 {
+	if keyword == "opacity" && f.Primary().TweenOffset != 0 {
 		// A variable can also be used in a counter with coarser precision.
 		// Opacity is continuous, including during the zero-visibility check.
 		rounded, _ := strconv.ParseFloat(value, 64)
 		value = strconv.FormatFloat(rounded+f.Primary().TweenOffset, 'g', -1, 64)
 	}
-	err := styles.Apply(f.Name.ScalarString(), value)
+	err := styles.Apply(keyword, value)
 	if err != nil {
 		c.errorf(scalar, err.Error())
 		return
 	}
 }
 
-func compileStyleFieldInit(styles *d2graph.Style, f *d2ir.Field) {
-	switch f.Name.ScalarString() {
+func compileStyleFieldInit(styles *d2graph.Style, f *d2ir.Field, keyword string) {
+	switch keyword {
 	case "opacity":
 		styles.Opacity = &d2graph.Scalar{MapKey: f.LastPrimaryKey()}
 	case "stroke":
@@ -1361,8 +1366,7 @@ func (c *compiler) compileEdgeMap(edge *d2graph.Edge, m *d2ir.Map) {
 		if c.stopped() {
 			return
 		}
-		_, ok := d2ast.ReservedKeywords[f.Name.ScalarString()]
-		if !(ok && f.Name.IsUnquoted()) {
+		if d2ast.Keyword(f.Name) == "" {
 			c.errorf(f.References[0].AST(), `edge map keys must be reserved keywords`)
 			continue
 		}
@@ -1371,9 +1375,8 @@ func (c *compiler) compileEdgeMap(edge *d2graph.Edge, m *d2ir.Map) {
 }
 
 func (c *compiler) compileEdgeField(edge *d2graph.Edge, f *d2ir.Field) {
-	keyword := strings.ToLower(f.Name.ScalarString())
+	keyword := d2ast.Keyword(f.Name)
 	_, isStyleReserved := d2ast.StyleKeywords[keyword]
-	isStyleReserved = isStyleReserved && f.Name.IsUnquoted()
 	if isStyleReserved {
 		c.errorf(f.LastRef().AST(), "%v must be style.%v", f.Name.ScalarString(), f.Name.ScalarString())
 		return
@@ -1382,7 +1385,7 @@ func (c *compiler) compileEdgeField(edge *d2graph.Edge, f *d2ir.Field) {
 	if isReserved {
 		c.compileReserved(&edge.Attributes, f)
 		return
-	} else if f.Name.ScalarString() == "style" {
+	} else if keyword == "style" {
 		if f.Map() == nil {
 			return
 		}
@@ -1390,7 +1393,7 @@ func (c *compiler) compileEdgeField(edge *d2graph.Edge, f *d2ir.Field) {
 		return
 	}
 
-	if (f.Name.ScalarString() == "source-arrowhead" || f.Name.ScalarString() == "target-arrowhead") && f.Name.IsUnquoted() {
+	if keyword == "source-arrowhead" || keyword == "target-arrowhead" {
 		c.compileArrowheads(edge, f)
 	}
 }
@@ -1400,7 +1403,7 @@ func (c *compiler) compileArrowheads(edge *d2graph.Edge, f *d2ir.Field) {
 		return
 	}
 	var attrs *d2graph.Attributes
-	if f.Name.ScalarString() == "source-arrowhead" {
+	if d2ast.Keyword(f.Name) == "source-arrowhead" {
 		if edge.SrcArrowhead == nil {
 			edge.SrcArrowhead = &d2graph.Attributes{}
 		}
@@ -1421,13 +1424,12 @@ func (c *compiler) compileArrowheads(edge *d2graph.Edge, f *d2ir.Field) {
 			if c.stopped() {
 				return
 			}
-			keyword := strings.ToLower(f2.Name.ScalarString())
+			keyword := d2ast.Keyword(f2.Name)
 			_, isReserved := d2ast.SimpleReservedKeywords[keyword]
-			isReserved = isReserved && f2.Name.IsUnquoted()
 			if isReserved {
 				c.compileReserved(attrs, f2)
 				continue
-			} else if f2.Name.ScalarString() == "style" && f2.Name.IsUnquoted() {
+			} else if keyword == "style" {
 				if f2.Map() == nil {
 					continue
 				}
@@ -1569,7 +1571,7 @@ func (c *compiler) validateKeys(obj *d2graph.Object, m *d2ir.Map) {
 		if c.stopped() {
 			return
 		}
-		if _, ok := d2ast.BoardKeywords[f.Name.ScalarString()]; ok && f.Name.IsUnquoted() {
+		if _, ok := d2ast.BoardKeywords[d2ast.Keyword(f.Name)]; ok {
 			continue
 		}
 		c.validateKey(obj, f)
@@ -1577,10 +1579,8 @@ func (c *compiler) validateKeys(obj *d2graph.Object, m *d2ir.Map) {
 }
 
 func (c *compiler) validateKey(obj *d2graph.Object, f *d2ir.Field) {
-	keyword := strings.ToLower(f.Name.ScalarString())
-	_, isReserved := d2ast.ReservedKeywords[keyword]
-	isReserved = isReserved && f.Name.IsUnquoted()
-	if isReserved {
+	keyword := d2ast.Keyword(f.Name)
+	if keyword != "" {
 		switch obj.Shape.Value {
 		case d2target.ShapeCircle, d2target.ShapeSquare:
 			checkEqual := (keyword == "width" && obj.HeightAttr != nil) || (keyword == "height" && obj.WidthAttr != nil)
@@ -1589,7 +1589,7 @@ func (c *compiler) validateKey(obj *d2graph.Object, f *d2ir.Field) {
 			}
 		}
 
-		switch f.Name.ScalarString() {
+		switch keyword {
 		case "style":
 			if obj.Style.ThreeDee != nil {
 				if !strings.EqualFold(obj.Shape.Value, d2target.ShapeSquare) && !strings.EqualFold(obj.Shape.Value, d2target.ShapeRectangle) && !strings.EqualFold(obj.Shape.Value, d2target.ShapeHexagon) {
@@ -1624,9 +1624,11 @@ func (c *compiler) validateKey(obj *d2graph.Object, f *d2ir.Field) {
 		return
 	}
 
-	obj, ok := obj.HasChild([]string{f.Name.ScalarString()})
-	if ok && f.Map() != nil {
-		c.validateKeys(obj, f.Map())
+	if f.Map() != nil {
+		id := d2format.FormatKeyPath([]d2ast.String{f.Name})
+		if child := obj.Children[strings.ToLower(id)]; child != nil {
+			c.validateKeys(child, f.Map())
+		}
 	}
 }
 
@@ -1797,6 +1799,28 @@ func (c *compiler) validateEdges(g *d2graph.Graph) {
 	}
 }
 
+// Board links and URLs share the link attribute. Only check D2 syntax for
+// paths beginning with an unquoted board namespace, root, or a parent step.
+func boardLinkSyntax(value string) error {
+	head, _, dotted := strings.Cut(value, ".")
+	head = strings.TrimSpace(head)
+	_, board := d2ast.BoardKeywords[strings.ToLower(head)]
+	if !dotted || (!board && head != "root" && head != "_") {
+		return nil
+	}
+	_, err := d2parser.ParseKey(value)
+	if err == nil || strings.IndexFunc(value, unicode.IsSpace) >= 0 {
+		return err
+	}
+	// A URI such as layers.html#intro or layers.example:open can also
+	// start with a board namespace.
+	u, urlErr := url.Parse(html.UnescapeString(value))
+	if urlErr == nil && (u.Scheme != "" || strings.ContainsAny(value, "/?#")) {
+		return nil
+	}
+	return err
+}
+
 func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 	for _, obj := range g.Objects {
 		if c.stopped() {
@@ -1854,7 +1878,7 @@ func hasBoard(root *d2graph.Graph, ida []d2ast.String) bool {
 		return root.Name == id.ScalarString()
 	}
 	nextID := ida[1]
-	switch id.ScalarString() {
+	switch d2ast.Keyword(id) {
 	case "layers":
 		for _, b := range root.Layers {
 			if b.Name == nextID.ScalarString() {

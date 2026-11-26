@@ -14,8 +14,12 @@ import (
 func TestEnsureChildCanonicalIDs(t *testing.T) {
 	for _, value := range []string{"", "a", "A0", "a_b", "shape", "SHAPE", "NULL", "a.b", "a b", " a ", "a--b", "a\\b", "a\nb", `a"b`, "${a}", "**", "世界", "x\x00y", string([]byte{0xff})} {
 		t.Run(value, func(t *testing.T) {
-			// Use the old one-element AST formatting expression as the oracle.
+			// Start with the canonical escaping used for a one-element key path.
 			wantID := d2format.Format(&d2ast.KeyPath{Path: []*d2ast.StringBox{d2ast.MakeValueBox(d2ast.RawString(value, true)).StringBox()}})
+			if value == "SHAPE" {
+				// A quoted keyword names an object and keeps its case.
+				wantID = "SHAPE"
+			}
 			wantValue := wantID
 			if key, _ := d2parser.ParseKey(wantID); key != nil && len(key.Path) > 0 {
 				wantValue = key.Path[0].Unbox().ScalarString()

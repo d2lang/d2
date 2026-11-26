@@ -157,6 +157,7 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 		ThemeID: tc.themeID,
 	}
 
+	formatCompileOpts, formatRenderOpts := *compileOpts, *renderOpts
 	diagram, g, err := d2lib.Compile(ctx, tc.script, compileOpts, renderOpts)
 	if tc.expErr != "" {
 		assert.Error(t, err)
@@ -165,6 +166,7 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 	}
 	assert.Success(t, err)
 
+	checkFormattedDiagram(t, ctx, tc.script, diagram, formatCompileOpts, formatRenderOpts)
 	err = d2layoutfeatures.Check("elk", g)
 	if tc.elkFeatureError != "" {
 		assert.Error(t, err)
@@ -398,6 +400,7 @@ func run(t *testing.T, tc testCase) {
 			// Scale: go2.Pointer(1.),
 		}
 
+		formatCompileOpts, formatRenderOpts := *compileOpts, *renderOpts
 		diagram, g, err := d2lib.Compile(ctx, tc.script, compileOpts, renderOpts)
 		if layoutName == "tala" && tc.talaLayoutError != "" {
 			assert.Error(t, err)
@@ -412,6 +415,9 @@ func run(t *testing.T, tc testCase) {
 			assert.Success(t, err)
 		}
 
+		if layoutName == "dagre" {
+			checkFormattedDiagram(t, ctx, tc.script, diagram, formatCompileOpts, formatRenderOpts)
+		}
 		err = d2layoutfeatures.Check(layoutName, g)
 		switch layoutName {
 		case "dagre":

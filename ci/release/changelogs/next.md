@@ -72,6 +72,20 @@
 
 #### Bugfixes ⛑️
 
+- `d2 fmt` preserves imported boards, board declaration order, explicit empty maps, block comments in arrays, and the parentheses around connections such as `("api" *- "db")`.
+- A file ending in the object name `!` parses with or without a final newline. Standalone key and value parsers reject trailing input, including an editor target such as `a; b`.
+- Empty filters (`&` or `!&`) now report an error. Supply a condition such as `&shape: circle`. A trailing dot needs a path segment. Write `a` for the object or `"a."` for a name ending in a literal dot. Use `"svc".(a -> b)[0]` to scope a connection.
+- A lone hyphen after a quoted name now reports a syntax error. Change `"build" - server` to `"build" -- server`. An unquoted name such as `build-server` still names one object.
+- Reserved keys work in any letter case. For example, `service.STYLE.Stroke: blue` sets the stroke color when you compile the diagram directly. To keep an object named `STYLE`, write `"STYLE"`.
+- Unquoted labels such as `10${unit}` resolve their substitutions even when the prefix looks like a number, boolean, or other special value. An undefined variable in that position now reports an error.
+- `d2 fmt` preserves escaped label text after a substitution, including the literal hash in `before${v}\#tag`.
+- Grouped connections require a closing `)` and at least one connection. A semicolon can follow the group, and names such as `call()` work in its property path. Invalid or oversized edge indices report errors.
+- Block strings close at the exact opening fence followed by a pipe, including mixed and Unicode fences. For an opener of `|!#md`, use `!#|` to close. Block strings and comments preserve Unicode text when removing indentation.
+- A name ending in `-` keeps its final hyphen before punctuation or end of file. An incomplete substitution or empty import now gives a diagnostic. Write `\$` for a literal dollar in a label.
+- Formatting preserves label capitalization, quoted objects named `"layers"`, `"scenarios"`, or `"steps"`, case-sensitive import filenames, and imports selecting a field named `d2`. Arrays retain `suspend` and `unsuspend` elements.
+
+- `d2 fmt` puts top-level entries on separate lines on the first pass, including files with no final newline. Nested maps can still use semicolons.
+
 - Grids retain cell order across repeated dimensions, imports and variable spreads. [#2115](https://github.com/d2lang/d2/issues/2115)
 - Grid cells preserve shape proportions and keep nested children, routed connections and their captions inside the container. Border icons and labels fit in zero-padding exports. [#1405](https://github.com/d2lang/d2/issues/1405)
 - Grid connections retain SQL row attachments as cells move, separate reciprocal captions, and make room for self-loops between neighboring cells. TALA routes around intervening cells and accepts a grid container as a `near` target. [#1741](https://github.com/d2lang/d2/issues/1741)
