@@ -1814,7 +1814,7 @@ func boardLinkSyntax(value string) error {
 	}
 	// A URI such as layers.html#intro or layers.example:open can also
 	// start with a board namespace.
-	u, urlErr := url.Parse(html.UnescapeString(value))
+	u, urlErr := url.Parse(htmlentity.Unescape(value))
 	if urlErr == nil && (u.Scheme != "" || strings.ContainsAny(value, "/?#")) {
 		return nil
 	}
