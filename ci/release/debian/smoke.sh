@@ -15,7 +15,7 @@ apt-get install -y --no-install-recommends "$package"
 test "$(dpkg-query -W -f='${Version} ${Architecture}' d2)" = "$debian_version $arch"
 test "$(command -v d2)" = /usr/bin/d2
 test "$(d2 --version)" = "$tag"
-gzip -t /usr/share/man/man1/d2.1.gz /usr/share/doc/d2/THIRD_PARTY_NOTICES.txt.gz
+gzip -t /usr/share/man/man1/d2.1.gz /usr/share/doc/d2/changelog.gz /usr/share/doc/d2/THIRD_PARTY_NOTICES.txt.gz
 test -s /usr/share/doc/d2/copyright
 
 printf 'client -> server\n' > /tmp/smoke.d2

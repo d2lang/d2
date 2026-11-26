@@ -65,11 +65,20 @@ class DebianPackageTest(unittest.TestCase):
                         self.assertEqual(member.mode, 0o755 if name == "usr/bin/d2" else 0o644)
                         self.assertEqual(member.mtime, 1234567890)
                     self.assertEqual(tar.extractfile(files["usr/bin/d2"]).read(), FILES["bin/d2"])
-                    self.assertEqual(tar.extractfile(files["usr/share/doc/d2/copyright"]).read(), FILES["LICENSE.txt"])
+                    copyright_file = files["usr/share/doc/d2/copyright"]
+                    upstream = f"Upstream source: https://github.com/d2lang/d2/tree/{tag}\n\n"
+                    self.assertEqual(tar.extractfile(copyright_file).read(), upstream.encode() + FILES["LICENSE.txt"])
                     self.assertEqual(gzip.decompress(tar.extractfile(files["usr/share/man/man1/d2.1.gz"]).read()), FILES["man/d2.1"])
                     notices = files["usr/share/doc/d2/THIRD_PARTY_NOTICES.txt.gz"]
                     self.assertEqual(gzip.decompress(tar.extractfile(notices).read()), FILES["THIRD_PARTY_NOTICES.txt"])
-                    self.assertEqual(len(files), 4)
+                    changelog = files["usr/share/doc/d2/changelog.gz"]
+                    self.assertEqual(gzip.decompress(tar.extractfile(changelog).read()).decode(), (
+                        f"d2 ({deb_version}) upstream; urgency=medium\n\n"
+                        f"  * Upstream release {tag}.\n"
+                        f"    Release notes: https://github.com/d2lang/d2/releases/tag/{tag}\n\n"
+                        " -- D2 maintainers <hi@d2lang.com>  Fri, 13 Feb 2009 23:31:30 +0000\n"
+                    ))
+                    self.assertEqual(len(files), 5)
                 before = package.read_bytes()
                 self.build(tag, arch, check=True, umask=0o077)
                 self.assertEqual(before, package.read_bytes())
