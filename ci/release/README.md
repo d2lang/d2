@@ -59,6 +59,27 @@ Run `gh workflow run npm-nightly.yml --repo d2lang/d2 --ref master` once to vali
 the new connection within npm's two-day window. Check the result with
 `npm view @d2lang/d2 dist-tags`. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 
+## PyPI publishing
+
+Publishing a stable GitHub release triggers [the PyPI workflow](../../.github/workflows/pypi-publish.yml).
+It checks the six archives against the promoted checksums on `master`, packages the release
+executables as `d2lang` wheels, and runs the installed commands on each supported platform
+before uploading the tested wheels to PyPI. The wheel version follows the D2 tag (`v0.9.0` → `0.9.0`).
+
+For the first upload, register a [pending PyPI publisher](https://pypi.org/manage/account/publishing/)
+with project `d2lang`, GitHub owner `d2lang`, repository `d2`, workflow `pypi-publish.yml`,
+and environment `pypi`. Configure that GitHub environment to allow the `master` branch and
+`v*` release tags. The workflow authenticates with GitHub's OpenID Connect token.
+
+To package an already published stable release, dispatch the workflow from `master`:
+
+```sh
+gh workflow run pypi-publish.yml --repo d2lang/d2 --ref master -f version=v0.9.0
+```
+
+After the upload, verify the public package with `uvx d2lang@0.9.0 --version`, substituting
+the published version.
+
 ## _install.sh
 
 The template for the install script in the root of the d2 repository.
