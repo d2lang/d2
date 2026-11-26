@@ -112,10 +112,7 @@ func (b *meshBuilder) tube(points []Vec, radius float64, mat *Material) {
 	// and the small slopes at crossing bridges.
 	rings := make([][6]Vertex, len(points))
 	for i, p := range points {
-		a, c := points[max(0, i-1)], points[min(len(points)-1, i+1)]
-		tangent := nunit(nsub(c, a))
-		side := nunit(ncross(tangent, nv(0, 1, 0)))
-		up := nunit(ncross(side, tangent))
+		side, up := routeFrame(points, i)
 		for j := 0; j < 6; j++ {
 			angle := 2 * math.Pi * float64(j) / 6
 			n := nadd(nmul(up, math.Cos(angle)), nmul(side, math.Sin(angle)))

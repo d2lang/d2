@@ -32,14 +32,25 @@ func (b *meshBuilder) routeInk(points []Vec, radius float64, mat *Material) {
 	}
 	left, right := make([]Vertex, len(points)), make([]Vertex, len(points))
 	for i, p := range points {
-		a, c := points[max(0, i-1)], points[min(len(points)-1, i+1)]
-		tangent := nunit(nsub(c, a))
-		side := nunit(ncross(tangent, nv(0, 1, 0)))
-		up := nunit(ncross(side, tangent))
+		side, up := routeFrame(points, i)
 		left[i] = Vertex{Position: nadd(p, nmul(side, radius)), Normal: up}
 		right[i] = Vertex{Position: nsub(p, nmul(side, radius)), Normal: up}
 	}
-	for i := 1; i < len(points); i++ {
+	b.ribbon(left, right, mat)
+}
+
+// routeFrame returns the horizontal side and the up normal of a route at
+// point i, from the chord between its neighbours.
+func routeFrame(points []Vec, i int) (side, up Vec) {
+	a, c := points[max(0, i-1)], points[min(len(points)-1, i+1)]
+	tangent := nunit(nsub(c, a))
+	side = nunit(ncross(tangent, nv(0, 1, 0)))
+	return side, nunit(ncross(side, tangent))
+}
+
+// ribbon joins two parallel vertex rails with a strip of triangles.
+func (b *meshBuilder) ribbon(left, right []Vertex, mat *Material) {
+	for i := 1; i < len(left); i++ {
 		b.triangle(left[i-1], right[i], right[i-1], mat, false)
 		b.triangle(left[i-1], left[i], right[i], mat, false)
 	}
@@ -60,10 +71,7 @@ func (b *meshBuilder) routeCasing(points []Vec, radius float64, opacity float64)
 	mat.Unlit = true
 	left, right := make([]Vertex, len(points)), make([]Vertex, len(points))
 	for i, p := range points {
-		a, c := points[max(0, i-1)], points[min(len(points)-1, i+1)]
-		tangent := nunit(nsub(c, a))
-		side := nunit(ncross(tangent, nv(0, 1, 0)))
-		up := nunit(ncross(side, tangent))
+		side, up := routeFrame(points, i)
 		offset := radius * .8
 		if b.routeCasingFloor > 0 && up.Y > 1e-9 {
 			// The paper casing is a decorative backing below the same route.
@@ -75,8 +83,5 @@ func (b *meshBuilder) routeCasing(points []Vec, radius float64, opacity float64)
 		left[i] = Vertex{Position: nadd(center, nmul(side, radius*1.3)), Normal: up}
 		right[i] = Vertex{Position: nsub(center, nmul(side, radius*1.3)), Normal: up}
 	}
-	for i := 1; i < len(points); i++ {
-		b.triangle(left[i-1], right[i], right[i-1], mat, false)
-		b.triangle(left[i-1], left[i], right[i], mat, false)
-	}
+	b.ribbon(left, right, mat)
 }

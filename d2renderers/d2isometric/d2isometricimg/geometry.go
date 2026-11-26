@@ -284,9 +284,10 @@ func (b *meshBuilder) label(text string, s labelSurface, style d2target.Text, in
 	printStyle := b.printStyle(s, style, ink, opacity, kind)
 	var tex *image.RGBA
 	var err error
-	rich := isRichLabel(d2target.Shape{Text: style})
+	source := d2target.Shape{Text: style}
+	rich := isRichLabel(source)
 	if rich {
-		tex, err = b.rich.texture(d2target.Shape{Text: style}, printStyle)
+		tex, err = b.rich.texture(source, printStyle)
 	} else {
 		tex, _, err = b.text.texture(text, printStyle)
 	}
@@ -639,9 +640,10 @@ func (b *meshBuilder) node(n d2isometric.Node, tint string, relief ...float64) {
 	n = nativeClassicNode(n)
 	first := len(b.triangles)
 	firstLink := len(b.links)
-	if nativeMarkdownCard(n) {
+	card, structured := nativeMarkdownCard(n), nativeStructuredNode(n)
+	if card {
 		b.markdownCard(n, tint)
-	} else if nativeStructuredNode(n) {
+	} else if structured {
 		b.structuredNode(n)
 	} else if nativeSolidNode(n) {
 		b.solidNode(n)
@@ -656,7 +658,7 @@ func (b *meshBuilder) node(n d2isometric.Node, tint string, relief ...float64) {
 	if len(b.triangles) > first {
 		before = b.triangles[len(b.triangles)-1].V[0].Position
 	}
-	if n.SequenceRole == "" && !nativeStructuredNode(n) && !nativeMarkdownCard(n) {
+	if n.SequenceRole == "" && !structured && !card {
 		b.clearOutsideCaption(n, first, factor)
 	}
 	if len(b.triangles) > first {
@@ -667,7 +669,7 @@ func (b *meshBuilder) node(n d2isometric.Node, tint string, relief ...float64) {
 			}
 		}
 	}
-	if len(relief) == 0 && !nativeStructuredNode(n) && !nativeMarkdownCard(n) {
+	if len(relief) == 0 && !structured && !card {
 		b.classicInkEdges(n, b.triangles[first:])
 	}
 	nativePhysicalShadows(b.triangles[first:], n.Metadata.Original.Shadow)

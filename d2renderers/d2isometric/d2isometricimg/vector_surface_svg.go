@@ -370,7 +370,7 @@ func (w *nativeSurfaceSVGWriter) paint(paint d2scene.Paint, role string, depth i
 		previous := w.inPattern
 		w.inPattern = true
 		body := w.node(p.Root, depth+1)
-		id = w.resource("pattern", id, nativeSVGAttr("patternUnits", units(p.Units))+nativeSVGAttr("patternTransform", nativeSVGMatrix(p.Transform))+nativeSVGFloat("x", p.Tile.X)+nativeSVGFloat("y", p.Tile.Y)+nativeSVGFloat("width", p.Tile.Width)+nativeSVGFloat("height", p.Tile.Height)+nativeSVGAttr("viewBox", "0 0 "+nativeSVGNumber(p.Tile.Width)+" "+nativeSVGNumber(p.Tile.Height))+" preserveAspectRatio=\"none\">"+body+"</pattern>")
+		id = w.resource("pattern", id, nativeSVGAttr("patternUnits", units(p.Units))+nativeSVGAttr("patternTransform", nativeSVGMatrix(p.Transform))+nativeSVGBoxAttributes(p.Tile)+nativeSVGAttr("viewBox", "0 0 "+nativeSVGNumber(p.Tile.Width)+" "+nativeSVGNumber(p.Tile.Height))+" preserveAspectRatio=\"none\">"+body+"</pattern>")
 		w.inPattern = previous
 	default:
 		w.err = fmt.Errorf("native SVG unsupported paint %T", paint)
@@ -430,7 +430,7 @@ func (w *nativeSurfaceSVGWriter) primitive(primitive d2scene.Primitive, depth in
 	case d2scene.Path:
 		return "<path" + nativeSVGAttr("d", w.path(p)) + nativeSVGAttr("fill-rule", nativeSVGFillRule(p.FillRule)) + w.style(p.Fill, p.Stroke, depth) + "/>"
 	case d2scene.Rect:
-		return "<rect" + nativeSVGFloat("x", p.Box.X) + nativeSVGFloat("y", p.Box.Y) + nativeSVGFloat("width", p.Box.Width) + nativeSVGFloat("height", p.Box.Height) + nativeSVGFloat("rx", p.RadiusX) + nativeSVGFloat("ry", p.RadiusY) + w.style(p.Fill, p.Stroke, depth) + "/>"
+		return "<rect" + nativeSVGBoxAttributes(p.Box) + nativeSVGFloat("rx", p.RadiusX) + nativeSVGFloat("ry", p.RadiusY) + w.style(p.Fill, p.Stroke, depth) + "/>"
 	case d2scene.Ellipse:
 		return "<ellipse" + nativeSVGFloat("cx", p.Center.X) + nativeSVGFloat("cy", p.Center.Y) + nativeSVGFloat("rx", p.RadiusX) + nativeSVGFloat("ry", p.RadiusY) + w.style(p.Fill, p.Stroke, depth) + "/>"
 	case d2scene.TextRun:
@@ -453,7 +453,7 @@ func (w *nativeSurfaceSVGWriter) primitive(primitive d2scene.Primitive, depth in
 				return ""
 			}
 			aspect := nativeSVGAspect(p.Aspect)
-			return "<image" + nativeSVGFloat("x", p.Box.X) + nativeSVGFloat("y", p.Box.Y) + nativeSVGFloat("width", p.Box.Width) + nativeSVGFloat("height", p.Box.Height) + nativeSVGAttr("preserveAspectRatio", aspect) + nativeSVGAttr("href", source) + "/>"
+			return "<image" + nativeSVGBoxAttributes(p.Box) + nativeSVGAttr("preserveAspectRatio", aspect) + nativeSVGAttr("href", source) + "/>"
 		case d2scene.VectorAsset:
 			matrix, err := d2scene.AspectRatioMatrix(a.ViewBox, p.Box, p.Aspect)
 			if err != nil {
@@ -461,7 +461,7 @@ func (w *nativeSurfaceSVGWriter) primitive(primitive d2scene.Primitive, depth in
 				return ""
 			}
 			id := w.id("image-clip")
-			id = w.resource("clipPath", id, "><rect"+nativeSVGFloat("x", p.Box.X)+nativeSVGFloat("y", p.Box.Y)+nativeSVGFloat("width", p.Box.Width)+nativeSVGFloat("height", p.Box.Height)+"/></clipPath>")
+			id = w.resource("clipPath", id, "><rect"+nativeSVGBoxAttributes(p.Box)+"/></clipPath>")
 			previous := w.transform
 			w.transform = previous.Mul(matrix)
 			body := w.node(a.Root, depth+1)

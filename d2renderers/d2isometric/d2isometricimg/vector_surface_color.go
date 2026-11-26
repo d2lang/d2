@@ -19,7 +19,7 @@ func (w *nativeSurfaceSVGWriter) colorGlyph(face *fontface.ParsedFace, plan *fon
 	transform := d2scene.Translate(origin.X, origin.Y).Mul(d2scene.Scale(scale, -scale))
 	box := d2scene.Box{X: plan.Clip.XMin, Y: plan.Clip.YMin, Width: plan.Clip.XMax - plan.Clip.XMin, Height: plan.Clip.YMax - plan.Clip.YMin}
 	id := w.id("color-clip")
-	w.def("<clipPath id=\"" + id + "\"><rect" + nativeSVGFloat("x", box.X) + nativeSVGFloat("y", box.Y) + nativeSVGFloat("width", box.Width) + nativeSVGFloat("height", box.Height) + "/></clipPath>")
+	w.def("<clipPath id=\"" + id + "\"><rect" + nativeSVGBoxAttributes(box) + "/></clipPath>")
 	return "<g transform=\"" + nativeSVGMatrix(transform) + "\"><g clip-path=\"url(#" + id + ")\">" + w.colorPaint(face, plan.Root, box, d2scene.Identity(), depth+1) + "</g></g>"
 }
 
