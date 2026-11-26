@@ -1,5 +1,7 @@
 #### Features 🚀
 
+- Run the native D2 CLI with `uvx d2lang input.d2 output.svg` on Linux, macOS, and Windows.
+
 - Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with board or container variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
 
 - Animate grid edits between steps with the same `animate-duration` setting. Cells slide to their new positions, arrivals grow in, and departures shrink away. An inserted row or column opens as a group. A replacement can hand off in place, and a summary cell can unfold to show a nested grid.
@@ -13,8 +15,12 @@
 
 - elk: choose the layout algorithm in `vars.d2-config.data`. Configure the force model and repulsion, target edge length for stress, tree traversal and sibling order, and radial spacing, branch angles and compaction in D2 or on the CLI. Layered layout also supports edge merging and routing, spacing within layers, pipeline wrapping, declaration order and feedback edges. Set `elk-layer-constraint` on a shape to place it in the first or last layer.
 
+- `d2 mcp` runs a Model Context Protocol server on stdin and stdout. AI clients get three tools: `guide` returns the language guide for the running D2 version, `check` reports errors with line and column, and `render` returns a PNG, SVG or text drawing. Hosts that support MCP Apps display the diagram inline. Local files are readable only beneath `--root`.
+
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
+
+- `d2 lsp` runs a language server on stdin and stdout. Editors get errors as you type, formatting, completion, hover, outline, folding, links, go to definition, find references and rename for shapes, including across imported files. See the [editor setup guide](https://github.com/d2lang/d2/blob/master/docs/LSP.md).
 
 #### Improvements 🧹
 

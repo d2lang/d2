@@ -4,6 +4,7 @@ package d2svg
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/base64"
 	"errors"
@@ -2390,6 +2391,15 @@ func appendOnTriggerLazy(buf *bytes.Buffer, source string, triggers []string, ne
 var DEFAULT_DARK_THEME *int64 = nil // no theme selected
 
 func Render(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
+	return RenderContext(context.Background(), diagram, opts)
+}
+
+// RenderContext renders a single board and observes cancellation between
+// render stages and individual objects.
+func RenderContext(ctx context.Context, diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if diagram == nil {
 		return nil, fmt.Errorf("render target is nil")
 	}
@@ -2399,7 +2409,7 @@ func Render(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
 	if err := d2target.ValidateRenderTarget(diagram); err != nil {
 		return nil, err
 	}
-	return renderValidated(diagram, opts)
+	return renderValidated(ctx, diagram, opts)
 }
 
 func validateRenderLinks(diagram *d2target.Diagram) error {
@@ -2419,7 +2429,7 @@ func validateRenderLinks(diagram *d2target.Diagram) error {
 // renderValidated renders one board after its complete target tree has been
 // validated. Keeping this internal lets RenderMultiboard avoid repeatedly
 // walking every descendant subtree.
-func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
+func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
 	if err := validateRenderPaints(diagram, opts); err != nil {
 		return nil, err
 	}
@@ -2518,6 +2528,9 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 		// Let the responsive stylesheet select the user's palette.
 		inlineTheme = nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	crossings := d2target.ConnectionCrossings(diagram.Connections, idToShape, sketch, strokeVisible)
 
 	sortObjects(allObjects)
@@ -2527,6 +2540,9 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	var labelMasks []string
 	markdown := newMarkdownRenderer(diagram.FontFamily, diagram.MonoFontFamily, inlineTheme)
 	for _, obj := range allObjects {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if c, is := obj.(indexedConnection); is {
 			maskID := ""
 			if len(crossings[c.index]) != 0 {
@@ -2660,6 +2676,9 @@ func renderValidated(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error
 	backgroundStr := backgroundEl.Render()
 
 	// generate style elements that will be appended to the SVG tag
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	bufStr := buf.String()
 	upperBuf := &bytes.Buffer{}
 	if opts.MasterID == "" {
@@ -3126,7 +3145,7 @@ func renderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, er
 		if err := validateRenderLinks(diagram); err != nil {
 			return boards, err
 		}
-		out, err := renderValidated(diagram, opts)
+		out, err := renderValidated(context.Background(), diagram, opts)
 		if err != nil {
 			return boards, err
 		}

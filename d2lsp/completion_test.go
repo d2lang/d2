@@ -14,6 +14,16 @@ func TestGetCompletionItems(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			name: "completion uses current line",
+			text: "abcde.style: {fill: red}\nshape:",
+			line: 1, column: 6, want: getShapeCompletions(),
+		},
+		{
+			name: "quoted shape owner",
+			text: `"foo".shape:`,
+			line: 0, column: 12, want: getShapeCompletions(),
+		},
+		{
 			name:   "style dot suggestions",
 			text:   "a.style.",
 			line:   0,

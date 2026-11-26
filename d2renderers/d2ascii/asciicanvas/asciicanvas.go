@@ -2,6 +2,8 @@ package asciicanvas
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"unicode"
@@ -132,6 +134,33 @@ func (c *Canvas) rowsWithLabels(chars charset.Set) ([][]string, map[int]bool) {
 }
 
 func (c *Canvas) ToByteArray(chars charset.Set) []byte {
+	out, _ := c.ToByteArrayContext(context.Background(), chars, 0)
+	return out
+}
+
+// ToByteArrayContext serializes the canvas, including the rows added for
+// connection labels. A positive maxCells bounds the expanded grid.
+func (c *Canvas) ToByteArrayContext(ctx context.Context, chars charset.Set, maxCells int) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if maxCells > 0 && c.Width() > 0 {
+		remainingRows := maxCells/c.Width() - c.Height()
+		if remainingRows < 0 {
+			return nil, fmt.Errorf("text canvas exceeds limit of %d cells", maxCells)
+		}
+		for y, labels := range c.labelsAbove {
+			if y < 0 || y >= c.Height() {
+				continue
+			}
+			for _, label := range labels {
+				remainingRows -= 1 + strings.Count(label.text, "\n")
+				if remainingRows < 0 {
+					return nil, fmt.Errorf("text canvas exceeds limit of %d cells", maxCells)
+				}
+			}
+		}
+	}
 	grid, labelRows := c.rowsWithLabels(chars)
 	var buf bytes.Buffer
 	startRow := 0
@@ -188,6 +217,9 @@ func (c *Canvas) ToByteArray(chars charset.Set) []byte {
 	var prevRouteColumns []int
 	var prevRouteType rune
 	for i := startRow; i <= endRow; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		rowData := grid[i]
 		if startCol < len(rowData) {
 			rowData = rowData[startCol:]
@@ -245,5 +277,5 @@ func (c *Canvas) ToByteArray(chars charset.Set) []byte {
 		buf.WriteString(line)
 		buf.WriteByte('\n')
 	}
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }

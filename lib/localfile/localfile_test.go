@@ -3,6 +3,7 @@ package localfile
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -234,5 +235,35 @@ func TestRootedPolicyCloseIsSharedAndCopySafe(t *testing.T) {
 	}
 	if err := Unrestricted().Close(); err != nil {
 		t.Fatalf("unrestricted Policy Close: %v", err)
+	}
+}
+
+func TestFilesWithExtensionRelativeSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks commonly requires elevated Windows privileges")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "boards", "aliases"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "boards", "app.d2"), []byte("app"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A link containing ".." is relative to its physical parent, even if the
+	// caller reached that parent through a directory symlink.
+	if err := os.Symlink("../app.d2", filepath.Join(root, "boards", "aliases", "main.d2")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("boards/aliases", filepath.Join(root, "views")); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Rooted(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	b, err := fs.ReadFile(p.FilesWithExtension(".d2"), "views/main.d2")
+	if err != nil || string(b) != "app" {
+		t.Fatalf("read linked diagram = %q, %v", b, err)
 	}
 }

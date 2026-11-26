@@ -38,6 +38,10 @@ type AssetOptions struct {
 	// When supplied, Build records the image sources for which this board used
 	// the built-in placeholder. Supply a fresh map for each board preview.
 	UnavailableImages map[string]struct{}
+
+	// OnUnavailableImage receives the resolver error once for each distinct
+	// source replaced by the built-in placeholder.
+	OnUnavailableImage func(error)
 }
 
 // SVGImportBudget is a document-wide ceiling on parse and emitted-scene work

@@ -100,6 +100,9 @@ type compiler struct {
 }
 
 type CompileOptions struct {
+	// Partial returns the IR built so far together with compile errors. It is
+	// for language tooling. A partial IR may be incomplete and must not be rendered.
+	Partial bool
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
 	// AnimateTweens controls sampling of step transitions. Nil follows
@@ -240,6 +243,9 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	if !c.err.Empty() {
+		if opts.Partial {
+			return m, c.imports, c.err
+		}
 		return nil, nil, c.err
 	}
 	return m, c.imports, nil
