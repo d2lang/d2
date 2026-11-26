@@ -72,30 +72,57 @@ async function checkBoundary(page) {
   );
 }
 
-// The actors and message have distinct hues. Their fills and stroke remain
-// identifiable while fading against white, without tying this test to one
-// browser's glyph antialiasing or exact layout coordinates.
+// Compare each frame with the same frame after hiding one fixture paint. This
+// measures pixels that paint actually contributed, including SVG <use> copies.
+// Unrelated text antialiasing and the browser's color profile cancel out.
 async function checkDeparture(page) {
+  const probes = {
+    client: '[fill="#fca311"]',
+    api: '[fill="#02c39a"]',
+    message: '[stroke="#8000ff"], [fill="#8000ff"]',
+  };
+  const style = await page.evaluateHandle(() => {
+    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    document.documentElement.append(style);
+    return style;
+  });
   const samples = [500];
   for (let ms = 1001; ms < 1400; ms += 16) samples.push(ms);
   samples.push(1399.9, 1450);
   for (const ms of samples) {
     await seek(page, ms);
-    const pixels = PNG.sync.read(await page.screenshot()).data;
-    let client = false;
-    let api = false;
-    let message = false;
-    for (let i = 0; i < pixels.length; i += 4) {
-      const r = pixels[i];
-      const g = pixels[i + 1];
-      const b = pixels[i + 2];
-      if (r > g + 6 && g > b + 6) client = true;
-      if (g > b + 6 && b > r + 6) api = true;
-      if (b > r + 6 && r > g + 6) message = true;
+    const baseline = PNG.sync.read(await page.screenshot()).data;
+    const painted = {};
+    for (const [role, selector] of Object.entries(probes)) {
+      await style.evaluate((style, selector) => {
+        style.textContent = `${selector} { opacity: 0 !important }`;
+      }, selector);
+      const withoutRole = PNG.sync.read(await page.screenshot()).data;
+      painted[role] = !baseline.equals(withoutRole);
     }
-    if (ms === 500) assert.ok(client && api && message, "initial sequence was not painted");
-    if (message) assert.ok(client && api, "sequence message outlived an actor at " + ms + "ms");
-    if (ms === 1450) assert.ok(!client && !api && !message, "departed sequence is still painted");
+    await style.evaluate((style) => {
+      style.textContent = "";
+    });
+    if (ms === 500) {
+      assert.deepEqual(
+        painted,
+        { client: true, api: true, message: true },
+        "initial sequence paint"
+      );
+    }
+    if (painted.message) {
+      assert.ok(
+        painted.client && painted.api,
+        `sequence message outlived an actor at ${ms}ms: ${JSON.stringify(painted)}`
+      );
+    }
+    if (ms === 1450) {
+      assert.deepEqual(
+        painted,
+        { client: false, api: false, message: false },
+        "departed sequence paint"
+      );
+    }
   }
 }
 
