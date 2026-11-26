@@ -850,6 +850,12 @@ func (eid *EdgeID) resolve(m *Map) (_ *EdgeID, _ *Map, common []d2ast.String, _ 
 	eid = eid.Copy()
 	maxUnderscores := go2.Max(countUnderscores(eid.SrcPath), countUnderscores(eid.DstPath))
 	for i := 0; i < maxUnderscores; i++ {
+		if len(eid.SrcPath) == 0 || len(eid.DstPath) == 0 {
+			// An endpoint of only underscores names no field, so
+			// countUnderscores counts none in it, but the other endpoint's
+			// underscores have used it up.
+			return nil, nil, nil, errors.New("field key must contain more than underscores")
+		}
 		if eid.SrcPath[0].ScalarString() == "_" && eid.SrcPath[0].IsUnquoted() {
 			eid.SrcPath = eid.SrcPath[1:]
 		} else {
@@ -1566,6 +1572,12 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 				ks = d2format.FormatKeyPath(BoardIDA(f))
 			}
 			gctx2 := c.getGlobContext(grefctx)
+			if gctx2 == nil {
+				// The glob is a parent board's, such as * in layers: {*: {a}},
+				// whose value is compiled in a board of its own (here each
+				// layer), which has its own glob contexts.
+				continue
+			}
 			gctx2.appliedFields[ks] = struct{}{}
 		}
 	}()
@@ -1916,6 +1928,10 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 				}
 			}
 			err = f.Map().createEdge(eid, refctx, gctx, c, indexed, ea)
+			if c != nil && len(f.References) == 0 {
+				// The edge failed, or its globs matched nothing.
+				c.unreferencedFields = true
+			}
 			if err != nil {
 				return err
 			}
@@ -1923,14 +1939,11 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 		return nil
 	}
 
-	ij := findProhibitedEdgeKeyword(eid.SrcPath...)
-	if ij != -1 {
-		return d2parser.Errorf(refctx.Edge.Src.Path[ij].Unbox(), "reserved keywords are prohibited in edges")
+	if err := checkEdgeKeyword(refctx.Edge.Src, eid.SrcPath); err != nil {
+		return err
 	}
-
-	ij = findProhibitedEdgeKeyword(eid.DstPath...)
-	if ij != -1 {
-		return d2parser.Errorf(refctx.Edge.Dst.Path[ij].Unbox(), "reserved keywords are prohibited in edges")
+	if err := checkEdgeKeyword(refctx.Edge.Dst, eid.DstPath); err != nil {
+		return err
 	}
 
 	srcFA, err := refctx.ScopeMap.ensureFieldMode(refctx.Edge.Src, refctx, true, c, indexed)
@@ -2333,6 +2346,23 @@ func countUnderscores(p []d2ast.String) int {
 		}
 	}
 	return 0
+}
+
+// checkEdgeKeyword reports a reserved keyword in path, the path that resolve
+// made of an edge endpoint's key kp.
+func checkEdgeKeyword(kp *d2ast.KeyPath, path []d2ast.String) error {
+	ij := findProhibitedEdgeKeyword(path...)
+	if ij == -1 {
+		return nil
+	}
+	// resolve only changes the front of a path (it drops underscores and a
+	// common prefix and adds the names of enclosing fields), so path ends as
+	// kp does.
+	var n d2ast.Node = kp
+	if k := len(kp.Path) - len(path) + ij; k >= 0 {
+		n = kp.Path[k].Unbox()
+	}
+	return d2parser.Errorf(n, "reserved keywords are prohibited in edges")
 }
 
 func findProhibitedEdgeKeyword(ida ...d2ast.String) int {
