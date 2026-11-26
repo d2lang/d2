@@ -5,6 +5,10 @@ include changes to the main d2 project.**
 
 ## Next
 
+## [0.2.0]
+### November 26, 2026
+
+- Support D2 0.9.1, including animated step transitions with `animateDuration`.
 - Release the embedded browser worker's blob URL after startup, including when startup fails.
 - Add `d2.format(source)` to format a D2 file without compiling or rendering it.
 - Add `d2.renderSVG(source, options)` to compile D2 source or a multi-file project directly to SVG.
