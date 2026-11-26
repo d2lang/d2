@@ -57,3 +57,4 @@ In a plugin's `.lsp.json`:
 - A file that is only ever imported by another file is checked on its own, so it may show errors that do not occur when it is imported.
 - Renaming a shape that has no label also changes the text shown on it, because the name is the label.
 - Files larger than 2 MiB receive an informational diagnostic. Language features resume when the file is within that limit.
+- Shape rename updates literal `near` paths. If a `near` value comes from a variable or a shared value resolves to different targets on different boards, the server reports the conflict before applying edits.

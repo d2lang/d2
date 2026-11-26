@@ -103,8 +103,9 @@ type occurrence struct {
 	edge  *d2ir.Edge
 	kind  symbolKind
 	glob  bool
-	name  d2ast.String // nil for edges
-	group int          // shared by all copies of an authored symbol
+	name  d2ast.String   // nil for edges
+	group int            // shared by all copies of an authored symbol
+	near  *nearReference // non-nil for a path component inside a near value
 }
 
 type walkContext int
@@ -113,12 +114,13 @@ const (
 	ctxObjects walkContext = iota
 	ctxVariables
 	ctxClasses
+	ctxClassProperties
 	ctxBoards
 	ctxKeywords
 )
 
 func (s *Server) buildIndex(doc document, root *d2ir.Map) []occurrence {
-	var out []occurrence
+	var out, near []occurrence
 	type scope struct {
 		m   *d2ir.Map
 		ctx walkContext
@@ -133,11 +135,17 @@ func (s *Server) buildIndex(doc document, root *d2ir.Map) []occurrence {
 		}
 		seen[key] = true
 		for _, f := range m.Fields {
-			kind, next := classify(ctx, d2ast.Keyword(f.Name))
+			keyword := d2ast.Keyword(f.Name)
+			kind, next := classify(ctx, keyword)
 			for _, ref := range f.References {
 				name, ok := ref.AST().(d2ast.String)
 				if !ok || isNilNode(name) {
 					continue
+				}
+				if (ctx == ctxObjects || ctx == ctxClassProperties) && keyword == "near" && d2ast.Keyword(name) == "near" && ref.Primary() {
+					if value, ok := nearValueAt(f, ref); ok {
+						near = append(near, s.nearOccurrences(doc, f, value, lines)...)
+					}
 				}
 				if name.IsUnquoted() && name.ScalarString() == "_" {
 					continue
@@ -164,6 +172,8 @@ func (s *Server) buildIndex(doc document, root *d2ir.Map) []occurrence {
 		}
 	}
 	walk(root, ctxObjects)
+	// A placement use is never a declaration, even when it precedes its target.
+	out = append(out, near...)
 	groupSymbols(out)
 	return out
 }
@@ -173,10 +183,10 @@ func classify(ctx walkContext, keyword string) (symbolKind, walkContext) {
 	case ctxVariables:
 		return kindVariable, ctxVariables
 	case ctxClasses:
-		return kindClass, ctxKeywords
+		return kindClass, ctxClassProperties
 	case ctxBoards:
 		return kindBoard, ctxObjects
-	case ctxKeywords:
+	case ctxClassProperties, ctxKeywords:
 		return kindKeyword, ctxKeywords
 	}
 	switch {
@@ -210,6 +220,9 @@ func (snap *snapshot) symbolAt(path string, pos lspPosition) *symbol {
 	var hit *occurrence
 	for i := range snap.index {
 		o := &snap.index[i]
+		if o.near != nil && (o.near.computed || o.near.noHit) {
+			continue
+		}
 		if o.group < 0 || o.rng.Path != path || !contains(o.rng, pos) {
 			continue
 		}
@@ -274,8 +287,17 @@ func groupSymbols(index []occurrence) {
 		key := owner{o.field, o.edge, o.kind}
 		if prev, ok := owners[key]; ok {
 			parent[i] = root(prev)
+		} else if o.near != nil {
+			// There is no authored declaration to rename with this use.
+			o.group = -1
+			continue
 		} else {
 			owners[key] = i
+		}
+		// The same imported near value can resolve differently on two boards.
+		// Only authored keys establish identity across copies.
+		if o.near != nil {
+			continue
 		}
 		site := source{o.rng, o.kind}
 		if prev, ok := sources[site]; ok {
@@ -318,15 +340,7 @@ func (s *Server) fieldRange(doc document, name d2ast.String, lines map[string][]
 }
 
 func (s *Server) escapedOperandAt(doc document, r d2ast.Range, operand rune, cache map[string][]string) bool {
-	lines, ok := cache[r.Path]
-	if !ok {
-		if r.Path == doc.path {
-			lines = strings.Split(doc.text, "\n")
-		} else if text, err := fs.ReadFile(s.overlay, r.Path); err == nil {
-			lines = strings.Split(string(text), "\n")
-		}
-		cache[r.Path] = lines
-	}
+	lines := s.sourceLines(doc, r.Path, cache)
 	if r.End.Line >= len(lines) {
 		return false
 	}
@@ -341,4 +355,17 @@ func (s *Server) escapedOperandAt(doc document, r d2ast.Range, operand rune, cac
 		column += utf16.RuneLen(ch)
 	}
 	return false
+}
+
+func (s *Server) sourceLines(doc document, path string, cache map[string][]string) []string {
+	lines, ok := cache[path]
+	if !ok {
+		if path == doc.path {
+			lines = strings.Split(doc.text, "\n")
+		} else if text, err := fs.ReadFile(s.overlay, path); err == nil {
+			lines = strings.Split(string(text), "\n")
+		}
+		cache[path] = lines
+	}
+	return lines
 }

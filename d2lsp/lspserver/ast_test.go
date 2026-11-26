@@ -47,6 +47,73 @@ func TestDocumentSymbols(t *testing.T) {
 		assert.Equal(t, 0, len(got[1].Children[0].Children))
 		assert.Equal(t, 19, got[2].Children[0].Children[0].Kind)
 	})
+	t.Run("DottedShapeAttributes", func(t *testing.T) {
+		got := outline(t, `x.shape: circle
+x.style.fill: red
+x: Server {
+  inner.part
+  inner.part.style: {fill: red}
+  inner.part.label: Details
+  inner."style"
+  inner.layers
+  other.shape: circle
+}
+folder: {other.style.fill: blue; layers.shape: circle}
+x -> y
+(x -> y)[0].style.stroke: red
+x -> y`)
+		assert.Equal(t, 4, len(got))
+		assert.Equal(t, "x", got[0].Name)
+		assert.Equal(t, objectSymbol, got[0].Kind)
+		assert.Equal(t, "Server", got[0].Detail)
+		assert.Equal(t, lineRange(2, 0, 1), got[0].SelectionRange)
+		assert.Equal(t, 4, len(got[0].Children))
+		assert.Equal(t, "inner.part", got[0].Children[0].Name)
+		assert.Equal(t, `inner."style"`, got[0].Children[1].Name)
+		assert.Equal(t, "inner.layers", got[0].Children[2].Name)
+		assert.Equal(t, "other", got[0].Children[3].Name)
+		assert.Equal(t, "", got[0].Children[3].Detail)
+		assert.Equal(t, lineRange(8, 2, 7), got[0].Children[3].SelectionRange)
+		assert.Equal(t, 2, len(got[1].Children))
+		assert.Equal(t, "other", got[1].Children[0].Name)
+		assert.Equal(t, "layers", got[1].Children[1].Name)
+		assert.Equal(t, objectSymbol, got[1].Children[1].Kind)
+		assert.Equal(t, operatorSymbol, got[2].Kind)
+		assert.Equal(t, operatorSymbol, got[3].Kind)
+	})
+	t.Run("ImplicitOutlineShapes", func(t *testing.T) {
+		got := outline(t, `x.shape: circle
+X.style.fill: red
+"x".label: Label
+a.b.icon: icon.svg
+"a.b".icon: icon.svg
+"shape".style.fill: red
+style.fill: red`)
+		assert.Equal(t, 4, len(got))
+		for i, want := range []string{"x", "a.b", `"a.b"`, `"shape"`} {
+			assert.Equal(t, want, got[i].Name)
+			assert.Equal(t, objectSymbol, got[i].Kind)
+			assert.Equal(t, "", got[i].Detail)
+		}
+		assert.Equal(t, lineRange(0, 0, 1), got[0].SelectionRange)
+		assert.Equal(t, lineRange(3, 0, 3), got[1].SelectionRange)
+	})
+	t.Run("RepeatedContainers", func(t *testing.T) {
+		got := outline(t, `x
+x: Server {a: {one}}
+x: {a: {two}; b}`)
+		assert.Equal(t, 1, len(got))
+		x := got[0]
+		assert.Equal(t, "Server", x.Detail)
+		assert.Equal(t, lineRange(0, 0, 1), x.SelectionRange)
+		assert.Equal(t, lspRange{End: lspPosition{Line: 2, Character: 16}}, x.Range)
+		assert.Equal(t, 2, len(x.Children))
+		assert.Equal(t, "a", x.Children[0].Name)
+		assert.Equal(t, "b", x.Children[1].Name)
+		assert.Equal(t, 2, len(x.Children[0].Children))
+		assert.Equal(t, "one", x.Children[0].Children[0].Name)
+		assert.Equal(t, "two", x.Children[0].Children[1].Name)
+	})
 	t.Run("L33_SelectionRanges", func(t *testing.T) {
 		got := outline(t, "container: {\n  \"日本\"\n  x -> y\n}\nlayers: {detail: {a}}")
 		var check func([]documentSymbol)

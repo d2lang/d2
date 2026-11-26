@@ -194,6 +194,14 @@ func (s *Server) rename(doc document, snap *snapshot, pos lspPosition, newName s
 	if newName == "" || strings.ContainsAny(newName, "\r\n") {
 		return nil, &rpcError{-32803, "invalid name"}
 	}
+	for _, use := range sym.occurrences {
+		if use.near != nil && use.near.computed {
+			return nil, &rpcError{-32803, "cannot rename this shape because a near value referring to it is computed"}
+		}
+	}
+	if snap.sharedNearTarget(sym) {
+		return nil, &rpcError{-32803, "a shared near value refers to different shapes on different boards"}
+	}
 	for owner := range sym.fields {
 		parent := owner.Parent().(*d2ir.Map)
 		for _, sibling := range parent.Fields {
@@ -216,7 +224,11 @@ func (s *Server) rename(doc document, snap *snapshot, pos lspPosition, newName s
 	edit := &workspaceEdit{Changes: make(map[string][]textEdit)}
 	for _, o := range sym.occurrences {
 		uri := s.uriForPath(doc, o.rng.Path)
-		edit.Changes[uri] = append(edit.Changes[uri], textEdit{Range: toLSPRange(o.rng), NewText: replacement})
+		change := textEdit{Range: toLSPRange(o.rng), NewText: replacement}
+		if o.near != nil {
+			change = o.near.rename(name)
+		}
+		edit.Changes[uri] = append(edit.Changes[uri], change)
 	}
 	return edit, nil
 }
