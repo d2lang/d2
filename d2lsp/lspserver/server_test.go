@@ -37,6 +37,16 @@ func TestFraming(t *testing.T) {
 			assert.Error(t, err)
 		}
 	})
+	t.Run("HeaderSize", func(t *testing.T) {
+		for _, headers := range []string{
+			"X-Long: " + strings.Repeat("x", maxHeaderBytes) + "\r\n",
+			strings.Repeat("X: short\r\n", maxHeaderBytes/10+1),
+		} {
+			c := conn{r: bufio.NewReader(strings.NewReader(headers + "Content-Length: 2\r\n\r\n{}"))}
+			_, err := c.read()
+			assert.Error(t, err)
+		}
+	})
 }
 
 func TestLifecycle(t *testing.T) {
@@ -81,6 +91,18 @@ func TestLifecycle(t *testing.T) {
 		assert.Equal(t, "null", string(m.ID))
 		assert.True(t, m.Result == nil && m.Error != nil)
 		assert.Equal(t, -32700, m.Error.Code)
+		c.request("initialize", map[string]any{})
+	})
+	t.Run("InvalidEnvelopes", func(t *testing.T) {
+		c := newBareTestClient(t)
+		for _, input := range []string{`null`, `{}`, `{"jsonrpc":"1.0","method":"exit"}`, `{"jsonrpc":"2.0","method":"shutdown","id":{}}`} {
+			c.sendRaw(input)
+			m := c.receive(time.After(responseTimeout))
+			assert.True(t, m.Error != nil)
+			assert.Equal(t, -32600, m.Error.Code)
+		}
+		// Error responses may have a null ID. Never answer a response.
+		c.sendRaw(`{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid request"}}`)
 		c.request("initialize", map[string]any{})
 	})
 	t.Run("L9_ShutdownAndExit", func(t *testing.T) {

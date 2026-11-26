@@ -2,6 +2,7 @@ package lspserver
 
 import (
 	"cmp"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,60 @@ import (
 	"github.com/d2lang/d2/lib/localfile"
 	"github.com/d2lang/util-go/assert"
 )
+
+func TestRenameWorkspaceEditVersions(t *testing.T) {
+	dir := t.TempDir()
+	diskPath := filepath.Join(dir, "b.d2")
+	disk := pathToURI(diskPath)
+	assert.WriteFile(t, diskPath, []byte("x"), 0o600)
+	first, last := pathToURI(filepath.Join(dir, "a.d2")), pathToURI(filepath.Join(dir, "c.d2"))
+	const firstText, lastText = "...@b\nx -> y", "...@b\nz -> x"
+	for _, tc := range []struct {
+		name      string
+		supported bool
+	}{{"DocumentChanges", true}, {"Changes", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newBareTestClient(t)
+			c.request("initialize", map[string]any{"capabilities": map[string]any{
+				"workspace": map[string]any{"workspaceEdit": map[string]bool{"documentChanges": tc.supported}},
+			}})
+			c.notify("initialized", nil)
+			c.open(last, "# initial")
+			c.change(last, 9, lastText)
+			c.open(first, "# initial")
+			c.change(first, 7, firstText)
+			params := renameParams{posParams(first, 1, 0), "new"}
+			fields := decode[map[string]json.RawMessage](t, c.request("textDocument/rename", params))
+			assert.Equal(t, 1, len(fields))
+			if !tc.supported {
+				changes := decode[map[string][]textEdit](t, fields["changes"])
+				assert.Equal(t, 3, len(changes))
+				assert.Equal(t, "...@b\nnew -> y", applyEdits(t, firstText, changes[first]))
+				return
+			}
+			var got []struct {
+				TextDocument struct {
+					URI     string
+					Version json.RawMessage
+				}
+				Edits []textEdit
+			}
+			assert.Success(t, json.Unmarshal(fields["documentChanges"], &got))
+			assert.Equal(t, 3, len(got))
+			for i, want := range []struct {
+				uri, version, before, after string
+			}{
+				{first, "7", firstText, "...@b\nnew -> y"},
+				{disk, "null", "x", "new"},
+				{last, "9", lastText, "...@b\nz -> new"},
+			} {
+				assert.Equal(t, want.uri, got[i].TextDocument.URI)
+				assert.Equal(t, want.version, string(got[i].TextDocument.Version))
+				assert.Equal(t, want.after, applyEdits(t, want.before, got[i].Edits))
+			}
+		})
+	}
+}
 
 func TestPrepareRename(t *testing.T) {
 	const uri = "untitled:rename"

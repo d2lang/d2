@@ -11,7 +11,10 @@ import (
 	"sync"
 )
 
-const maxMessageBytes = 16 << 20
+const (
+	maxHeaderBytes  = 4 << 10
+	maxMessageBytes = 16 << 20
+)
 
 type conn struct {
 	r  *bufio.Reader
@@ -22,12 +25,17 @@ type conn struct {
 // read returns the next message body.
 func (c *conn) read() ([]byte, error) {
 	length := -1
+	headerBytes := 0
 	for {
-		line, err := c.r.ReadString('\n')
+		raw, err := c.r.ReadSlice('\n')
+		headerBytes += len(raw)
+		if errors.Is(err, bufio.ErrBufferFull) || headerBytes > maxHeaderBytes {
+			return nil, fmt.Errorf("headers exceed the %d byte limit", maxHeaderBytes)
+		}
 		if err != nil {
 			return nil, err
 		}
-		line = strings.TrimRight(line, "\r\n")
+		line := strings.TrimRight(string(raw), "\r\n")
 		if line == "" {
 			break
 		}
@@ -71,22 +79,36 @@ func (c *conn) write(v any) error {
 }
 
 type incoming struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *json.RawMessage `json:"id,omitempty"`
-	Method  string           `json:"method,omitempty"`
-	Params  json.RawMessage  `json:"params,omitempty"`
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+func (m incoming) valid() bool {
+	if m.JSONRPC != "2.0" {
+		return false
+	}
+	if m.Method == "" {
+		return m.ID != nil // a response, including a possible null ID on error
+	}
+	if m.ID == nil || m.ID[0] == '"' {
+		return true // a notification or a request with a string ID
+	}
+	_, err := strconv.ParseInt(string(m.ID), 10, 64)
+	return err == nil
 }
 
 type okResponse struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *json.RawMessage `json:"id"`
-	Result  any              `json:"result"` // nil marshals as null, which is required
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result"` // nil marshals as null, which is required
 }
 
 type errResponse struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *json.RawMessage `json:"id"` // nil marshals as null, for parse errors
-	Error   rpcError         `json:"error"`
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"` // nil marshals as null, for parse errors
+	Error   rpcError        `json:"error"`
 }
 
 type rpcError struct {

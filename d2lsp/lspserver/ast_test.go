@@ -114,6 +114,38 @@ x: {a: {two}; b}`)
 		assert.Equal(t, "one", x.Children[0].Children[0].Name)
 		assert.Equal(t, "two", x.Children[0].Children[1].Name)
 	})
+	t.Run("DottedNamespaces", func(t *testing.T) {
+		got := outline(t, `layers.detail: {a}
+layers: {detail: {b}; overview: {c}}
+layers.detail.d.style.fill: red
+vars.endpoint: localhost
+vars: {region: us}
+classes.web.style.fill: red
+classes.web.style.stroke: blue`)
+		assert.Equal(t, 3, len(got))
+		layers := got[0]
+		assert.Equal(t, "layers", layers.Name)
+		assert.Equal(t, lineRange(0, 0, 6), layers.SelectionRange)
+		assert.Equal(t, 2, len(layers.Children))
+		detail := layers.Children[0]
+		assert.Equal(t, packageSymbol, detail.Kind)
+		assert.Equal(t, "detail", detail.Name)
+		assert.Equal(t, lineRange(0, 7, 13), detail.SelectionRange)
+		assert.Equal(t, 3, len(detail.Children))
+		for i, name := range []string{"a", "b", "d"} {
+			assert.Equal(t, name, detail.Children[i].Name)
+			assert.Equal(t, objectSymbol, detail.Children[i].Kind)
+		}
+		assert.Equal(t, "overview", layers.Children[1].Name)
+		assert.Equal(t, 2, len(got[1].Children))
+		assert.Equal(t, "endpoint", got[1].Children[0].Name)
+		assert.Equal(t, variableSymbol, got[1].Children[0].Kind)
+		assert.Equal(t, "region", got[1].Children[1].Name)
+		assert.Equal(t, 1, len(got[2].Children))
+		assert.Equal(t, "web", got[2].Children[0].Name)
+		assert.Equal(t, classSymbol, got[2].Children[0].Kind)
+		assert.Equal(t, 0, len(got[2].Children[0].Children))
+	})
 	t.Run("L33_SelectionRanges", func(t *testing.T) {
 		got := outline(t, "container: {\n  \"日本\"\n  x -> y\n}\nlayers: {detail: {a}}")
 		var check func([]documentSymbol)
@@ -197,6 +229,33 @@ func TestDocumentLinks(t *testing.T) {
 		c.open(uri, "x.link: layers.y")
 		assert.Equal(t, "[]", string(c.request("textDocument/documentLink", docParams(uri))))
 	})
+}
+
+func TestCompletionHintAcceptsWithoutInsertingItsLabel(t *testing.T) {
+	const uri = "untitled:hints"
+	c := newTestClient(t)
+	pos := openAtCursor(t, c, uri, "x.style.opacity:¦")
+	got := decode[[]completionItem](t, c.request("textDocument/completion", pos))
+	assert.Equal(t, 1, len(got))
+	assert.True(t, strings.Contains(got[0].Label, "number"))
+	assert.JSON(t, &textEdit{Range: lspRange{Start: pos.Position, End: pos.Position}}, got[0].TextEdit)
+}
+
+func TestInterpolatedAttributes(t *testing.T) {
+	const uri = "untitled:interpolation"
+	c := newTestClient(t)
+	c.open(uri, `vars.suffix: blue
+x.link: https://example.com/${suffix}
+x.style.fill: "red${suffix}"`)
+	assert.Equal(t, "[]", string(c.request("textDocument/documentLink", docParams(uri))))
+	assert.Equal(t, "[]", string(c.request("textDocument/documentColor", docParams(uri))))
+}
+
+func TestShapeHoverLabelAttribute(t *testing.T) {
+	c := newTestClient(t)
+	pos := openAtCursor(t, c, "untitled:label", "¦x: Initial\nx.label: Display name")
+	got := decode[hover](t, c.request("textDocument/hover", pos))
+	assert.True(t, strings.Contains(got.Contents.Value, "label: Display name"))
 }
 
 func TestKeywordHover(t *testing.T) {

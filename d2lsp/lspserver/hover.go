@@ -59,6 +59,11 @@ func (s *Server) symbolHover(doc document, snap *snapshot, pos lspPosition) *hov
 		if value := field.Primary(); value != nil {
 			label = value.Value.ScalarString()
 		}
+		if m := field.Map(); m != nil {
+			if attr := m.GetField(d2ast.FlatUnquotedString("label")); attr != nil && attr.Primary() != nil {
+				label = attr.Primary().Value.ScalarString()
+			}
+		}
 		name = shapePath(field)
 		lines = append(lines, "label: "+label)
 		if m := field.Map(); m != nil {

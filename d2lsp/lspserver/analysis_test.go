@@ -1,6 +1,7 @@
 package lspserver
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 
@@ -8,6 +9,22 @@ import (
 
 	"github.com/d2lang/d2/d2ast"
 )
+
+func TestIncompleteEdgeWhileTyping(t *testing.T) {
+	var log bytes.Buffer
+	s := New(Options{Log: &log})
+	doc := document{uri: "untitled:edge", version: 1, text: "service\na ->"}
+	snap := s.analyze(t.Context(), doc)
+	s.ensureIR(t.Context(), doc, snap)
+	assert.True(t, snap.parseErr != nil && snap.ir == nil)
+	assert.Equal(t, "service", symbols(snap.ast)[0].Name)
+	assert.Equal(t, "", log.String())
+	doc.version++
+	doc.text += " b"
+	snap = s.analyze(t.Context(), doc)
+	s.ensureIR(t.Context(), doc, snap)
+	assert.True(t, snap.ir != nil)
+}
 
 func TestLazySnapshot(t *testing.T) {
 	s := New(Options{})

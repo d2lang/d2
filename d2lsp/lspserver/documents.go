@@ -27,15 +27,36 @@ func (s *Server) document(uri string) (document, bool) {
 	return doc, ok
 }
 
-func (s *Server) textForPath(path string) (string, bool) {
+// Editors can open the same path with different URI spellings. Use the same
+// buffer for import contents and locations, independent of map iteration.
+func (s *Server) documentForPath(path string) (document, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var selected document
 	for _, doc := range s.docs {
-		if doc.path == path {
-			return doc.text, true
+		if doc.path == path && (selected.uri == "" || doc.uri < selected.uri) {
+			selected = doc
 		}
 	}
-	return "", false
+	return selected, selected.uri != ""
+}
+
+// Edits are indexed by filesystem path. If two buffers for a target path
+// contain different text, one set of ranges cannot reliably edit both.
+func (s *Server) conflictingBuffer(paths map[string]bool) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	texts := make(map[string]string)
+	for _, doc := range s.docs {
+		if doc.path == "" || !paths[doc.path] {
+			continue
+		}
+		if text, ok := texts[doc.path]; ok && text != doc.text {
+			return doc.path
+		}
+		texts[doc.path] = doc.text
+	}
+	return ""
 }
 
 func (s *Server) fileSystem(doc document) fs.FS {
@@ -52,10 +73,10 @@ type overlay struct {
 }
 
 func (o overlay) Open(name string) (fs.File, error) {
-	if text, ok := o.server.textForPath(filepath.Clean(name)); ok {
+	if doc, ok := o.server.documentForPath(filepath.Clean(name)); ok {
 		return &memFile{
-			Reader: strings.NewReader(text),
-			info:   memInfo{name: filepath.Base(name), size: int64(len(text))},
+			Reader: strings.NewReader(doc.text),
+			info:   memInfo{name: filepath.Base(name), size: int64(len(doc.text))},
 		}, nil
 	}
 	return o.Policy.Open(name)
@@ -106,7 +127,7 @@ func (s *Server) updateDocuments(ctx context.Context, msg incoming) error {
 			return nil
 		}
 		doc, ok := s.docs[p.TextDocument.URI]
-		if !ok {
+		if !ok || p.TextDocument.Version <= doc.version {
 			return nil
 		}
 		doc.text = p.ContentChanges[len(p.ContentChanges)-1].Text

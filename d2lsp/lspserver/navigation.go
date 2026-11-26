@@ -1,7 +1,10 @@
 package lspserver
 
 import (
+	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2ast"
@@ -46,14 +49,9 @@ func (s *Server) definition(doc document, snap *snapshot, pos lspPosition) *loca
 		})
 	}
 	if sub != nil && len(sub.Path) != 0 {
-		parts := []d2ast.String{d2ast.FlatUnquotedString("vars")}
-		for _, part := range sub.Path {
-			if part == nil || part.Unbox() == nil {
-				return nil
-			}
-			parts = append(parts, part.Unbox())
-		}
-		return s.declaration(doc, snap, nodes, parts)
+		board := boardAt(snap.ir, nodes)
+		field := variableAt(snap, board, key, sub)
+		return s.fieldDeclaration(doc, snap, board, field)
 	}
 
 	sym := snap.symbolAt(doc.path, pos)
@@ -95,6 +93,10 @@ func (s *Server) declaration(doc document, snap *snapshot, nodes []d2ast.Node, p
 		board = snap.ir
 		field = board.GetField(path...)
 	}
+	return s.fieldDeclaration(doc, snap, board, field)
+}
+
+func (s *Server) fieldDeclaration(doc document, snap *snapshot, board *d2ir.Map, field *d2ir.Field) *location {
 	if field == nil {
 		return nil
 	}
@@ -186,7 +188,7 @@ func prepareRename(doc document, snap *snapshot, pos lspPosition) *prepareRename
 	return &prepareRenameResult{Range: toLSPRange(sym.hit.rng), Placeholder: sym.hit.name.ScalarString()}
 }
 
-func (s *Server) rename(doc document, snap *snapshot, pos lspPosition, newName string) (*workspaceEdit, *rpcError) {
+func (s *Server) rename(ctx context.Context, doc document, snap *snapshot, pos lspPosition, newName string) (*workspaceEdit, *rpcError) {
 	sym := snap.symbolAt(doc.path, pos)
 	if sym == nil || sym.hit.kind != kindObject {
 		return nil, &rpcError{-32803, "only shapes can be renamed"}
@@ -195,6 +197,9 @@ func (s *Server) rename(doc document, snap *snapshot, pos lspPosition, newName s
 		return nil, &rpcError{-32803, "invalid name"}
 	}
 	for _, use := range sym.occurrences {
+		if root := snap.unresolvedSources[use.rng.Path]; root != "" {
+			return nil, &rpcError{-32803, fmt.Sprintf("cannot resolve references in %s", root)}
+		}
 		if use.near != nil && use.near.computed {
 			return nil, &rpcError{-32803, "cannot rename this shape because a near value referring to it is computed"}
 		}
@@ -202,8 +207,14 @@ func (s *Server) rename(doc document, snap *snapshot, pos lspPosition, newName s
 	if snap.sharedNearTarget(sym) {
 		return nil, &rpcError{-32803, "a shared near value refers to different shapes on different boards"}
 	}
+	if reason := s.renameConflict(ctx, doc, snap, sym, newName); reason != "" {
+		return nil, &rpcError{-32803, reason}
+	}
 	for owner := range sym.fields {
-		parent := owner.Parent().(*d2ir.Map)
+		parent, ok := owner.Parent().(*d2ir.Map)
+		if !ok {
+			return nil, &rpcError{-32803, "cannot resolve the containing map for this shape"}
+		}
 		for _, sibling := range parent.Fields {
 			if sibling != owner && sibling.Name != nil && strings.EqualFold(sibling.Name.ScalarString(), newName) {
 				return nil, &rpcError{-32803, fmt.Sprintf("%q already exists in this container", newName)}
@@ -221,14 +232,25 @@ func (s *Server) rename(doc document, snap *snapshot, pos lspPosition, newName s
 	// Format a key path to use key escaping rules for literal dollars.
 	path := &d2ast.KeyPath{Path: []*d2ast.StringBox{d2ast.MakeValueBox(name).StringBox()}}
 	replacement := d2format.Format(path)
-	edit := &workspaceEdit{Changes: make(map[string][]textEdit)}
+	changes := make(map[string][]textEdit)
 	for _, o := range sym.occurrences {
 		uri := s.uriForPath(doc, o.rng.Path)
 		change := textEdit{Range: toLSPRange(o.rng), NewText: replacement}
 		if o.near != nil {
 			change = o.near.rename(name)
 		}
-		edit.Changes[uri] = append(edit.Changes[uri], change)
+		changes[uri] = append(changes[uri], change)
+	}
+	if !s.documentChanges {
+		return &workspaceEdit{Changes: changes}, nil
+	}
+	edit := &workspaceEdit{}
+	for _, uri := range slices.Sorted(maps.Keys(changes)) {
+		target := optionalVersionedTextDocumentIdentifier{URI: uri}
+		if open, ok := s.document(uri); ok {
+			target.Version = &open.version
+		}
+		edit.DocumentChanges = append(edit.DocumentChanges, textDocumentEdit{TextDocument: target, Edits: changes[uri]})
 	}
 	return edit, nil
 }

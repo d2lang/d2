@@ -38,3 +38,14 @@ func TestL74_ColorPresentation(t *testing.T) {
 	}))
 	assert.JSON(t, []colorPresentation{{Label: `"#ff0000"`, TextEdit: &textEdit{Range: r, NewText: `"#ff0000"`}}}, got)
 }
+
+func TestTransparentColorPresentation(t *testing.T) {
+	const uri = "untitled:colors"
+	c := newTestClient(t)
+	c.open(uri, "style.fill: transparent")
+	color := decode[[]colorInformation](t, c.request("textDocument/documentColor", docParams(uri)))[0]
+	got := decode[[]colorPresentation](t, c.request("textDocument/colorPresentation", colorPresentationParams{
+		TextDocument: textDocumentIdentifier{URI: uri}, Range: color.Range, Color: color.Color,
+	}))
+	assert.JSON(t, []colorPresentation{{Label: "transparent", TextEdit: &textEdit{Range: color.Range, NewText: "transparent"}}}, got)
+}

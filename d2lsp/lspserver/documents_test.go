@@ -63,6 +63,16 @@ func TestDocumentDiagnostics(t *testing.T) {
 		assert.JSON(t, []diagnostic{}, got.Diagnostics)
 		c.expectQuiet()
 	})
+	t.Run("IgnoreStaleVersion", func(t *testing.T) {
+		c := newTestClient(t)
+		c.open(uri, "initial")
+		c.waitDiagnostics(uri)
+		c.change(uri, 3, "direction: right")
+		c.change(uri, 2, "direction: LR")
+		got := c.waitDiagnosticParams(uri)
+		assert.Equal(t, int32(3), got.Version)
+		assert.JSON(t, []diagnostic{}, got.Diagnostics)
+	})
 	t.Run("L19_CloseWhileChangePending", func(t *testing.T) {
 		c := newTestClient(t)
 		c.open(uri, "direction: LR")
@@ -163,6 +173,24 @@ func TestImportDiagnostics(t *testing.T) {
 		assert.JSON(t, []diagnostic{}, got.Diagnostics)
 	})
 
+	t.Run("OpenURIWithAlternateSpelling", func(t *testing.T) {
+		alias := strings.TrimSuffix(b, "b.d2") + "%62.d2"
+		c := newTestClient(t)
+		c.open(alias, "direction: LR")
+		c.open(b, "direction: right")
+		c.open(a, "x: @b")
+		got := c.waitDiagnostics(a)
+		assert.Equal(t, 1, len(got))
+		assert.Equal(t, alias, got[0].RelatedInformation[0].Location.URI)
+		links := decode[[]documentLink](t, c.request("textDocument/documentLink", docParams(a)))
+		assert.Equal(t, alias, links[0].Target)
+
+		c.notify("textDocument/didClose", docParams(alias))
+		assert.JSON(t, []diagnostic{}, c.waitDiagnostics(a))
+		links = decode[[]documentLink](t, c.request("textDocument/documentLink", docParams(a)))
+		assert.Equal(t, b, links[0].Target)
+	})
+
 	t.Run("WatchedFiles", func(t *testing.T) {
 		assert.WriteFile(t, bPath, []byte("direction: LR"), 0o600)
 		c := newTestClient(t)
@@ -191,6 +219,29 @@ func TestFormatting(t *testing.T) {
 			assert.JSON(t, tc.want, got)
 		})
 	}
+}
+
+func TestRenameConflictingBuffers(t *testing.T) {
+	dir := t.TempDir()
+	path := pathToURI(filepath.Join(dir, "b.d2"))
+	alias := strings.TrimSuffix(path, "b.d2") + "%62.d2"
+	importer := pathToURI(filepath.Join(dir, "main.d2"))
+	c := newTestClient(t)
+	c.open(alias, "a")
+	c.open(path, "q")
+	c.open(importer, "...@b\na -> x")
+	for _, pos := range []textDocumentPositionParams{
+		posParams(path, 0, 0), posParams(alias, 0, 0), posParams(importer, 1, 0),
+	} {
+		err := c.requestError("textDocument/rename", renameParams{pos, "renamed"})
+		assert.Equal(t, -32803, err.Code)
+		assert.True(t, strings.Contains(err.Message, "different contents"))
+	}
+	// An unrelated shape remains renameable. Matching alias texts also allow
+	// renaming the shared shape again.
+	assert.Equal(t, 1, len(c.rename(posParams(importer, 1, 5), "other")))
+	c.change(path, 2, "a")
+	assert.Equal(t, 2, len(c.rename(posParams(importer, 1, 0), "renamed")))
 }
 
 func TestL30_Completion(t *testing.T) {

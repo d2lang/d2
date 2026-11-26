@@ -71,14 +71,26 @@ type textEdit struct {
 }
 
 type workspaceEdit struct {
-	Changes map[string][]textEdit `json:"changes"`
+	Changes         map[string][]textEdit `json:"changes,omitempty"`
+	DocumentChanges []textDocumentEdit    `json:"documentChanges,omitempty"`
+}
+
+type textDocumentEdit struct {
+	TextDocument optionalVersionedTextDocumentIdentifier `json:"textDocument"`
+	Edits        []textEdit                              `json:"edits"`
+}
+
+type optionalVersionedTextDocumentIdentifier struct {
+	URI     string `json:"uri"`
+	Version *int32 `json:"version"` // null for a document read from disk
 }
 
 type completionItem struct {
-	Label      string `json:"label"`
-	Kind       int    `json:"kind,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	InsertText string `json:"insertText,omitempty"`
+	Label      string    `json:"label"`
+	Kind       int       `json:"kind,omitempty"`
+	Detail     string    `json:"detail,omitempty"`
+	InsertText string    `json:"insertText,omitempty"`
+	TextEdit   *textEdit `json:"textEdit,omitempty"`
 }
 
 type hover struct {

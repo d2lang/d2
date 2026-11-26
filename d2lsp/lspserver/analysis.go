@@ -17,13 +17,15 @@ import (
 // Snapshots belong to the request goroutine. An edit to any open file or a
 // disk change can invalidate imports even if this document's version is stable.
 type snapshot struct {
-	epoch       uint64
-	version     int32
-	ast         *d2ast.Map
-	parseErr    error
-	attemptedIR bool
-	ir          *d2ir.Map
-	index       []occurrence
+	unresolvedSources map[string]string // source path to an incomplete open root that depends on it
+	epoch             uint64
+	version           int32
+	ast               *d2ast.Map
+	parseErr          error
+	attemptedIR       bool
+	ir                *d2ir.Map
+	index             []occurrence
+	imports           map[string]bool // all files opened by this compilation, including transitive imports
 }
 
 func (s *Server) analyze(ctx context.Context, doc document) *snapshot {
@@ -43,18 +45,28 @@ func (s *Server) ensureIR(ctx context.Context, doc document, snap *snapshot) {
 		return
 	}
 	snap.attemptedIR = true
+	// Parser recovery can leave incomplete edges without a destination. The
+	// AST still serves syntax features, but is not valid compiler input.
+	if snap.parseErr != nil {
+		return
+	}
 	defer func() {
 		if v := recover(); v != nil {
 			s.log.Printf("analyzing %s: %v\n%s", doc.uri, v, debug.Stack())
 		}
 	}()
-	input, _ := d2parser.ParseContext(ctx, doc.path, strings.NewReader(doc.text), &d2parser.ParseOptions{UTF16Pos: true})
-	if input == nil {
+	input, err := d2parser.ParseContext(ctx, doc.path, strings.NewReader(doc.text), &d2parser.ParseOptions{UTF16Pos: true})
+	if err != nil || input == nil {
 		return
 	}
 	off := false
+	var files fs.FS
+	if doc.path != "" {
+		snap.imports = make(map[string]bool)
+		files = importRecorder{s.overlay, snap.imports}
+	}
 	ir, _, _ := d2ir.Compile(input, &d2ir.CompileOptions{
-		Context: ctx, UTF16Pos: true, FS: s.fileSystem(doc), Partial: true, AnimateTweens: &off,
+		Context: ctx, UTF16Pos: true, FS: files, Partial: true, AnimateTweens: &off,
 	})
 	snap.index = s.buildIndex(doc, ir)
 	snap.ir = ir
@@ -152,7 +164,7 @@ func (s *Server) buildIndex(doc document, root *d2ir.Map) []occurrence {
 				}
 				out = append(out, occurrence{
 					rng: s.fieldRange(doc, name, lines), field: f, kind: kind, name: name,
-					glob: ref.DueToGlob() || ref.DueToLazyGlob(),
+					glob: generatedFieldRef(ref),
 				})
 			}
 			walk(f.Map(), next)
@@ -176,6 +188,16 @@ func (s *Server) buildIndex(doc document, root *d2ir.Map) []occurrence {
 	out = append(out, near...)
 	groupSymbols(out)
 	return out
+}
+
+// A literal prefix in group.* is an authored use of group. A literal
+// after the wildcard, or in a map produced by a glob, can name many fields.
+func generatedFieldRef(ref *d2ir.FieldReference) bool {
+	if !ref.DueToGlob() && !ref.DueToLazyGlob() {
+		return false
+	}
+	first := ref.KeyPath.FirstGlob()
+	return first < 0 || ref.KeyPathIndex() >= first
 }
 
 func classify(ctx walkContext, keyword string) (symbolKind, walkContext) {

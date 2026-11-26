@@ -30,20 +30,27 @@ func symbols(root *d2ast.Map) []documentSymbol {
 func mapSymbols(nodes []d2ast.MapNodeBox, defaultKind int, boardRoot bool) []documentSymbol {
 	out := []documentSymbol{}
 	type entry struct {
-		index    int
-		explicit bool
-		children []d2ast.MapNodeBox
+		index        int
+		explicit     bool
+		childrenKind int
+		children     []d2ast.MapNodeBox
 	}
-	objects := make(map[string]*entry)
+	type symbolID struct {
+		kind int
+		path string
+	}
+	entries := make(map[symbolID]*entry)
 	for _, node := range nodes {
 		key := node.MapKey
 		if key == nil || key.EdgeIndex != nil || key.EdgeKey != nil {
 			continue
 		}
 		kind, childrenKind := defaultKind, objectSymbol
+		key = splitNamespaceKey(key, defaultKind, boardRoot)
+		path := key.Key
 		index := len(out)
 		implicit := false
-		var shape *entry
+		var item *entry
 		var name string
 		selection := key.Range
 		if key.Key != nil {
@@ -78,17 +85,8 @@ func mapSymbols(nodes []d2ast.MapNodeBox, defaultKind int, boardRoot bool) []doc
 			case "layers", "scenarios", "steps":
 				name, kind, childrenKind = keyword, namespaceSymbol, packageSymbol
 			case "":
-				path := shapePrefix(key.Key)
+				path = shapePrefix(key.Key)
 				implicit = path != key.Key
-				id := shapeSymbolID(path)
-				shape = objects[id]
-				if shape == nil {
-					shape = &entry{index: index}
-					objects[id] = shape
-				} else if implicit {
-					continue
-				}
-				index = shape.index
 				if implicit {
 					name, selection = d2format.Format(path), path.Range
 					childrenKind = 0
@@ -96,6 +94,17 @@ func mapSymbols(nodes []d2ast.MapNodeBox, defaultKind int, boardRoot bool) []doc
 			default:
 				continue
 			}
+		}
+		if path != nil && len(key.Edges) == 0 {
+			id := symbolID{kind, shapeSymbolID(path)}
+			item = entries[id]
+			if item == nil {
+				item = &entry{index: index}
+				entries[id] = item
+			} else if implicit {
+				continue
+			}
+			index = item.index
 		}
 		if name == "" {
 			name = "(empty)"
@@ -107,7 +116,7 @@ func mapSymbols(nodes []d2ast.MapNodeBox, defaultKind int, boardRoot bool) []doc
 			Name: name, Kind: kind,
 			Range: toLSPRange(key.Range), SelectionRange: toLSPRange(selection),
 		}
-		if shape != nil && shape.explicit {
+		if item != nil && item.explicit {
 			// Keep the first explicit declaration as the navigation target,
 			// and extend its range to include children declared later.
 			sym = out[index]
@@ -122,13 +131,12 @@ func mapSymbols(nodes []d2ast.MapNodeBox, defaultKind int, boardRoot bool) []doc
 				sym.Detail = value.ScalarString()
 			}
 		}
-		if shape != nil && !implicit {
-			shape.explicit = true
-			if childMap := key.Value.Map; childMap != nil {
-				shape.children = append(shape.children, childMap.Nodes...)
+		if item != nil && !implicit {
+			item.explicit = true
+			item.childrenKind = childrenKind
+			if childMap := key.Value.Map; childrenKind != 0 && childMap != nil {
+				item.children = append(item.children, childMap.Nodes...)
 			}
-		} else if childrenKind != 0 && key.Value.Map != nil {
-			sym.Children = mapSymbols(key.Value.Map.Nodes, childrenKind, kind == packageSymbol)
 		}
 		if index == len(out) {
 			out = append(out, sym)
@@ -138,12 +146,40 @@ func mapSymbols(nodes []d2ast.MapNodeBox, defaultKind int, boardRoot bool) []doc
 	}
 	// D2 merges maps from repeated declarations. Outline their children in one
 	// scope so nested shapes can also be declared across multiple blocks.
-	for _, shape := range objects {
-		if len(shape.children) > 0 {
-			out[shape.index].Children = mapSymbols(shape.children, objectSymbol, false)
+	for _, item := range entries {
+		if len(item.children) > 0 {
+			sym := &out[item.index]
+			sym.Children = mapSymbols(item.children, item.childrenKind, sym.Kind == packageSymbol)
 		}
 	}
 	return out
+}
+
+// A dotted declaration such as layers.detail is equivalent to layers: {detail}.
+// Split off namespace and member names for the outline without changing the
+// editor's AST. Ordinary dotted shape names retain their source spelling.
+func splitNamespaceKey(key *d2ast.Key, kind int, boardRoot bool) *d2ast.Key {
+	path := key.Key
+	if path == nil || len(path.Path) < 2 || len(key.Edges) > 0 {
+		return key
+	}
+	if kind != packageSymbol && kind != classSymbol {
+		keyword := d2ast.Keyword(path.Path[0].Unbox())
+		_, board := d2ast.BoardKeywords[keyword]
+		if kind != objectSymbol || !(keyword == "classes" || keyword == "vars" || (boardRoot && board)) {
+			return key
+		}
+	}
+	head, tail := *path, *path
+	head.Path, tail.Path = path.Path[:1], path.Path[1:]
+	head.Range.End = head.Path[0].Unbox().GetRange().End
+	tail.Range.Start = tail.Path[0].Unbox().GetRange().Start
+	child := *key
+	child.Key, child.Range.Start = &tail, tail.Range.Start
+	return &d2ast.Key{
+		Key: &head, Range: key.Range,
+		Value: d2ast.ValueBox{Map: &d2ast.Map{Nodes: []d2ast.MapNodeBox{{MapKey: &child}}}},
+	}
 }
 
 // After a shape name, a reserved attribute starts a property assignment.

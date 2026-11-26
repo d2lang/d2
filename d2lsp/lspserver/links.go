@@ -22,7 +22,7 @@ func (s *Server) links(doc document, root *d2ast.Map) []documentLink {
 			}
 			switch d2ast.Keyword(path.Last().Unbox()) {
 			case "link", "icon":
-				if value := stringValue(n); value != nil {
+				if value := literalStringValue(n); value != nil {
 					target := value.ScalarString()
 					if strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "http://") {
 						links = append(links, documentLink{Range: toLSPRange(value.GetRange()), Target: target})
@@ -42,11 +42,17 @@ func attributePath(key *d2ast.Key) *d2ast.KeyPath {
 	return key.Key
 }
 
-func stringValue(key *d2ast.Key) d2ast.String {
-	if primary, ok := key.Primary.Unbox().(d2ast.String); ok {
-		return primary
+// ScalarString on an interpolated AST value returns only its first fragment.
+// An edit or hyperlink must refer to the entire literal.
+func literalStringValue(key *d2ast.Key) d2ast.String {
+	value, ok := key.Primary.Unbox().(d2ast.String)
+	if !ok {
+		value = key.Value.StringBox().Unbox()
 	}
-	return key.Value.StringBox().Unbox()
+	if value == nil || len(value.Children()) != 0 {
+		return nil
+	}
+	return value
 }
 
 func (s *Server) importLocation(doc document, imp *d2ast.Import) *location {
@@ -68,12 +74,8 @@ func (s *Server) uriForPath(doc document, path string) string {
 	if path == doc.path {
 		return doc.uri
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for uri, open := range s.docs {
-		if open.path == path {
-			return uri
-		}
+	if open, ok := s.documentForPath(path); ok {
+		return open.uri
 	}
 	return pathToURI(path)
 }

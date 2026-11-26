@@ -34,11 +34,12 @@ type Server struct {
 	epoch   uint64
 	overlay overlay
 
-	snapshots     map[string]*snapshot
-	initialized   bool
-	shutdown      bool
-	watchDynamic  bool
-	hoverMarkdown bool
+	snapshots       map[string]*snapshot
+	initialized     bool
+	shutdown        bool
+	watchDynamic    bool
+	hoverMarkdown   bool
+	documentChanges bool
 }
 
 func New(opts Options) *Server {
@@ -63,6 +64,9 @@ func (s *Server) Run(ctx context.Context) int {
 	defer s.stopDiagnostics()
 	for {
 		body, err := s.conn.read()
+		if ctx.Err() != nil {
+			return 1
+		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				s.log.Print(err)
@@ -70,7 +74,7 @@ func (s *Server) Run(ctx context.Context) int {
 			return 1
 		}
 		var msg incoming
-		if decodeErr := json.Unmarshal(body, &msg); decodeErr != nil {
+		if decodeErr := json.Unmarshal(body, &msg); decodeErr != nil || !msg.valid() {
 			code := -32700
 			message := "parse error"
 			if json.Valid(body) {
@@ -95,6 +99,9 @@ func (s *Server) Run(ctx context.Context) int {
 			}
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return 1
+			}
 			s.log.Print(err)
 			return 1
 		}
@@ -162,6 +169,9 @@ func (s *Server) documentRequest(ctx context.Context, msg incoming) (any, *rpcEr
 		}
 		return presentColor(params), nil
 	}
+	if msg.Method == "textDocument/rename" {
+		s.refreshDiskImports()
+	}
 	snap := s.analyze(ctx, doc)
 	switch msg.Method {
 	case "textDocument/documentSymbol":
@@ -178,6 +188,9 @@ func (s *Server) documentRequest(ctx context.Context, msg incoming) (any, *rpcEr
 		}
 	}
 	s.ensureIR(ctx, doc, snap)
+	if msg.Method == "textDocument/rename" || msg.Method == "textDocument/references" {
+		snap = s.workspaceSnapshot(ctx, doc, snap)
+	}
 	switch msg.Method {
 	case "textDocument/definition":
 		return s.definition(doc, snap, p.Position), nil
@@ -197,7 +210,7 @@ func (s *Server) documentRequest(ctx context.Context, msg incoming) (any, *rpcEr
 		if snap.ir == nil {
 			return nil, nil
 		}
-		return s.rename(doc, snap, p.Position, params.NewName)
+		return s.rename(ctx, doc, snap, p.Position, params.NewName)
 	case "textDocument/hover":
 		return s.symbolHover(doc, snap, p.Position), nil
 	default:
@@ -209,6 +222,9 @@ func (s *Server) initialize(params json.RawMessage) (any, *rpcError) {
 	var p struct {
 		Capabilities struct {
 			Workspace struct {
+				WorkspaceEdit struct {
+					DocumentChanges bool
+				}
 				DidChangeWatchedFiles struct {
 					DynamicRegistration bool
 				}
@@ -226,6 +242,7 @@ func (s *Server) initialize(params json.RawMessage) (any, *rpcError) {
 		}
 	}
 	s.initialized = true
+	s.documentChanges = p.Capabilities.Workspace.WorkspaceEdit.DocumentChanges
 	s.watchDynamic = p.Capabilities.Workspace.DidChangeWatchedFiles.DynamicRegistration
 	formats := p.Capabilities.TextDocument.Hover.ContentFormat
 	s.hoverMarkdown = formats == nil || slices.Contains(formats, "markdown")

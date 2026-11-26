@@ -71,7 +71,7 @@ func (s *Server) computeDiagnostics(ctx context.Context, doc document) (out []di
 				d.Range = source
 			}
 			d.Message = fmt.Sprintf("%s:%s: %s", filepath.Base(e.Range.Path), e.Range.Start, message)
-			d.RelatedInformation = []relatedInformation{{Location: location{URI: pathToURI(e.Range.Path), Range: r}, Message: message}}
+			d.RelatedInformation = []relatedInformation{{Location: location{URI: s.uriForPath(doc, e.Range.Path), Range: r}, Message: message}}
 		}
 		if comparePosition(d.Range.End, d.Range.Start) <= 0 {
 			d.Range.End = d.Range.Start

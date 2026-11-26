@@ -44,7 +44,7 @@ func colors(root *d2ast.Map) []colorInformation {
 }
 
 func colorValue(key *d2ast.Key) *colorInformation {
-	value := stringValue(key)
+	value := literalStringValue(key)
 	if value == nil {
 		return nil
 	}
@@ -66,5 +66,8 @@ func colorValue(key *d2ast.Key) *colorInformation {
 func presentColor(p colorPresentationParams) []colorPresentation {
 	rgb := csscolorparser.Color{R: p.Color.Red, G: p.Color.Green, B: p.Color.Blue, A: 1}
 	label := strconv.Quote(rgb.HexString())
+	if p.Color.Alpha == 0 {
+		label = "transparent"
+	}
 	return []colorPresentation{{Label: label, TextEdit: &textEdit{Range: p.Range, NewText: label}}}
 }

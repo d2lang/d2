@@ -18,9 +18,15 @@ func completions(doc document, pos lspPosition) []completionItem {
 		case d2lsp.ShapeCompletion:
 			kind = 12 // Value
 		}
-		out = append(out, completionItem{
+		completion := completionItem{
 			Label: item.Label, Kind: kind, Detail: item.Detail, InsertText: item.InsertText,
-		})
+		}
+		// A hint has no insertable value. Without an explicit edit LSP
+		// clients insert its descriptive label as diagram source.
+		if item.InsertText == "" {
+			completion.TextEdit = &textEdit{Range: lspRange{Start: pos, End: pos}}
+		}
+		out = append(out, completion)
 	}
 	return out
 }

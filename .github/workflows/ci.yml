@@ -98,6 +98,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Test TALA and geometry with the race detector
         run: go test -race ./d2layouts/d2talalayout/... ./internal/geomath -count=1 -timeout=15m
+      - name: Test language server with the race detector
+        run: go test -race ./d2lsp/lspserver -count=1
       - name: Test the dagre adapter with its TinyGo-only shadow maps compiled in
         run: go test -tags dagre_shadowmaps ./d2layouts/d2dagrelayout -count=1
       - name: Verify representative release archive and size budget
@@ -117,6 +119,8 @@ jobs:
           go-version-file: ./go.mod
       - name: Test native and virtual import paths
         run: go test -v -run '^(TestImportRelativeToNativeInputPath|TestImportVirtualDirectoryWithBackslash|TestResolveImportPathOnWindows)$' ./d2ir ./lib/localfile
+      - name: Test language server with native Windows paths
+        run: go test ./d2lsp/lspserver -count=1
       - name: Render a diagram from outside its directory
         run: go test -v -run '^TestCLI_E2E$/^import_from_another_directory$' ./e2etests-cli
   wasm:

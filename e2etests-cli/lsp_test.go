@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -62,6 +63,22 @@ func TestLSPStdio(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestLSPInterruptWithOpenStdin(t *testing.T) {
+	ts := testMain(t.TempDir(), nil, "lsp")
+	ts.StdinPipe()
+	ts.Start(t, t.Context())
+	defer ts.Cleanup(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := ts.Signal(ctx, os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	var exit xmain.ExitError
+	if err := ts.Wait(ctx); !errors.As(err, &exit) || exit.Code != 1 {
+		t.Fatalf("expected prompt interrupt exit, got %v", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/spf13/pflag"
@@ -35,8 +36,21 @@ func lspCmd(ctx context.Context, ms *xmain.State, args []string) error {
 		Log:     ms.Stderr,
 		Version: version.Version,
 	})
-	if code := server.Run(ctx); code != 0 {
-		return xmain.ExitErrorf(code, "language server exited before completing shutdown")
+	done := make(chan int, 1)
+	go func() { done <- server.Run(ctx) }()
+	select {
+	case code := <-done:
+		if code != 0 {
+			return xmain.ExitErrorf(code, "language server exited before completing shutdown")
+		}
+		return nil
+	case <-ctx.Done():
+		// Release interruptible streams. An inherited process pipe can stay
+		// blocked in a system call until the CLI exits, even after Close.
+		if in, ok := ms.Stdin.(io.Closer); ok {
+			in.Close()
+		}
+		ms.Stdout.Close()
+		return ctx.Err()
 	}
-	return nil
 }
