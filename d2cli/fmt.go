@@ -3,11 +3,15 @@ package d2cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/aymanbagabas/go-udiff"
 
 	"github.com/d2lang/util-go/xdefer"
-
 	"github.com/d2lang/util-go/xmain"
 
 	"github.com/d2lang/d2/d2format"
@@ -15,17 +19,20 @@ import (
 	"github.com/d2lang/d2/lib/log"
 )
 
-func fmtCmd(ctx context.Context, ms *xmain.State, check bool) (err error) {
+func fmtCmd(ctx context.Context, ms *xmain.State, check, showDiff bool) (err error) {
 	defer xdefer.Errorf(&err, "failed to fmt")
 
-	ms.Opts = xmain.NewOpts(ms.Env, ms.Opts.Flags.Args()[1:])
-	if len(ms.Opts.Args) == 0 {
+	paths := ms.Opts.Flags.Args()[1:]
+	if len(paths) == 0 {
 		return xmain.UsageErrorf("fmt must be passed at least one file to be formatted")
 	}
 
 	unformattedCount := 0
 
-	for _, inputPath := range ms.Opts.Args {
+	for _, inputPath := range paths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if inputPath != "-" {
 			inputPath = ms.AbsPath(inputPath)
 			d, err := os.Stat(inputPath)
@@ -39,20 +46,39 @@ func fmtCmd(ctx context.Context, ms *xmain.State, check bool) (err error) {
 			return err
 		}
 
-		m, err := d2parser.ParseContext(ctx, inputPath, bytes.NewReader(input), nil)
+		output, err := formatSource(ctx, inputPath, input)
 		if err != nil {
 			return err
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
-		output := []byte(d2format.Format(m))
-		if !bytes.Equal(output, input) {
-			if check {
-				unformattedCount += 1
-				log.Warn(ctx, inputPath)
-			} else {
-				if err := ms.WritePath(inputPath, output); err != nil {
+		changed := !bytes.Equal(output, input)
+		if check || showDiff {
+			if !changed {
+				continue
+			}
+			if showDiff {
+				if err := writeFormatDiff(ms, inputPath, input, output); err != nil {
 					return err
 				}
+			}
+			if check {
+				unformattedCount++
+				if !showDiff {
+					log.Warn(ctx, inputPath)
+				}
+			}
+			continue
+		}
+		if inputPath == "-" {
+			if _, err := ms.Stdout.Write(output); err != nil {
+				return err
+			}
+		} else if changed {
+			if err := ms.WritePath(inputPath, output); err != nil {
+				return err
 			}
 		}
 	}
@@ -67,4 +93,37 @@ func fmtCmd(ctx context.Context, ms *xmain.State, check bool) (err error) {
 	}
 
 	return nil
+}
+
+func formatSource(ctx context.Context, path string, input []byte) ([]byte, error) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		return d2format.FormatMarkdown(ctx, path, input)
+	}
+	parsed, err := d2parser.ParseContext(ctx, path, bytes.NewReader(input), nil)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(d2format.Format(parsed)), nil
+}
+
+func writeFormatDiff(ms *xmain.State, path string, input, output []byte) error {
+	if path == "-" {
+		path = "stdin"
+	} else if relative, err := filepath.Rel(ms.PWD, path); err == nil {
+		path = relative
+	}
+	path = filepath.ToSlash(path)
+	before, after := "a/"+path, "b/"+path
+	if strings.ContainsAny(path, "\t\r\n\"\\") {
+		before, after = strconv.Quote(before), strconv.Quote(after)
+	}
+	original := string(input)
+	edits := udiff.Lines(original, string(output))
+	patch, err := udiff.ToUnified(before, after, original, edits, udiff.DefaultContextLines)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(ms.Stdout, patch)
+	return err
 }

@@ -158,7 +158,11 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	fontMonoItalicFlag := ms.Opts.String("D2_FONT_MONO_ITALIC", "font-mono-italic", "", "", "path to .ttf file to use for the monospace italic font. If none provided, Source Code Pro Italic is used.")
 	fontMonoSemiboldFlag := ms.Opts.String("D2_FONT_MONO_SEMIBOLD", "font-mono-semibold", "", "", "path to .ttf file to use for the monospace semibold font. If none provided, Source Code Pro Semibold is used.")
 
-	checkFlag, err := ms.Opts.Bool("D2_CHECK", "check", "", false, "check that the specified files are formatted correctly.")
+	checkFlag, err := ms.Opts.Bool("D2_CHECK", "check", "", false, "with fmt, exit with status 1 if an input needs formatting")
+	if err != nil {
+		return err
+	}
+	fmtDiffFlag, err := ms.Opts.Bool("", "diff", "", false, "with fmt, print a unified diff instead of writing formatted input")
 	if err != nil {
 		return err
 	}
@@ -214,7 +218,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			themesCmd(ctx, ms)
 			return nil
 		case "fmt":
-			return fmtCmd(ctx, ms, *checkFlag)
+			return fmtCmd(ctx, ms, *checkFlag, *fmtDiffFlag)
 		case "play":
 			return playCmd(ctx, ms)
 		case "validate":
