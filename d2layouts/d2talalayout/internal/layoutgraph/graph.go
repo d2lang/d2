@@ -1527,11 +1527,11 @@ func (g *Graph) containerPadding(container *Node, considerChildren bool) Spacing
 
 	// The center belongs to the authored title. With a single plain child
 	// the fitted frame and title position are known before placing the child.
-	if children := g.Containers[container]; len(children) == 1 && container.IsRectangular() &&
+	if children := g.Containers[container]; len(children) == 1 && container.Shape.IsRectangular() &&
 		container.Icon == nil && container.Label != nil && container.Label.PositionFixed() &&
 		container.Label.Position == label.InsideMiddleCenter {
 		child := children[0]
-		if child.IsRectangular() && !child.isContainer && child.FixedTopLeft == nil && child.Icon == nil &&
+		if child.Shape.IsRectangular() && !child.isContainer && child.FixedTopLeft == nil && child.Icon == nil &&
 			!child.Is3D && !child.IsMultiple && (child.Label == nil || !child.Label.Position.IsOutside()) {
 			spacing.reserveCenteredTitle(container, child, len(g.Containers[container.container()]) > 1)
 		}
@@ -1566,11 +1566,11 @@ func (s *Spacing) reserveCenteredTitle(container, child *Node, hasSiblings bool)
 // fitAuthoredGutters lets an isolated plain tile fit inside a requested frame
 // when the usual 60 px margin would be the only reason to grow it.
 func (s *Spacing) fitAuthoredGutters(container, child *Node) {
-	if !container.IsRectangular() || container.AspectRatio1() || container.Icon != nil ||
+	if !container.Shape.IsRectangular() || container.Shape.AspectRatio1() || container.Icon != nil ||
 		len(container.Edges) > 0 || len(container.Nears) > 0 || (container.Label != nil && !container.Label.Position.IsOutside()) {
 		return
 	}
-	if !child.IsRectangular() || child.isContainer || child.FixedTopLeft != nil || child.Icon != nil ||
+	if !child.Shape.IsRectangular() || child.isContainer || child.FixedTopLeft != nil || child.Icon != nil ||
 		child.IsMultiple || child.Is3D || len(child.Edges) > 0 || len(child.Nears) > 0 {
 		return
 	}

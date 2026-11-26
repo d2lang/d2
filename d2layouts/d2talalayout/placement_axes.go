@@ -25,7 +25,7 @@ func considerPlacementAxes(ctx context.Context, input seedInput, incumbent seedR
 			return incumbent, err
 		}
 		if (n.DesiredHeight == nil) == (n.DesiredWidth == nil) || len(n.Edges) < 2 ||
-			n.FixedTopLeft != nil || !n.IsRectangular() || n.AspectRatio1() || n.IsContainer() ||
+			n.FixedTopLeft != nil || !n.Shape.IsRectangular() || n.Shape.AspectRatio1() || n.IsContainer() ||
 			n.IsTable() || n.IsClass() || n.IsImage() || n.IsInvisible {
 			continue
 		}

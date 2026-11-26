@@ -94,7 +94,7 @@ func packNodeBounds(node *layoutgraph.Node, allNodes layoutgraph.Nodes, extrema 
 // label.PADDING, width, height) with the same operations on values (the
 // library returns its point and the box center as new points).
 func packOutsideLabelTopLeft(node *layoutgraph.Node, position label.Position, width, height float64) geo.Point {
-	box := node.GetBox()
+	box := node.Shape.GetBox()
 	padding := float64(label.PADDING)
 	p := geo.Point{X: box.TopLeft.X, Y: box.TopLeft.Y}
 	centerX := box.TopLeft.X + box.Width/2

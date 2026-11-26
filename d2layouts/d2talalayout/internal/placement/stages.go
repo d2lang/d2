@@ -14,7 +14,7 @@ import (
 
 func Prescale(graph *layoutgraph.Graph) {
 	for _, node := range graph.Nodes {
-		if node.AspectRatio1() {
+		if node.Shape.AspectRatio1() {
 			size := math.Max(node.Width, node.Height)
 			node.Width = size
 			node.Height = size
@@ -68,7 +68,7 @@ func scaleBasedOnEdges(node *layoutgraph.Node) {
 		return
 	}
 	xRatio, yRatio := 1.0, 1.0
-	if node.AspectRatio1() {
+	if node.Shape.AspectRatio1() {
 		if node.Width < minLength {
 			xRatio = minLength / node.Width
 			yRatio = minLength / node.Height

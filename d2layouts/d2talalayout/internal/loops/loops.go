@@ -388,10 +388,10 @@ func findLoopPortsForEdge(e *layoutgraph.Edge, availablePorts []*loopPorts) *loo
 // and target-only arrows distinct categories in addition to -- and <->.
 func makeLoopPorts(n *layoutgraph.Node) []*loopPorts {
 	ports := n.Ports()
-	topIndices := n.PortIndices(geo.Top)
-	rightIndices := n.PortIndices(geo.Right)
-	bottomIndices := n.PortIndices(geo.Bottom)
-	leftIndices := n.PortIndices(geo.Left)
+	topIndices := n.Shape.PortIndices(geo.Top)
+	rightIndices := n.Shape.PortIndices(geo.Right)
+	bottomIndices := n.Shape.PortIndices(geo.Bottom)
+	leftIndices := n.Shape.PortIndices(geo.Left)
 
 	trTop, trRight := closestPorts(ports, topIndices, rightIndices)
 	blBottom, blLeft := closestPorts(ports, bottomIndices, leftIndices)

@@ -1041,7 +1041,7 @@ func packGuarded(ctx context.Context, g *layoutgraph.Graph, root *layoutgraph.No
 			// that invariant, so retain the larger constrained dimension on both
 			// axes. The child-fit and bad-state checks below still reject an unsafe
 			// expansion and restore the complete original box.
-			if root.AspectRatio1() {
+			if root.Shape.AspectRatio1() {
 				size := math.Max(root.Width, root.Height)
 				root.Width = size
 				root.Height = size

@@ -346,7 +346,7 @@ func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 		}
 		// most shapes have 12 ports (3 on each side)
 		ovg.Ports[node] = make([]*OVGNode, 0, 12)
-		for i, relativePoints := range node.SnapPointPercentages() {
+		for i, relativePoints := range node.Shape.SnapPointPercentages() {
 			if err := guard.step(); err != nil {
 				return err
 			}
@@ -374,7 +374,7 @@ func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 		}
 
 		ports := ovg.Ports[node]
-		for _, index := range node.CenterPortIndices() {
+		for _, index := range node.Shape.CenterPortIndices() {
 			if err := guard.step(); err != nil {
 				return err
 			}

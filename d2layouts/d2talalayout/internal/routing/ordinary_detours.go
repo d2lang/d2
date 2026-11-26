@@ -92,7 +92,7 @@ func (env fanObstacles) repairBoundaryDetour(e *layoutgraph.Edge) error {
 			return err
 		}
 		if n != e.From && n != e.To && n.IsContainer() && (e.From.IsDescendantOf(n) || e.To.IsDescendantOf(n)) {
-			if n.IsInvisible || !n.IsRectangular() {
+			if n.IsInvisible || !n.Shape.IsRectangular() {
 				return nil
 			}
 			ancestors = append(ancestors, n)

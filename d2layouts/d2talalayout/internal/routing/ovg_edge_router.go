@@ -1805,7 +1805,7 @@ func (router *ovgEdgeRouter) tablePorts(edge *layoutgraph.Edge, source, target *
 			}
 			portIndex, isTableSide := nodeshape.TablePortIndex(node.Shape, o, columnIndex)
 			if !isTableSide {
-				portIndex = node.PortIndices(o)[columnIndex]
+				portIndex = node.Shape.PortIndices(o)[columnIndex]
 			}
 			ports[router.ovg.Ports[node][portIndex]] = struct{}{}
 		}
