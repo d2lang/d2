@@ -80,15 +80,10 @@ func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) (markdownOuterS
 				if box.Substitution == nil {
 					continue
 				}
-				for j, scope := range varsStack {
-					value := c.resolveSubstitution(scope, node, box.Substitution, j == 0)
-					if value != nil {
-						if j > step && value.Primary() != nil {
-							text := value.Primary().Value.ScalarString()
-							boxes[i] = d2ast.InterpolationBox{String: &text}
-						}
-						break
-					}
+				value, scopeIndex := c.resolveVariable(varsStack, node, box.Substitution)
+				if scopeIndex > step && value.Primary() != nil {
+					text := value.Primary().Value.ScalarString()
+					boxes[i] = d2ast.InterpolationBox{String: &text}
 				}
 			}
 		}
@@ -314,7 +309,7 @@ func (c *compiler) sampleStep(board *Map, changes stepChanges, duration int) {
 	view := *board
 	view.Fields = nil
 	for _, f := range board.Fields {
-		if f.Name == nil || findBoardKeyword(f.Name) == -1 {
+		if _, board := d2ast.BoardKeywords[d2ast.Keyword(f.Name)]; !board {
 			view.Fields = append(view.Fields, f)
 		}
 	}

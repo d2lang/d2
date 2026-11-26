@@ -2,6 +2,7 @@ package d2themescatalog
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/d2lang/d2/d2themes"
@@ -47,6 +48,28 @@ func Find(id int64) d2themes.Theme {
 	}
 
 	return d2themes.Theme{}
+}
+
+// Resolve accepts a decimal theme ID or a case-insensitive catalog name.
+// Hyphens can stand in for spaces in names such as "Terminal Grayscale".
+func Resolve(value string) (d2themes.Theme, error) {
+	if id, err := strconv.ParseInt(value, 10, 64); err == nil {
+		theme := Find(id)
+		if theme.Name == "" {
+			return d2themes.Theme{}, fmt.Errorf("%d is not a valid theme ID", id)
+		}
+		return theme, nil
+	}
+
+	name := strings.ReplaceAll(value, "-", " ")
+	for _, catalog := range [][]d2themes.Theme{LightCatalog, DarkCatalog} {
+		for i := range catalog {
+			if strings.EqualFold(catalog[i].Name, name) {
+				return catalog[i], nil
+			}
+		}
+	}
+	return d2themes.Theme{}, fmt.Errorf("unknown theme %q (run 'd2 themes' to list available themes)", value)
 }
 
 func CLIString() string {

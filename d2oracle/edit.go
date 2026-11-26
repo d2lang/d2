@@ -323,6 +323,15 @@ func recompile(g *d2graph.Graph) (*d2graph.Graph, error) {
 	return g2, nil
 }
 
+// Board holders are reserved at the board root and ordinary children of shapes.
+func reservedField(id string, boardRoot bool) bool {
+	if _, board := d2ast.BoardKeywords[strings.ToLower(id)]; board {
+		return boardRoot
+	}
+	_, reserved := d2ast.ReservedKeywords[id]
+	return reserved
+}
+
 // TODO merge flat styles
 func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) error {
 	if tag != nil {
@@ -381,8 +390,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 	if mk.Key != nil {
 		found := true
 		for _, idel := range d2graph.Key(mk.Key) {
-			_, ok := d2ast.ReservedKeywords[idel]
-			if ok {
+			if reservedField(idel, obj == g.Root) {
 				reserved = true
 				break
 			}
@@ -420,8 +428,8 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			}
 		}
 
-		if mk.Key != nil && len(mk.Key.Path) == 2 {
-			boardType := mk.Key.Path[0].Unbox().ScalarString()
+		if obj == g.Root && mk.Key != nil && len(mk.Key.Path) == 2 {
+			boardType := d2ast.Keyword(mk.Key.Path[0].Unbox())
 			if boardType == "layers" || boardType == "scenarios" || boardType == "steps" {
 				boardName := mk.Key.Path[1].Unbox().ScalarString()
 				if strings.ContainsAny(boardName, ".\"") {
@@ -431,7 +439,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 				var containerMap *d2ast.Map
 				for _, n := range scope.Nodes {
 					if n.MapKey != nil && n.MapKey.Key != nil && len(n.MapKey.Key.Path) == 1 &&
-						n.MapKey.Key.Path[0].Unbox().ScalarString() == boardType {
+						d2ast.Keyword(n.MapKey.Key.Path[0].Unbox()) == boardType {
 						containerMap = n.MapKey.Value.Map
 						break
 					}
@@ -1152,8 +1160,7 @@ func hoistRefChildren(g *d2graph.Graph, key *d2ast.KeyPath, ref d2graph.Referenc
 			continue
 		}
 		if n.MapKey.Key != nil {
-			_, ok := d2ast.ReservedKeywords[n.MapKey.Key.Path[0].Unbox().ScalarString()]
-			if ok {
+			if reservedField(n.MapKey.Key.Path[0].Unbox().ScalarString(), false) {
 				continue
 			}
 		}
@@ -1205,8 +1212,7 @@ func renameConflictsToParent(g *d2graph.Graph, key *d2ast.KeyPath) (*d2graph.Gra
 					continue
 				}
 				if n.MapKey.Key != nil {
-					_, ok := d2ast.ReservedKeywords[n.MapKey.Key.Path[0].Unbox().ScalarString()]
-					if ok {
+					if reservedField(n.MapKey.Key.Path[0].Unbox().ScalarString(), false) {
 						continue
 					}
 					mapKeys = append(mapKeys, n.MapKey.Key)
@@ -1225,7 +1231,7 @@ func renameConflictsToParent(g *d2graph.Graph, key *d2ast.KeyPath) (*d2graph.Gra
 				absKey.Path = append(absKey.Path, k.Path[0])
 				absKeys = append(absKeys, absKey)
 			}
-		} else if _, ok := d2ast.ReservedKeywords[ref.Key.Path[len(ref.Key.Path)-1].Unbox().ScalarString()]; !ok {
+		} else if !reservedField(ref.Key.Path[len(ref.Key.Path)-1].Unbox().ScalarString(), false) {
 			absKey, err := d2parser.ParseKey(ref.ScopeObj.AbsID())
 			if err != nil {
 				absKey = &d2ast.KeyPath{}
@@ -1329,12 +1335,13 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 		}
 		targetKey = mk.EdgeKey
 	}
-	_, ok := d2ast.ReservedKeywords[targetKey.Path[len(targetKey.Path)-1].Unbox().ScalarString()]
-	if !ok {
+	last := targetKey.Path[len(targetKey.Path)-1].Unbox()
+	if !reservedField(last.ScalarString(), len(targetKey.Path) == 1 && last.IsUnquoted()) {
 		return g, nil
 	}
 
 	var e *d2graph.Edge
+	var ok bool
 	obj := g.Root
 	if len(boardPath) > 0 {
 		boardG := GetBoardGraph(g, boardPath)
@@ -1372,8 +1379,7 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 	imported := false
 	parts := d2graph.Key(targetKey)
 	for i, id := range parts {
-		_, ok := d2ast.ReservedKeywords[id]
-		if ok {
+		if reservedField(id, obj.Parent == nil) {
 			if id == "style" {
 				isNestedKey = true
 				continue
@@ -1549,7 +1555,7 @@ func deleteObject(g *d2graph.Graph, baseAST *d2ast.Map, key *d2ast.KeyPath, obj 
 			}
 			ref.Key.Path = append(ref.Key.Path[:ref.KeyPathIndex], ref.Key.Path[ref.KeyPathIndex+1:]...)
 			withoutSpecial := go2.Filter(ref.Key.Path, func(x *d2ast.StringBox) bool {
-				_, isReserved := d2ast.ReservedKeywords[x.Unbox().ScalarString()]
+				isReserved := reservedField(x.Unbox().ScalarString(), false)
 				isSpecial := isReserved || x.Unbox().ScalarString() == "_"
 				return !isSpecial
 			})
@@ -1568,8 +1574,7 @@ func deleteObject(g *d2graph.Graph, baseAST *d2ast.Map, key *d2ast.KeyPath, obj 
 				for i := 0; i < len(ref.MapKey.Value.Map.Nodes); i++ {
 					n := ref.MapKey.Value.Map.Nodes[i]
 					if n.MapKey != nil && n.MapKey.Key != nil {
-						_, ok := d2ast.ReservedKeywords[n.MapKey.Key.Path[0].Unbox().ScalarString()]
-						if ok {
+						if reservedField(n.MapKey.Key.Path[0].Unbox().ScalarString(), false) {
 							deleteFromMap(ref.MapKey.Value.Map, n.MapKey)
 							i--
 							continue
@@ -1735,8 +1740,7 @@ func Rename(g *d2graph.Graph, boardPath []string, key, newName string) (_ *d2gra
 		mk2.Key = mk.Key
 		mk = mk2
 	} else {
-		_, ok := d2ast.ReservedKeywords[newName]
-		if ok {
+		if reservedField(newName, mk.Key == nil || len(mk.Key.Path) == 1) {
 			return nil, "", fmt.Errorf("cannot rename to reserved keyword: %#v", newName)
 		}
 		if mk.Key != nil {
@@ -1744,14 +1748,19 @@ func Rename(g *d2graph.Graph, boardPath []string, key, newName string) (_ *d2gra
 			if !ok {
 				return nil, "", fmt.Errorf("key does not exist")
 			}
-			// If attempt to name something "x", but "x" already exists, rename it "x 2" instead
-			generatedName, _, err := generateUniqueKey(boardG, newName, obj, nil)
-			if err == nil {
-				newName = generatedName
+			// Resolve conflicts with siblings in the object's own scope.
+			last := len(mk.Key.Path) - 1
+			mk.Key.Path[last] = d2ast.MakeValueBox(d2ast.RawString(newName, true)).StringBox()
+			generated, _, err := generateUniqueKey(boardG, d2format.Format(&d2ast.Key{Key: mk.Key}), obj, nil)
+			if err != nil {
+				return nil, "", err
 			}
+			mk.Key, err = d2parser.ParseKey(generated)
+			if err != nil {
+				return nil, "", err
+			}
+			newName = mk.Key.Path[last].Unbox().ScalarString()
 		}
-		// TODO: Handle mk.EdgeKey
-		mk.Key.Path[len(mk.Key.Path)-1] = d2ast.MakeValueBox(d2ast.RawString(newName, true)).StringBox()
 	}
 
 	g, err = move(g, boardPath, key, d2format.Format(mk), false)
@@ -1760,7 +1769,7 @@ func Rename(g *d2graph.Graph, boardPath []string, key, newName string) (_ *d2gra
 
 func trimReservedSuffix(path []*d2ast.StringBox) []*d2ast.StringBox {
 	for i, p := range path {
-		if _, ok := d2ast.ReservedKeywords[p.Unbox().ScalarString()]; ok {
+		if reservedField(p.Unbox().ScalarString(), false) {
 			return path[:i]
 		}
 	}
@@ -2010,10 +2019,9 @@ func move(g *d2graph.Graph, boardPath []string, key, newKey string, includeDesce
 			ida = resolvedIDA
 		}
 		// e.g. "a.b.shape: circle"
-		_, endsWithReserved := d2ast.ReservedKeywords[ida[len(ida)-1]]
+		endsWithReserved := reservedField(ida[len(ida)-1], false)
 		ida = go2.Filter(ida, func(x string) bool {
-			_, ok := d2ast.ReservedKeywords[x]
-			return !ok
+			return !reservedField(x, false)
 		})
 
 		// There are 3 cases of what we want to do with Key references in cross scope
@@ -2053,8 +2061,7 @@ func move(g *d2graph.Graph, boardPath []string, key, newKey string, includeDesce
 								continue
 							}
 							if n.MapKey.Key != nil {
-								_, ok := d2ast.ReservedKeywords[n.MapKey.Key.Path[0].Unbox().ScalarString()]
-								if ok {
+								if reservedField(n.MapKey.Key.Path[0].Unbox().ScalarString(), false) {
 									detachedMK.Value.Map.Nodes = append(detachedMK.Value.Map.Nodes, n)
 								}
 							}
@@ -2299,8 +2306,7 @@ func filterReserved(value d2ast.ValueBox) (with, without d2ast.ValueBox) {
 				forWithout = append(forWithout, n)
 				continue
 			}
-			_, ok := d2ast.ReservedKeywords[n.MapKey.Key.Path[0].Unbox().ScalarString()]
-			if !ok {
+			if !reservedField(n.MapKey.Key.Path[0].Unbox().ScalarString(), false) {
 				flushComments(&forWithout)
 				forWithout = append(forWithout, n)
 				continue
@@ -2718,9 +2724,10 @@ func generateUniqueKey(g *d2graph.Graph, prefix string, ignored *d2graph.Object,
 	k2 := cloneKey(mk.Key)
 	i := 0
 	for {
+		formatted := d2format.Format(&d2ast.Key{Key: k2})
 		conflictsWithIncluded := false
 		for _, s := range included {
-			if d2format.Format(k2) == s {
+			if formatted == s {
 				conflictsWithIncluded = true
 				break
 			}
@@ -2728,7 +2735,7 @@ func generateUniqueKey(g *d2graph.Graph, prefix string, ignored *d2graph.Object,
 		if !conflictsWithIncluded {
 			obj, ok := g.Root.HasChild(d2graph.Key(k2))
 			if !ok || obj == ignored {
-				return d2format.Format(k2), false, nil
+				return formatted, false, nil
 			}
 		}
 
@@ -3009,7 +3016,7 @@ func DeleteIDDeltas(g *d2graph.Graph, boardPath []string, key string) (deltas ma
 	if mk.Key != nil {
 		ida := d2graph.Key(mk.Key)
 		// Deleting a reserved field cannot possibly have any deltas
-		if _, ok := d2ast.ReservedKeywords[ida[len(ida)-1]]; ok {
+		if reservedField(ida[len(ida)-1], len(ida) == 1) {
 			return nil, nil
 		}
 
@@ -3233,7 +3240,7 @@ func RenameIDDeltas(g *d2graph.Graph, boardPath []string, key, newName string) (
 	}
 
 	mk.Key.Path[len(mk.Key.Path)-1].Unbox().SetString(newName)
-	uniqueKeyStr, _, err := generateUniqueKey(boardG, strings.Join(d2graph.Key(mk.Key), "."), obj, nil)
+	uniqueKeyStr, _, err := generateUniqueKey(boardG, d2format.Format(&d2ast.Key{Key: mk.Key}), obj, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3340,7 +3347,7 @@ func getMostNestedRefs(obj *d2graph.Object) []d2graph.Reference {
 
 func filterReservedPath(path []*d2ast.StringBox) (filtered []*d2ast.StringBox) {
 	for _, box := range path {
-		if _, ok := d2ast.ReservedKeywords[strings.ToLower(box.Unbox().ScalarString())]; ok {
+		if reservedField(strings.ToLower(box.Unbox().ScalarString()), false) {
 			return
 		}
 		filtered = append(filtered, box)

@@ -33,8 +33,7 @@ https://user-images.githubusercontent.com/3120367/206125010-bd1fea8e-248a-43e7-8
 vars: {
   d2-config: {
     layout-engine: elk
-    # Terminal theme code
-    theme-id: 300
+    theme-id: Terminal
   }
 }
 network: {

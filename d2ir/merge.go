@@ -118,7 +118,7 @@ func mergeMap(m, overlay *Map, indexed bool, site *spreadSite, at int) {
 			if indexed {
 				bf = m.getFieldIndexed(of.Name)
 			} else {
-				bf = m.GetField(of.Name)
+				bf = m.getFieldLinear(false, of.Name)
 			}
 		}
 		if bf == nil {

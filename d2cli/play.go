@@ -11,13 +11,13 @@ import (
 	"github.com/d2lang/util-go/xmain"
 )
 
-func playCmd(ctx context.Context, ms *xmain.State) error {
+func playCmd(ctx context.Context, ms *xmain.State, themeArg string) error {
 	if len(ms.Opts.Flags.Args()) != 2 {
 		return xmain.UsageErrorf("play must be passed one argument: either a filepath or '-' for stdin")
 	}
 	filepath := ms.Opts.Flags.Args()[1]
 
-	theme, err := ms.Opts.Flags.GetInt64("theme")
+	theme, err := resolveThemeFlag(ms, "theme", themeArg)
 	if err != nil {
 		return err
 	}
@@ -44,7 +44,7 @@ func playCmd(ctx context.Context, ms *xmain.State) error {
 		return err
 	}
 
-	url := fmt.Sprintf("https://play.d2lang.com/?script=%s&sketch=%d&theme=%d&", encoded, sketchNumber, theme)
+	url := fmt.Sprintf("https://play.d2lang.com/?script=%s&sketch=%d&theme=%d&", encoded, sketchNumber, *theme)
 	openBrowser(ctx, ms, url)
 	return nil
 }

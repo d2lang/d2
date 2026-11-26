@@ -7,7 +7,7 @@
 .Sh SYNOPSIS
 .Nm d2
 .Op Fl -watch Ar false
-.Op Fl -theme Em 0
+.Op Fl -theme Ar theme
 .Op Fl -salt Ar string
 .Ar file.d2
 .Op Ar file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt
@@ -81,11 +81,15 @@ Host listening address when used with
 Port listening address when used with
 .Ar watch
 .Ns .
-.It Fl t , -theme Ar 0
-Set the diagram theme ID
-.Ns .
-.It Fl -dark-theme Ar -1
-The theme to use when the viewer's browser is in dark mode. When left unset
+.It Fl t , -theme Ar theme
+Set the diagram theme by ID or name. For example, 300 and Terminal select the same theme.
+The default is 0 (Neutral Default).
+Run
+.Cm d2 themes
+to list the available names and IDs.
+.It Fl -dark-theme Ar theme
+The theme ID or name to use when the viewer's browser is in dark mode.
+The default of -1 leaves this option unset. When left unset
 .Fl -theme
 is used for both light and dark mode. Be aware that explicit styles set in D2 code will
 still be applied and this may produce unexpected results. We plan on resolving this by

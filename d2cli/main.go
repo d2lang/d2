@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +34,6 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/d2svg/appendix"
 	"github.com/d2lang/d2/d2target"
-	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/internal/d2layoutfeatures"
 	"github.com/d2lang/d2/lib/background"
@@ -48,6 +48,27 @@ import (
 	timelib "github.com/d2lang/d2/lib/time"
 	"github.com/d2lang/d2/lib/version"
 )
+
+func resolveThemeFlag(ms *xmain.State, flag, value string) (*int64, error) {
+	// The CLI's integer flags accept base prefixes, while environment variables use decimal.
+	base := 10
+	if ms.Opts.Flags.Changed(flag) {
+		base = 0
+	}
+	lookup := value
+	if id, err := strconv.ParseInt(value, base, 64); err == nil {
+		if flag == "dark-theme" && id == -1 {
+			return nil, nil
+		}
+		lookup = strconv.FormatInt(id, 10)
+	}
+	theme, err := d2themescatalog.Resolve(lookup)
+	if err != nil {
+		return nil, xmain.UsageErrorf("--%s could not be found. The available options are:\n%s\nYou provided: %s", flag, d2themescatalog.CLIString(), value)
+	}
+	ms.Log.Debug.Printf("using %s %s (ID: %d)", flag, theme.Name, theme.ID)
+	return go2.Pointer(theme.ID), nil
+}
 
 func privateNetworkEnvDefault(ms *xmain.State) (bool, error) {
 	const key = "D2_ALLOW_PRIVATE_NETWORK"
@@ -100,14 +121,8 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return err
 	}
 	layoutFlag := ms.Opts.String("D2_LAYOUT", "layout", "l", "dagre", `the layout engine used`)
-	themeFlag, err := ms.Opts.Int64("D2_THEME", "theme", "t", 0, "the diagram theme ID")
-	if err != nil {
-		return err
-	}
-	darkThemeFlag, err := ms.Opts.Int64("D2_DARK_THEME", "dark-theme", "", -1, "the theme to use when the viewer's browser is in dark mode. When left unset -theme is used for both light and dark mode. Be aware that explicit styles set in D2 code will still be applied and this may produce unexpected results. We plan on resolving this by making style maps in D2 light/dark mode specific. See https://github.com/d2lang/d2/issues/831.")
-	if err != nil {
-		return err
-	}
+	themeArg := ms.Opts.String("D2_THEME", "theme", "t", "0", "the diagram theme ID or name (see d2 themes)")
+	darkThemeArg := ms.Opts.String("D2_DARK_THEME", "dark-theme", "", "-1", "the theme ID or name to use when the viewer's browser is in dark mode. When left unset -theme is used for both light and dark mode. Be aware that explicit styles set in D2 code will still be applied and this may produce unexpected results. We plan on resolving this by making style maps in D2 light/dark mode specific. See https://github.com/d2lang/d2/issues/831.")
 	padFlag, err := ms.Opts.Int64("D2_PAD", "pad", "", d2svg.DEFAULT_PADDING, "pixels padded around the rendered diagram")
 	if err != nil {
 		return err
@@ -220,7 +235,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		case "fmt":
 			return fmtCmd(ctx, ms, *checkFlag, *fmtDiffFlag)
 		case "play":
-			return playCmd(ctx, ms)
+			return playCmd(ctx, ms, *themeArg)
 		case "validate":
 			return validateCmd(ctx, ms)
 		case "version":
@@ -297,11 +312,10 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		outputPath = ms.AbsPath(outputPath)
 	}
 
-	match := d2themescatalog.Find(*themeFlag)
-	if match == (d2themes.Theme{}) {
-		return xmain.UsageErrorf("-t[heme] could not be found. The available options are:\n%s\nYou provided: %d", d2themescatalog.CLIString(), *themeFlag)
+	themeFlag, err := resolveThemeFlag(ms, "theme", *themeArg)
+	if err != nil {
+		return err
 	}
-	ms.Log.Debug.Printf("using theme %s (ID: %d)", match.Name, *themeFlag)
 
 	// If flag is not explicitly set by user, set to nil.
 	// Later, configs from D2 code will only overwrite if they weren't explicitly set by user
@@ -347,15 +361,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		}
 	}
 
-	if *darkThemeFlag == -1 {
-		darkThemeFlag = nil // TODO this is a temporary solution: https://github.com/d2lang/util-go/issues/7
-	}
-	if darkThemeFlag != nil {
-		match = d2themescatalog.Find(*darkThemeFlag)
-		if match == (d2themes.Theme{}) {
-			return xmain.UsageErrorf("--dark-theme could not be found. The available options are:\n%s\nYou provided: %d", d2themescatalog.CLIString(), *darkThemeFlag)
-		}
-		ms.Log.Debug.Printf("using dark theme %s (ID: %d)", match.Name, *darkThemeFlag)
+	darkThemeFlag, err := resolveThemeFlag(ms, "dark-theme", *darkThemeArg)
+	if err != nil {
+		return err
 	}
 
 	if !outputFormat.supportsDarkTheme() {
