@@ -5,7 +5,6 @@ package d2fonts
 import (
 	"embed"
 	"encoding/base64"
-	"strings"
 
 	"github.com/d2lang/d2/lib/syncmap"
 )
@@ -21,28 +20,27 @@ func init() {
 		filename string
 		family   FontFamily
 		style    FontStyle
-		woff     string
 	}{
-		{"SourceSansPro-Regular.ttf", SourceSansPro, FONT_STYLE_REGULAR, ""},
-		{"SourceSansPro-Bold.ttf", SourceSansPro, FONT_STYLE_BOLD, ""},
-		{"SourceSansPro-Semibold.ttf", SourceSansPro, FONT_STYLE_SEMIBOLD, sourceSansProSemiboldBase64},
-		{"SourceSansPro-Italic.ttf", SourceSansPro, FONT_STYLE_ITALIC, ""},
-		{"SourceCodePro-Regular.ttf", SourceCodePro, FONT_STYLE_REGULAR, ""},
-		{"SourceCodePro-Bold.ttf", SourceCodePro, FONT_STYLE_BOLD, sourceCodeProBoldBase64},
-		{"SourceCodePro-Semibold.ttf", SourceCodePro, FONT_STYLE_SEMIBOLD, sourceCodeProSemiboldBase64},
-		{"SourceCodePro-Italic.ttf", SourceCodePro, FONT_STYLE_ITALIC, sourceCodeProItalicBase64},
-		{"FuzzyBubbles-Regular.ttf", HandDrawn, FONT_STYLE_REGULAR, ""},
-		{"FuzzyBubbles-Bold.ttf", HandDrawn, FONT_STYLE_BOLD, ""},
+		{"SourceSansPro-Regular.ttf", SourceSansPro, FONT_STYLE_REGULAR},
+		{"SourceSansPro-Bold.ttf", SourceSansPro, FONT_STYLE_BOLD},
+		{"SourceSansPro-Semibold.ttf", SourceSansPro, FONT_STYLE_SEMIBOLD},
+		{"SourceSansPro-Italic.ttf", SourceSansPro, FONT_STYLE_ITALIC},
+		{"SourceCodePro-Regular.ttf", SourceCodePro, FONT_STYLE_REGULAR},
+		{"SourceCodePro-Bold.ttf", SourceCodePro, FONT_STYLE_BOLD},
+		{"SourceCodePro-Semibold.ttf", SourceCodePro, FONT_STYLE_SEMIBOLD},
+		{"SourceCodePro-Italic.ttf", SourceCodePro, FONT_STYLE_ITALIC},
+		{"FuzzyBubbles-Regular.ttf", HandDrawn, FONT_STYLE_REGULAR},
+		{"FuzzyBubbles-Bold.ttf", HandDrawn, FONT_STYLE_BOLD},
 	} {
 		ttf, err := fontFacesFS.ReadFile("ttf/" + face.filename)
 		if err != nil {
 			panic(err)
 		}
-		uri := strings.TrimSuffix(face.woff, "\n")
-		if uri == "" {
-			// These six SVG encodings use the original TTF bytes with the historical WOFF media type.
-			uri = "data:application/font-woff;base64," + base64.StdEncoding.EncodeToString(ttf)
-		}
+		// SVG embeds a subset cut from the TTF. The whole-font encoding is the
+		// TTF itself under the historical WOFF media type; a WOFF copy of every
+		// face would add its weight to the module for a fallback that subsetting
+		// a bundled face never takes.
+		uri := "data:application/font-woff;base64," + base64.StdEncoding.EncodeToString(ttf)
 		font := Font{Family: face.family, Style: face.style}
 		FontFaces.Set(font, ttf)
 		FontEncodings.Set(font, uri)

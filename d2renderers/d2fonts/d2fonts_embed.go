@@ -28,8 +28,23 @@ var fuzzyBubblesRegularBase64 string
 //go:embed encoded/FuzzyBubbles-Bold.txt
 var fuzzyBubblesBoldBase64 string
 
-// These four SVG encodings contain WOFF data. The other encodings already
-// contain the full TTF, so each native binary only needs one copy of those faces.
+// These four SVG encodings contain WOFFs distinct from the TTFs used for text
+// measurement.
+//
+//go:embed encoded/SourceSansPro-Semibold.txt
+var sourceSansProSemiboldBase64 string
+
+//go:embed encoded/SourceCodePro-Bold.txt
+var sourceCodeProBoldBase64 string
+
+//go:embed encoded/SourceCodePro-Semibold.txt
+var sourceCodeProSemiboldBase64 string
+
+//go:embed encoded/SourceCodePro-Italic.txt
+var sourceCodeProItalicBase64 string
+
+// The other encodings already contain the full TTF, so each native binary
+// only needs one copy of those faces.
 //
 //go:embed ttf/SourceSansPro-Semibold.ttf ttf/SourceCodePro-Bold.ttf
 //go:embed ttf/SourceCodePro-Semibold.ttf ttf/SourceCodePro-Italic.ttf
