@@ -158,7 +158,7 @@ func TestMarkdownMatcherNoMatchStorageIsSparse(t *testing.T) {
 
 	input := "${unknown} " + strings.Repeat("plain text without matches ", 1<<15)
 	allocations := testing.AllocsPerRun(5, func() {
-		got, used, err := matcher.replaceBounded(context.Background(), input, 32)
+		got, used, err := matcher.replaceBounded(context.Background(), input, 32, nil)
 		if err != nil || got != input || used != 0 {
 			panic("unexpected no-match result")
 		}
@@ -288,5 +288,50 @@ func TestResolveSubstitutionsMarkdownBudgetAndMalformedReferences(t *testing.T) 
 	_, _, err = ResolveSubstitutionsMarkdownBounded(ctx, "${x}", nil, 6, resolve)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("result error = %v, want context.Canceled", err)
+	}
+}
+
+func TestMarkdownLinkSubstitutions(t *testing.T) {
+	t.Parallel()
+	const input = "[${name}](${url} '${name}')\n\n" +
+		"[first][ref] and ![second][ref]\n\n[ref]: <${url}> \"multi\n${name}\"\n\n" +
+		"![alt](${url}) <https://example.com/${name}> [unknown](${missing})\n\n" +
+		"`[code](${url})`\n\n```\n[code](${url})\n```"
+	const want = "[Guide](https://example.com/guide 'Guide')\n\n" +
+		"[first][ref] and ![second][ref]\n\n[ref]: <https://example.com/guide> \"multi\nGuide\"\n\n" +
+		"![alt](https://example.com/guide) <https://example.com/Guide> [unknown](${missing})\n\n" +
+		"`[code](${url})`\n\n```\n[code](${url})\n```"
+	vars := map[string]string{"url": "https://example.com/guide", "name": "Guide"}
+	// The reference destination and title each cost one substitution even with two uses.
+	budget := int64(3*(1+len(vars["url"])) + 4*(1+len(vars["name"])))
+	got, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, budget)
+	if err != nil || got != want || used != budget {
+		t.Fatalf("result = %q, work = %d, error = %v; want %q, work %d", got, used, err, want, budget)
+	}
+	if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, budget-1); err == nil {
+		t.Fatal("expected link substitutions to honor the expansion limit")
+	}
+}
+
+func TestMarkdownLinkSubstitutionsPreserveURLAndTitle(t *testing.T) {
+	t.Parallel()
+	const input = `[Guide](${url} '${title}')`
+	values := map[string]string{
+		"url":   "https://example.com/My Guide)/v1?q=1&copy;=2",
+		"title": "What's new (v1)",
+	}
+	out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, values, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderMarkdown(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `<a href="https://example.com/My%20Guide)/v1?q=1&amp;copy;=2" title="What's new (v1)">Guide</a>`; !strings.Contains(rendered, want) {
+		t.Errorf("rendered %q, want %q", rendered, want)
+	}
+	if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, values, used-1); err == nil {
+		t.Fatal("escaped bytes must count toward the expansion limit")
 	}
 }

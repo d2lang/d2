@@ -16,19 +16,19 @@ type propertyPathPart struct {
 	edge  int
 }
 
-type directChange struct {
+type tweenChange struct {
 	path     []propertyPathPart
 	property d2ast.String
 	value    tweenValue
 	hold     *Field
 }
 
-func hasDirectMotion(changes []directChange) bool {
-	return slices.ContainsFunc(changes, func(change directChange) bool { return change.value != nil })
+func hasTweenMotion(changes []tweenChange) bool {
+	return slices.ContainsFunc(changes, func(change tweenChange) bool { return change.value != nil })
 }
 
-func (c *compiler) directChanges(previous, board *Map) []directChange {
-	var changes []directChange
+func (c *compiler) stepChanges(previous, board *Map) []tweenChange {
+	var changes []tweenChange
 	classKey := d2ast.FlatUnquotedString("classes")
 	previousClasses := previous.lookupField(classKey).Map()
 	classes := board.lookupField(classKey).Map()
@@ -50,7 +50,10 @@ func (c *compiler) directChanges(previous, board *Map) []directChange {
 			next := append(path, propertyPathPart{field: field.Name})
 			if field.Name.IsUnquoted() {
 				switch strings.ToLower(field.Name.ScalarString()) {
-				case "vars", "layers", "scenarios", "steps":
+				case "vars":
+					changes = c.variableChanges(changes, tweenVarScopes(previous), field.Map(), next, nil)
+					continue
+				case "layers", "scenarios", "steps":
 					continue
 				case "style":
 					changes = appendStyles(changes, previous, previousClasses, field, next)
@@ -101,7 +104,7 @@ func (c *compiler) directChanges(previous, board *Map) []directChange {
 	return changes
 }
 
-func appendStyles(changes []directChange, previous, classes *Map, style *Field, path []propertyPathPart) []directChange {
+func appendStyles(changes []tweenChange, previous, classes *Map, style *Field, path []propertyPathPart) []tweenChange {
 	before := previous.lookupField(style.Name).Map()
 	for _, property := range style.Map().Fields {
 		if property.Primary() == nil || !property.Name.IsUnquoted() {
@@ -116,7 +119,7 @@ func appendStyles(changes []directChange, previous, classes *Map, style *Field, 
 	return changes
 }
 
-func appendDimensions(changes []directChange, previous, current, previousClasses, classes *Map, path []propertyPathPart) []directChange {
+func appendDimensions(changes []tweenChange, previous, current, previousClasses, classes *Map, path []propertyPathPart) []tweenChange {
 	owner, ok := current.Parent().(*Field)
 	if !ok || owner.Name == nil || makeFieldIndexKey(owner.Name).unquotedReserved {
 		return changes
@@ -142,7 +145,7 @@ func appendDimensions(changes []directChange, previous, current, previousClasses
 			if endW != nil && endH != nil && (w == nil || h == nil || !equalDimensions(oldW, oldH)) {
 				for _, field := range []*Field{endW, endH} {
 					if field.Primary() != nil && field.Primary().binding != nil {
-						changes = append(changes, directChange{path: slices.Clone(path), property: field.Name, hold: field})
+						changes = append(changes, tweenChange{path: slices.Clone(path), property: field.Name, hold: field})
 					}
 				}
 				return changes
@@ -158,7 +161,7 @@ func equalDimensions(a, b *Field) bool {
 		a.Primary().Value.ScalarString() == b.Primary().Value.ScalarString()
 }
 
-func appendDirectChange(changes []directChange, path []propertyPathPart, start, end *Field) []directChange {
+func appendDirectChange(changes []tweenChange, path []propertyPathPart, start, end *Field) []tweenChange {
 	if start == nil || end == nil || start.Primary() == nil || end.Primary() == nil {
 		return changes
 	}
@@ -204,7 +207,7 @@ func appendDirectChange(changes []directChange, path []propertyPathPart, start, 
 	default:
 		return changes
 	}
-	return append(changes, directChange{path: slices.Clone(path), property: end.Name, value: value})
+	return append(changes, tweenChange{path: slices.Clone(path), property: end.Name, value: value})
 }
 
 // Interpolate the distance from the lower endpoint. Computing with absolute
@@ -267,7 +270,7 @@ func inheritedProperty(object, classes *Map, path ...d2ast.String) *Field {
 	return nil
 }
 
-func applyDirectChanges(frame *Map, changes []directChange, fraction float64) {
+func applyTweenChanges(frame *Map, changes []tweenChange, fraction float64) {
 	for _, change := range changes {
 		m := frame
 		for _, part := range change.path {

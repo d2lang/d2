@@ -10,9 +10,9 @@ import (
 
 // DefaultMaxVariableExpansion is the maximum amount of work that variable
 // substitutions and the copies they induce may add to one compilation. One
-// work unit is one copied IR node or copied slice element, one inserted array
-// member, one produced string byte, one Markdown match candidate, or one byte
-// prepared for a Markdown variable lookup pattern.
+// work unit is one copied IR node or slice element, one forward dependency,
+// one inserted array member, one produced string byte, one Markdown match
+// candidate, or one byte prepared for a Markdown variable lookup pattern.
 const DefaultMaxVariableExpansion int64 = 65_536
 
 type variableExpansionBudget struct {

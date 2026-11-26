@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/d2compiler"
+	"github.com/d2lang/d2/lib/textmeasure"
 )
 
 func TestMarkdownUsesRegularVariableLookup(t *testing.T) {
@@ -49,6 +50,29 @@ func TestMarkdownVariableLookupPreservesCodeAndUnknownNames(t *testing.T) {
 	}
 	if got, want := g.Root.Children["service"].Label.Value, "staging `${env}` ${region}"; got != want {
 		t.Errorf("Markdown label = %q, want %q", got, want)
+	}
+}
+
+func TestMarkdownLinkUsesRegularVariableLookup(t *testing.T) {
+	const source = `vars.url: https://example.com
+service: {
+  vars: {url: https://example.com/runbook; name: Runbook}
+  plain: ${name} {link: ${url}}
+  markdown: |md [${name}](${URL}) |
+}`
+	g, _, err := d2compiler.Compile("links.d2", strings.NewReader(source), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := g.Root.Children["service"]
+	plain := service.Children["plain"]
+	rendered, err := textmeasure.RenderMarkdown(service.Children["markdown"].Label.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`<a href="%s">%s</a>`, plain.Link.Value, plain.Label.Value)
+	if !strings.Contains(rendered, want) {
+		t.Errorf("Markdown rendered as %q, want %q", rendered, want)
 	}
 }
 
