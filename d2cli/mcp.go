@@ -201,16 +201,15 @@ func mcpHandler[I any](s *mcpServer, name string, h mcp.ToolHandlerFor[I, any]) 
 		if ctx.Err() == nil {
 			res, out, err = h(ctx, req, in)
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			// The deadline can pass after the last cancellation check, while a
-			// renderer finishes encoding a usable image. Keep the completed result.
-			if err == nil && res != nil && !res.IsError {
-				return res, out, nil
+		switch ctx.Err() {
+		case context.DeadlineExceeded:
+			// The deadline can pass while a renderer finishes encoding a usable
+			// image. Return that result even if cancellation arrived meanwhile.
+			if err != nil || res == nil || res.IsError {
+				return mcpFailure(fmt.Sprintf("timed out after %s", s.cfg.timeout))
 			}
-			return mcpFailure(fmt.Sprintf("timed out after %s", s.cfg.timeout))
-		}
-		if err := ctx.Err(); err != nil {
-			return mcpFailure(err.Error())
+		case context.Canceled:
+			return mcpFailure(context.Canceled.Error())
 		}
 		return
 	}

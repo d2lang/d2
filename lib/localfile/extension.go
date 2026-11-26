@@ -72,7 +72,7 @@ func (v extensionFS) Open(name string) (fs.File, error) {
 		// Check the opened descriptor before returning it. A replacement
 		// between Lstat and Open must not change which file is read.
 		opened, err := file.Stat()
-		if err != nil || !os.SameFile(info, opened) {
+		if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
 			return nil, errors.Join(ErrDenied, err, file.Close())
 		}
 		return file, nil
