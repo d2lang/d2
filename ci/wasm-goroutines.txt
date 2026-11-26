@@ -12,10 +12,6 @@
 # is watched by a goroutine. D2 derives from the standard ones only.
 context/context.go:523:2
 
-# time.AfterFunc, which context.WithTimeout and WithDeadline use. A timer
-# cannot fire while a call into the module runs, with or without a scheduler.
-time/sleep.go:182:2
-
 # The clock behind regexp2's match timeouts, which Chroma's lexers set. It
 # could not tick during a call either.
 github.com/dlclark/regexp2/v2@v2.13.2/fastclock.go:90:3
