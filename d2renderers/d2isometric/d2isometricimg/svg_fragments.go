@@ -2,11 +2,12 @@ package d2isometricimg
 
 import (
 	"fmt"
-	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
 	"sync"
 	"unsafe"
+
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type svgVisibleFragment struct {

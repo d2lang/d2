@@ -3,10 +3,11 @@ package d2isometricimg
 import (
 	"context"
 	"fmt"
-	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
 	"slices"
+
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // SVG visibility is solved in the final orthographic camera. Depth is affine

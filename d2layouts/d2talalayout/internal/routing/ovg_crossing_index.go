@@ -2,10 +2,11 @@ package routing
 
 import (
 	"cmp"
-	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
 	"sort"
+
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // Grid edges stay fixed as routes are added. Each coordinate has a sorted list

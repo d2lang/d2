@@ -1,9 +1,10 @@
 package d2isometricimg
 
 import (
-	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
+
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type svgVisibilityTreeNode struct {

@@ -2,8 +2,9 @@ package d2dagrelayout
 
 import (
 	"cmp"
-	"github.com/d2lang/d2/lib/xsort"
 	"math"
+
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // axisOrder keeps the objects of g.Objects sorted by their coordinate along

@@ -4,10 +4,11 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"github.com/d2lang/d2/lib/xsort"
 	"math"
 	"math/bits"
 	"sort"
+
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // A large face's centroid can be nearer than a label on its far end, even
