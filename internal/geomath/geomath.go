@@ -79,6 +79,12 @@ func nanIntersection(u0x, u0y, u1x, u1y, v0x, v0y, v1x, v1y float64) (x, y float
 func FirstBoxIntersection(x, y, w, h, sx, sy, ex, ey float64) (px, py float64, ok bool) {
 	trX, trY := x+w, y
 	brX, brY := trX, trY+h
+	if math.IsNaN(trX) || math.IsNaN(brY) {
+		// When both operands of a corner sum are NaNs, the compiled addition
+		// can select a different payload here than in Box.Intersections.
+		// Give the reference the original box so it computes its own corners.
+		return nanBoxIntersection(x, y, w, h, sx, sy, ex, ey)
+	}
 	blX, blY := x, brY
 	if px, py, ok = SegmentIntersection(sx, sy, ex, ey, x, y, trX, trY); ok {
 		return px, py, ok
@@ -90,4 +96,13 @@ func FirstBoxIntersection(x, y, w, h, sx, sy, ex, ey float64) (px, py float64, o
 		return px, py, ok
 	}
 	return SegmentIntersection(sx, sy, ex, ey, blX, blY, x, y)
+}
+
+func nanBoxIntersection(x, y, w, h, sx, sy, ex, ey float64) (float64, float64, bool) {
+	box := geo.NewBox(geo.NewPoint(x, y), w, h)
+	points := box.Intersections(geo.Segment{Start: geo.NewPoint(sx, sy), End: geo.NewPoint(ex, ey)})
+	if len(points) == 0 {
+		return 0, 0, false
+	}
+	return points[0].X, points[0].Y, true
 }
