@@ -13,7 +13,7 @@ Tests fall under 1 of 4 categories:
 4. **Real-world**. Substantial diagrams from other projects, preserved with source
    revisions, adaptations, and licenses in
    [`testdata/files/REAL_WORLD.md`](testdata/files/REAL_WORLD.md). Each fixture runs
-   through both Dagre and ELK using the same checks as the other e2e groups.
+   through Dagre, ELK, and TALA using the same checks as the other e2e groups.
 
 Upon a major release, Regressions are carried over to Stable.
 
@@ -27,7 +27,7 @@ SVG comparisons check the encoded bytes for deterministic output.
 The `asciitxtar` fixtures check SVG, standard ASCII and Unicode text only; they
 do not produce isometric snapshots.
 
-The isometric suite has 870 SVG snapshots. It uses D2's existing bundled fonts
+The isometric suite uses D2's bundled fonts
 and embedded image data without downloading artwork or discovering system fonts.
 For boards that require external artwork or additional glyphs, the suite
 checks explicit resource errors listed in `isometric_test.go` instead. Unexpected
@@ -42,6 +42,9 @@ go test ./e2etests -run '^TestE2E/stable/all_shapes$' -count=1
 go run ./e2etests/report -skip-tests -delta -variant isometric -test-set '^stable$' -test-case '^all_shapes$'
 open ./e2etests/out/e2e_report.html
 ```
+
+To run one engine, append its subtest name, for example
+`go test ./e2etests -run '^TestE2E/stable/all_shapes$/tala$' -count=1`.
 
 After reviewing the changes, accept the selected case's goldens and rerun without
 the acceptance flag. Acceptance also updates any changed SVG/board goldens:

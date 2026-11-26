@@ -98,7 +98,7 @@ func isometricBoards(diagram *d2target.Diagram) []isometricBoard {
 	return boards
 }
 
-func renderIsometric(t *testing.T, ctx context.Context, diagram *d2target.Diagram, dir string, opts *d2svg.RenderOpts) {
+func renderIsometric(t *testing.T, ctx context.Context, diagram *d2target.Diagram, fixtureName, dir string, opts *d2svg.RenderOpts) {
 	t.Helper()
 	if os.Getenv("SKIP_ISOMETRIC_CHECK") != "" || os.Getenv("SKIP_SVG_CHECK") != "" {
 		return
@@ -118,7 +118,7 @@ func renderIsometric(t *testing.T, ctx context.Context, diagram *d2target.Diagra
 			Width:  1200, Height: 1200, FitContent: true,
 		}
 		data, err := d2isometricimg.Render(ctx, board.diagram, &options)
-		resourceKey := strings.TrimPrefix(t.Name(), "TestE2E/") + "/" + board.name
+		resourceKey := fixtureName + "/" + board.name
 		if want := isometricResourceErrors[resourceKey]; want != "" {
 			if err == nil {
 				t.Errorf("%s no longer needs external resources; remove its resource-error expectation and add its SVG snapshot", resourceKey)
@@ -231,7 +231,7 @@ func TestIsometricSVGSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	renderIsometric(t, context.Background(), &diagram, dir, &d2svg.RenderOpts{})
+	renderIsometric(t, context.Background(), &diagram, "", dir, &d2svg.RenderOpts{})
 	if info, err := os.Stat(filepath.Join(dir, "isometric.exp.svg")); err != nil || info.Size() == 0 {
 		t.Fatalf("missing SVG snapshot: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestIsometricSVGSnapshot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "isometric.got.svg"), []byte("stale"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	renderIsometric(t, context.Background(), &diagram, dir, &d2svg.RenderOpts{})
+	renderIsometric(t, context.Background(), &diagram, "", dir, &d2svg.RenderOpts{})
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func TestIsometricSVGSnapshot(t *testing.T) {
 		t.Run(flag, func(t *testing.T) {
 			t.Setenv(flag, "1")
 			dir := t.TempDir()
-			renderIsometric(t, context.Background(), &diagram, dir, &d2svg.RenderOpts{})
+			renderIsometric(t, context.Background(), &diagram, "", dir, &d2svg.RenderOpts{})
 			files, err := os.ReadDir(dir)
 			if err != nil || len(files) != 0 {
 				t.Fatalf("skip flag left output: %v, %v", files, err)

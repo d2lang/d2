@@ -216,6 +216,7 @@ func TestDiscoverLayoutFreeAndNestedCases(t *testing.T) {
 	fixture(t, root, "stable/group/focused/dagre/sketch.exp.svg", "nested svg")
 	fixture(t, root, "stable/group/focused/dagre/isometric.exp.svg", "nested dagre")
 	fixture(t, root, "stable/group/focused/elk/isometric.exp.svg", "nested elk")
+	fixture(t, root, "stable/group/focused/tala/isometric.exp.svg", "nested tala")
 	fixture(t, root, "stable/group/other/elk/isometric.exp.svg", "other nested case")
 	for _, tc := range []struct {
 		set, testcase, variant string
@@ -225,7 +226,7 @@ func TestDiscoverLayoutFreeAndNestedCases(t *testing.T) {
 		{"^asciitxtar$", "^nested/focused$", "sketch", []string{"asciitxtar/nested/focused/sketch.svg"}},
 		{"^asciitxtar$", "^nested/elk$", "sketch", []string{"asciitxtar/nested/elk/sketch.svg"}},
 		{"^asciitxtar$", "", "isometric", nil},
-		{"^stable$", "^group/focused$", "isometric", []string{"stable/group/focused/dagre/isometric.svg", "stable/group/focused/elk/isometric.svg"}},
+		{"^stable$", "^group/focused$", "isometric", []string{"stable/group/focused/dagre/isometric.svg", "stable/group/focused/elk/isometric.svg", "stable/group/focused/tala/isometric.svg"}},
 		{"^stable$", "^group/focused$", "sketch", []string{"stable/group/focused/dagre/sketch.svg"}},
 	} {
 		t.Run(tc.set+tc.testcase+tc.variant, func(t *testing.T) {

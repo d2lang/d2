@@ -1,15 +1,7 @@
 name: Windows installer
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/windows-installer.yml
-      - install.sh
-  push:
-    branches: [master]
-    paths:
-      - .github/workflows/windows-installer.yml
-      - install.sh
+  workflow_call:
 
 permissions:
   contents: read

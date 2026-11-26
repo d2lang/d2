@@ -1,0 +1,230 @@
+name: Archive checks
+
+on:
+  workflow_call:
+    inputs:
+      full:
+        description: Repeat the build for reproducibility, run native smoke tests, and verify Windows installers
+        required: true
+        type: boolean
+    outputs:
+      version:
+        description: Version embedded in the archives
+        value: ${{ jobs.build.outputs.version }}
+      commit:
+        description: Source commit used to build the archives
+        value: ${{ jobs.build.outputs.commit }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_BUILD_SERIAL: "1"
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.version.outputs.commit }}
+      windows_sha256: ${{ steps.archives.outputs.windows_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ./go.mod
+          cache: true
+
+      - name: Select release version
+        id: version
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version=$GITHUB_REF_NAME
+            if ! printf '%s\n' "$version" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'; then
+              echo "release tag must be a v-prefixed semantic version" >&2
+              exit 1
+            fi
+          elif [[ -n "$PR_NUMBER" ]]; then
+            version="v0.0.0-pr.$PR_NUMBER"
+          else
+            version="v0.0.0-ci.$GITHUB_RUN_ID"
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Verify modules
+        env:
+          GOEXPERIMENT: ""
+          GOFLAGS: ""
+          GOTOOLCHAIN: local
+          GOWORK: "off"
+        run: go mod verify
+
+      - name: Build and verify all release archives
+        env:
+          RELEASE: "1"
+          RELEASE_BUILD_IN_CI: "1"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./ci/release/build.sh --rebuild --version="$VERSION"
+
+      - name: Prove archive reproducibility
+        if: inputs.full
+        env:
+          RELEASE: "1"
+          RELEASE_BUILD_IN_CI: "1"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp "ci/release/build/$VERSION/SHA256SUMS" "$RUNNER_TEMP/first-SHA256SUMS"
+          ./ci/release/build.sh --rebuild --version="$VERSION"
+          diff -u "$RUNNER_TEMP/first-SHA256SUMS" "ci/release/build/$VERSION/SHA256SUMS"
+          git diff --exit-code
+
+      - name: Record Windows archive checksum
+        if: inputs.full
+        id: archives
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          digest=$(sha256sum "ci/release/build/$VERSION/d2-$VERSION-windows-amd64.tar.gz" | cut -d ' ' -f 1)
+          echo "windows_sha256=$digest" >>"$GITHUB_OUTPUT"
+
+      - name: Generate release SBOM
+        if: inputs.full
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          GOTOOLCHAIN=local GOWORK=off GOFLAGS= GOEXPERIMENT= \
+            go run -mod=readonly ./ci/release/releasetool sbom \
+              --binary "ci/release/build/$VERSION/linux-amd64/d2-$VERSION/bin/d2" \
+              --output "$RUNNER_TEMP/d2.spdx.json" \
+              --name "d2-$VERSION" \
+              --version "$VERSION" \
+              --epoch "$(git show -s --format=%ct HEAD)"
+
+      - name: Upload immutable release archives
+        if: inputs.full
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-archives
+          path: |
+            ci/release/build/${{ steps.version.outputs.version }}/*.tar.gz
+            ci/release/build/${{ steps.version.outputs.version }}/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload release SBOM
+        if: inputs.full
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-sbom
+          path: ${{ runner.temp }}/d2.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  smoke:
+    if: inputs.full
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: amd64
+            extension: ""
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            extension: ""
+          - runner: macos-15-intel
+            os: macos
+            arch: amd64
+            extension: ""
+          - runner: macos-15
+            os: macos
+            arch: arm64
+            extension: ""
+          - runner: windows-2025
+            os: windows
+            arch: amd64
+            extension: .exe
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
+            extension: .exe
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-archives
+          path: ${{ runner.temp }}/release-archives
+
+      - name: Run native archive smoke test
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+          BINARY_EXTENSION: ${{ matrix.extension }}
+          OS: ${{ matrix.os }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "release-archives/d2-$env:VERSION-$env:OS-$env:ARCH.tar.gz"
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw "missing $archive"
+          }
+          $destination = Join-Path $env:RUNNER_TEMP "d2-release-smoke"
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          tar -C $destination -xzf $archive
+          if ($LASTEXITCODE -ne 0) {
+            throw "unable to extract $archive"
+          }
+          $binary = Join-Path $destination "d2-$env:VERSION/bin/d2$env:BINARY_EXTENSION"
+          $actualVersion = (& $binary --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualVersion -cne $env:VERSION) {
+            throw "d2 --version returned '$actualVersion', expected '$env:VERSION'"
+          }
+          $inputFile = Join-Path $destination "smoke.d2"
+          $outputFile = Join-Path $destination "smoke.svg"
+          "x -> y" | Set-Content -LiteralPath $inputFile
+          & $binary $inputFile $outputFile
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $outputFile -PathType Leaf)) {
+            throw "d2 SVG smoke render failed"
+          }
+          if (-not (Select-String -LiteralPath $outputFile -Pattern '<svg' -Quiet)) {
+            throw "d2 SVG smoke render did not produce SVG"
+          }
+          $talaOutputFile = Join-Path $destination "smoke-tala.svg"
+          & $binary --layout=tala $inputFile $talaOutputFile
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $talaOutputFile -PathType Leaf)) {
+            throw "d2 TALA SVG smoke render failed"
+          }
+          if (-not (Select-String -LiteralPath $talaOutputFile -Pattern '<svg' -Quiet)) {
+            throw "d2 TALA SVG smoke render did not produce SVG"
+          }
+          $pngFile = Join-Path $destination "smoke.png"
+          & $binary $inputFile $pngFile
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pngFile -PathType Leaf)) {
+            throw "d2 PNG smoke render failed"
+          }
+          $pngBytes = [System.IO.File]::ReadAllBytes($pngFile)
+          if ($pngBytes.Length -lt 8 -or [System.BitConverter]::ToString($pngBytes, 0, 8) -cne '89-50-4E-47-0D-0A-1A-0A') {
+            throw "d2 PNG smoke render did not produce PNG"
+          }
+
+  msi:
+    needs: [build, smoke]
+    if: inputs.full && (github.ref_type == 'tag' || vars.WIX7_EULA_ACCEPTED == 'true')
+    uses: ./.github/workflows/windows-msi.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+      commit: ${{ needs.build.outputs.commit }}
+      archive_sha256: ${{ needs.build.outputs.windows_sha256 }}
