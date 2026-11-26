@@ -31,17 +31,16 @@ pnpm add @d2lang/d2
 bun add @d2lang/d2
 ```
 
-`@terrastruct/d2` remains available as a compatibility package and receives the same
-releases during the namespace transition. New installations should use `@d2lang/d2`.
+`@terrastruct/d2` remains available as a compatibility package for stable releases
+during the namespace transition. New installations should use `@d2lang/d2`.
 
 ### Nightly
 
-Use the `@nightly` tag to get the version that is built by daily CI on the master branch.
-
-For example,
+CI checks `master` daily and publishes a new `@d2lang/d2@nightly` when D2.js or its
+WebAssembly build inputs have changed since the last published nightly.
 
 ```bash
-yarn add @d2lang/d2@nightly
+npm install @d2lang/d2@nightly
 ```
 
 ## Usage
@@ -258,13 +257,8 @@ Visit `http://localhost:3000` to see the example page.
 
 ### Publishing
 
-TODO stable release publishing.
-
-Nightly builds are automated by CI by running:
-
-```bash
-PUBLISH=1 ./make.sh build
-```
+See the [npm release instructions](https://github.com/d2lang/d2/blob/master/ci/release/README.md#npm-publishing) for stable
+releases and nightly publisher setup.
 
 ## Contributing
 

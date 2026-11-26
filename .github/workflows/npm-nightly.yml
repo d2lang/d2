@@ -1,0 +1,117 @@
+name: npm nightly
+
+on:
+  schedule:
+    - cron: "19 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-nightly
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    if: github.ref == 'refs/heads/master' && github.ref_protected
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          sparse-checkout: ci
+      - id: check
+        run: |
+          changed=$(./ci/npm-nightly-changed.sh)
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+  pack:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          submodules: recursive
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ./go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: npm install --global npm@12.2.3 bun@1.4.5
+      - run: ./ci/install-wasm-tools.sh
+      - name: Build, test, and pack the nightly
+        working-directory: d2js/js
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          version="$(jq -r .version package.json)-nightly.$(date -u +%Y%m%d).g${GITHUB_SHA:0:12}"
+          npm version "$version" --no-git-tag-version --ignore-scripts
+          ./ci/build.sh
+          bun run test:all
+          mkdir "$RUNNER_TEMP/npm-nightly"
+          npm pack --pack-destination "$RUNNER_TEMP/npm-nightly"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-nightly
+          path: ${{ runner.temp }}/npm-nightly/*.tgz
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: pack
+    environment: npm-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            ci
+            d2js/js
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@12.2.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-nightly
+          path: ${{ runner.temp }}/npm-nightly
+      - name: Publish the verified prerelease
+        run: |
+          set -euo pipefail
+          # Recheck when retrying just this job after a newer nightly shipped.
+          changed=$(./ci/npm-nightly-changed.sh)
+          if [[ $changed == false ]]; then
+            exit 0
+          fi
+          [[ $changed == true ]]
+          tarballs=("$RUNNER_TEMP"/npm-nightly/*.tgz)
+          if [[ ${#tarballs[@]} != 1 || ! -f ${tarballs[0]} ]]; then
+            echo "Expected one nightly package tarball" >&2
+            exit 1
+          fi
+          base=$(jq -er .version d2js/js/package.json)
+          version=$(tar -xOzf "${tarballs[0]}" package/package.json | jq -er '
+            select(.name == "@d2lang/d2" and .publishConfig == {"access":"public"}) | .version')
+          nightly='^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.g([0-9a-f]{12})$'
+          if ! [[ $version =~ $nightly && ${BASH_REMATCH[1]} == "${GITHUB_SHA:0:12}" && $version == "$base-nightly."* ]]; then
+            echo "Unexpected package version for this commit: $version" >&2
+            exit 1
+          fi
+          npm publish "${tarballs[0]}" --tag nightly --access public --ignore-scripts

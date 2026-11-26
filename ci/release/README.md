@@ -27,7 +27,7 @@ or source commit independently of the npm version.
 The canonical package was bootstrapped once from the existing `@terrastruct/d2@0.1.33`
 built artifacts because npm does not allow a brand-new package to use staged publishing.
 
-Direct publishing is retained only for local bootstrap or recovery. It requires a
+The local direct-publish script is retained for bootstrap or recovery. It requires a
 short-lived `NPM_TOKEN` that can publish every selected package and is not stored in GitHub.
 The script pre-packs and preflights every selected package before publishing; a retry skips
 an existing version only when its registry tarball integrity exactly matches the local
@@ -40,6 +40,24 @@ Use `npm stage approve <stage-id>` for each identity. If the release is abandone
 every pending half with
 `npm stage reject <stage-id>` before starting another run. A pending stage reserves its
 package/version, so list pending stages before retrying any failed job.
+
+### Automatic D2.js nightlies
+
+[`npm-nightly.yml`](../../.github/workflows/npm-nightly.yml) checks protected `master`
+daily at 09:19 UTC. It compares the commit in the published `@nightly` version with
+the current source, builds and tests the package when inputs changed, and publishes
+the tarball to `@d2lang/d2` under the `nightly` tag. The first run creates the tag.
+
+To enable publishing, merge the workflow, then add a GitHub Actions trusted publisher
+in the npm package settings for `@d2lang/d2`. Enter organization `d2lang`, repository
+`d2`, workflow filename `npm-nightly.yml`, and environment `npm-release`. Select
+**Allow npm publish**. This permission applies to the package, so the workflow checks
+the package name and prerelease version and passes `--tag nightly` explicitly.
+The existing publisher for `npm-stage.yml` handles stable releases.
+
+Run `gh workflow run npm-nightly.yml --repo d2lang/d2 --ref master` once to validate
+the new connection within npm's two-day window. Check the result with
+`npm view @d2lang/d2 dist-tags`. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 
 ## _install.sh
 
