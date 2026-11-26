@@ -1,0 +1,150 @@
+name: Package D2 for PyPI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/pypi-publish.yml
+      - ci/release/build-wheels.py
+      - ci/release/pypi/**
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published stable D2 release tag to package
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-${{ github.event.pull_request.number || inputs.version || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.13.9"
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.repository == 'd2lang/d2' &&
+        ((github.event_name == 'release' && github.ref_type == 'tag' && !github.event.release.prerelease) ||
+         (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.ref_protected)))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.archives.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify published archives against the promoted installer checksums
+        id: archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Exercise the candidate packaging code against a real release on PRs.
+          VERSION: ${{ inputs.version || github.event.release.tag_name || 'v0.9.0' }}
+        run: |
+          set -euo pipefail
+          [[ $VERSION =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          gh api "repos/d2lang/d2/releases/tags/$VERSION" | jq -e --arg version "$VERSION" \
+            '.tag_name == $version and .draft == false and .prerelease == false and .published_at != null'
+
+          mkdir archives
+          cd archives
+          gh release download "$VERSION" --repo d2lang/d2 --pattern 'd2-*.tar.gz' --pattern SHA256SUMS
+          # Promotion to master happens after tagging, before the release is published.
+          gh api "repos/d2lang/d2/contents/ci/release/checksums/$VERSION.txt?ref=master" \
+            -H 'Accept: application/vnd.github.raw+json' > promoted.txt
+          cmp promoted.txt SHA256SUMS
+          sha256sum --check --strict promoted.txt
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build native wheels
+        env:
+          VERSION: ${{ steps.archives.outputs.version }}
+        run: python3 ci/release/build-wheels.py --version "$VERSION" --archives archives --output dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: d2lang-wheels
+          path: dist/*.whl
+          if-no-files-found: error
+          compression-level: 0
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15, windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: d2lang-wheels
+          path: dist
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          require-checksums: true
+          enable-cache: false
+
+      - name: Install with pip and render with uvx
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          UV_PYTHON: "3.13"
+          UV_MANAGED_PYTHON: "true"
+        run: |
+          set -euo pipefail
+          uv venv --seed pip-smoke
+          python=pip-smoke/bin/python
+          if [[ "$RUNNER_OS" == Windows ]]; then python=pip-smoke/Scripts/python.exe; fi
+          "$python" -m pip install --no-index --find-links dist d2lang
+          "$python" -c 'from importlib.metadata import version; import os; assert version("d2lang") == os.environ["VERSION"][1:]'
+          test "$(uvx --no-index --find-links dist d2lang --version)" = "$VERSION"
+          test "$(uvx --no-index --find-links dist --from d2lang d2 --version)" = "$VERSION"
+          printf 'x -> y\n' > smoke.d2
+          uvx --no-index --find-links dist d2lang smoke.d2 smoke.svg
+          grep -q '<svg' smoke.svg
+
+      - name: Install and render on musl
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          docker run --rm -e VERSION -v "$PWD/dist:/wheels:ro" -w /tmp \
+            python:3.13-alpine@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e \
+            sh -ec 'python -m pip install --no-index --find-links /wheels d2lang
+              test "$(d2lang --version)" = "$VERSION"
+              echo "x -> y" > smoke.d2
+              d2 smoke.d2 smoke.svg
+              grep -q "<svg" smoke.svg'
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/d2lang/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: d2lang-wheels
+          path: dist
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          require-checksums: true
+          enable-cache: false
+      - name: Publish the tested wheels with PyPI Trusted Publishing
+        run: uv publish --trusted-publishing always dist/*.whl
