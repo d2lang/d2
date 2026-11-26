@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 	tassert "github.com/stretchr/testify/assert"
 
 	"github.com/d2lang/d2/internal/testlog"

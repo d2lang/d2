@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 )
 
 func main() {

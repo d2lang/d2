@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 )
 
 // The WebAssembly build carries the bundled TTFs as ttf_stream.br: the files

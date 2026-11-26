@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 )
 
 var reDataSVG = regexp.MustCompile(`(?i)(?:(?:xlink:)?href)\s*=\s*"(data:image/svg\+xml;base64,([^"]+))"`)

@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 	_ "golang.org/x/image/webp"
 	"golang.org/x/text/encoding/charmap"
 

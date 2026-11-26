@@ -6,8 +6,8 @@ require (
 	codeberg.org/go-pdf/fpdf v0.12.0
 	github.com/PuerkitoBio/goquery v1.14.0
 	github.com/alecthomas/chroma/v2 v2.27.0
-	github.com/andybalholm/brotli v1.3.0
 	github.com/coder/websocket v1.8.15
+	github.com/d2lang/brotli v0.1.0
 	github.com/d2lang/dagro v0.4.0
 	github.com/d2lang/elk-go v0.3.2
 	github.com/d2lang/mathjax-go v0.1.1
