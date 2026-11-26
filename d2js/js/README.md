@@ -34,6 +34,23 @@ bun add @d2lang/d2
 `@terrastruct/d2` remains available as a compatibility package for stable releases
 during the namespace transition. New installations should use `@d2lang/d2`.
 
+### Command line
+
+Render a single D2 file to SVG using the same WebAssembly engine as the JavaScript API:
+
+```sh
+npx @d2lang/d2 input.d2 output.svg
+```
+
+Omit the output path to write `input.svg` beside the source. Use `-` for stdin or stdout:
+
+```sh
+printf 'client -> server\n' | npx @d2lang/d2 - - > architecture.svg
+```
+
+For a project with imports, supply a file map through the [JavaScript API](#imports)
+or use the [native D2 CLI](https://github.com/d2lang/d2/blob/master/docs/INSTALL.md).
+
 ### Nightly
 
 CI checks `master` daily and publishes a new `@d2lang/d2@nightly` when D2.js or its

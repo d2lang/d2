@@ -15,6 +15,9 @@
     "access": "public"
   },
   "type": "module",
+  "bin": {
+    "d2": "./cli/d2.js"
+  },
   "main": "./dist/node-cjs/index.js",
   "module": "./dist/node-esm/index.js",
   "browser": "./dist/browser/index.js",
@@ -35,6 +38,7 @@
     "./worker": "./dist/browser/worker.js"
   },
   "files": [
+    "cli/d2.js",
     "dist",
     "index.d.ts",
     "LICENSE.txt",

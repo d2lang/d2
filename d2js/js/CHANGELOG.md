@@ -5,6 +5,8 @@ include changes to the main d2 project.**
 
 ## Next
 
+- Render a single D2 file to SVG with `npx @d2lang/d2 input.d2 output.svg` using the package's existing WebAssembly runtime.
+
 ## [0.2.0]
 ### November 26, 2026
 
