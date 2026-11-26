@@ -4,20 +4,13 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
-type shapeCode struct {
-	shapeSquare
+var codeKind = shapeKind{
+	typ:         CODE_TYPE,
+	rectangular: true,
+	paddingX:    0,
+	paddingY:    0,
 }
 
 func NewCode(box *geo.Box) Shape {
-	shape := shapeCode{
-		shapeSquare: shapeSquare{
-			baseShape: newShapeBase(CODE_TYPE, box),
-		},
-	}
-	*shape.FullShape = shape
-	return shape
-}
-
-func (s shapeCode) GetDefaultPadding() (paddingX, paddingY float64) {
-	return 0, 0
+	return newShape(&codeKind, box)
 }

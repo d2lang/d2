@@ -7,19 +7,21 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeHexagon struct {
-	*baseShape
+var hexagonKind = shapeKind{
+	typ:             HEXAGON_TYPE,
+	paddingX:        defaultPadding / 2,
+	paddingY:        defaultPadding / 2,
+	innerBox:        hexagonInnerBox,
+	dimensionsToFit: hexagonDimensionsToFit,
+	path:            hexagonPath,
+	trace:           hexagonTrace,
 }
 
 func NewHexagon(box *geo.Box) Shape {
-	shape := shapeHexagon{
-		baseShape: newShapeBase(HEXAGON_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&hexagonKind, box)
 }
 
-func (s shapeHexagon) GetInnerBox() *geo.Box {
+func hexagonInnerBox(s *shape) *geo.Box {
 	width := s.Box.Width
 	height := s.Box.Height
 	tl := s.Box.TopLeft.Copy()
@@ -48,30 +50,12 @@ func hexagonOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float6
 	return pc
 }
 
-func (s shapeHexagon) Perimeter() []geo.Intersectable {
-	return hexagonPath(s.Box).Path
+func hexagonTrace(box *geo.Box, t *borderTracer) {
+	hexagonOutline(box, t.newPath)
 }
 
-func (s shapeHexagon) traceBorder(t *borderTracer) {
-	hexagonOutline(s.Box, t.newPath)
-}
-
-func (s shapeHexagon) GetSVGPathData() []string {
-	return []string{
-		hexagonPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeHexagon) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(hexagonPath(s.Box))
-}
-
-func (s shapeHexagon) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func hexagonDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	totalWidth := 1.5 * (width + paddingX)
 	totalHeight := 1.5 * (height + paddingY)
 	return math.Ceil(totalWidth), math.Ceil(totalHeight)
-}
-
-func (s shapeHexagon) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding / 2, defaultPadding / 2
 }
