@@ -1,6 +1,6 @@
 #### Features 🚀
 
-- Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
+- Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with board or container variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
 
 - Animate grid edits between steps with the same `animate-duration` setting. Cells slide to their new positions, arrivals grow in, and departures shrink away. An inserted row or column opens as a group. A replacement can hand off in place, and a summary cell can unfold to show a nested grid.
 
@@ -96,6 +96,8 @@
 
 - d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
 - compiler:
+  - Resolve forward variable references in full. Map templates keep the scope where they were declared, and local aliases read the same value as direct references.
+  - Glob filters match labels and properties supplied by variables. Markdown links can use variables in their URLs and titles.
   - Apply recursive connection styles efficiently to diagrams with few or no
     connections, including large SQL tables. [#2946](https://github.com/d2lang/d2/issues/2946)
   - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)

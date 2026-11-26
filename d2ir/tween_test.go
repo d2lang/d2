@@ -88,6 +88,103 @@ steps: {
 	}
 }
 
+func TestTweenContainerVariables(t *testing.T) {
+	const source = `
+vars: {p: 10}
+panel: {
+  vArS."p": 0
+  meter: ${P}
+  child: {vars.p: 20; meter: ${p}}
+  steps: {vars.p: 30; meter: ${p}}
+}
+other: {meter: ${p}}
+steps: {
+  next: {
+    panel.vars.p: 4
+    panel.child.VARS.P: 24
+    panel.steps.vars.p: 34
+    other.vars.p: 14
+    steps.further: {panel.vars.p: 8}
+  }
+}
+`
+	m, err := compileTween(t, source, d2ir.CompileOptions{AnimateTweens: go2.Pointer(true), AnimateDuration: go2.Pointer(int64(80))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "next").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d frames", len(step.TweenFrames))
+	}
+	for _, tc := range []struct {
+		path            []string
+		start, mid, end string
+	}{
+		{[]string{"panel", "meter"}, "0", "2", "4"},
+		{[]string{"panel", "child", "meter"}, "20", "22", "24"},
+		{[]string{"panel", "steps", "meter"}, "30", "32", "34"},
+		{[]string{"other", "meter"}, "10", "12", "14"},
+	} {
+		for i, frame := range []*d2ir.Map{step.TweenFrames[0], step.TweenFrames[1], step} {
+			want := []string{tc.start, tc.mid, tc.end}[i]
+			if got := tweenText(t, frame, tc.path...); got != want {
+				t.Errorf("frame %d %v = %q, want %q", i, tc.path, got, want)
+			}
+		}
+	}
+	nested := tweenField(step, "steps", "further").Map()
+	if len(nested.TweenFrames) != 2 || tweenText(t, nested.TweenFrames[1], "panel", "meter") != "6" {
+		t.Fatalf("nested step did not interpolate from its parent")
+	}
+}
+
+func TestTweenContainerVariablesWithoutBoardVariables(t *testing.T) {
+	m, err := compileTween(t, `panel: {vars.p: 0; meter: ${p}; note: |md ${p} | }
+steps: {next: {panel.vars.p: 4}}`, d2ir.CompileOptions{AnimateTweens: go2.Pointer(true), AnimateDuration: go2.Pointer(int64(80))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "next").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d frames", len(step.TweenFrames))
+	}
+	for _, name := range []string{"meter", "note"} {
+		if got := tweenText(t, step.TweenFrames[1], "panel", name); got != "2" {
+			t.Errorf("midpoint %s = %q, want 2", name, got)
+		}
+	}
+}
+
+func TestTweenKeywordVariables(t *testing.T) {
+	m, err := compileTween(t, `vars: {"width": 0; height: 10; "height": 20; props."style": 30}
+read: "${width}/${"width"} ${height}/${"height"} ${props.style}"
+panel: {vars."height": 40; read: "${height}/${"height"}"}
+steps: {next: {vars: {width: 4; height: 14; "height": 24; props.style: 34}; panel.vars.height: 44}}
+`, d2ir.CompileOptions{AnimateTweens: go2.Pointer(true), AnimateDuration: go2.Pointer(int64(80))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "next").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d frames", len(step.TweenFrames))
+	}
+	for i, tc := range []struct {
+		frame       *d2ir.Map
+		want, local string
+	}{
+		{step.TweenFrames[0], "0/0 10/20 30", "10/40"},
+		{step.TweenFrames[1], "2/0 12/22 32", "27/40"},
+		{step, "4/0 14/24 34", "44/40"},
+	} {
+		if got := tweenText(t, tc.frame, "read"); got != tc.want {
+			t.Errorf("frame %d = %q, want %q", i, got, tc.want)
+		}
+		if got := tweenText(t, tc.frame, "panel", "read"); got != tc.local {
+			t.Errorf("local frame %d = %q, want %q", i, got, tc.local)
+		}
+	}
+}
+
 func TestTweenImportsAndScopes(t *testing.T) {
 	opts := d2ir.CompileOptions{
 		AnimateTweens: go2.Pointer(true),
@@ -293,6 +390,36 @@ layers: {sensor: @module.layers.panel}`, opts)
 		t.Fatalf("automatic mode exceeded the static import budget: %v", err)
 	}
 
+}
+
+func TestTweenForwardVariableInSelectedImport(t *testing.T) {
+	opts := d2ir.CompileOptions{FS: fstest.MapFS{
+		"module.d2": {Data: []byte(`layers: {panel: {
+  vars.p: 0
+  steps: {load: {
+    vars.p: 4
+    plain: "${p} ${url}"
+    markdown: |md [${p}](${url}) |
+  }}
+}}
+vars: {url: "https://example.com/${path}"; path: runbook}`)},
+	}}
+	m, err := compileTween(t, `vars: {url: wrong; d2-config: {animate-interval: 1s; animate-duration: 80ms}}
+layers: {sensor: @module.layers.panel}`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "layers", "sensor", "steps", "load").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d frames", len(step.TweenFrames))
+	}
+	mid := step.TweenFrames[1]
+	if got := tweenText(t, mid, "plain"); got != "2 https://example.com/runbook" {
+		t.Errorf("plain midpoint = %q", got)
+	}
+	if got := tweenText(t, mid, "markdown"); got != "[2](https://example.com/runbook)" {
+		t.Errorf("Markdown midpoint = %q", got)
+	}
 }
 
 func TestTweenImportedMarkdownResolvesStepScope(t *testing.T) {

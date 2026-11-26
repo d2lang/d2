@@ -15,18 +15,8 @@ type tweenBinding struct {
 	markdownOuter map[string]string
 }
 
-type stepChanges struct {
-	variables []tweenVariable
-	direct    []directChange
-}
-
 type tweenValue interface {
 	at(fraction float64) string
-}
-
-type tweenVariable struct {
-	path  []d2ast.String
-	value tweenValue
 }
 
 type tweenNumericValue struct {
@@ -68,46 +58,62 @@ func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) (markdownOuterS
 			return -1
 		}
 	}
-	for step, vars := range varsStack {
-		if NodeBoardKind(ParentMap(vars)) != BoardStep {
-			continue
-		}
-		boxes = slices.Clone(boxes)
-		if len(c.importStack) > 1 {
-			// A selected board can leave its module's outer scope. Bind those
-			// references here while leaving its own step variables editable.
-			for i, box := range boxes {
-				if box.Substitution == nil {
-					continue
-				}
-				value, scopeIndex := c.resolveVariable(varsStack, node, box.Substitution)
-				if scopeIndex > step && value.Primary() != nil {
-					text := value.Primary().Value.ScalarString()
-					boxes[i] = d2ast.InterpolationBox{String: &text}
-				}
-			}
-		}
-		// Substitution replaces boxes or coalesces the string. Its original
-		// text and substitution paths remain immutable and can be shared.
-		switch value := primary.Value.(type) {
-		case *d2ast.UnquotedString:
-			binding := *value
-			binding.Value = boxes
-			primary.binding = &tweenBinding{source: &binding}
-		case *d2ast.DoubleQuotedString:
-			binding := *value
-			binding.Value = boxes
-			primary.binding = &tweenBinding{source: &binding}
-		case *d2ast.BlockString:
-			binding := *value
-			primary.binding = &tweenBinding{source: &binding}
-			if len(c.importStack) > 1 && step+1 < len(varsStack) {
-				return step + 1
-			}
-		}
+	outer := stepVariableScopeCount(varsStack)
+	if outer == 0 {
 		return -1
 	}
+	boxes = slices.Clone(boxes)
+	if len(c.importStack) > 1 {
+		// A selected board can leave its module's outer scope. Bind those
+		// references here while leaving its own step variables editable.
+		for i, box := range boxes {
+			if box.Substitution == nil {
+				continue
+			}
+			value, scopeIndex, ok := c.readVariable(varsStack, node, box.Substitution)
+			if ok && scopeIndex >= outer && value.Primary() != nil {
+				text := value.Primary().Value.ScalarString()
+				boxes[i] = d2ast.InterpolationBox{String: &text}
+			}
+		}
+	}
+	// Substitution replaces boxes or coalesces the string. Its original
+	// text and substitution paths remain immutable and can be shared.
+	switch value := primary.Value.(type) {
+	case *d2ast.UnquotedString:
+		binding := *value
+		binding.Value = boxes
+		primary.binding = &tweenBinding{source: &binding}
+	case *d2ast.DoubleQuotedString:
+		binding := *value
+		binding.Value = boxes
+		primary.binding = &tweenBinding{source: &binding}
+	case *d2ast.BlockString:
+		binding := *value
+		primary.binding = &tweenBinding{source: &binding}
+		if len(c.importStack) > 1 && outer < len(varsStack) {
+			return outer
+		}
+	}
 	return -1
+}
+
+// The innermost step can have variables only in containers, for example when
+// timing comes from CLI flags. All scopes up through that step stay live.
+func stepVariableScopeCount(scopes []*Map) int {
+	if len(scopes) == 0 {
+		return 0
+	}
+	i := 0
+	for m := ParentMap(scopes[0]); m != nil; m = ParentMap(m) {
+		if i < len(scopes) && m == ParentMap(scopes[i]) {
+			i++
+		}
+		if NodeBoardKind(m) == BoardStep {
+			return i
+		}
+	}
+	return 0
 }
 
 // A whole-map substitution or a spread can provide configuration during
@@ -169,12 +175,8 @@ func (c *compiler) compileStepTweens(board *Map, duration int) {
 				continue
 			}
 			if group == "steps" {
-				vars := child.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
-				changes := stepChanges{direct: c.directChanges(previous, child)}
-				if vars != nil {
-					c.findTweenChanges(tweenVarScopes(previous), vars, nil, &changes.variables)
-				}
-				if len(changes.variables) > 0 || hasDirectMotion(changes.direct) {
+				changes := c.stepChanges(previous, child)
+				if hasTweenMotion(changes) {
 					c.sampleStep(child, changes, duration)
 				}
 				previous = child
@@ -193,37 +195,34 @@ func tweenVarScopes(board *Map) (scopes []*Map) {
 	return scopes
 }
 
-func (c *compiler) findTweenChanges(previous []*Map, vars *Map, prefix []d2ast.String, changes *[]tweenVariable) {
-	if vars == nil || c.stopped() {
-		return
-	}
+// framePath addresses the destination vars map in each sample. variablePath
+// addresses the same variable in the previous board's lexical scopes.
+func (c *compiler) variableChanges(changes []tweenChange, previous []*Map, vars *Map, framePath []propertyPathPart, variablePath []*d2ast.StringBox) []tweenChange {
 	for _, field := range vars.Fields {
-		if field.suspended || field.Name == nil || (len(prefix) == 0 && field.Name.ScalarString() == "d2-config") {
+		if c.stopped() {
+			break
+		}
+		if field.suspended || field.Name == nil || (len(variablePath) == 0 && field.Name.ScalarString() == "d2-config") {
 			continue
 		}
-		path := append(prefix, field.Name)
+		path := append(variablePath, d2ast.MakeValueBox(field.Name).StringBox())
 		if field.Map() != nil {
-			c.findTweenChanges(previous, field.Map(), path, changes)
+			changes = c.variableChanges(changes, previous, field.Map(), append(framePath, propertyPathPart{field: field.Name}), path)
 			continue
 		}
 		if field.Primary() == nil || field.Composite != nil {
 			continue
 		}
-		var start *Field
-		for _, scope := range previous {
-			start = scope.getFieldIndexed(path...)
-			if start != nil {
-				break
-			}
-		}
+		start, _ := c.resolveVariable(previous, vars, &d2ast.Substitution{Path: path})
 		if start == nil || start.suspended || start.Primary() == nil || start.Composite != nil {
 			continue
 		}
 		value, ok := tweenScalarChange(start.Primary().Value.ScalarString(), field.Primary().Value.ScalarString())
 		if ok {
-			*changes = append(*changes, tweenVariable{path: slices.Clone(path), value: value})
+			changes = append(changes, tweenChange{path: slices.Clone(framePath), property: field.Name, value: value})
 		}
 	}
+	return changes
 }
 
 func tweenScalarChange(start, end string) (tweenValue, bool) {
@@ -304,7 +303,7 @@ func tweenNumber(raw string) (number float64, unit string, precision int, valid 
 	return number, unit, precision, true
 }
 
-func (c *compiler) sampleStep(board *Map, changes stepChanges, duration int) {
+func (c *compiler) sampleStep(board *Map, changes []tweenChange, duration int) {
 	// The parent step's samples never include its child boards.
 	view := *board
 	view.Fields = nil
@@ -328,7 +327,7 @@ func (c *compiler) sampleStep(board *Map, changes stepChanges, duration int) {
 // Each sampled board obeys the same expansion limit as an authored board.
 // An additional shared budget limits the sum across the entire animation to
 // one full-length tween's worth of that work, even for many short tweens.
-func (c *compiler) sampleTween(template *Map, changes stepChanges, outerVars []*Map, fraction float64) *Map {
+func (c *compiler) sampleTween(template *Map, changes []tweenChange, outerVars []*Map, fraction float64) *Map {
 	base := c.variableExpansion
 	if c.tweenExpansion == nil {
 		limit := int64(math.MaxInt64)
@@ -366,11 +365,7 @@ func (c *compiler) sampleTween(template *Map, changes stepChanges, outerVars []*
 	if c.stopped() {
 		return nil
 	}
-	vars := frame.getFieldIndexed(d2ast.FlatUnquotedString("vars")).Map()
-	for _, v := range changes.variables {
-		setTweenValue(vars.getFieldIndexed(v.path...).Primary_, v.value, fraction)
-	}
-	applyDirectChanges(frame, changes.direct, fraction)
+	applyTweenChanges(frame, changes, fraction)
 	c.compileSubstitutions(frame, outerVars)
 	if c.stopped() || !c.err.Empty() {
 		return nil

@@ -150,8 +150,10 @@ type Scalar struct {
 	// binding retains a step expression for interpolation after its endpoint resolves.
 	binding  *tweenBinding
 	markdown *markdownBinding
-	parent   Node
-	Value    d2ast.Scalar `json:"value"`
+	// globPattern is shared read-only when an interpolated scalar is used as a filter.
+	globPattern *interpolatedGlobPattern
+	parent      Node
+	Value       d2ast.Scalar `json:"value"`
 	// TweenOffset retains precision lost when formatting a numeric sample for
 	// text. Continuous paint properties can use it for the unrounded value.
 	TweenOffset float64 `json:"-"`

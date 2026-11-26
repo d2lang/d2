@@ -79,6 +79,8 @@ func formatCyclicChain(cyclicChain []string) string {
 // Returns either *Map or *Field.
 func (c *compiler) _import(imp *d2ast.Import, importer Node) (Node, bool) {
 	_, fieldImport := importer.(*Field)
+	c.filterImports = append(c.filterImports, filterImport{importer, imp})
+	defer func() { c.filterImports = c.filterImports[:len(c.filterImports)-1] }()
 	return c.__import(imp, importTemplateSafeAt(importer), fieldImport)
 }
 
@@ -142,6 +144,7 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 	}
 
 	errCount := len(c.err.Errors)
+	filterReads := c.filterReads
 	ast, openErr, ok := c.loadImportAST(impPath, imp, c.err)
 	if !ok {
 		if openErr != nil {
@@ -171,7 +174,8 @@ func (c *compiler) __import(imp *d2ast.Import, templateSafe, fieldImport bool) (
 	}
 
 	c.seenImports[impPath] = struct{}{}
-	if cacheable && len(c.err.Errors) == errCount {
+	// A variable-dependent filter may have read a binding supplied by the caller.
+	if cacheable && len(c.err.Errors) == errCount && filterReads == c.filterReads {
 		if !c.reserveVariableCopy(imp, ir) {
 			return nil, false
 		}

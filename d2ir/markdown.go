@@ -16,14 +16,25 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 	primary := node.Primary()
 	replay := newMarkdownReplay(primary, value, len(c.importStack) > 1)
 	names := make(map[string]string)
+	type declaration struct {
+		field *Field
+		scope int
+	}
+	var pending map[string]declaration
 	seen := make(map[Node]struct{})
 	var outerNames map[string]bool
 	for i, scope := range scopes {
-		c.collectMarkdownNames(scope, "", source, seen, func(name, text string) {
+		c.collectMarkdownNames(scope, "", source, seen, func(name string, field *Field) {
 			if _, exists := names[name]; exists {
 				return
 			}
-			names[name] = text
+			names[name] = field.Primary().Value.ScalarString()
+			if hasSubstitution(field.Primary().Value) {
+				if pending == nil {
+					pending = make(map[string]declaration)
+				}
+				pending[name] = declaration{field, i}
+			}
 			if outerStart >= 0 && i >= outerStart {
 				if outerNames == nil {
 					outerNames = make(map[string]bool)
@@ -57,7 +68,11 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 		token := "${" + key + "}"
 		parsed, err := d2parser.ParseValue(token)
 		if s, ok := parsed.(*d2ast.UnquotedString); err == nil && ok && len(s.Value) == 1 && s.Value[0].Substitution != nil {
-			field, scope := c.resolveVariable(scopes, node, s.Value[0].Substitution)
+			field, scope, ok := c.readVariable(scopes, node, s.Value[0].Substitution)
+			if !ok {
+				replay.missing = true
+				return token, true
+			}
 			if field == nil {
 				replay.missing = true
 				if captured {
@@ -76,6 +91,14 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 			}
 			text, exists = field.Primary().Value.ScalarString(), true
 			outer = outerStart >= 0 && scope >= outerStart
+		} else if decl, ok := pending[key]; ok {
+			// Historical literal patterns can contain a closing brace and
+			// consequently have no parseable D2 substitution path.
+			if !c.resolveVariableField(scopes[decl.scope:], node, decl.field, source) || decl.field.Primary() == nil {
+				replay.missing = true
+				return token, true
+			}
+			text = decl.field.Primary().Value.ScalarString()
 		}
 		if exists {
 			replay.record(key, text)
@@ -109,7 +132,7 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 
 // Collect full path spellings only. A leaf inside db, for instance, is named
 // db.host; it does not declare host in its enclosing variable scope.
-func (c *compiler) collectMarkdownNames(vars *Map, prefix string, source d2ast.Node, seen map[Node]struct{}, add func(string, string)) {
+func (c *compiler) collectMarkdownNames(vars *Map, prefix string, source d2ast.Node, seen map[Node]struct{}, add func(string, *Field)) {
 	if vars == nil || c.stopped() || !c.visitSubstitutionNode(vars, source, seen) {
 		return
 	}
@@ -117,7 +140,7 @@ func (c *compiler) collectMarkdownNames(vars *Map, prefix string, source d2ast.N
 		if c.stopped() || !c.visitSubstitutionNode(f, source, seen) {
 			return
 		}
-		if f.Primary() == nil && f.Map() == nil {
+		if f.Name == nil || (f.Primary() == nil && f.Map() == nil) {
 			continue
 		}
 		name := f.Name.ScalarString()
@@ -126,7 +149,7 @@ func (c *compiler) collectMarkdownNames(vars *Map, prefix string, source d2ast.N
 		}
 		path := prefix + name
 		if f.Primary() != nil {
-			add(path, f.Primary().Value.ScalarString())
+			add(path, f)
 		}
 		if children := f.Map(); children != nil {
 			c.collectMarkdownNames(children, path+".", source, seen, add)
