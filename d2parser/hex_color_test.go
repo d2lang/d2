@@ -1,6 +1,7 @@
 package d2parser_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -109,5 +110,37 @@ func TestHashCommentAfterMissingValue(t *testing.T) {
 		if _, err := d2parser.ParseMapKey("x: " + literal); err == nil || !strings.Contains(err.Error(), "missing value after colon") {
 			t.Errorf("%q: expected missing value diagnostic, got %v", literal, err)
 		}
+	}
+}
+
+func TestHashLabelSourceRange(t *testing.T) {
+	for _, literal := range []string{`#${team}`, `#oncall\!`, `#📟${team}`, `#oncall\📟`, "#ticket\\ "} {
+		for _, utf16 := range []bool{false, true} {
+			const prefix = "alert: "
+			m, err := d2parser.Parse("alerts.d2", strings.NewReader(prefix+literal+"  # note\n"), &d2parser.ParseOptions{UTF16Pos: utf16})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := m.Nodes[0].MapKey.Value.UnquotedString.Range
+			start := d2ast.Position{}.AdvanceString(prefix, utf16)
+			end := start.AdvanceString(literal, utf16)
+			if got.Start != start || got.End != end {
+				t.Errorf("range of %q (UTF16Pos=%t) = [%v, %v), want [%v, %v)", literal, utf16, got.Start, got.End, start, end)
+			}
+		}
+	}
+}
+
+func TestHashLabelWithWildcardsAndVariable(t *testing.T) {
+	const label = `#active *${team}x*`
+	value, err := d2parser.ParseValue(label)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := value.(*d2ast.UnquotedString).Pattern, []string{"#active ", "*", "x", "*"}; !slices.Equal(got, want) {
+		t.Errorf("wildcard pattern = %q, want %q", got, want)
+	}
+	if got := d2format.Format(value); got != label {
+		t.Errorf("formatted label = %q, want %q", got, label)
 	}
 }

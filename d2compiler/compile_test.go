@@ -5905,6 +5905,14 @@ hi: 1 ${x}
 				},
 			},
 			{
+				name: "quoted-empty",
+				run: func(t *testing.T) {
+					assertCompile(t, `vars: {steps}
+hi: "count: ${steps}"
+`, `d2/testdata/d2compiler/TestCompile2/vars/errors/quoted-empty.d2:2:1: cannot substitute variable without value: "steps"`)
+				},
+			},
+			{
 				name: "quoted-map",
 				run: func(t *testing.T) {
 					assertCompile(t, `

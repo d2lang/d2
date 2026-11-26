@@ -79,3 +79,36 @@ func TestVariableDataExcludesConfigAndLegend(t *testing.T) {
 		}
 	}
 }
+
+func TestImportedKeywordVariables(t *testing.T) {
+	fs := fstest.MapFS{
+		"lib.d2": {Data: []byte(`"classes": {item: {value: literal}}
+classes: {item: {label: imported}}
+steps: {release: {label: deployed}}
+`)},
+		"mid.d2": {Data: []byte(`vars: {lib: @lib; style: @lib; steps: @lib}`)},
+	}
+	const source = `...@mid
+literal: ${lib."classes".item.value}
+imported: ${lib.classes.item.label}
+board: ${style.steps.release.label}
+selected: @mid.vars.lib.classes.item.label
+combined: @mid.vars.steps.classes.item.label
+group: {
+  vars: {lib: {"classes": {item: {label: local}}}}
+  from-outer: ${lib.classes.item.label}
+  from-inner: ${lib."classes".item.label}
+}
+`
+	g, _, err := d2compiler.Compile("main.d2", strings.NewReader(source), &d2compiler.CompileOptions{FS: fs})
+	assert.Success(t, err)
+	for id, want := range map[string]string{
+		"literal": "literal", "imported": "imported", "board": "deployed",
+		"selected": "imported", "combined": "imported",
+	} {
+		assert.String(t, want, g.Root.Children[id].Label.Value)
+	}
+	group := g.Root.Children["group"]
+	assert.String(t, "imported", group.Children["from-outer"].Label.Value)
+	assert.String(t, "local", group.Children["from-inner"].Label.Value)
+}

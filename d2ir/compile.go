@@ -694,13 +694,19 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 					c.errorf(node.LastRef().AST(), `could not resolve variable "%s"`, strings.Join(box.Substitution.IDA(), "."))
 					return
 				}
-				if resolvedField.Primary() == nil && resolvedField.Composite != nil {
-					c.errorf(node.LastRef().AST(), `cannot substitute map variable "%s" in quotes`, strings.Join(box.Substitution.IDA(), "."))
+				primary := resolvedField.Primary()
+				if primary == nil {
+					name := strings.Join(box.Substitution.IDA(), ".")
+					if resolvedField.Composite == nil {
+						c.errorf(node.LastRef().AST(), `cannot substitute variable without value: "%s"`, name)
+					} else {
+						c.errorf(node.LastRef().AST(), `cannot substitute map variable "%s" in quotes`, name)
+					}
 					return
 				}
-				s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
+				s.Value[i].String = go2.Pointer(primary.Value.ScalarString())
 				if len(s.Value) == 1 {
-					node.Primary().TweenOffset = resolvedField.Primary().TweenOffset
+					node.Primary().TweenOffset = primary.TweenOffset
 				}
 				subbed = true
 			}
@@ -1016,7 +1022,7 @@ func resolveSubstitution(vars *Map, node Node, substitution *d2ast.Substitution,
 		f := vars.getFieldIndexed(name)
 		if f == nil && vars != nil && fallback {
 			if _, reserved := d2ast.ReservedKeywords[strings.ToLower(name.ScalarString())]; reserved {
-				key := makeFieldIndexKey(name)
+				key := makeFieldIndexKey(vars.fieldName(name, false))
 				key.unquotedReserved = !key.unquotedReserved
 				vars.ensureFieldIndex()
 				f = vars.fieldIndex[key]

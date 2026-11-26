@@ -1198,6 +1198,9 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 	// TODO: fix unquoted end whitespace handling to peekNotSpace
 	lastNonSpace := p.pos
 	defer s.Range.End.From(&lastNonSpace)
+	// Hash-prefixed values include complete substitutions and escapes in their
+	// token range. Other bare strings retain their existing source positions.
+	hashPrefixed := false
 
 	var sb strings.Builder
 	var rawb strings.Builder
@@ -1293,6 +1296,7 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 			if eof || unicode.IsSpace(next) || strings.ContainsRune("#;{}", next) {
 				return s
 			}
+			hashPrefixed = true
 			p.peek()
 		case ']':
 			if ctx.inArray {
@@ -1330,6 +1334,11 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 			if sb.Len() == 0 {
 				s.Pattern = append(s.Pattern, "*")
 			} else {
+				// An interpolation can start a shorter text fragment between
+				// wildcards. A prior offset outside it belongs to the old fragment.
+				if lastPatternIndex > sb.Len() {
+					lastPatternIndex = 0
+				}
 				s.Pattern = append(s.Pattern, sb.String()[lastPatternIndex:], "*")
 			}
 			lastPatternIndex = len(sb.String()) + 1
@@ -1357,6 +1366,9 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 				}
 				subst := p.parseSubstitution(start, false)
 				s.Value = append(s.Value, d2ast.InterpolationBox{Substitution: subst})
+				if hashPrefixed {
+					lastNonSpace = p.pos
+				}
 				continue
 			}
 		}
@@ -1395,6 +1407,9 @@ func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString
 		sb.WriteRune(d2string.DecodeEscape(r2))
 		rawb.WriteByte('\\')
 		rawb.WriteRune(r2)
+		if hashPrefixed {
+			lastNonSpace = p.pos
+		}
 	}
 }
 
