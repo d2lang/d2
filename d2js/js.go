@@ -8,7 +8,9 @@ import (
 	"github.com/d2lang/d2/d2js/d2wasm"
 )
 
-func main() {
+// register exports the D2 API on the JavaScript global object and tells the
+// loader that it is there.
+func register() {
 	api := d2wasm.NewD2API()
 
 	api.Register("getCompletions", d2wasm.GetCompletions)
@@ -33,5 +35,4 @@ func main() {
 	if cb := js.Global().Get("onWasmInitialized"); !cb.IsUndefined() {
 		cb.Invoke()
 	}
-	select {}
 }

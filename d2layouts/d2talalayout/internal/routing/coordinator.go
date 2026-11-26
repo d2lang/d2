@@ -8,7 +8,6 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"sync"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
@@ -98,16 +97,11 @@ func generateRouteFlavorResponsesWith(
 	defer cancelWorkers()
 
 	responseChan := make(chan routeFlavorResult, len(routers))
-	var workers sync.WaitGroup
-	for i, router := range routers {
-		workers.Go(func() {
-			responseChan <- runRouteFlavorWorker(workerCtx, i, router, straightLineFallback, worker)
-		})
-	}
-	go func() {
-		workers.Wait()
+	startRouteFlavors(len(routers), func(i int) {
+		responseChan <- runRouteFlavorWorker(workerCtx, i, routers[i], straightLineFallback, worker)
+	}, func() {
 		close(responseChan)
-	}()
+	})
 	return collectRouteFlavorResponses(ctx, responseChan, cancelWorkers)
 }
 

@@ -313,6 +313,9 @@ func TestLayoutPlanRejectsInvalidInput(t *testing.T) {
 }
 
 func TestCoordinateLocalSeedsRunsAllWithBoundedConcurrency(t *testing.T) {
+	if !seedsRunConcurrently {
+		t.Skip("seeds run one at a time without a scheduler")
+	}
 	synctest.Test(t, func(t *testing.T) {
 		seeds := []int64{1, 2, 3, 4, 5, 6}
 		var active atomic.Int32
