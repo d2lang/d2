@@ -22,6 +22,9 @@
 .Ar play Ar file.d2
 .Nm d2
 .Ar validate Ar file.d2
+.Nm d2
+.Ar lsp
+.Op Fl -stdio
 .Sh DESCRIPTION
 .Nm
 compiles and renders
@@ -291,6 +294,8 @@ Pass - to read D2 from stdin and always print the formatted source on success.
 Opens the file in playground, an online web viewer (https://play.d2lang.com)
 .It Ar validate Ar file.d2
 Validates file.d2
+.It Ar lsp Op Fl -stdio
+Runs the D2 language server on standard input and output for editors.
 .El
 .Sh ENVIRONMENT VARIABLES
 Many flags can also be set with environment variables.
