@@ -18,6 +18,8 @@
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
 
+- `d2 lsp` runs a language server on stdin and stdout. Editors get errors as you type, formatting, completion, hover, outline, folding, links, go to definition, find references and rename for shapes, including across imported files. See the [editor setup guide](https://github.com/d2lang/d2/blob/master/docs/LSP.md).
+
 #### Improvements 🧹
 
 - Parser authors can use the [D2 grammar](https://github.com/d2lang/d2/tree/master/docs/grammar) and [conformance cases](https://github.com/d2lang/d2/tree/master/docs/grammar/testdata) to check their implementations.
