@@ -84,6 +84,10 @@ func privateNetworkEnvDefault(ms *xmain.State) (bool, error) {
 
 func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx = log.WithDefault(ctx)
+	// Protocol servers own stdin and stdout and parse their own flags.
+	if len(ms.Opts.Args) > 0 && ms.Opts.Args[0] == "mcp" {
+		return mcpCmd(ctx, ms, ms.Opts.Args[1:])
+	}
 	// These should be kept up-to-date with the d2 man page
 	watchFlag, err := ms.Opts.Bool("D2_WATCH", "watch", "w", false, "watch for changes to input and live reload. Use $HOST and $PORT to specify the listening address.\n(default localhost:0, which will open on a randomly available local port).")
 	if err != nil {

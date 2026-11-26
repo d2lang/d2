@@ -3,6 +3,7 @@ package d2ascii
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"os"
@@ -35,6 +36,8 @@ type ASCIIartist struct {
 type RenderOpts struct {
 	Scale   *float64
 	Charset charset.Type
+	// MaxCells bounds the dense canvas allocation. Zero leaves the size unrestricted.
+	MaxCells int
 }
 
 type Point = asciiroute.Point
@@ -262,7 +265,11 @@ func (a *ASCIIartist) Render(ctx context.Context, diagram *d2target.Diagram, opt
 	padding := maxLabelLen + asciishapes.MinLabelPadding
 	log.Debug(ctx, "canvas setup", slog.Int("maxLabelLen", maxLabelLen), slog.Int("padding", padding), slog.Int("width", w+padding+1), slog.Int("height", h+padding+1))
 
-	a.canvas = asciicanvas.New(w+padding+1, h+padding+1)
+	width, height := w+padding+1, h+padding+1
+	if opts.MaxCells > 0 && (width <= 0 || height <= 0 || width > opts.MaxCells/height) {
+		return nil, fmt.Errorf("text canvas exceeds limit of %d cells", opts.MaxCells)
+	}
+	a.canvas = asciicanvas.New(width, height)
 
 	log.Debug(ctx, "processing shapes", slog.Int("count", len(diagram.Shapes)), slog.Int("xOffset", xOffset), slog.Int("yOffset", yOffset))
 	for i, shape := range diagram.Shapes {

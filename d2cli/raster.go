@@ -252,6 +252,10 @@ func buildSceneWithAssets(ctx context.Context, diagram *d2target.Diagram, opts d
 	if err != nil {
 		return nil, err
 	}
+	return buildSceneWithAssetsAndFonts(ctx, diagram, opts, assetOptions, fontOptions)
+}
+
+func buildSceneWithAssetsAndFonts(ctx context.Context, diagram *d2target.Diagram, opts d2svg.RenderOpts, assetOptions *d2scenebuild.AssetOptions, fontOptions *d2scenebuild.FontFallbackOptions) (*d2scene.Document, error) {
 	return buildSceneWithResourcesAndLinks(ctx, diagram, opts, assetOptions, fontOptions, d2scenebuild.LinkBudget{
 		MaxRegions: rasterMaxLinkRegions, MaxStringBytes: rasterMaxLinkStringBytes,
 	}, sceneFrameOptions{
@@ -276,7 +280,11 @@ func newFontFallbackOptions(totalBoards int) (*d2scenebuild.FontFallbackOptions,
 	if err != nil {
 		return nil, fmt.Errorf("raster export: initialize font fallback resolver: %w", err)
 	}
-	fontResolver, err := d2fonts.NewBundledFallbackResolver(systemFontResolver, d2fonts.BundledFallbackLimits{
+	return bundledFontFallbackOptions(totalBoards, systemFontResolver)
+}
+
+func bundledFontFallbackOptions(totalBoards int, next d2fonts.FallbackResolver) (*d2scenebuild.FontFallbackOptions, error) {
+	fontResolver, err := d2fonts.NewBundledFallbackResolver(next, d2fonts.BundledFallbackLimits{
 		MaxRequestedRunes: fontSearchRequestedRunes,
 		MaxBundledBytes:   fontBundledCopyBytes,
 		MaxResolvedBytes:  fontBundledResolvedBytes,

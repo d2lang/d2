@@ -96,6 +96,14 @@ jobs:
           # Disable chat notifications from the shared CI helper.
           CI_MAKE_ROOT: "0"
           GITHUB_TOKEN: ${{ github.token }}
+      - name: Test the MCP server with the race detector
+        run: go test -race ./d2cli/ -run TestMCP
+      - name: Build without the MCP server
+        run: |
+          go build -tags d2nomcp ./...
+          go build -tags d2nomcp -o "$RUNNER_TEMP/d2nomcp" .
+          if output=$("$RUNNER_TEMP/d2nomcp" mcp 2>&1); then exit 1; fi
+          grep -F 'this build of d2 does not include the MCP server' <<< "$output"
       - name: Test TALA and geometry with the race detector
         run: go test -race ./d2layouts/d2talalayout/... ./internal/geomath -count=1 -timeout=15m
       - name: Test the dagre adapter with its TinyGo-only shadow maps compiled in

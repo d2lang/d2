@@ -22,6 +22,11 @@
 .Ar play Ar file.d2
 .Nm d2
 .Ar validate Ar file.d2
+.Nm d2
+.Cm mcp
+.Op Fl -root Ar dir
+.Op Fl -no-ui
+.Op Fl -timeout Ar seconds
 .Sh DESCRIPTION
 .Nm
 compiles and renders
@@ -291,6 +296,25 @@ Pass - to read D2 from stdin and always print the formatted source on success.
 Opens the file in playground, an online web viewer (https://play.d2lang.com)
 .It Ar validate Ar file.d2
 Validates file.d2
+.It Cm mcp
+Run a Model Context Protocol server on standard input and standard output.
+AI clients can read the D2 language guide, check diagrams for errors, and render PNG, SVG or text.
+The server denies local file access by default.
+Use
+.Fl -root Ar dir
+or
+.Ev D2_MCP_ROOT
+to allow diagram files, imports and images beneath that directory.
+Use
+.Fl -no-ui
+or
+.Ev D2_MCP_NO_UI
+to disable the inline diagram viewer.
+Set the per-call time limit with
+.Fl -timeout Ar seconds
+or
+.Ev D2_MCP_TIMEOUT .
+The default is 60 seconds and the accepted range is 1 through 600.
 .El
 .Sh ENVIRONMENT VARIABLES
 Many flags can also be set with environment variables.
