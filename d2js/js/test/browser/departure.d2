@@ -1,0 +1,12 @@
+vars: {d2-config: {animate-interval: 1s; animate-duration: 400ms; pad: 8}}
+grid-columns: 1
+
+exchange: {
+  shape: sequence_diagram
+  client: Client {style.fill: "#fca311"}
+  api: API {style.fill: "#02c39a"}
+  client -> api: Request {style.stroke: "#8000ff"}
+}
+done: Done
+
+steps: {finish: {exchange: null}}

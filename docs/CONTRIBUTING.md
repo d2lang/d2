@@ -52,7 +52,19 @@ the Bun version from `d2js/js/package.json`, and Node.js 24 with npm.
 `./make.sh` also builds the D2.js WebAssembly package, tests its browser and Node
 entry points, and runs the Go WebAssembly tests. These checks use TinyGo and
 Binaryen and run daily, on release tags, and on demand in the **WASM tests**
-workflow. Subcommands to run individual parts of CI:
+workflow. PRs that change the CI policy, Go toolchain, or WASM test suite also
+run these checks. Chromium and WebKit exercise the packed library and animated SVGs.
+
+The required `ci` check waits for native tests, Windows imports, commit signatures,
+and the jobs selected by the PR's complete diff. Animation changes exercise SVG
+playback in both browsers. Changes to D2.js or its build chain also test a real
+worker from the packed npm library. Layout and Go dependency changes check all
+six targets against their binary and compressed archive size budgets. Packaging, installer, platform-specific, and Go
+toolchain changes also verify reproducibility, run native archive smoke tests,
+and exercise the Windows installers when enabled. To request all checks for a
+branch, run the **ci** workflow manually on that branch.
+
+Subcommands to run individual parts of CI:
 
 - `./make.sh fmt`
 - `./make.sh lint`
