@@ -15,6 +15,8 @@
 
 - elk: choose the layout algorithm in `vars.d2-config.data`. Configure the force model and repulsion, target edge length for stress, tree traversal and sibling order, and radial spacing, branch angles and compaction in D2 or on the CLI. Layered layout also supports edge merging and routing, spacing within layers, pipeline wrapping, declaration order and feedback edges. Set `elk-layer-constraint` on a shape to place it in the first or last layer.
 
+- `d2 mcp` runs a Model Context Protocol server on stdin and stdout. AI clients get three tools: `guide` returns the language guide for the running D2 version, `check` reports errors with line and column, and `render` returns a PNG, SVG or text drawing. Hosts that support MCP Apps display the diagram inline. Local files are readable only beneath `--root`.
+
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
 

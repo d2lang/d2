@@ -13,6 +13,9 @@ runs:
       run: |
         npm ci --ignore-scripts --no-audit --no-fund
         ./node_modules/.bin/playwright-core install --with-deps --only-shell chromium webkit
+    - name: Test the MCP diagram viewer
+      shell: bash
+      run: node --test d2js/js/test/browser/mcp-viewer.mjs
     - name: Test a packed browser worker and its SVG output
       if: inputs.packed == 'true'
       shell: bash

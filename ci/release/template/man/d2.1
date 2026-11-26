@@ -25,6 +25,11 @@
 .Nm d2
 .Ar lsp
 .Op Fl -stdio
+.Nm d2
+.Cm mcp
+.Op Fl -root Ar dir
+.Op Fl -no-ui
+.Op Fl -timeout Ar seconds
 .Sh DESCRIPTION
 .Nm
 compiles and renders
@@ -296,6 +301,28 @@ Opens the file in playground, an online web viewer (https://play.d2lang.com)
 Validates file.d2
 .It Ar lsp Op Fl -stdio
 Runs the D2 language server on standard input and output for editors.
+.It Cm mcp
+Run a Model Context Protocol server on standard input and standard output.
+AI clients can read the D2 language guide, check diagrams for errors, and render PNG, SVG or text.
+The server denies local file access by default.
+Use
+.Fl -root Ar dir
+or
+.Ev D2_MCP_ROOT
+to allow .d2 source files and local images beneath that directory.
+Diagram paths and their symbolic link targets must end in .d2.
+Use
+.Fl -no-ui
+or
+.Ev D2_MCP_NO_UI
+to disable the inline diagram viewer.
+Set the per-call time limit with
+.Fl -timeout Ar seconds
+or
+.Ev D2_MCP_TIMEOUT .
+The default is 60 seconds and the accepted range is 1 through 600.
+When a call reaches its deadline, the server asks the renderer to stop.
+If the renderer finishes successfully, the server returns the completed diagram.
 .El
 .Sh ENVIRONMENT VARIABLES
 Many flags can also be set with environment variables.
