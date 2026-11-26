@@ -20,7 +20,7 @@ const options: CompileOptions = {
   layout: "tala",
   sketch: false,
   animateDuration: 200,
-  isometric: true,
+  isometric: false,
 };
 
 const defaults: Promise<CompileResponse> = d2.compile(source);

@@ -13,7 +13,7 @@
 
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
-- renders: add native isometric SVG, PNG, GIF, PDF, and PPTX exports with `--isometric`, source configuration, and Go/JavaScript options
+- renders: add native isometric SVG, PNG, GIF, PDF, and PPTX exports with `--isometric`, source configuration, and Go options
 
 #### Improvements 🧹
 
@@ -29,6 +29,8 @@
 
 - D2.js: the WebAssembly module is about 12 MB (47%) smaller, and 2.0 MB (30%) smaller when compressed with Brotli, and runs D2's end-to-end corpus in about half the time, with identical output. D2.js calls into the module and every call runs to completion, so the module is now built without a goroutine scheduler, which on WebAssembly made every function that could be running when a goroutine is switched out about two thirds larger. The build needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases). The module also drops its function names, a second HTML entity table, two unused Unicode segmentation tables and four separately encoded copies of bundled fonts, stores the tables of the formula renderer and of the ELK layout engine as constant data, keeps its bundled fonts compressed until it starts, and sorts with one shared routine.
 
+- D2.js no longer renders isometric diagrams: it rejects `isometric: true` with an error, and its WebAssembly module is 2.6 MB (19%) smaller, 0.85 MB with Brotli. The CLI and the Go library still render them.
+
 - The d2 binary is about 3 MB smaller: PPTX export writes its XML parts without `text/template`, whose method lookups by name kept unused methods throughout the program. [#3000](https://github.com/d2lang/d2/pull/3000)
 
 - Native isometric GIFs with animated shapes render faster by sampling only texture opacity for shadows.
@@ -37,7 +39,7 @@
 
 - isometric: draw interior creases with a finer line and soften ground shadows away from the object's foot.
 - renders: reduce isometric SVG size by sharing lighting gradients and removing interior edges from filled paths.
-- performance: isometric SVG export does far less work to remove hidden surfaces; the largest boards in the E2E corpus render about 4× to 5× faster. Processes that render more than once (watch mode, D2.js, the Go API) reuse the glyph metrics and embedded-font subsets of the bundled fonts, held in bounded caches of about 10 MB and 8 MB. Output is unchanged. [#2992](https://github.com/d2lang/d2/pull/2992)
+- performance: isometric SVG export does far less work to remove hidden surfaces; the largest boards in the E2E corpus render about 4× to 5× faster. Processes that render more than once (watch mode, the Go API) reuse the glyph metrics and embedded-font subsets of the bundled fonts, held in bounded caches of about 10 MB and 8 MB. Output is unchanged. [#2992](https://github.com/d2lang/d2/pull/2992)
 
 - isometric: keep steep connection captions at the same reading angle as node labels and preserve clearance from their wires.
 - d2svg:

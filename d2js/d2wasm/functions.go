@@ -430,6 +430,8 @@ func Render(args []js.Value) (interface{}, error) {
 	return render(input)
 }
 
+const errIsometric = "isometric rendering is not available in D2.js (the D2 CLI and Go library render it); render with isometric: false"
+
 func render(input RenderRequest) ([]byte, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
@@ -440,6 +442,10 @@ func render(input RenderRequest) ([]byte, error) {
 
 	if input.Opts == nil {
 		input.Opts = &RenderOptions{}
+	}
+	// The module leaves out isometric rendering; the CLI and the Go library have it.
+	if input.Opts.Isometric != nil && *input.Opts.Isometric {
+		return nil, &WASMError{Message: errIsometric, Code: 400}
 	}
 	animateInterval := 0
 	if interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval); interval != nil && *interval > 0 {
@@ -501,7 +507,6 @@ func render(input RenderRequest) ([]byte, error) {
 		Scale:              scale,
 		Salt:               input.Opts.Salt,
 		Sketch:             input.Opts.Sketch,
-		Isometric:          input.Opts.Isometric,
 		Pad:                input.Opts.Pad,
 		Center:             input.Opts.Center,
 		ThemeID:            input.Opts.ThemeID,
@@ -513,18 +518,6 @@ func render(input RenderRequest) ([]byte, error) {
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err.Error()), Code: 500}
-	}
-
-	if renderOpts.Isometric != nil && *renderOpts.Isometric {
-		if input.Opts.ASCII != nil && *input.Opts.ASCII {
-			return nil, &WASMError{Message: "isometric rendering requires SVG output; ASCII cannot preserve its geometry", Code: 400}
-		}
-		if animateInterval > 0 {
-			return nil, &WASMError{Message: "isometric rendering does not yet support multi-board SVG animation", Code: 400}
-		}
-		if forceAppendix {
-			return nil, &WASMError{Message: "isometric rendering does not yet support an SVG appendix", Code: 400}
-		}
 	}
 
 	if input.Opts.ASCII != nil && *input.Opts.ASCII {

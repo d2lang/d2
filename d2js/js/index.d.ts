@@ -54,7 +54,7 @@ export interface ThemeOverrides {
 export interface RenderOptions {
   /** Enable sketch mode, including pencil shading for animated solid fills [default: false]. */
   sketch?: boolean;
-  /** Enable native isometric SVG rendering, preserving the compiled layout [default: false]. Icons and images must use embedded data URLs. Cannot be combined with sketch, ASCII, darkThemeID, forceAppendix, or animateInterval. */
+  /** D2.js does not render isometric diagrams (the D2 CLI and Go library do): render and renderSVG reject `true`. Compile reports `vars.d2-config.isometric` here; pass `false` to render such a diagram flat. */
   isometric?: boolean;
   /** Theme ID to use [default: 0] */
   themeID?: number;

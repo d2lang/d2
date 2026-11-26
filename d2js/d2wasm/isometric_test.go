@@ -11,7 +11,9 @@ import (
 	"github.com/d2lang/util-go/go2"
 )
 
-func TestIsometricWASMCompileAndRender(t *testing.T) {
+// The module leaves out isometric rendering. Compile still resolves the mode as
+// the Go library does, and every render that asks for it fails the same way.
+func TestIsometricWASMUnavailable(t *testing.T) {
 	for _, test := range []struct {
 		name, source string
 		option       *bool
@@ -32,41 +34,44 @@ func TestIsometricWASMCompileAndRender(t *testing.T) {
 				t.Fatalf("resolved isometric = %v, want %v", result.RenderOptions.Isometric, test.want)
 			}
 			out, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: &result.RenderOptions}))
-			if err != nil {
+			if test.want {
+				assertIsometricUnavailable(t, err)
+			} else if err != nil {
 				t.Fatal(err)
+			} else if !strings.Contains(string(out.([]byte)), "<svg") {
+				t.Fatalf("flat render is not an SVG")
 			}
-			isometric := strings.Contains(string(out.([]byte)), "d2-isometric")
-			if isometric != test.want {
-				t.Fatalf("isometric output = %v, want %v", isometric, test.want)
+			_, err = RenderSVG(wasmJSONArgument(t, request))
+			if test.want {
+				assertIsometricUnavailable(t, err)
+			} else if err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
-}
 
-func TestIsometricWASMRejectsIncompatibleFormats(t *testing.T) {
 	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": "a"}, Opts: &CompileOptions{}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	result := compiled.(CompileResponse)
-	for _, test := range []struct {
-		name string
-		opts RenderOptions
-		want string
-	}{
-		{"sketch", RenderOptions{Sketch: go2.Pointer(true)}, "sketch cannot"},
-		{"ASCII", RenderOptions{ASCII: go2.Pointer(true)}, "ASCII cannot"},
-		{"appendix", RenderOptions{ForceAppendix: go2.Pointer(true)}, "SVG appendix"},
-		{"animation", RenderOptions{AnimateInterval: go2.Pointer(int64(1000))}, "multi-board SVG animation"},
-		{"dark theme", RenderOptions{DarkThemeID: go2.Pointer(int64(200))}, "responsive dark themes"},
+	for _, opts := range []RenderOptions{
+		{ASCII: go2.Pointer(true)},
+		{ForceAppendix: go2.Pointer(true)},
+		{Target: go2.Pointer("*"), AnimateInterval: go2.Pointer(int64(1000))},
+		{DarkThemeID: go2.Pointer(int64(200))},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			test.opts.Isometric = go2.Pointer(true)
-			_, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: &test.opts}))
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("error = %v, want %s", err, test.want)
-			}
-		})
+		opts.Isometric = go2.Pointer(true)
+		_, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &result.Diagram, Opts: &opts}))
+		assertIsometricUnavailable(t, err)
+	}
+}
+
+func assertIsometricUnavailable(t *testing.T, err error) {
+	t.Helper()
+	wasmErr, ok := err.(*WASMError)
+	if !ok || wasmErr.Code != 400 || wasmErr.Message != errIsometric {
+		t.Fatalf("error = %#v, want 400 %q", err, errIsometric)
 	}
 }
 
