@@ -148,9 +148,10 @@ func (r *EdgeReference) DueToLazyGlob() bool   { return r.DueToLazyGlob_ }
 type Scalar struct {
 	order fieldOrder // Occurrence that supplied this primary value.
 	// binding retains a step expression for interpolation after its endpoint resolves.
-	binding *tweenBinding
-	parent  Node
-	Value   d2ast.Scalar `json:"value"`
+	binding  *tweenBinding
+	markdown *markdownBinding
+	parent   Node
+	Value    d2ast.Scalar `json:"value"`
 	// TweenOffset retains precision lost when formatting a numeric sample for
 	// text. Continuous paint properties can use it for the unrounded value.
 	TweenOffset float64 `json:"-"`

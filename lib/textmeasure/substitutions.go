@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark/v2/ast"
 )
@@ -21,6 +23,14 @@ func ReplaceSubstitutionsMarkdown(mdText string, variables map[string]string) st
 // spans and blocks while bounding candidate-match work and bytes inserted by
 // replacements. It checks the bound before each allocating replacement.
 func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, variables map[string]string, maxExpansion int64) (string, int64, error) {
+	return ResolveSubstitutionsMarkdownBounded(ctx, mdText, variables, maxExpansion, nil)
+}
+
+// ResolveSubstitutionsMarkdownBounded resolves D2 references in Markdown prose.
+// The callback receives the original spelling between the braces. Literal names
+// in variables also match, including historical names with an unquoted closing
+// brace. The longest match wins, and resolve can override its stored value.
+func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, variables map[string]string, maxExpansion int64, resolve func(key string) (string, bool)) (string, int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -30,13 +40,14 @@ func ReplaceSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	if err := ctx.Err(); err != nil {
 		return "", 0, err
 	}
-	if len(variables) == 0 || !strings.Contains(mdText, "${") {
+	if (len(variables) == 0 && resolve == nil) || !strings.Contains(mdText, "${") {
 		return mdText, 0, nil
 	}
 	matcher, err := newMarkdownSubstitutionMatcher(ctx, variables)
 	if err != nil {
 		return "", 0, err
 	}
+	matcher.resolve = resolve
 	source := []byte(mdText)
 	doc := markdownParser.Parse(source)
 
@@ -132,7 +143,8 @@ type markdownSubstitutionState struct {
 }
 
 type markdownSubstitutionMatcher struct {
-	states []markdownSubstitutionState
+	states  []markdownSubstitutionState
+	resolve func(string) (string, bool)
 }
 
 func newMarkdownSubstitutionMatcher(ctx context.Context, vars map[string]string) (*markdownSubstitutionMatcher, error) {
@@ -281,23 +293,48 @@ func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, 
 	}
 
 	var replacements []replacement
+	var nextReference int
 	for i := 0; i < len(s); {
 		if i&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				return "", 0, err
 			}
 		}
-		replacement, ok := bestAtStart[i]
-		if !ok {
+		match, found := bestAtStart[i]
+		legacyEnd := match.stop
+		if matcher.resolve != nil && i >= nextReference && strings.HasPrefix(s[i:], "${") {
+			end, next, err := markdownReferenceEnd(ctx, s, i+2)
+			if err != nil {
+				return "", 0, err
+			}
+			nextReference = next
+			if end > match.stop {
+				if value, ok := matcher.resolve(s[i+2 : end-1]); ok {
+					if used >= maxExpansion {
+						return "", 0, errors.New("Markdown substitution expansion limit exceeded")
+					}
+					used++
+					match = replacement{start: i, stop: end, value: value}
+					found = true
+				}
+			}
+		}
+		if !found {
 			i++
 			continue
 		}
-		if int64(len(replacement.value)) > maxExpansion-used {
+		// Exact literal matches already paid their candidate cost above.
+		if matcher.resolve != nil && match.stop == legacyEnd {
+			if value, ok := matcher.resolve(s[i+2 : match.stop-1]); ok {
+				match.value = value
+			}
+		}
+		if int64(len(match.value)) > maxExpansion-used {
 			return "", 0, errors.New("Markdown substitution expansion limit exceeded")
 		}
-		used += int64(len(replacement.value))
-		replacements = append(replacements, replacement)
-		i = replacement.stop
+		used += int64(len(match.value))
+		replacements = append(replacements, match)
+		i = match.stop
 	}
 	if len(replacements) == 0 {
 		return s, 0, nil
@@ -325,4 +362,63 @@ func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, 
 	}
 	result.WriteString(s[written:])
 	return result.String(), used, nil
+}
+
+// markdownReferenceEnd locates a closing brace outside quoted or escaped key
+// segments. The resolver validates the key path. next lets the caller continue
+// in one forward pass even when the candidate is incomplete.
+func markdownReferenceEnd(ctx context.Context, s string, start int) (end, next int, err error) {
+	var quote byte
+	segmentStart := true
+	nextCheck := start
+	for i := start; i < len(s); i++ {
+		if i >= nextCheck {
+			nextCheck = i + 1024
+			if err := ctx.Err(); err != nil {
+				return 0, 0, err
+			}
+		}
+		c := s[i]
+		if c == '\n' {
+			return 0, i + 1, nil
+		}
+		if c == '\\' && quote != '\'' {
+			i++
+			segmentStart = false
+			continue
+		}
+		if quote != 0 {
+			if c == quote {
+				if quote == '\'' && i+1 < len(s) && s[i+1] == '\'' {
+					i++
+				} else {
+					quote = 0
+				}
+			}
+			continue
+		}
+		switch c {
+		case '}':
+			return i + 1, i + 1, nil
+		case '{':
+			if i > start && s[i-1] == '$' {
+				return 0, i - 1, nil
+			}
+			return 0, i + 1, nil
+		case '.':
+			segmentStart = true
+		case '"', '\'':
+			if segmentStart {
+				quote = c
+			}
+			segmentStart = false
+		default:
+			if segmentStart {
+				r, size := utf8.DecodeRuneInString(s[i:])
+				segmentStart = unicode.IsSpace(r)
+				i += size - 1
+			}
+		}
+	}
+	return 0, len(s), nil
 }

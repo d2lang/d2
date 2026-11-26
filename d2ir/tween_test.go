@@ -295,6 +295,44 @@ layers: {sensor: @module.layers.panel}`, opts)
 
 }
 
+func TestTweenImportedMarkdownResolvesStepScope(t *testing.T) {
+	opts := d2ir.CompileOptions{FS: fstest.MapFS{
+		"module.d2": {Data: []byte(`vars: {p: 99; unit: watts; formula: '${p}'; empty: ""}
+layers: {panel: {
+  vars: {p: 0}
+  steps: {load: {
+    vars: {p: 4}
+    plain: "${p}/${unit}/${formula}/${empty}"
+    markdown: |md
+      ${p}/${unit}/${formula}/${empty}
+    |
+    group: {vars: {unit: kW}; note: |md ${p} ${unit} |}
+  }}
+}}`)},
+	}}
+	m, err := compileTween(t, `vars: {unit: volts; formula: other; empty: wrong; d2-config: {animate-interval: 1s; animate-duration: 80ms}}
+layers: {sensor: @module.layers.panel}`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "layers", "sensor", "steps", "load").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d frames", len(step.TweenFrames))
+	}
+	for _, tc := range []struct {
+		board *d2ir.Map
+		value string
+	}{{step.TweenFrames[0], "0"}, {step.TweenFrames[1], "2"}, {step, "4"}} {
+		want := tc.value + "/watts/${p}/"
+		if plain, md := tweenText(t, tc.board, "plain"), tweenText(t, tc.board, "markdown"); plain != want || md != want {
+			t.Errorf("plain %q, Markdown %q, want %q", plain, md, want)
+		}
+		if got := tweenText(t, tc.board, "group", "note"); got != tc.value+" kW" {
+			t.Errorf("nested Markdown is %q, want %q", got, tc.value+" kW")
+		}
+	}
+}
+
 func TestTweenColorVariables(t *testing.T) {
 	const src = `vars: {
   d2-config: {animate-duration: 160ms; animate-interval: 1s}

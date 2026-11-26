@@ -19,7 +19,6 @@ import (
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
-	"github.com/d2lang/d2/lib/textmeasure"
 )
 
 type globContext struct {
@@ -644,8 +643,15 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 						if !c.reserveVariableExpansion(box.Substitution, int64(len(resolvedField.Primary().Value.ScalarString()))) {
 							return
 						}
-						node.Primary().Value = resolvedField.Primary().Value
-						node.Primary().TweenOffset = resolvedField.Primary().TweenOffset
+						value := resolvedField.Primary()
+						node.Primary().Value = value.Value
+						if block, ok := value.Value.(*d2ast.BlockString); ok {
+							// The two labels can resolve again in different import scopes.
+							copy := *block
+							node.Primary().Value = &copy
+						}
+						node.Primary().markdown = value.markdown
+						node.Primary().TweenOffset = value.TweenOffset
 					} else {
 						s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
 						subbed = true
@@ -718,54 +724,11 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 			s.Coalesce()
 		}
 	case *d2ast.BlockString:
-		if !strings.Contains(s.Value, "${") {
-			return
+		if strings.Contains(s.Value, "${") {
+			s.Value = c.resolveMarkdown(node, s.Value, varsStack, markdownOuterStart)
 		}
-		variables := make(map[string]string)
-		seen := make(map[Node]struct{})
-		var outer map[string]string
-		for i, vars := range varsStack {
-			dest := variables
-			if markdownOuterStart >= 0 && i >= markdownOuterStart {
-				if outer == nil {
-					outer = make(map[string]string)
-				}
-				dest = outer
-			}
-			c.collectVariables(vars, dest, seen, node.LastRef().AST())
-		}
-		if outer != nil {
-			// A sampled fragment may leave its module. Remember the lexical
-			// values during the ordinary import pass, collecting each scope once.
-			node.Primary().binding.markdownOuter = outer
-			for name, value := range outer {
-				variables[name] = value
-			}
-		}
-		if c.stopped() {
-			return
-		}
-		s.Value = c.replaceMarkdownVariables(node, s.Value, variables)
 	}
 	return removedField
-}
-
-func (c *compiler) replaceMarkdownVariables(node Node, value string, variables map[string]string) string {
-	preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, value, variables, c.variableExpansion.remaining())
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			c.contextErr = err
-			c.halted = true
-			return value
-		}
-		c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
-		c.halted = true
-		return value
-	}
-	if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
-		return value
-	}
-	return preprocessedValue
 }
 
 func interpolationBytes(values []d2ast.InterpolationBox) int64 {
@@ -932,64 +895,6 @@ func walkComposite(composite Composite, visit func(Node) bool) bool {
 		}
 	}
 	return false
-}
-
-func (c *compiler) collectVariables(vars *Map, variables map[string]string, seen map[Node]struct{}, source d2ast.Node) {
-	if vars == nil || c.stopped() {
-		return
-	}
-	if !c.visitSubstitutionNode(vars, source, seen) {
-		return
-	}
-	for _, f := range vars.Fields {
-		if c.stopped() {
-			return
-		}
-		if !c.visitSubstitutionNode(f, source, seen) {
-			return
-		}
-		if f.Primary() != nil {
-			name := f.Name.ScalarString()
-			if !c.reserveVariableExpansion(source, markdownVariablePatternBytes(int64(len(name)))) {
-				return
-			}
-			variables[name] = f.Primary().Value.ScalarString()
-		} else if f.Map() != nil {
-			nestedVars := make(map[string]string)
-			c.collectVariables(f.Map(), nestedVars, seen, source)
-			if c.stopped() {
-				return
-			}
-			name := f.Name.ScalarString()
-			for k, v := range nestedVars {
-				if !c.reserveVariableExpansion(source, markdownVariablePatternBytes(joinedVariableNameBytes(name, k))) {
-					return
-				}
-				variables[name+"."+k] = v
-			}
-			c.collectVariables(f.Map(), variables, seen, source)
-			if c.stopped() {
-				return
-			}
-		}
-	}
-}
-
-func markdownVariablePatternBytes(nameBytes int64) int64 {
-	const maxInt64 = int64(^uint64(0) >> 1)
-	if nameBytes >= maxInt64-3 {
-		return maxInt64
-	}
-	return nameBytes + 3 // "${" + name + "}"
-}
-
-func joinedVariableNameBytes(prefix, suffix string) int64 {
-	const maxInt64 = int64(^uint64(0) >> 1)
-	total := int64(len(prefix))
-	if total == maxInt64 || int64(len(suffix)) >= maxInt64-total {
-		return maxInt64
-	}
-	return total + 1 + int64(len(suffix))
 }
 
 // Reserved keys historically allowed distinct quoted and unquoted bindings.
