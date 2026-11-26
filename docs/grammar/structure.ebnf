@@ -16,7 +16,7 @@ Filter     = "&" | "!&" .
 
 EntryKey    = keyPath | EdgeChain | [ keyPath spaces "." spaces ] EdgeGroup .
 keyPath     = keyString { spaces "." spaces keyString } .
-Assignment  = Map | ":" spaces ( Scalar [ spaces Map ] | Map | Array | Import ) .
+Assignment  = Map | ":" spaces ( ( Scalar | hexColour ) [ spaces Map ] | Map | Array | Import ) .
 Value       = Scalar | Map | Array | Import .
 Scalar      = valueString .
 
@@ -35,7 +35,7 @@ Arrow            = FirstArrow | "*" ArrowTail .
 ArrowTail        = { "-" | EdgeContinuation } [ ">" | "*" ] .
 EdgeContinuation = "\\" spaces newline spaces .
 
-// At entry start, "...@" and "...$" introduce a spread.
+// At entry start, "..." followed by an import or a substitution opens a spread.
 Spread       = "..." ( Import | substitution ) .
 // Consume the longest run of dots and slashes after "@" before reading keyPath.
 Import       = "@" { "." | "/" } spaces keyPath .

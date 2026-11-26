@@ -314,7 +314,7 @@ func (c *compiler) sampleStep(board *Map, changes stepChanges, duration int) {
 	view := *board
 	view.Fields = nil
 	for _, f := range board.Fields {
-		if f.Name == nil || findBoardKeyword(f.Name) == -1 {
+		if _, board := d2ast.BoardKeywords[d2ast.Keyword(f.Name)]; !board {
 			view.Fields = append(view.Fields, f)
 		}
 	}

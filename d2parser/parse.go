@@ -108,7 +108,7 @@ func ParseKey(key string) (*d2ast.KeyPath, error) {
 		err:    &ParseError{},
 	}
 
-	k := p.parseKey()
+	k := p.parseKey(stringContext{beforeEdge: true})
 	if k != nil {
 		p.requireEnd("key")
 	}
@@ -148,7 +148,7 @@ func ParseValue(value string) (d2ast.Value, error) {
 		err:    &ParseError{},
 	}
 
-	v := p.parseValue()
+	v := p.parseValue(false)
 	if v.Unbox() != nil {
 		p.requireEnd("value")
 	}
@@ -574,35 +574,34 @@ func (p *parser) parseMapNode(r rune) d2ast.MapNodeBox {
 		box.BlockComment = p.parseBlockComment()
 		return box
 	case '.':
-		s, eof := p.peekn(2)
-		if eof {
-			break
-		}
-		if s != ".." {
-			p.rewind()
-			break
-		}
-		r, eof := p.peek()
-		if eof {
-			break
-		}
-		if r == '$' {
-			p.commit()
-			box.Substitution = p.parseSubstitution(true)
+		box.Substitution, box.Import = p.parseSpread(false)
+		if box.Substitution != nil || box.Import != nil {
 			return box
 		}
-		if r == '@' {
-			p.commit()
-			box.Import = p.parseImport(true)
-			return box
-		}
-		p.rewind()
-		break
 	}
 
 	p.replay(r)
 	box.MapKey = p.parseMapKey()
 	return box
+}
+
+// The first dot has already been read. Only consume a complete spread prefix.
+func (p *parser) parseSpread(inArray bool) (*d2ast.Substitution, *d2ast.Import) {
+	prefix, eof := p.peekn(3)
+	if !eof {
+		switch prefix {
+		case "..$":
+			start := p.pos.Subtract('.', p.utf16Pos)
+			if p.consumeSubstitutionOpen() {
+				return p.parseSubstitution(start, true), nil
+			}
+		case "..@":
+			p.commit()
+			return nil, p.parseImport(true, inArray)
+		}
+	}
+	p.rewind()
+	return nil, nil
 }
 
 func (p *parser) parseComment() *d2ast.Comment {
@@ -801,7 +800,7 @@ func (p *parser) parseMapKey() (mk *d2ast.Key) {
 	}
 	p.rewind()
 
-	k, scopedGroup := p.parseKeyPath(true)
+	k, scopedGroup := p.parseKeyPath(stringContext{beforeEdge: true}, true)
 	mk.Key = k
 	if scopedGroup {
 		p.parseEdgeGroup(mk)
@@ -862,7 +861,7 @@ func (p *parser) parseMapKeyValue(mk *d2ast.Key) {
 		p.rewind()
 		return
 	}
-	mk.Value = p.parseValue()
+	mk.Value = p.parseValue(false)
 	if mk.Value.Unbox() == nil {
 		p.errorf(p.pos.Subtract(':', p.utf16Pos), p.pos, "missing value after colon")
 	}
@@ -880,7 +879,7 @@ func (p *parser) parseMapKeyValue(mk *d2ast.Key) {
 		p.commit()
 		p.replay(r)
 		mk.Primary = sb
-		mk.Value = p.parseValue()
+		mk.Value = p.parseValue(false)
 	}
 }
 
@@ -888,7 +887,7 @@ func (p *parser) parseEdgeGroup(mk *d2ast.Key) {
 	groupStart := p.pos.Subtract('(', p.utf16Pos)
 	// Only endpoint keys use the group's closing parenthesis as a delimiter.
 	p.inEdgeGroup = true
-	src := p.parseKey()
+	src := p.parseKey(stringContext{beforeEdge: true})
 	p.parseEdges(mk, src)
 	p.inEdgeGroup = false
 
@@ -923,7 +922,7 @@ func (p *parser) parseEdgeGroup(mk *d2ast.Key) {
 	if r == '.' {
 		p.commit()
 		dotEnd := p.pos
-		mk.EdgeKey = p.parseKey()
+		mk.EdgeKey = p.parseKey(stringContext{})
 		if mk.EdgeKey == nil {
 			p.errorAfterDot(dotEnd)
 		}
@@ -1017,7 +1016,7 @@ func (p *parser) parseEdges(mk *d2ast.Key, src *d2ast.KeyPath) {
 			return
 		}
 
-		dst := p.parseKey()
+		dst := p.parseKey(stringContext{beforeEdge: true})
 		if dst == nil {
 			p.errorf(e.Range.Start, p.pos, "connection missing destination")
 		} else {
@@ -1077,8 +1076,14 @@ func (p *parser) parseEdge(e *d2ast.Edge) (ok bool) {
 	}
 }
 
-func (p *parser) parseKey() *d2ast.KeyPath {
-	k, _ := p.parseKeyPath(false)
+type stringContext struct {
+	inKey      bool
+	inArray    bool // a closing bracket ends this array element
+	beforeEdge bool // an edge operator can follow this endpoint
+}
+
+func (p *parser) parseKey(ctx stringContext) *d2ast.KeyPath {
+	k, _ := p.parseKeyPath(ctx, false)
 	return k
 }
 
@@ -1088,7 +1093,8 @@ func (p *parser) errorAfterDot(dotEnd d2ast.Position) {
 
 // An entry key may end in .( instead of another path segment. In that case
 // parseKeyPath consumes the opening parenthesis for parseEdgeGroup.
-func (p *parser) parseKeyPath(allowScopedGroup bool) (k *d2ast.KeyPath, scopedGroup bool) {
+func (p *parser) parseKeyPath(ctx stringContext, allowScopedGroup bool) (k *d2ast.KeyPath, scopedGroup bool) {
+	ctx.inKey = true
 	k = &d2ast.KeyPath{
 		Range: d2ast.Range{
 			Path:  p.path,
@@ -1123,7 +1129,7 @@ func (p *parser) parseKeyPath(allowScopedGroup bool) (k *d2ast.KeyPath, scopedGr
 
 		var sb d2ast.StringBox
 		if !eof && newlines == 0 && r != '(' && r != '.' {
-			sb = p.parseString(true)
+			sb = p.parseString(ctx)
 		}
 		s := sb.Unbox()
 		if s == nil {
@@ -1154,8 +1160,7 @@ func (p *parser) parseKeyPath(allowScopedGroup bool) (k *d2ast.KeyPath, scopedGr
 	}
 }
 
-// TODO: inKey -> p.inKey (means I have to restore though)
-func (p *parser) parseString(inKey bool) d2ast.StringBox {
+func (p *parser) parseString(ctx stringContext) d2ast.StringBox {
 	var box d2ast.StringBox
 
 	r, newlines, eof := p.peekNotSpace()
@@ -1167,7 +1172,7 @@ func (p *parser) parseString(inKey bool) d2ast.StringBox {
 
 	switch r {
 	case '"':
-		box.DoubleQuotedString = p.parseDoubleQuotedString(inKey)
+		box.DoubleQuotedString = p.parseDoubleQuotedString(ctx.inKey)
 		return box
 	case '\'':
 		box.SingleQuotedString = p.parseSingleQuotedString()
@@ -1177,12 +1182,12 @@ func (p *parser) parseString(inKey bool) d2ast.StringBox {
 		return box
 	default:
 		p.replay(r)
-		box.UnquotedString = p.parseUnquotedString(inKey)
+		box.UnquotedString = p.parseUnquotedString(ctx)
 		return box
 	}
 }
 
-func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
+func (p *parser) parseUnquotedString(ctx stringContext) (s *d2ast.UnquotedString) {
 	s = &d2ast.UnquotedString{
 		Range: d2ast.Range{
 			Path:  p.path,
@@ -1246,14 +1251,7 @@ func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
 		}
 
 		if p.inEdgeGroup && r == ')' {
-			// TODO: need a peekNotSpace across escaped newlines
-			r2, newlines, eof := p.peekNotSpace()
-			if eof || newlines > 0 {
-				p.rewind()
-				return s
-			}
-			switch r2 {
-			case ';', '#', '{', '}', '[', ']', ':', '.':
+			if p.endsEdgeGroup() {
 				p.rewind()
 				return s
 			}
@@ -1268,20 +1266,30 @@ func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
 			continue
 		}
 
-		// top:   '\n', '#', '{', '}', '[', ']'
-		// keys:  ':', '.'
-		// edges: '<', '>', '(', ')',
-		// edges: --, ->, -*, *-
 		switch r {
-		case '\n', ';', '#', '{', '}', '[', ']':
+		case '\n', ';', '#', '{', '}':
 			p.rewind()
 			return s
-		}
-		if inKey {
-			switch r {
-			case ':', '.', '<', '>', '&':
+		case ']':
+			if ctx.inArray {
 				p.rewind()
 				return s
+			}
+		}
+		if ctx.inKey {
+			switch r {
+			case ':', '.':
+				p.rewind()
+				return s
+			case '<':
+				if ctx.beforeEdge {
+					edge := p.startsLeftArrow(sb.Len() != 0)
+					p.rewind()
+					if edge {
+						return s
+					}
+					p.peek()
+				}
 			case '-':
 				// Only the first character of an arrow belongs to the edge parser.
 				// Otherwise consume the hyphen as text and scan the next rune normally.
@@ -1309,9 +1317,9 @@ func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
 			lastNonSpace = p.pos
 		}
 
-		if !inKey && r == '$' {
-			subst := p.parseSubstitution(false)
-			if subst != nil {
+		if !ctx.inKey && r == '$' {
+			start := p.pos.Subtract('$', p.utf16Pos)
+			if p.consumeSubstitutionOpen() {
 				if sb.Len() > 0 {
 					sv := sb.String()
 					rawv := sv
@@ -1323,10 +1331,10 @@ func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
 					rawb.Reset()
 					hasRaw = false
 				}
+				subst := p.parseSubstitution(start, false)
 				s.Value = append(s.Value, d2ast.InterpolationBox{Substitution: subst})
 				continue
 			}
-			continue
 		}
 
 		if r != '\\' {
@@ -1366,6 +1374,46 @@ func (p *parser) parseUnquotedString(inKey bool) (s *d2ast.UnquotedString) {
 	}
 }
 
+// The closing parenthesis is already peeked. Parentheses within endpoint
+// text (for instance get()) are otherwise part of the unquoted key.
+func (p *parser) endsEdgeGroup() bool {
+	next, newlines, eof := p.peekNotSpace()
+	return eof || newlines > 0 || strings.ContainsRune(";#{}[]:.", next)
+}
+
+// A bare '<' is also a valid left-pointing connection when there are
+// endpoints on either side. Explicit arrowheads and shafts still start an
+// operator even if an endpoint is missing.
+func (p *parser) startsLeftArrow(hasSource bool) bool {
+	next, eof := p.peek()
+	if !eof && next == '\\' {
+		// A backslash continues an arrow only across a line break. Other
+		// escapes belong to the surrounding literal key.
+		for {
+			r, eof := p.peek()
+			if eof || !unicode.IsSpace(r) {
+				return false
+			}
+			if r == '\n' {
+				return true
+			}
+		}
+	}
+	if !eof && strings.ContainsRune("->*", next) {
+		return true
+	}
+	if !hasSource {
+		return false
+	}
+	for !eof && next != '\n' && unicode.IsSpace(next) {
+		next, eof = p.peek()
+	}
+	if !eof && p.inEdgeGroup && next == ')' {
+		return !p.endsEdgeGroup()
+	}
+	return !eof && !strings.ContainsRune("\n;#{}:.(@", next)
+}
+
 func (p *parser) parseDoubleQuotedString(inKey bool) *d2ast.DoubleQuotedString {
 	s := &d2ast.DoubleQuotedString{
 		Range: d2ast.Range{
@@ -1399,8 +1447,9 @@ func (p *parser) parseDoubleQuotedString(inKey bool) *d2ast.DoubleQuotedString {
 
 		p.commit()
 		if !inKey && r == '$' {
-			subst := p.parseSubstitution(false)
-			if subst != nil {
+			start := p.pos.Subtract('$', p.utf16Pos)
+			if p.consumeSubstitutionOpen() {
+				subst := p.parseSubstitution(start, false)
 				if sb.Len() > 0 {
 					s.Value = append(s.Value, d2ast.InterpolationBox{String: go2.Pointer(sb.String())})
 					sb.Reset()
@@ -1648,34 +1697,14 @@ func (p *parser) parseArrayNode(r rune) d2ast.ArrayNodeBox {
 		box.BlockComment = p.parseBlockComment()
 		return box
 	case '.':
-		s, eof := p.peekn(2)
-		if eof {
-			break
-		}
-		if s != ".." {
-			p.rewind()
-			break
-		}
-		r, eof := p.peek()
-		if eof {
-			break
-		}
-		if r == '$' {
-			p.commit()
-			box.Substitution = p.parseSubstitution(true)
+		box.Substitution, box.Import = p.parseSpread(true)
+		if box.Substitution != nil || box.Import != nil {
 			return box
 		}
-		if r == '@' {
-			p.commit()
-			box.Import = p.parseImport(true)
-			return box
-		}
-		p.rewind()
-		break
 	}
 
 	p.replay(r)
-	vbox := p.parseValue()
+	vbox := p.parseValue(true)
 	if vbox.UnquotedString != nil && vbox.UnquotedString.ScalarString() == "" &&
 		!(len(vbox.UnquotedString.Value) > 0 && vbox.UnquotedString.Value[0].Substitution != nil) {
 		p.errorf(p.pos, p.pos.Advance(r, p.utf16Pos), "unquoted strings cannot start on %q", r)
@@ -1694,7 +1723,7 @@ func (p *parser) parseArrayNode(r rune) d2ast.ArrayNodeBox {
 	return box
 }
 
-func (p *parser) parseValue() d2ast.ValueBox {
+func (p *parser) parseValue(inArray bool) d2ast.ValueBox {
 	var box d2ast.ValueBox
 
 	r, newlines, eof := p.peekNotSpace()
@@ -1705,6 +1734,9 @@ func (p *parser) parseValue() d2ast.ValueBox {
 	p.commit()
 
 	switch r {
+	case '#':
+		box.UnquotedString = p.parseHexColor()
+		return box
 	case '[':
 		box.Array = p.parseArray()
 		return box
@@ -1712,12 +1744,12 @@ func (p *parser) parseValue() d2ast.ValueBox {
 		box.Map = p.parseMap(false)
 		return box
 	case '@':
-		box.Import = p.parseImport(false)
+		box.Import = p.parseImport(false, inArray)
 		return box
 	}
 
 	p.replay(r)
-	sb := p.parseString(false)
+	sb := p.parseString(stringContext{inArray: inArray})
 	if sb.DoubleQuotedString != nil {
 		box.DoubleQuotedString = sb.DoubleQuotedString
 		return box
@@ -1794,36 +1826,63 @@ func (p *parser) parseValue() d2ast.ValueBox {
 	return box
 }
 
-func (p *parser) parseSubstitution(spread bool) *d2ast.Substitution {
+// The opening # has been consumed in a value position. Put it back for
+// comment parsing if the following digits don't spell a D2 hex color.
+func (p *parser) parseHexColor() *d2ast.UnquotedString {
+	digits := 0
+	for digits <= 6 {
+		r, eof := p.peek()
+		if eof || !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			break
+		}
+		digits++
+	}
+	p.rewind()
+	if digits != 3 && digits != 6 {
+		p.replay('#')
+		return nil
+	}
+
+	start := p.pos.Subtract('#', p.utf16Pos)
+	hex, _ := p.peekn(digits)
+	p.commit()
+	literal := "#" + hex
+	return &d2ast.UnquotedString{
+		Range: d2ast.Range{Path: p.path, Start: start, End: p.pos},
+		Value: []d2ast.InterpolationBox{{String: &literal, StringRaw: go2.Pointer(literal)}},
+	}
+}
+
+// The dollar sign is already consumed or part of a peeked spread prefix.
+// Preserve the existing horizontal whitespace permitted before the brace.
+func (p *parser) consumeSubstitutionOpen() bool {
+	r, newlines, eof := p.peekNotSpace()
+	if eof || newlines > 0 || r != '{' {
+		p.rewind()
+		return false
+	}
+	p.commit()
+	return true
+}
+
+func (p *parser) parseSubstitution(start d2ast.Position, spread bool) *d2ast.Substitution {
 	subst := &d2ast.Substitution{
 		Range: d2ast.Range{
 			Path:  p.path,
-			Start: p.pos.SubtractString("$", p.utf16Pos),
+			Start: start,
 		},
 		Spread: spread,
 	}
 	defer subst.Range.End.From(&p.pos)
 
-	if subst.Spread {
-		subst.Range.Start = subst.Range.Start.SubtractString("...", p.utf16Pos)
-	}
-
-	r, newlines, eof := p.peekNotSpace()
-	if eof || newlines > 0 || r != '{' {
-		p.rewind()
-		p.errorf(subst.Range.Start, p.pos, "substitutions must begin on {")
-		return nil
-	}
-	p.commit()
-
-	k := p.parseKey()
+	k := p.parseKey(stringContext{})
 	if k != nil {
 		subst.Path = k.Path
 	} else {
 		p.errorf(subst.Range.Start, p.pos, "substitution requires a variable name")
 	}
 
-	r, newlines, eof = p.peekNotSpace()
+	r, newlines, eof := p.peekNotSpace()
 	if eof {
 		p.errorf(subst.Range.Start, p.readerPos, "substitutions must be terminated by }")
 		return subst
@@ -1838,7 +1897,7 @@ func (p *parser) parseSubstitution(spread bool) *d2ast.Substitution {
 	return subst
 }
 
-func (p *parser) parseImport(spread bool) *d2ast.Import {
+func (p *parser) parseImport(spread, inArray bool) *d2ast.Import {
 	imp := &d2ast.Import{
 		Range: d2ast.Range{
 			Path:  p.path,
@@ -1867,7 +1926,7 @@ func (p *parser) parseImport(spread bool) *d2ast.Import {
 	}
 	imp.Pre = pre.String()
 
-	k := p.parseKey()
+	k := p.parseKey(stringContext{inArray: inArray})
 	if k == nil {
 		p.errorf(imp.Range.Start, p.pos, "import requires a path")
 		return imp

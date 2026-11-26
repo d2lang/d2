@@ -1258,7 +1258,9 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 				c.ensureGlobContext(gctx2.refctx)
 			}
 
-			scenariosField := impn.Map().getFieldIndexed(d2ast.FlatUnquotedString("scenarios"))
+			// Only actual board groups inherit the destination. An imported
+			// shape can have ordinary children named scenarios and steps.
+			scenariosField := impn.Map().lookupField(d2ast.FlatUnquotedString("scenarios"))
 			if scenariosField != nil && scenariosField.Map() != nil {
 				for _, sf := range scenariosField.Map().Fields {
 					if c.stopped() {
@@ -1268,7 +1270,7 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 				}
 			}
 
-			stepsField := impn.Map().getFieldIndexed(d2ast.FlatUnquotedString("steps"))
+			stepsField := impn.Map().lookupField(d2ast.FlatUnquotedString("steps"))
 			if stepsField != nil && stepsField.Map() != nil {
 				for _, sf := range stepsField.Map().Fields {
 					if c.stopped() {
@@ -2239,7 +2241,16 @@ func (c *compiler) compileLink(f *Field, refctx *RefContext) {
 // Format a board path like a dotted declaration so a board named WIDTH keeps
 // its spelling in a link such as root.layers.WIDTH.
 func formatBoardPath(path []d2ast.String) string {
-	return d2format.Format(&d2ast.Key{Key: d2ast.MakeKeyPathString(path)})
+	// "root" and unresolved parent references locate the board scope. Only
+	// the remaining path is a declaration relative to that board's root.
+	var prefix strings.Builder
+	for len(path) > 1 && path[0].IsUnquoted() &&
+		(path[0].ScalarString() == "_" || (prefix.Len() == 0 && path[0].ScalarString() == "root")) {
+		prefix.WriteString(path[0].ScalarString())
+		prefix.WriteByte('.')
+		path = path[1:]
+	}
+	return prefix.String() + d2format.Format(&d2ast.Key{Key: d2ast.MakeKeyPathString(path)})
 }
 
 func (c *compiler) compileEdges(refctx *RefContext) {

@@ -696,7 +696,9 @@ containers: {
   }
 }
 `,
-			expErr: `d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2:3:10: missing value after colon`,
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				assert.String(t, "#ffffff", g.Objects[0].Style.Fill.Value)
+			},
 		},
 		{
 			name: "edge_unquoted_hex",
@@ -707,7 +709,9 @@ containers: {
   }
 }
 `,
-			expErr: `d2/testdata/d2compiler/TestCompile/edge_unquoted_hex.d2:3:10: missing value after colon`,
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				assert.String(t, "#ffffff", g.Edges[0].Style.Fill.Value)
+			},
 		},
 		{
 			name: "blank_underscore",
@@ -739,7 +743,7 @@ containers: {
   Steps
 }
 `,
-			expErr: `d2/testdata/d2compiler/TestCompile/image_children_Steps.d2:4:3: steps must be declared at a board root scope`,
+			expErr: `d2/testdata/d2compiler/TestCompile/image_children_Steps.d2:4:3: image shapes cannot have children.`,
 		},
 		{
 			name: "name-with-dot-underscore",
@@ -2344,7 +2348,12 @@ c: {
 }
 `,
 			},
-			expErr: `d2/testdata/d2compiler/TestCompile/import-classes-boards.d2:10:7: layers must be declared at a board root scope`,
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, 2, len(g.Layers))
+				assert.Equal(t, 0, len(g.Layers[0].Layers))
+				obj, ok := g.Layers[0].Root.HasChild([]string{"qwer", "layers", "ok", "bok"})
+				assert.True(t, ok && obj.ID == "bok")
+			},
 		},
 		{
 			name: "import_url_link",

@@ -797,12 +797,17 @@ func (obj *Object) newObject(id string) *Object {
 }
 
 func (obj *Object) HasChild(ids []string) (*Object, bool) {
+	return obj.hasChild(ids, false)
+}
+
+func (obj *Object) hasChild(ids []string, near bool) (*Object, bool) {
 	if len(ids) == 0 {
 		return obj, true
 	}
 	if len(ids) == 1 && ids[0] != "style" {
-		_, ok := d2ast.ReservedKeywords[ids[0]]
-		if ok {
+		_, reserved := d2ast.ReservedKeywords[ids[0]]
+		_, board := d2ast.BoardKeywords[ids[0]]
+		if reserved && (!board || obj.Parent == nil || (near && obj.Children[ids[0]] == nil)) {
 			return obj, true
 		}
 	}
@@ -825,7 +830,7 @@ func (obj *Object) HasChild(ids []string) (*Object, bool) {
 	}
 
 	if len(ids) >= 1 {
-		return child.HasChild(ids)
+		return child.hasChild(ids, near)
 	}
 	return child, true
 }
@@ -948,6 +953,9 @@ func (obj *Object) ensureChildEdge(ida []d2ast.String) *Object {
 // EnsureChild grabs the child by ids or creates it if it does not exist including all
 // intermediate nodes.
 func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
+	if len(ida) == 0 {
+		return obj
+	}
 	seq := obj.OuterSequenceDiagram()
 	if seq != nil {
 		for _, c := range seq.ChildrenArray {
@@ -964,18 +972,16 @@ func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
 		}
 	}
 
-	if len(ida) == 0 {
-		return obj
-	}
-
-	if len(ida) == 1 {
-		keyword := d2ast.Keyword(ida[0])
-		if _, holder := d2ast.ReservedKeywordHolders[keyword]; keyword != "" && !holder {
+	id := ida[0]
+	keyword := d2ast.Keyword(id)
+	_, board := d2ast.BoardKeywords[keyword]
+	literalBoardName := board && obj.Parent != nil
+	if len(ida) == 1 && keyword != "" && !literalBoardName {
+		if _, holder := d2ast.ReservedKeywordHolders[keyword]; !holder {
 			return obj
 		}
 	}
 
-	id := ida[0]
 	ida = ida[1:]
 
 	if id.ScalarString() == "_" && id.IsUnquoted() {
@@ -983,6 +989,9 @@ func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
 	}
 
 	head := objectID(id)
+	if literalBoardName {
+		head = id.ScalarString()
+	}
 	child, ok := obj.Children[strings.ToLower(head)]
 	if !ok {
 		child = obj.newObject(head)
@@ -1268,18 +1277,25 @@ func (obj *Object) OuterNearContainer() *Object {
 	return nil
 }
 
+// NearTarget resolves an object-relative near placement. Historically an absent
+// unquoted board name at the end of a near key resolved to its container.
+func (obj *Object) NearTarget() (*Object, bool) {
+	if obj.NearKey == nil {
+		return nil, false
+	}
+	return obj.Graph.Root.hasChild(Key(obj.NearKey), true)
+}
+
 func (obj *Object) IsConstantNear() bool {
 	if obj.NearKey == nil {
 		return false
 	}
-	keyPath := Key(obj.NearKey)
-
 	// interesting if there is a shape with id=top-left, then top-left isn't treated a constant near
-	_, isKey := obj.Graph.Root.HasChild(keyPath)
+	_, isKey := obj.NearTarget()
 	if isKey {
 		return false
 	}
-	_, isConst := d2ast.NearConstants[keyPath[0]]
+	_, isConst := d2ast.NearConstants[Key(obj.NearKey)[0]]
 	return isConst
 }
 
@@ -1448,9 +1464,19 @@ func appendAbsIDArray(ids []string, obj *Object) []string {
 
 func (obj *Object) Connect(srcID, dstID []d2ast.String, srcArrow, dstArrow bool, label string) (*Edge, error) {
 	for _, id := range [][]d2ast.String{srcID, dstID} {
-		for _, p := range id {
-			if d2ast.Keyword(p) != "" {
-				return nil, errors.New("cannot connect to reserved keyword")
+		scope := obj
+		for len(id) > 0 && id[0].IsUnquoted() && id[0].ScalarString() == "_" {
+			scope = scope.Parent
+			if scope == nil {
+				return nil, errors.New("invalid underscore: no parent")
+			}
+			id = id[1:]
+		}
+		for i, p := range id {
+			if keyword := d2ast.Keyword(p); keyword != "" {
+				if _, board := d2ast.BoardKeywords[keyword]; !board || (scope.Parent == nil && i == 0) {
+					return nil, errors.New("cannot connect to reserved keyword")
+				}
 			}
 		}
 	}

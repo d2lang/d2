@@ -7,6 +7,10 @@ horizontalSpace = "\t" | "\v" … "\r" | " " | "\u0085" | "\u00A0" | "\u1680"
                 | "\u205F" | "\u3000" .
 decimalDigit = "0" … "9" .
 
+// After a colon, accept a complete three- or six-digit hex colour as a scalar.
+// At entry start (including in arrays) and after a value, "#" starts a comment.
+hexColour = "#" hexDigit hexDigit hexDigit [ hexDigit hexDigit hexDigit ] .
+hexDigit = decimalDigit | "a" … "f" | "A" … "F" .
 // Consume line comments through the last character before LF or EOF.
 lineComment = "#" { nonLF } .
 // At entry start, three quotes begin a block comment. The next triple closes it.
@@ -19,14 +23,21 @@ valueString = singleQuotedString | doubleQuotedValue | blockString | unquotedVal
 // Scan the longest bare string, trimming trailing whitespace from its final text
 // segment. It must yield text or a substitution. An unescaped "--", "->" or "-*"
 // ends a bare key before the hyphen. A decoded bare key cannot start with "@".
+// A leading "&" or "!&" at map-entry start introduces a filter. In an edge
+// endpoint, "<" after a source introduces a reverse arrow if it can take a
+// destination. At the start of a key, "<" can be text, e.g. "<stdin>".
 unquotedKey = keyStart { keyUnit } .
-keyStart = commonBareStart | "$" | "*" | "-" | escape | continuedLine .
-keyUnit = commonBareChar | "$" | "*" | "-" | escape | continuedLine .
+keyStart = commonBareStart | bareKeyPunctuation | escape | continuedLine .
+keyUnit = commonBareChar | bareKeyPunctuation | escape | continuedLine .
+bareKeyPunctuation = "$" | "*" | "-" | "&" | "<" | ">" | "[" | "]" .
 // The raw prefix "...@" is reserved for a spread and cannot start a bare value.
+// At value start "[" opens an array. A "]" terminates a direct array element.
+// In values "$" begins a substitution only before its opening brace (possibly
+// separated by horizontal whitespace). A malformed substitution is an error.
 unquotedValue = valueStart { valueUnit } .
-valueStart = commonBareStart | "(" | "&" | "*" | "-" | "." | ":" | "<" | ">"
+valueStart = commonBareStart | "$" | "]" | "(" | "&" | "*" | "-" | "." | ":" | "<" | ">"
            | substitution | escape | continuedLine .
-valueUnit = commonBareChar | "&" | "*" | "-" | "." | ":" | "<" | ">"
+valueUnit = commonBareChar | "$" | "[" | "]" | "&" | "*" | "-" | "." | ":" | "<" | ">"
           | substitution | escape | continuedLine .
 
 // Space, quotes, "(", "@", and "|" may occur within a bare string. At the
@@ -47,7 +58,7 @@ singleQuotedString = "'" { singleChar | "''" | "\\" newline } "'" .
 singleChar = "\u0000" … "\t" | "\v" … "&" | "(" … "\uD7FF"
            | "\uE000" … "\U0010FFFF" .
 doubleQuotedKey = "\"" { doubleChar | "$" | escape | "\\" newline } "\"" .
-doubleQuotedValue = "\"" { doubleChar | substitution | escape | "\\" newline } "\"" .
+doubleQuotedValue = "\"" { doubleChar | "$" | substitution | escape | "\\" newline } "\"" .
 doubleChar = "\u0000" … "\t" | "\v" … "!" | "#" | "%" … "["
            | "]" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
 

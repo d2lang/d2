@@ -1440,7 +1440,7 @@ layers: {
 					{"single-hyphen", "\"build\" - server\n", "use --"},
 					{"unclosed-group", "(a -> b", "terminated with )"},
 					{"wrong-block-fence", "x: |!#md\n  hello\n##|\n", "terminated with !#|"},
-					{"incomplete-variable", "x: amount$\n", "substitutions must begin"},
+					{"incomplete-variable", "x: amount${cost\n", "substitutions must be terminated"},
 				} {
 					t.Run(tc.name, func(t *testing.T) {
 						assert.WriteFile(t, filepath.Join(dir, "invalid.d2"), []byte(tc.source), 0644)
@@ -1769,7 +1769,7 @@ c
 		{
 			name: "validate-against-incorrect-d2",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
-				const source = `x > y`
+				const source = `"x" - y`
 				if grammartest.Recognizes(t, grammartest.Load(t), source) {
 					t.Fatal("EBNF accepted malformed connection")
 				}

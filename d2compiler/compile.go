@@ -1659,7 +1659,7 @@ func (c *compiler) validateNear(g *d2graph.Graph) {
 			return
 		}
 		if obj.NearKey != nil {
-			nearObj, isKey := g.Root.HasChild(d2graph.Key(obj.NearKey))
+			nearObj, isKey := obj.NearTarget()
 			_, isConst := d2ast.NearConstants[d2graph.Key(obj.NearKey)[0]]
 			if isKey {
 				// Doesn't make sense to set near to an ancestor or descendant

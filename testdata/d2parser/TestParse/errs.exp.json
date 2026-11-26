@@ -4,7 +4,7 @@
     "nodes": [
       {
         "map_key": {
-          "range": "d2/testdata/d2parser/TestParse/errs.d2,1:0:1-1:8:9",
+          "range": "d2/testdata/d2parser/TestParse/errs.d2,1:0:1-1:12:13",
           "edges": [
             {
               "range": "d2/testdata/d2parser/TestParse/errs.d2,1:0:1-1:2:3",
@@ -17,11 +17,11 @@
           "primary": {},
           "value": {
             "unquoted_string": {
-              "range": "d2/testdata/d2parser/TestParse/errs.d2,1:4:5-1:8:9",
+              "range": "d2/testdata/d2parser/TestParse/errs.d2,1:4:5-1:11:12",
               "value": [
                 {
-                  "string": "meow",
-                  "raw_string": "meow"
+                  "string": "meow]]]",
+                  "raw_string": "meow]]]"
                 }
               ]
             }
@@ -30,17 +30,17 @@
       },
       {
         "map_key": {
-          "range": "d2/testdata/d2parser/TestParse/errs.d2,2:0:14-2:4:18",
+          "range": "d2/testdata/d2parser/TestParse/errs.d2,2:0:14-2:11:25",
           "key": {
-            "range": "d2/testdata/d2parser/TestParse/errs.d2,2:0:14-2:4:18",
+            "range": "d2/testdata/d2parser/TestParse/errs.d2,2:0:14-2:6:20",
             "path": [
               {
                 "unquoted_string": {
-                  "range": "d2/testdata/d2parser/TestParse/errs.d2,2:0:14-2:4:18",
+                  "range": "d2/testdata/d2parser/TestParse/errs.d2,2:0:14-2:6:20",
                   "value": [
                     {
-                      "string": "meow",
-                      "raw_string": "meow"
+                      "string": "meow][",
+                      "raw_string": "meow]["
                     }
                   ]
                 }
@@ -48,7 +48,17 @@
             ]
           },
           "primary": {},
-          "value": {}
+          "value": {
+            "unquoted_string": {
+              "range": "d2/testdata/d2parser/TestParse/errs.d2,2:8:22-2:10:24",
+              "value": [
+                {
+                  "string": "ok",
+                  "raw_string": "ok"
+                }
+              ]
+            }
+          }
         }
       },
       {
@@ -185,6 +195,29 @@
                     {
                       "string": "wow",
                       "raw_string": "wow"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "primary": {},
+          "value": {}
+        }
+      },
+      {
+        "map_key": {
+          "range": "d2/testdata/d2parser/TestParse/errs.d2,12:0:128-12:2:130",
+          "key": {
+            "range": "d2/testdata/d2parser/TestParse/errs.d2,12:0:128-12:2:130",
+            "path": [
+              {
+                "unquoted_string": {
+                  "range": "d2/testdata/d2parser/TestParse/errs.d2,12:0:128-12:2:130",
+                  "value": [
+                    {
+                      "string": "[]",
+                      "raw_string": "[]"
                     }
                   ]
                 }
@@ -402,14 +435,6 @@
         "errmsg": "d2/testdata/d2parser/TestParse/errs.d2:2:1: connection missing destination"
       },
       {
-        "range": "d2/testdata/d2parser/TestParse/errs.d2,1:8:9-1:11:12",
-        "errmsg": "d2/testdata/d2parser/TestParse/errs.d2:2:9: unexpected text after unquoted string"
-      },
-      {
-        "range": "d2/testdata/d2parser/TestParse/errs.d2,2:4:18-2:10:24",
-        "errmsg": "d2/testdata/d2parser/TestParse/errs.d2:3:5: unexpected text after map key"
-      },
-      {
         "range": "d2/testdata/d2parser/TestParse/errs.d2,3:16:42-3:31:57",
         "errmsg": "d2/testdata/d2parser/TestParse/errs.d2:4:17: unexpected text after double quoted string"
       },
@@ -424,10 +449,6 @@
       {
         "range": "d2/testdata/d2parser/TestParse/errs.d2,10:0:123-10:1:124",
         "errmsg": "d2/testdata/d2parser/TestParse/errs.d2:11:1: missing value after colon"
-      },
-      {
-        "range": "d2/testdata/d2parser/TestParse/errs.d2,12:0:128-12:2:130",
-        "errmsg": "d2/testdata/d2parser/TestParse/errs.d2:13:1: invalid text beginning unquoted key"
       },
       {
         "range": "d2/testdata/d2parser/TestParse/errs.d2,14:2:134-14:3:135",
