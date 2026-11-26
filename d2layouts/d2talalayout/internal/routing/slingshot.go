@@ -36,7 +36,6 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/xsort"
 )
 
@@ -514,54 +513,6 @@ func (router *ovgEdgeRouter) arrowheadLabelOverlapPenalty(gEdge *layoutgraph.Edg
 		penalty += cost
 	}
 	return penalty, nil
-}
-
-func positionedArrowheadLabelCost(pal labeling.PositionedArrowheadLabel, nodes []*layoutgraph.Node, labels []labeling.PositionedArrowheadLabel, routes []*Route, edges []*layoutgraph.Edge) (penalty float64) {
-	for _, other := range labels {
-		if pal.Edge == other.Edge && pal.IsTarget == other.IsTarget {
-			continue
-		}
-		if pal.Box.Overlaps(other.Box) {
-			if pal.Text == other.Text {
-				continue
-			}
-			return math.Inf(1)
-		}
-	}
-
-	graph := pal.Edge.From.Graph
-	fakeLabelNode := &layoutgraph.Node{
-		Box:   pal.Box,
-		Graph: graph,
-	}
-	penalty += 4 * graph.TurnCost() * float64(fakeLabelNode.NodeOverlapCount(nodes, label.PADDING))
-
-	overlappingEdgeCount := 0
-	// during edge routing we work with routes, afterwards we use edges
-	for _, route := range routes {
-		if route.GEdge == pal.Edge {
-			continue
-		}
-		for i := 1; i < len(route.OVGNodes); i++ {
-			if fakeLabelNode.OverlapsLine(route.OVGNodes[i-1].Point, route.OVGNodes[i].Point, 0) {
-				overlappingEdgeCount++
-				break
-			}
-		}
-	}
-	for _, edge := range edges {
-		if edge == pal.Edge {
-			continue
-		}
-		for i := 1; i < len(edge.Points); i++ {
-			if fakeLabelNode.OverlapsLine(edge.Points[i-1], edge.Points[i], 0) {
-				overlappingEdgeCount++
-				break
-			}
-		}
-	}
-	penalty += graph.TurnCost() * float64(overlappingEdgeCount)
-	return penalty
 }
 
 func (router *ovgEdgeRouter) slingshot(ctx context.Context, gEdge *layoutgraph.Edge) ([]*OVGNode, float64, error) {

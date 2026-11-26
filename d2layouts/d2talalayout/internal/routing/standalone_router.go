@@ -122,7 +122,7 @@ func routeEdgesWithBudgets(ctx context.Context, g *layoutgraph.Graph, edges []*l
 				}
 				continue
 			}
-			if err := tryStraightEdgeFallbackGuarded(g, edge, guard); err != nil {
+			if _, err := tryStraightEdgeFallbackGuarded(g, edge, guard); err != nil {
 				return err
 			}
 		}
