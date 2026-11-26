@@ -72,6 +72,7 @@
 
 #### Bugfixes ⛑️
 
+- Empty filters (`&` or `!&`) now report an error. Supply a condition such as `&shape: circle`. A trailing dot needs a path segment. Write `a` for the object or `"a."` for a name ending in a literal dot. Use `"svc".(a -> b)[0]` to scope a connection.
 - A lone hyphen after a quoted name now reports a syntax error. Change `"build" - server` to `"build" -- server`. An unquoted name such as `build-server` still names one object.
 - Reserved keys work in any letter case. For example, `service.STYLE.Stroke: blue` sets the stroke color when you compile the diagram directly. To keep an object named `STYLE`, write `"STYLE"`.
 - Unquoted labels such as `10${unit}` resolve their substitutions even when the prefix looks like a number, boolean, or other special value. An undefined variable in that position now reports an error.

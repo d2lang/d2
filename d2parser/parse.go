@@ -730,21 +730,15 @@ func (p *parser) parseMapKey() (mk *d2ast.Key) {
 	}
 	defer mk.Range.End.From(&p.pos)
 
-	defer func() {
-		if mk.Key == nil && len(mk.Edges) == 0 {
-			mk = nil
-		}
-	}()
-
-	// Check for not ampersand/@.
+	// An optional filter marker precedes a key or connection.
 	r, eof := p.peek()
 	if eof {
-		return mk
+		return nil
 	}
 	if r == '!' {
 		r, eof := p.peek()
 		if eof {
-			return mk
+			return nil
 		}
 		if r == '&' {
 			p.commit()
@@ -759,6 +753,17 @@ func (p *parser) parseMapKey() (mk *d2ast.Key) {
 		p.rewind()
 	}
 
+	markerEnd := p.pos
+	errorsBefore := len(p.err.Errors)
+	defer func() {
+		if mk.Key == nil && len(mk.Edges) == 0 {
+			if (mk.Ampersand || mk.NotAmpersand) && len(p.err.Errors) == errorsBefore {
+				p.errorf(mk.Range.Start, markerEnd, "filter requires a key or connection")
+			}
+			mk = nil
+		}
+	}()
+
 	r, eof = p.peek()
 	if eof {
 		return mk
@@ -770,9 +775,11 @@ func (p *parser) parseMapKey() (mk *d2ast.Key) {
 	}
 	p.rewind()
 
-	k := p.parseKey()
-	if k != nil {
-		mk.Key = k
+	k, scopedGroup := p.parseKeyPath(true)
+	mk.Key = k
+	if scopedGroup {
+		p.parseEdgeGroup(mk)
+		return mk
 	}
 
 	r, newlines, eof := p.peekNotSpace()
@@ -786,6 +793,9 @@ func (p *parser) parseMapKey() (mk *d2ast.Key) {
 	switch r {
 	case '(':
 		p.commit()
+		if k != nil {
+			p.errorf(p.pos.Subtract('(', p.utf16Pos), p.pos, "expected . before scoped connection")
+		}
 		p.parseEdgeGroup(mk)
 		return mk
 	case '<', '>', '-':
@@ -886,7 +896,11 @@ func (p *parser) parseEdgeGroup(mk *d2ast.Key) {
 	}
 	if r == '.' {
 		p.commit()
+		dotEnd := p.pos
 		mk.EdgeKey = p.parseKey()
+		if mk.EdgeKey == nil {
+			p.errorAfterDot(dotEnd)
+		}
 	} else {
 		p.rewind()
 	}
@@ -1037,7 +1051,18 @@ func (p *parser) parseEdge(e *d2ast.Edge) (ok bool) {
 	}
 }
 
-func (p *parser) parseKey() (k *d2ast.KeyPath) {
+func (p *parser) parseKey() *d2ast.KeyPath {
+	k, _ := p.parseKeyPath(false)
+	return k
+}
+
+func (p *parser) errorAfterDot(dotEnd d2ast.Position) {
+	p.errorf(dotEnd.Subtract('.', p.utf16Pos), dotEnd, "expected a key segment after .")
+}
+
+// An entry key may end in .( instead of another path segment. In that case
+// parseKeyPath consumes the opening parenthesis for parseEdgeGroup.
+func (p *parser) parseKeyPath(allowScopedGroup bool) (k *d2ast.KeyPath, scopedGroup bool) {
 	k = &d2ast.KeyPath{
 		Range: d2ast.Range{
 			Path:  p.path,
@@ -1061,25 +1086,25 @@ func (p *parser) parseKey() (k *d2ast.KeyPath) {
 		}
 	}()
 
+	var dotEnd d2ast.Position
 	for {
 		r, newlines, eof := p.peekNotSpace()
-		if eof {
-			return k
-		}
-		if newlines > 0 || r == '(' {
-			p.rewind()
-			return k
-		}
-		// TODO: error if begin, but see below too
-		if r == '.' {
-			continue
+		if allowScopedGroup && len(k.Path) > 0 && !eof && newlines == 0 && r == '(' {
+			p.commit()
+			return k, true
 		}
 		p.rewind()
 
-		sb := p.parseString(true)
+		var sb d2ast.StringBox
+		if !eof && newlines == 0 && r != '(' && r != '.' {
+			sb = p.parseString(true)
+		}
 		s := sb.Unbox()
 		if s == nil {
-			return k
+			if len(k.Path) > 0 {
+				p.errorAfterDot(dotEnd)
+			}
+			return k, false
 		}
 		if sb.UnquotedString != nil && strings.HasPrefix(s.ScalarString(), "@") {
 			p.errorf(s.GetRange().Start, s.GetRange().End, "%s is not a valid import, did you mean ...%[2]s?", s.ScalarString())
@@ -1092,14 +1117,14 @@ func (p *parser) parseKey() (k *d2ast.KeyPath) {
 
 		r, newlines, eof = p.peekNotSpace()
 		if eof {
-			return k
+			return k, false
 		}
 		if newlines > 0 || r != '.' {
 			p.rewind()
-			return k
+			return k, false
 		}
-		// TODO: error if not string or ( after, see above too
 		p.commit()
+		dotEnd = p.pos
 	}
 }
 

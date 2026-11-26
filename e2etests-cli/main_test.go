@@ -1417,6 +1417,10 @@ layers: {
 			name: "fmt-invalid-syntax",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				for _, tc := range []struct{ name, source, diagnostic string }{
+					{"empty-filter", "api; db\n*: {&; label: selected}\n", "filter requires"},
+					{"empty-negated-filter", "*: {!&; style.fill: red}", "filter requires"},
+					{"trailing-path-dot", "a.: title", "key segment after ."},
+					{"missing-scope-dot", `"svc"(a -> b)[0]`, "expected . before scoped connection"},
 					{"single-hyphen", "\"build\" - server\n", "use --"},
 					{"unclosed-group", "(a -> b", "terminated with )"},
 					{"wrong-block-fence", "x: |!#md\n  hello\n##|\n", "terminated with !#|"},
