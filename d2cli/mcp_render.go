@@ -19,6 +19,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2ascii"
 	"github.com/d2lang/d2/d2renderers/d2ascii/charset"
 	"github.com/d2lang/d2/d2renderers/d2raster"
+	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
@@ -94,24 +95,9 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in rende
 		Shapes: len(board.Shapes), Connections: len(board.Connections),
 	}
 	res := &mcp.CallToolResult{}
-	var svg string
-	if s.cfg.ui || format == "svg" {
-		var warning string
-		svg, warning, err = s.renderSVG(ctx, path, &board, opts)
-		if err != nil {
-			return mcpFailure(err.Error())
-		}
-		if warning != "" {
-			info.Warnings = append(info.Warnings, warning)
-		}
-		if s.cfg.ui && len(svg) <= 2<<20 {
-			res.Meta = mcp.Meta{mcpSVGMetaKey: svg}
-		}
-	}
+	var pngAssets *d2scenebuild.AssetOptions
 	var drawing mcp.Content
 	switch format {
-	case "svg":
-		drawing = mcpText(svg)
 	case "txt":
 		// Each cell requires a string in the renderer's dense grid. Bound
 		// both output and temporary memory for model-supplied dimensions.
@@ -125,9 +111,32 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in rende
 		if in.MaxDimension != nil {
 			maxDimension = min(4096, max(256, *in.MaxDimension))
 		}
-		drawing, err = mcpPNG(ctx, path, &board, opts, maxDimension, &info)
+		pngAssets, err = sceneAssetOptions(ctx, path, false)
 		if err != nil {
 			return mcpFailure(err.Error())
+		}
+		defer pngAssets.Resolver.CloseIdleConnections()
+		if s.cfg.ui {
+			pngAssets.UnavailableImages = make(map[string]struct{})
+		}
+		drawing, err = mcpPNG(ctx, pngAssets, &board, opts, maxDimension, &info)
+		if err != nil {
+			return mcpFailure(err.Error())
+		}
+	}
+	if s.cfg.ui || format == "svg" {
+		svg, warning, err := s.renderSVG(ctx, path, &board, opts, pngAssets)
+		if err != nil {
+			return mcpFailure(err.Error())
+		}
+		if warning != "" {
+			info.Warnings = append(info.Warnings, warning)
+		}
+		if format == "svg" {
+			drawing = mcpText(svg)
+		}
+		if s.cfg.ui && len(svg) <= 2<<20 {
+			res.Meta = mcp.Meta{mcpSVGMetaKey: svg}
 		}
 	}
 	if in.Source != nil {
@@ -156,7 +165,7 @@ func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, 
 		return strings.ToLower(name)
 	}
 	opts := &d2lib.CompileOptions{
-		InputPath: path, FS: s.files, Ruler: ruler,
+		InputPath: path, FS: s.sources, Ruler: ruler,
 		LayoutResolver: func(name string) (d2graph.LayoutGraph, error) { return s.layouts(engine(name)) },
 		RouterResolver: func(name string) (d2graph.RouteEdges, error) { return s.routers(engine(name)) },
 		LayoutReuse:    true, AnimateTweens: new(false),
@@ -182,11 +191,19 @@ func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, 
 	return diagram, layout, nil
 }
 
-func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts) (svg, warning string, err error) {
+func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts, pngAssets *d2scenebuild.AssetOptions) (svg, warning string, err error) {
 	opts.Scale = nil
 	data, err := d2svg.Render(board, &opts)
 	if err != nil {
 		return "", "", err
+	}
+	if pngAssets != nil {
+		// Use the same resources and missing-image placeholders as the PNG.
+		preview, err := bundleRasterPreview(ctx, pngAssets, data)
+		if err != nil {
+			return string(data), "could not bundle images: " + err.Error(), nil
+		}
+		return string(preview), "", nil
 	}
 	resolver, err := svgBundleResolver(ctx, path, false)
 	if err == nil {
@@ -200,12 +217,15 @@ func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.
 	return string(data), "", nil
 }
 
-func mcpPNG(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts, maxDim int, info *renderInfo) (*mcp.ImageContent, error) {
-	assets, err := sceneAssetOptions(ctx, path, false)
-	if err != nil {
-		return nil, err
+func mcpPNG(ctx context.Context, assets *d2scenebuild.AssetOptions, board *d2target.Diagram, opts d2svg.RenderOpts, maxDim int, info *renderInfo) (*mcp.ImageContent, error) {
+	var missing int
+	var firstMissing error
+	assets.OnUnavailableImage = func(err error) {
+		missing++
+		if firstMissing == nil {
+			firstMissing = err
+		}
 	}
-	defer assets.Resolver.CloseIdleConnections()
 	// A rendered label may request missing glyphs. Restrict fallback to
 	// bundled fonts so labels cannot trigger reads of system font directories.
 	fonts, err := bundledFontFallbackOptions(1, nil)
@@ -238,6 +258,9 @@ func mcpPNG(ctx context.Context, path string, board *d2target.Diagram, opts d2sv
 	}
 	info.Width, info.Height = int(math.Ceil(document.LogicalWidth)), int(math.Ceil(document.LogicalHeight))
 	info.ImageWidth, info.ImageHeight = frame.Bounds().Dx(), frame.Bounds().Dy()
+	if missing > 0 {
+		info.Warnings = append(info.Warnings, fmt.Sprintf("could not bundle %s: %v", plural(missing, "image"), firstMissing))
+	}
 	if warning := textSizeWarning(board, scale, info.Width, info.Height, maxDim); warning != "" {
 		info.Warnings = append(info.Warnings, warning)
 	}

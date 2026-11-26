@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -39,6 +40,7 @@ type mcpServer struct {
 	ms      *xmain.State
 	cfg     mcpConfig
 	files   localfile.Policy
+	sources fs.FS
 	layouts func(string) (d2graph.LayoutGraph, error)
 	routers func(string) (d2graph.RouteEdges, error)
 	sem     chan struct{}
@@ -119,6 +121,8 @@ func newMCPServer(ctx context.Context, ms *xmain.State, cfg mcpConfig) (*mcp.Ser
 		cleanup = func() { _ = policy.Close() }
 	}
 
+	s.sources = s.files.FilesWithExtension(".d2")
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:       "d2",
 		Title:      "D2",
@@ -198,6 +202,11 @@ func mcpHandler[I any](s *mcpServer, name string, h mcp.ToolHandlerFor[I, any]) 
 			res, out, err = h(ctx, req, in)
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// The deadline can pass after the last cancellation check, while a
+			// renderer finishes encoding a usable image. Keep the completed result.
+			if err == nil && res != nil && !res.IsError {
+				return res, out, nil
+			}
 			return mcpFailure(fmt.Sprintf("timed out after %s", s.cfg.timeout))
 		}
 		if err := ctx.Err(); err != nil {

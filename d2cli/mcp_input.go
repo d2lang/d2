@@ -35,7 +35,7 @@ func (s *mcpServer) resolveInput(source, path *string) (text, inputPath, msg str
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(s.cfg.root, p)
 	}
-	f, err := s.files.Open(p)
+	f, err := s.sources.Open(p)
 	if err != nil {
 		return "", "", fmt.Sprintf("cannot read %s: %v", *path, err)
 	}

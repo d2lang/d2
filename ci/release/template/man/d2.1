@@ -304,7 +304,8 @@ Use
 .Fl -root Ar dir
 or
 .Ev D2_MCP_ROOT
-to allow diagram files, imports and images beneath that directory.
+to allow .d2 source files and local images beneath that directory.
+Diagram paths and their symbolic link targets must end in .d2.
 Use
 .Fl -no-ui
 or
@@ -315,6 +316,8 @@ Set the per-call time limit with
 or
 .Ev D2_MCP_TIMEOUT .
 The default is 60 seconds and the accepted range is 1 through 600.
+When a call reaches its deadline, the server asks the renderer to stop.
+If the renderer finishes successfully, the server returns the completed diagram.
 .El
 .Sh ENVIRONMENT VARIABLES
 Many flags can also be set with environment variables.

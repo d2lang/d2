@@ -302,10 +302,10 @@ notes: |md
 | You wrote | What happens | Write this |
 |---|---|---|
 | `main.go -> utils.go` | A dot nests. You get containers `main` and `utils`, each holding `go`. | `"main.go" -> "utils.go"` |
-| `api.example.com`, `10.0.0.1`, `v1.2` as names | Same: nested shapes. | Quote the name. |
-| `nginx:1.25 -> redis:7` | The first colon starts a label. | `"nginx:1.25" -> "redis:7"` |
+| `api.example.com`, `10.0.0.1`, `v1.2` as names | Each dot starts a nested shape. | `"api.example.com"`, `"10.0.0.1"`, `"v1.2"`. |
+| `nginx:1.25 -> redis:7` | The first colon starts the label of a single shape named `nginx`. | `"nginx:1.25" -> "redis:7"` |
 | `a -> b: GET /users/{id}` | `{` starts a map. | `a -> b: "GET /users/{id}"` |
-| `a: C# service` | `#` starts a comment. The label becomes `C`. | `a: "C# service"` |
+| `a: C# service` | The hash after `C` starts a comment, so the label is `C`. A leading hash stays literal, as in `a: #tag`. | `a: "C# service"` |
 | `a: "${price}"` for literal text | `${price}` expands a variable. A plain `$`, as in `"costs $5"`, stays literal. | `a: '${price}'` |
 | `a: read; write` | `;` separates statements. You get two shapes. | `a: "read; write"` |
 | `Repo<Order>` as a shape name | `<` starts an edge. In a label, `a: Repo<Order>`, `a: string[]`, and `a: R&D` all work. | `"Repo<Order>"` |
@@ -317,6 +317,6 @@ notes: |md
 | `subgraph x {}` | Creates a shape named `subgraph x`. | `x: {}` |
 | `layers`, `steps` or `scenarios` as a shape at the root of a board | Those keys declare boards. Inside another shape, they name ordinary shapes. | Quote the name at the board root, for example `"layers"`. |
 | `a -> b` again to change its style | Makes a second connection. | `(a -> b)[0].style.stroke: red` |
-| `x.class: servce` (typo) | No error. The shape is unstyled. | Check class names by eye. |
+| `x.class: servce` (typo) | No error. The shape is unstyled. | Use the declared class name, for example `x.class: service`. |
 
 Reserved words cannot be shape names unless quoted: `label`, `shape`, `icon`, `style`, `class`, `classes`, `vars`, `link`, `near`, `tooltip`, `width`, `height`, `top`, `left`, `direction`, `constraint`, and the style words such as `fill`, `stroke`, `opacity`, `font`, `bold`, `shadow`.

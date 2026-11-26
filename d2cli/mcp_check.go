@@ -37,7 +37,7 @@ func (s *mcpServer) check(ctx context.Context, _ *mcp.CallToolRequest, in checkI
 		}
 	}
 
-	g, _, err := d2compiler.Compile(path, strings.NewReader(source), &d2compiler.CompileOptions{Context: ctx, FS: s.files})
+	g, _, err := d2compiler.Compile(path, strings.NewReader(source), &d2compiler.CompileOptions{Context: ctx, FS: s.sources})
 	if err != nil {
 		result, status := mcpCompileError(err, "check")
 		info.mcpStatus = status

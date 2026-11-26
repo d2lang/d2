@@ -112,7 +112,7 @@ func (b *builder) resolveImageAsset(object, source string) (d2scene.AssetID, err
 			return "", ctxErr
 		}
 		if errors.Is(err, imageasset.ErrUnavailable) {
-			return b.resolveUnavailableImageAsset(source)
+			return b.resolveUnavailableImageAsset(source, err)
 		}
 		return "", fmt.Errorf("scene: %s image asset: %w", object, err)
 	}
@@ -190,7 +190,7 @@ const UnavailableImageSVG = `<svg xmlns="http://www.w3.org/2000/svg" id="image-u
   <path id="image-unavailable:fold" d="M42 3V18H57" fill="none" stroke="#7b838c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
-func (b *builder) resolveUnavailableImageAsset(source string) (d2scene.AssetID, error) {
+func (b *builder) resolveUnavailableImageAsset(source string, cause error) (d2scene.AssetID, error) {
 	if _, ok := b.assets[unavailableImageAssetID]; !ok {
 		// The fixed built-in icon is independent of the user's SVG import budget.
 		icon, err := d2svgimport.ImportNode(b.ctx, string(unavailableImageAssetID), []byte(UnavailableImageSVG), d2svgimport.Limits{
@@ -211,6 +211,9 @@ func (b *builder) resolveUnavailableImageAsset(source string) (d2scene.AssetID, 
 	}
 	if missing := b.options.Assets.UnavailableImages; missing != nil {
 		missing[source] = struct{}{}
+	}
+	if notify := b.options.Assets.OnUnavailableImage; notify != nil {
+		notify(cause)
 	}
 	b.sourceAssetIDs[source] = unavailableImageAssetID
 	return unavailableImageAssetID, nil
