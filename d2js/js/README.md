@@ -221,7 +221,7 @@ All [RenderOptions](#renderoptions) properties in addition to:
 ## Development
 
 D2.js builds its browser and Node.js WebAssembly module with TinyGo. Install the
-Go version in the root `go.mod`, TinyGo 0.44.0-d2.2 from
+Go version in the root `go.mod`, TinyGo 0.44.0-d2.3 from
 [d2lang/tinygo](https://github.com/d2lang/tinygo/releases) (`ci/wasm-flags.sh`
 says why the build needs it), Binaryen (CI uses version 133), the Bun version in
 `package.json`, and Node.js 24 with npm. Put `tinygo` and `wasm-opt` on PATH. The
