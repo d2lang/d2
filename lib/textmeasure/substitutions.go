@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
 	"github.com/yuin/goldmark/v2/text"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 func ReplaceSubstitutionsMarkdown(mdText string, variables map[string]string) string {
@@ -42,7 +45,7 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	if err := ctx.Err(); err != nil {
 		return "", 0, err
 	}
-	if (len(variables) == 0 && resolve == nil) || !strings.Contains(mdText, "${") {
+	if !strings.Contains(mdText, "${") || (len(variables) == 0 && resolve == nil && !strings.Contains(mdText, `\${`)) {
 		return mdText, 0, nil
 	}
 	matcher, err := newMarkdownSubstitutionMatcher(ctx, variables)
@@ -51,7 +54,12 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	}
 	matcher.resolve = resolve
 	source := []byte(mdText)
-	doc := markdownParser.Parse(source)
+	doc, pc, err := parseMarkdownSubstitutions(ctx, source, mdText)
+	if err != nil {
+		return "", 0, err
+	}
+
+	matcher.source, matcher.references = mdText, pc
 
 	type substitution struct {
 		start  int
@@ -66,6 +74,7 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 			return nil
 		}
 		original := mdText[segment.Start:segment.Stop]
+		matcher.segmentStart = segment.Start
 		value, used, err := matcher.replaceBounded(ctx, original, maxExpansion-expansion, escapes)
 		if err != nil {
 			return err
@@ -76,46 +85,77 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 		}
 		return nil
 	}
-	replaceLink := func(dest text.SingleLineValue, title text.MultiLineValue) error {
-		if err := replace(dest.Index(), &destinationEscapes); err != nil {
-			return err
+	replaceParts := func(parts text.MultiLineValue, escapes *markdownEscapes) error {
+		indices := parts.Indices()
+		if escapes == &referenceEscapes && len(indices) > 0 {
+			// A shortcut's visible code is literal. Apply that same rule to
+			// its lookup key so changing the definition cannot break the link.
+			start, stop := indices[0].Start, indices[len(indices)-1].Stop
+			if strings.Contains(mdText[start:stop], "`") && strings.Contains(mdText[start:stop], "${") {
+				indices, err = referenceProseIndices(ctx, mdText[start:stop], start, indices)
+				if err != nil {
+					return err
+				}
+			}
 		}
-		for _, segment := range title.Indices() {
-			if err := replace(segment, &titleEscapes); err != nil {
+		for _, segment := range indices {
+			if err := replace(segment, escapes); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
+	replaceLink := func(dest text.SingleLineValue, title text.MultiLineValue, ref *ast.ReferenceLink) error {
+		if ref != nil {
+			// Shortcut and collapsed references use their visible text as the key.
+			if ref.ReferenceLinkKind == ast.ReferenceLinkKindFull {
+				return replaceParts(ref.Value, &referenceEscapes)
+			}
+			return nil
+		}
+		if err := replace(dest.Index(), &destinationEscapes); err != nil {
+			return err
+		}
+		return replaceParts(title, &titleEscapes)
+	}
 
+	shortcutDepth := 0
 	err = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if err := ctx.Err(); err != nil {
 			return ast.WalkStop, err
 		}
 		if !entering {
+			if referenceUsesText(n) {
+				shortcutDepth--
+			}
 			return ast.WalkContinue, nil
 		}
 
+		if referenceUsesText(n) {
+			shortcutDepth++
+		}
 		if isCodeNode(n) {
 			return ast.WalkSkipChildren, nil
 		}
 
 		switch n := n.(type) {
 		case *ast.Text:
+			if shortcutDepth > 0 {
+				return ast.WalkContinue, replace(n.Value.Index(), &referenceEscapes)
+			}
 			return ast.WalkContinue, replace(n.Value.Index(), nil)
 		case *ast.AutoLink:
 			return ast.WalkContinue, replace(n.Text.Index(), &autolinkEscapes)
 		case *ast.Link:
-			if n.Reference == nil {
-				return ast.WalkContinue, replaceLink(n.Destination, n.Title)
-			}
+			return ast.WalkContinue, replaceLink(n.Destination, n.Title, n.Reference)
 		case *ast.Image:
-			if n.Reference == nil {
-				return ast.WalkContinue, replaceLink(n.Destination, n.Title)
-			}
+			return ast.WalkContinue, replaceLink(n.Destination, n.Title, n.Reference)
 		case *ast.LinkReferenceDefinition:
 			// Every use shares these source offsets. Edit the definition once.
-			return ast.WalkContinue, replaceLink(n.Destination, n.Title)
+			if err := replaceParts(n.Label, &referenceEscapes); err != nil {
+				return ast.WalkStop, err
+			}
+			return ast.WalkContinue, replaceLink(n.Destination, n.Title, nil)
 		}
 		return ast.WalkContinue, nil
 	})
@@ -148,6 +188,106 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	return result.String(), expansion, nil
 }
 
+// A label can span several source segments in a Markdown block quote or list.
+// Goldmark supplies code span boundaries and the original segments retain
+// indentation and block prefixes outside the label.
+func referenceProseIndices(ctx context.Context, label string, start int, segments []text.Index) ([]text.Index, error) {
+	const prefix = "x " // Parse the label as inline paragraph content.
+	src := prefix + label
+	doc, _, err := parseMarkdownSubstitutions(ctx, []byte(src), src)
+	if err != nil {
+		return nil, err
+	}
+	var code []text.Index
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if span, ok := n.(*ast.CodeSpan); entering && ok {
+			indices := span.Value.Indices()
+			if len(indices) > 0 {
+				code = append(code, text.NewIndex(start+indices[0].Start-len(prefix), start+indices[len(indices)-1].Stop-len(prefix)))
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	if len(code) == 0 {
+		return segments, nil
+	}
+	var prose []text.Index
+	for _, segment := range segments {
+		for len(code) > 0 && code[0].Start < segment.Stop {
+			if segment.Start < code[0].Start {
+				prose = append(prose, text.NewIndex(segment.Start, code[0].Start))
+			}
+			segment.Start = max(segment.Start, code[0].Stop)
+			if code[0].Stop > segment.Stop {
+				break
+			}
+			code = code[1:]
+		}
+		if segment.Start < segment.Stop {
+			prose = append(prose, segment)
+		}
+	}
+	return prose, nil
+}
+
+// During substitution, D2 owns the complete reference in prose. Otherwise a
+// key such as ${__version__} is split across Markdown emphasis nodes. Actual
+// code spans and blocks are consumed by Goldmark before reaching this parser.
+var substitutionParser = newMarkdownParser(parser.WithInlineParsers(util.Prioritized[parser.InlineParser](referenceInlineParser{}, 100)))
+var referenceParserKey = parser.NewContextKey()
+
+func parseMarkdownSubstitutions(ctx context.Context, src []byte, input string) (ast.Node, parser.Context, error) {
+	state := &referenceParserState{ctx: ctx, source: input}
+	pc := parser.NewContext()
+	pc.Set(referenceParserKey, state)
+	doc := substitutionParser.Parse(src, parser.WithContext(pc))
+	return doc, pc, state.err
+}
+
+type referenceParserState struct {
+	ctx    context.Context
+	source string
+	next   int
+	err    error
+}
+
+type referenceInlineParser struct{}
+
+func (referenceInlineParser) Trigger() []byte { return []byte{'$', '\\'} }
+func (referenceInlineParser) Parse(_ ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	line, segment := block.PeekLine()
+	start := segment.Start
+	if len(line) >= 1 && line[0] == '\\' {
+		line = line[1:]
+		start++
+	}
+	if len(line) < 2 || line[0] != '$' || line[1] != '{' {
+		return nil
+	}
+	state := pc.Get(referenceParserKey).(*referenceParserState)
+	if segment.Start < state.next || state.err != nil {
+		return nil
+	}
+	var end int
+	end, state.next, state.err = markdownReferenceEnd(state.ctx, state.source, start+2)
+	if end == 0 || end > segment.Stop || !strings.ContainsAny(state.source[start+2:end-1], markdownSyntax) {
+		return nil
+	}
+	block.Advance(end - segment.Start)
+	return ast.NewText(text.NewSingleLineValueFromSegment(segment.WithStop(end), block.Decoder()))
+}
+
+func referenceUsesText(n ast.Node) bool {
+	var ref *ast.ReferenceLink
+	switch n := n.(type) {
+	case *ast.Link:
+		ref = n.Reference
+	case *ast.Image:
+		ref = n.Reference
+	}
+	return ref != nil && ref.ReferenceLinkKind != ast.ReferenceLinkKindFull
+}
+
 func isCodeNode(n ast.Node) bool {
 	switch n.Kind() {
 	case ast.KindCodeBlock, ast.KindCodeSpan:
@@ -159,6 +299,19 @@ func isCodeNode(n ast.Node) bool {
 // An interpolated URL or title is data inside Markdown syntax. Escape only
 // the inserted bytes, leaving the author's delimiters and escapes intact.
 type markdownEscapes [256]string
+
+const markdownSyntax = "`*_[]<>~&\\|"
+
+var literalKeyEscapes = func() (escapes markdownEscapes) {
+	for _, ch := range markdownSyntax {
+		escapes[ch] = "&#" + strconv.Itoa(int(ch)) + ";"
+	}
+	return escapes
+}()
+
+// Reference labels compare source spellings. Use the same escapes on the
+// definition and each use so brackets and backslashes still match.
+var referenceEscapes = markdownEscapes{'[': `\[`, ']': `\]`, '\\': `\\`, '\n': "&#10;", '\r': "&#13;"}
 
 var destinationEscapes = markdownEscapes{
 	' ': "%20", '\t': "%09", '\n': "%0A", '\r': "%0D",
@@ -214,8 +367,11 @@ type markdownSubstitutionState struct {
 }
 
 type markdownSubstitutionMatcher struct {
-	states  []markdownSubstitutionState
-	resolve func(string) (string, bool)
+	states       []markdownSubstitutionState
+	resolve      func(string) (string, bool)
+	source       string
+	references   parser.Context
+	segmentStart int
 }
 
 func newMarkdownSubstitutionMatcher(ctx context.Context, vars map[string]string) (*markdownSubstitutionMatcher, error) {
@@ -291,6 +447,52 @@ func newMarkdownSubstitutionMatcher(ctx context.Context, vars map[string]string)
 	}
 	matcher.states = states
 	return matcher, nil
+}
+
+// An unresolved shortcut can become a link to a literal definition after
+// interpolation. Escape brackets only if that produces a defined reference.
+func (matcher *markdownSubstitutionMatcher) matchesLiteralReference(ctx context.Context, start, stop int, value string) bool {
+	start += matcher.segmentStart
+	stop += matcher.segmentStart
+	if matcher.references == nil || start == 0 || stop >= len(matcher.source) || matcher.source[start-1] != '[' || matcher.source[stop] != ']' {
+		return false
+	}
+	if len(value) > 999 || !strings.ContainsAny(value, `[]\`) {
+		return false
+	}
+	// CommonMark limits reference labels to 999 characters.
+	escaped, err := referenceEscapes.escape(ctx, value, 999)
+	if err != nil {
+		return false
+	}
+	_, found := matcher.references.LinkDefinition(util.ToLinkReference([]byte(escaped)))
+	return found
+}
+
+func escapedMarkdownDollar(s string, i int) bool {
+	start := i
+	for start > 0 && s[start-1] == '\\' {
+		start--
+	}
+	return (i-start)%2 != 0
+}
+
+// Keep punctuation in a literal placeholder through Markdown rendering and
+// import replay. Simple names can retain their original Markdown spelling.
+func escapedMarkdownReference(ctx context.Context, key string, remaining int64) (string, error) {
+	if !strings.ContainsAny(key, markdownSyntax) {
+		return "", nil
+	}
+	const prefix = "&#36;{"
+	remaining -= int64(len(prefix) + 1)
+	if int64(len(key)) > remaining {
+		return "", errors.New("Markdown substitution expansion limit exceeded")
+	}
+	key, err := literalKeyEscapes.escape(ctx, key, remaining)
+	if err != nil {
+		return "", err
+	}
+	return prefix + key + "}", nil
 }
 
 func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, s string, maxExpansion int64, escapes *markdownEscapes) (string, int64, error) {
@@ -371,6 +573,29 @@ func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, 
 				return "", 0, err
 			}
 		}
+		if strings.HasPrefix(s[i:], "${") && escapedMarkdownDollar(s, i) {
+			if (escapes == nil || escapes == &referenceEscapes) && i >= nextReference {
+				end, next, err := markdownReferenceEnd(ctx, s, i+2)
+				if err != nil {
+					return "", 0, err
+				}
+				nextReference = next
+				if end > 0 {
+					literal, err := escapedMarkdownReference(ctx, s[i+2:end-1], maxExpansion-used)
+					if err != nil {
+						return "", 0, err
+					}
+					if literal != "" {
+						replacements = append(replacements, replacement{start: i - 1, stop: end, value: literal})
+						used += int64(len(literal))
+					}
+					i = end
+					continue
+				}
+			}
+			i++
+			continue
+		}
 		match, found := bestAtStart[i]
 		legacyEnd := match.stop
 		if matcher.resolve != nil && i >= nextReference && strings.HasPrefix(s[i:], "${") {
@@ -403,9 +628,13 @@ func (matcher *markdownSubstitutionMatcher) replaceBounded(ctx context.Context, 
 		if int64(len(match.value)) > maxExpansion-used {
 			return "", 0, errors.New("Markdown substitution expansion limit exceeded")
 		}
-		if escapes != nil && match.value != s[match.start:match.stop] {
+		matchEscapes := escapes
+		if matchEscapes == nil && matcher.matchesLiteralReference(ctx, match.start, match.stop, match.value) {
+			matchEscapes = &referenceEscapes
+		}
+		if matchEscapes != nil && match.value != s[match.start:match.stop] {
 			var err error
-			match.value, err = escapes.escape(ctx, match.value, maxExpansion-used)
+			match.value, err = matchEscapes.escape(ctx, match.value, maxExpansion-used)
 			if err != nil {
 				return "", 0, err
 			}

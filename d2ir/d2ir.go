@@ -1346,9 +1346,17 @@ func (m *Map) ensureFieldMode(kp *d2ast.KeyPath, refctx *RefContext, create bool
 		}
 	}
 	if len(fa) > 0 && c != nil && len(c.globRefContextStack) == 0 {
-		if len(created) > 0 {
+		// A new board can have supplied the requested field by inheritance.
+		// Its key updates an existing shape just as it would inside a map.
+		newTarget := len(created) > 0
+		if newTarget && len(fa) == 1 {
+			last := created[len(created)-1]
+			newTarget = fa[0] == last || NodeBoardKind(last) == ""
+		}
+		if newTarget {
 			c.enqueueLazyPostTargets(fa...)
 			c.applyLazyGlobs(fa)
+			c.applyDottedBoardGlobs(m, fa)
 		} else {
 			c.applyLazyGlobs(nil)
 		}
@@ -1421,9 +1429,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 						continue
 					}
 					if f.Map() == nil {
-						f.Composite = &Map{
-							parent: f,
-						}
+						c.openFieldMap(f)
 					}
 					err := f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
 					if err != nil {
@@ -1456,9 +1462,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 						continue
 					}
 					if f.Map() == nil {
-						f.Composite = &Map{
-							parent: f,
-						}
+						c.openFieldMap(f)
 					}
 					err := f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
 					if err != nil {
@@ -1527,9 +1531,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			return d2parser.Errorf(kp.Path[i].Unbox(), "cannot index into array")
 		}
 		if f.Map() == nil {
-			f.Composite = &Map{
-				parent: f,
-			}
+			c.openFieldMap(f)
 		}
 		return f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
 	}
@@ -1599,9 +1601,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		return nil
 	}
 	if f.Composite == nil {
-		f.Composite = &Map{
-			parent: f,
-		}
+		c.openFieldMap(f)
 	}
 	return f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
 }
@@ -1785,9 +1785,7 @@ func (m *Map) getEdges(eid *EdgeID, refctx *RefContext, gctx *globContext, c *co
 				return d2parser.Errorf(refctx.Edge.Src, "cannot index into array")
 			}
 			if f.Map() == nil {
-				f.Composite = &Map{
-					parent: f,
-				}
+				c.openFieldMap(f)
 			}
 			err = f.Map().getEdges(eid, refctx, gctx, c, indexed, ea)
 			if err != nil {
@@ -1911,9 +1909,7 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 				return d2parser.Errorf(refctx.Edge.Src, "cannot index into array")
 			}
 			if f.Map() == nil {
-				f.Composite = &Map{
-					parent: f,
-				}
+				c.openFieldMap(f)
 			}
 			err = f.Map().createEdge(eid, refctx, gctx, c, indexed, ea)
 			if err != nil {
@@ -2033,9 +2029,7 @@ func (m *Map) createEdge2(eid *EdgeID, refctx *RefContext, gctx *globContext, c 
 				return nil, d2parser.Errorf(refctx.Edge.Src, "cannot index into array")
 			}
 			if f.Map() == nil {
-				f.Composite = &Map{
-					parent: f,
-				}
+				c.openFieldMap(f)
 			}
 			edges2, err := f.Map().createEdge2(eid, refctx, gctx, c, indexed, src, dst)
 			if err != nil {

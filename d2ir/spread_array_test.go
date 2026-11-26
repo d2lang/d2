@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2parser"
 )
 
@@ -42,5 +43,28 @@ func TestSpreadArrayReplacesEarlierMap(t *testing.T) {
 				t.Fatalf("spread:\n%s\ninline:\n%s", got, want)
 			}
 		})
+	}
+}
+
+func TestArraySpreadOrderAndScope(t *testing.T) {
+	const vars = `vars: {color: red; empty: []; base: [${color}; green]; theme: [...${base}; ...${empty}]}`
+	const use = `app: {vars.color: wrong; class: [first; ...${theme}; middle; ...${theme}; ...${empty}; last]}`
+	for _, source := range []string{vars + "\n" + use, use + "\n" + vars} {
+		ast, err := d2parser.Parse("array.d2", strings.NewReader(source), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, _, err := Compile(ast, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		arr := m.getFieldIndexedMode(d2ast.MakeKeyPath([]string{"app", "class"}).IDA(), true).Composite.(*Array)
+		var values []string
+		for _, v := range arr.Values {
+			values = append(values, v.Primary().Value.ScalarString())
+		}
+		if got, want := strings.Join(values, "/"), "first/red/green/middle/red/green/last"; got != want {
+			t.Errorf("array = %q, want %q", got, want)
+		}
 	}
 }

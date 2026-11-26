@@ -399,3 +399,34 @@ func TestImportVirtualDirectoryWithBackslash(t *testing.T) {
 	}
 	assertQuery(t, m, 0, 0, "meow", "x")
 }
+
+func TestSelectedImportScopesFilterSubstitutionErrors(t *testing.T) {
+	opts := d2ir.CompileOptions{FS: fstest.MapFS{
+		"lib.d2": {Data: []byte(`common.node: Ready
+deployment: {node: ${env}; *: {&label: production; style.fill: red}}`)},
+		"nested.d2": {Data: []byte(`plain: @lib.common; scoped: @lib.deployment`)},
+	}}
+	root, err := compileTween(t, `a: @lib.common
+b: @nested.plain
+staging: {vars.env: staging; app: @lib.deployment}
+prod: {vars.env: production; app: @lib.deployment}`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if got := tweenText(t, root, id, "node"); got != "Ready" {
+			t.Errorf("%s.node = %q", id, got)
+		}
+	}
+	if got := tweenText(t, root, "prod", "app", "node", "style", "fill"); got != "red" {
+		t.Errorf("production fill = %q", got)
+	}
+	if f := tweenField(root, "staging", "app", "node", "style", "fill"); f != nil {
+		t.Errorf("staging fill = %v", f)
+	}
+	for _, imp := range []string{"lib", "lib.deployment", "nested.scoped"} {
+		if _, err := compileTween(t, "app: @"+imp, opts); err == nil {
+			t.Errorf("missing env compiled for @%s", imp)
+		}
+	}
+}

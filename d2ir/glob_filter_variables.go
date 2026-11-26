@@ -1,12 +1,15 @@
 package d2ir
 
 import (
+	"slices"
+
 	"github.com/d2lang/d2/d2ast"
 )
 
 type globFilter struct {
 	*compiler
-	pending bool
+	candidate Node
+	pending   bool
 }
 
 type filterOperand struct {
@@ -17,6 +20,7 @@ type filterOperand struct {
 type filterResult struct {
 	value   d2ast.Scalar
 	pending bool
+	errors  []d2ast.Error
 }
 
 // The selector's lexical scope is shared by all its candidates.
@@ -26,27 +30,49 @@ func (g *globFilter) operand(s *Scalar, scope *Map) d2ast.Scalar {
 		return nil
 	}
 	key := filterOperand{scope, s.Value}
-	if result, ok := g.filterOperands[key]; ok {
-		g.pending = result.pending
-		return result.value
+	result, ok := g.filterOperands[key]
+	if !ok {
+		before := len(g.err.Errors)
+		result.value = g.scalar(s, true)
+		result.pending = g.pending
+		result.errors = g.takeFilterImportErrors(before)
+		if g.filterOperands == nil {
+			g.filterOperands = make(map[filterOperand]filterResult)
+		}
+		g.filterOperands[key] = result
 	}
-	value := g.scalar(s, true)
-	if g.filterOperands == nil {
-		g.filterOperands = make(map[filterOperand]filterResult)
+	// One lexical read can affect several candidates, only some of which
+	// belong to the selected export.
+	for _, err := range result.errors {
+		g.reportFilterImportError(g.candidate, err)
 	}
-	g.filterOperands[key] = filterResult{value, g.pending}
+	g.pending = result.pending
+	return result.value
+}
+
+func (g *globFilter) takeFilterImportErrors(before int) []d2ast.Error {
+	if len(g.filterImports) == 0 || g.stopped() {
+		return nil
+	}
+	errors := slices.Clone(g.err.Errors[before:])
+	g.err.Errors = g.err.Errors[:before]
+	return errors
+}
+
+func (g *globFilter) scalar(s *Scalar, operand bool) d2ast.Scalar {
+	value, _ := g.value(s, operand)
 	return value
 }
 
 // Evaluate a copy: the same filter expression can run in several boards, and
 // a label's ordinary substitution still needs its original expression.
-func (g *globFilter) scalar(s *Scalar, operand bool) d2ast.Scalar {
+func (g *globFilter) value(s *Scalar, operand bool) (d2ast.Scalar, *Array) {
 	if !hasSubstitution(s.Value) {
-		return filterScalarValue(s, operand)
+		return filterScalarValue(s, operand), nil
 	}
 	if g.collectFilterVars {
 		g.pending = true
-		return nil
+		return nil, nil
 	}
 	g.filterReads++
 	local := ParentMap(s)
@@ -56,7 +82,7 @@ func (g *globFilter) scalar(s *Scalar, operand bool) d2ast.Scalar {
 		origin, scopes = g.filterImportScopes(g.filterImports[i], origin, scopes)
 	}
 	if !g.reserveVariableExpansion(s.Value, variableExpansionScalarValueUnits(s.Value)) {
-		return nil
+		return nil, nil
 	}
 	copy := s.Copy(s.Parent()).(*Scalar)
 	previous, visits := g.scalarResolutions, g.substitutionVisits
@@ -66,23 +92,36 @@ func (g *globFilter) scalar(s *Scalar, operand bool) d2ast.Scalar {
 	g.resolveSubstitutions(scopes, copy)
 	g.scalarResolutions, g.substitutionVisits = previous, visits
 	if len(g.err.Errors) != before {
+		if !operand {
+			for _, err := range g.takeFilterImportErrors(before) {
+				g.reportFilterImportError(g.candidate, err)
+			}
+		}
 		g.pending = true
-		return nil
+		return nil, nil
 	}
 	if text, ok := copy.Value.(*d2ast.UnquotedString); ok && hasSubstitution(text) {
 		// A whole-value substitution of a map or array supplies no scalar.
 		if operand {
 			g.errorf(s.Value, "glob filters cannot be composites")
 			g.pending = true
+		} else if len(text.Value) == 1 && text.Value[0].Substitution != nil {
+			// readVariable already resolved this binding in these scopes.
+			field, _ := g.resolveVariable(scopes, copy, text.Value[0].Substitution)
+			if field != nil {
+				array, _ := field.Composite.(*Array)
+				return nil, array
+			}
 		}
-		return nil
+		return nil, nil
 	}
-	return filterScalarValue(copy, operand)
+	return filterScalarValue(copy, operand), nil
 }
 
 type filterImport struct {
 	site   Node
 	source *d2ast.Import
+	errors []filterImportError
 }
 
 func (c *compiler) filterImportScopes(entry filterImport, origin Node, scopes []*Map) (Node, []*Map) {
@@ -98,12 +137,7 @@ func (c *compiler) filterImportScopes(entry filterImport, origin Node, scopes []
 		inside := false
 		if m != nil {
 			selected := RootMap(m).getFieldIndexedMode(path, true)
-			for n := origin; n != nil; n = n.Parent() {
-				if n == selected {
-					inside = true
-					break
-				}
-			}
+			inside = withinImport(origin, selected)
 		}
 		if !inside {
 			return parent, c.filterVarScopes(parent, scopes)

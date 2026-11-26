@@ -335,3 +335,88 @@ func TestMarkdownLinkSubstitutionsPreserveURLAndTitle(t *testing.T) {
 		t.Fatal("escaped bytes must count toward the expansion limit")
 	}
 }
+
+func TestMarkdownReferenceLabelSubstitutions(t *testing.T) {
+	t.Parallel()
+	const input = "[${name}], [${name}][], [guide][${name}], ![alt][${name}]\n\n[${name}]: /guide"
+	for _, name := range []string{"Runbook", "Build [v2]", `A\B`} {
+		out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, map[string]string{"name": name}, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rendered, err := RenderMarkdown(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(rendered, `href="/guide"`) != 3 || !strings.Contains(rendered, `src="/guide"`) {
+			t.Errorf("substituting %q produced %s from %q", name, rendered, out)
+		}
+		if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, map[string]string{"name": name}, used-1); err == nil {
+			t.Fatal("reference labels must respect the expansion limit")
+		}
+	}
+}
+
+func TestMarkdownEscapedSubstitution(t *testing.T) {
+	t.Parallel()
+	const input = "\\${env} \\\\${env} \\\\\\${env} ${env} `\\${env}`"
+	const want = `<p>${env} \staging \${env} staging <code>\${env}</code></p>`
+	out, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, map[string]string{"env": "staging"}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderMarkdown(out)
+	if err != nil || strings.TrimSpace(rendered) != want {
+		t.Errorf("rendered %q, %v; want %q", rendered, err, want)
+	}
+}
+
+func TestMarkdownPunctuationInVariableKeys(t *testing.T) {
+	t.Parallel()
+	const input = "**${'build[prod]'}** ${__version__} `[${__version__}]`\n\n```\n${'build[prod]'}\n```"
+	const want = "**ready** v2.4 `[${__version__}]`\n\n```\n${'build[prod]'}\n```"
+	keys := map[string]string{"'build[prod]'": "ready", "__version__": "v2.4"}
+	out, used, err := ResolveSubstitutionsMarkdownBounded(context.Background(), input, nil, 11, func(key string) (string, bool) { val, ok := keys[key]; return val, ok })
+	if err != nil || out != want || used != 11 {
+		t.Errorf("substitution = %q, %d, %v; want %q, 11", out, used, err, want)
+	}
+}
+
+func TestMarkdownReferenceKeysPreserveInlineCode(t *testing.T) {
+	input := "[${env} `${env}`] and [explicit][${env} `${env}`]\n\n[${env} `${env}`]: /guide"
+	out := ReplaceSubstitutionsMarkdown(input, map[string]string{"env": "stage"})
+	rendered, err := RenderMarkdown(out)
+	if err != nil || strings.Count(rendered, `href="/guide"`) != 2 || !strings.Contains(rendered, "stage <code>${env}</code>") {
+		t.Errorf("rendering %q gave %q, %v", out, rendered, err)
+	}
+}
+
+func TestMarkdownLiteralPlaceholderAndReferenceLookup(t *testing.T) {
+	for _, tc := range []struct{ input, value, want string }{
+		{`\${__name__}`, "replaced", `<p>${__name__}</p>`},
+		{"[${name}]\n\n[Run \\[v2\\]]: /go", "Run [v2]", `<p><a href="/go">Run [v2]</a></p>`},
+		{"${name}\n\n[Run \\[v2\\]]: /go", "[go](/other)", `<p><a href="/other">go</a></p>`},
+	} {
+		out := ReplaceSubstitutionsMarkdown(tc.input, map[string]string{"name": tc.value, "__name__": tc.value})
+		rendered, err := RenderMarkdown(out)
+		if err != nil || strings.TrimSpace(rendered) != tc.want {
+			t.Errorf("%q rendered as %q from %q, want %q, err %v", tc.input, rendered, out, tc.want, err)
+		}
+	}
+	out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), `\${__name__}`, nil, 200)
+	if err != nil || used == 0 {
+		t.Fatalf("escaped literal returned %q, %d, %v", out, used, err)
+	}
+	if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), `\${__name__}`, nil, used-1); err == nil {
+		t.Fatal("escaped literal must respect work limit")
+	}
+}
+
+func TestMarkdownNestedReferenceImage(t *testing.T) {
+	input := "[![${name}][]][${page}]\n\n[${name}]: /image\n[${page}]: /guide"
+	out := ReplaceSubstitutionsMarkdown(input, map[string]string{"name": "Run [v2]", "page": "Guide [v2]"})
+	rendered, err := RenderMarkdown(out)
+	if err != nil || !strings.Contains(rendered, `<a href="/guide"><img src="/image" alt="Run [v2]"`) {
+		t.Errorf("nested reference image rendered %q from %q, %v", rendered, out, err)
+	}
+}

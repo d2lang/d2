@@ -79,9 +79,49 @@ func formatCyclicChain(cyclicChain []string) string {
 // Returns either *Map or *Field.
 func (c *compiler) _import(imp *d2ast.Import, importer Node) (Node, bool) {
 	_, fieldImport := importer.(*Field)
-	c.filterImports = append(c.filterImports, filterImport{importer, imp})
-	defer func() { c.filterImports = c.filterImports[:len(c.filterImports)-1] }()
-	return c.__import(imp, importTemplateSafeAt(importer), fieldImport)
+	i := len(c.filterImports)
+	c.filterImports = append(c.filterImports, filterImport{site: importer, source: imp})
+	node, ok := c.__import(imp, importTemplateSafeAt(importer), fieldImport)
+	errors := c.filterImports[i].errors
+	c.filterImports = c.filterImports[:i]
+	if ok && len(errors) != 0 {
+		reported := make(map[d2ast.Error]struct{})
+		for _, e := range errors {
+			if _, seen := reported[e.err]; seen {
+				continue
+			}
+			if len(imp.Path) == 1 || withinImport(node, e.site) || withinImport(e.site, node) {
+				c.reportFilterImportError(importer, e.err)
+				reported[e.err] = struct{}{}
+			}
+		}
+	}
+	return node, ok
+}
+
+// A module compiles as a unit, including filters in exports the caller may
+// never select. Retain substitution diagnostics only for the selected tree.
+type filterImportError struct {
+	site Node
+	err  d2ast.Error
+}
+
+func withinImport(node, ancestor Node) bool {
+	for ; node != nil; node = node.Parent() {
+		if node == ancestor {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *compiler) reportFilterImportError(site Node, err d2ast.Error) {
+	if len(c.filterImports) == 0 {
+		c.err.Errors = append(c.err.Errors, err)
+		return
+	}
+	frame := &c.filterImports[len(c.filterImports)-1]
+	frame.errors = append(frame.errors, filterImportError{site, err})
 }
 
 func (c *compiler) selectImport(ir *Map, imp *d2ast.Import) (Node, bool) {
