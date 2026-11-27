@@ -119,6 +119,9 @@ func hasSFNTDirectory(face []byte) bool {
 }
 
 func Sfnt2Woff(fontBuf []byte) ([]byte, error) {
+	if !hasSFNTDirectory(fontBuf) {
+		return nil, fmt.Errorf("incomplete SFNT table directory")
+	}
 	return sfnt2Woff(fontBuf, false, nil)
 }
 
@@ -147,11 +150,9 @@ func sfnt2Woff(fontBuf []byte, compact bool, compression *woffCompression) ([]by
 			Length:   binary.BigEndian.Uint32(table[SFNT_OFFSET_LENGTH:]),
 		}
 
-		if compact {
-			paddedLength := (uint64(entry.Length) + 3) &^ 3
-			if uint64(entry.Offset)+paddedLength > uint64(len(fontBuf)) || (string(entry.Tag) == "head" && entry.Length < 12) {
-				return nil, fmt.Errorf("invalid SFNT table %q", entry.Tag)
-			}
+		paddedLength := (uint64(entry.Length) + 3) &^ 3
+		if uint64(entry.Offset)+paddedLength > uint64(len(fontBuf)) || (string(entry.Tag) == "head" && entry.Length < 12) {
+			return nil, fmt.Errorf("invalid SFNT table %q", entry.Tag)
 		}
 		entries = append(entries, entry)
 	}

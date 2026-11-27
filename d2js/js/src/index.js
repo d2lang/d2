@@ -6,6 +6,29 @@ function compileRequest(input, options) {
     : { ...input, options: { ...options, ...input.options } };
 }
 
+// The wire format carries the font bytes once on the root. An extracted board
+// shares that snapshot without duplicating it in serialized multi-board output.
+function inheritCustomFonts(diagram) {
+  const fonts = diagram?.customFonts;
+  if (!fonts) return;
+  const pending = [diagram];
+  while (pending.length) {
+    const board = pending.pop();
+    for (const children of [
+      board.layers,
+      board.scenarios,
+      board.steps,
+      board.tweenFrames,
+    ]) {
+      for (const child of children ?? []) {
+        if (!child) continue;
+        Object.defineProperty(child, "customFonts", { value: fonts, configurable: true });
+        pending.push(child);
+      }
+    }
+  }
+}
+
 export class D2 {
   constructor(options = {}) {
     this.nextRequestId = 0;
@@ -124,7 +147,9 @@ export class D2 {
   }
 
   async compile(input, options = {}) {
-    return this.sendMessage("compile", compileRequest(input, options));
+    const result = await this.sendMessage("compile", compileRequest(input, options));
+    inheritCustomFonts(result?.diagram);
+    return result;
   }
 
   async renderSVG(input, options = {}) {
@@ -132,6 +157,8 @@ export class D2 {
   }
 
   async render(diagram, options = {}) {
+    // Structured cloning drops the non-enumerable snapshot on an extracted board.
+    if (diagram?.customFonts) diagram = { ...diagram, customFonts: diagram.customFonts };
     return this.sendMessage("render", { diagram, options });
   }
 

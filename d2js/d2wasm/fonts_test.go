@@ -22,13 +22,6 @@ import (
 // allows the wasm build to drop the four separately encoded WOFFs that native
 // builds register for SourceSansPro-Semibold and SourceCodePro-Bold, -Semibold
 // and -Italic.
-//
-// One caller still sees the difference. A custom family takes over the bundled
-// encoding of each style it does not supply. If a later call supplies that
-// style with a file that the font parser accepts but that cannot be encoded,
-// AddFontStyle keeps the encoding and replaces the face, and the SVG then
-// embeds the bundled face whole: re-encoded from the TTF here, the separately
-// encoded WOFF in a native build.
 func TestBundledSVGFontEncodings(t *testing.T) {
 	const prefix = "data:application/font-woff;base64,"
 	for _, family := range []d2fonts.FontFamily{d2fonts.SourceSansPro, d2fonts.SourceCodePro, d2fonts.HandDrawn} {

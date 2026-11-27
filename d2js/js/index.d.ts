@@ -119,6 +119,8 @@ export interface CompileResponse {
 }
 
 export interface Diagram {
+  /** Custom TrueType faces encoded as base64. Retained on the root when serializing a compiled diagram. */
+  customFonts?: { regular?: string; italic?: string; bold?: string; semibold?: string };
   config?: RenderOptions & Pick<CompileOptions, "animateDuration">;
   name: string;
   /**
