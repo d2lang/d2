@@ -71,5 +71,5 @@ In a plugin's `.lsp.json`:
 - A file that is only ever imported by another file is checked on its own, so it may show errors that do not occur when it is imported.
 - Renaming a shape that has no label also changes the text shown on it, because the name is the label.
 - Files larger than 2 MiB receive an informational diagnostic. Language features resume when the file is within that limit.
-- Shape rename updates literal `near` paths. If a `near` value comes from a variable or a shared value resolves to different targets on different boards, the server reports the conflict before applying edits.
-- Rename can also report a conflict when a related file has a syntax error, a selective import uses the name, or a board removes or suspends a field with that name. The diagnostic or rename message identifies what needs attention.
+- Shape rename updates literal `near` paths. The server reports a conflict if a placement uses a variable, a shared value resolves to different targets on different boards, or the new name would turn a placement constant such as `top-left` into a shape reference.
+- Rename can also report a conflict when a related file has a syntax error, a selective import uses the name, or the server cannot resolve the name inside a removed or suspended shape or connection. The diagnostic or rename message identifies what needs attention.
