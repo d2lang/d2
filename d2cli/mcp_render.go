@@ -22,6 +22,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2renderers/d2svg/appendix"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/internal/d2layoutfeatures"
@@ -71,8 +72,12 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in *rend
 	if msg != "" {
 		return mcpFailure(msg)
 	}
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		return mcpFailure(err.Error())
+	}
 	opts := d2svg.RenderOpts{ThemeID: in.Theme, Sketch: in.Sketch}
-	root, graph, layout, err := s.compileForRender(ctx, path, source, in.Layout, format, &opts)
+	root, graph, layout, err := s.compileForRender(ctx, path, source, in.Layout, format, &opts, ruler)
 	if err != nil {
 		return mcpCompileFailure(err, "render")
 	}
@@ -132,9 +137,11 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in *rend
 			return mcpFailure(err.Error())
 		}
 	}
+	forceAppendix := root.Config.ResolveForceAppendix(nil)
+	includeAppendix := forceAppendix != nil && *forceAppendix
 	var viewerSVG string
 	if format == "svg" {
-		svg, warning, err := s.renderSVG(ctx, path, &board, opts)
+		svg, warning, err := s.renderSVG(ctx, path, &board, opts, ruler, includeAppendix)
 		if err != nil {
 			return mcpFailure(err.Error())
 		}
@@ -144,7 +151,7 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in *rend
 		drawing = mcpText(svg)
 		viewerSVG = svg
 	} else if s.cfg.ui {
-		viewerSVG, err = mcpViewerPreview(ctx, path, &board, opts, pngAssets)
+		viewerSVG, err = mcpViewerPreview(ctx, path, &board, opts, pngAssets, ruler, format == "png" || includeAppendix)
 		if err != nil {
 			// Hosts can still show the PNG or text returned by the tool.
 			info.Warnings = append(info.Warnings, "could not create the inline SVG preview: "+err.Error())
@@ -164,11 +171,7 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in *rend
 	return res, info, nil
 }
 
-func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, format string, render *d2svg.RenderOpts) (*d2target.Diagram, *d2graph.Graph, string, error) {
-	ruler, err := textmeasure.NewRuler()
-	if err != nil {
-		return nil, nil, "", err
-	}
+func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, format string, render *d2svg.RenderOpts, ruler *textmeasure.Ruler) (*d2target.Diagram, *d2graph.Graph, string, error) {
 	// The compiler resolves the layout from the argument, source (including
 	// imports), or default, in that order. Substitute ELK for text only after
 	// that decision so a source-selected TALA layout is honored.
@@ -202,9 +205,16 @@ func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, 
 	return diagram, graph, layout, nil
 }
 
-func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts) (svg, warning string, err error) {
-	opts.Scale = nil
+func mcpBoardSVG(ctx context.Context, board *d2target.Diagram, opts d2svg.RenderOpts, ruler *textmeasure.Ruler, includeAppendix bool) ([]byte, error) {
 	data, err := d2svg.RenderContext(ctx, board, &opts)
+	if err != nil || !includeAppendix {
+		return data, err
+	}
+	return appendix.AppendRendered(board, &opts, ruler, data)
+}
+
+func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts, ruler *textmeasure.Ruler, includeAppendix bool) (svg, warning string, err error) {
+	data, err := mcpBoardSVG(ctx, board, opts, ruler, includeAppendix)
 	if err != nil {
 		return "", "", err
 	}
@@ -222,9 +232,9 @@ func (s *mcpServer) renderSVG(ctx context.Context, path string, board *d2target.
 
 // The preview is optional. Keep its budget independent of the requested
 // drawing; use an existing PNG resolver to reuse its images and placeholders.
-func mcpViewerPreview(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts, assets *d2scenebuild.AssetOptions) (string, error) {
+func mcpViewerPreview(ctx context.Context, path string, board *d2target.Diagram, opts d2svg.RenderOpts, assets *d2scenebuild.AssetOptions, ruler *textmeasure.Ruler, includeAppendix bool) (string, error) {
 	opts.Scale = nil
-	svg, err := d2svg.RenderContext(ctx, board, &opts)
+	svg, err := mcpBoardSVG(ctx, board, opts, ruler, includeAppendix)
 	if err != nil {
 		return "", err
 	}

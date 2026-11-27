@@ -312,3 +312,22 @@ func TestMCPDrawingStopsWhenCanceled(t *testing.T) {
 	_, err = d2svg.RenderContext(ctx, board, nil)
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestMCPSourceSVGAppendix(t *testing.T) {
+	s := newTestMCP(t, mcpConfig{ui: true})
+	for _, enabled := range []bool{false, true} {
+		source := fmt.Sprintf("vars.d2-config: {force-appendix: %t; scale: .5}\nlayers.detail: {box: {tooltip: saved note}}", enabled)
+		result := callMCP(t, s, "render", map[string]any{"source": source, "format": "svg", "target": "layers.detail"})
+		require.False(t, result.IsError, "%v", result.Content)
+		svg := result.Content[0].(*mcp.TextContent).Text
+		require.Equal(t, enabled, strings.Contains(svg, `class="appendix"`))
+		require.Equal(t, svg, result.Meta[mcpSVGMetaKey])
+		native, err := imageCLI(t, t.TempDir(), source, "--target=layers.detail", "-")
+		require.NoError(t, err)
+		require.Equal(t, strings.TrimSpace(string(native)), strings.TrimSpace(svg))
+
+		result = callMCP(t, s, "render", map[string]any{"source": source, "format": "png", "target": "layers.detail"})
+		require.False(t, result.IsError, "%v", result.Content)
+		require.Contains(t, result.Meta[mcpSVGMetaKey], `class="appendix"`)
+	}
+}
