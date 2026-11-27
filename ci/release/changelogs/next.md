@@ -6,6 +6,7 @@
 - SVG exports use fewer bytes for element tags and Markdown coordinates and omit unused XLink declarations.
 - SVG exports combine and compact the generated CSS for fonts, themes, and animations.
 - SVG code blocks use fewer bytes for indentation and quoted strings.
+- Sketch SVGs omit redundant zeros and separators in hand-drawn paths while retaining their original coordinates.
 
 #### Bugfixes ⛑️
 

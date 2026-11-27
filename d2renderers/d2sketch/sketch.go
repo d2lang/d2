@@ -17,7 +17,12 @@ import (
 	"github.com/d2lang/util-go/go2"
 )
 
-var floatRE = regexp.MustCompile(`(\d+)\.(\d+)`)
+var (
+	floatRE = regexp.MustCompile(`\d+\.\d+`)
+	// Rough emits only M, L and C commands, with comma-space separators
+	// between control points. A sign or a command already delimits a number.
+	pathSeparators = strings.NewReplacer(", -", "-", ", ", " ", " -", "-", " M", "M", " L", "L", " C", "C")
+)
 
 const (
 	BG_COLOR = color.N7
@@ -759,7 +764,7 @@ func computeRoughPaths(g *rough.Generator, drawable rough.Drawable) []roughPath 
 	paths := make([]roughPath, 0, len(pathInfos))
 	for _, path := range pathInfos {
 		paths = append(paths, roughPath{
-			Attrs: attrs{D: truncatePathData(path.D)},
+			Attrs: attrs{D: compactPathData(path.D)},
 			Style: style{
 				Stroke:      path.Stroke,
 				StrokeWidth: rough.NumberString(path.StrokeWidth),
@@ -793,14 +798,17 @@ func (rp roughPath) StyleCSS() string {
 	return style
 }
 
-func truncatePathData(pathData string) string {
-	// we want to have a fixed precision to the decimals in the path data
-	return floatRE.ReplaceAllStringFunc(pathData, func(floatStr string) string {
-		i := strings.Index(floatStr, ".")
-		decimalLen := len(floatStr) - i - 1
-		end := i + go2.Min(decimalLen, 6)
-		return floatStr[:end+1]
+func compactPathData(pathData string) string {
+	data := floatRE.ReplaceAllStringFunc(pathData, func(number string) string {
+		// Preserve the six fractional digits historically emitted by D2.
+		end := min(len(number), strings.IndexByte(number, '.')+7)
+		number = strings.TrimSuffix(strings.TrimRight(number[:end], "0"), ".")
+		if strings.HasPrefix(number, "0.") {
+			return number[1:]
+		}
+		return number
 	})
+	return pathSeparators.Replace(data)
 }
 
 func extractPathData(roughPaths []roughPath) ([]string, error) {
@@ -907,7 +915,7 @@ func ArrowheadsWithPaint(connection d2target.Connection, srcAdj, dstAdj *geo.Poi
 			return "", nil
 		}
 		anchor, angle := ArrowheadPlacement(connection, end.isTarget, end.adjustment)
-		transform := fmt.Sprintf("translate(%f %f) rotate(%v)", anchor.X, anchor.Y, angle)
+		transform := fmt.Sprintf("translate(%s %s) rotate(%v)", svg.FormatFloat(anchor.X), svg.FormatFloat(anchor.Y), angle)
 		roughPaths := computeRoughPaths(g, arrow)
 		if extra != nil {
 			roughPaths = append(roughPaths, computeRoughPaths(g, *extra)...)
