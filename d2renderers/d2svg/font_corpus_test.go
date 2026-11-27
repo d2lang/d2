@@ -2,6 +2,7 @@ package d2svg
 
 import (
 	"bytes"
+	"encoding/xml"
 	"reflect"
 	"regexp"
 	"strings"
@@ -293,6 +294,19 @@ func TestEmbedFontsUsesRenderedCorpora(t *testing.T) {
 	}
 	if strings.Contains(out.String(), `font-family: diagram-font-mono;`) || strings.Count(out.String(), "@font-face") != 2 {
 		t.Fatal("unused monospace face embedded by substring trigger")
+	}
+}
+
+func TestCodeTokenCharacterData(t *testing.T) {
+	// Indentation, quotes and entity-looking code must survive XML parsing.
+	// A greater-than sign can close a forbidden CDATA delimiter after "]]".
+	source := svgEscaper.Replace(" \t\"&lt;<]]>")
+	if source != "\u00a0\u00a0\u00a0\u00a0\u00a0\"&amp;lt;&lt;]]&gt;" {
+		t.Fatalf("unexpected code token %q", source)
+	}
+	var decoded string
+	if err := xml.Unmarshal([]byte("<text>"+source+"</text>"), &decoded); err != nil || decoded != "\u00a0\u00a0\u00a0\u00a0\u00a0\"&lt;<]]>" {
+		t.Fatalf("invalid token text %q: %v", decoded, err)
 	}
 }
 
