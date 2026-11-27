@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 168 68"><svg class="d2-2288270678 d2-svg" width="168" height="68" viewBox="-1 -1 168 68"><rect x="-1" y="-1" width="168" height="68" rx="0" fill="#FFFFFF" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[
+<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 168 68"><svg class="d2-2288270678 d2-svg" width="168" height="68" viewBox="-1 -1 168 68"><rect x="-1" y="-1" width="168" height="68" fill="#FFFFFF" class=" fill-N7" stroke-width="0"/><style type="text/css"><![CDATA[
 .d2-2288270678 .text-bold {
 	font-family: "d2-2288270678-font-bold";
 }
@@ -1086,4 +1086,4 @@
 </svg>
 </g>
 </pattern>
-</defs><g class="YQ=="><g class="shape" ><rect x="0" y="0" width="53" height="66" stroke="#170206" fill="#FFFBF8" class=" stroke-B1 fill-B6" style="stroke-width:2;" /></g><text x="26.5" y="38.5" fill="#170206" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">a</text></g><g class="Yg=="><g class="shape" ><rect x="113" y="0" width="53" height="66" stroke="#170206" fill="#FFFBF8" class=" stroke-B1 fill-B6" style="stroke-width:2;" /><rect x="113" y="0" width="53" height="66" class="paper-overlay" style="stroke-width:2;" /></g><text x="139.5" y="38.5" fill="#170206" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">b</text></g></svg></svg>
+</defs><g class="YQ=="><g class="shape"><rect x="0" y="0" width="53" height="66" stroke="#170206" fill="#FFFBF8" class=" stroke-B1 fill-B6" style="stroke-width:2;"/></g><text x="26.5" y="38.5" fill="#170206" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">a</text></g><g class="Yg=="><g class="shape"><rect x="113" y="0" width="53" height="66" stroke="#170206" fill="#FFFBF8" class=" stroke-B1 fill-B6" style="stroke-width:2;"/><rect x="113" y="0" width="53" height="66" class="paper-overlay" style="stroke-width:2;"/></g><text x="139.5" y="38.5" fill="#170206" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">b</text></g></svg></svg>

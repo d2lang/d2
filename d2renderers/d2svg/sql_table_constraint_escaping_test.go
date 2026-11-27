@@ -35,6 +35,28 @@ func TestRenderEscapesSQLTableConstraints(t *testing.T) {
 	}
 }
 
+// A custom stylesheet can select the optional column or the background by
+// attribute. Keep its original selector targets even when they paint no ink.
+func TestEmptySQLConstraintWithCustomStylesheet(t *testing.T) {
+	original := d2svg.BaseStylesheet
+	t.Cleanup(func() { d2svg.BaseStylesheet = original })
+	diagram := sqlConstraintEscapingDiagram("")
+	for _, custom := range []bool{false, true} {
+		if custom {
+			d2svg.BaseStylesheet += `.shape text:empty,rect[rx="0"]{opacity:.75}`
+		}
+		out, err := d2svg.Render(diagram, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, attribute := range []string{`text-anchor:end`, ` rx="0"`, ` xmlns:xlink=`} {
+			if strings.Contains(string(out), attribute) != custom {
+				t.Errorf("custom stylesheet %v: unexpected presence of %q", custom, attribute)
+			}
+		}
+	}
+}
+
 func sqlConstraintEscapingDiagram(constraint string) *d2target.Diagram {
 	diagram := d2target.NewDiagram()
 	fontFamily, monoFontFamily := d2fonts.SourceSansPro, d2fonts.SourceCodePro

@@ -52,7 +52,7 @@ func TestRichConnectionLabelsPreserveLinks(t *testing.T) {
 			assert.Success(t, xml.Unmarshal(out, &parsed))
 			svg := string(out)
 			want := `<a href="https://example.com/?a=1&amp;b=2" xlink:href="https://example.com/?a=1&amp;b=2">`
-			if !strings.Contains(svg, want) {
+			if !strings.Contains(svg, want) || !strings.Contains(svg, ` xmlns:xlink="http://www.w3.org/1999/xlink"`) {
 				t.Fatalf("linked %s label missing anchor %q", tc.name, want)
 			}
 		})

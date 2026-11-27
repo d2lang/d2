@@ -277,7 +277,7 @@ func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {
 
 // D2 emits the frame group followed by its background rectangles (including
 // double borders and pattern overlays). Resize only those opening elements.
-var frameBackground = regexp.MustCompile(`^<g [^>]*>(?:<rect [^>]* />)*`)
+var frameBackground = regexp.MustCompile(`^<g [^>]*>(?:<rect [^>]*/>)*`)
 var frameDimension = regexp.MustCompile(` (x|width|height)="(-?[0-9]+)"`)
 
 func appendToFrame(svg, appendix string, box image.Rectangle, tl, br d2target.Point, w, h int) (string, bool) {

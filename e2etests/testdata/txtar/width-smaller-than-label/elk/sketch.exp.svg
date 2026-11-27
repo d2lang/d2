@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 101 93"><svg class="d2-2470178629 d2-svg" width="101" height="93" viewBox="-6 11 101 93"><rect x="-6" y="11" width="101" height="93" rx="0" fill="#FFFFFF" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[
+<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 101 93"><svg class="d2-2470178629 d2-svg" width="101" height="93" viewBox="-6 11 101 93"><rect x="-6" y="11" width="101" height="93" fill="#FFFFFF" class=" fill-N7" stroke-width="0"/><style type="text/css"><![CDATA[
 .d2-2470178629 .text-bold {
 	font-family: "d2-2470178629-font-bold";
 }
@@ -22,4 +22,4 @@
 		.d2-2470178629 .fill-N7{fill:#FFFFFF;}
 		.d2-2470178629 .fill-B3{fill:#E3E9FD;}
 		.d2-2470178629 .stroke-B1{stroke:#0D32B2;}
-		.d2-2470178629 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><g class="Yg=="><g class="shape" ><path d="M 76 78 H 12 V 77 C 12 66 19 56 30 51 C 24 47 20 40 20 33 C 20 22 31 12 44 12 C 57 12 68 22 68 33 C 68 40 64 46 58 50 C 69 55 76 65 76 76 V 77 H 76 Z" stroke="#0D32B2" fill="#E3E9FD" class=" stroke-B1 fill-B3" style="stroke-width:2;" /></g><text x="44" y="99" fill="#0A0F25" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">hello there cat</text></g></svg></svg>
+		.d2-2470178629 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><g class="Yg=="><g class="shape"><path d="M 76 78 H 12 V 77 C 12 66 19 56 30 51 C 24 47 20 40 20 33 C 20 22 31 12 44 12 C 57 12 68 22 68 33 C 68 40 64 46 58 50 C 69 55 76 65 76 76 V 77 H 76 Z" stroke="#0D32B2" fill="#E3E9FD" class=" stroke-B1 fill-B3" style="stroke-width:2;"/></g><text x="44" y="99" fill="#0A0F25" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">hello there cat</text></g></svg></svg>

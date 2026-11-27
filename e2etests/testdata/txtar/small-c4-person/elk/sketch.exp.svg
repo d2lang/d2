@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 182 122"><svg class="d2-1736778707 d2-svg" width="182" height="122" viewBox="11 -12 182 122"><rect x="11" y="-12" width="182" height="122" rx="0" fill="#FFFFFF" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[
+<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 182 122"><svg class="d2-1736778707 d2-svg" width="182" height="122" viewBox="11 -12 182 122"><rect x="11" y="-12" width="182" height="122" fill="#FFFFFF" class=" fill-N7" stroke-width="0"/><style type="text/css"><![CDATA[
 .d2-1736778707 .text-bold {
 	font-family: "d2-1736778707-font-bold";
 }
@@ -22,4 +22,4 @@
 		.d2-1736778707 .fill-N7{fill:#FFFFFF;}
 		.d2-1736778707 .fill-B3{fill:#E3E9FD;}
 		.d2-1736778707 .stroke-B1{stroke:#0D32B2;}
-		.d2-1736778707 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><g class="YQ=="><g class="shape" ><path d="M 12 90 C 12 86 16 84 18 84 H 185 C 189 84 191 88 191 90 V 103 C 191 107 187 109 185 109 H 18 C 14 109 12 105 12 103 Z" stroke="#0D32B2" fill="#E3E9FD" class=" stroke-B1 fill-B3" style="stroke-width:2;" /><path d="M 102 12 C 124 12 142 30 142 52 C 142 73 124 91 102 91 C 80 91 62 73 62 52 C 62 30 80 12 102 12" stroke="#0D32B2" fill="#E3E9FD" class=" stroke-B1 fill-B3" style="stroke-width:2;" /></g><text x="102" y="101.64" fill="#0A0F25" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">c4-person</text></g></svg></svg>
+		.d2-1736778707 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><g class="YQ=="><g class="shape"><path d="M 12 90 C 12 86 16 84 18 84 H 185 C 189 84 191 88 191 90 V 103 C 191 107 187 109 185 109 H 18 C 14 109 12 105 12 103 Z" stroke="#0D32B2" fill="#E3E9FD" class=" stroke-B1 fill-B3" style="stroke-width:2;"/><path d="M 102 12 C 124 12 142 30 142 52 C 142 73 124 91 102 91 C 80 91 62 73 62 52 C 62 30 80 12 102 12" stroke="#0D32B2" fill="#E3E9FD" class=" stroke-B1 fill-B3" style="stroke-width:2;"/></g><text x="102" y="101.64" fill="#0A0F25" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">c4-person</text></g></svg></svg>

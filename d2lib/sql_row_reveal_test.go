@@ -207,7 +207,7 @@ steps: {round: {Message.style.border-radius: 250}}`},
 				bottom := svg.FormatFloat(y + float64(shape.Height))
 				divider := fmt.Sprintf(`<line x1="%s" x2="%s" y1="%s" y2="%s"`, svg.FormatFloat(x+radius), svg.FormatFloat(x+float64(shape.Width)-radius), bottom, bottom)
 				clipStart := fmt.Sprintf(`<path d="M %s %s L`, svg.FormatFloat(x), svg.FormatFloat(y+radius))
-				if !strings.Contains(doc, divider) || radius > 0 && (!strings.Contains(doc, clipStart) || !strings.Contains(doc, `Z" fill="none" /> </clipPath>`)) {
+				if !strings.Contains(doc, divider) || radius > 0 && (!strings.Contains(doc, clipStart) || !strings.Contains(doc, `Z" fill="none"/></clipPath>`)) {
 					t.Fatalf("header clip or bottom divider misses the outline radius %.1f", radius)
 				}
 			}

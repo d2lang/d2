@@ -645,15 +645,11 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 	default:
 		return ""
 	}
-	return strings.Join([]string{
-		fmt.Sprintf(`<marker id="%s" markerWidth="%s" markerHeight="%s" refX="%s" refY="%s"`,
-			id, svg.FormatFloat(markerWidth), svg.FormatFloat(height), svg.FormatFloat(refX), svg.FormatFloat(refY),
-		),
-		fmt.Sprintf(`viewBox="%s %s %s %s"`, svg.FormatFloat(0.), svg.FormatFloat(0.), svg.FormatFloat(markerWidth), svg.FormatFloat(height)),
-		`orient="auto" markerUnits="userSpaceOnUse">`,
-		el.Render(),
-		"</marker>",
-	}, " ")
+	widthText, heightText := svg.FormatFloat(markerWidth), svg.FormatFloat(height)
+	return `<marker id="` + svg.EscapeAttribute(id) + `" markerWidth="` + widthText +
+		`" markerHeight="` + heightText + `" refX="` + svg.FormatFloat(refX) + `" refY="` + svg.FormatFloat(refY) +
+		`" viewBox="0 0 ` + widthText + " " + heightText + `" orient="auto" markerUnits="userSpaceOnUse">` +
+		el.Render() + "</marker>"
 }
 
 func crossingMaskID(boardHash string, edge int) string {
@@ -723,7 +719,7 @@ func makeLabelMaskWithTransform(labelTL *geo.Point, width, height int, opacity f
 		y -= shapePos.Y
 	}
 
-	return svg.CompactEmptyElement("rect", svg.FloatAttr("x", x), svg.FloatAttr("y", y),
+	return svg.EmptyElement("rect", svg.FloatAttr("x", x), svg.FloatAttr("y", y),
 		svg.IntAttr("width", width+4), svg.IntAttr("height", height), svg.Attr("fill", fill))
 }
 
@@ -780,7 +776,7 @@ func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, label
 		maskY -= shapePos.Y
 	}
 
-	return svg.CompactEmptyElement("rect", svg.FloatAttr("x", maskX), svg.FloatAttr("y", maskY),
+	return svg.EmptyElement("rect", svg.FloatAttr("x", maskX), svg.FloatAttr("y", maskY),
 		svg.FloatAttr("width", maskWidth), svg.FloatAttr("height", maskHeight), svg.Attr("fill", fill))
 }
 
@@ -1356,7 +1352,7 @@ func render3D(diagramHash string, targetShape d2target.Shape, inlineTheme *d2the
 			svg.IntAttr("height", targetShape.Height+d2target.THREE_DEE_OFFSET),
 			svg.Attr("fill", "white"),
 		) + svg.CloseElement("rect"),
-		svg.CompactEmptyElement("path",
+		svg.EmptyElement("path",
 			svg.Attr("d", strings.Join(border, "")),
 			svg.Attr("style", style+";stroke:#000;fill:none;opacity:1;"),
 		) + svg.CloseElement("mask") + svg.CloseElement("defs"),
@@ -1422,24 +1418,19 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	style := targetShape.CSSStyle()
 	s := targetShape.Geometry()
 
-	var shadowAttr string
+	writer.buf.WriteString(`<g class="shape`)
+	if targetShape.Blend {
+		writer.buf.WriteString(" blend")
+	}
+	writer.buf.WriteByte('"')
 	if targetShape.Shadow {
 		switch targetShape.Type {
-		case d2target.ShapeText,
-			d2target.ShapeCode,
-			d2target.ShapeClass,
-			d2target.ShapeSQLTable:
+		case d2target.ShapeText, d2target.ShapeCode, d2target.ShapeClass, d2target.ShapeSQLTable:
 		default:
-			shadowAttr = `filter="url(#shadow-filter)" `
+			writer.buf.WriteString(` filter="url(#shadow-filter)"`)
 		}
 	}
-
-	var blendModeClass string
-	if targetShape.Blend {
-		blendModeClass = " blend"
-	}
-
-	fmt.Fprintf(writer.buf, `<g class="shape%s" %s>`, blendModeClass, shadowAttr)
+	writer.buf.WriteByte('>')
 
 	var multipleTL *geo.Point
 	if targetShape.Multiple {
@@ -2600,7 +2591,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", w), svg.IntAttr("height", h)}
 		attrs := []svg.Attribute{svg.Attr("id", isolatedDiagramHash), svg.Attr("maskUnits", "userSpaceOnUse")}
 		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
-		buf.WriteString(svg.CompactEmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
+		buf.WriteString(svg.EmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
 		for _, label := range labelMasks {
 			buf.WriteString(label)
 		}
@@ -2635,7 +2626,9 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	backgroundEl.Fill = diagram.Root.Fill
 	backgroundEl.Stroke = diagram.Root.Stroke
 	backgroundEl.FillPattern = diagram.Root.FillPattern
-	backgroundEl.Rx = float64(diagram.Root.BorderRadius)
+	if diagram.Root.BorderRadius != 0 || !UsesDefaultStylesheet() {
+		backgroundEl.Rx = float64(diagram.Root.BorderRadius)
+	}
 	if diagram.Root.StrokeDash != 0 {
 		dashSize, gapSize := svg.GetStrokeDashAttributes(strokeWidth, diagram.Root.StrokeDash)
 		backgroundEl.StrokeDashArray = fmt.Sprintf("%s, %s", svg.FormatFloat(dashSize), svg.FormatFloat(gapSize))
@@ -2758,16 +2751,18 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	tag := "g"
 	// Many things change when this is rendering for animation
 	if opts.MasterID == "" {
-		dataD2Version := ""
-		if opts.OmitVersion == nil || !*opts.OmitVersion {
-			dataD2Version = fmt.Sprintf(`data-d2-version="%s"`, version.Version)
+		xlink := ""
+		// Links and pattern definitions can each introduce an XLink attribute.
+		// Animated frames get their namespace from the animation wrapper.
+		if !UsesDefaultStylesheet() || strings.Contains(bufStr, "xlink:") || bytes.Contains(upperBuf.Bytes(), []byte("xlink:")) {
+			xlink = ` xmlns:xlink="http://www.w3.org/1999/xlink"`
 		}
-		fitToScreenWrapperOpening = fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" %s preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`,
-			dataD2Version,
-			alignment,
-			w, h,
-			dimensions,
-		)
+		versionAttr := ""
+		if opts.OmitVersion == nil || !*opts.OmitVersion {
+			versionAttr = ` data-d2-version="` + svg.EscapeAttribute(version.Version) + `"`
+		}
+		fitToScreenWrapperOpening = `<svg xmlns="http://www.w3.org/2000/svg"` + xlink + versionAttr +
+			` preserveAspectRatio="` + alignment + ` meet" viewBox="0 0 ` + strconv.Itoa(w) + " " + strconv.Itoa(h) + `"` + dimensions + ">"
 		if opts.NoXMLTag == nil || !*opts.NoXMLTag {
 			xmlTag = `<?xml version="1.0" encoding="utf-8"?>`
 		}
@@ -2785,7 +2780,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		doubleBorderElStr,
 		backgroundStr,
 		upperBuf.String(),
-		buf.String(),
+		bufStr,
 		tag,
 		fitToScreenWrapperClosing,
 	)

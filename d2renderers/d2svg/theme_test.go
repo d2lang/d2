@@ -117,3 +117,16 @@ func TestCustomStylesheetKeepsGeneratedResources(t *testing.T) {
 		t.Fatal("custom animation stylesheet lost its palette")
 	}
 }
+
+func TestRootFillPatternDeclaresXLink(t *testing.T) {
+	t.Parallel()
+	diagram := d2target.NewDiagram()
+	diagram.Root.FillPattern = "grain"
+	out, err := Render(diagram, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(` xlink:href=`)) || !bytes.Contains(out, []byte(` xmlns:xlink="http://www.w3.org/1999/xlink"`)) {
+		t.Fatal("grain pattern needs an XLink namespace for its embedded image")
+	}
+}

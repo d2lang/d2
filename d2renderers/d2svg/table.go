@@ -37,7 +37,7 @@ func clipPathForBorderRadius(diagramHash string, shape d2target.Shape) string {
 		out += fmt.Sprintf(`S %s %s %s %s`, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+box.Height), svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+box.Height-radius))
 		out += fmt.Sprintf(`L %s %s`, svg.FormatFloat(box.TopLeft.X), svg.FormatFloat(box.TopLeft.Y+radius))
 	}
-	return out + `Z" fill="none" /> </clipPath>`
+	return out + `Z" fill="none"/></clipPath>`
 }
 
 func borderRadiusClipPathID(diagramHash, shapeID string) svg.ID {
@@ -98,6 +98,9 @@ func tableRow(writer *objectWriter, shape d2target.Shape, box *geo.Box, nameText
 	textEl.Fill = shape.NeutralAccentColor
 	writer.text(textEl, typeText)
 
+	if constraintText == "" && UsesDefaultStylesheet() {
+		return
+	}
 	textEl.X = box.TopLeft.X + (box.Width - d2target.NamePadding)
 	textEl.Fill = shape.SecondaryAccentColor
 	textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "end", fontSize)
