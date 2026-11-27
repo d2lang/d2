@@ -131,8 +131,8 @@ jobs:
         run: go test -v -run '^(TestImportRelativeToNativeInputPath|TestImportVirtualDirectoryWithBackslash|TestResolveImportPathOnWindows)$' ./d2ir ./lib/localfile
       - name: Test language server with native Windows paths
         run: go test ./d2lsp/lspserver -count=1
-      - name: Test rooted MCP file input and diagnostics
-        run: go test -v -run '^TestMCP(DiagramPaths|UTF16Diagram|Root)$' ./d2cli
+      - name: Test native watch imports and rooted MCP file input
+        run: go test -v -run '^Test(WatchResolvesImportsRelativeToEntryFile|MCP(DiagramPaths|UTF16Diagram|Root))$' ./d2cli
       - name: Render a diagram from outside its directory
         run: go test -v -run '^TestCLI_E2E$/^import_from_another_directory$' ./e2etests-cli
   wasm:

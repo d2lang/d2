@@ -1622,16 +1622,17 @@ layers: {
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				writeFile(t, dir, "index.d2", `
 a: {
-  link: layers.b
+  link: layers."2012.06"
 }
 
 layers: {
-  b: {
-    hi
+  sibling: {other}
+  "2012.06": {
+    hi.link: layers.index
 
     layers: {
-      hey: {
-        hey
+      index: {
+        encodedLeaf
       }
     }
   }
@@ -1656,11 +1657,20 @@ layers: {
 
 				err = getWatchPage(ctx, t, httpClient, fmt.Sprintf("http://%s/%s", watchURL, link))
 				assert.Success(t, err)
-				_, _, err = c.Read(ctx)
+				var nested struct{ SVG, Err string }
+				assert.Success(t, wsjson.Read(ctx, c, &nested))
+				assert.Equal(t, "", nested.Err)
+				assert.True(t, strings.Contains(nested.SVG, ">hi<"))
+				assert.Equal(t, "2012.06/index.svg", link)
+				assert.True(t, len(readFile(t, dir, "index/index.svg")) > 0)
+				assert.True(t, len(readFile(t, dir, "index/sibling.svg")) > 0)
+				child := regexp.MustCompile(`href="(_d2_[0-9a-f]+\.svg)"`).FindStringSubmatch(nested.SVG)
+				assert.Equal(t, 2, len(child))
+				err = getWatchPage(ctx, t, httpClient, fmt.Sprintf("http://%s/2012.06/%s", watchURL, child[1]))
 				assert.Success(t, err)
-				successRE := regexp.MustCompile(`broadcasting update to 1 client`)
-				_, err = waitLogs(ctx, stderr, successRE)
-				assert.Success(t, err)
+				assert.Success(t, wsjson.Read(ctx, c, &nested))
+				assert.Equal(t, "", nested.Err)
+				assert.True(t, strings.Contains(nested.SVG, ">encodedLeaf<"))
 			},
 		},
 		{
