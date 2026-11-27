@@ -5,6 +5,8 @@
 
 D2.js is a JavaScript wrapper around D2, the modern diagram scripting language. It enables running D2 directly in browsers and Node environments through WebAssembly.
 
+See the [D2 release notes](https://d2lang.com/releases/intro/) for changes to D2.js.
+
 For an example of usage, see [https://play.d2lang.com](https://play.d2lang.com), which is powered by d2.js and is [open-source](https://github.com/d2lang/d2-playground).
 
 ## Features
