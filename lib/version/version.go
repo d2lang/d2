@@ -2,8 +2,8 @@ package version
 
 import "regexp"
 
-// Pre-built binaries will have version set correctly during build time.
-var Version = "v0.8.1-HEAD"
+// Release archives and D2.js set Version at link time.
+var Version = "(devel)"
 
 func OnlyNumbers() string {
 	re, err := regexp.Compile("[0-9]+.[0-9]+.[0-9]+")

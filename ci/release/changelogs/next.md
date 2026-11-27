@@ -82,6 +82,8 @@
 
 #### Bugfixes ⛑️
 
+- Go module installs report the installed D2 version in the CLI, LSP, and MCP server.
+
 - Dagre lays out nested diagrams on which its ordering lost containers, which failed with `dagre fails on this input: it sets "order" on a node missing from a layer` or `not possible to find intersection inside of the rectangle`. Diagrams that laid out before keep their exact layout. [dagro v0.4.1](https://github.com/d2lang/dagro/pull/11)
 - `d2 fmt` preserves imported boards, board declaration order, explicit empty maps, block comments in arrays, and the parentheses around connections such as `("api" *- "db")`.
 - A file ending in the object name `!` parses with or without a final newline. Standalone key and value parsers reject trailing input, including an editor target such as `a; b`.

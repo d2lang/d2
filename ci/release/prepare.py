@@ -60,8 +60,9 @@ def main():
         parser.error("this release is published or already has its MSI; use a new version for changes, or retry failed Actions jobs for the existing draft")
     branch_ref = f"refs/heads/{version}"
     tag_ref = f"refs/tags/{version}"
+    master_ref = "refs/heads/master"
     remote_refs = {}
-    for line in output("git", "ls-remote", "origin", branch_ref, tag_ref, tag_ref + "^{}").splitlines():
+    for line in output("git", "ls-remote", "origin", master_ref, branch_ref, tag_ref, tag_ref + "^{}").splitlines():
         commit, ref = line.split()
         remote_refs[ref] = commit
     branch = local_ref(branch_ref)
@@ -79,7 +80,11 @@ def main():
         return
     if releases:
         parser.error("a release already exists without its remote tag; do not reuse this version")
-    source = branch or remote_branch or local_ref("refs/heads/master")
+    source = branch or remote_branch
+    if not source:
+        source = local_ref(master_ref)
+        if not source or source != remote_refs.get(master_ref):
+            parser.error("local master must match master on origin before preparing a new release; update your checkout and review the release source")
     if not source or not local_ref(source + "^{commit}"):
         parser.error("release branch commit is unavailable locally; fetch origin before retrying")
     if remote_branch and subprocess.run(["git", "merge-base", "--is-ancestor", remote_branch, source]).returncode != 0:

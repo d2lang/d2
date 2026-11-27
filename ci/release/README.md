@@ -103,7 +103,8 @@ verified release manifests in `ci/release/checksums/`.
 - ./release.sh is the top level script to generate a new release.
   Run with --help for usage.
 
-Run from a clean checkout with Python 3, Git, and an authenticated GitHub CLI. The script
+Run from a clean checkout with Python 3, Git, and an authenticated GitHub CLI.
+A new release starts at local `master`, which must match `master` on `origin`. The script
 prepares the release branch, changelog, PR, and tag, then returns. It leaves existing PR
 descriptions unchanged and uses the Human/AI template for new PRs. Prereleases must have
 a semantic-version suffix, for example `--version=v0.9.0-rc.1`; `--prerelease` with a
