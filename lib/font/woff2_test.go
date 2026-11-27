@@ -10,11 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-text/typesetting/font/opentype"
+	"github.com/go-text/typesetting/font/opentype/tables"
+
 	"github.com/d2lang/brotli"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/lib/font"
-	"github.com/go-text/typesetting/font/opentype"
-	"github.com/go-text/typesetting/font/opentype/tables"
 )
 
 // Independently encoded with FontTools' WOFF2 writer using the corresponding
