@@ -145,6 +145,7 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 			return nil, nil, err
 		}
 		alignCaptions(d)
+		shareCanvas(d)
 	}
 	if d != nil {
 		if config == nil {

@@ -146,6 +146,10 @@ type Diagram struct {
 	// parent scenario base or the preceding step. Independent layers start
 	// their own coordinate system.
 	LayoutContinuity bool `json:"layoutContinuity,omitempty"`
+	// Canvas is a box the board's bounds always include. An animation with
+	// annotations gives every board and frame the same canvas, so the picture
+	// keeps one size while notes come and go.
+	Canvas *MotionBox `json:"canvas,omitempty"`
 }
 
 type Legend struct {
@@ -483,6 +487,10 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 		tl.Y = min(tl.Y, int(math.Floor(caption.TopLeft.Y)))
 		br.X = max(br.X, int(math.Ceil(caption.TopLeft.X+caption.Width)))
 		br.Y = max(br.Y, int(math.Ceil(caption.TopLeft.Y+caption.Height)))
+	}
+	if c := diagram.Canvas; c != nil {
+		tl.X, tl.Y = min(tl.X, c.X), min(tl.Y, c.Y)
+		br.X, br.Y = max(br.X, c.X+c.Width), max(br.Y, c.Y+c.Height)
 	}
 	return tl, br
 }

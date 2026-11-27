@@ -143,6 +143,8 @@ export interface Diagram {
   gridMotion?: boolean;
   layoutContinuity?: boolean;
   tweenDurationMS?: number;
+  /** A box the board's bounds always include. Shared by the boards of an annotated animation. */
+  canvas?: { x: number; y: number; width: number; height: number };
 }
 
 export interface Legend {

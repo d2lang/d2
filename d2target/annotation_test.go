@@ -224,6 +224,26 @@ func TestAnnotationsGrowTheBoard(t *testing.T) {
 	}
 }
 
+func TestCanvasWidensTheBoard(t *testing.T) {
+	d := &Diagram{Shapes: []Shape{annotatedShape("a", 0, 0, 100, 60, nil)}}
+	tl, br := d.BoundingBox()
+
+	d.Canvas = &MotionBox{Point: Point{X: -40, Y: tl.Y + 5}, Width: 300, Height: 10}
+	ctl, cbr := d.BoundingBox()
+	if ctl.X != -40 || cbr.X != 260 {
+		t.Fatalf("board spans x %d to %d, want the canvas's -40 to 260", ctl.X, cbr.X)
+	}
+	// The canvas is a floor: it never trims what the board draws.
+	if ctl.Y != tl.Y || cbr.Y != br.Y {
+		t.Fatalf("board spans y %d to %d, want its own %d to %d", ctl.Y, cbr.Y, tl.Y, br.Y)
+	}
+
+	d.Canvas = &MotionBox{Width: 0, Height: 10}
+	if err := ValidateRenderTarget(d); err == nil || !strings.Contains(err.Error(), "canvas") {
+		t.Fatalf("an empty canvas passed validation: %v", err)
+	}
+}
+
 func TestCaptionBox(t *testing.T) {
 	d := &Diagram{Shapes: []Shape{annotatedShape("a", 0, 0, 100, 60, nil)}}
 	d.Root.Annotation = &Annotation{Label: "A caption wider than the board.", LabelWidth: 300, LabelHeight: 30}

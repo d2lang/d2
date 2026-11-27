@@ -191,6 +191,59 @@ steps: {
 	}
 }
 
+func TestAnnotatedAnimationKeepsOneCanvas(t *testing.T) {
+	// Each step's note sticks out on a different side, and the last step is
+	// much wider than the first.
+	d := compileAnnotated(t, `vars: {d2-config: {animate-interval: 1000ms; animate-duration: 200ms}}
+direction: right
+a -> b
+steps: {
+  one: {a.annotation: a note above {near: top-center}}
+  two: {b.annotation: a note below {near: bottom-center}}
+  three: {b -> c -> d}
+}
+`)
+	wantTL, wantBR := d.NestedBoundingBox()
+	frames := 0
+	for _, board := range animationBoards(d) {
+		frames++
+		if tl, br := board.BoundingBox(); tl != wantTL || br != wantBR {
+			t.Fatalf("board %q spans (%v)-(%v), want the shared canvas (%v)-(%v)", board.Name, tl, br, wantTL, wantBR)
+		}
+	}
+	if frames < 4+2*d2target.TweenFrameCount(200) {
+		t.Fatalf("checked %d boards and frames, expected the transitions too", frames)
+	}
+
+	// Without annotations each board keeps its own bounds, as before.
+	plain := compileAnnotated(t, `vars: {d2-config: {animate-interval: 1000ms; animate-duration: 200ms}}
+direction: right
+a -> b
+steps: {
+  one: {b.style.opacity: 0.5}
+  two: {b -> c -> d}
+}
+`)
+	for _, board := range animationBoards(plain) {
+		if board.Canvas != nil {
+			t.Fatalf("board %q of an animation without annotations was given a canvas", board.Name)
+		}
+	}
+
+	// A still export is one board; it stays as tight as its own ink.
+	still := compileAnnotated(t, `a -> b
+steps: {
+  one: {a.annotation: a note above {near: top-center}}
+  two: {b -> c -> d}
+}
+`)
+	for _, board := range animationBoards(still) {
+		if board.Canvas != nil {
+			t.Fatalf("board %q of a still export was given a canvas", board.Name)
+		}
+	}
+}
+
 func TestAnnotationsWithoutAnimation(t *testing.T) {
 	// With no interval the boards are separate pictures: each keeps its
 	// caption under itself and nothing is sampled.
@@ -254,6 +307,8 @@ func TestAnnotationsLeaveOtherTransitionsAlone(t *testing.T) {
 			bare.Connections[i].Annotation, bare.Connections[i].LeavingAnnotation = nil, nil
 		}
 		bare.Root.Annotation, bare.Root.LeavingAnnotation = nil, nil
+		// The shared canvas is there for the notes, like the notes themselves.
+		bare.Canvas = nil
 		// The sampling is compared on its own below.
 		bare.Steps, bare.TweenFrames, bare.TweenFrameEndsMS, bare.TweenDurationMS = nil, nil, nil, 0
 		return bare

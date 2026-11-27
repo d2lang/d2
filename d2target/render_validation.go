@@ -93,6 +93,9 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 	if diagram.TweenDurationMS > MaxTweenDurationMS || diagram.TweenDurationMS < len(diagram.TweenFrames) || (len(diagram.TweenFrames) == 0 && diagram.TweenDurationMS != 0) {
 		return fmt.Errorf("render target %s has inconsistent tween duration %dms for %d frames", path, diagram.TweenDurationMS, len(diagram.TweenFrames))
 	}
+	if c := diagram.Canvas; c != nil && (c.Width <= 0 || c.Height <= 0) {
+		return invalidRenderField(path, "canvas", c, "must have positive dimensions")
+	}
 	if times := diagram.TweenFrameEndsMS; len(times) > 0 {
 		if len(times) != len(diagram.TweenFrames) {
 			return fmt.Errorf("render target %s requires one end time per tween frame", path)

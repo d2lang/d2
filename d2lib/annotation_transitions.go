@@ -346,22 +346,11 @@ func sampleAnnotations(ctx context.Context, root *d2target.Diagram, lifted map[*
 // shows all of its boards in a single viewport; without a shared anchor the
 // caption would jump whenever a step changed the diagram's extent.
 func alignCaptions(root *d2target.Diagram) {
-	var boards []*d2target.Diagram
+	boards := animationBoards(root)
 	captioned := false
-	var walk func(*d2target.Diagram)
-	walk = func(board *d2target.Diagram) {
-		if !board.IsFolderOnly {
-			boards = append(boards, board)
-			boards = append(boards, board.TweenFrames...)
-			captioned = captioned || board.Root.Annotation != nil
-		}
-		for _, children := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
-			for _, child := range children {
-				walk(child)
-			}
-		}
+	for _, board := range boards {
+		captioned = captioned || board.Root.Annotation != nil
 	}
-	walk(root)
 	if !captioned {
 		return
 	}
@@ -391,4 +380,80 @@ func alignCaptions(root *d2target.Diagram) {
 			}
 		}
 	}
+}
+
+// animationBoards lists every board an animation shows, each followed by the
+// frames of its incoming transition.
+func animationBoards(root *d2target.Diagram) []*d2target.Diagram {
+	var boards []*d2target.Diagram
+	var walk func(*d2target.Diagram)
+	walk = func(board *d2target.Diagram) {
+		if !board.IsFolderOnly {
+			boards = append(boards, board)
+			boards = append(boards, board.TweenFrames...)
+		}
+		for _, children := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
+			for _, child := range children {
+				walk(child)
+			}
+		}
+	}
+	walk(root)
+	return boards
+}
+
+// shareCanvas gives every board and frame of an annotated animation the same
+// canvas. A renderer paints a board's background over that board's own
+// bounds, and a note that sticks out changes those bounds, so without a
+// shared canvas the background would resize on almost every step. It shows
+// on any theme whose canvas is not the color of the page behind it.
+func shareCanvas(root *d2target.Diagram) {
+	boards := animationBoards(root)
+	annotated := false
+	for _, board := range boards {
+		if boardIsAnnotated(board) {
+			annotated = true
+			break
+		}
+	}
+	if !annotated {
+		return
+	}
+	first := true
+	var tl, br d2target.Point
+	for _, board := range boards {
+		if len(board.Shapes) == 0 {
+			continue
+		}
+		btl, bbr := board.BoundingBox()
+		if first {
+			tl, br, first = btl, bbr, false
+			continue
+		}
+		tl.X, tl.Y = min(tl.X, btl.X), min(tl.Y, btl.Y)
+		br.X, br.Y = max(br.X, bbr.X), max(br.Y, bbr.Y)
+	}
+	if first || br.X <= tl.X || br.Y <= tl.Y {
+		return
+	}
+	for _, board := range boards {
+		board.Canvas = &d2target.MotionBox{Point: tl, Width: br.X - tl.X, Height: br.Y - tl.Y}
+	}
+}
+
+func boardIsAnnotated(board *d2target.Diagram) bool {
+	if board.Root.Annotation != nil || board.Root.LeavingAnnotation != nil {
+		return true
+	}
+	for i := range board.Shapes {
+		if board.Shapes[i].Annotation != nil || board.Shapes[i].LeavingAnnotation != nil {
+			return true
+		}
+	}
+	for i := range board.Connections {
+		if board.Connections[i].Annotation != nil || board.Connections[i].LeavingAnnotation != nil {
+			return true
+		}
+	}
+	return false
 }
