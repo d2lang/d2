@@ -5,6 +5,8 @@ package d2fonts
 // bundledTTFStreamFaces lists the faces of ttf_stream.br in stream order with
 // their lengths in bytes.
 var bundledTTFStreamFaces = [...]bundledTTFStreamFace{
+	{"D2Appendix-Bold.ttf", 44736},
+	{"D2Appendix-Regular.ttf", 44864},
 	{"FuzzyBubbles-Bold.ttf", 139528},
 	{"FuzzyBubbles-Regular.ttf", 145008},
 	{"SourceCodePro-Bold.ttf", 119648},

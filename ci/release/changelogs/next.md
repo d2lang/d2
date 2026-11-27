@@ -10,6 +10,7 @@
 - SVG exports use shorter path data for paper textures and sketch fills.
 - SVG connections use shorter references to arrowhead markers.
 - SVG exports use shorter path coordinates for LaTeX formulas.
+- Standalone SVGs with ASCII footnotes or numbered appendix markers can embed smaller fonts while preserving kerning and ligatures.
 
 #### Bugfixes ⛑️
 
