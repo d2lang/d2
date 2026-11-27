@@ -99,3 +99,29 @@ func TestNearSharedConstant(t *testing.T) {
 	err := c.requestError("textDocument/rename", renameParams{posParams(uri, 0, 13), "different"})
 	assert.Equal(t, -32803, err.Code)
 }
+
+func TestRenameCapturesConstantNear(t *testing.T) {
+	for _, tc := range []struct {
+		source  string
+		capture bool
+	}{
+		{"server\nnote.near: top-left", true},
+		{"server\nvars.corner: top-left\nnote.near: ${corner}", true},
+		{"server\nscenarios.one: {note.near: top-left}", true},
+		{"server\nlayers.one: {note.near: top-left}", false},
+		{"box.server\nnote.near: top-left", false},
+		{"server\nnote.near: bottom-left", false},
+	} {
+		c := newTestClient(t)
+		const uri = "untitled:near-capture"
+		c.open(uri, tc.source)
+		pos := posParams(uri, 0, strings.Index(tc.source, "server"))
+		if tc.capture {
+			err := c.requestError("textDocument/rename", renameParams{pos, "TOP-LEFT"})
+			assert.Equal(t, -32803, err.Code)
+			assert.True(t, strings.Contains(err.Message, "placement constant"))
+		} else {
+			assert.Equal(t, strings.Replace(tc.source, "server", "TOP-LEFT", 1), applyEdits(t, tc.source, c.rename(pos, "TOP-LEFT")[uri]))
+		}
+	}
+}

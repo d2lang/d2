@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2ast"
@@ -29,7 +30,9 @@ func (s *Server) renameConflict(ctx context.Context, doc document, snap *snapsho
 	}
 	oldName := sym.hit.name.ScalarString()
 	ancestorFields := make(map[*d2ir.Field]bool)
+	ownerMaps := make(map[*d2ir.Map]bool)
 	for f := range sym.fields {
+		ownerMaps[d2ir.ParentMap(f)] = true
 		for parent := d2ir.ParentField(f); parent != nil; parent = d2ir.ParentField(parent) {
 			ancestorFields[parent] = true
 		}
@@ -37,6 +40,11 @@ func (s *Server) renameConflict(ctx context.Context, doc document, snap *snapsho
 	ancestorGroups := make(map[int]bool)
 	indexed := make(map[d2ast.Range]int)
 	for _, o := range snap.index {
+		if n := o.near; n != nil && ownerMaps[n.constantScope] && strings.EqualFold(o.name.ScalarString(), newName) {
+			// This placement currently resolves to a constant. A renamed sibling
+			// in the same board could turn it into an object-relative placement.
+			return "the new name would capture a near placement constant"
+		}
 		if o.group < 0 {
 			continue
 		}
@@ -83,7 +91,7 @@ func (s *Server) renameConflict(ctx context.Context, doc document, snap *snapsho
 				}
 			case *d2ast.Key:
 				if removedFieldConflict(file.snap.ast, n, oldName, newName, indexed, ancestorGroups) {
-					reason = "a removed or suspended field with this name cannot be resolved"
+					reason = "a removed or suspended reference with this name cannot be resolved"
 				}
 			}
 			return reason == ""
@@ -121,24 +129,41 @@ func (s *Server) selectiveImportConflict(ctx context.Context, target *renameFile
 }
 
 func removedFieldConflict(ast *d2ast.Map, key *d2ast.Key, oldName, newName string, indexed map[d2ast.Range]int, ancestors map[int]bool) bool {
-	if key.Key == nil || len(key.Edges) > 0 {
-		return false
-	}
 	if key.Value.Null == nil && key.Primary.Null == nil && key.Value.Suspension == nil && key.Primary.Suspension == nil {
 		return false
 	}
-	for i, box := range key.Key.Path {
-		if box == nil || box.Unbox() == nil {
-			continue
+	// The IR can discard the endpoints along with a removed edge. Its shared
+	// prefix and each endpoint are shape paths, just like a removed field.
+	conflicts := func(path *d2ast.KeyPath, shared *d2ast.KeyPath) bool {
+		if path == nil {
+			return false
 		}
-		name := box.Unbox()
-		if _, resolved := indexed[name.GetRange()]; resolved {
-			continue
-		}
-		if strings.EqualFold(name.ScalarString(), oldName) || strings.EqualFold(name.ScalarString(), newName) {
-			if scope, known := removalScope(ast, key, i, indexed); !known || ancestors[scope] {
-				return true
+		for i, box := range path.Path {
+			if box == nil || box.Unbox() == nil {
+				continue
 			}
+			name := box.Unbox()
+			if _, resolved := indexed[name.GetRange()]; resolved {
+				continue
+			}
+			if strings.EqualFold(name.ScalarString(), oldName) || strings.EqualFold(name.ScalarString(), newName) {
+				prefix := path.Path[:i]
+				if shared != nil {
+					prefix = slices.Concat(shared.Path, prefix)
+				}
+				if scope, known := removalScope(ast, key, prefix, indexed); !known || ancestors[scope] {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if conflicts(key.Key, nil) {
+		return true
+	}
+	for _, e := range key.Edges {
+		if e != nil && (conflicts(e.Src, key.Key) || conflicts(e.Dst, key.Key)) {
+			return true
 		}
 	}
 	return false
@@ -147,17 +172,19 @@ func removedFieldConflict(ast *d2ast.Map, key *d2ast.Key, oldName, newName strin
 // A surviving authored prefix identifies the container even after the IR has
 // discarded the last component. It may occur in this dotted key or outside its
 // braces. Parent selectors or globs make that syntactic prefix unreliable.
-func removalScope(ast *d2ast.Map, key *d2ast.Key, part int, indexed map[d2ast.Range]int) (int, bool) {
+func removalScope(ast *d2ast.Map, key *d2ast.Key, prefix []*d2ast.StringBox, indexed map[d2ast.Range]int) (int, bool) {
 	nodes := nodePathAt(ast, toLSPRange(key.Range).Start)
 	group, known := 0, false
 	for _, n := range nodes {
 		k, ok := n.(*d2ast.Key)
-		if !ok || k.Key == nil {
+		if !ok {
 			continue
 		}
-		path := k.Key.Path
+		var path []*d2ast.StringBox
 		if k == key {
-			path = path[:part]
+			path = prefix
+		} else if k.Key != nil {
+			path = k.Key.Path
 		}
 		for _, box := range path {
 			if box == nil || box.Unbox() == nil {
