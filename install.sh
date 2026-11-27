@@ -782,6 +782,12 @@ installer_gh() (
 )
 release_checksums() {
   cat <<'D2_RELEASE_CHECKSUMS'
+8d0431301a1c2cccb73e4895dc8144113b37fdc56d00c7666f6177b9ec90cd9a  d2-v0.10.0-linux-amd64.tar.gz
+65e7b3a287fc97a49ffe3dc7762a570db978024127b1cd257f8f17f48c76f3df  d2-v0.10.0-linux-arm64.tar.gz
+5e5411a7ccb7e16d1625a287ae462f41f9108e9c5d200e16029adabcc3406c02  d2-v0.10.0-macos-amd64.tar.gz
+69dd590f9723d85013f3af23a014acd73cd86ebe3bac665fed7add1c5c457c09  d2-v0.10.0-macos-arm64.tar.gz
+cf82cb391dc88acd670efe41f468a6807b01296906f1f92ec6c9c1c6da797435  d2-v0.10.0-windows-amd64.tar.gz
+d4d992af47246b3d3c893a9027c5042006ad4814bf8cf60d7e4cc2b425b070ec  d2-v0.10.0-windows-arm64.tar.gz
 0ea49e35f17c3ac00ffa5d0a1fa571f5c344cd38127dbaa4bf6158fcd0c7bfb0  d2-v0.8.2-linux-amd64.tar.gz
 bf1585cebf8496690668dc135dfd469068e3ae3eb38cecdc1f7d7835cdbc1228  d2-v0.8.2-linux-arm64.tar.gz
 6c7b7a09278b131664cbc5e715dac0ee849c3f785ffc9dfaab2df6b1f91bf8ed  d2-v0.8.2-macos-amd64.tar.gz
