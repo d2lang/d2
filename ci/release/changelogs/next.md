@@ -11,5 +11,6 @@
 
 - Labels that mention a fill pattern class such as `paper-overlay` no longer embed an unused texture in ordinary SVG exports.
 - **GIF.** The ceiling on an animation's total frame area rose from 160 to 256 Mi-pixels, enough for a narrated explainer of about twenty seconds at 700 by 600.
+- Animated SVG connections with crossing gaps render more smoothly on large diagrams. [#3091](https://github.com/d2lang/d2/issues/3091)
 
 <!-- When this release changes D2.js, add a “#### D2.js <npm version>” section here. -->

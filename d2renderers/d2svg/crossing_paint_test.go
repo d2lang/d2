@@ -1,7 +1,6 @@
 package d2svg_test
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
@@ -9,7 +8,7 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
-func TestCrossingMasksUseVisiblePaint(t *testing.T) {
+func TestCrossingGapsUseVisiblePaint(t *testing.T) {
 	transparent := "transparent"
 	hidden := &d2target.ThemeOverrides{B1: &transparent}
 	dark := int64(200)
@@ -39,13 +38,10 @@ func TestCrossingMasksUseVisiblePaint(t *testing.T) {
 			front.Route = []*geo.Point{{X: 20, Y: 0}, {X: 80, Y: 100}}
 			diagram := d2target.NewDiagram()
 			diagram.Connections = []d2target.Connection{back, front}
-			out, err := d2svg.Render(diagram, &tc.opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := bytes.Contains(out, []byte(`<mask id="crossings-`))
+			doc := renderCrossingSVG(t, diagram, &tc.opts)
+			got := doc.Find(`[id$="-cg0"]`).Length() != 0
 			if got != tc.want {
-				t.Fatalf("crossing mask present = %t, want %t", got, tc.want)
+				t.Fatalf("crossing gap present = %t, want %t", got, tc.want)
 			}
 		})
 	}
