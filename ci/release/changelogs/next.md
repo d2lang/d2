@@ -8,6 +8,7 @@
 - SVG code blocks use fewer bytes for indentation and quoted strings.
 - Sketch SVGs omit redundant zeros and separators in hand-drawn paths while retaining their original coordinates.
 - SVG exports use shorter path data for paper textures and sketch fills.
+- SVG connections use shorter references to arrowhead markers.
 
 #### Bugfixes ⛑️
 

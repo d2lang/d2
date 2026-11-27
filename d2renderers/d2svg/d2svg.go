@@ -431,7 +431,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 		{X: startX + width, Y: midY},
 	}
 
-	legendHash := fmt.Sprintf("legend-%s", hash(fmt.Sprintf("%s-%d-%d", c.ID, x, y)))
+	legendHash := fmt.Sprintf("legend-%s", hash(fmt.Sprintf("%s-%d-%d", c.ID, x, y), 10))
 
 	defined := make(map[string]struct{})
 	idToShape := make(map[string]d2target.Shape)
@@ -451,7 +451,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	return finalBuf.String(), nil
 }
 
-func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Connection) string {
+func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Connection, placement string, compact bool) string {
 	var arrowhead d2target.Arrowhead
 	if isTarget {
 		arrowhead = connection.DstArrow
@@ -459,9 +459,18 @@ func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Co
 		arrowhead = connection.SrcArrow
 	}
 
-	return fmt.Sprintf("mk-%s-%s", diagramHash, hash(fmt.Sprintf("%s,%t,%s,%s",
-		arrowhead, isTarget, strconv.FormatFloat(connection.RenderedStrokeWidth(), 'f', -1, 64), connection.Stroke,
-	)))
+	// Keep every bit of both hashes and the board namespace. A trailing delimiter keeps whole-ID string replacement (e.g. Obsidian)
+	// from matching a shorter paint hash inside another marker's ID.
+	scope, base, end := diagramHash, 10, ""
+	if compact {
+		scope, base, end = strings.TrimPrefix(diagramHash, "d2-"), 36, "_"
+	}
+	paint := fmt.Sprintf("%s,%t,%s,%s", arrowhead, isTarget, strconv.FormatFloat(connection.RenderedStrokeWidth(), 'f', -1, 64), connection.Stroke)
+	id := "mk-" + scope + "-" + hash(paint, base)
+	if placement != "" {
+		id += "-" + hash(placement, base)
+	}
+	return id + end
 }
 
 // markerPoints formats coordinate pairs as an SVG points list ("x,y x,y ...").
@@ -819,10 +828,11 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		if arrow == d2target.NoArrowhead || (sketch && gradient != nil) {
 			return nil
 		}
-		id := arrowheadMarkerID(diagramHash, target, connection)
+		position := ""
 		if gradient != nil {
-			id += "-" + hash(fmt.Sprint(placement))
+			position = fmt.Sprint(placement)
 		}
+		id := arrowheadMarkerID(diagramHash, target, connection, position, writer.compactMarkerIDs)
 		if _, exists := defined[id]; !exists {
 			markup := arrowheadMarker(target, id, connection, inlineTheme, gradient, placement)
 			if markup == "" {
@@ -2228,7 +2238,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	}
 
 	buf := &bytes.Buffer{}
-	writer := &objectWriter{buf: buf}
+	writer := &objectWriter{buf: buf, compactMarkerIDs: opts.MasterID == "" && UsesDefaultStylesheet()}
 	if opts.MasterID == "" && !sketch && UsesDefaultStylesheet() {
 		writer.usage = &svgUsage{classes: make(map[string]bool)}
 	}
@@ -2931,11 +2941,12 @@ func fontToFamily(fontFamily string) *d2fonts.FontFamily {
 	return &ff
 }
 
-func hash(s string) string {
+func hash(s string, base int) string {
 	const secret = "lalalas"
 	h := fnv.New32a()
-	h.Write([]byte(fmt.Sprintf("%s%s", s, secret)))
-	return fmt.Sprint(h.Sum32())
+	h.Write([]byte(s))
+	h.Write([]byte(secret))
+	return strconv.FormatUint(uint64(h.Sum32()), base)
 }
 
 func RenderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, error) {

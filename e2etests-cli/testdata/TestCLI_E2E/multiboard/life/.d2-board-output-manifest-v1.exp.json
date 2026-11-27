@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "index.svg",
-      "sha256": "00f5567ffd1e92709546d53e308072ef223c7aa0eafb0ca4b410c62649883393"
+      "sha256": "6d0d62c433646ffd331d07c7a9f2de6537fdb9a998ecbdd51b3c782ba76537f3"
     },
     {
       "path": "layers/broker.svg",
@@ -20,7 +20,7 @@
     },
     {
       "path": "scenarios/why.svg",
-      "sha256": "3e18cbfbbf358bda216c0e9528405c87abb335633c5f8e55dc3a8b2e807056b0"
+      "sha256": "d726abc9a78f0a950c9b03fc9ece415d3c80aeb03746ca6ae7678e3a96ee087f"
     }
   ],
   "directories": [
