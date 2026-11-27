@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"github.com/d2lang/d2/internal/bundledfont"
 )
 
 var (
@@ -82,9 +84,17 @@ func calcChecksum(buf []byte) uint32 {
 }
 
 // SubsetWOFF produces a self-contained font for an SVG. The compact subset
-// drops redundant SFNT entries, retains every selected glyph and its metrics,
-// and uses the same WOFF container as the full-font fallback.
+// drops redundant SFNT entries. Subsets of D2's bundled faces keep only the
+// PostScript name and omit the missing-glyph outline when the text permits.
 func SubsetWOFF(face []byte, chars string) ([]byte, error) {
+	subset, err := subsetTrueType(face, chars)
+	if err != nil {
+		return nil, err
+	}
+	return sfnt2Woff(subset, true, nil)
+}
+
+func subsetTrueType(face []byte, chars string) ([]byte, error) {
 	if !hasSFNTDirectory(face) {
 		return nil, fmt.Errorf("incomplete SFNT table directory")
 	}
@@ -95,11 +105,16 @@ func SubsetWOFF(face []byte, chars string) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported outline format %q", face[:4])
 	}
-	subset := cutFont(bytes.Clone(face), chars, true)
+	f := utf8FontFile{
+		fileReader: &fileReader{array: bytes.Clone(face)},
+		compact:    true,
+		bundled:    bundledfont.Is(face),
+	}
+	subset := f.cutFont(chars)
 	if len(subset) == 0 {
 		return nil, fmt.Errorf("font does not contain the tables needed for a TrueType subset")
 	}
-	return sfnt2Woff(subset, true, nil)
+	return subset, nil
 }
 
 // FullWOFF losslessly encodes a complete SFNT face for embedding. The
@@ -119,6 +134,9 @@ func hasSFNTDirectory(face []byte) bool {
 }
 
 func Sfnt2Woff(fontBuf []byte) ([]byte, error) {
+	if !hasSFNTDirectory(fontBuf) {
+		return nil, fmt.Errorf("incomplete SFNT table directory")
+	}
 	return sfnt2Woff(fontBuf, false, nil)
 }
 
@@ -147,11 +165,9 @@ func sfnt2Woff(fontBuf []byte, compact bool, compression *woffCompression) ([]by
 			Length:   binary.BigEndian.Uint32(table[SFNT_OFFSET_LENGTH:]),
 		}
 
-		if compact {
-			paddedLength := (uint64(entry.Length) + 3) &^ 3
-			if uint64(entry.Offset)+paddedLength > uint64(len(fontBuf)) || (string(entry.Tag) == "head" && entry.Length < 12) {
-				return nil, fmt.Errorf("invalid SFNT table %q", entry.Tag)
-			}
+		paddedLength := (uint64(entry.Length) + 3) &^ 3
+		if uint64(entry.Offset)+paddedLength > uint64(len(fontBuf)) || (string(entry.Tag) == "head" && entry.Length < 12) {
+			return nil, fmt.Errorf("invalid SFNT table %q", entry.Tag)
 		}
 		entries = append(entries, entry)
 	}

@@ -3,13 +3,18 @@ package appendix_test
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2dagrelayout"
 	"github.com/d2lang/d2/d2lib"
+	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/d2svg/appendix"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
@@ -38,10 +43,64 @@ api -> db`
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular := []byte(`font-family: "font-regular"`)
-	bold := []byte(`font-family: "font-bold"`)
-	if !bytes.Contains(rendered, regular) || bytes.Contains(rendered, bold) {
+	regular := []byte(`.text{font-family:font-regular}`)
+	bold := []byte(`.text-bold{font-family:font-bold}`)
+	full := []byte(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR).GetEncodedFull())
+	if !bytes.Contains(rendered, regular) || bytes.Contains(rendered, bold) || !bytes.Contains(rendered, full) {
 		t.Fatal("expected only the full regular font for the tooltip")
+	}
+
+	// A tab is serialized as an XML character reference in generated text.
+	// Keep the complete face for whitespace with browser-dependent aliases.
+	withTab := *diagram
+	withTab.Shapes = append([]d2target.Shape(nil), diagram.Shapes...)
+	for i := range withTab.Shapes {
+		if withTab.Shapes[i].Tooltip != "" {
+			withTab.Shapes[i].Tooltip = "Two\twords"
+		}
+	}
+	tabBoard, err := d2svg.Render(&withTab, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabSVG, err := appendix.AppendRendered(&withTab, opts, ruler, tabBoard)
+	if err != nil || !bytes.Contains(tabSVG, full) {
+		t.Fatalf("tabbed footnote lost the complete regular font: %v", err)
+	}
+
+	if bytes.LastIndex(rendered, []byte("</text>")) > bytes.LastIndex(rendered, []byte("<style>")) {
+		t.Fatal("standalone appendix fallback must follow the footnote text for ImageIO")
+	}
+
+	// A registered font URL can contain a literal </style> inside CDATA.
+	// In this case fallbacks must follow the entire original stylesheet.
+	const uri = "https://example.org/a (regular)</style>.woff?a=1&b=2"
+	withURL := bytes.Replace(svg, []byte("<style>"), []byte(`<style><![CDATA[@font-face{font-family:external;src:url("`+uri+`")}`), 1)
+	withURL = bytes.Replace(withURL, []byte("}</style>"), []byte("}]]></style>"), 1)
+	withFallback, err := appendix.AppendRendered(diagram, opts, ruler, withURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := xml.NewDecoder(bytes.NewReader(withFallback))
+	var sheets []string
+	for {
+		token, err := d.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if el, ok := token.(xml.StartElement); ok && el.Name.Local == "style" {
+			var css string
+			if err := d.DecodeElement(&css, &el); err != nil {
+				t.Fatal(err)
+			}
+			sheets = append(sheets, css)
+		}
+	}
+	if len(sheets) != 2 || !strings.Contains(sheets[0], `url("`+uri+`")`) || !strings.Contains(sheets[1], string(regular)) {
+		t.Fatal("appendix altered the original font URL or misplaced the fallback face")
 	}
 
 	// Consumers can pass SVG with their own styles, even ones referring to
@@ -51,7 +110,8 @@ api -> db`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(preserved, regular) || !bytes.Contains(preserved, bold) {
+	fullBold := []byte(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_BOLD).GetEncodedFull())
+	if !bytes.Contains(preserved, full) || !bytes.Contains(preserved, fullBold) {
 		t.Fatal("custom SVG lost a full font")
 	}
 }

@@ -125,6 +125,9 @@ type MarkdownSVGOptions struct {
 	Class       string
 	RolePaint   map[MarkdownColorRole]MarkdownSVGPaint
 	FontClasses map[MarkdownFontRole]string
+	// CompactNumbers omits trailing zeroes at the same coordinate precision.
+	// Leave off for stylesheets with selectors on the original attribute values.
+	CompactNumbers bool
 	// DisableLinks emits linked text without inner <a> elements. d2svg uses
 	// this when a Markdown label is already wrapped by a shape/connection link.
 	DisableLinks bool
@@ -248,6 +251,11 @@ func (l *MarkdownLayout) SVG(opts MarkdownSVGOptions) string {
 		fontClasses[role] = class
 	}
 
+	format := mdFloat
+	if opts.CompactNumbers {
+		format = func(v float64) string { return strings.TrimSuffix(strings.TrimRight(mdFloat(v), "0"), ".") }
+	}
+
 	var out strings.Builder
 	fmt.Fprintf(&out, `<g class="%s">`, svg.EscapeText(opts.Class))
 	for _, primitive := range l.Primitives {
@@ -281,13 +289,13 @@ func (l *MarkdownLayout) SVG(opts MarkdownSVGOptions) string {
 		switch primitive.Kind {
 		case MarkdownRectPrimitive:
 			fmt.Fprintf(&out, `<rect x="%s" y="%s" width="%s" height="%s" rx="%s"%s`,
-				mdFloat(primitive.X), mdFloat(primitive.Y), mdFloat(primitive.Width), mdFloat(primitive.Height), mdFloat(primitive.Radius), classAttr)
+				format(primitive.X), format(primitive.Y), format(primitive.Width), format(primitive.Height), format(primitive.Radius), classAttr)
 			if fill == "" {
 				fill = "none"
 			}
 			fmt.Fprintf(&out, ` fill="%s"`, svg.EscapeText(fill))
 			if stroke != "" && primitive.StrokeWidth > 0 {
-				fmt.Fprintf(&out, ` stroke="%s" stroke-width="%s"`, svg.EscapeText(stroke), mdFloat(primitive.StrokeWidth))
+				fmt.Fprintf(&out, ` stroke="%s" stroke-width="%s"`, svg.EscapeText(stroke), format(primitive.StrokeWidth))
 			}
 			out.WriteString(`/>`)
 		case MarkdownLinePrimitive:
@@ -295,15 +303,15 @@ func (l *MarkdownLayout) SVG(opts MarkdownSVGOptions) string {
 				stroke = "currentColor"
 			}
 			fmt.Fprintf(&out, `<line x1="%s" y1="%s" x2="%s" y2="%s"%s stroke="%s" stroke-width="%s"/>`,
-				mdFloat(primitive.X), mdFloat(primitive.Y), mdFloat(primitive.X2), mdFloat(primitive.Y2), classAttr,
-				svg.EscapeText(stroke), mdFloat(primitive.StrokeWidth))
+				format(primitive.X), format(primitive.Y), format(primitive.X2), format(primitive.Y2), classAttr,
+				svg.EscapeText(stroke), format(primitive.StrokeWidth))
 		case MarkdownTextPrimitive:
 			if fill == "" {
 				fill = "currentColor"
 			}
 			writeText := func(underline bool, clip string) {
 				fmt.Fprintf(&out, `<text x="%s" y="%s"%s fill="%s" font-size="%s" xml:space="preserve"`,
-					mdFloat(primitive.X), mdFloat(primitive.Y), classAttr, svg.EscapeText(fill), mdFloat(primitive.FontSize))
+					format(primitive.X), format(primitive.Y), classAttr, svg.EscapeText(fill), format(primitive.FontSize))
 				if clip != "" {
 					if underline {
 						out.WriteString(` aria-hidden="true"`)
@@ -329,7 +337,7 @@ func (l *MarkdownLayout) SVG(opts MarkdownSVGOptions) string {
 					out.WriteString(` font-style="italic"`)
 				}
 				if primitive.TextLength {
-					fmt.Fprintf(&out, ` textLength="%s" lengthAdjust="spacingAndGlyphs"`, mdFloat(primitive.Width))
+					fmt.Fprintf(&out, ` textLength="%s" lengthAdjust="spacingAndGlyphs"`, format(primitive.Width))
 				}
 				fmt.Fprintf(&out, `>%s</text>`, svg.EscapeText(primitive.Text))
 			}

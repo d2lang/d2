@@ -33,6 +33,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/internal/d2layoutfeatures"
 	"github.com/d2lang/d2/internal/testlog"
+	_ "github.com/d2lang/d2/internal/testversion"
 	"github.com/d2lang/d2/lib/log"
 	"github.com/d2lang/d2/lib/textmeasure"
 )

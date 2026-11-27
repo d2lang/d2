@@ -118,7 +118,7 @@ func TestThemableElementLegacyAttributesAreChecked(t *testing.T) {
 
 	element := NewThemableElement("path", nil)
 	element.Attributes = `data-value="a&amp;b" aria-label="hello"`
-	if got, want := element.Render(), `<path data-value="a&amp;b" aria-label="hello" />`; got != want {
+	if got, want := element.Render(), `<path data-value="a&amp;b" aria-label="hello"/>`; got != want {
 		t.Fatalf("Render() = %q, want %q", got, want)
 	}
 
@@ -146,7 +146,7 @@ func TestThemableElementLegacyLocalReferencesAreChecked(t *testing.T) {
 	element := NewThemableElement("rect", nil)
 	element.Mask = "url(#mask-id)"
 	element.ClipPath = "clip-id"
-	if got, want := element.Render(), `<rect mask="url(#mask-id)" clip-path="url(#clip-id)" />`; got != want {
+	if got, want := element.Render(), `<rect mask="url(#mask-id)" clip-path="url(#clip-id)"/>`; got != want {
 		t.Fatalf("Render() = %q, want %q", got, want)
 	}
 

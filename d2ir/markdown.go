@@ -3,6 +3,7 @@ package d2ir
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2parser"
@@ -55,12 +56,12 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 			names[name] = text
 		}
 	}
-	if len(names) == 0 {
+	if len(names) == 0 && !strings.Contains(value, `\${`) {
 		return value
 	}
 	resolve := func(key string) (string, bool) {
 		previous, captured := replay.lookup(key)
-		if captured && !replay.retry {
+		if captured {
 			return previous, true
 		}
 		text, exists := names[key]
@@ -70,14 +71,9 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 		if s, ok := parsed.(*d2ast.UnquotedString); err == nil && ok && len(s.Value) == 1 && s.Value[0].Substitution != nil {
 			field, scope, ok := c.readVariable(scopes, node, s.Value[0].Substitution)
 			if !ok {
-				replay.missing = true
 				return token, true
 			}
 			if field == nil {
-				replay.missing = true
-				if captured {
-					return previous, true
-				}
 				if exists {
 					// A literal pattern can spell an unavailable path or a self-reference.
 					return token, true
@@ -86,7 +82,6 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 			}
 			if field.Primary() == nil {
 				// A local map or empty declaration shadows an outer scalar.
-				replay.missing = true
 				return token, true
 			}
 			text, exists = field.Primary().Value.ScalarString(), true
@@ -95,7 +90,6 @@ func (c *compiler) resolveMarkdown(node Node, value string, scopes []*Map, outer
 			// Historical literal patterns can contain a closing brace and
 			// consequently have no parseable D2 substitution path.
 			if !c.resolveVariableField(scopes[decl.scope:], node, decl.field, source) || decl.field.Primary() == nil {
-				replay.missing = true
 				return token, true
 			}
 			text = decl.field.Primary().Value.ScalarString()

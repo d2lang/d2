@@ -16,11 +16,12 @@ import (
 // A near value is a scalar containing a second layer of D2 syntax, an
 // absolute key path. Re-encode both layers so a literal dot stays in its name.
 type nearReference struct {
-	value    d2ast.Range
-	key      *d2ast.KeyPath
-	part     int
-	computed bool
-	noHit    bool
+	constantScope *d2ir.Map // containing map of the unresolved component of a placement constant
+	value         d2ast.Range
+	key           *d2ast.KeyPath
+	part          int
+	computed      bool
+	noHit         bool
 }
 
 func (n *nearReference) rename(name d2ast.String) textEdit {
@@ -70,7 +71,7 @@ func (s *Server) nearOccurrences(doc document, near *d2ir.Field, value nearValue
 			// another board may instead have a shape named top-left. The
 			// constant has no owner, so it is never a navigable occurrence.
 			if _, constant := d2ast.NearConstants[path.Path[0].Unbox().ScalarString()]; constant {
-				return []occurrence{{rng: r, near: &nearReference{value: r, key: path}}}
+				return []occurrence{{rng: r, name: name, near: &nearReference{value: r, key: path, constantScope: m}}}
 			}
 			return nil
 		}

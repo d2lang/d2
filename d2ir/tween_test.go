@@ -530,3 +530,82 @@ steps: {change: {vars: {paint: "` + pair[1] + `"}}}`
 		})
 	}
 }
+
+func TestTweenTemplateDeclarationScope(t *testing.T) {
+	const source = `
+vars.global: 10
+vars.card: {
+  vars.progress: 0
+  meter: "${progress} of ${global}"
+  note: |md ${progress} of ${global} |
+}
+panel: ${card}
+inline: {vars.progress: 0; meter: ${progress}}
+steps.next: {panel.vars.progress: 4; panel.vars.global: 100; inline.vars.progress: 4; vars.global: 14}
+`
+	m, err := compileTween(t, source, d2ir.CompileOptions{AnimateTweens: go2.Pointer(true), AnimateDuration: go2.Pointer(int64(80))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "next").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d samples", len(step.TweenFrames))
+	}
+	for i, frame := range []*d2ir.Map{m, step.TweenFrames[0], step.TweenFrames[1], step} {
+		for _, name := range []string{"meter", "note"} {
+			want := []string{"0 of 10", "0 of 10", "0 of 12", "0 of 14"}[i]
+			if got := tweenText(t, frame, "panel", name); got != want {
+				t.Errorf("frame %d panel.%s = %q, want %q", i, name, got, want)
+			}
+		}
+		if got, want := tweenText(t, frame, "inline", "meter"), []string{"0", "0", "2", "4"}[i]; got != want {
+			t.Errorf("frame %d inline.meter = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestTweenVariableWithMetadata(t *testing.T) {
+	const source = `
+vars.progress: 0 {unit: percent; capacity: 10}
+meter: "${progress}/${progress.capacity} ${progress.unit}"
+steps.next: {vars.progress: 4; vars.progress.capacity: 14}
+`
+	m, err := compileTween(t, source, d2ir.CompileOptions{AnimateTweens: go2.Pointer(true), AnimateDuration: go2.Pointer(int64(80))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "next").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d samples", len(step.TweenFrames))
+	}
+	for i, frame := range []*d2ir.Map{step.TweenFrames[0], step.TweenFrames[1], step} {
+		if got, want := tweenText(t, frame, "meter"), []string{"0/10 percent", "2/12 percent", "4/14 percent"}[i]; got != want {
+			t.Errorf("frame %d meter = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestTweenInheritedImportedTemplateRetainsItsValue(t *testing.T) {
+	const source = `vars.x: 1
+steps: {one: @lib.steps.one; two: {vars.n: 4; live: "${n}"}}`
+	const lib = `vars.x: 8
+steps.one: {vars: {n: 2; card: {meter: "${n} ${x}"; note: |md ${n} ${x} | }}; panel: ${card}}`
+	m, err := compileTween(t, source, d2ir.CompileOptions{FS: fstest.MapFS{"lib.d2": {Data: []byte(lib)}}, AnimateTweens: go2.Pointer(true), AnimateDuration: go2.Pointer(int64(80))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(m, "steps", "two").Map()
+	if len(step.TweenFrames) != 2 {
+		t.Fatalf("got %d samples", len(step.TweenFrames))
+	}
+	for i, frame := range []*d2ir.Map{step.TweenFrames[0], step.TweenFrames[1], step} {
+		for _, name := range []string{"meter", "note"} {
+			if got := tweenText(t, frame, "panel", name); got != "2 8" {
+				t.Errorf("frame %d %s = %q, want 2 8", i, name, got)
+			}
+		}
+		if got, want := tweenText(t, frame, "live"), []string{"2", "3", "4"}[i]; got != want {
+			t.Errorf("frame %d live = %q, want %q", i, got, want)
+		}
+	}
+}

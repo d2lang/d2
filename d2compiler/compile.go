@@ -468,6 +468,16 @@ func (c *compiler) stopped() bool {
 	return false
 }
 
+// fieldErrorNode returns where to report an error about f: the last key that
+// set f, or, if none did (f was only part of longer keys, as constraint is in
+// constraint.x), the last reference to it.
+func fieldErrorNode(f *d2ir.Field) d2ast.Node {
+	if k := f.LastPrimaryKey(); k != nil {
+		return k
+	}
+	return f.LastRef().AST()
+}
+
 func (c *compiler) errorf(n d2ast.Node, f string, v ...interface{}) {
 	err := d2parser.Errorf(n, f, v...).(d2ast.Error)
 	if c.err.ErrorsLookup == nil {
@@ -909,7 +919,7 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 			}
 		}
 		if len(f.Map().Edges) > 0 {
-			c.errorf(f.LastPrimaryKey(), "unexpected edges in map")
+			c.errorf(fieldErrorNode(f), "unexpected edges in map")
 		}
 	}
 }
@@ -953,7 +963,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			case "label", "icon", "tooltip":
 				c.compilePosition(attrs, f)
 			default:
-				c.errorf(f.LastPrimaryKey(), "reserved field %v does not accept composite", f.Name.ScalarString())
+				c.errorf(fieldErrorNode(f), "reserved field %v does not accept composite", f.Name.ScalarString())
 			}
 		} else {
 			c.errorf(f.LastRef().AST(), `reserved field "%v" must have a value`, f.Name.ScalarString())
@@ -1614,7 +1624,7 @@ func (c *compiler) validateKey(obj *d2graph.Object, f *d2ir.Field) {
 			}
 		case "constraint":
 			if !strings.EqualFold(obj.Shape.Value, d2target.ShapeSQLTable) {
-				c.errorf(f.LastPrimaryKey(), `"constraint" keyword can only be used in "sql_table" shapes`)
+				c.errorf(fieldErrorNode(f), `"constraint" keyword can only be used in "sql_table" shapes`)
 			}
 		}
 		return

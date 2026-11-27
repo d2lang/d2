@@ -3,6 +3,14 @@ are licensed under the SIL Open Font License 1.1.
 
 Attribution and license: http://scripts.sil.org/OFL
 
+D2 Appendix Regular and Bold are subsets of Source Sans Pro designed for SVG
+footnotes and their marker numbers. Copyright 2010–2018 Adobe Systems
+Incorporated, with Reserved Font Name “Source”. The subsets are licensed under
+the SIL Open Font License 1.1 (SourceSansPro-OFL.txt). To regenerate them from
+the bundled originals, run gen_appendix_faces.py with FontTools 4.69.1 and
+Brotli 1.2.1. The renderer embeds the WOFF2 files in encoded/. Their decoded
+TTFs in testdata/ are used by the Go shaping test.
+
 Noto Color Emoji version 2.051
 Upstream license copyright: Copyright 2013 Google LLC
 Font metadata copyright: Copyright 2022 Google Inc.

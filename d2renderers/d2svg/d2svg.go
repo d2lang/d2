@@ -30,6 +30,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2sketch"
 	"github.com/d2lang/d2/d2renderers/internal/codestyle"
 	"github.com/d2lang/d2/d2renderers/internal/patternassets"
+	"github.com/d2lang/d2/d2renderers/internal/svgstyle"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
@@ -430,7 +431,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 		{X: startX + width, Y: midY},
 	}
 
-	legendHash := fmt.Sprintf("legend-%s", hash(fmt.Sprintf("%s-%d-%d", c.ID, x, y)))
+	legendHash := fmt.Sprintf("legend-%s", hash(fmt.Sprintf("%s-%d-%d", c.ID, x, y), 10))
 
 	defined := make(map[string]struct{})
 	idToShape := make(map[string]d2target.Shape)
@@ -438,7 +439,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, connectionMasks{}, legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -450,7 +451,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	return finalBuf.String(), nil
 }
 
-func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Connection) string {
+func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Connection, placement string, compact bool) string {
 	var arrowhead d2target.Arrowhead
 	if isTarget {
 		arrowhead = connection.DstArrow
@@ -458,9 +459,18 @@ func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Co
 		arrowhead = connection.SrcArrow
 	}
 
-	return fmt.Sprintf("mk-%s-%s", diagramHash, hash(fmt.Sprintf("%s,%t,%s,%s",
-		arrowhead, isTarget, strconv.FormatFloat(connection.RenderedStrokeWidth(), 'f', -1, 64), connection.Stroke,
-	)))
+	// Keep every bit of both hashes and the board namespace. A trailing delimiter keeps whole-ID string replacement (e.g. Obsidian)
+	// from matching a shorter paint hash inside another marker's ID.
+	scope, base, end := diagramHash, 10, ""
+	if compact {
+		scope, base, end = strings.TrimPrefix(diagramHash, "d2-"), 36, "_"
+	}
+	paint := fmt.Sprintf("%s,%t,%s,%s", arrowhead, isTarget, strconv.FormatFloat(connection.RenderedStrokeWidth(), 'f', -1, 64), connection.Stroke)
+	id := "mk-" + scope + "-" + hash(paint, base)
+	if placement != "" {
+		id += "-" + hash(placement, base)
+	}
+	return id + end
 }
 
 // markerPoints formats coordinate pairs as an SVG points list ("x,y x,y ...").
@@ -645,15 +655,11 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 	default:
 		return ""
 	}
-	return strings.Join([]string{
-		fmt.Sprintf(`<marker id="%s" markerWidth="%s" markerHeight="%s" refX="%s" refY="%s"`,
-			id, svg.FormatFloat(markerWidth), svg.FormatFloat(height), svg.FormatFloat(refX), svg.FormatFloat(refY),
-		),
-		fmt.Sprintf(`viewBox="%s %s %s %s"`, svg.FormatFloat(0.), svg.FormatFloat(0.), svg.FormatFloat(markerWidth), svg.FormatFloat(height)),
-		`orient="auto" markerUnits="userSpaceOnUse">`,
-		el.Render(),
-		"</marker>",
-	}, " ")
+	widthText, heightText := svg.FormatFloat(markerWidth), svg.FormatFloat(height)
+	return `<marker id="` + svg.EscapeAttribute(id) + `" markerWidth="` + widthText +
+		`" markerHeight="` + heightText + `" refX="` + svg.FormatFloat(refX) + `" refY="` + svg.FormatFloat(refY) +
+		`" viewBox="0 0 ` + widthText + " " + heightText + `" orient="auto" markerUnits="userSpaceOnUse">` +
+		el.Render() + "</marker>"
 }
 
 func crossingMaskID(boardHash string, edge int) string {
@@ -723,7 +729,7 @@ func makeLabelMaskWithTransform(labelTL *geo.Point, width, height int, opacity f
 		y -= shapePos.Y
 	}
 
-	return svg.CompactEmptyElement("rect", svg.FloatAttr("x", x), svg.FloatAttr("y", y),
+	return svg.EmptyElement("rect", svg.FloatAttr("x", x), svg.FloatAttr("y", y),
 		svg.IntAttr("width", width+4), svg.IntAttr("height", height), svg.Attr("fill", fill))
 }
 
@@ -780,7 +786,7 @@ func makeBorderLabelMask(labelPosition label.Position, labelTL *geo.Point, label
 		maskY -= shapePos.Y
 	}
 
-	return svg.CompactEmptyElement("rect", svg.FloatAttr("x", maskX), svg.FloatAttr("y", maskY),
+	return svg.EmptyElement("rect", svg.FloatAttr("x", maskX), svg.FloatAttr("y", maskY),
 		svg.FloatAttr("width", maskWidth), svg.FloatAttr("height", maskHeight), svg.Attr("fill", fill))
 }
 
@@ -792,7 +798,12 @@ func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
 		svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", c.X, c.Y, c.Width, c.Height)), svg.Attr("overflow", "hidden")))
 }
 
-func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+type connectionMasks struct {
+	labelID    string
+	crossingID string
+}
+
+func drawConnection(writer *objectWriter, markerScope string, masks connectionMasks, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
 	if c := connection.MotionClip; c != nil {
 		openMotionViewport(writer, c)
 		defer writer.buf.WriteString("</svg>")
@@ -822,10 +833,11 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		if arrow == d2target.NoArrowhead || (sketch && gradient != nil) {
 			return nil
 		}
-		id := arrowheadMarkerID(diagramHash, target, connection)
+		position := ""
 		if gradient != nil {
-			id += "-" + hash(fmt.Sprint(placement))
+			position = fmt.Sprint(placement)
 		}
+		id := arrowheadMarkerID(markerScope, target, connection, position, writer.compactMarkerIDs)
 		if _, exists := defined[id]; !exists {
 			markup := arrowheadMarker(target, id, connection, inlineTheme, gradient, placement)
 			if markup == "" {
@@ -895,13 +907,16 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		labelMask = ""
 	}
 	path := pathData(connection, srcAdj, dstAdj)
-	mask := svg.Attr("mask", svg.LocalIRI(svg.LiteralID(diagramHash)))
-	if crossingMask != "" {
-		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(crossingMask)))))
+	var pathAttrs []svg.Attribute
+	if masks.labelID != "" {
+		pathAttrs = []svg.Attribute{svg.Attr("mask", svg.LocalIRI(svg.LiteralID(masks.labelID)))}
+	}
+	if masks.crossingID != "" {
+		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(masks.crossingID)))))
 	}
 
 	if sketch {
-		out, err := d2sketch.ConnectionWithAttributes(connection, path, []svg.Attribute{mask})
+		out, err := d2sketch.ConnectionWithAttributes(connection, path, pathAttrs)
 		if err != nil {
 			return "", err
 		}
@@ -933,7 +948,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 			pathEl.Stroke = connection.Stroke
 			pathEl.ClassName = className
 			pathEl.Style = connection.CSSStyle() + extraStyle
-			pathEl.AddAttributes(append(attrs, mask)...)
+			pathEl.AddAttributes(append(attrs, pathAttrs...)...)
 			writer.element(pathEl)
 		}
 		// If connection is animated and bidirectional
@@ -950,7 +965,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		}
 	}
 
-	if crossingMask != "" {
+	if masks.crossingID != "" {
 		fmt.Fprint(writer, svg.CloseElement("g"))
 	}
 
@@ -1069,6 +1084,9 @@ func latexLabel(src string, tl *geo.Point, fontColor string, inlineTheme *d2them
 	}
 	render = strings.ReplaceAll(render, `<?xml version="1.0" encoding="UTF-8"?>`, "")
 	render = strings.ReplaceAll(render, `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">`, "")
+	if UsesDefaultStylesheet() {
+		render = compactMathJaxGlyphs(render)
+	}
 	gEl := d2themes.NewThemableElement("g", inlineTheme)
 	gEl.SetTranslate(tl.X, tl.Y)
 	gEl.Color = fontColor
@@ -1356,7 +1374,7 @@ func render3D(diagramHash string, targetShape d2target.Shape, inlineTheme *d2the
 			svg.IntAttr("height", targetShape.Height+d2target.THREE_DEE_OFFSET),
 			svg.Attr("fill", "white"),
 		) + svg.CloseElement("rect"),
-		svg.CompactEmptyElement("path",
+		svg.EmptyElement("path",
 			svg.Attr("d", strings.Join(border, "")),
 			svg.Attr("style", style+";stroke:#000;fill:none;opacity:1;"),
 		) + svg.CloseElement("mask") + svg.CloseElement("defs"),
@@ -1422,24 +1440,20 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	style := targetShape.CSSStyle()
 	s := targetShape.Geometry()
 
-	var shadowAttr string
+	writer.buf.WriteString(`<g class="shape`)
+	if targetShape.Blend {
+		writer.classes("blend")
+		writer.buf.WriteString(" blend")
+	}
+	writer.buf.WriteByte('"')
 	if targetShape.Shadow {
 		switch targetShape.Type {
-		case d2target.ShapeText,
-			d2target.ShapeCode,
-			d2target.ShapeClass,
-			d2target.ShapeSQLTable:
+		case d2target.ShapeText, d2target.ShapeCode, d2target.ShapeClass, d2target.ShapeSQLTable:
 		default:
-			shadowAttr = `filter="url(#shadow-filter)" `
+			writer.buf.WriteString(` filter="url(#shadow-filter)"`)
 		}
 	}
-
-	var blendModeClass string
-	if targetShape.Blend {
-		blendModeClass = " blend"
-	}
-
-	fmt.Fprintf(writer.buf, `<g class="shape%s" %s>`, blendModeClass, shadowAttr)
+	writer.buf.WriteByte('>')
 
 	var multipleTL *geo.Point
 	if targetShape.Multiple {
@@ -2002,6 +2016,23 @@ func EmbedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 }
 
 func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, corpus string, corpora fontCorpora) {
+	start := buf.Len()
+	buf.WriteString(legacyStyleOpen)
+	contentStart := buf.Len()
+	writeFontCSS(buf, diagramHash, source, fontFamily, monoFontFamily, corpus, corpora, false)
+	if buf.Len() == contentStart {
+		buf.Truncate(start)
+		return
+	}
+	if css := buf.Bytes()[contentStart:]; bytes.Contains(css, []byte("]]>")) {
+		text := string(css)
+		buf.Truncate(contentStart)
+		writeCDATA(buf, text)
+	}
+	buf.WriteString(legacyStyleClose)
+}
+
+func writeFontCSS(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, corpus string, corpora fontCorpora, compact bool) {
 	if fontFamily == nil || *fontFamily == "" {
 		family := d2fonts.SourceSansPro
 		fontFamily = &family
@@ -2023,96 +2054,51 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 		}
 	}
 	corpora = restrictFontCorpora(corpora, corpus)
-	start := buf.Len()
-	buf.WriteString(`<style type="text/css"><![CDATA[`)
-	contentStart := buf.Len()
-
-	appendFontOnTrigger(
-		buf,
-		source,
-		[]string{
-			`class="text"`,
-			`class="text `,
-			`class="md"`,
-			`class="md `,
-		},
-		corpora, "text", corpus,
-		func(corpus string) string {
+	appendFace := func(class, face string, font *d2fonts.FontFamily, style d2fonts.FontStyle, triggers ...string) {
+		appendFontOnTrigger(buf, source, triggers, corpora, class, corpus, func(corpus string) string {
+			subsetFont := font.Font(0, style)
+			family := diagramHash + "-font-" + face
+			if compact {
+				return svgstyle.FontFace(diagramHash, class, family, subsetFont.GetSVGEncodedSubset(corpus))
+			}
 			return fmt.Sprintf(`
-.%s .text {
-	font-family: "%s-font-regular";
+.%s .%s {
+	font-family: "%s";
 }
 @font-face {
-	font-family: %s-font-regular;
+	font-family: %s;
 	src: url("%s");
-}`,
-				diagramHash,
-				diagramHash,
-				diagramHash,
-				fontFamily.Font(0, d2fonts.FONT_STYLE_REGULAR).GetEncodedSubset(corpus),
-			)
-		},
-	)
+}`, diagramHash, class, family, family, subsetFont.GetEncodedSubset(corpus))
+		})
+	}
+	appendRule := func(trigger, css string) {
+		if !strings.Contains(source, trigger) {
+			return
+		}
+		if compact {
+			css = compactCSS(css)
+		}
+		buf.WriteString(css)
+	}
+	appendFace("text", "regular", fontFamily, d2fonts.FONT_STYLE_REGULAR, `class="text"`, `class="text `, `class="md"`, `class="md `)
 
-	appendFontOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-semibold`,
-		},
-		corpora, "text-semibold", corpus,
-		func(corpus string) string {
-			return fmt.Sprintf(`
-.%s .text-semibold {
-	font-family: "%s-font-semibold";
-}
-@font-face {
-	font-family: %s-font-semibold;
-	src: url("%s");
-}`,
-				diagramHash,
-				diagramHash,
-				diagramHash,
-				fontFamily.Font(0, d2fonts.FONT_STYLE_SEMIBOLD).GetEncodedSubset(corpus),
-			)
-		},
-	)
+	appendFace("text-semibold", "semibold", fontFamily, d2fonts.FONT_STYLE_SEMIBOLD, `text-semibold`)
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-underline`,
-		},
-		`
+	appendRule("text-underline", `
 .text-underline {
 	text-decoration: underline;
-}`,
-	)
+}`)
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-link`,
-		},
-		`
+	appendRule("text-link", `
 .text-link {
 	fill: blue;
 }
 
 .text-link:visited {
 	fill: purple;
-}`,
-	)
+}`)
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`animated-connection`,
-		},
-		fmt.Sprintf(`
+	appendRule("animated-connection", fmt.Sprintf(`
 @keyframes dashdraw {
 	from {
 		stroke-dashoffset: 0;
@@ -2123,16 +2109,9 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 		animation: none !important;
 	}
 }
-`, diagramHash),
-	)
+`, diagramHash))
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`animated-shape`,
-		},
-		`
+	appendRule("animated-shape", `
 @keyframes shapeappear {
     0%, 100% { transform: translateY(0); filter: drop-shadow(0px 0px 0px rgba(0,0,0,0)); }
     50% { transform: translateY(-4px); filter: drop-shadow(0px 12.6px 25.2px rgba(50,50,93,0.25)) drop-shadow(0px 7.56px 15.12px rgba(0,0,0,0.1)); }
@@ -2140,245 +2119,54 @@ func embedFonts(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2fon
 .animated-shape {
 	animation: shapeappear 1s linear infinite;
 }
-`,
-	)
+`)
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`appendix-icon`,
-		},
-		`
+	appendRule("appendix-icon", `
 .appendix-icon {
 	filter: drop-shadow(0px 0px 32px rgba(31, 36, 58, 0.1));
-}`,
-	)
+}`)
 
-	appendFontOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-bold`,
-			`<b>`,
-			`<strong>`,
-		},
-		corpora, "text-bold", corpus,
-		func(corpus string) string {
-			return fmt.Sprintf(`
-.%s .text-bold {
-	font-family: "%s-font-bold";
-}
-@font-face {
-	font-family: %s-font-bold;
-	src: url("%s");
-}`,
-				diagramHash,
-				diagramHash,
-				diagramHash,
-				fontFamily.Font(0, d2fonts.FONT_STYLE_BOLD).GetEncodedSubset(corpus),
-			)
-		},
-	)
+	appendFace("text-bold", "bold", fontFamily, d2fonts.FONT_STYLE_BOLD, `text-bold`, `<b>`, `<strong>`)
 
-	appendFontOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-italic`,
-			`<em>`,
-			`<dfn>`,
-		},
-		corpora, "text-italic", corpus,
-		func(corpus string) string {
-			return fmt.Sprintf(`
-.%s .text-italic {
-	font-family: "%s-font-italic";
-}
-@font-face {
-	font-family: %s-font-italic;
-	src: url("%s");
-}`,
-				diagramHash,
-				diagramHash,
-				diagramHash,
-				fontFamily.Font(0, d2fonts.FONT_STYLE_ITALIC).GetEncodedSubset(corpus),
-			)
-		},
-	)
+	appendFace("text-italic", "italic", fontFamily, d2fonts.FONT_STYLE_ITALIC, `text-italic`, `<em>`, `<dfn>`)
 
-	appendFontOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-mono`,
-			`<pre>`,
-			`<code>`,
-			`<kbd>`,
-			`<samp>`,
-		},
-		corpora, "text-mono", corpus,
-		func(corpus string) string {
-			return fmt.Sprintf(`
-.%s .text-mono {
-	font-family: "%s-font-mono";
-}
-@font-face {
-	font-family: %s-font-mono;
-	src: url("%s");
-}`,
-				diagramHash,
-				diagramHash,
-				diagramHash,
-				monoFontFamily.Font(0, d2fonts.FONT_STYLE_REGULAR).GetEncodedSubset(corpus),
-			)
-		},
-	)
+	appendFace("text-mono", "mono", monoFontFamily, d2fonts.FONT_STYLE_REGULAR, `text-mono`, `<pre>`, `<code>`, `<kbd>`, `<samp>`)
 
-	appendFontOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-mono-semibold`,
-		},
-		corpora, "text-mono-semibold", corpus,
-		func(corpus string) string {
-			return fmt.Sprintf(`
-.%s .text-mono-semibold {
-	font-family: "%s-font-mono-semibold";
-}
-@font-face {
-	font-family: %s-font-mono-semibold;
-	src: url("%s");
-}`,
-				diagramHash,
-				diagramHash,
-				diagramHash,
-				monoFontFamily.Font(0, d2fonts.FONT_STYLE_SEMIBOLD).GetEncodedSubset(corpus),
-			)
-		},
-	)
+	appendFace("text-mono-semibold", "mono-semibold", monoFontFamily, d2fonts.FONT_STYLE_SEMIBOLD, `text-mono-semibold`)
 
-	appendFontOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-mono-bold`,
-		},
-		corpora, "text-mono-bold", corpus,
-		func(corpus string) string {
-			return fmt.Sprintf(`
-.%s .text-mono-bold {
-	font-family: "%s-font-mono-bold";
-}
-@font-face {
-	font-family: %s-font-mono-bold;
-	src: url("%s");
-}`,
-				diagramHash,
-				diagramHash,
-				diagramHash,
-				monoFontFamily.Font(0, d2fonts.FONT_STYLE_BOLD).GetEncodedSubset(corpus),
-			)
-		},
-	)
+	appendFace("text-mono-bold", "mono-bold", monoFontFamily, d2fonts.FONT_STYLE_BOLD, `text-mono-bold`)
 
-	appendFontOnTrigger(
-		buf,
-		source,
-		[]string{
-			`text-mono-italic`,
-		},
-		corpora, "text-mono-italic", corpus,
-		func(corpus string) string {
-			return fmt.Sprintf(`
-.%s .text-mono-italic {
-	font-family: "%s-font-mono-italic";
-}
-@font-face {
-	font-family: %s-font-mono-italic;
-	src: url("%s");
-}`,
-				diagramHash,
-				diagramHash,
-				diagramHash,
-				monoFontFamily.Font(0, d2fonts.FONT_STYLE_ITALIC).GetEncodedSubset(corpus),
-			)
-		},
-	)
+	appendFace("text-mono-italic", "mono-italic", monoFontFamily, d2fonts.FONT_STYLE_ITALIC, `text-mono-italic`)
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`sketch-overlay-bright`,
-		},
-		fmt.Sprintf(`
+	appendRule("sketch-overlay-bright", fmt.Sprintf(`
 .sketch-overlay-bright {
 	fill: url(#streaks-bright-%s);
 	mix-blend-mode: darken;
-}`, diagramHash),
-	)
+}`, diagramHash))
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`sketch-overlay-normal`,
-		},
-		fmt.Sprintf(`
+	appendRule("sketch-overlay-normal", fmt.Sprintf(`
 .sketch-overlay-normal {
 	fill: url(#streaks-normal-%s);
 	mix-blend-mode: color-burn;
-}`, diagramHash),
-	)
+}`, diagramHash))
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`sketch-overlay-dark`,
-		},
-		fmt.Sprintf(`
+	appendRule("sketch-overlay-dark", fmt.Sprintf(`
 .sketch-overlay-dark {
 	fill: url(#streaks-dark-%s);
 	mix-blend-mode: overlay;
-}`, diagramHash),
-	)
+}`, diagramHash))
 
-	appendOnTrigger(
-		buf,
-		source,
-		[]string{
-			`sketch-overlay-darker`,
-		},
-		fmt.Sprintf(`
+	appendRule("sketch-overlay-darker", fmt.Sprintf(`
 .sketch-overlay-darker {
 	fill: url(#streaks-darker-%s);
 	mix-blend-mode: lighten;
-}`, diagramHash),
-	)
+}`, diagramHash))
 
-	if buf.Len() == contentStart {
-		buf.Truncate(start)
-		return
-	}
-	fmt.Fprint(buf, `]]></style>`)
 }
 
 var nativeMarkdownTextPattern = regexp.MustCompile(`<text\b[^>]*\bclass="[^"]*\bmd-text\b[^"]*"[^>]*>([^<]*)</text>`)
 
-func appendOnTrigger(buf *bytes.Buffer, source string, triggers []string, newContent string) {
-	for _, trigger := range triggers {
-		if strings.Contains(source, trigger) {
-			fmt.Fprint(buf, newContent)
-			break
-		}
-	}
-}
-
 // appendOnTriggerLazy avoids constructing a font subset unless its CSS is used.
-// Match the source and trigger order used by appendOnTrigger exactly.
 func appendOnTriggerLazy(buf *bytes.Buffer, source string, triggers []string, newContent func() string) {
 	for _, trigger := range triggers {
 		if strings.Contains(source, trigger) {
@@ -2461,7 +2249,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	}
 
 	buf := &bytes.Buffer{}
-	writer := &objectWriter{buf: buf}
+	writer := &objectWriter{buf: buf, compactMarkerIDs: opts.MasterID == "" && UsesDefaultStylesheet()}
 	if opts.MasterID == "" && !sketch && UsesDefaultStylesheet() {
 		writer.usage = &svgUsage{classes: make(map[string]bool)}
 	}
@@ -2544,11 +2332,11 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 			return nil, err
 		}
 		if c, is := obj.(indexedConnection); is {
-			maskID := ""
+			masks := connectionMasks{labelID: isolatedDiagramHash}
 			if len(crossings[c.index]) != 0 {
-				maskID = crossingMaskID(isolatedDiagramHash, c.index)
+				masks.crossingID = crossingMaskID(isolatedDiagramHash, c.index)
 			}
-			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
+			labelMask, err := drawConnection(writer, isolatedDiagramHash, masks, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
 			}
@@ -2600,7 +2388,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", w), svg.IntAttr("height", h)}
 		attrs := []svg.Attribute{svg.Attr("id", isolatedDiagramHash), svg.Attr("maskUnits", "userSpaceOnUse")}
 		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
-		buf.WriteString(svg.CompactEmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
+		buf.WriteString(svg.EmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
 		for _, label := range labelMasks {
 			buf.WriteString(label)
 		}
@@ -2635,7 +2423,9 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	backgroundEl.Fill = diagram.Root.Fill
 	backgroundEl.Stroke = diagram.Root.Stroke
 	backgroundEl.FillPattern = diagram.Root.FillPattern
-	backgroundEl.Rx = float64(diagram.Root.BorderRadius)
+	if diagram.Root.BorderRadius != 0 || !UsesDefaultStylesheet() {
+		backgroundEl.Rx = float64(diagram.Root.BorderRadius)
+	}
 	if diagram.Root.StrokeDash != 0 {
 		dashSize, gapSize := svg.GetStrokeDashAttributes(strokeWidth, diagram.Root.StrokeDash)
 		backgroundEl.StrokeDashArray = fmt.Sprintf("%s, %s", svg.FormatFloat(dashSize), svg.FormatFloat(gapSize))
@@ -2681,9 +2471,11 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	}
 	bufStr := buf.String()
 	upperBuf := &bytes.Buffer{}
+	compact := UsesDefaultStylesheet()
+	styleStart := 0
+	var classes map[string]bool
 	if opts.MasterID == "" {
 		var corpora fontCorpora
-		var classes map[string]bool
 		if sketch {
 			corpora, classes, _ = collectFontCorporaAndClasses(bufStr)
 		} else {
@@ -2698,25 +2490,32 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 				break
 			}
 		}
-		embedFonts(upperBuf, diagramHash, bufStr, diagram.FontFamily, diagram.MonoFontFamily, diagram.GetCorpus()+markdown.generatedCorpus(), corpora) // Must precede DefineFillPatterns, after all text is rendered.
 
 		if classes == nil {
 			themeStylesheet = pruneThemeCSS(themeStylesheet, bufStr, backgroundStr, doubleBorderElStr)
 		} else {
 			themeStylesheet = pruneThemeCSSWithClasses(themeStylesheet, classes, backgroundStr, doubleBorderElStr)
 		}
-		writeThemeStyle(upperBuf, themeStylesheet)
+		styleStart = writeDiagramCSS(upperBuf, diagramHash, bufStr, diagram.FontFamily, diagram.MonoFontFamily,
+			diagram.GetCorpus()+markdown.generatedCorpus(), corpora, classes, themeStylesheet, compact)
 
-		if sketch {
+		if sketch && !compact {
 			writeSketchPatterns(upperBuf, diagramHash)
 		}
 	}
 
 	patternDefs := ""
+	usedPatterns := usedFillPatterns(bufStr, diagramHash, classes)
 	for _, pattern := range d2ast.FillPatterns {
-		if strings.Contains(bufStr, fmt.Sprintf("%s-overlay", pattern)) || strings.EqualFold(diagram.Root.FillPattern, pattern) {
+		if usedPatterns[pattern] || strings.EqualFold(diagram.Root.FillPattern, pattern) {
 			if patternDefs == "" {
-				fmt.Fprint(upperBuf, `<style type="text/css"><![CDATA[`)
+				if !compact {
+					upperBuf.WriteString(legacyStyleOpen)
+				} else if opts.MasterID != "" {
+					// A standalone frame supplies its own pattern rules.
+					upperBuf.WriteString("<style>")
+					styleStart = upperBuf.Len()
+				}
 			}
 			switch pattern {
 			case "dots":
@@ -2728,15 +2527,26 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 			case "paper":
 				patternDefs += fmt.Sprintf(patternassets.PaperSVG(), diagramHash)
 			}
-			fmt.Fprintf(upperBuf, `
+			if compact {
+				fmt.Fprintf(upperBuf, ".%s-overlay{fill:url(#%s-%s);mix-blend-mode:multiply}", pattern, pattern, diagramHash)
+			} else {
+				fmt.Fprintf(upperBuf, `
 .%s-overlay {
 	fill: url(#%s-%s);
 	mix-blend-mode: multiply;
 }`, pattern, pattern, diagramHash)
+			}
 		}
 	}
+	if compact && styleStart != 0 {
+		closeStyle(upperBuf, styleStart)
+	} else if patternDefs != "" {
+		upperBuf.WriteString(legacyStyleClose)
+	}
+	if compact && sketch && opts.MasterID == "" {
+		writeSketchPatterns(upperBuf, diagramHash)
+	}
 	if patternDefs != "" {
-		fmt.Fprint(upperBuf, `]]></style>`)
 		fmt.Fprint(upperBuf, "<defs>")
 		fmt.Fprint(upperBuf, patternDefs)
 		fmt.Fprint(upperBuf, "</defs>")
@@ -2758,16 +2568,18 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	tag := "g"
 	// Many things change when this is rendering for animation
 	if opts.MasterID == "" {
-		dataD2Version := ""
-		if opts.OmitVersion == nil || !*opts.OmitVersion {
-			dataD2Version = fmt.Sprintf(`data-d2-version="%s"`, version.Version)
+		xlink := ""
+		// Links and pattern definitions can each introduce an XLink attribute.
+		// Animated frames get their namespace from the animation wrapper.
+		if !UsesDefaultStylesheet() || strings.Contains(bufStr, "xlink:") || bytes.Contains(upperBuf.Bytes(), []byte("xlink:")) {
+			xlink = ` xmlns:xlink="http://www.w3.org/1999/xlink"`
 		}
-		fitToScreenWrapperOpening = fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" %s preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`,
-			dataD2Version,
-			alignment,
-			w, h,
-			dimensions,
-		)
+		versionAttr := ""
+		if opts.OmitVersion == nil || !*opts.OmitVersion {
+			versionAttr = ` data-d2-version="` + svg.EscapeAttribute(version.Version) + `"`
+		}
+		fitToScreenWrapperOpening = `<svg xmlns="http://www.w3.org/2000/svg"` + xlink + versionAttr +
+			` preserveAspectRatio="` + alignment + ` meet" viewBox="0 0 ` + strconv.Itoa(w) + " " + strconv.Itoa(h) + `"` + dimensions + ">"
 		if opts.NoXMLTag == nil || !*opts.NoXMLTag {
 			xmlTag = `<?xml version="1.0" encoding="utf-8"?>`
 		}
@@ -2785,7 +2597,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		doubleBorderElStr,
 		backgroundStr,
 		upperBuf.String(),
-		buf.String(),
+		bufStr,
 		tag,
 		fitToScreenWrapperClosing,
 	)
@@ -2795,22 +2607,38 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 // WriteAnimationStyles embeds the font faces and theme rules used by a complete
 // animation. Source includes the shared definitions and all rendered frames.
 func WriteAnimationStyles(buf *bytes.Buffer, diagramHash, source string, diagram *d2target.Diagram, opts RenderOpts) error {
+	return WriteAnimationStylesWithTransitions(buf, diagramHash, source, diagram, opts, nil)
+}
+
+// WriteAnimationStylesWithTransitions adds the animation clock's CSS to the
+// generated stylesheet. Custom base styles retain their own stylesheet so CSS
+// imports and namespace declarations stay in their original positions.
+func WriteAnimationStylesWithTransitions(buf *bytes.Buffer, diagramHash, source string, diagram *d2target.Diagram, opts RenderOpts, transitions []byte) error {
 	stylesheet, err := ThemeCSS(diagramHash, opts.ThemeID, opts.DarkThemeID, opts.ThemeOverrides, opts.DarkThemeOverrides)
 	if err != nil {
 		return err
 	}
 	corpora, classes, _ := collectFontCorporaAndClasses(source)
-	embedFonts(buf, diagramHash, source, diagram.FontFamily, diagram.MonoFontFamily, diagram.GetNestedCorpus(), corpora)
-	if UsesDefaultStylesheet() {
+	compact := UsesDefaultStylesheet()
+	if compact {
 		if classes == nil {
 			stylesheet = pruneThemeCSS(stylesheet, source)
 		} else {
 			stylesheet = pruneThemeCSSWithClasses(stylesheet, classes)
 		}
 	}
-	writeThemeStyle(buf, stylesheet)
+	start := writeDiagramCSS(buf, diagramHash, source, diagram.FontFamily, diagram.MonoFontFamily, diagram.GetNestedCorpus(), corpora, classes, stylesheet, compact)
+	if compact {
+		buf.Write(transitions)
+		closeStyle(buf, start)
+	}
 	if opts.Sketch != nil && *opts.Sketch {
 		writeSketchPatterns(buf, diagramHash)
+	}
+	if !compact && transitions != nil {
+		buf.WriteString(legacyStyleOpen)
+		writeCDATA(buf, string(transitions))
+		buf.WriteString(legacyStyleClose)
 	}
 	return nil
 }
@@ -2823,8 +2651,30 @@ func writeSketchPatterns(buf *bytes.Buffer, diagramHash string) {
 	}
 }
 
-func writeThemeStyle(buf *bytes.Buffer, stylesheet string) {
-	fmt.Fprintf(buf, `<style type="text/css"><![CDATA[%s%s]]></style>`, BaseStylesheet, stylesheet)
+// writeDiagramCSS leaves the compact stylesheet open for pattern or animation
+// rules. Custom styles keep the original font and theme elements and ordering.
+func writeDiagramCSS(buf *bytes.Buffer, hash, source string, fontFamily, monoFamily *d2fonts.FontFamily, corpus string, corpora fontCorpora, classes map[string]bool, theme string, compact bool) int {
+	if !compact {
+		embedFonts(buf, hash, source, fontFamily, monoFamily, corpus, corpora)
+		buf.WriteString(legacyStyleOpen)
+		writeCDATA(buf, BaseStylesheet)
+		writeCDATA(buf, theme)
+		buf.WriteString(legacyStyleClose)
+		return 0
+	}
+
+	buf.WriteString("<style>")
+	start := buf.Len()
+	writeFontCSS(buf, hash, source, fontFamily, monoFamily, corpus, corpora, true)
+	// Unknown classes (e.g. scripted SVG or external references) can introduce
+	// a blend at runtime, including a user-defined D2 class with that name.
+	if classes == nil || classes["blend"] {
+		buf.WriteString(compactBaseStylesheet)
+	} else {
+		buf.WriteString(baseWithoutBlend)
+	}
+	buf.WriteString(compactCSS(theme))
+	return start
 }
 
 func ThemeCSS(diagramHash string, themeID *int64, darkThemeID *int64, overrides, darkOverrides *d2target.ThemeOverrides) (stylesheet string, err error) {
@@ -3103,11 +2953,12 @@ func fontToFamily(fontFamily string) *d2fonts.FontFamily {
 	return &ff
 }
 
-func hash(s string) string {
+func hash(s string, base int) string {
 	const secret = "lalalas"
 	h := fnv.New32a()
-	h.Write([]byte(fmt.Sprintf("%s%s", s, secret)))
-	return fmt.Sprint(h.Sum32())
+	h.Write([]byte(s))
+	h.Write([]byte(secret))
+	return strconv.FormatUint(uint64(h.Sum32()), base)
 }
 
 func RenderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, error) {

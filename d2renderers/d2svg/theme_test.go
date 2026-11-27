@@ -117,3 +117,38 @@ func TestCustomStylesheetKeepsGeneratedResources(t *testing.T) {
 		t.Fatal("custom animation stylesheet lost its palette")
 	}
 }
+
+func TestRootFillPatternDeclaresXLink(t *testing.T) {
+	t.Parallel()
+	diagram := d2target.NewDiagram()
+	diagram.Root.FillPattern = "grain"
+	out, err := Render(diagram, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(` xlink:href=`)) || !bytes.Contains(out, []byte(` xmlns:xlink="http://www.w3.org/1999/xlink"`)) {
+		t.Fatal("grain pattern needs an XLink namespace for its embedded image")
+	}
+}
+
+func TestMarkerHashNamespaces(t *testing.T) {
+	edge := d2target.BaseConnection()
+	edge.DstArrow, edge.StrokeWidth, edge.Stroke = d2target.TriangleArrowhead, 2, "#aabbcc"
+	const plain = "mk-123-1k1sg7c_"
+	const gradient = "mk-123-1k1sg7c-16yag8t_"
+	if got := arrowheadMarkerID("d2-123", true, *edge, "", true); got != plain {
+		t.Fatalf("ordinary marker = %q, want %q", got, plain)
+	}
+	if got := arrowheadMarkerID("d2-123", true, *edge, "placement A", true); got != gradient {
+		t.Fatalf("gradient marker = %q, want %q", got, gradient)
+	}
+	if strings.Contains(gradient, plain) {
+		t.Fatal("an ordinary ID matches inside the gradient marker's ID")
+	}
+	if got := arrowheadMarkerID("legend-123", true, *edge, "", false); got != "mk-legend-123-3389112840" {
+		t.Fatalf("legend marker changed: %q", got)
+	}
+	if got := arrowheadMarkerID("d2-123", true, *edge, "placement A", false); got != "mk-d2-123-3389112840-2597173949" {
+		t.Fatalf("legacy marker changed: %q", got)
+	}
+}

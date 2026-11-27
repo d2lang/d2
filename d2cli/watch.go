@@ -450,12 +450,9 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 		// filesystem. localfile.Policy rejects directories and other special files.
 		fs := trackedFS{localFiles: localFilesFromContext(ctx)}
 		w.boardpathMu.Lock()
-		var boardPath []string
-		if w.boardPath != "" {
-			boardPath = strings.Split(w.boardPath, string(os.PathSeparator))
-		}
+		boardPath := w.boardPath
 		renderOpts := w.renderOpts
-		svg, _, err := compile(ctx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.inputPath, w.outputPath, boardPath, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, true)
+		svg, _, err := compile(ctx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.inputPath, w.outputPath, nil, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, &boardPath)
 		w.boardpathMu.Unlock()
 		errs := ""
 		if err != nil {
@@ -596,16 +593,8 @@ func (w *watcher) handleRoot(hw http.ResponseWriter, r *http.Request) {
 </html>`, filepath.Base(w.outputPath), w.devMode)
 
 	w.boardpathMu.Lock()
-	// if path is "/x.svg", we just want "x"
+	// The URL uses the portable output filename, including encoded board names.
 	boardPath := strings.TrimPrefix(r.URL.Path, "/")
-	if idx := strings.LastIndexByte(boardPath, '.'); idx != -1 {
-		boardPath = boardPath[:idx]
-	}
-	// if path is "/index", we just want "/"
-	boardPath = strings.TrimSuffix(boardPath, "/index")
-	if boardPath == "index" {
-		boardPath = ""
-	}
 	recompile := false
 	if boardPath != w.boardPath {
 		w.boardPath = boardPath
@@ -615,6 +604,27 @@ func (w *watcher) handleRoot(hw http.ResponseWriter, r *http.Request) {
 	if recompile {
 		w.requestCompile()
 	}
+}
+
+// watchBoardOutput matches URLs against the generated paths. An extensionless
+// bookmark can still select either a leaf or a board with its own index.
+func watchBoardOutput(urlPath, outputPath string, links map[string]string) string {
+	root, ext := splitBoardOutputPath(outputPath)
+	base := filepath.Join(root, filepath.FromSlash(urlPath))
+	candidates := [...]string{base, base + ext, filepath.Join(base, "index"+ext)}
+	best := len(candidates)
+	for _, file := range links {
+		for i, candidate := range candidates[:best] {
+			if file == candidate {
+				best = i
+				break
+			}
+		}
+	}
+	if best < len(candidates) {
+		return candidates[best]
+	}
+	return ""
 }
 
 func (w *watcher) handleWatch(hw http.ResponseWriter, r *http.Request) error {
@@ -743,6 +753,10 @@ func wsHeartbeat(ctx context.Context, c *websocket.Conn) {
 type trackedFS struct {
 	localFiles localfile.Policy
 	opened     []string
+}
+
+func (tfs *trackedFS) ResolveImportPath(parent, name string) string {
+	return tfs.localFiles.ResolveImportPath(parent, name)
 }
 
 func (tfs *trackedFS) Open(name string) (fs.File, error) {

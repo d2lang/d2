@@ -12,6 +12,7 @@ import (
 
 func TestImportFormatPreservesSelection(t *testing.T) {
 	files := fstest.MapFS{
+		"NULL.d2":  {Data: []byte("x: uppercase filename")},
 		"theme.d2": {Data: []byte("d2: selected\nunrelated: other")},
 		"STYLE.d2": {Data: []byte("x: uppercase filename")},
 		"style.d2": {Data: []byte("x: lowercase filename")},
@@ -21,6 +22,7 @@ func TestImportFormatPreservesSelection(t *testing.T) {
 		{`x: @"theme".d2`, "selected"},
 		{`x: @theme."d2"`, "selected"},
 		{"...@STYLE", "uppercase filename"},
+		{`...@"NULL"`, "uppercase filename"},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			source := tc.source

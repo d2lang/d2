@@ -79,6 +79,21 @@ type CompletionResponse struct {
 }
 
 type RenderRequest struct {
+	fonts   *customFonts
 	Diagram *d2target.Diagram `json:"diagram"`
 	Opts    *RenderOptions    `json:"options"`
+}
+
+// compiledDiagram carries the source font faces once at the root of the WASM
+// response. The underlying target and its SVG hash contain only the family name.
+type compiledDiagram struct {
+	d2target.Diagram
+	CustomFonts *customFonts `json:"customFonts,omitempty"`
+}
+
+type customFonts struct {
+	Regular  []byte `json:"regular,omitempty"`
+	Italic   []byte `json:"italic,omitempty"`
+	Bold     []byte `json:"bold,omitempty"`
+	Semibold []byte `json:"semibold,omitempty"`
 }

@@ -443,6 +443,18 @@ func TestRenderPPTXPreservesRenderablePreorder(t *testing.T) {
 	}
 }
 
+func TestPagedLinksToDottedBoardName(t *testing.T) {
+	const source = `a.link: layers."2012.06"
+layers: {"2012.06": {hello}}`
+	for _, format := range []string{"pdf", "pptx"} {
+		t.Run(format, func(t *testing.T) {
+			if _, err := imageCLI(t, t.TempDir(), source, "--stdout-format="+format, "-"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestPagedTypedLinksExportToPDFAndPPTX(t *testing.T) {
 	root := pagedMetadataDiagram()
 	child := simpleRasterDiagram()

@@ -5,6 +5,8 @@
 
 D2.js is a JavaScript wrapper around D2, the modern diagram scripting language. It enables running D2 directly in browsers and Node environments through WebAssembly.
 
+See the [D2 release notes](https://d2lang.com/releases/intro/) for changes to D2.js.
+
 For an example of usage, see [https://play.d2lang.com](https://play.d2lang.com), which is powered by d2.js and is [open-source](https://github.com/d2lang/d2-playground).
 
 ## Features
@@ -33,6 +35,27 @@ bun add @d2lang/d2
 
 `@terrastruct/d2` remains available as a compatibility package for stable releases
 during the namespace transition. New installations should use `@d2lang/d2`.
+
+### Command line
+
+Render a single D2 file to SVG using the same WebAssembly engine as the JavaScript API:
+
+```sh
+npx @d2lang/d2 input.d2 output.svg
+```
+
+Omit the output path to write `input.svg` beside the source. Use `-` for stdin or stdout:
+
+```sh
+printf 'client -> server\n' | npx @d2lang/d2 - - > architecture.svg
+```
+
+For a project with imports, supply a file map through the [JavaScript API](#imports)
+or use the [native D2 CLI](https://github.com/d2lang/d2/blob/master/docs/INSTALL.md).
+
+After installing `@d2lang/d2` in a project, use `d2-svg input.d2 output.svg`
+in npm scripts. Scripts can use `d2` for PNG, PDF, and other formats when the
+native D2 CLI is installed on your PATH.
 
 ### Nightly
 
@@ -172,7 +195,8 @@ const svg = await d2.render(diagram, renderOptions);
 
 ### `render(diagram: Diagram, options?: RenderOptions): Promise<string>`
 
-Renders a compiled diagram to SVG.
+Renders a compiled diagram to SVG. A compiled diagram retains its custom font faces,
+including when you serialize the root diagram to JSON and render it in another D2 instance.
 
 ### `dispose(): Promise<void>`
 
@@ -226,7 +250,8 @@ Go version in the root `go.mod`, TinyGo 0.44.0-d2.3 from
 says why the build needs it), Binaryen (CI uses version 133), the Bun version in
 `package.json`, and Node.js 24 with npm. Put `tinygo` and `wasm-opt` on PATH. The
 build bundles the JavaScript runtime from the same TinyGo installation as the
-compiler.
+compiler. The fork publishes a prebuilt compiler for Linux amd64. On other hosts,
+use a Linux amd64 build environment or build the pinned fork from source.
 
 ### Building from source
 

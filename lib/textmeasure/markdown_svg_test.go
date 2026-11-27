@@ -1062,6 +1062,21 @@ func TestLayoutMarkdownRejectsUnsupportedHTML(t *testing.T) {
 	require.ErrorContains(t, err, "does not support HTML element <video>")
 }
 
+func TestCompactMarkdownSVGPreservesRoundedCoordinatesAndWhitespace(t *testing.T) {
+	t.Parallel()
+	layout := textmeasure.MarkdownLayout{Primitives: []textmeasure.MarkdownPrimitive{
+		{Kind: textmeasure.MarkdownTextPrimitive, X: -0.00049, Y: 13.60001, FontSize: 16, Text: " a  b "},
+		{Kind: textmeasure.MarkdownTextPrimitive, X: 1.23456, Y: 20, FontSize: 16, Text: "next"},
+	}}
+	fragment := layout.SVG(textmeasure.MarkdownSVGOptions{CompactNumbers: true})
+	assert.Contains(t, fragment, `<text x="0" y="13.6"`)
+	assert.Contains(t, fragment, `<text x="1.235" y="20"`)
+	// Chromium and WebKit can collapse significant spaces when xml:space
+	// is inherited from a group instead of set on the text element itself.
+	assert.Contains(t, fragment, `font-size="16" xml:space="preserve"> a  b </text>`)
+	assert.Contains(t, fragment, `font-size="16" xml:space="preserve">next</text>`)
+}
+
 func TestMarkdownSVGOptionsOverrideThemeFontsAndLinks(t *testing.T) {
 	t.Parallel()
 	layout := &textmeasure.MarkdownLayout{

@@ -4,7 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/d2lang/d2/d2compiler"
 
 	"github.com/d2lang/d2/lib/localfile"
 )
@@ -63,5 +66,25 @@ func TestTrackedFSHonorsLocalFilePolicy(t *testing.T) {
 	}
 	if len(trusted.opened) != 1 || trusted.opened[0] != outside {
 		t.Fatalf("trusted tracked opens = %q, want [%q]", trusted.opened, outside)
+	}
+}
+
+func TestWatchResolvesImportsRelativeToEntryFile(t *testing.T) {
+	root := t.TempDir()
+	entry := filepath.Join(root, "diagrams", "main.d2")
+	dep := filepath.Join(root, "shared", "library.d2")
+	if err := os.Mkdir(filepath.Dir(dep), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dep, []byte("database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fs := &trackedFS{localFiles: localfile.Unrestricted()}
+	_, _, err := d2compiler.Compile(entry, strings.NewReader("...@../shared/library"), &d2compiler.CompileOptions{FS: fs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.opened) != 1 || fs.opened[0] != dep {
+		t.Fatalf("watched imports = %v, want %v", fs.opened, dep)
 	}
 }

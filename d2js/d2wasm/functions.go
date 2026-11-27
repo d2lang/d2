@@ -3,6 +3,7 @@
 package d2wasm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -220,6 +221,12 @@ func Compile(args []js.Value) (interface{}, error) {
 		return nil, err
 	}
 	result.FS[result.InputPath] = d2format.Format(result.Graph.AST)
+	if fonts := input.Opts.customFonts(); fonts != nil {
+		return struct {
+			*CompileResponse
+			Diagram compiledDiagram `json:"diagram"`
+		}{result, compiledDiagram{result.Diagram, fonts}}, nil
+	}
 	return *result, nil
 }
 
@@ -326,33 +333,9 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		return nil, &WASMError{Message: fmt.Sprintf("invalid fs input: %s", err.Error()), Code: 400}
 	}
 
-	var fontRegular []byte
-	var fontItalic []byte
-	var fontBold []byte
-	var fontSemibold []byte
-	if input.Opts != nil && (input.Opts.FontRegular != nil) {
-		fontRegular = *input.Opts.FontRegular
-	}
-	if input.Opts != nil && (input.Opts.FontItalic != nil) {
-		fontItalic = *input.Opts.FontItalic
-	}
-	if input.Opts != nil && (input.Opts.FontBold != nil) {
-		fontBold = *input.Opts.FontBold
-	}
-	if input.Opts != nil && (input.Opts.FontSemibold != nil) {
-		fontSemibold = *input.Opts.FontSemibold
-	}
-	if fontRegular != nil || fontItalic != nil || fontBold != nil || fontSemibold != nil {
-		fontFamily, err := d2fonts.AddFontFamily("custom", fontRegular, fontItalic, fontBold, fontSemibold)
-		if err != nil {
-			return nil, &WASMError{Message: fmt.Sprintf("custom fonts could not be initialized: %s", err.Error()), Code: 400}
-		}
-		compileOpts.FontFamily = fontFamily
-	}
-
-	compileOpts.Ruler, err = textmeasure.NewRuler()
+	compileOpts.Ruler, compileOpts.FontFamily, err = input.Opts.customFonts().newRuler()
 	if err != nil {
-		return nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err.Error()), Code: 500}
+		return nil, err
 	}
 
 	if input.Opts != nil && input.Opts.Layout != nil {
@@ -426,21 +409,95 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 	}, nil
 }
 
+func (opts *CompileOptions) customFonts() *customFonts {
+	if opts.FontRegular == nil && opts.FontItalic == nil && opts.FontBold == nil && opts.FontSemibold == nil {
+		return nil
+	}
+	face := func(data *[]byte) []byte {
+		if data == nil {
+			return nil
+		}
+		return *data
+	}
+	return &customFonts{face(opts.FontRegular), face(opts.FontItalic), face(opts.FontBold), face(opts.FontSemibold)}
+}
+
+// One worker runs each WASM call to completion. Keep a single custom family
+// installed and restore it from the diagram before a later render. Identical
+// requests need no font conversion, and disposing of a diagram releases its
+// bytes independently of other compiled diagrams.
+var currentCustomFonts *customFonts
+
+func (fonts *customFonts) register() (*d2fonts.FontFamily, error) {
+	if fonts == nil {
+		return nil, nil
+	}
+	current := currentCustomFonts
+	same := func(a, b []byte) bool { return (a == nil) == (b == nil) && bytes.Equal(a, b) }
+	if current != nil && same(fonts.Regular, current.Regular) && same(fonts.Italic, current.Italic) && same(fonts.Bold, current.Bold) && same(fonts.Semibold, current.Semibold) {
+		family := d2fonts.FontFamily("custom")
+		return &family, nil
+	}
+	family, err := d2fonts.AddFontFamily("custom", fonts.Regular, fonts.Italic, fonts.Bold, fonts.Semibold)
+	if err != nil {
+		return nil, &WASMError{Message: fmt.Sprintf("custom fonts could not be initialized: %s", err), Code: 400}
+	}
+	currentCustomFonts = fonts
+	return family, nil
+}
+
+// The font encoder and the text measurer read different parts of a face. Only
+// retain a replacement that both can use, so the next request can still load
+// its ruler if this diagram's font lacks usable metrics.
+func (fonts *customFonts) newRuler() (*textmeasure.Ruler, *d2fonts.FontFamily, error) {
+	previous := currentCustomFonts
+	family, err := fonts.register()
+	if err != nil {
+		return nil, nil, err
+	}
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		if currentCustomFonts != previous {
+			if previous == nil {
+				previous = &customFonts{}
+			}
+			// The previous set was already measured. An empty set restores
+			// the bundled faces if this was the first custom request.
+			if _, restoreErr := previous.register(); restoreErr != nil {
+				return nil, nil, restoreErr
+			}
+		}
+		return nil, nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err), Code: 500}
+	}
+	return ruler, family, nil
+}
+
 func Render(args []js.Value) (interface{}, error) {
 	if len(args) < 1 {
 		return nil, &WASMError{Message: "missing JSON argument", Code: 400}
 	}
-	var input RenderRequest
+	var input struct {
+		Diagram *compiledDiagram `json:"diagram"`
+		Opts    *RenderOptions   `json:"options"`
+	}
 	if err := json.Unmarshal([]byte(args[0].String()), &input); err != nil {
 		return nil, &WASMError{Message: "invalid JSON input", Code: 400}
 	}
 
-	return render(input)
+	if input.Diagram == nil {
+		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
+	}
+	return render(RenderRequest{Diagram: &input.Diagram.Diagram, Opts: input.Opts, fonts: input.Diagram.CustomFonts})
 }
 
 func render(input RenderRequest) ([]byte, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
+	}
+	// Validation checks that the target refers to registered font families.
+	ruler, _, err := input.fonts.newRuler()
+	if err != nil {
+		return nil, err
 	}
 	if err := d2target.ValidateRenderTarget(input.Diagram); err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid diagram: %s", err.Error()), Code: 400}
@@ -517,10 +574,6 @@ func render(input RenderRequest) ([]byte, error) {
 		ThemeOverrides:     input.Opts.ThemeOverrides,
 		DarkThemeOverrides: input.Opts.DarkThemeOverrides,
 		NoXMLTag:           input.Opts.NoXMLTag,
-	}
-	ruler, err := textmeasure.NewRuler()
-	if err != nil {
-		return nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err.Error()), Code: 500}
 	}
 
 	if input.Opts.ASCII != nil && *input.Opts.ASCII {

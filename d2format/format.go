@@ -100,10 +100,10 @@ func (p *printer) nodeAt(n d2ast.Node, pos tokenPosition) {
 	case *d2ast.Number:
 		p.sb.WriteString(n.Raw)
 	case *d2ast.UnquotedString:
-		p.interpolationBoxes(n.Value, false, pos)
+		p.interpolationBoxes(n.Value, false, !n.Range.OneLine(), pos)
 	case *d2ast.DoubleQuotedString:
 		p.sb.WriteByte('"')
-		p.interpolationBoxes(n.Value, true, pos)
+		p.interpolationBoxes(n.Value, true, false, pos)
 		p.sb.WriteByte('"')
 	case *d2ast.SingleQuotedString:
 		p.sb.WriteByte('\'')
@@ -178,7 +178,7 @@ func (p *printer) blockLines(value string, oneLine bool) {
 	}
 }
 
-func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString bool, pos tokenPosition) {
+func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString, continued bool, pos tokenPosition) {
 	wholeToken := len(boxes) == 1
 	for i, b := range boxes {
 		if b.Substitution != nil {
@@ -194,6 +194,9 @@ func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleStr
 			text = escapeDoubledQuotedValue(*b.String, p.inKey)
 		case b.StringRaw != nil && (wholeToken || matchesUnquotedFragment(*b.StringRaw, *b.String, i == len(boxes)-1)):
 			text = *b.StringRaw
+			if continued {
+				text = escapeFoldedToken(text, p.inKey, i == 0)
+			}
 			if !isDoubleString {
 				text = escapeRawInContext(text, pos, i == 0 && !p.inKey, i == len(boxes)-1)
 			}
@@ -279,8 +282,9 @@ func (p *printer) _import(i *d2ast.Import, pos tokenPosition) {
 		return
 	}
 	filename := path.Clean(i.Path[0].ScalarString())
-	if len(i.Path) > 1 && i.Path[1].UnquotedString != nil && i.Path[1].ScalarString() == "d2" {
-		// After a quoted filename, the parser reads .d2 as a field name.
+	selectsD2 := len(i.Path) > 1 && i.Path[1].UnquotedString != nil && i.Path[1].ScalarString() == "d2"
+	if selectsD2 || strings.EqualFold(filename, "null") {
+		// Quoting preserves filename case and distinguishes a .d2 field from a file extension.
 		p.node(d2ast.FlatDoubleQuotedString(filename))
 	} else {
 		p.node(d2ast.RawString(filename, true))

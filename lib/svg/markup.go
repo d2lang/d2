@@ -144,7 +144,7 @@ func OpenElement(name string, attributes ...Attribute) string {
 
 func EmptyElement(name string, attributes ...Attribute) string {
 	validateElementName(name)
-	return "<" + name + RenderAttributes(attributes...) + " />"
+	return "<" + name + RenderAttributes(attributes...) + "/>"
 }
 
 // OpenClippedViewport clips the child artwork to a rectangle and translates
@@ -156,11 +156,9 @@ func OpenClippedViewport(x, y, width, height, sourceY float64) string {
 		Attr("viewBox", viewBox), Attr("overflow", "hidden"))
 }
 
-// CompactEmptyElement is equivalent to EmptyElement but preserves the compact
-// `/>` syntax used by older renderer output.
+// CompactEmptyElement is an alias for EmptyElement.
 func CompactEmptyElement(name string, attributes ...Attribute) string {
-	validateElementName(name)
-	return "<" + name + RenderAttributes(attributes...) + "/>"
+	return EmptyElement(name, attributes...)
 }
 
 func CloseElement(name string) string {

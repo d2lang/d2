@@ -90,3 +90,31 @@ func TestHexColorMovedIntoKey(t *testing.T) {
 		t.Fatalf("expected a shape named #abc after formatting %q", formatted)
 	}
 }
+
+func TestFormatFoldedTokens(t *testing.T) {
+	for _, tc := range []struct{ prefix, suffix, want string }{
+		{"API-", ">Worker", `API\->Worker`},
+		{"API-", "-Worker -> db", `API\--Worker -> db`},
+		{"API-", "*.style.fill: blue", `API\-*.style.fill: blue`},
+		{"!", "&flag", `\!&flag`},
+		{"box.", "(port", `box.\(port`},
+		{"status: ", `"On call"`, `status: \"On call"`},
+		{"status: ", `'${literal}'`, `status: \'${literal}'`},
+		{"status: ", "@file", `status: \@file`},
+		{"status: ...", "@file", `status: \...@file`},
+		{"status: [", "[open]", "status: [\n  \\[open\n]"},
+	} {
+		s := tc.prefix + "\\\n  " + tc.suffix
+		for range 2 {
+			m, err := d2parser.Parse("test.d2", strings.NewReader(s), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s = d2format.Format(m)
+			if strings.TrimSpace(s) != tc.want {
+				t.Errorf("formatting %q + %q: got %q, want %q", tc.prefix, tc.suffix, s, tc.want)
+				break
+			}
+		}
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"cmp"
 
 	"github.com/d2lang/d2/d2ast"
-	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/lib/xsort"
 )
 
@@ -121,7 +120,7 @@ func (m *Map) selectRecursiveEdges(id *EdgeID, ref *RefContext, glob *globContex
 				continue
 			}
 			key := glob.edgeKey(e)
-			if _, applied := glob.appliedEdges[key]; applied {
+			if _, applied := glob.edges(key)[key]; applied {
 				continue
 			}
 			src := scope.getFieldIndexed(e.ID.SrcPath...)
@@ -172,8 +171,8 @@ func (m *Map) selectRecursiveEdges(id *EdgeID, ref *RefContext, glob *globContex
 	}
 	var edges []*Edge
 	for _, match := range candidates {
-		if _, applied := glob.appliedEdges[match.key]; !applied {
-			glob.appliedEdges[match.key] = struct{}{}
+		if _, applied := glob.edges(match.key)[match.key]; !applied {
+			glob.edges(match.key)[match.key] = struct{}{}
 			edges = append(edges, match.edge)
 		}
 	}
@@ -181,8 +180,5 @@ func (m *Map) selectRecursiveEdges(id *EdgeID, ref *RefContext, glob *globContex
 }
 
 func (g *globContext) edgeKey(e *Edge) string {
-	if g.refctx.Key.HasTripleGlob() {
-		return d2format.FormatKeyPath(IDA(e))
-	}
-	return d2format.FormatKeyPath(BoardIDA(e))
+	return g.appliedKey(e)
 }

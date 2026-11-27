@@ -131,7 +131,7 @@ func TestRenameSelectiveReexport(t *testing.T) {
 }
 
 func TestRenameBesideRemovedBoardShape(t *testing.T) {
-	for _, rule := range []string{"bar.a: null", "bar: {a: suspend}"} {
+	for _, rule := range []string{"bar.a: null", "bar: {a: suspend}", "bar: {(a -> destination)[0]: null}"} {
 		c := newTestClient(t)
 		const uri = "untitled:separate"
 		text := "foo.a\nbar.a\nscenarios.detail: {" + rule + "}"
@@ -139,4 +139,37 @@ func TestRenameBesideRemovedBoardShape(t *testing.T) {
 		p := posParams(uri, 0, 4)
 		assert.Equal(t, strings.Replace(text, "foo.a", "foo.b", 1), applyEdits(t, text, c.rename(p, "b")[uri]))
 	}
+}
+
+func TestRenameRemovedEdgeEndpoints(t *testing.T) {
+	const uri = "untitled:removed-edge"
+	for _, source := range []string{
+		"a -> b\nscenarios.one: {(a -> b)[0]: null}",
+		"a -> b\n(a -> b)[0]: null",
+		"box: {a -> b}\nscenarios.one: {box.(a -> b)[0]: null}",
+	} {
+		c := newTestClient(t)
+		c.open(uri, source)
+		err := c.requestError("textDocument/rename", renameParams{posParams(uri, 0, strings.Index(source, "a ->")), "new"})
+		assert.Equal(t, -32803, err.Code)
+		assert.True(t, strings.Contains(err.Message, "removed or suspended"))
+	}
+	// A suspended endpoint still present in the index can be edited normally.
+	c := newTestClient(t)
+	const source = "a -> b\nsteps.one: {(a -> b)[0]: suspend}\nsteps.two: {c}"
+	c.open(uri, source)
+	changes := c.rename(posParams(uri, 0, 5), "new")
+	assert.Equal(t, strings.ReplaceAll(source, "-> b", "-> new"), applyEdits(t, source, changes[uri]))
+}
+
+func TestRenameWithRemovedEdgeInImporter(t *testing.T) {
+	dir := t.TempDir()
+	shared := pathToURI(filepath.Join(dir, "shared.d2"))
+	main := pathToURI(filepath.Join(dir, "main.d2"))
+	c := newTestClient(t)
+	c.open(shared, "a -> b")
+	c.open(main, "...@shared\nscenarios.one: {(a -> b)[0]: null}")
+	err := c.requestError("textDocument/rename", renameParams{posParams(shared, 0, 0), "new"})
+	assert.Equal(t, -32803, err.Code)
+	assert.True(t, strings.Contains(err.Message, "removed or suspended"))
 }

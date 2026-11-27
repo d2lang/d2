@@ -180,7 +180,7 @@ func themeRuleWhitespace(c byte) bool {
 }
 
 func isThemeClass(class string) bool {
-	return class == "md" || class == "light-code" || class == "dark-code" || isPaletteClass(class)
+	return strings.HasSuffix(class, "-overlay") || class == "blend" || class == "md" || class == "light-code" || class == "dark-code" || isPaletteClass(class)
 }
 
 func isPaletteClass(class string) bool {

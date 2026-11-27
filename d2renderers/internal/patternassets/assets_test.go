@@ -13,10 +13,10 @@ func TestCanonicalAssetHashes(t *testing.T) {
 		bytes  int
 		digest string
 	}{
-		{name: "paper SVG", data: []byte(PaperSVG()), bytes: 435438, digest: "98b3c110441c6c02cb685c0a7303e7a36c1faee7fa1f65f6424b48ec51123527"},
-		{name: "paper Brotli", data: paperBrotli, bytes: 133164, digest: "fe047f4104975b17b033988e49981c42a5aca928da39d149e35f4e31c8fb248a"},
-		{name: "grain PNG", data: GrainPNG(), bytes: 20845, digest: "7aec37844fa033cbdb586efaa1955dc6f43d56707c0b1bf91e8b5e32386d8d69"},
-		{name: "streak path", data: []byte(StreakPathData()), bytes: 9224, digest: "7b4001e7d043ac395abd015ce0bc2bbe018725a634f6e352b1eb2ff60cc99dea"},
+		{name: "paper SVG", data: []byte(PaperSVG()), bytes: 414575, digest: "d6f43553eeca8f5bf37f08720dfef17be958f349639cb328c6b1669b4cbfb944"},
+		{name: "paper Brotli", data: paperBrotli, bytes: 131360, digest: "feee16c7085f5b3abe263388b10e13c5e703524f5effe49642c3eafdb429873d"},
+		{name: "grain PNG", data: GrainPNG(), bytes: 19079, digest: "50730e6c56603eac7ad90780979ed2de1538488c56f709aa6795d6a24975fb84"},
+		{name: "streak path", data: []byte(StreakPathData()), bytes: 8878, digest: "76e01a8aa5a6228fa08bed2c4b607cabc6c936e79777994df662c5fb8e9f4ffc"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -37,7 +37,7 @@ func TestSVGWrappersMatchCanonicalOutput(t *testing.T) {
 		bytes  int
 		digest string
 	}{
-		{name: "grain", output: GrainSVG(), bytes: 28443, digest: "e23dfd58ed7febaf5c2485c087585953c4d42e37cbca621f0bfc46a8381ef075"},
+		{name: "grain", output: GrainSVG(), bytes: 26087, digest: "e830b29a299408e89d9f0c848e3a61299dd410166c1691bdde4fd3bf3ba55fda"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
