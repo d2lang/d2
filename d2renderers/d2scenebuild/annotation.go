@@ -24,7 +24,11 @@ func (b *builder) buildAnnotations() ([]*d2scene.Node, error) {
 		object := fmt.Sprintf("annotation of %q", mark.ID)
 		root := d2scene.NewNode(nil)
 		root.ID = mark.ID + ":annotation"
-		stroke, err := b.stroke(mark.Paint, mark.Width, 0, d2scene.CapRound, d2scene.JoinRound, object+" stroke")
+		lineCap := d2scene.CapRound
+		if mark.Flat {
+			lineCap = d2scene.CapButt
+		}
+		stroke, err := b.stroke(mark.Paint, mark.Width, 0, lineCap, d2scene.JoinRound, object+" stroke")
 		if err != nil {
 			return nil, err
 		}
@@ -51,7 +55,7 @@ func (b *builder) buildAnnotations() ([]*d2scene.Node, error) {
 			root.Children = append(root.Children, ink)
 		}
 		if mark.LabelBox != nil && mark.LabelOpacity > 0 {
-			note, err := b.buildAnnotationText(object+" note", root.ID+":note", mark.Label, mark.FontFamily, d2target.AnnotationFontSize, mark.LabelBox, mark.Paint)
+			note, err := b.buildAnnotationText(object+" note", root.ID+":note", mark.Label, mark.FontFamily, d2target.AnnotationFontSize, mark.LabelBox, mark.NotePaint)
 			if err != nil {
 				return nil, err
 			}

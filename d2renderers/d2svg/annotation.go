@@ -48,11 +48,15 @@ func drawAnnotations(writer *objectWriter, diagram *d2target.Diagram, inkTL, ink
 			el.D = polylineData(stroke)
 			el.Fill = color.None
 			el.Stroke = mark.Paint
-			el.Style = "stroke-width:" + svg.FormatFloat(mark.Width) + ";stroke-linecap:round;stroke-linejoin:round" + opacityStyle(mark.Opacity)
+			linecap := "round"
+			if mark.Flat {
+				linecap = "butt"
+			}
+			el.Style = "stroke-width:" + svg.FormatFloat(mark.Width) + ";stroke-linecap:" + linecap + ";stroke-linejoin:round" + opacityStyle(mark.Opacity)
 			fmt.Fprint(writer, el.Render())
 		}
 		if mark.LabelBox != nil && mark.LabelOpacity > 0 {
-			if err := drawAnnotationText(writer, markdown, mark.Label, mark.FontFamily, d2target.AnnotationFontSize, mark.LabelBox, mark.Paint, mark.LabelOpacity); err != nil {
+			if err := drawAnnotationText(writer, markdown, mark.Label, mark.FontFamily, d2target.AnnotationFontSize, mark.LabelBox, mark.NotePaint, mark.LabelOpacity); err != nil {
 				return err
 			}
 		}

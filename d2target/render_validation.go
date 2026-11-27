@@ -216,14 +216,21 @@ func validateRenderAnnotation(a *Annotation, path string, target annotationTarge
 		valid = a.Shape == ""
 	case annotationOnShape:
 		switch a.Shape {
-		case AnnotationCircle, AnnotationBox, AnnotationUnderline, AnnotationBrace, AnnotationCross:
+		case AnnotationCircle, AnnotationBox, AnnotationUnderline, AnnotationBrace, AnnotationCross,
+			AnnotationHighlight, AnnotationArrow, AnnotationLasso:
 			valid = true
 		}
 	case annotationOnConnection:
-		valid = a.Shape == AnnotationTrace || a.Shape == AnnotationCross
+		switch a.Shape {
+		case AnnotationTrace, AnnotationCross, AnnotationHighlight, AnnotationArrow:
+			valid = true
+		}
 	}
 	if !valid {
 		return invalidRenderField(path, "shape", a.Shape, "is not a mark this target can carry")
+	}
+	if len(a.Members) > 0 && (target != annotationOnShape || a.Shape != AnnotationLasso) {
+		return invalidRenderField(path, "members", a.Members, "belong to a lasso on a shape")
 	}
 	switch a.Position {
 	case "", "top-center", "center-left", "center-right", "bottom-center":

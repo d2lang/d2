@@ -2106,6 +2106,29 @@ annotation: |md Every mark sits on top of the layout. **Nothing moved** to make 
 `,
 		},
 		{
+			name: "annotation_marks",
+			script: `direction: right
+
+classes: {
+  unit: {
+    annotation: one lasso for a class {shape: lasso}
+  }
+}
+web: Web
+api: API {class: unit}
+worker: Worker {class: unit}
+db: orders-db {shape: cylinder}
+web -> api: 40 ms
+api -> worker
+api -> db
+
+db.annotation: highlight {shape: highlight}
+web.annotation: arrow {shape: arrow; style.font-color: "#1971C2"}
+(web -> api)[0].annotation.shape: highlight
+(api -> db)[0].annotation: an arrow to a connection {shape: arrow; near: bottom-center}
+`,
+		},
+		{
 			name: "links",
 			script: `x: { link: https://d2lang.com }
 			y: { link: https://terrastruct.com; tooltip: Gee, I feel kind of LIGHT in the head now,\nknowing I can't make my satellite dish PAYMENTS! }

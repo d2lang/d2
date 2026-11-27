@@ -111,30 +111,35 @@ func (c *compiler) compileAnnotation(attrs *d2graph.Attributes, f *d2ir.Field) {
 				continue
 			}
 			for _, style := range child.Map().Fields {
-				if d2ast.Keyword(style.Name) != "stroke" {
-					c.errorf(style.LastRef().AST(), `an annotation can only style its "stroke", which colors both the mark and the text`)
+				name := d2ast.Keyword(style.Name)
+				if name != "stroke" && name != "font-color" {
+					c.errorf(style.LastRef().AST(), `an annotation can only style its "stroke", the color of the pen, and its "font-color", the color of the text alone`)
 					continue
 				}
 				if style.Primary() == nil {
 					continue
 				}
+				set := &annotation.Stroke
+				if name == "font-color" {
+					set = &annotation.FontColor
+				}
 				scalar := style.Primary().Value
 				if _, null := scalar.(*d2ast.Null); null {
-					annotation.Stroke = nil
+					*set = nil
 					continue
 				}
 				if !color.ValidColor(scalar.ScalarString()) {
-					c.errorf(scalar, `expected "stroke" to be a valid named color ("orange"), a hex code ("#f0ff3a"), or a gradient ("linear-gradient(red, blue)")`)
+					c.errorf(scalar, `expected %q to be a valid named color ("orange"), a hex code ("#f0ff3a"), or a gradient ("linear-gradient(red, blue)")`, name)
 					continue
 				}
-				annotation.Stroke = &d2graph.Scalar{Value: scalar.ScalarString(), MapKey: style.LastPrimaryKey()}
+				*set = &d2graph.Scalar{Value: scalar.ScalarString(), MapKey: style.LastPrimaryKey()}
 			}
 		default:
 			var node d2ast.Node = fieldErrorNode(child)
 			if child.LastPrimaryKey() != nil {
 				node = child.LastPrimaryKey()
 			}
-			c.errorf(node, `unexpected field %s in annotation, expected shape, near or style.stroke%s`, child.Name.ScalarString(), annotationNameHint)
+			c.errorf(node, `unexpected field %s in annotation, expected shape, near or style%s`, child.Name.ScalarString(), annotationNameHint)
 		}
 	}
 	if len(m.Edges) > 0 {
@@ -155,7 +160,7 @@ func (c *compiler) validateAnnotations(g *d2graph.Graph) {
 			continue
 		}
 		if annotation.Shape != nil && annotation.Shape.Value == "trace" {
-			c.errorf(annotation.Shape.MapKey, `annotation shape "trace" follows a connection; on a shape use circle, box, underline, brace or cross`)
+			c.errorf(annotation.Shape.MapKey, `annotation shape "trace" follows a connection; on a shape use circle, box, underline, brace, cross, highlight, arrow or lasso`)
 		}
 	}
 	for _, edge := range g.Edges {
@@ -167,9 +172,13 @@ func (c *compiler) validateAnnotations(g *d2graph.Graph) {
 			continue
 		}
 		switch annotation.Shape.Value {
-		case "trace", "cross":
+		case "trace", "cross", "arrow":
+		case "highlight":
+			if edge.Label.Value == "" {
+				c.errorf(annotation.Shape.MapKey, `annotation shape "highlight" runs over a label, and this connection has none; use trace to mark its route`)
+			}
 		default:
-			c.errorf(annotation.Shape.MapKey, `annotation shape %q surrounds a shape; on a connection use trace or cross`, annotation.Shape.Value)
+			c.errorf(annotation.Shape.MapKey, `annotation shape %q marks a shape; on a connection use trace, cross, highlight or arrow`, annotation.Shape.Value)
 		}
 	}
 

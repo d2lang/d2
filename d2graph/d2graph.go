@@ -297,6 +297,8 @@ type Annotation struct {
 	// picks the side with the most room.
 	Position *Scalar `json:"position,omitempty"`
 	Stroke   *Scalar `json:"stroke,omitempty"`
+	// FontColor colors the text alone. Unset, the text is written in the pen.
+	FontColor *Scalar `json:"fontColor,omitempty"`
 	// Cues are the objects a board's caption links to, by absolute ID, in the
 	// order the caption names them. Text is that caption as painted, with each
 	// cue link replaced by emphasis.

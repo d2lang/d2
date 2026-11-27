@@ -478,6 +478,7 @@ func getAnnotationCompletions() []CompletionItem {
 		{"shape", "the mark to draw"},
 		{"near", "side of the target for the note"},
 		{"style.stroke", "color of the mark and its note"},
+		{"style.font-color", "color of the note alone"},
 	}
 	items := make([]CompletionItem, len(completions))
 	for i, c := range completions {
@@ -498,7 +499,10 @@ func getAnnotationShapeCompletions() []CompletionItem {
 		"underline": "line under the shape's label (default for text)",
 		"brace":     "curly brace along one side (default for containers)",
 		"cross":     "strike a shape or connection out",
-		"trace":     "highlight a connection's route (default for connections)",
+		"trace":     "follow a connection's route (default for connections)",
+		"highlight": "highlighter over the label of a shape or connection",
+		"arrow":     "arrow from the note to the shape or connection",
+		"lasso":     "one loop round every shape a class or glob gives it to",
 	}
 	items := make([]CompletionItem, len(d2ast.AnnotationShapesArray))
 	for i, shape := range d2ast.AnnotationShapesArray {

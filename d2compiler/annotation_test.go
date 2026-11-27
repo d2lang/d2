@@ -182,13 +182,35 @@ annotation: No links here.
 	assert.Equal(t, 0, len(plain.Cues))
 }
 
+func TestAnnotationHighlightArrowLasso(t *testing.T) {
+	t.Parallel()
+
+	g := compileAnnotated(t, `x.annotation: note {shape: highlight; style.font-color: navy}
+y.annotation.shape: arrow
+z.annotation.shape: lasso
+x -> y: 40 ms {annotation.shape: highlight}
+y -> z: {annotation: slow {shape: arrow}}
+`)
+	shapes := map[string]string{}
+	for _, obj := range g.Objects {
+		shapes[obj.ID] = obj.Annotation.Shape.Value
+	}
+	deepEqual(t, map[string]string{"x": "highlight", "y": "arrow", "z": "lasso"}, shapes)
+	if x := g.Objects[0].Annotation; x.FontColor == nil || x.FontColor.Value != "navy" || x.Stroke != nil {
+		t.Fatalf("font-color was not kept apart from the pen: %+v", x)
+	}
+	deepEqual(t, []string{"highlight", "arrow"}, []string{g.Edges[0].Annotation.Shape.Value, g.Edges[1].Annotation.Shape.Value})
+}
+
 func TestAnnotationErrors(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ name, source, want string }{
 		{"unknown shape", `x.annotation.shape: squiggle`, `unknown annotation shape "squiggle"`},
 		{"trace on a shape", `x.annotation.shape: trace`, `"trace" follows a connection`},
-		{"ring on a connection", `x -> y: {annotation.shape: circle}`, `on a connection use trace or cross`},
+		{"ring on a connection", `x -> y: {annotation.shape: circle}`, `on a connection use trace, cross, highlight or arrow`},
+		{"lasso on a connection", `x -> y: {annotation.shape: lasso}`, `"lasso" marks a shape`},
+		{"highlight on a connection without a label", `x -> y: {annotation.shape: highlight}`, `this connection has none; use trace`},
 		{"shape on a board", `x; annotation: caption {shape: box}`, `a board's annotation is its caption and has no shape`},
 		{"near on a board", `x; annotation: caption {near: top-center}`, `always placed below the diagram`},
 		{"corner near", `x.annotation: note {near: top-left}`, `invalid annotation near "top-left"`},
@@ -196,6 +218,7 @@ func TestAnnotationErrors(t *testing.T) {
 		{"unexpected field", `x.annotation: note {width: 3}`, `unexpected field width in annotation`},
 		{"style other than stroke", `x.annotation: note {style.fill: red}`, `can only style its "stroke"`},
 		{"bad stroke", `x.annotation: note {style.stroke: notacolor}`, `expected "stroke" to be a valid named color`},
+		{"bad font color", `x.annotation: note {style.font-color: notacolor}`, `expected "font-color" to be a valid named color`},
 		{"composite shape", `x.annotation.shape: {a: b}`, `annotation shape must be a single value`},
 		{"arrowhead", `x -> y: {target-arrowhead.annotation: tip}`, `an arrowhead cannot be annotated`},
 		{"edge in map", `x.annotation: {a -> b}`, `unexpected edges in map`},

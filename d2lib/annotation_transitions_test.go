@@ -413,3 +413,49 @@ chosen -> words: {annotation.shape: cross}
 		t.Errorf("connection is marked with %+v, want a cross", got)
 	}
 }
+
+func TestLassoGathersWhatOneDeclarationMarks(t *testing.T) {
+	d := compileAnnotated(t, `classes: {
+  unit: {
+    annotation: deployed together {shape: lasso}
+  }
+}
+a.class: unit
+b
+c.class: unit
+d.class: unit
+alone.annotation: by itself {shape: lasso}
+s1.shape: cylinder
+s2.shape: cylinder
+*: {
+  &shape: cylinder
+  annotation.shape: lasso
+}
+`)
+	// The first shape a class or a glob gives the lasso to carries it for all
+	// of them. A lasso declared on one shape holds that shape.
+	for id, members := range map[string][]string{"a": {"c", "d"}, "alone": nil, "s1": {"s2"}} {
+		got := shapeOf(t, d, id).Annotation
+		if got == nil || got.Shape != d2target.AnnotationLasso || !reflect.DeepEqual(got.Members, members) {
+			t.Fatalf("%s carries %+v, want a lasso holding %v", id, got, members)
+		}
+	}
+	for _, id := range []string{"b", "c", "d", "s2"} {
+		if got := shapeOf(t, d, id).Annotation; got != nil {
+			t.Fatalf("%s has an annotation of its own: %+v", id, got)
+		}
+	}
+	if a := shapeOf(t, d, "a").Annotation; a.Label != "deployed together" {
+		t.Fatalf("the lasso's note is %q", a.Label)
+	}
+	marks := 0
+	for _, m := range d.AnnotationMarks() {
+		marks++
+		if len(m.Strokes) != 1 {
+			t.Fatalf("%s is %d strokes, want one loop", m.ID, len(m.Strokes))
+		}
+	}
+	if marks != 3 {
+		t.Fatalf("got %d loops, want 3", marks)
+	}
+}

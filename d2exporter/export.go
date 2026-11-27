@@ -32,6 +32,28 @@ func defaultAnnotationMark(obj *d2graph.Object) string {
 	return d2target.AnnotationCircle
 }
 
+// groupLassos joins the shapes that were given a lasso by one declaration,
+// which is what a class or a glob does for every shape it applies to. The
+// first of them carries the annotation and names the others; one loop is
+// drawn round them all. A lasso declared on a shape itself holds that shape.
+func groupLassos(g *d2graph.Graph, diagram *d2target.Diagram) {
+	owners := make(map[string]*d2target.Annotation)
+	for i, obj := range g.Objects {
+		a := obj.Annotation
+		held := diagram.Shapes[i].Annotation
+		if a == nil || held == nil || held.Shape != d2target.AnnotationLasso || a.Shape == nil || a.Shape.MapKey == nil {
+			continue
+		}
+		declared := a.Shape.MapKey.Range.String()
+		if owner, ok := owners[declared]; ok {
+			owner.Members = append(owner.Members, diagram.Shapes[i].ID)
+			diagram.Shapes[i].Annotation = nil
+			continue
+		}
+		owners[declared] = held
+	}
+}
+
 // toAnnotation resolves an annotation for rendering. defaultShape is the mark
 // used when the author named none; a caption has no mark.
 func toAnnotation(a *d2graph.Annotation, defaultShape string) *d2target.Annotation {
@@ -53,6 +75,9 @@ func toAnnotation(a *d2graph.Annotation, defaultShape string) *d2target.Annotati
 	}
 	if a.Stroke != nil {
 		out.Stroke = a.Stroke.Value
+	}
+	if a.FontColor != nil {
+		out.FontColor = a.FontColor.Value
 	}
 	if out.Label == "" && out.Shape == "" {
 		return nil
@@ -88,6 +113,8 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 	for i, obj := range g.Objects {
 		diagram.Shapes[i] = toShape(obj, g)
 	}
+
+	groupLassos(g, diagram)
 
 	// A caption that links to an object points at it, even when nothing else
 	// on the board annotates that object. The caption draws that mark, so it

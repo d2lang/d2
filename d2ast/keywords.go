@@ -174,8 +174,8 @@ var TooltipPositionsArray = []string{
 var TooltipPositions map[string]struct{}
 
 // AnnotationShapesArray are the marks an annotation can draw over its target.
-// A trace follows a connection's route. The other marks surround a shape, and
-// a cross can strike out either.
+// A trace follows a connection's route and a lasso loops round shapes. A
+// cross, a highlight and an arrow can mark either. The rest mark a shape.
 var AnnotationShapesArray = []string{
 	"circle",
 	"box",
@@ -183,6 +183,9 @@ var AnnotationShapesArray = []string{
 	"brace",
 	"cross",
 	"trace",
+	"highlight",
+	"arrow",
+	"lasso",
 }
 var AnnotationShapes map[string]struct{}
 

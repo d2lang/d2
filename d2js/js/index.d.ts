@@ -308,7 +308,10 @@ export type AnnotationShape =
   | "underline"
   | "brace"
   | "cross"
-  | "trace";
+  | "trace"
+  | "highlight"
+  | "arrow"
+  | "lasso";
 
 export interface Annotation {
   /** Markdown. */
@@ -319,6 +322,10 @@ export interface Annotation {
   shape?: AnnotationShape;
   position?: "top-center" | "center-left" | "center-right" | "bottom-center";
   stroke?: string;
+  /** Color of the text alone. Absent, the text is written in the pen. */
+  fontColor?: string;
+  /** IDs of the other shapes a lasso holds. */
+  members?: string[];
   /** IDs of the shapes a caption names, in reading order. */
   cues?: string[];
   /** Top center of a caption that an animation has pinned. */

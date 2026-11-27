@@ -3,9 +3,9 @@ package d2target
 import (
 	"hash/fnv"
 	"math"
+	"strings"
 
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/d2/lib/label"
 )
 
 // The marks an annotation can draw. A trace follows a connection; the others
@@ -17,6 +17,9 @@ const (
 	AnnotationBrace     = "brace"
 	AnnotationCross     = "cross"
 	AnnotationTrace     = "trace"
+	AnnotationHighlight = "highlight"
+	AnnotationArrow     = "arrow"
+	AnnotationLasso     = "lasso"
 )
 
 const (
@@ -28,6 +31,13 @@ const (
 	// translucent so the connection reads through it.
 	annotationTraceExtraWidth = 8
 	AnnotationTraceOpacity    = 0.38
+
+	// DefaultHighlightStroke is the yellow of a highlighter. A label reads
+	// through it at AnnotationHighlightOpacity.
+	DefaultHighlightStroke     = "#FFD43B"
+	AnnotationHighlightOpacity = 0.45
+	// annotationArrowReach is how far from its target an arrow's note stands.
+	annotationArrowReach = 36
 
 	annotationLabelGap = 8
 	// CaptionGap separates a board's caption from the lowest ink above it.
@@ -52,6 +62,12 @@ type Annotation struct {
 	// the most room on each board.
 	Position string `json:"position,omitempty"`
 	Stroke   string `json:"stroke,omitempty"`
+	// FontColor is an authored color for the text alone. Empty, the note is
+	// written in the pen.
+	FontColor string `json:"fontColor,omitempty"`
+	// Members are the IDs of the other shapes a lasso holds, besides the one
+	// that carries it.
+	Members []string `json:"members,omitempty"`
 	// Cues are the IDs of the shapes a caption names, in reading order.
 	Cues []string `json:"cues,omitempty"`
 	// Anchor pins a caption's top center. Animations set it so that every
@@ -63,17 +79,37 @@ type Annotation struct {
 	Drawn *[2]float64 `json:"drawn,omitempty"`
 }
 
-// GetStroke returns the paint shared by the mark and its note.
+// GetStroke returns the paint of the mark: the authored pen, or the default
+// for the kind of mark it is.
 func (a *Annotation) GetStroke() string {
 	if a.Stroke != "" {
 		return a.Stroke
 	}
+	if a.Shape == AnnotationHighlight {
+		return DefaultHighlightStroke
+	}
 	return DefaultAnnotationStroke
 }
 
+// notePaint returns the paint of the note. It is written in the pen that
+// drew the mark, except beside a highlight: a highlighter is too pale to
+// write with, so that note is in the default pen.
+func (a *Annotation) notePaint() string {
+	if a.FontColor != "" {
+		return a.FontColor
+	}
+	if a.Shape == AnnotationHighlight {
+		return DefaultAnnotationStroke
+	}
+	return a.GetStroke()
+}
+
 // CaptionPaint returns the paint for a caption's text. A caption is set in
-// the board's own text color unless its author gave it a pen.
+// the board's own text color unless its author gave it a color or a pen.
 func (a *Annotation) CaptionPaint(text string) string {
+	if a.FontColor != "" {
+		return a.FontColor
+	}
 	if a.Stroke != "" {
 		return a.Stroke
 	}
@@ -113,8 +149,12 @@ type AnnotationMark struct {
 	Paint   string
 	Width   float64
 	Opacity float64
+	// Flat ends the strokes square, as a highlighter does. Other marks end round.
+	Flat bool
 
-	Label        string
+	Label string
+	// NotePaint is the paint of the note, which can differ from the mark's.
+	NotePaint    string
 	LabelBox     *geo.Box
 	LabelOpacity float64
 	FontFamily   string
@@ -176,18 +216,40 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 		// anchor is what the note sits beside, and target what it describes.
 		anchor, target *geo.Box
 		sides          []string
+		// aim is what an arrow points at. Its strokes start at the note, so
+		// they are drawn once the note has a place.
+		aim  *geo.Box
+		seed float64
 	}
 	var marks []AnnotationMark
 	var notes []pending
-	add := func(m AnnotationMark, a *Annotation, leaving bool, anchor, target *geo.Box, sides []string) {
+	add := func(m AnnotationMark, a *Annotation, leaving bool, anchor, target, aim *geo.Box, sides []string) {
+		seed := markSeed(m.ID)
 		if leaving {
 			m.ID += ":leaving"
 		}
 		if a.Position != "" && a.Shape != AnnotationBrace {
 			sides = []string{a.Position}
 		}
+		m.NotePaint = a.notePaint()
 		marks = append(marks, m)
-		notes = append(notes, pending{a, anchor, target, sides})
+		notes = append(notes, pending{a, anchor, target, sides, aim, seed})
+	}
+	// An arrow reads best when it comes in at an angle.
+	arrowSides := []string{
+		"top-right", "top-left", "bottom-right", "bottom-left",
+		"center-right", "top-center", "bottom-center", "center-left",
+	}
+	var boxes map[string]*geo.Box
+	shapeBox := func(id string) *geo.Box {
+		if boxes == nil {
+			boxes = make(map[string]*geo.Box, len(diagram.Shapes))
+			for i := range diagram.Shapes {
+				s := &diagram.Shapes[i]
+				boxes[s.ID] = geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height))
+			}
+		}
+		return boxes[id]
 	}
 
 	for i := range diagram.Shapes {
@@ -198,7 +260,42 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 			}
 			box := geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height))
 			m := AnnotationMark{ID: s.ID, Paint: a.GetStroke(), Width: AnnotationStrokeWidth, Opacity: 1, FontFamily: s.FontFamily}
-			m.Strokes = shapeMarkStrokes(s, a, box)
+			var aim *geo.Box
+			switch a.Shape {
+			case AnnotationHighlight:
+				band, lines := shapeHighlightBand(s, box)
+				m.Strokes, m.Width = highlightStrokes(band, lines, markSeed(s.ID))
+				m.Opacity, m.Flat = AnnotationHighlightOpacity, true
+			case AnnotationLasso:
+				ids := append([]string{s.ID}, a.Members...)
+				held := []*geo.Box{box}
+				for _, id := range a.Members {
+					if other := shapeBox(id); other != nil && id != s.ID {
+						held = append(held, other)
+					}
+				}
+				// Every other shape is something to go round, apart from what
+				// is inside a held shape and the containers a held shape is in.
+				var others []*geo.Box
+				for k := range diagram.Shapes {
+					other := diagram.Shapes[k].ID
+					related := false
+					for _, id := range ids {
+						if other == id || strings.HasPrefix(other, id+".") || strings.HasPrefix(id, other+".") {
+							related = true
+							break
+						}
+					}
+					if !related {
+						others = append(others, shapeBox(other))
+					}
+				}
+				m.Strokes = [][]geo.Point{lassoStroke(held, others, markSeed(s.ID))}
+			case AnnotationArrow:
+				aim = box
+			default:
+				m.Strokes = shapeMarkStrokes(s, a, box)
+			}
 			// Try the four sides first, then above and below flush with an
 			// edge, then the corners. The first with nothing in the way wins.
 			sides := []string{
@@ -219,9 +316,19 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 				}
 			case AnnotationUnderline:
 				sides = []string{"bottom-center", "center-right", "top-center", "center-left"}
+			case AnnotationArrow:
+				sides = arrowSides
 			}
 			x1, y1, x2, y2 := m.Bounds()
-			add(m, a, j == 0, geo.NewBox(geo.NewPoint(x1, y1), x2-x1, y2-y1), box, sides)
+			anchor := geo.NewBox(geo.NewPoint(x1, y1), x2-x1, y2-y1)
+			switch a.Shape {
+			case AnnotationArrow:
+				anchor = growBox(box, annotationArrowReach)
+			case AnnotationHighlight:
+				// The note goes beside the shape, not beside the label inside it.
+				anchor = unionBox(anchor, box)
+			}
+			add(m, a, j == 0, anchor, box, aim, sides)
 		}
 	}
 	for i := range diagram.Connections {
@@ -234,43 +341,67 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 			route := flattenRoute(c)
 			mid := pointAlong(route, 0.5)
 			// The note sits beside the middle of the route, not beside all of it.
-			var anchor *geo.Box
-			if a.Shape == AnnotationCross {
+			var anchor, aim *geo.Box
+			sides := []string{
+				"top-center", "center-right", "bottom-center", "center-left",
+				"top-right", "bottom-right", "top-left", "bottom-left",
+			}
+			band := connectionLabelBox(c)
+			switch {
+			case a.Shape == AnnotationCross:
 				m.Strokes = routeCrossStrokes(route, markSeed(c.ID))
 				x1, y1, x2, y2 := m.Bounds()
 				anchor = geo.NewBox(geo.NewPoint(x1, y1), x2-x1, y2-y1)
-			} else {
+			case a.Shape == AnnotationArrow:
+				aim = geo.NewBox(geo.NewPoint(mid.X-1, mid.Y-1), 2, 2)
+				anchor = growBox(aim, annotationArrowReach)
+				sides = arrowSides
+			case a.Shape == AnnotationHighlight && band != nil:
+				m.Strokes, m.Width = highlightStrokes(band, 1+strings.Count(c.Label, "\n"), markSeed(c.ID))
+				m.Opacity, m.Flat = AnnotationHighlightOpacity, true
+				x1, y1, x2, y2 := m.Bounds()
+				anchor = geo.NewBox(geo.NewPoint(x1, y1), x2-x1, y2-y1)
+			default:
 				m.Width = c.RenderedStrokeWidth() + annotationTraceExtraWidth
 				m.Opacity = AnnotationTraceOpacity
 				m.Strokes = [][]geo.Point{route}
 				anchor = geo.NewBox(geo.NewPoint(mid.X-m.Width/2, mid.Y-m.Width/2), m.Width, m.Width)
 			}
-			add(m, a, j == 0, anchor, nil, []string{
-				"top-center", "center-right", "bottom-center", "center-left",
-				"top-right", "bottom-right", "top-left", "bottom-left",
-			})
+			add(m, a, j == 0, anchor, nil, aim, sides)
 		}
 	}
 
 	var placed []*geo.Box
 	for i, note := range notes {
 		a := note.annotation
-		if a.Label != "" && a.LabelWidth > 0 && a.LabelHeight > 0 {
-			best, bestScore := (*geo.Box)(nil), math.Inf(1)
-			for _, side := range note.sides {
-				box := noteBox(note.anchor, side, float64(a.LabelWidth), float64(a.LabelHeight))
-				score := diagram.noteCollisions(box, note.target, placed)
-				for j := range marks {
-					if j != i {
-						score += inkInside(marks[j].Strokes, box)
-					}
-				}
-				if score < bestScore {
-					best, bestScore = box, score
+		w, h := float64(a.LabelWidth), float64(a.LabelHeight)
+		labelled := a.Label != "" && w > 0 && h > 0
+		if !labelled {
+			if note.aim == nil {
+				continue
+			}
+			// An arrow with nothing to say still has to come from somewhere.
+			w, h = 0, 0
+		}
+		best, bestScore := (*geo.Box)(nil), math.Inf(1)
+		for _, side := range note.sides {
+			box := noteBox(note.anchor, side, w, h)
+			score := diagram.noteCollisions(box, note.target, placed)
+			for j := range marks {
+				if j != i {
+					score += inkInside(marks[j].Strokes, box)
 				}
 			}
+			if score < bestScore {
+				best, bestScore = box, score
+			}
+		}
+		if labelled {
 			marks[i].Label, marks[i].LabelBox, marks[i].LabelOpacity = a.Label, best, a.noteOpacity()
 			placed = append(placed, best)
+		}
+		if note.aim != nil {
+			marks[i].Strokes = arrowStrokes(best, note.aim, note.seed)
 		}
 	}
 	if cut {
@@ -486,15 +617,8 @@ func boxStroke(box *geo.Box, seed float64) []geo.Point {
 func underlineStroke(s *Shape, box *geo.Box, seed float64) []geo.Point {
 	x1, x2 := box.TopLeft.X, box.TopLeft.X+box.Width
 	y := box.TopLeft.Y + box.Height + 7
-	if s.Label != "" && s.LabelWidth > 0 && s.Type != ShapeClass && s.Type != ShapeSQLTable && s.Type != ShapeCode {
-		// Resolve the label the way the renderers do.
-		position := label.FromString(s.LabelPosition)
-		geometry := s.Geometry()
-		labelBox := geometry.GetInnerBox()
-		if position.IsOutside() || position.IsBorder() {
-			labelBox = s.OuterLabelBox(geometry.GetBox())
-		}
-		tl := s.LabelTopLeft(position, labelBox)
+	if labelBox, ok := shapeLabelBox(s); ok {
+		tl := labelBox.TopLeft
 		x1, x2 = tl.X-5, tl.X+float64(s.LabelWidth)+5
 		y = tl.Y + float64(s.LabelHeight) + 2
 	}

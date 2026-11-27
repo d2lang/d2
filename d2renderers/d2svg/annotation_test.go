@@ -173,3 +173,30 @@ func TestRenderCaptionCrossFade(t *testing.T) {
 		t.Fatal("captions are not cross-faded")
 	}
 }
+
+func TestRenderHighlightAndNoteColor(t *testing.T) {
+	t.Parallel()
+
+	d := annotationDiagram()
+	d.Shapes[0].Annotation = &d2target.Annotation{Shape: d2target.AnnotationHighlight, Label: "late", LabelWidth: 30, LabelHeight: 21}
+	d.Shapes[1].Annotation = &d2target.Annotation{Shape: d2target.AnnotationArrow, Label: "here", LabelWidth: 30, LabelHeight: 21, Stroke: "#0000ff", FontColor: "#008000"}
+	out, err := d2svg.Render(d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg := string(out)
+	// A highlighter ends square, in its own yellow, and its note is in the pen.
+	if !regexp.MustCompile(`<path d="[^"]+"[^>]*stroke="` + d2target.DefaultHighlightStroke + `"[^>]*stroke-linecap:butt`).MatchString(svg) {
+		t.Fatal("no square-ended highlighter stroke in the default yellow")
+	}
+	if !strings.Contains(svg, "color:"+d2target.DefaultAnnotationStroke) && !strings.Contains(svg, `fill="`+d2target.DefaultAnnotationStroke+`"`) {
+		t.Fatal("the highlight's note is not written in the default pen")
+	}
+	// An arrow is a shaft and two barbs in the pen, and font-color colors its note alone.
+	if n := len(regexp.MustCompile(`stroke="#0000ff"[^>]*stroke-linecap:round`).FindAllString(svg, -1)); n != 3 {
+		t.Fatalf("arrow drew %d strokes in its pen, want 3", n)
+	}
+	if !strings.Contains(svg, "#008000") {
+		t.Fatal("font-color did not reach the note")
+	}
+}
