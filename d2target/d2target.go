@@ -935,13 +935,29 @@ func (s *Shape) geometry(pos Point, width, height int) shape.Shape {
 	return g
 }
 
+// InsideLabelBox returns the placement box for an inside label on outline.
+// Syntax-highlighted code blocks stay in the shape's main inner box because
+// they paint a full shape-sized background frame from box.TopLeft.
+func (s *Shape) InsideLabelBox(outline shape.Shape, position label.Position) *geo.Box {
+	if s.Language != "" && s.Language != "latex" && s.Language != "markdown" {
+		return outline.GetInnerBox()
+	}
+	return shape.GetInsideLabelBox(
+		outline,
+		position,
+		label.PADDING,
+		float64(s.LabelWidth),
+		float64(s.LabelHeight),
+	)
+}
+
 // LabelTopLeft resolves both ordinary captions and intermediate animation anchors.
 func (s *Shape) LabelTopLeft(position label.Position, box *geo.Box) *geo.Point {
 	if p := s.MotionLabelTopLeft; p != nil {
 		return geo.NewPoint(float64(p.X), float64(p.Y))
 	}
 	if b := s.MotionLabelBox; b != nil {
-		box = s.geometry(b.Point, b.Width, b.Height).GetInnerBox()
+		box = s.InsideLabelBox(s.geometry(b.Point, b.Width, b.Height), position)
 	}
 	return position.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
 }

@@ -713,10 +713,11 @@ func copyLabelRecord(source *Label) *Label {
 		return nil
 	}
 	return &Label{
-		Text:     source.Text,
-		Position: label.FromString(source.Position.String()),
-		Width:    source.Width,
-		Height:   source.Height,
+		Text:       source.Text,
+		Position:   label.FromString(source.Position.String()),
+		Width:      source.Width,
+		Height:     source.Height,
+		KeepInBody: source.KeepInBody,
 	}
 }
 

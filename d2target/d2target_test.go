@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
@@ -171,5 +172,38 @@ func TestBorderDecorationBounds(t *testing.T) {
 				t.Fatalf("bounds %v..%v, want %v..%v", tl, br, tc.tl, tc.br)
 			}
 		})
+	}
+}
+
+func TestPackageMotionLabelBoxMatchesInsideLabelBox(t *testing.T) {
+	t.Parallel()
+
+	finalBox := MotionBox{Point: Point{X: 10, Y: 20}, Width: 200, Height: 200}
+
+	plain := Shape{
+		Type:          ShapePackage,
+		Pos:           Point{X: 20, Y: 30},
+		Width:         180,
+		Height:        180,
+		LabelPosition: "INSIDE_TOP_CENTER",
+		Text: Text{
+			Label:       "Core",
+			LabelWidth:  40,
+			LabelHeight: 20,
+		},
+		MotionLabelBox: &finalBox,
+	}
+	got := plain.LabelTopLeft(label.InsideTopCenter, plain.Geometry().GetInnerBox())
+	// Tab of (10,20 200x200) is (10,20 100x40), so centered 40x20 label is at (40, 25).
+	if got.X != 40 || got.Y != 25 {
+		t.Fatalf("plain package MotionLabelBox LabelTopLeft() = (%v, %v), want (40, 25)", got.X, got.Y)
+	}
+
+	code := plain
+	code.Language = "go"
+	gotCode := code.LabelTopLeft(label.InsideTopCenter, code.Geometry().GetInnerBox())
+	// Code block stays in main body (10,60 200x160), so centered 40x20 label is at (90, 65).
+	if gotCode.X != 90 || gotCode.Y != 65 {
+		t.Fatalf("code package MotionLabelBox LabelTopLeft() = (%v, %v), want (90, 65)", gotCode.X, gotCode.Y)
 	}
 }

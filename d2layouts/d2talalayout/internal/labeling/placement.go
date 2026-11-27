@@ -162,7 +162,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 					iconSize := node.IconSize(iconPosition)
 					fakeIconNode := &layoutgraph.Node{
 						Box: geo.Box{
-							TopLeft: node.LabelTopLeft(iconPosition, iconSize, iconSize),
+							TopLeft: node.IconTopLeft(iconPosition, iconSize, iconSize),
 							Width:   iconSize,
 							Height:  iconSize,
 						},
@@ -196,7 +196,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 				iconSize := node.IconSize(node.Icon.Position)
 				fakeIconNode := &layoutgraph.Node{
 					Box: geo.Box{
-						TopLeft: node.LabelTopLeft(node.Icon.Position, iconSize, iconSize),
+						TopLeft: node.IconTopLeft(node.Icon.Position, iconSize, iconSize),
 						Width:   iconSize,
 						Height:  iconSize,
 					},
@@ -221,7 +221,7 @@ func place(ctx context.Context, g *layoutgraph.Graph, workLimit int64) (err erro
 			iconSize := node.IconSize(node.Icon.Position)
 			fakeIconNode := &layoutgraph.Node{
 				Box: geo.Box{
-					TopLeft: node.LabelTopLeft(node.Icon.Position, iconSize, iconSize),
+					TopLeft: node.IconTopLeft(node.Icon.Position, iconSize, iconSize),
 					Width:   iconSize,
 					Height:  iconSize,
 				},
@@ -570,7 +570,7 @@ func placeNewEdges(ctx context.Context, g *layoutgraph.Graph, edges []*layoutgra
 			iconSize := node.IconSize(node.Icon.Position)
 			fakeIconNode := &layoutgraph.Node{
 				Box: geo.Box{
-					TopLeft: node.LabelTopLeft(node.Icon.Position, iconSize, iconSize),
+					TopLeft: node.IconTopLeft(node.Icon.Position, iconSize, iconSize),
 					Width:   iconSize,
 					Height:  iconSize,
 				},

@@ -154,13 +154,7 @@ func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth,
 }
 
 func shapeInsideLabelBox(geometry shape.Shape, targetShape d2target.Shape, position label.Position) *geo.Box {
-	return shape.GetInsideLabelBox(
-		geometry,
-		position,
-		label.PADDING,
-		float64(targetShape.LabelWidth),
-		float64(targetShape.LabelHeight),
-	)
+	return targetShape.InsideLabelBox(geometry, position)
 }
 
 // shapeLabelBox is the box a shape label at position is placed against:

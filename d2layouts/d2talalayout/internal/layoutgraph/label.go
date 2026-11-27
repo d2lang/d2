@@ -4,10 +4,11 @@ import "github.com/d2lang/d2/lib/label"
 
 // Label is the label state attached to a layout node or edge.
 type Label struct {
-	Text     string
-	Position label.Position
-	Width    float64
-	Height   float64
+	Text       string
+	Position   label.Position
+	Width      float64
+	Height     float64
+	KeepInBody bool
 
 	positionFixed bool
 }

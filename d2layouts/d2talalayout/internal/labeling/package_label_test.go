@@ -63,4 +63,75 @@ func TestPackageTopLabelPlacementUsesTabWhenItFits(t *testing.T) {
 			t.Fatalf("overflowing LabelTopLeft() = (%v, %v), want (5, 45)", overflow.X, overflow.Y)
 		}
 	})
+
+	t.Run("KeepInBody code label stays in main body and survives clone", func(t *testing.T) {
+		t.Parallel()
+
+		g := layoutgraph.NewGraph()
+		pkg := layoutgraph.NewNode(1, 200, 200)
+		pkg.TopLeft = geo.NewPoint(0, 0)
+		pkg.SetShape(shape.PACKAGE_TYPE)
+		pkg.SetContainer(true)
+		pkg.Label = &layoutgraph.Label{
+			Text:       "hi",
+			Width:      40,
+			Height:     20,
+			KeepInBody: true,
+		}
+		child := layoutgraph.NewNode(2, 60, 40)
+		child.TopLeft = geo.NewPoint(70, 90)
+		child.Container = pkg
+		g.Nodes = []*layoutgraph.Node{pkg, child}
+		g.Containers[nil] = []*layoutgraph.Node{pkg}
+		g.Containers[pkg] = []*layoutgraph.Node{child}
+
+		Initialize(g)
+		if err := Place(context.Background(), g); err != nil {
+			t.Fatalf("Place() error = %v", err)
+		}
+		tl := pkg.LabelTopLeft(label.InsideTopCenter, pkg.Label.Width, pkg.Label.Height)
+		if tl.X != 80 || tl.Y != 45 {
+			t.Fatalf("KeepInBody LabelTopLeft(InsideTopCenter) = (%v, %v), want (80, 45)", tl.X, tl.Y)
+		}
+		tlLeft := pkg.LabelTopLeft(label.InsideTopLeft, pkg.Label.Width, pkg.Label.Height)
+		if tlLeft.X != 5 || tlLeft.Y != 45 {
+			t.Fatalf("KeepInBody LabelTopLeft(InsideTopLeft) = (%v, %v), want (5, 45)", tlLeft.X, tlLeft.Y)
+		}
+
+		cloned, err := layoutgraph.Clone(context.Background(), g)
+		if err != nil {
+			t.Fatalf("Clone() error = %v", err)
+		}
+		var clonedPkg *layoutgraph.Node
+		for _, n := range cloned.Nodes {
+			if n.ID == pkg.ID {
+				clonedPkg = n
+				break
+			}
+		}
+		if clonedPkg == nil || clonedPkg.Label == nil || !clonedPkg.Label.KeepInBody {
+			t.Fatalf("cloned package did not preserve KeepInBody")
+		}
+		clonedTL := clonedPkg.LabelTopLeft(label.InsideTopCenter, clonedPkg.Label.Width, clonedPkg.Label.Height)
+		if clonedTL.X != 80 || clonedTL.Y != 45 {
+			t.Fatalf("cloned KeepInBody LabelTopLeft() = (%v, %v), want (80, 45)", clonedTL.X, clonedTL.Y)
+		}
+	})
+
+	t.Run("inside icon stays in main body via IconTopLeft", func(t *testing.T) {
+		t.Parallel()
+
+		pkg := layoutgraph.NewNode(1, 200, 200)
+		pkg.TopLeft = geo.NewPoint(0, 0)
+		pkg.SetShape(shape.PACKAGE_TYPE)
+
+		tl := pkg.IconTopLeft(label.InsideTopLeft, 24, 24)
+		if tl.X != 5 || tl.Y != 45 {
+			t.Fatalf("IconTopLeft(InsideTopLeft) = (%v, %v), want (5, 45)", tl.X, tl.Y)
+		}
+		center := pkg.IconTopLeft(label.InsideTopCenter, 24, 24)
+		if center.X != 88 || center.Y != 45 {
+			t.Fatalf("IconTopLeft(InsideTopCenter) = (%v, %v), want (88, 45)", center.X, center.Y)
+		}
+	})
 }

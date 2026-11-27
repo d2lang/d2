@@ -3,11 +3,12 @@ package d2graph_test
 import (
 	"testing"
 
+	"github.com/d2lang/util-go/go2"
+
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
-	"github.com/d2lang/util-go/go2"
 )
 
 func TestPackageGetLabelTopLeft(t *testing.T) {
@@ -15,6 +16,7 @@ func TestPackageGetLabelTopLeft(t *testing.T) {
 
 	tests := []struct {
 		name     string
+		language string
 		position label.Position
 		labelW   int
 		labelH   int
@@ -31,6 +33,33 @@ func TestPackageGetLabelTopLeft(t *testing.T) {
 		},
 		{
 			name:     "top-center fits in tab",
+			position: label.InsideTopCenter,
+			labelW:   40,
+			labelH:   20,
+			wantX:    30,
+			wantY:    5,
+		},
+		{
+			name:     "code label with top-center stays in main body",
+			language: "go",
+			position: label.InsideTopCenter,
+			labelW:   40,
+			labelH:   20,
+			wantX:    80,
+			wantY:    45,
+		},
+		{
+			name:     "code label with top-left stays in main body",
+			language: "go",
+			position: label.InsideTopLeft,
+			labelW:   40,
+			labelH:   20,
+			wantX:    5,
+			wantY:    45,
+		},
+		{
+			name:     "markdown label with top-center fits in tab",
+			language: "markdown",
 			position: label.InsideTopCenter,
 			labelW:   40,
 			labelH:   20,
@@ -78,7 +107,8 @@ func TestPackageGetLabelTopLeft(t *testing.T) {
 			obj := &d2graph.Object{
 				Box: geo.NewBox(geo.NewPoint(0, 0), 200, 200),
 				Attributes: d2graph.Attributes{
-					Shape: d2graph.Scalar{Value: d2target.ShapePackage},
+					Shape:    d2graph.Scalar{Value: d2target.ShapePackage},
+					Language: tc.language,
 					LabelDimensions: d2target.TextDimensions{
 						Width:  tc.labelW,
 						Height: tc.labelH,

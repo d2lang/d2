@@ -87,6 +87,7 @@ func TestBoardRevealKeepsVisibleLetteringStill(t *testing.T) {
 		{"container", "inbox -> queue", "audit: {review: Compliance review; archive: Archive; review -> archive}; queue -> audit.review", "audit.review", "Compliance review"},
 		{"markdown", "queue", "note: |md **Important** |; queue -> note", "note", "Important"},
 		{"markdown rectangle", "queue", "status: |md **Available** | {shape: rectangle}; queue -> status", "status", "Available"},
+		{"package top tab", "queue", "pkg: Core {shape: package; label.near: top-center; width: 200; height: 200}; queue -> pkg", "pkg", "Core"},
 		{"table row", "queue", "ledger: Ledger {shape: sql_table; account_number: int}; queue -> ledger", "ledger", "account_number"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -158,7 +158,7 @@ func (node *Node) boundingBoxValues(allNodes Nodes, roundDimensions bool) (geo.P
 	}
 	if node.Icon != nil && node.shapeType != imageType && node.Icon.Position.IsOutside() && allNodes != nil {
 		iconSize := node.OutsideIconReserve()
-		iconTL := node.LabelTopLeft(node.Icon.Position, iconSize, iconSize)
+		iconTL := node.IconTopLeft(node.Icon.Position, iconSize, iconSize)
 
 		outsidePadding := 2. * label.PADDING
 
@@ -2059,6 +2059,19 @@ func (node *Node) LabelTopLeft(labelPosition label.Position, width, height float
 	return labelPosition.GetPointOnBox(box, label.PADDING, width, height)
 }
 
+// IconTopLeft returns the top-left point for an icon of the given size and
+// position relative to node. Inside icons always use the shape's main inner box.
+func (node *Node) IconTopLeft(iconPosition label.Position, width, height float64) *geo.Point {
+	var box *geo.Box
+	if iconPosition.IsOutside() {
+		box = node.Shape.GetBox()
+	} else {
+		box = node.InnerBox()
+	}
+
+	return iconPosition.GetPointOnBox(box, label.PADDING, width, height)
+}
+
 // NodeOverlapCount reports how many nodes overlap node within delta.
 func (node *Node) NodeOverlapCount(nodes Nodes, delta float64) int {
 	count := 0
@@ -2371,6 +2384,9 @@ func (n *Node) InnerBox() *geo.Box {
 // LabelInnerBox returns the rounded inside box used to place a label of size
 // (width x height) at labelPosition.
 func (n *Node) LabelInnerBox(labelPosition label.Position, width, height float64) *geo.Box {
+	if n.Label != nil && n.Label.KeepInBody {
+		return n.InnerBox()
+	}
 	return roundBox(shape.GetInsideLabelBox(n.Shape, labelPosition, label.PADDING, width, height))
 }
 

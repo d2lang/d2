@@ -38,4 +38,27 @@ func TestShapeLabelPlacementPackageTopTab(t *testing.T) {
 	if tl.X != 15 || tl.Y != 65 {
 		t.Fatalf("shapeLabelPlacement(overflow) = (%v, %v), want (15, 65)", tl.X, tl.Y)
 	}
+
+	code := s
+	code.LabelWidth = 40
+	code.Language = "go"
+	code.LabelPosition = "INSIDE_TOP_CENTER"
+	_, tl = shapeLabelPlacement(code)
+	if tl.X != 90 || tl.Y != 65 {
+		t.Fatalf("shapeLabelPlacement(code top-center) = (%v, %v), want (90, 65)", tl.X, tl.Y)
+	}
+
+	code.LabelPosition = "INSIDE_TOP_LEFT"
+	_, tl = shapeLabelPlacement(code)
+	if tl.X != 15 || tl.Y != 65 {
+		t.Fatalf("shapeLabelPlacement(code top-left) = (%v, %v), want (15, 65)", tl.X, tl.Y)
+	}
+
+	md := code
+	md.Language = "markdown"
+	md.LabelPosition = "INSIDE_TOP_CENTER"
+	_, tl = shapeLabelPlacement(md)
+	if tl.X != 40 || tl.Y != 25 {
+		t.Fatalf("shapeLabelPlacement(markdown top-center) = (%v, %v), want (40, 25)", tl.X, tl.Y)
+	}
 }

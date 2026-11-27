@@ -61,7 +61,7 @@ func scoreExistingLabelPlacements(g *layoutgraph.Graph, guard *limits.WorkGuard)
 		if node.Icon != nil && !node.IsImage() {
 			iconSize := node.IconSize(node.Icon.Position)
 			iconBox := geo.Box{
-				TopLeft: node.LabelTopLeft(node.Icon.Position, iconSize, iconSize),
+				TopLeft: node.IconTopLeft(node.Icon.Position, iconSize, iconSize),
 				Width:   iconSize,
 				Height:  iconSize,
 			}
