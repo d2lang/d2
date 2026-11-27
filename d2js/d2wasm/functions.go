@@ -333,14 +333,9 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		return nil, &WASMError{Message: fmt.Sprintf("invalid fs input: %s", err.Error()), Code: 400}
 	}
 
-	compileOpts.FontFamily, err = input.Opts.customFonts().register()
+	compileOpts.Ruler, compileOpts.FontFamily, err = input.Opts.customFonts().newRuler()
 	if err != nil {
 		return nil, err
-	}
-
-	compileOpts.Ruler, err = textmeasure.NewRuler()
-	if err != nil {
-		return nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err.Error()), Code: 500}
 	}
 
 	if input.Opts != nil && input.Opts.Layout != nil {
@@ -451,6 +446,32 @@ func (fonts *customFonts) register() (*d2fonts.FontFamily, error) {
 	return family, nil
 }
 
+// The font encoder and the text measurer read different parts of a face. Only
+// retain a replacement that both can use, so the next request can still load
+// its ruler if this diagram's font lacks usable metrics.
+func (fonts *customFonts) newRuler() (*textmeasure.Ruler, *d2fonts.FontFamily, error) {
+	previous := currentCustomFonts
+	family, err := fonts.register()
+	if err != nil {
+		return nil, nil, err
+	}
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		if currentCustomFonts != previous {
+			if previous == nil {
+				previous = &customFonts{}
+			}
+			// The previous set was already measured. An empty set restores
+			// the bundled faces if this was the first custom request.
+			if _, restoreErr := previous.register(); restoreErr != nil {
+				return nil, nil, restoreErr
+			}
+		}
+		return nil, nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err), Code: 500}
+	}
+	return ruler, family, nil
+}
+
 func Render(args []js.Value) (interface{}, error) {
 	if len(args) < 1 {
 		return nil, &WASMError{Message: "missing JSON argument", Code: 400}
@@ -466,10 +487,7 @@ func Render(args []js.Value) (interface{}, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
 	}
-	if _, err := input.Diagram.CustomFonts.register(); err != nil {
-		return nil, err
-	}
-	return render(RenderRequest{Diagram: &input.Diagram.Diagram, Opts: input.Opts})
+	return render(RenderRequest{Diagram: &input.Diagram.Diagram, Opts: input.Opts, fonts: input.Diagram.CustomFonts})
 }
 
 func render(input RenderRequest) ([]byte, error) {
@@ -552,9 +570,9 @@ func render(input RenderRequest) ([]byte, error) {
 		DarkThemeOverrides: input.Opts.DarkThemeOverrides,
 		NoXMLTag:           input.Opts.NoXMLTag,
 	}
-	ruler, err := textmeasure.NewRuler()
+	ruler, _, err := input.fonts.newRuler()
 	if err != nil {
-		return nil, &WASMError{Message: fmt.Sprintf("text ruler cannot be initialized: %s", err.Error()), Code: 500}
+		return nil, err
 	}
 
 	if input.Opts.ASCII != nil && *input.Opts.ASCII {

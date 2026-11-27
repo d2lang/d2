@@ -79,6 +79,7 @@ type CompletionResponse struct {
 }
 
 type RenderRequest struct {
+	fonts   *customFonts
 	Diagram *d2target.Diagram `json:"diagram"`
 	Opts    *RenderOptions    `json:"options"`
 }
