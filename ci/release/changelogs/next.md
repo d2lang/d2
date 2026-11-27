@@ -1,3 +1,9 @@
+#### Upgrading from v0.9.0
+
+- Quote names that match D2 keywords, including references. To keep a shape named `STYLE`, write `service."STYLE": notes` and `api -> service."STYLE"`. An unquoted `LABEL` inside a container now sets the container's label.
+- Dagre and ELK accept up to 1,024 objects and 1,024 edges per layout graph. For example, add `grid-columns: 32` to a flat inventory of 1,025 independent services, or split a connected diagram into boards.
+- The Go packages `d2plugin` and `d2layouts/d2layoutfeatures` were removed. Drop the plugins argument to `d2cli.LayoutResolver` and `d2cli.RouterResolver`. Set `CompileOptions.FS` for diagrams that import local files.
+
 #### Features 🚀
 
 - Run the native D2 CLI with `uvx d2lang input.d2 output.svg` on Linux, macOS, and Windows.
@@ -81,6 +87,8 @@
     outside the selected tree. [#2908](https://github.com/d2lang/d2/pull/2908)
 
 #### Bugfixes ⛑️
+
+- Sequence groups leave room for notes after messages between spans on the same actor. [#2939](https://github.com/d2lang/d2/issues/2939)
 
 - Dagre lays out nested diagrams on which its ordering lost containers, which failed with `dagre fails on this input: it sets "order" on a node missing from a layer` or `not possible to find intersection inside of the rectangle`. Diagrams that laid out before keep their exact layout. [dagro v0.4.1](https://github.com/d2lang/dagro/pull/11)
 - `d2 fmt` preserves imported boards, board declaration order, explicit empty maps, block comments in arrays, and the parentheses around connections such as `("api" *- "db")`.

@@ -51,6 +51,11 @@ printf 'client -> server\n' | npx @d2lang/d2 - - > architecture.svg
 For a project with imports, supply a file map through the [JavaScript API](#imports)
 or use the [native D2 CLI](https://github.com/d2lang/d2/blob/master/docs/INSTALL.md).
 
+npm makes the package's local `d2` executable take precedence over the system
+`d2` inside `npm run` scripts. To keep a script that exports PNG or PDF using
+the native CLI, call the native binary by its full path. On macOS or Linux,
+run `command -v d2` in an ordinary terminal to find that path.
+
 ### Nightly
 
 CI checks `master` daily and publishes a new `@d2lang/d2@nightly` when D2.js or its
