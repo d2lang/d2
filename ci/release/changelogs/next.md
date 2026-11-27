@@ -40,7 +40,7 @@
 
 - Ordinary labeled diagrams render faster and allocate fewer bytes because the SVG writer records fonts and theme colors as it draws. [#2995](https://github.com/d2lang/d2/pull/2995)
 
-- Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer.
+- Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer. A Go module install reports its installed D2 version in the CLI, LSP, and MCP server.
 
 - D2.js: the WebAssembly module is built with TinyGo instead of Go, reducing its Brotli-compressed size by about 40%. [#2966](https://github.com/d2lang/d2/pull/2966)
 
@@ -81,8 +81,6 @@
     outside the selected tree. [#2908](https://github.com/d2lang/d2/pull/2908)
 
 #### Bugfixes ⛑️
-
-- Go module installs report the installed D2 version in the CLI, LSP, and MCP server.
 
 - Dagre lays out nested diagrams on which its ordering lost containers, which failed with `dagre fails on this input: it sets "order" on a node missing from a layer` or `not possible to find intersection inside of the rectangle`. Diagrams that laid out before keep their exact layout. [dagro v0.4.1](https://github.com/d2lang/dagro/pull/11)
 - `d2 fmt` preserves imported boards, board declaration order, explicit empty maps, block comments in arrays, and the parentheses around connections such as `("api" *- "db")`.
