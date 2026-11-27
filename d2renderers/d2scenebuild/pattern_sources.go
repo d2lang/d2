@@ -18,12 +18,12 @@ import (
 )
 
 const (
-	paperPatternSourceSHA256    = "6d2131fa5828dedfc0648b93ee3dd4f2492f706dc8ec81a2f7106f063f99487c"
+	paperPatternSourceSHA256    = "d6f43553eeca8f5bf37f08720dfef17be958f349639cb328c6b1669b4cbfb944"
 	paperPatternPathCount       = 1042
 	paperPatternCommandCount    = 10926
 	paperPatternMaskPathData    = "M75.0871 -0.0878906H-0.0878906V75.0871H75.0871V-0.0878906Z"
-	grainPatternPNGSourceSHA256 = "7aec37844fa033cbdb586efaa1955dc6f43d56707c0b1bf91e8b5e32386d8d69"
-	grainPatternPNGBytes        = 20845
+	grainPatternPNGSourceSHA256 = "50730e6c56603eac7ad90780979ed2de1538488c56f709aa6795d6a24975fb84"
+	grainPatternPNGBytes        = 19079
 	grainPatternPixelWidth      = 466
 	grainPatternPixelHeight     = 349
 	grainPatternDecodedBytes    = int64(grainPatternPixelWidth * grainPatternPixelHeight * 4)

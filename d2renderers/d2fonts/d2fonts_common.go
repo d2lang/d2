@@ -32,7 +32,10 @@ func (f FontFamily) Font(size int, style FontStyle) Font {
 	}
 }
 
-const woffDataPrefix = "data:application/font-woff;base64,"
+const (
+	woffDataPrefix  = "data:application/font-woff;base64,"
+	woff2DataPrefix = "data:font/woff2;base64,"
+)
 
 // Some bundled data URLs historically contain a TTF with a WOFF MIME type.
 // Index by the original URL so callers overriding FontEncodings retain exactly
@@ -108,7 +111,7 @@ func (f Font) encodedSubset(corpus string, svg bool) string {
 	if svg && cacheable {
 		fontBuf, err = font.SubsetWOFF2(face, uniqueChars)
 		if err == nil {
-			prefix = "data:font/woff2;base64,"
+			prefix = woff2DataPrefix
 		}
 	}
 	if fontBuf == nil {

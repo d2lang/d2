@@ -63,7 +63,7 @@ func init() {
 		FontFaces.Set(alias, FontFaces.Get(source))
 		FontEncodings.Set(alias, FontEncodings.Get(source))
 	}
-	registerAppendixFaces(func(name string) []byte { return faces[name] })
+	registerAppendixFaces()
 	if err := registerBundledFontFaces(); err != nil {
 		panic(err)
 	}
