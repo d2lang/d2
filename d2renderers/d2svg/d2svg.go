@@ -1076,6 +1076,9 @@ func latexLabel(src string, tl *geo.Point, fontColor string, inlineTheme *d2them
 	}
 	render = strings.ReplaceAll(render, `<?xml version="1.0" encoding="UTF-8"?>`, "")
 	render = strings.ReplaceAll(render, `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">`, "")
+	if UsesDefaultStylesheet() {
+		render = compactMathJaxGlyphs(render)
+	}
 	gEl := d2themes.NewThemableElement("g", inlineTheme)
 	gEl.SetTranslate(tl.X, tl.Y)
 	gEl.Color = fontColor

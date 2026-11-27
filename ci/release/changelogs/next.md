@@ -9,6 +9,7 @@
 - Sketch SVGs omit redundant zeros and separators in hand-drawn paths while retaining their original coordinates.
 - SVG exports use shorter path data for paper textures and sketch fills.
 - SVG connections use shorter references to arrowhead markers.
+- SVG exports use shorter path coordinates for LaTeX formulas.
 
 #### Bugfixes ⛑️
 
