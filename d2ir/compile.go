@@ -1683,6 +1683,7 @@ func (c *compiler) compileMapWithChecks(dst *Map, ast, scopeAST *d2ast.Map, chec
 			if !c.reserveVariableCopy(n.Import, impn.Map()) {
 				return
 			}
+			c.extendNearKeys(impn.Map(), impn.Map(), BoardIDA(ParentField(dst)))
 			overlayMapIndexed(dst, impn.Map())
 			c.recordImport(dst, impn.Map())
 			impDir := n.Import.Dir()
@@ -2501,6 +2502,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			if !c.reserveVariableCopy(refctx.Key.Value.Import, n) {
 				return
 			}
+			c.extendNearKeys(n, n, BoardIDA(f))
 			overlayMapIndexed(f.Map(), n)
 			impDir := refctx.Key.Value.Import.Dir()
 			c.extendLinks(f.Map(), f, impDir)
@@ -2655,6 +2657,47 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 		}
 		if f.Map() != nil {
 			c.extendLinks(f.Map(), importF, importDir)
+		}
+	}
+}
+
+// extendNearKeys makes the near keys of imported shapes absolute again. A near
+// key names a shape from the root of its board, so once an import lands inside
+// a shape, as in "a: @b", the key must also lead with the path of that shape.
+// It runs on the imported map before it is overlaid, so only keys written in
+// the imported file are changed, never ones the importing file wrote. Within
+// that, only keys that name a shape of the imported file itself (importM) are
+// changed: constants and keys that do not resolve there stay as written. Nested boards have roots of their own
+// and are skipped.
+func (c *compiler) extendNearKeys(m, importM *Map, prefix []d2ast.String) {
+	if len(prefix) == 0 {
+		return
+	}
+	for _, f := range m.Fields {
+		if f.Name == nil {
+			continue
+		}
+		switch d2ast.Keyword(f.Name) {
+		case "layers", "scenarios", "steps":
+			continue
+		case "near":
+			if f.Primary() == nil {
+				continue
+			}
+			near, err := d2parser.ParseKey(f.Primary().Value.ScalarString())
+			if err != nil {
+				continue
+			}
+			ida := near.IDA()
+			if len(ida) == 0 || importM.GetField(ida...) == nil {
+				continue
+			}
+			extended := append(slices.Clone(prefix), ida...)
+			f.Primary_.Value = d2ast.MakeValueBox(d2ast.FlatUnquotedString(d2format.FormatKeyPath(extended))).ScalarBox().Unbox()
+			continue
+		}
+		if f.Map() != nil {
+			c.extendNearKeys(f.Map(), importM, prefix)
 		}
 	}
 }
