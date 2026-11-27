@@ -106,6 +106,21 @@ func Set(g *d2graph.Graph, boardPath []string, key string, tag, value *string) (
 		}
 	}
 
+	origSource := d2format.Format(g.AST)
+	var origBaseSource string
+	if len(boardPath) > 0 {
+		origBaseSource = d2format.Format(baseAST)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		restoreASTSource(g.AST, origSource)
+		if len(boardPath) > 0 {
+			restoreASTSource(baseAST, origBaseSource)
+		}
+	}()
+
 	err = _set(boardG, baseAST, key, tag, value)
 	if err != nil {
 		return nil, err
@@ -363,6 +378,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 
 	scope := baseAST
 	edgeTrimCommon(mk)
+	barrier := findTargetStyleOrderingBarrier(g, baseAST, mk)
 	obj := g.Root
 	toSkip := 1
 
@@ -406,14 +422,15 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			if baseAST != g.AST || imported {
 				writeableRefs := GetWriteableRefs(obj, baseAST)
 				for _, ref := range writeableRefs {
-					if ref.MapKey != nil && ref.MapKey.Value.Map != nil && ref.MapKey.Key == mk.Key && isWriteableASTKey(baseAST, ref.MapKey) {
+					if ref.MapKey != nil && ref.MapKey.Value.Map != nil && ref.MapKey.Key == mk.Key && isWriteableASTKey(baseAST, ref.MapKey) && !keyBlockedByBarrier(barrier, ref.MapKey) {
 						maybeNewScope = ref.MapKey.Value.Map
 					}
 				}
 			} else if obj.Map != nil {
-				// Never write shape overrides into a shared class or glob map (including keys nested inside `*: { ... }`).
+				// Never write shape overrides into a shared class, vars, or glob map,
+				// or into a shape map that precedes an overriding glob/substitution.
 				for _, ref := range obj.References {
-					if ref.MapKey != nil && ref.MapKey.Value.Map == obj.Map && isWriteableASTKey(baseAST, ref.MapKey) {
+					if ref.MapKey != nil && ref.MapKey.Value.Map == obj.Map && isWriteableASTKey(baseAST, ref.MapKey) && !keyBlockedByBarrier(barrier, ref.MapKey) {
 						maybeNewScope = obj.Map
 						break
 					}
@@ -484,7 +501,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 		if baseAST != g.AST || imported {
 			writeableRefs := GetWriteableRefs(obj, baseAST)
 			for _, ref := range writeableRefs {
-				if isWriteableASTKey(baseAST, ref.MapKey) {
+				if isWriteableASTKey(baseAST, ref.MapKey) && !keyBlockedByBarrier(barrier, ref.MapKey) {
 					objK = ref.MapKey
 					break
 				}
@@ -495,7 +512,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			}
 			writeableLabelMK = false
 			for _, ref := range writeableRefs {
-				if ref.MapKey == obj.Label.MapKey && isWriteableASTKey(baseAST, ref.MapKey) {
+				if ref.MapKey == obj.Label.MapKey && isWriteableASTKey(baseAST, ref.MapKey) && !keyBlockedByBarrier(barrier, ref.MapKey) {
 					writeableLabelMK = true
 					break
 				}
@@ -505,7 +522,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			// In those cases, the label is not a direct object reference
 			found := false
 			for _, ref := range obj.References {
-				if ref.MapKey == obj.Label.MapKey && isWriteableASTKey(baseAST, ref.MapKey) {
+				if ref.MapKey == obj.Label.MapKey && isWriteableASTKey(baseAST, ref.MapKey) && !keyBlockedByBarrier(barrier, ref.MapKey) {
 					found = true
 					break
 				}
@@ -593,7 +610,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 				}
 			}
 
-			if isWriteableASTKey(baseAST, ref.MapKey) && (ref.MapKey.EdgeIndex == nil || !ref.MapKey.EdgeIndex.Glob) {
+			if isWriteableASTKey(baseAST, ref.MapKey) && !keyBlockedByBarrier(barrier, ref.MapKey) && (ref.MapKey.EdgeIndex == nil || !ref.MapKey.EdgeIndex.Glob) {
 				// If a ref has an exact match on this key, just change the value
 				tmp1 := *ref.MapKey
 				tmp2 := *mk
@@ -608,7 +625,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			}
 		}
 		if onlyInChain {
-			if earliestRef != nil && isWriteableASTKey(baseAST, earliestRef.MapKey) && scope.Range.Before(earliestRef.MapKey.Range) {
+			if earliestRef != nil && isWriteableASTKey(baseAST, earliestRef.MapKey) && !keyBlockedByBarrier(barrier, earliestRef.MapKey) && scope.Range.Before(earliestRef.MapKey.Range) {
 				// Since the original mk was trimmed to common, we set to the edge that
 				// the ref's scope is in
 				// Only replace with earliestRef.Edge if it's not a glob pattern
@@ -640,7 +657,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			foundMap := false
 			for _, ref := range refs {
 				// TODO get the most nested one
-				if !isWriteableASTKey(baseAST, ref.MapKey) || ref.MapKey.EdgeKey != nil {
+				if !isWriteableASTKey(baseAST, ref.MapKey) || keyBlockedByBarrier(barrier, ref.MapKey) || ref.MapKey.EdgeKey != nil {
 					continue
 				}
 				if ref.MapKey.Value.Map != nil {
@@ -672,12 +689,12 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			}
 			if !foundMap {
 				edgeLabelMK := attrs.Label.MapKey
-				if edgeLabelMK != nil && (!isWriteableASTKey(baseAST, edgeLabelMK) || edgeLabelMK.EdgeKey != nil || len(edgeLabelMK.Edges) != 1) {
+				if edgeLabelMK != nil && (!isWriteableASTKey(baseAST, edgeLabelMK) || keyBlockedByBarrier(barrier, edgeLabelMK) || edgeLabelMK.EdgeKey != nil || len(edgeLabelMK.Edges) != 1) {
 					edgeLabelMK = nil
 				}
 				if edgeLabelMK == nil {
 					for _, ref := range refs {
-						if ref.MapKey != nil && isWriteableASTKey(baseAST, ref.MapKey) && ref.MapKey.EdgeKey == nil && len(ref.MapKey.Edges) == 1 {
+						if ref.MapKey != nil && isWriteableASTKey(baseAST, ref.MapKey) && !keyBlockedByBarrier(barrier, ref.MapKey) && ref.MapKey.EdgeKey == nil && len(ref.MapKey.Edges) == 1 {
 							edgeLabelMK = ref.MapKey
 							break
 						}
@@ -704,7 +721,7 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 			if s == nil || s.MapKey == nil {
 				return false
 			}
-			return isWriteableASTKey(baseAST, s.MapKey) && !ir.InClass(s.MapKey)
+			return isWriteableASTKey(baseAST, s.MapKey) && !keyBlockedByBarrier(barrier, s.MapKey) && !ir.InClass(s.MapKey)
 		}
 		reservedIndex := toSkip - 1
 		if mk.Key != nil && len(mk.Key.Path) > 0 {
@@ -1377,9 +1394,9 @@ func renameConflictsToParent(g *d2graph.Graph, key *d2ast.KeyPath) (*d2graph.Gra
 	return g, nil
 }
 
-func inspectASTKey(m *d2ast.Map, target *d2ast.Key, inClass, inGlob bool) (found, isClass, isGlob bool) {
+func inspectASTKey(m *d2ast.Map, target *d2ast.Key, inClass, inVars, inGlob bool) (found, isClass, isVars, isGlob bool) {
 	if m == nil || target == nil {
-		return false, false, false
+		return false, false, false, false
 	}
 	for _, n := range m.Nodes {
 		mk := n.MapKey
@@ -1387,33 +1404,384 @@ func inspectASTKey(m *d2ast.Map, target *d2ast.Key, inClass, inGlob bool) (found
 			continue
 		}
 		keyInClass := inClass
-		if !keyInClass && mk.Key != nil {
+		keyInVars := inVars
+		if (!keyInClass || !keyInVars) && mk.Key != nil {
 			for _, seg := range mk.Key.Path {
-				if d2ast.Keyword(seg.Unbox()) == "classes" {
+				switch d2ast.Keyword(seg.Unbox()) {
+				case "classes":
 					keyInClass = true
-					break
+				case "vars":
+					keyInVars = true
 				}
 			}
 		}
 		keyInGlob := inGlob || mk.HasGlob()
 		if mk == target {
-			return true, keyInClass, keyInGlob
+			return true, keyInClass, keyInVars, keyInGlob
 		}
 		if mk.Value.Map != nil {
-			if f, c, g := inspectASTKey(mk.Value.Map, target, keyInClass, keyInGlob); f {
-				return true, c, g
+			if f, c, v, g := inspectASTKey(mk.Value.Map, target, keyInClass, keyInVars, keyInGlob); f {
+				return true, c, v, g
 			}
 		}
 	}
-	return false, false, false
+	return false, false, false, false
 }
 
 func isWriteableASTKey(baseAST *d2ast.Map, mk *d2ast.Key) bool {
 	if mk == nil || mk.Range.Path != baseAST.Range.Path || mk.HasGlob() {
 		return false
 	}
-	found, inClass, inGlob := inspectASTKey(baseAST, mk, false, false)
-	return found && !inClass && !inGlob
+	found, inClass, inVars, inGlob := inspectASTKey(baseAST, mk, false, false, false)
+	return found && !inClass && !inVars && !inGlob
+}
+
+type astOrderingBarrier struct {
+	parent *d2ast.Map
+	index  int
+}
+
+func mapContainsASTKey(m *d2ast.Map, target *d2ast.Key) bool {
+	if m == nil || target == nil {
+		return false
+	}
+	for _, n := range m.Nodes {
+		mk := n.MapKey
+		if mk == nil {
+			continue
+		}
+		if mk == target {
+			return true
+		}
+		if mk.Value.Map != nil && mapContainsASTKey(mk.Value.Map, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func keyBlockedByBarrier(barrier *astOrderingBarrier, candidate *d2ast.Key) bool {
+	if barrier == nil || barrier.parent == nil || candidate == nil {
+		return false
+	}
+	limit := barrier.index
+	if limit >= len(barrier.parent.Nodes) {
+		limit = len(barrier.parent.Nodes) - 1
+	}
+	for i := 0; i <= limit; i++ {
+		mk := barrier.parent.Nodes[i].MapKey
+		if mk == nil {
+			continue
+		}
+		if mk == candidate || mapContainsASTKey(mk.Value.Map, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func findOutermostGlobBarrier(m *d2ast.Map, target *d2ast.Key) (*astOrderingBarrier, bool) {
+	if m == nil || target == nil {
+		return nil, false
+	}
+	for i, n := range m.Nodes {
+		mk := n.MapKey
+		if mk == nil {
+			continue
+		}
+		skip := false
+		if mk.Key != nil {
+			for _, seg := range mk.Key.Path {
+				kw := d2ast.Keyword(seg.Unbox())
+				if kw == "classes" || kw == "vars" {
+					skip = true
+					break
+				}
+			}
+		}
+		if skip {
+			continue
+		}
+		if mk.HasGlob() {
+			if mk == target || mapContainsASTKey(mk.Value.Map, target) {
+				return &astOrderingBarrier{parent: m, index: i}, true
+			}
+			continue
+		}
+		if mk.Value.Map != nil {
+			if b, ok := findOutermostGlobBarrier(mk.Value.Map, target); ok {
+				return b, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func scalarHasSubstitution(s d2ast.Scalar) bool {
+	switch v := s.(type) {
+	case *d2ast.UnquotedString:
+		for _, box := range v.Value {
+			if box.Substitution != nil {
+				return true
+			}
+		}
+	case *d2ast.DoubleQuotedString:
+		for _, box := range v.Value {
+			if box.Substitution != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func keyHasScalarSubstitution(mk *d2ast.Key) bool {
+	if mk == nil {
+		return false
+	}
+	return scalarHasSubstitution(mk.Value.ScalarBox().Unbox()) || scalarHasSubstitution(mk.Primary.Unbox())
+}
+
+func mapHasSpreadSubstitution(m *d2ast.Map) bool {
+	if m == nil {
+		return false
+	}
+	for _, n := range m.Nodes {
+		if n.Substitution != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveStyleScalar(attrs d2graph.Attributes, reservedParts []string) *d2graph.Scalar {
+	if len(reservedParts) < 2 || !strings.EqualFold(reservedParts[0], "style") {
+		return nil
+	}
+	switch strings.ToLower(reservedParts[1]) {
+	case "fill-pattern":
+		if len(reservedParts) == 3 && strings.EqualFold(reservedParts[2], "color") {
+			return attrs.Style.FillPatternColor
+		}
+		if len(reservedParts) == 2 {
+			return attrs.Style.FillPattern
+		}
+	case "opacity":
+		return attrs.Style.Opacity
+	case "stroke":
+		return attrs.Style.Stroke
+	case "fill":
+		return attrs.Style.Fill
+	case "stroke-width":
+		return attrs.Style.StrokeWidth
+	case "stroke-dash":
+		return attrs.Style.StrokeDash
+	case "border-radius":
+		return attrs.Style.BorderRadius
+	case "shadow":
+		return attrs.Style.Shadow
+	case "3d":
+		return attrs.Style.ThreeDee
+	case "multiple":
+		return attrs.Style.Multiple
+	case "double-border":
+		return attrs.Style.DoubleBorder
+	case "font":
+		return attrs.Style.Font
+	case "font-size":
+		return attrs.Style.FontSize
+	case "font-color":
+		return attrs.Style.FontColor
+	case "animated":
+		return attrs.Style.Animated
+	case "bold":
+		return attrs.Style.Bold
+	case "italic":
+		return attrs.Style.Italic
+	case "underline":
+		return attrs.Style.Underline
+	}
+	return nil
+}
+
+func findTargetStyleOrderingBarrier(g *d2graph.Graph, baseAST *d2ast.Map, mk *d2ast.Key) *astOrderingBarrier {
+	if g == nil || baseAST == nil || mk == nil {
+		return nil
+	}
+	type ancestorStep struct {
+		scope    *d2ast.Map
+		childKey *d2ast.Key
+	}
+	var steps []ancestorStep
+	curScope := baseAST
+	obj := g.Root
+	var reservedParts []string
+
+	if mk.Key != nil {
+		parts := d2graph.Key(mk.Key)
+		for i, idel := range parts {
+			if len(mk.Edges) == 0 && reservedField(idel, obj == g.Root) {
+				reservedParts = parts[i:]
+				break
+			}
+			o, ok := obj.HasChild([]string{idel})
+			if !ok {
+				return nil
+			}
+			if len(mk.Edges) == 1 || (i+1 < len(parts) && !reservedField(parts[i+1], false)) {
+				// Track container map descent so outer globs can block entering earlier containers.
+				if o.Map != nil {
+					for _, ref := range o.References {
+						if ref.MapKey != nil && ref.MapKey.Value.Map == o.Map && isWriteableASTKey(baseAST, ref.MapKey) {
+							steps = append(steps, ancestorStep{scope: curScope, childKey: ref.MapKey})
+							curScope = o.Map
+							break
+						}
+					}
+				}
+			}
+			obj = o
+		}
+	}
+
+	var attrs d2graph.Attributes
+	targetRefKeys := make(map[*d2ast.Key]struct{})
+	var targetPrimaryMap *d2ast.Map
+	if len(mk.Edges) == 1 {
+		if mk.EdgeIndex == nil || mk.EdgeKey == nil {
+			return nil
+		}
+		edge, ok := obj.HasEdge(mk)
+		if !ok {
+			return nil
+		}
+		attrs = edge.Attributes
+		reservedParts = d2graph.Key(mk.EdgeKey)
+		for _, ref := range edge.References {
+			if ref.MapKey != nil {
+				targetRefKeys[ref.MapKey] = struct{}{}
+				if targetPrimaryMap == nil && ref.MapKey.Value.Map != nil && ref.MapKey.EdgeKey == nil && isWriteableASTKey(baseAST, ref.MapKey) {
+					targetPrimaryMap = ref.MapKey.Value.Map
+				}
+			}
+		}
+	} else {
+		attrs = obj.Attributes
+		targetPrimaryMap = obj.Map
+		for _, ref := range obj.References {
+			if ref.MapKey != nil {
+				targetRefKeys[ref.MapKey] = struct{}{}
+			}
+		}
+	}
+
+	attrScalar := resolveStyleScalar(attrs, reservedParts)
+	if attrScalar == nil || attrScalar.MapKey == nil {
+		return nil
+	}
+
+	found, _, inVars, inGlob := inspectASTKey(baseAST, attrScalar.MapKey, false, false, false)
+	if !found {
+		return nil
+	}
+	if inGlob {
+		b, _ := findOutermostGlobBarrier(baseAST, attrScalar.MapKey)
+		return b
+	}
+	if !inVars {
+		return nil
+	}
+
+	// For styles inherited from vars, block writing into any earlier declaration
+	// that precedes a glob (e.g. `*: ${swatch}`) or a substitution reference on
+	// the target itself (e.g. `x: ${swatch}` or a later `x: { ...${swatch} }`).
+	findInMap := func(m *d2ast.Map) *astOrderingBarrier {
+		if m == nil {
+			return nil
+		}
+		for i := len(m.Nodes) - 1; i >= 0; i-- {
+			nmk := m.Nodes[i].MapKey
+			if nmk == nil {
+				continue
+			}
+			if nmk.HasGlob() {
+				return &astOrderingBarrier{parent: m, index: i}
+			}
+			if _, ok := targetRefKeys[nmk]; ok {
+				if keyHasScalarSubstitution(nmk) {
+					return &astOrderingBarrier{parent: m, index: i}
+				}
+				if nmk.Value.Map != nil && nmk.Value.Map != targetPrimaryMap && mapHasSpreadSubstitution(nmk.Value.Map) {
+					return &astOrderingBarrier{parent: m, index: i}
+				}
+			}
+		}
+		return nil
+	}
+
+	for _, step := range steps {
+		if b := findInMap(step.scope); b != nil && keyBlockedByBarrier(b, step.childKey) {
+			return b
+		}
+	}
+	return findInMap(curScope)
+}
+
+func restoreASTSource(m *d2ast.Map, origSource string) {
+	if m == nil || d2format.Format(m) == origSource {
+		return
+	}
+	if restored, err := d2parser.Parse(m.Range.Path, strings.NewReader(origSource), nil); err == nil {
+		m.Nodes = restored.Nodes
+	}
+}
+
+func findBoardASTMap(ast *d2ast.Map, boardPath []string) *d2ast.Map {
+	if ast == nil || len(boardPath) == 0 {
+		return nil
+	}
+	for _, boardType := range []string{"layers", "scenarios", "steps"} {
+		for _, n := range ast.Nodes {
+			if n.MapKey == nil || n.MapKey.Key == nil || n.MapKey.Value.Map == nil {
+				continue
+			}
+			if d2ast.Keyword(n.MapKey.Key.Path[0].Unbox()) != boardType {
+				continue
+			}
+			for _, bn := range n.MapKey.Value.Map.Nodes {
+				if bn.MapKey == nil || bn.MapKey.Key == nil || bn.MapKey.Value.Map == nil {
+					continue
+				}
+				if bn.MapKey.Key.Path[0].Unbox().ScalarString() != boardPath[0] {
+					continue
+				}
+				if len(boardPath) > 1 {
+					if nested := findBoardASTMap(bn.MapKey.Value.Map, boardPath[1:]); nested != nil {
+						return nested
+					}
+				} else {
+					return bn.MapKey.Value.Map
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func recompileWithBoard(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map) (*d2graph.Graph, error) {
+	if len(boardPath) == 0 {
+		return recompile(g)
+	}
+	boardMap := findBoardASTMap(g.AST, boardPath)
+	if boardMap == nil {
+		return nil, fmt.Errorf("board %v AST not found", boardPath)
+	}
+	origNodes := boardMap.Nodes
+	boardMap.Nodes = baseAST.Nodes
+	defer func() {
+		boardMap.Nodes = origNodes
+	}()
+	return recompile(g)
 }
 
 func isFillPatternColorParts(parts []string) bool {
@@ -1474,7 +1842,7 @@ func hasImportNode(m *d2ast.Map) bool {
 	return false
 }
 
-func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk *d2ast.Key) (*d2graph.Graph, error) {
+func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk *d2ast.Key) (_ *d2graph.Graph, err error) {
 	targetKey := mk.Key
 	if len(mk.Edges) == 1 {
 		if mk.EdgeKey == nil {
@@ -1485,6 +1853,21 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 	if !isReservedDeleteKeyPath(targetKey) {
 		return g, nil
 	}
+
+	origSource := d2format.Format(g.AST)
+	var origBaseSource string
+	if len(boardPath) > 0 {
+		origBaseSource = d2format.Format(baseAST)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		restoreASTSource(g.AST, origSource)
+		if len(boardPath) > 0 {
+			restoreASTSource(baseAST, origBaseSource)
+		}
+	}()
 
 	var e *d2graph.Edge
 	var ok bool
@@ -1796,15 +2179,37 @@ func deleteObjFieldPath(g *d2graph.Graph, boardPath []string, ast *d2ast.Map, ob
 	}
 	objGK := d2graph.Key(objK)
 	removeOrKeepObjRef := func(ref d2graph.Reference) (bool, error) {
-		tmpNodes := make([]d2ast.MapNodeBox, len(ref.Scope.Nodes))
-		copy(tmpNodes, ref.Scope.Nodes)
+		origNodes := make([]d2ast.MapNodeBox, len(ref.Scope.Nodes))
+		copy(origNodes, ref.Scope.Nodes)
+		origPrimary := ref.MapKey.Primary
+		origValue := ref.MapKey.Value
+		origPath := append([]*d2ast.StringBox(nil), ref.Key.Path...)
 		removed := deleteFromMap(ref.Scope, ref.MapKey)
 		if !removed {
 			return false, nil
 		}
-		g2, err := recompile(g)
+		keepBareObj := func() {
+			ref.Scope.Nodes = origNodes
+			ref.MapKey.Primary = d2ast.ScalarBox{}
+			ref.MapKey.Value = d2ast.ValueBox{}
+			ref.Key.Path = origPath[:ref.KeyPathIndex+1]
+		}
+		restoreOrig := func() {
+			ref.Scope.Nodes = origNodes
+			ref.MapKey.Primary = origPrimary
+			ref.MapKey.Value = origValue
+			ref.Key.Path = origPath
+		}
+		g2, err := recompileWithBoard(g, boardPath, ast)
 		if err != nil {
-			return false, err
+			// Removing obj's sole declaration can break references such as
+			// `y.near: x`. Retry with a bare declaration before reporting error.
+			keepBareObj()
+			if _, bareErr := recompileWithBoard(g, boardPath, ast); bareErr != nil {
+				restoreOrig()
+				return false, err
+			}
+			return true, nil
 		}
 		boardRoot := g2.Root
 		if len(boardPath) > 0 {
@@ -1814,10 +2219,7 @@ func deleteObjFieldPath(g *d2graph.Graph, boardPath []string, ast *d2ast.Map, ob
 		}
 		if _, ok := boardRoot.HasChild(objGK); !ok {
 			// Keep the object alive when this was its only declaration.
-			ref.Scope.Nodes = tmpNodes
-			ref.MapKey.Primary = d2ast.ScalarBox{}
-			ref.MapKey.Value = d2ast.ValueBox{}
-			ref.Key.Path = ref.Key.Path[:ref.KeyPathIndex+1]
+			keepBareObj()
 		}
 		return true, nil
 	}

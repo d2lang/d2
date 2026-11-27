@@ -108,4 +108,32 @@ x.style.fill-pattern.size: 10
 			t.Fatal("expected compile error for invalid fill-pattern subfield")
 		}
 	})
+
+	t.Run("double_glob_skips_style_fill_pattern_color", func(t *testing.T) {
+		t.Parallel()
+		g, _, err := d2compiler.Compile("", strings.NewReader(`
+a: {
+  x: {
+    style.fill-pattern: dots {
+      color: white
+    }
+  }
+  y
+}
+**.style.fill: blue
+`), nil)
+		if err != nil {
+			t.Fatalf("unexpected compile error: %v", err)
+		}
+		ax, ok := g.Root.HasChild([]string{"a", "x"})
+		if !ok {
+			t.Fatal("missing shape a.x")
+		}
+		if ax.Style.Fill == nil || ax.Style.Fill.Value != "blue" {
+			t.Fatalf("a.x Fill = %+v, want blue", ax.Style.Fill)
+		}
+		if ax.Style.FillPatternColor == nil || ax.Style.FillPatternColor.Value != "white" {
+			t.Fatalf("a.x FillPatternColor = %+v, want white", ax.Style.FillPatternColor)
+		}
+	})
 }
