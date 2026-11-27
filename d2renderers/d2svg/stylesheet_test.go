@@ -118,6 +118,20 @@ func TestCompactStylesheet(t *testing.T) {
 	}
 }
 
+func TestFillPatternAfterDarkTheme(t *testing.T) {
+	diagram := d2target.NewDiagram()
+	diagram.Root.FillPattern = "dots"
+	dark := int64(200)
+	out, err := Render(diagram, &RenderOpts{DarkThemeID: &dark})
+	if err != nil {
+		t.Fatal(err)
+	}
+	styles := readStyles(t, out)
+	if len(styles) != 1 || !strings.Contains(styles[0], "}} .dots-overlay{") {
+		t.Fatal("ImageIO requires whitespace between the dark media query and the fill pattern")
+	}
+}
+
 func TestCustomStylesheetPreservesSheetBoundaries(t *testing.T) {
 	original := BaseStylesheet
 	t.Cleanup(func() { BaseStylesheet = original })
