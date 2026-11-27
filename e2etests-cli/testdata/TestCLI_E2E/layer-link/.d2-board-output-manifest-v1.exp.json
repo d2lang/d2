@@ -4,11 +4,11 @@
   "files": [
     {
       "path": "index.svg",
-      "sha256": "696c74857ea4594d1de06c223901024c8e16eff00e5f013c6847546c724b0947"
+      "sha256": "5d60105b4efdcb0ae5380c228e2d9e3f1c50989d8ac873a791b3a728658ddaae"
     },
     {
       "path": "test2.svg",
-      "sha256": "3d05ae3ea6d4854ac3f88d9f34d1e76ec7e5691b2090622691b7d4e7a737a464"
+      "sha256": "8a41c7df88138c9e7aa6cd32f5ce5c485ab6775bddba41a24d8e38cf2ebdbe52"
     }
   ],
   "directories": []

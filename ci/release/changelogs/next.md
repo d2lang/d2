@@ -7,6 +7,7 @@
 - SVG exports combine and compact the generated CSS for fonts, themes, and animations.
 - SVG code blocks use fewer bytes for indentation and quoted strings.
 - Sketch SVGs omit redundant zeros and separators in hand-drawn paths while retaining their original coordinates.
+- SVG exports use shorter path data for paper textures and sketch fills.
 
 #### Bugfixes ⛑️
 
