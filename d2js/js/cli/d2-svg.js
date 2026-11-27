@@ -13,7 +13,7 @@ import { dirname, extname, join, parse, sep } from "node:path";
 import { text } from "node:stream/consumers";
 import { pipeline } from "node:stream/promises";
 
-const help = `Usage: d2 [input.d2|-] [output.svg|-]
+const help = `Usage: d2-svg [input.d2|-] [output.svg|-]
 
 Render the root board of one D2 source file to SVG with WebAssembly.
 File input defaults to a sibling .svg file. Piped input defaults to stdout.
@@ -93,7 +93,7 @@ async function main(args) {
   }
   if (args.length > 2 || args.some((arg) => arg !== "-" && arg.startsWith("-"))) {
     throw new Error(
-      "Expected an input file and optional SVG output. Run d2 --help for usage."
+      "Expected an input file and optional SVG output. Run d2-svg --help for usage."
     );
   }
   const [input = "-", requestedOutput] = args;

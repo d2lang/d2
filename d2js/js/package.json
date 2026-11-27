@@ -16,7 +16,7 @@
   },
   "type": "module",
   "bin": {
-    "d2": "./cli/d2.js"
+    "d2-svg": "./cli/d2-svg.js"
   },
   "main": "./dist/node-cjs/index.js",
   "module": "./dist/node-esm/index.js",
@@ -38,7 +38,7 @@
     "./worker": "./dist/browser/worker.js"
   },
   "files": [
-    "cli/d2.js",
+    "cli/d2-svg.js",
     "dist",
     "index.d.ts",
     "LICENSE.txt",
