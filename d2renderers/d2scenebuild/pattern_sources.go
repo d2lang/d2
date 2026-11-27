@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	paperPatternSourceSHA256    = "98b3c110441c6c02cb685c0a7303e7a36c1faee7fa1f65f6424b48ec51123527"
+	paperPatternSourceSHA256    = "6d2131fa5828dedfc0648b93ee3dd4f2492f706dc8ec81a2f7106f063f99487c"
 	paperPatternPathCount       = 1042
 	paperPatternCommandCount    = 10926
 	paperPatternMaskPathData    = "M75.0871 -0.0878906H-0.0878906V75.0871H75.0871V-0.0878906Z"

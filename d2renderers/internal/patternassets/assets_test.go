@@ -13,10 +13,10 @@ func TestCanonicalAssetHashes(t *testing.T) {
 		bytes  int
 		digest string
 	}{
-		{name: "paper SVG", data: []byte(PaperSVG()), bytes: 435438, digest: "98b3c110441c6c02cb685c0a7303e7a36c1faee7fa1f65f6424b48ec51123527"},
-		{name: "paper Brotli", data: paperBrotli, bytes: 133164, digest: "fe047f4104975b17b033988e49981c42a5aca928da39d149e35f4e31c8fb248a"},
+		{name: "paper SVG", data: []byte(PaperSVG()), bytes: 419795, digest: "6d2131fa5828dedfc0648b93ee3dd4f2492f706dc8ec81a2f7106f063f99487c"},
+		{name: "paper Brotli", data: paperBrotli, bytes: 132925, digest: "12f137f63add58ee23c90db58a1a592df5e1e114d487d013270959be8e26e19f"},
 		{name: "grain PNG", data: GrainPNG(), bytes: 20845, digest: "7aec37844fa033cbdb586efaa1955dc6f43d56707c0b1bf91e8b5e32386d8d69"},
-		{name: "streak path", data: []byte(StreakPathData()), bytes: 9224, digest: "7b4001e7d043ac395abd015ce0bc2bbe018725a634f6e352b1eb2ff60cc99dea"},
+		{name: "streak path", data: []byte(StreakPathData()), bytes: 8878, digest: "76e01a8aa5a6228fa08bed2c4b607cabc6c936e79777994df662c5fb8e9f4ffc"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
