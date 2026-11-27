@@ -335,3 +335,154 @@ func TestMarkdownLinkSubstitutionsPreserveURLAndTitle(t *testing.T) {
 		t.Fatal("escaped bytes must count toward the expansion limit")
 	}
 }
+
+func TestMarkdownReferenceLabelSubstitutions(t *testing.T) {
+	t.Parallel()
+	const input = "[${name}], [${name}][], [guide][${name}], ![alt][${name}]\n\n[${name}]: /guide"
+	for _, name := range []string{"Runbook", "Build [v2]", `A\B`} {
+		out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, map[string]string{"name": name}, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rendered, err := RenderMarkdown(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(rendered, `href="/guide"`) != 3 || !strings.Contains(rendered, `src="/guide"`) {
+			t.Errorf("substituting %q produced %s from %q", name, rendered, out)
+		}
+		if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, map[string]string{"name": name}, used-1); err == nil {
+			t.Fatal("reference labels must respect the expansion limit")
+		}
+	}
+}
+
+func TestMarkdownEscapedSubstitution(t *testing.T) {
+	t.Parallel()
+	const input = "\\${env} \\\\${env} \\\\\\${env} ${env} `\\${env}`"
+	const want = `<p>${env} \staging \${env} staging <code>\${env}</code></p>`
+	out, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, map[string]string{"env": "staging"}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderMarkdown(out)
+	if err != nil || strings.TrimSpace(rendered) != want {
+		t.Errorf("rendered %q, %v; want %q", rendered, err, want)
+	}
+}
+
+func TestMarkdownPunctuationInVariableKeys(t *testing.T) {
+	t.Parallel()
+	const input = "**${'build[prod]'}** ${__version__} `[${__version__}]`\n\n```\n${'build[prod]'}\n```"
+	const want = "**ready** v2.4 `[${__version__}]`\n\n```\n${'build[prod]'}\n```"
+	keys := map[string]string{"'build[prod]'": "ready", "__version__": "v2.4"}
+	out, used, err := ResolveSubstitutionsMarkdownBounded(context.Background(), input, nil, 11, func(key string) (string, bool) { val, ok := keys[key]; return val, ok })
+	if err != nil || out != want || used != 11 {
+		t.Errorf("substitution = %q, %d, %v; want %q, 11", out, used, err, want)
+	}
+}
+
+func TestMarkdownReferenceKeysPreserveInlineCode(t *testing.T) {
+	input := "[${env} `${env}`] and [explicit][${env} `${env}`]\n\n[${env} `${env}`]: /guide"
+	out := ReplaceSubstitutionsMarkdown(input, map[string]string{"env": "stage"})
+	rendered, err := RenderMarkdown(out)
+	if err != nil || strings.Count(rendered, `href="/guide"`) != 2 || !strings.Contains(rendered, "stage <code>${env}</code>") {
+		t.Errorf("rendering %q gave %q, %v", out, rendered, err)
+	}
+}
+
+func TestMarkdownLiteralPlaceholderAndReferenceLookup(t *testing.T) {
+	for _, tc := range []struct{ input, value, want string }{
+		{`\${__name__}`, "replaced", `<p>${__name__}</p>`},
+		{"[${name}]\n\n[Run \\[v2\\]]: /go", "Run [v2]", `<p><a href="/go">Run [v2]</a></p>`},
+		{"${name}\n\n[Run \\[v2\\]]: /go", "[go](/other)", `<p><a href="/other">go</a></p>`},
+	} {
+		out := ReplaceSubstitutionsMarkdown(tc.input, map[string]string{"name": tc.value, "__name__": tc.value})
+		rendered, err := RenderMarkdown(out)
+		if err != nil || strings.TrimSpace(rendered) != tc.want {
+			t.Errorf("%q rendered as %q from %q, want %q, err %v", tc.input, rendered, out, tc.want, err)
+		}
+	}
+	out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), `\${__name__}`, nil, 200)
+	if err != nil || used == 0 {
+		t.Fatalf("escaped literal returned %q, %d, %v", out, used, err)
+	}
+	if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), `\${__name__}`, nil, used-1); err == nil {
+		t.Fatal("escaped literal must respect work limit")
+	}
+}
+
+func TestMarkdownNestedReferenceImage(t *testing.T) {
+	input := "[![${name}][]][${page}]\n\n[${name}]: /image\n[${page}]: /guide"
+	out := ReplaceSubstitutionsMarkdown(input, map[string]string{"name": "Run [v2]", "page": "Guide [v2]"})
+	rendered, err := RenderMarkdown(out)
+	if err != nil || !strings.Contains(rendered, `<a href="/guide"><img src="/image" alt="Run [v2]"`) {
+		t.Errorf("nested reference image rendered %q from %q, %v", rendered, out, err)
+	}
+}
+
+func TestMarkdownReferenceIdentity(t *testing.T) {
+	const defs = "[${first}]: /api \"API guide\"\n[${second}]: /ops \"Ops guide\"\n[runbook]: /static"
+	vars := map[string]string{"first": "Runbook", "second": "RUNBOOK", "suffix": "!"}
+	for _, tc := range []struct{ name, use, want string }{
+		{"shortcut", `[${first}]${suffix} [${second}] [runbook]`, `<a href="/api" title="API guide">Runbook</a>! <a href="/ops" title="Ops guide">RUNBOOK</a> <a href="/static">runbook</a>`},
+		{"collapsed", `[${first}][] [${second}][ ] [runbook][]`, `<a href="/api" title="API guide">Runbook</a> <a href="/ops" title="Ops guide">RUNBOOK</a> <a href="/static">runbook</a>`},
+		{"full", `[API][${first}] [Ops][${second}] [static][runbook]`, `<a href="/api" title="API guide">API</a> <a href="/ops" title="Ops guide">Ops</a> <a href="/static">static</a>`},
+		{"images", `![${first}][] ![alt][${second}]`, `<img src="/api" alt="Runbook" title="API guide" /> <img src="/ops" alt="alt" title="Ops guide" />`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, input := range []string{tc.use + "\n\n" + defs, defs + "\n\n" + tc.use} {
+				out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, 1024)
+				rendered, renderErr := RenderMarkdown(out)
+				if err != nil || renderErr != nil || !strings.Contains(rendered, tc.want) {
+					t.Fatalf("rendering %q gave %q, errors: %v, %v", out, rendered, err, renderErr)
+				}
+				if used > 0 {
+					if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, used-1); err == nil {
+						t.Fatal("a reference must fit within the expansion budget")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMultilineMarkdownReferenceIdentity(t *testing.T) {
+	for _, tail := range []string{"", "[]", "[\n> ]"} {
+		input := "> [Launch\n> ${stage}]" + tail + "\n\n> [Launch\n> ${stage}]: /guide"
+		out := ReplaceSubstitutionsMarkdown(input, map[string]string{"stage": "prod"})
+		rendered, err := RenderMarkdown(out)
+		if err != nil || !strings.Contains(rendered, `href="/guide"`) || !strings.Contains(rendered, "prod</a>") {
+			t.Fatalf("reference in a block quote: %q rendered as %q, %v", out, rendered, err)
+		}
+	}
+}
+
+func TestMarkdownReferenceFallback(t *testing.T) {
+	for _, tc := range []struct{ name, use, defs, want string }{
+		{"dynamic-use", "[API][${first}]", "[Runbook]: /guide", `<a href="/guide">API</a>`},
+		{"dynamic-definition", "[API][Runbook]", "[${first}]: /guide", `<a href="/guide">API</a>`},
+		{"distinct-variables", "[API][${first}]", "[${second}]: /guide", `<a href="/guide">API</a>`},
+		{"bracketed-values", "[API][${build}]", "[${sameBuild}]: /guide", `<a href="/guide">API</a>`},
+		{"literal-priority", "[API][Runbook]", "[${first}]: /first\n[runbook]: /static", `<a href="/static">API</a>`},
+		{"ambiguous", "[API][Runbook]", "[${first}]: /first\n[${second}]: /second", `<p>[API][Runbook]</p>`},
+		{"ambiguous-shortcut", "[Runbook]", "[${first}]: /first\n[${second}]: /second", `<p>[Runbook]</p>`},
+		{"multiline-block-quote", "> [API][Launch runbook]", "> [Launch\n> ${first}]: /guide \"full title\"", `<a href="/guide" title="full title">API</a>`},
+		{"inline-code", "[API][Runbook `${second}`]", "[${first} `${second}`]: /guide", `<a href="/guide">API</a>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.use + "\n\n" + tc.defs
+			vars := map[string]string{"first": "Runbook", "second": "RUNBOOK", "build": "Build [v2]", "sameBuild": "Build [v2]"}
+			out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, 1024)
+			rendered, renderErr := RenderMarkdown(out)
+			if err != nil || renderErr != nil || !strings.Contains(rendered, tc.want) {
+				t.Fatalf("%q became %q and rendered %q, errors %v, %v", input, out, rendered, err, renderErr)
+			}
+			if used > 0 {
+				if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, used-1); err == nil {
+					t.Fatal("fallback reference must respect the expansion limit")
+				}
+			}
+		})
+	}
+}

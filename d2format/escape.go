@@ -90,6 +90,44 @@ func escapeUnquotedValue(s string, inKey, wholeToken bool) string {
 	return b.String()
 }
 
+// The parser folds unquoted line continuations. Two pieces of literal text
+// can then spell syntax that was absent on either physical line.
+func escapeFoldedToken(raw string, inKey, first bool) string {
+	if raw == "" {
+		return raw
+	}
+	if first {
+		openers := "'\"|[@"
+		if inKey {
+			openers = "'\"|(&"
+		}
+		if strings.IndexByte(openers, raw[0]) >= 0 || strings.HasPrefix(raw, "...") || (inKey && strings.HasPrefix(raw, "!&")) {
+			raw = `\` + raw
+		}
+	}
+	if !inKey || !strings.ContainsAny(raw, "-<") {
+		return raw
+	}
+	var b strings.Builder
+	start := 0
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\\' {
+			i++
+			continue
+		}
+		if raw[i] == '<' || (raw[i] == '-' && i+1 < len(raw) && strings.IndexByte("->*", raw[i+1]) >= 0) {
+			b.WriteString(raw[start:i])
+			b.WriteByte('\\')
+			start = i
+		}
+	}
+	if b.Len() == 0 {
+		return raw
+	}
+	b.WriteString(raw[start:])
+	return b.String()
+}
+
 // A parsed bare string can be moved into a position with different delimiters.
 // Preserve its source spelling, escaping only characters that gain meaning.
 func escapeRawInContext(raw string, pos tokenPosition, valueStart, last bool) string {

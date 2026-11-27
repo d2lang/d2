@@ -1352,12 +1352,17 @@ func (m *Map) ensureFieldMode(kp *d2ast.KeyPath, refctx *RefContext, create bool
 		}
 	}
 	if len(fa) > 0 && c != nil && len(c.globRefContextStack) == 0 {
-		if len(created) > 0 {
-			c.enqueueLazyPostTargets(fa...)
-			c.applyLazyGlobs(fa)
-		} else {
-			c.applyLazyGlobs(nil)
+		// A new board can have supplied the requested field by inheritance.
+		// Its key updates an existing shape just as it would inside a map.
+		newTarget := len(created) > 0
+		if newTarget && len(fa) == 1 {
+			last := created[len(created)-1]
+			newTarget = fa[0] == last || NodeBoardKind(last) == ""
 		}
+		if newTarget {
+			c.enqueueLazyPostTargets(fa...)
+		}
+		c.applyFieldGlobs(m, fa, newTarget)
 	}
 	return fa, err
 }
@@ -1433,9 +1438,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 						continue
 					}
 					if f.Map() == nil {
-						f.Composite = &Map{
-							parent: f,
-						}
+						c.openFieldMap(f)
 					}
 					err := f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
 					if err != nil {
@@ -1548,6 +1551,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		if _, ok := f.Composite.(*Array); ok {
 			return d2parser.Errorf(kp.Path[i].Unbox(), "cannot index into array")
 		}
+		c.applyBoardEntryGlobs(f, false)
 		if !c.ensurePathMap(f, gctx) {
 			return nil
 		}
@@ -1624,12 +1628,27 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		faAppend(f)
 		return nil
 	}
+	c.applyBoardEntryGlobs(f, true)
 	if f.Composite == nil {
-		f.Composite = &Map{
-			parent: f,
-		}
+		c.openFieldMap(f)
 	}
 	return f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
+}
+
+// A dotted declaration enters its board group and its board in sequence.
+// Give each prefix the same opportunity to apply rules as opening its map.
+func (c *compiler) applyBoardEntryGlobs(f *Field, created bool) {
+	if c == nil || len(c.globContextStack) == 0 || len(c.globContexts()) == 0 || len(c.globRefContextStack) != 0 {
+		return
+	}
+	if _, group := d2ast.BoardKeywords[d2ast.Keyword(f.Name)]; !group && !isBoardGroup(ParentMap(f)) {
+		return
+	}
+	if created {
+		c.applyLazyGlobs([]*Field{f})
+	} else {
+		c.applyLazyGlobs(nil)
+	}
 }
 
 // ensurePathMap gives existing field f, which a key path continues into, a
@@ -1638,27 +1657,18 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 // first. It reports false if the path stops at f: f is a step that awaitsBase,
 // or the compilation stopped.
 func (c *compiler) ensurePathMap(f *Field, gctx *globContext) bool {
-	if c == nil || gctx == nil {
-		if f.Map() == nil {
-			f.Composite = &Map{
-				parent: f,
-			}
-		}
-		return true
-	}
 	if f.Map() == nil {
-		if c.awaitsBase(f) {
+		if gctx != nil && c.awaitsBase(f) {
 			return false
 		}
-		f.Composite = &Map{
-			parent: f,
-		}
-		c.overlayBase(f)
-		if c.stopped() {
+		c.openFieldMap(f)
+		if c != nil && c.stopped() {
 			return false
 		}
 	}
-	c.enterStep(f)
+	if gctx != nil {
+		c.enterStep(f)
+	}
 	return true
 }
 
@@ -1895,9 +1905,7 @@ func (m *Map) getEdges(eid *EdgeID, refctx *RefContext, gctx *globContext, c *co
 				return d2parser.Errorf(refctx.Edge.Src, "cannot index into array")
 			}
 			if f.Map() == nil {
-				f.Composite = &Map{
-					parent: f,
-				}
+				c.openFieldMap(f)
 			}
 			err = f.Map().getEdges(eid, refctx, gctx, c, indexed, ea)
 			if err != nil {
@@ -2021,9 +2029,7 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 				return d2parser.Errorf(refctx.Edge.Src, "cannot index into array")
 			}
 			if f.Map() == nil {
-				f.Composite = &Map{
-					parent: f,
-				}
+				c.openFieldMap(f)
 			}
 			err = f.Map().createEdge(eid, refctx, gctx, c, indexed, ea)
 			if c != nil && len(f.References) == 0 {
@@ -2146,9 +2152,7 @@ func (m *Map) createEdge2(eid *EdgeID, refctx *RefContext, gctx *globContext, c 
 				return nil, d2parser.Errorf(refctx.Edge.Src, "cannot index into array")
 			}
 			if f.Map() == nil {
-				f.Composite = &Map{
-					parent: f,
-				}
+				c.openFieldMap(f)
 			}
 			edges2, err := f.Map().createEdge2(eid, refctx, gctx, c, indexed, src, dst)
 			if err != nil {
@@ -2228,14 +2232,33 @@ func (f *Field) AST() d2ast.Node {
 	return k
 }
 
+// A flattened board can be compiled again by the editor. Quoted property names
+// and the parent marker must still refer to shapes in its edge endpoints.
+func edgeEndpointAST(path []d2ast.String) *d2ast.KeyPath {
+	kp := &d2ast.KeyPath{}
+	for _, part := range path {
+		name := part.ScalarString()
+		if !part.IsUnquoted() {
+			_, keyword := d2ast.ReservedKeywords[strings.ToLower(name)]
+			if keyword || name == "_" {
+				kp.Path = append(kp.Path, d2ast.MakeValueBox(part).StringBox())
+				continue
+			}
+		}
+		part = d2ast.RawString(name, true)
+		kp.Path = append(kp.Path, d2ast.MakeValueBox(part).StringBox())
+	}
+	return kp
+}
+
 func (e *Edge) AST() d2ast.Node {
 	astEdge := &d2ast.Edge{}
 
-	astEdge.Src = d2ast.MakeKeyPathString(e.ID.SrcPath)
+	astEdge.Src = edgeEndpointAST(e.ID.SrcPath)
 	if e.ID.SrcArrow {
 		astEdge.SrcArrow = "<"
 	}
-	astEdge.Dst = d2ast.MakeKeyPathString(e.ID.DstPath)
+	astEdge.Dst = edgeEndpointAST(e.ID.DstPath)
 	if e.ID.DstArrow {
 		astEdge.DstArrow = ">"
 	}

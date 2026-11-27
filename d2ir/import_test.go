@@ -399,3 +399,66 @@ func TestImportVirtualDirectoryWithBackslash(t *testing.T) {
 	}
 	assertQuery(t, m, 0, 0, "meow", "x")
 }
+
+func TestSelectedImportScopesFilterSubstitutionErrors(t *testing.T) {
+	opts := d2ir.CompileOptions{FS: fstest.MapFS{
+		"lib.d2": {Data: []byte(`common.node: Ready
+deployment: {node: ${env}; *: {&label: production; style.fill: red}}`)},
+		"nested.d2": {Data: []byte(`plain: @lib.common; scoped: @lib.deployment`)},
+	}}
+	root, err := compileTween(t, `a: @lib.common
+b: @nested.plain
+staging: {vars.env: staging; app: @lib.deployment}
+prod: {vars.env: production; app: @lib.deployment}`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if got := tweenText(t, root, id, "node"); got != "Ready" {
+			t.Errorf("%s.node = %q", id, got)
+		}
+	}
+	if got := tweenText(t, root, "prod", "app", "node", "style", "fill"); got != "red" {
+		t.Errorf("production fill = %q", got)
+	}
+	if f := tweenField(root, "staging", "app", "node", "style", "fill"); f != nil {
+		t.Errorf("staging fill = %v", f)
+	}
+	for _, imp := range []string{"lib", "lib.deployment", "nested.scoped"} {
+		if _, err := compileTween(t, "app: @"+imp, opts); err == nil {
+			t.Errorf("missing env compiled for @%s", imp)
+		}
+	}
+}
+
+func TestFilterErrorsAndScopeAcrossReexports(t *testing.T) {
+	const library = `good.node: working
+bad: {one: ready; two: ready; *: {&label: ${env}; style.fill: green}}`
+	for _, wrapper := range []string{"both: @leaf", "both: {...@leaf}"} {
+		opts := d2ir.CompileOptions{FS: fstest.MapFS{
+			"leaf.d2":   {Data: []byte(library)},
+			"middle.d2": {Data: []byte(wrapper)},
+			"top.d2":    {Data: []byte("...@middle")},
+		}}
+		root, err := compileTween(t, "out: @top.both.good", opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tweenText(t, root, "out", "node"); got != "working" {
+			t.Errorf("selected label = %q", got)
+		}
+		root, err = compileTween(t, "out: @top.both.bad; out.vars.env: ready", opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tweenText(t, root, "out", "two", "style", "fill"); got != "green" {
+			t.Errorf("selected fill = %q", got)
+		}
+		for _, path := range []string{"both", "both.bad", "both.bad.one", "both.bad.two"} {
+			_, err := compileTween(t, "out: @top."+path, opts)
+			if err == nil || strings.Count(err.Error(), `could not resolve variable "env"`) != 1 {
+				t.Errorf("@top.%s: expected one missing env error, got %v", path, err)
+			}
+		}
+	}
+}

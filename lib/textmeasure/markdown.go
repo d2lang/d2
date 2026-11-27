@@ -16,10 +16,11 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 )
 
-var markdownParser = parser.New(parser.WithExtensions(
-	extension.NewStrikethroughParser(),
-	extension.NewTableParser(),
-))
+func newMarkdownParser(options ...parser.Option) parser.Parser {
+	return parser.New(append(options, parser.WithExtensions(extension.NewStrikethroughParser(), extension.NewTableParser()))...)
+}
+
+var markdownParser = newMarkdownParser()
 var markdownRenderer = goldmarkHtml.New(
 	goldmarkHtml.WithUnsafe(),
 	goldmarkHtml.WithXHTML(),

@@ -45,7 +45,7 @@ note: @lib.note`, opts)
 	}
 }
 
-func TestPartiallyResolvedMarkdownUsesSelectedImportScope(t *testing.T) {
+func TestPartiallyResolvedSelectedImportKeepsLocalBindings(t *testing.T) {
 	opts := d2ir.CompileOptions{FS: fstest.MapFS{
 		"lib.d2": {Data: []byte(`vars: {env: original; formula: '${zone}'}
 plain: "${env} ${zone}"
@@ -62,11 +62,33 @@ onlyInLibrary: @lib.onlyInLibrary`, opts)
 		t.Fatal(err)
 	}
 	for label, want := range map[string]string{
-		"plain": "importing outer", "markdown": "importing outer",
+		"plain": "original outer", "markdown": "original outer",
 		"complete": "original ${zone}", "onlyInLibrary": "${zone} outer",
 	} {
 		if got := tweenText(t, root, label); got != want {
 			t.Errorf("%s = %q, want %q", label, got, want)
+		}
+	}
+}
+
+func TestSelectedImportBindsLaterLocalReferences(t *testing.T) {
+	opts := d2ir.CompileOptions{FS: fstest.MapFS{
+		"lib.d2": {Data: []byte(`vars.region: '${literal}'
+plain: ${tier}/${region}
+quoted: "${tier}/${region}"
+markdown: |md ${tier}/${region} |`)},
+	}}
+	root, err := compileTween(t, `vars: {region: caller; literal: caller}
+a: {vars.tier: first; p: @lib.plain; q: @lib.quoted; m: @lib.markdown}
+b: {vars.tier: second; p: @lib.plain; q: @lib.quoted; m: @lib.markdown}`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"a": "first/${literal}", "b": "second/${literal}"} {
+		for _, key := range []string{"p", "q", "m"} {
+			if got := tweenText(t, root, id, key); got != want {
+				t.Errorf("%s.%s = %q, want %q", id, key, got, want)
+			}
 		}
 	}
 }

@@ -13,6 +13,8 @@ import (
 type tweenBinding struct {
 	source        d2ast.Scalar
 	markdownOuter map[string]string
+	// Templates expand in their declaration scope even when copied into a shape with its own vars.
+	templateVars *Map
 }
 
 type tweenValue interface {
@@ -79,18 +81,22 @@ func (c *compiler) saveTweenBinding(node Node, varsStack []*Map) (markdownOuterS
 	}
 	// Substitution replaces boxes or coalesces the string. Its original
 	// text and substitution paths remain immutable and can be shared.
+	primary.binding = &tweenBinding{}
+	if owner := ParentField(node); owner != nil && IsVar(owner.Parent()) {
+		primary.binding.templateVars = varsStack[0]
+	}
 	switch value := primary.Value.(type) {
 	case *d2ast.UnquotedString:
 		binding := *value
 		binding.Value = boxes
-		primary.binding = &tweenBinding{source: &binding}
+		primary.binding.source = &binding
 	case *d2ast.DoubleQuotedString:
 		binding := *value
 		binding.Value = boxes
-		primary.binding = &tweenBinding{source: &binding}
+		primary.binding.source = &binding
 	case *d2ast.BlockString:
 		binding := *value
-		primary.binding = &tweenBinding{source: &binding}
+		primary.binding.source = &binding
 		if len(c.importStack) > 1 && outer < len(varsStack) {
 			return outer
 		}
@@ -208,13 +214,12 @@ func (c *compiler) variableChanges(changes []tweenChange, previous []*Map, vars 
 		path := append(variablePath, d2ast.MakeValueBox(field.Name).StringBox())
 		if field.Map() != nil {
 			changes = c.variableChanges(changes, previous, field.Map(), append(framePath, propertyPathPart{field: field.Name}), path)
-			continue
 		}
-		if field.Primary() == nil || field.Composite != nil {
+		if field.Primary() == nil {
 			continue
 		}
 		start, _ := c.resolveVariable(previous, vars, &d2ast.Substitution{Path: path})
-		if start == nil || start.suspended || start.Primary() == nil || start.Composite != nil {
+		if start == nil || start.suspended || start.Primary() == nil {
 			continue
 		}
 		value, ok := tweenScalarChange(start.Primary().Value.ScalarString(), field.Primary().Value.ScalarString())
@@ -324,6 +329,46 @@ func (c *compiler) sampleStep(board *Map, changes []tweenChange, duration int) {
 	board.TweenDurationMS = duration
 }
 
+// Locate a template's declaration in the sampled step. The template may be
+// inside a container or an edge with variables of its own.
+func sampledTemplateVars(template, frame, declaration *Map, outer []*Map) []*Map {
+	var path []propertyPathPart
+	m := declaration
+	for ; m != nil && NodeBoardKind(m) != BoardStep; m = ParentMap(m) {
+		switch owner := m.Parent().(type) {
+		case *Field:
+			if owner.Name == nil {
+				return nil
+			}
+			path = append(path, propertyPathPart{field: owner.Name})
+		case *Edge:
+			path = append(path, propertyPathPart{edge: slices.Index(ParentMap(owner).Edges, owner)})
+		default:
+			return nil
+		}
+	}
+	// An imported template has already resolved in its module. Inheriting
+	// that finished board into another step preserves the resolved value.
+	if m == nil || m.Parent() != template.Parent() {
+		return nil
+	}
+	m = frame
+	for i := len(path) - 1; i >= 0; i-- {
+		part := path[i]
+		if part.field != nil {
+			m = m.lookupField(part.field).Map()
+		} else if part.edge >= 0 && part.edge < len(m.Edges) {
+			m = m.Edges[part.edge].Map()
+		} else {
+			return nil
+		}
+		if m == nil {
+			return nil
+		}
+	}
+	return append(tweenVarScopes(ParentMap(m)), outer...)
+}
+
 // Each sampled board obeys the same expansion limit as an authored board.
 // An additional shared budget limits the sum across the entire animation to
 // one full-length tween's worth of that work, even for many short tweens.
@@ -346,8 +391,23 @@ func (c *compiler) sampleTween(template *Map, changes []tweenChange, outerVars [
 	}
 	frame := template.Copy(nil).(*Map)
 	frame.variableExpansion = c.variableExpansion
+	scopesByDeclaration := make(map[*Map][]*Map)
+	c.sampledTemplateScopes = make(map[*Scalar][]*Map)
+	defer func() { c.sampledTemplateScopes = nil }()
 	walkComposite(frame, func(n Node) bool {
 		if p := n.Primary(); p != nil && p.binding != nil {
+			if decl := p.binding.templateVars; decl != nil {
+				scopes, found := scopesByDeclaration[decl]
+				if !found {
+					scopes = sampledTemplateVars(template, frame, decl, outerVars)
+					scopesByDeclaration[decl] = scopes
+				}
+				if scopes == nil {
+					// A selected import can leave its declaration outside the frame.
+					return false
+				}
+				c.sampledTemplateScopes[p] = scopes
+			}
 			if !c.reserveVariableExpansion(template.LastRef().AST(), variableExpansionScalarValueUnits(p.binding.source)) {
 				return true
 			}
