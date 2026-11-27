@@ -1087,7 +1087,7 @@ install_post_brew() {
 install_post_warn() {
   if command -v d2 >/dev/null; then
     INSTALLED_VERSION=$(d2 --version)
-    if [ "$INSTALLED_VERSION" != "$VERSION" ]; then
+    if [ "${INSTALLED_VERSION#v}" != "${VERSION#v}" ]; then
       warn "newly installed d2 $VERSION is shadowed by d2 $INSTALLED_VERSION in \$PATH"
     fi
   fi
