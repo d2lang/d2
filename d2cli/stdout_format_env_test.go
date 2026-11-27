@@ -68,3 +68,17 @@ func TestRunStdoutFormatEnvironment(t *testing.T) {
 		})
 	}
 }
+
+func TestStdoutFormatEnvironmentDoesNotChangeNamedFiles(t *testing.T) {
+	for _, value := range []string{"pdf", "invalid"} {
+		dir := t.TempDir()
+		_, err := imageCLIWithEnv(t, dir, "a", []string{"D2_STDOUT_FORMAT=" + value}, "out.svg")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "out.svg"))
+		if err != nil || !bytes.Contains(data, []byte("<svg")) {
+			t.Fatalf("named SVG changed with env %s: %v", value, err)
+		}
+	}
+}

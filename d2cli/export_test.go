@@ -160,3 +160,53 @@ func imageCLIWithEnv(t *testing.T, dir, source string, env []string, args ...str
 	err := state.Wait(ctx)
 	return stdout.Bytes(), err
 }
+
+func TestRefuseToOverwriteSource(t *testing.T) {
+	for _, alias := range []string{"same path", "symlink", "hard link"} {
+		t.Run(alias, func(t *testing.T) {
+			dir := t.TempDir()
+			input := filepath.Join(dir, "source.d2")
+			output := filepath.Join(dir, "result.svg")
+			const source = "a -> b\n"
+			if err := os.WriteFile(input, []byte(source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			switch alias {
+			case "same path":
+				output = input
+			case "symlink":
+				if err := os.Symlink(input, output); err != nil {
+					t.Skip(err)
+				}
+			case "hard link":
+				if err := os.Link(input, output); err != nil {
+					t.Skip(err)
+				}
+			}
+			err := runBoardOutputCLIResult(t, dir, input, output)
+			if err == nil || !strings.Contains(err.Error(), "same file") {
+				t.Fatalf("got %v", err)
+			}
+			got, err := os.ReadFile(input)
+			if err != nil || string(got) != source {
+				t.Fatalf("source = %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestTextExportHonorsSourceLayout(t *testing.T) {
+	const source = "vars.d2-config.layout-engine: tala\na: {top: 60; left: 30}\na -> b"
+	got, err := imageCLI(t, t.TempDir(), source, "--stdout-format=txt", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := imageCLI(t, t.TempDir(), source, "--layout=tala", "--stdout-format=txt", "-")
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("source TALA differs from explicit TALA: %v", err)
+	}
+	_, err = imageCLI(t, t.TempDir(), source, "--layout=DAGRE", "--stdout-format=txt", "-")
+	if err == nil || !strings.Contains(err.Error(), `layout engine "elk"`) {
+		t.Fatalf("explicit Dagre should select ELK for text: %v", err)
+	}
+}

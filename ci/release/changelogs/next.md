@@ -105,7 +105,9 @@
 
 - TALA keeps hierarchy nodes and containers separated, preserves directed dependencies when orienting cycles and undirected links, and respects nested directions, container dimensions, edge labels, and proximity hints.
 
-- Windows: resolve nested imports relative to the importing diagram, including on UNC shares. [#2642](https://github.com/d2lang/d2/issues/2642)
+- CLI: keep all exported boards when navigating the watch preview. Links to boards with dotted or reserved names now open their generated files.
+- CLI: refuse to overwrite the input file, honor source-selected TALA in text exports, and use `D2_STDOUT_FORMAT` for standard output.
+- Windows: resolve nested imports relative to the importing diagram in regular and watch-mode exports, including on UNC shares. [#2642](https://github.com/d2lang/d2/issues/2642)
 
 - PNG, GIF, PDF and PPTX exports now render SVG icons that use default gradients, masks, Gaussian blur and common editor metadata. [#2937](https://github.com/d2lang/d2/issues/2937)
 

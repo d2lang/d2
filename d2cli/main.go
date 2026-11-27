@@ -23,6 +23,7 @@ import (
 	"github.com/d2lang/util-go/xmain"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2lib"
@@ -308,6 +309,11 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return xmain.UsageErrorf("D2 does not support ppt exports, did you mean \"pptx\"?")
 	}
 
+	// An explicit --stdout-format has historically also selected the format of
+	// named files. A shell-wide default only applies when writing to stdout.
+	if outputPath != "-" && !ms.Opts.Flags.Changed("stdout-format") {
+		stdoutFormatFlag = nil
+	}
 	outputFormat, err := getOutputFormat(stdoutFormatFlag, outputPath)
 	if err != nil {
 		return xmain.UsageErrorf("%v", err)
@@ -320,6 +326,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	}
 	if outputPath != "-" {
 		outputPath = ms.AbsPath(outputPath)
+		if inputPath != "-" && sameInputAndOutput(inputPath, outputPath) {
+			return xmain.UsageErrorf("input and output refer to the same file: %s", ms.HumanPath(inputPath))
+		}
 	}
 
 	themeFlag, err := resolveThemeFlag(ms, "theme", *themeArg)
@@ -446,7 +455,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx, cancel := timelib.WithTimeout(ctx, time.Minute*2)
 	defer cancel()
 
-	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, false)
+	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, nil)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
@@ -454,6 +463,18 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return fmt.Errorf("failed to compile %s: %w", ms.HumanPath(inputPath), err)
 	}
 	return nil
+}
+
+func sameInputAndOutput(input, output string) bool {
+	if input == output {
+		return true
+	}
+	source, err := os.Stat(input)
+	if err != nil {
+		return false
+	}
+	destination, err := os.Stat(output)
+	return err == nil && os.SameFile(source, destination)
 }
 
 func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
@@ -469,20 +490,8 @@ func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
 	return nil
 }
 
-func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, wantPreview bool) (_ []byte, written bool, _ error) {
-	// Use ELK layout for ascii outputs when layout is dagre or unspecified
-	if ext == TXT {
-		if layout == nil || *layout == "dagre" {
-			if ms.Log.Debug != nil {
-				prevLayout := "unspecified"
-				if layout != nil {
-					prevLayout = *layout
-				}
-				ms.Log.Debug.Printf("switching layout engine to ELK for ASCII format (was %s)", prevLayout)
-			}
-			layout = go2.Pointer("elk")
-		}
-	}
+func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, watchURLPath *string) (_ []byte, written bool, _ error) {
+	wantPreview := watchURLPath != nil
 
 	start := time.Now()
 	input, err := ms.ReadPath(inputPath)
@@ -495,14 +504,24 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		return nil, false, err
 	}
 
+	layoutResolver := LayoutResolver(ctx, ms)
+	routerResolver := RouterResolver(ctx, ms)
+	// Text output substitutes ELK for Dagre after the compiler resolves CLI,
+	// environment and source configuration (including imported configuration).
+	textLayout := func(engine string) string {
+		if ext == TXT && strings.EqualFold(engine, "dagre") {
+			return "elk"
+		}
+		return engine
+	}
 	opts := &d2lib.CompileOptions{
 		Ruler:           ruler,
 		FontFamily:      fontFamily,
 		MonoFontFamily:  monoFontFamily,
 		InputPath:       inputPath,
-		LayoutResolver:  LayoutResolver(ctx, ms),
+		LayoutResolver:  func(engine string) (d2graph.LayoutGraph, error) { return layoutResolver(textLayout(engine)) },
 		Layout:          layout,
-		RouterResolver:  RouterResolver(ctx, ms),
+		RouterResolver:  func(engine string) (d2graph.RouteEdges, error) { return routerResolver(textLayout(engine)) },
 		FS:              fs,
 		LayoutReuse:     true,
 		AnimateDuration: animateDurationFlag,
@@ -569,7 +588,8 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	renderOpts := *renderOptions
 	cancel()
 
-	if ext == GIF && strings.EqualFold(*opts.Layout, "tala") {
+	engine := textLayout(*opts.Layout)
+	if ext == GIF && strings.EqualFold(engine, "tala") {
 		markPinnedGIFBoards(rootDiagram, g)
 	}
 	diagram := rootDiagram.GetBoard(boardPath)
@@ -590,11 +610,11 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		renderOpts.MasterID = masterID
 	}
 
-	if !isBuiltinLayout(*opts.Layout) {
-		return nil, false, layoutNotFound(*opts.Layout)
+	if !isBuiltinLayout(engine) {
+		return nil, false, layoutNotFound(engine)
 	}
-	ms.Log.Debug.Printf("using layout engine %s (built-in)", strings.ToLower(*opts.Layout))
-	if err := d2layoutfeatures.Check(*opts.Layout, g); err != nil {
+	ms.Log.Debug.Printf("using layout engine %s (built-in)", strings.ToLower(engine))
+	if err := d2layoutfeatures.Check(engine, g); err != nil {
 		return nil, false, err
 	}
 
@@ -752,6 +772,10 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		}
 
 		var boards [][]byte
+		var selection *boardOutputPreview
+		if watchURLPath != nil && *watchURLPath != "" {
+			selection = &boardOutputPreview{path: watchBoardOutput(*watchURLPath, outputPath, linkToOutput)}
+		}
 		var outputWritten bool
 		if !noChildren {
 			if err := validateBoardOutputPaths(outputPath, diagram); err != nil {
@@ -770,7 +794,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		if noChildren {
 			boards, outputWritten, err = renderSingle(ctx, ms, compileDur, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview)
 		} else {
-			boards, outputWritten, err = renderToPaths(ctx, ms, compileDur, renderOpts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview)
+			boards, outputWritten, err = renderToPaths(ctx, ms, compileDur, renderOpts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview && selection == nil, selection)
 		}
 		if err != nil {
 			if outputWorkspace != nil {
@@ -785,12 +809,22 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 				return nil, outputWritten, err
 			}
 		}
+		if selection != nil {
+			if !selection.found {
+				return nil, true, fmt.Errorf("preview board %q not found", *watchURLPath)
+			}
+			return selection.data, true, nil
+		}
 		var out []byte
 		if len(boards) > 0 {
 			out = boards[0]
 		}
 		return out, true, nil
 	}
+}
+
+func boardLinkID(parent, kind, name string) string {
+	return parent + "." + kind + "." + d2format.FormatKeyPath([]d2ast.String{d2ast.RawString(name, true)})
 }
 
 func resolveLinks(currDiagramPath, outputPath string, diagram *d2target.Diagram) (linkToOutput map[string]string, err error) {
@@ -802,7 +836,7 @@ func resolveLinks(currDiagramPath, outputPath string, diagram *d2target.Diagram)
 	linkToOutput = map[string]string{currDiagramPath: plan.board.displayPath}
 
 	for _, dl := range diagram.Layers {
-		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "layers", dl.Name}, "."), plan.layers.displayPath, dl)
+		m, err := resolveLinks(boardLinkID(currDiagramPath, "layers", dl.Name), plan.layers.displayPath, dl)
 		if err != nil {
 			return nil, err
 		}
@@ -811,7 +845,7 @@ func resolveLinks(currDiagramPath, outputPath string, diagram *d2target.Diagram)
 		}
 	}
 	for _, dl := range diagram.Scenarios {
-		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "scenarios", dl.Name}, "."), plan.scenarios.displayPath, dl)
+		m, err := resolveLinks(boardLinkID(currDiagramPath, "scenarios", dl.Name), plan.scenarios.displayPath, dl)
 		if err != nil {
 			return nil, err
 		}
@@ -820,7 +854,7 @@ func resolveLinks(currDiagramPath, outputPath string, diagram *d2target.Diagram)
 		}
 	}
 	for _, dl := range diagram.Steps {
-		m, err := resolveLinks(strings.Join([]string{currDiagramPath, "steps", dl.Name}, "."), plan.steps.displayPath, dl)
+		m, err := resolveLinks(boardLinkID(currDiagramPath, "steps", dl.Name), plan.steps.displayPath, dl)
 		if err != nil {
 			return nil, err
 		}
@@ -833,48 +867,47 @@ func resolveLinks(currDiagramPath, outputPath string, diagram *d2target.Diagram)
 }
 
 func relink(currDiagramPath string, d *d2target.Diagram, linkToOutput map[string]string) error {
-	for i, shape := range d.Shapes {
-		if shape.Link != "" {
-			for k, v := range linkToOutput {
-				if shape.Link == k {
-					rel, err := filepath.Rel(filepath.Dir(linkToOutput[currDiagramPath]), v)
-					if err != nil {
-						return err
-					}
-					d.Shapes[i].Link = boardOutputLink(rel)
-					break
-				}
+	rewrite := func(link *string) error {
+		target, ok := linkToOutput[*link]
+		if !ok && strings.HasPrefix(*link, "root.") {
+			// References may quote ordinary names or a literal dot in a board name.
+			if key, err := d2parser.ParseKey(*link); err == nil {
+				target, ok = linkToOutput[d2format.FormatKeyPath(key.IDA())]
 			}
 		}
+		if !ok {
+			return nil
+		}
+		rel, err := filepath.Rel(filepath.Dir(linkToOutput[currDiagramPath]), target)
+		if err == nil {
+			*link = boardOutputLink(rel)
+		}
+		return err
 	}
-	for i, connection := range d.Connections {
-		if connection.Link != "" {
-			for k, v := range linkToOutput {
-				if connection.Link == k {
-					rel, err := filepath.Rel(filepath.Dir(linkToOutput[currDiagramPath]), v)
-					if err != nil {
-						return err
-					}
-					d.Connections[i].Link = boardOutputLink(rel)
-					break
-				}
-			}
+	for i := range d.Shapes {
+		if err := rewrite(&d.Shapes[i].Link); err != nil {
+			return err
+		}
+	}
+	for i := range d.Connections {
+		if err := rewrite(&d.Connections[i].Link); err != nil {
+			return err
 		}
 	}
 	for _, board := range d.Layers {
-		err := relink(strings.Join([]string{currDiagramPath, "layers", board.Name}, "."), board, linkToOutput)
+		err := relink(boardLinkID(currDiagramPath, "layers", board.Name), board, linkToOutput)
 		if err != nil {
 			return err
 		}
 	}
 	for _, board := range d.Scenarios {
-		err := relink(strings.Join([]string{currDiagramPath, "scenarios", board.Name}, "."), board, linkToOutput)
+		err := relink(boardLinkID(currDiagramPath, "scenarios", board.Name), board, linkToOutput)
 		if err != nil {
 			return err
 		}
 	}
 	for _, board := range d.Steps {
-		err := relink(strings.Join([]string{currDiagramPath, "steps", board.Name}, "."), board, linkToOutput)
+		err := relink(boardLinkID(currDiagramPath, "steps", board.Name), board, linkToOutput)
 		if err != nil {
 			return err
 		}
@@ -892,24 +925,31 @@ func boardOutputLink(path string) string {
 	return strings.Join(parts, "/")
 }
 
-func render(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool) (_ [][]byte, written bool, _ error) {
-	return renderToPaths(ctx, ms, compileDur, opts, inputPath, newBoardOutputPaths(outputPath), bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview)
+// A browser URL selects a preview from the full export. It never supplies a write path.
+type boardOutputPreview struct {
+	path  string
+	data  []byte
+	found bool
 }
 
-func renderToPaths(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath string, outputPaths boardOutputPaths, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool) (_ [][]byte, written bool, _ error) {
+func render(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool) (_ [][]byte, written bool, _ error) {
+	return renderToPaths(ctx, ms, compileDur, opts, inputPath, newBoardOutputPaths(outputPath), bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, nil)
+}
+
+func renderToPaths(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath string, outputPaths boardOutputPaths, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool, selection *boardOutputPreview) (_ [][]byte, written bool, _ error) {
 	if ext == PNG {
 		var encoder rasterPNGEncoder
 		defer encoder.close()
-		return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, &encoder)
+		return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, &encoder, selection)
 	}
-	return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, nil)
+	return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, outputPaths, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, nil, selection)
 }
 
 func renderWithPNGEncoder(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath, outputPath string, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool, pngEncoder *rasterPNGEncoder) (_ [][]byte, written bool, _ error) {
-	return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, newBoardOutputPaths(outputPath), bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, pngEncoder)
+	return renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, newBoardOutputPaths(outputPath), bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, pngEncoder, nil)
 }
 
-func renderWithPNGEncoderToPaths(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath string, outputPaths boardOutputPaths, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool, pngEncoder *rasterPNGEncoder) (_ [][]byte, written bool, _ error) {
+func renderWithPNGEncoderToPaths(ctx context.Context, ms *xmain.State, compileDur time.Duration, opts d2svg.RenderOpts, inputPath string, outputPaths boardOutputPaths, bundle, forceAppendix bool, ruler *textmeasure.Ruler, diagram *d2target.Diagram, ext exportExtension, asciiMode string, wantPreview bool, pngEncoder *rasterPNGEncoder, selection *boardOutputPreview) (_ [][]byte, written bool, _ error) {
 	plan, err := planBoardOutput(outputPaths, diagram)
 	if err != nil {
 		return nil, false, err
@@ -924,7 +964,7 @@ func renderWithPNGEncoderToPaths(ctx context.Context, ms *xmain.State, compileDu
 	var boards [][]byte
 	for _, dl := range diagram.Layers {
 		childPreview := wantPreview && diagram.IsFolderOnly && len(boards) == 0
-		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.layers, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
+		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.layers, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder, selection)
 		written = written || childWritten
 		if err != nil {
 			return boards, written, err
@@ -933,7 +973,7 @@ func renderWithPNGEncoderToPaths(ctx context.Context, ms *xmain.State, compileDu
 	}
 	for _, dl := range diagram.Scenarios {
 		childPreview := wantPreview && diagram.IsFolderOnly && len(boards) == 0
-		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.scenarios, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
+		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.scenarios, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder, selection)
 		written = written || childWritten
 		if err != nil {
 			return boards, written, err
@@ -942,7 +982,7 @@ func renderWithPNGEncoderToPaths(ctx context.Context, ms *xmain.State, compileDu
 	}
 	for _, dl := range diagram.Steps {
 		childPreview := wantPreview && diagram.IsFolderOnly && len(boards) == 0
-		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.steps, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder)
+		childrenBoards, childWritten, err := renderWithPNGEncoderToPaths(ctx, ms, compileDur, opts, inputPath, plan.steps, bundle, forceAppendix, ruler, dl, ext, asciiMode, childPreview, pngEncoder, selection)
 		written = written || childWritten
 		if err != nil {
 			return boards, written, err
@@ -951,8 +991,12 @@ func renderWithPNGEncoderToPaths(ctx context.Context, ms *xmain.State, compileDu
 	}
 
 	if !diagram.IsFolderOnly {
+		selected := selection != nil && selection.path == plan.board.displayPath
 		start := time.Now()
-		out, boardWritten, err := _renderWithPNGEncoder(ctx, ms, opts, inputPath, plan.board.writePath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview, pngEncoder)
+		out, boardWritten, err := _renderWithPNGEncoder(ctx, ms, opts, inputPath, plan.board.writePath, bundle, forceAppendix, ruler, diagram, ext, asciiMode, wantPreview || selected, pngEncoder)
+		if selected {
+			selection.data, selection.found = out, true
+		}
 		written = written || boardWritten
 		if err != nil {
 			return boards, written, err
