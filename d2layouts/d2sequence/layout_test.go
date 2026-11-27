@@ -593,4 +593,3 @@ g3: {
 	assert.GreaterOrEqual(t, g3.TopLeft.Y, g2.TopLeft.Y+g2.Height,
 		"g3 (top %v) must not overlap g2 (bottom %v)", g3.TopLeft.Y, g2.TopLeft.Y+g2.Height)
 }
-
