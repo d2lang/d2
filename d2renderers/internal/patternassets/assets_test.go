@@ -13,8 +13,8 @@ func TestCanonicalAssetHashes(t *testing.T) {
 		bytes  int
 		digest string
 	}{
-		{name: "paper SVG", data: []byte(PaperSVG()), bytes: 419795, digest: "6d2131fa5828dedfc0648b93ee3dd4f2492f706dc8ec81a2f7106f063f99487c"},
-		{name: "paper Brotli", data: paperBrotli, bytes: 132925, digest: "12f137f63add58ee23c90db58a1a592df5e1e114d487d013270959be8e26e19f"},
+		{name: "paper SVG", data: []byte(PaperSVG()), bytes: 414575, digest: "d6f43553eeca8f5bf37f08720dfef17be958f349639cb328c6b1669b4cbfb944"},
+		{name: "paper Brotli", data: paperBrotli, bytes: 131360, digest: "feee16c7085f5b3abe263388b10e13c5e703524f5effe49642c3eafdb429873d"},
 		{name: "grain PNG", data: GrainPNG(), bytes: 19079, digest: "50730e6c56603eac7ad90780979ed2de1538488c56f709aa6795d6a24975fb84"},
 		{name: "streak path", data: []byte(StreakPathData()), bytes: 8878, digest: "76e01a8aa5a6228fa08bed2c4b607cabc6c936e79777994df662c5fb8e9f4ffc"},
 	}
