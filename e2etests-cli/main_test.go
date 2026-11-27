@@ -29,6 +29,7 @@ import (
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/internal/grammartest"
 	"github.com/d2lang/d2/internal/testutil"
+	_ "github.com/d2lang/d2/internal/testversion"
 	"github.com/d2lang/d2/lib/compression"
 	"github.com/d2lang/d2/lib/pptx"
 )

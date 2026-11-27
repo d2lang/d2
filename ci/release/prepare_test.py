@@ -53,6 +53,7 @@ class PreparationTests(unittest.TestCase):
         self.git('add', '.')
         self.git('commit', '-qm', 'initial')
         self.git('remote', 'add', 'origin', str(self.remote))
+        self.git('push', 'origin', 'master')
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         fake = self.bin / 'gh'
@@ -89,6 +90,19 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(len(created), 1)
         self.assertTrue(created[0]['body'].startswith('## Human\n\n---\n\n## AI\n'))
         self.assertFalse(any(call['args'][0] in ('release', 'workflow', 'run') for call in self.calls()))
+
+    def test_new_release_rejects_stale_or_unpublished_master(self):
+        initial = self.git('rev-parse', 'master')
+        advanced = self.add_commit('new-source')
+        for local, remote in ((initial, advanced), (advanced, initial)):
+            with self.subTest(local=local, remote=remote):
+                self.git('push', 'origin', advanced + ':refs/heads/fixture')
+                self.remote_git('update-ref', 'refs/heads/master', remote)
+                self.git('reset', '--hard', local)
+                before = self.refs()
+                self.assertIn('local master must match', self.prepare(success=False))
+                self.assertEqual(self.refs(), before)
+                self.assertFalse(any(call['args'][0] == 'pr' for call in self.calls()))
 
     def test_existing_pr_description_is_untouched(self):
         self.state.write_text(json.dumps({'prs': [{'url': 'https://github.com/test/repo/pull/9', 'state': 'OPEN'}]}))
@@ -192,6 +206,8 @@ class PreparationTests(unittest.TestCase):
         commit = self.git('rev-parse', 'HEAD')
         self.git('checkout', '-q', 'master')
         self.git('branch', '-D', 'v1.2.3')
+        self.add_commit('later-master-work')
+        self.git('push', 'origin', 'master')
         self.state.write_text('{}')
         self.prepare()
         self.assertEqual(self.git('rev-parse', 'HEAD'), commit)
