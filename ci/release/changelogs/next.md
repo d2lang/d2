@@ -189,6 +189,45 @@
 - Diagrams that crashed the compiler now compile: a step with a map after a step without one, a glob connection whose shared path matches nothing (`a.b.*.x -> a.b.*.y`), a reference from inside a `sql_table` column or `class` field to an object outside it (`t.a: {_._.x}`), a glob with a map value in `layers` (`layers: {w: {b}; *: {a}}`), and a block comment inside an array (`class: [a; """ note """; b]`).
 - Grids with `grid-rows` or `grid-columns` no longer hang when one cell is far larger than the rest, such as one 10^17 wide among 50.
 - Dagre lays out a diagram the same way every time. Diagrams with containers could get slightly different container sizes from run to run, and in D2.js from build to build.
+- Globs over boards:
+  - A glob that selects layers, scenarios or steps applies to every board it
+    selects, once. `scenarios: {w: {b}; v: {c}; *: {a}}`, `layers.*.a` and
+    `scenarios.*.(x -> y)[0].style.stroke: red` reached only the first board,
+    also in steps, nested boards, imported boards and filtered globs.
+  - A glob in a `layers`, `scenarios` or `steps` map applies in that map, where
+    its first element selects the boards, and no longer also inside each board:
+    `scenarios: {*: {a}; w: {b}}` no longer gives `w.b` an `a`, and
+    `scenarios: {*.style.fill: red}` now fills each scenario's background, not
+    its objects. A glob whose paths all start with `**` still reaches the
+    objects of each board, once: `scenarios: {**.style.fill: red}` fills them.
+  - A connection glob in such a map that has an endpoint of one element other
+    than `**` applies inside each board instead, as if written there, in boards
+    declared before it too and in their scenarios and steps, but not in their
+    layers: `steps: {(* -> *)[*].style.stroke: red}`,
+    `layers: {(* -> *)[*].style.stroke: red}`, `scenarios: {* -> hub}`, which
+    reported "cannot create edges between boards", and `steps: {** -> hub}`,
+    which also made a step named `hub`.
+  - Glob connections such as `scenarios.*.x -> scenarios.*.y` connect the
+    objects within each board and skip pairs in different boards, as `**` does,
+    so `scenarios.*.a -> x`, whose pairs all cross boards, creates nothing
+    instead of reporting an error.
+  - A scenario or step that a glob reaches before it has a map starts as a copy
+    of its base board: `x; scenarios.*.y; scenarios: {w: {z}}` gives `w` the
+    `x`. A step without a map that a glob gives content starts as a copy of the
+    step before it, once: `steps: {w; v; *: {a -> b}}` gives `v` one `a -> b`
+    instead of none. A glob whose filter fails no longer stops a scenario or
+    step from copying its base: `r; scenarios: {*: {&label: Z; k}; w: {x}}`
+    gives `w` the `r`.
+  - Steps no longer stop their board's globs from applying to a later object of
+    the same name: `*.style.fill: red; steps: {s1: {y}}; y` fills the root `y`.
+  - A glob no longer applies again to what its own import added: `**: @f; a`,
+    where `f` declares `p`, gives `a` one `p`, not `p.p`, and such globs no
+    longer report a false cyclic import. `x; *: @f; p` gives the importer's `p`
+    the import too. `***` no longer applies again to what a scenario or step
+    inherits: `***: {u -> v}; a; steps: {s1: {b}}` gave `s1.a` a second
+    `u -> v`.
+  - As globs reach more boards, a diagram with many glob connections can now
+    exceed the glob or connection expansion limit.
 
 ---
 
