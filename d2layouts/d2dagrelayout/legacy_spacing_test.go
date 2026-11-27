@@ -4,9 +4,8 @@ package d2dagrelayout
 // index-based rewrite (layout.go at d2 e22f4d566), kept as the reference of the property tests: the
 // original code, with its functions renamed, and with one *legacyOrders
 // parameter whose rec.* calls record the orders the code takes from ranging
-// over its maps and what a shift writes into its maps before its grow pass
-// (they do nothing when rec is nil). Those orders are random (see
-// map_order.go); the tests replay them in the rewrite.
+// over its maps (they do nothing when rec is nil). Those orders are random
+// (see map_order.go); the tests replay them in the rewrite.
 
 import (
 	"math"
@@ -175,7 +174,6 @@ func legacyShiftReachableDownIndexed(g *d2graph.Graph, index *legacyCrossRankInd
 				if shift {
 					curr.TopLeft.X += distance
 					shifted[curr] = struct{}{}
-					rec.wrote("shifted", curr, nil)
 				}
 			} else {
 				_, shift := needsMove[curr]
@@ -189,12 +187,10 @@ func legacyShiftReachableDownIndexed(g *d2graph.Graph, index *legacyCrossRankInd
 				if shift {
 					curr.TopLeft.Y += distance
 					shifted[curr] = struct{}{}
-					rec.wrote("shifted", curr, nil)
 				}
 			}
 			seen[curr] = struct{}{}
 			rec.insert(curr)
-			rec.wrote("seen", curr, nil)
 
 			if curr.Parent != g.Root && !curr.IsDescendantOf(obj) {
 				queue(curr.Parent)
@@ -219,7 +215,6 @@ func legacyShiftReachableDownIndexed(g *d2graph.Graph, index *legacyCrossRankInd
 						}
 					}
 					shiftedEdges[e] = struct{}{}
-					rec.wrote("shiftedEdges", nil, e)
 					continue
 				} else if e.Src == curr {
 					last := e.Route[len(e.Route)-1]
@@ -227,13 +222,11 @@ func legacyShiftReachableDownIndexed(g *d2graph.Graph, index *legacyCrossRankInd
 						if start <= last.X &&
 							e.Dst.TopLeft.X+e.Dst.Width < last.X+distance {
 							needsMove[e.Dst] = struct{}{}
-							rec.wrote("needsMove", e.Dst, nil)
 						}
 					} else {
 						if start <= last.Y &&
 							e.Dst.TopLeft.Y+e.Dst.Height < last.Y+distance {
 							needsMove[e.Dst] = struct{}{}
-							rec.wrote("needsMove", e.Dst, nil)
 						}
 					}
 					queue(e.Dst)
@@ -264,20 +257,17 @@ func legacyShiftReachableDownIndexed(g *d2graph.Graph, index *legacyCrossRankInd
 						}
 					}
 					shiftedEdges[e] = struct{}{}
-					rec.wrote("shiftedEdges", nil, e)
 				} else if e.Dst == curr {
 					first := e.Route[0]
 					if isHorizontal {
 						if start <= first.X &&
 							e.Src.TopLeft.X+e.Src.Width < first.X+distance {
 							needsMove[e.Src] = struct{}{}
-							rec.wrote("needsMove", e.Src, nil)
 						}
 					} else {
 						if start <= first.Y &&
 							e.Src.TopLeft.Y+e.Src.Height < first.Y+distance {
 							needsMove[e.Src] = struct{}{}
-							rec.wrote("needsMove", e.Src, nil)
 						}
 					}
 					queue(e.Src)
@@ -308,7 +298,6 @@ func legacyShiftReachableDownIndexed(g *d2graph.Graph, index *legacyCrossRankInd
 						}
 					}
 					shiftedEdges[e] = struct{}{}
-					rec.wrote("shiftedEdges", nil, e)
 				}
 			}
 

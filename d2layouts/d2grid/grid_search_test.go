@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/lib/geo"
@@ -205,5 +206,78 @@ func TestGridSingletonMeasurementsDoNotAllocateCache(t *testing.T) {
 		gd.columns = n
 		assertSearchMatchesReference(t, gd, false)
 		assertSearchMatchesReference(t, gd, true)
+	}
+}
+
+// In a grid with one object much larger than the rest, the rows without it
+// stay below the target size until okThreshold has grown for many passes, and
+// until then no division passes the size checks. getBestLayout skips those
+// passes; it must still choose what the original chose after running them.
+func TestGridSearchSkipsRepeatedPasses(t *testing.T) {
+	rng := rand.New(rand.NewPCG(5, 29))
+	for fixture := 0; fixture < 200; fixture++ {
+		n := 30 + rng.IntN(30)
+		gd := benchmarkGrid(n, 7+rng.IntN(4))
+		gd.columns = gd.rows
+		if affordablePartitions(n, gd.rows-1) {
+			t.Fatalf("fixture %d: %d objects in %d rows get the exhaustive search", fixture, n, gd.rows)
+		}
+		gd.horizontalGap = rng.IntN(40)
+		gd.verticalGap = rng.IntN(40)
+		for _, o := range gd.objects {
+			// Fractional sizes: the bounded search, not integralCuts.
+			o.Width = 10 + 20*rng.Float64()
+			o.Height = 10 + 20*rng.Float64()
+		}
+		outlier := gd.objects[rng.IntN(n)]
+		outlier.Width *= float64(10 + rng.IntN(5000))
+		outlier.Height *= float64(10 + rng.IntN(5000))
+		for _, columns := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/columns=%v", fixture, columns), func(t *testing.T) {
+				assertSearchMatchesReference(t, gd, columns)
+			})
+		}
+	}
+}
+
+// With one object vastly larger than the rest, the original search never
+// finished: okThreshold, growing a quarter per pass, would need more passes
+// than finish in any reasonable time, or never reach a value at which the
+// size checks accept a division. getBestLayout then scores divisions without
+// the checks.
+func TestGridSearchFinishesWithOutlier(t *testing.T) {
+	for _, size := range []float64{1e12, 1e17, math.MaxInt64} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			gd := benchmarkGrid(50, 7)
+			gd.objects[0].Width = size
+			done := make(chan [][]*d2graph.Object, 1)
+			go func() {
+				done <- gd.getBestLayout(gridTarget(gd, false), false)
+			}()
+			var layout [][]*d2graph.Object
+			select {
+			case layout = <-done:
+			case <-time.After(30 * time.Second):
+				t.Fatal("getBestLayout did not finish")
+			}
+			if len(layout) != gd.rows {
+				t.Fatalf("%d rows, want %d", len(layout), gd.rows)
+			}
+			next := 0
+			for _, row := range layout {
+				if len(row) == 0 {
+					t.Fatal("empty row")
+				}
+				for _, o := range row {
+					if o != gd.objects[next] {
+						t.Fatalf("object %s in place %d, want %s", o.ID, next, gd.objects[next].ID)
+					}
+					next++
+				}
+			}
+			if next != len(gd.objects) {
+				t.Fatalf("%d objects laid out, want %d", next, len(gd.objects))
+			}
+		})
 	}
 }

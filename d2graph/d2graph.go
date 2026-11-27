@@ -992,6 +992,12 @@ func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
 	if literalBoardName {
 		head = id.ScalarString()
 	}
+	if obj.Children == nil {
+		// A compiled class or sql_table: its children became its fields and
+		// methods or columns (compileClass, compileSQLTable), so a path into
+		// it ends at it.
+		return obj
+	}
 	child, ok := obj.Children[strings.ToLower(head)]
 	if !ok {
 		child = obj.newObject(head)

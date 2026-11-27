@@ -39,6 +39,9 @@ type compiler struct {
 	spreadNulls         []spreadNull
 	hasMapSpread        bool
 	hasEdgePropertyGlob bool
+	// unreferencedFields is set when an edge's common prefix is left
+	// without references (see removeFieldsWithoutReferences).
+	unreferencedFields  bool
 	spreadRuleCopies    map[spreadRuleScope]*globContext
 	fieldOrder          uint64
 	err                 *d2parser.ParseError
@@ -316,6 +319,9 @@ func (c *compiler) overlayClasses(m *Map) {
 }
 
 func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
+	if c.unreferencedFields {
+		removeFieldsWithoutReferences(m)
+	}
 	outerNulls := c.spreadNulls
 	outerChecks, outerFields := c.arrayAccess, c.fieldArrayAccess
 	c.spreadNulls, c.arrayAccess, c.fieldArrayAccess = nil, nil, nil
@@ -331,6 +337,31 @@ func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
 		}
 	}
 	c.spreadNulls, c.arrayAccess, c.fieldArrayAccess = outerNulls, outerChecks, outerFields
+}
+
+// removeFieldsWithoutReferences removes, from m and the maps in it, every field
+// that holds nothing and that no key made. createEdge makes the fields of an
+// edge's common prefix without a reference, for the edge's keys to add theirs,
+// so they have none if the edge fails or its globs match nothing (near.a ->
+// near.b, a.b.*.x -> a.b.*.y); it then sets unreferencedFields, and
+// compileSubstitutions calls this. Every pass after that one reads a field's
+// references.
+func removeFieldsWithoutReferences(m *Map) {
+	for i := 0; i < len(m.Fields); i++ {
+		f := m.Fields[i]
+		fm := f.Map()
+		if fm != nil {
+			removeFieldsWithoutReferences(fm)
+		}
+		if len(f.References) > 0 || f.Primary() != nil {
+			continue
+		}
+		if f.Composite != nil && (fm == nil || len(fm.Fields) > 0 || len(fm.Edges) > 0) {
+			continue
+		}
+		m.removeField(i)
+		i--
+	}
 }
 
 func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, source d2ast.Node) {
@@ -1116,6 +1147,18 @@ func lookupVariableField(scope *Map, name d2ast.String, fallback bool) *Field {
 	key.unquotedReserved = !key.unquotedReserved
 	scope.ensureFieldIndex()
 	return scope.fieldIndex[key]
+}
+
+// stepBase returns the map that step i of stepsMap builds on: the map of the
+// closest step before it that has one, or else its board's. A step without a
+// map is no board.
+func stepBase(stepsMap *Map, i int, f *Field) *Map {
+	for j := i - 1; j >= 0; j-- {
+		if m := stepsMap.Fields[j].Map(); m != nil {
+			return m
+		}
+	}
+	return ParentBoard(f).Map()
 }
 
 func (c *compiler) overlay(base *Map, f *Field) {
@@ -2008,11 +2051,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 				stepsMap := ParentMap(f)
 				for i := range stepsMap.Fields {
 					if stepsMap.Fields[i] == f {
-						if i == 0 {
-							c.overlay(ParentBoard(f).Map(), f)
-						} else {
-							c.overlay(stepsMap.Fields[i-1].Map(), f)
-						}
+						c.overlay(stepBase(stepsMap, i, f), f)
 						if c.stopped() {
 							return
 						}
@@ -2093,11 +2132,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 				stepsMap := ParentMap(f)
 				for i := range stepsMap.Fields {
 					if stepsMap.Fields[i] == f {
-						if i == 0 {
-							c.overlay(ParentBoard(f).Map(), f)
-						} else {
-							c.overlay(stepsMap.Fields[i-1].Map(), f)
-						}
+						c.overlay(stepBase(stepsMap, i, f), f)
 						if c.stopped() {
 							return
 						}
@@ -2631,7 +2666,7 @@ func (c *compiler) compileArray(dst *Array, a *d2ast.Array, scopeAST *d2ast.Map)
 					Value: []d2ast.InterpolationBox{{Substitution: an.Substitution}},
 				},
 			}
-		case *d2ast.Comment:
+		case *d2ast.Comment, *d2ast.BlockComment:
 			continue
 		}
 

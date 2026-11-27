@@ -185,6 +185,10 @@
   - Render forced appendices inside their animated SVG frames and size the
     animation to include every board's footnotes.
 - sequence diagrams: fix a compile error ("invalid position with infinity value") when a group nested in another group contains only a note. [#2750](https://github.com/d2lang/d2/issues/2750)
+- The compiler reports an error instead of crashing on a connection endpoint of only underscores (`x: {y: {_._.b -> _}}`), a reserved keyword in a connection after a shared path or underscores (`c.left -> c.t`, `x: {_.a -> left}`), a reserved keyword as a connection's shared path (`near.a -> near.b`), `constraint` with a child (`constraint.x`), and connections in a `label`, `icon` or `tooltip` map.
+- Diagrams that crashed the compiler now compile: a step with a map after a step without one, a glob connection whose shared path matches nothing (`a.b.*.x -> a.b.*.y`), a reference from inside a `sql_table` column or `class` field to an object outside it (`t.a: {_._.x}`), a glob with a map value in `layers` (`layers: {w: {b}; *: {a}}`), and a block comment inside an array (`class: [a; """ note """; b]`).
+- Grids with `grid-rows` or `grid-columns` no longer hang when one cell is far larger than the rest, such as one 10^17 wide among 50.
+- Dagre lays out a diagram the same way every time. Diagrams with containers could get slightly different container sizes from run to run, and in D2.js from build to build.
 
 ---
 
