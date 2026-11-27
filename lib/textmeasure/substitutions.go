@@ -109,31 +109,37 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	// visible text of a shortcut or collapsed reference, make its ID explicit.
 	// A target's source index identifies its definition, including multiline
 	// labels inside lists and block quotes.
-	definitions := make(map[text.Index]text.MultiLineValue)
-	type changedReference struct {
-		dest text.Index
-		ref  *ast.ReferenceLink
+	definitions, cost, err := matcher.referenceDefinitions(ctx, doc, source, maxExpansion)
+	if err != nil {
+		return "", 0, err
 	}
-	var changed []changedReference
+	expansion += cost
+	type referenceUse struct {
+		dest    text.Index
+		ref     *ast.ReferenceLink
+		changed bool
+	}
+	var uses []referenceUse
 	var shortcutStarts []int
 	err = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if err := ctx.Err(); err != nil {
 			return ast.WalkStop, err
 		}
-		dest, ref := visibleReference(n)
-		if ref != nil {
+		dest, ref := markdownReference(n)
+		if ref != nil && ref.ReferenceLinkKind != ast.ReferenceLinkKindFull {
 			if entering {
 				shortcutStarts = append(shortcutStarts, len(substitutions))
 			} else {
 				last := len(shortcutStarts) - 1
-				if len(substitutions) > shortcutStarts[last] {
-					changed = append(changed, changedReference{dest, ref})
-				}
+				uses = append(uses, referenceUse{dest, ref, len(substitutions) > shortcutStarts[last]})
 				shortcutStarts = shortcutStarts[:last]
 			}
 		}
 		if !entering {
 			return ast.WalkContinue, nil
+		}
+		if ref != nil && ref.ReferenceLinkKind == ast.ReferenceLinkKindFull {
+			uses = append(uses, referenceUse{dest: dest, ref: ref})
 		}
 		if isCodeNode(n) {
 			return ast.WalkSkipChildren, nil
@@ -153,7 +159,10 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 			return ast.WalkContinue, replaceLink(n.Destination, n.Title, n.Reference)
 		case *ast.LinkReferenceDefinition:
 			// Every use shares these source offsets. Edit the definition once.
-			definitions[n.Destination.Index()] = n.Label
+			if id := definitions[n.Destination.Index()]; id.alias != "" {
+				span := markdownValueSpan(n.Label)
+				substitutions = append(substitutions, substitution{span.Start, span.Stop, id.alias})
+			}
 			return ast.WalkContinue, replaceLink(n.Destination, n.Title, nil)
 		}
 		return ast.WalkContinue, nil
@@ -162,15 +171,21 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 		return "", 0, err
 	}
 
-	for _, use := range changed {
+	for _, use := range uses {
 		if err := ctx.Err(); err != nil {
 			return "", 0, err
 		}
 		// Preserve the source spelling of escapes in the key. Whitespace in
 		// reference labels is normalized by CommonMark for lookup.
-		key := string(util.ReplaceSpaces(definitions[use.dest].Bytes(source), ' '))
-		parts := use.ref.Value.Indices()
-		index := text.NewIndex(parts[0].Start, parts[len(parts)-1].Stop)
+		id := definitions[use.dest]
+		key := id.alias
+		if key == "" {
+			if !use.changed {
+				continue
+			}
+			key = id.source
+		}
+		index := markdownValueSpan(use.ref.Value)
 		shortcut := use.ref.ReferenceLinkKind == ast.ReferenceLinkKindShortcut
 		cost := int64(len(key))
 		if shortcut {
@@ -264,18 +279,125 @@ func (referenceInlineParser) Parse(_ ast.Node, block text.Reader, pc parser.Cont
 	return ast.NewText(text.NewSingleLineValueFromSegment(segment.WithStop(end), block.Decoder()))
 }
 
-func visibleReference(n ast.Node) (text.Index, *ast.ReferenceLink) {
+func markdownReference(n ast.Node) (text.Index, *ast.ReferenceLink) {
 	switch n := n.(type) {
 	case *ast.Link:
-		if n.Reference != nil && n.Reference.ReferenceLinkKind != ast.ReferenceLinkKindFull {
-			return n.Destination.Index(), n.Reference
-		}
+		return n.Destination.Index(), n.Reference
 	case *ast.Image:
-		if n.Reference != nil && n.Reference.ReferenceLinkKind != ast.ReferenceLinkKindFull {
-			return n.Destination.Index(), n.Reference
-		}
+		return n.Destination.Index(), n.Reference
 	}
 	return text.Index{}, nil
+}
+
+func markdownValueSpan(value text.Value) text.Index {
+	parts := value.Indices()
+	return text.NewIndex(parts[0].Start, parts[len(parts)-1].Stop)
+}
+
+type markdownReferenceID struct {
+	source string
+	alias  string
+}
+
+// Reserve authored IDs before giving definitions an expanded name. Unbound
+// reference uses can then find a unique alias, even before its declaration.
+func (matcher *markdownSubstitutionMatcher) referenceDefinitions(ctx context.Context, doc ast.Node, source []byte, limit int64) (map[text.Index]*markdownReferenceID, int64, error) {
+	ids := make(map[text.Index]*markdownReferenceID)
+	candidates := make(map[string]*markdownReferenceID)
+	var used int64
+	if len(matcher.references.LinkDefinitions()) == 0 {
+		return ids, used, nil
+	}
+	err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if err := ctx.Err(); err != nil {
+			return ast.WalkStop, err
+		}
+		if _, inline := n.(ast.InlineNode); inline {
+			return ast.WalkSkipChildren, nil
+		}
+		def, ok := n.(*ast.LinkReferenceDefinition)
+		if !entering || !ok {
+			return ast.WalkContinue, nil
+		}
+		raw := def.Label.Bytes(source)
+		id := &markdownReferenceID{source: string(util.ReplaceSpaces(raw, ' '))}
+		ids[def.Destination.Index()] = id
+		if !strings.Contains(id.source, "${") {
+			return ast.WalkContinue, nil
+		}
+		alias, cost, err := matcher.referenceAlias(ctx, string(raw), limit-used)
+		if err != nil {
+			return ast.WalkStop, err
+		}
+		used += cost
+		if alias != string(raw) && len(alias) <= 999 {
+			key := util.ToLinkReference([]byte(alias))
+			if _, reserved := matcher.references.LinkDefinition(key); key != "" && !reserved {
+				if previous, duplicate := candidates[key]; duplicate {
+					if previous != nil {
+						previous.alias = ""
+					}
+					candidates[key] = nil
+				} else {
+					id.alias = alias
+					candidates[key] = id
+				}
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	matcher.aliases = make(map[string]bool)
+	for key, def := range candidates {
+		if def != nil {
+			matcher.aliases[key] = true
+		}
+	}
+	return ids, used, nil
+}
+
+// Interpret a definition's potential fallback name as its users would see it.
+// A shortcut's inline code remains literal even when its prose interpolates.
+func (matcher *markdownSubstitutionMatcher) referenceAlias(ctx context.Context, label string, limit int64) (string, int64, error) {
+	if !strings.Contains(label, "`") {
+		return matcher.replaceBounded(ctx, label, limit, &referenceEscapes)
+	}
+	const prefix = "x " // Force inline parsing in a paragraph.
+	source := prefix + label
+	doc, _, err := parseMarkdownSubstitutions(ctx, []byte(source), source)
+	if err != nil {
+		return "", 0, err
+	}
+	start := len(prefix)
+	var out strings.Builder
+	var used int64
+	replaceUntil := func(stop int) error {
+		prose, cost, err := matcher.replaceBounded(ctx, source[start:stop], limit-used, &referenceEscapes)
+		if err != nil {
+			return err
+		}
+		out.WriteString(prose)
+		used += cost
+		return nil
+	}
+	err = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		code, ok := n.(*ast.CodeSpan)
+		if entering && ok && len(code.Value.Indices()) > 0 {
+			span := markdownValueSpan(code.Value)
+			if err := replaceUntil(span.Start); err != nil {
+				return ast.WalkStop, err
+			}
+			out.WriteString(source[span.Start:span.Stop])
+			start = span.Stop
+		}
+		return ast.WalkContinue, nil
+	})
+	if err == nil {
+		err = replaceUntil(len(source))
+	}
+	return out.String(), used, err
 }
 
 func isCodeNode(n ast.Node) bool {
@@ -360,6 +482,7 @@ type markdownSubstitutionMatcher struct {
 	resolve      func(string) (string, bool)
 	source       string
 	references   parser.Context
+	aliases      map[string]bool
 	segmentStart int
 }
 
@@ -454,8 +577,9 @@ func (matcher *markdownSubstitutionMatcher) matchesLiteralReference(ctx context.
 	if err != nil {
 		return false
 	}
-	_, found := matcher.references.LinkDefinition(util.ToLinkReference([]byte(escaped)))
-	return found
+	id := util.ToLinkReference([]byte(escaped))
+	_, found := matcher.references.LinkDefinition(id)
+	return found || matcher.aliases[id]
 }
 
 func escapedMarkdownDollar(s string, i int) bool {

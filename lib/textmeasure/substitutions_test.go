@@ -457,3 +457,32 @@ func TestMultilineMarkdownReferenceIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkdownReferenceFallback(t *testing.T) {
+	for _, tc := range []struct{ name, use, defs, want string }{
+		{"dynamic-use", "[API][${first}]", "[Runbook]: /guide", `<a href="/guide">API</a>`},
+		{"dynamic-definition", "[API][Runbook]", "[${first}]: /guide", `<a href="/guide">API</a>`},
+		{"distinct-variables", "[API][${first}]", "[${second}]: /guide", `<a href="/guide">API</a>`},
+		{"bracketed-values", "[API][${build}]", "[${sameBuild}]: /guide", `<a href="/guide">API</a>`},
+		{"literal-priority", "[API][Runbook]", "[${first}]: /first\n[runbook]: /static", `<a href="/static">API</a>`},
+		{"ambiguous", "[API][Runbook]", "[${first}]: /first\n[${second}]: /second", `<p>[API][Runbook]</p>`},
+		{"ambiguous-shortcut", "[Runbook]", "[${first}]: /first\n[${second}]: /second", `<p>[Runbook]</p>`},
+		{"multiline-block-quote", "> [API][Launch runbook]", "> [Launch\n> ${first}]: /guide \"full title\"", `<a href="/guide" title="full title">API</a>`},
+		{"inline-code", "[API][Runbook `${second}`]", "[${first} `${second}`]: /guide", `<a href="/guide">API</a>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.use + "\n\n" + tc.defs
+			vars := map[string]string{"first": "Runbook", "second": "RUNBOOK", "build": "Build [v2]", "sameBuild": "Build [v2]"}
+			out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, 1024)
+			rendered, renderErr := RenderMarkdown(out)
+			if err != nil || renderErr != nil || !strings.Contains(rendered, tc.want) {
+				t.Fatalf("%q became %q and rendered %q, errors %v, %v", input, out, rendered, err, renderErr)
+			}
+			if used > 0 {
+				if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, used-1); err == nil {
+					t.Fatal("fallback reference must respect the expansion limit")
+				}
+			}
+		})
+	}
+}
