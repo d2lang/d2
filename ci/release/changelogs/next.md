@@ -6,11 +6,6 @@ I plan to cut a 1.0 soon finally. There'll be more one-time breaking changes lik
 
 AI-generated changelog:
 
-#### Upgrading from v0.9.0
-
-- **Quote shape names that match keywords.** To keep a child named `STYLE`, change `service.STYLE: notes` to `service."STYLE": notes` and use `api -> service."STYLE"` in connections. Unquoted `LABEL` now sets a label, so an existing diagram can render differently even if it still compiles.
-- **Check large generated diagrams.** Dagre and ELK accept up to 1,024 objects and 1,024 edges per layout graph. A flat inventory of 1,025 independent services can use `grid-columns: 32`. For connected diagrams, split the drawing into [boards](https://d2lang.com/tour/composition/).
-
 #### Features 🚀
 
 - **Animated transitions.** Set `animate-duration` to animate styles, gradients, text decorations, grid edits, and sketch shading in SVG or GIF. It defaults to zero. `animate-interval` sets the minimum time per board. [Timing](https://d2lang.com/tour/animation/#configuration) · [Grid examples](https://d2lang.com/tour/animation/#grid-animations)
@@ -115,6 +110,8 @@ AI-generated changelog:
 
 #### Breaking Changes
 
+- **Quote shape names that match keywords.** To keep a child named `STYLE`, change `service.STYLE: notes` to `service."STYLE": notes` and use `api -> service."STYLE"` in connections. Unquoted `LABEL` now sets a label, so an existing diagram can render differently even if it still compiles.
+- **Check large generated diagrams.** Dagre and ELK accept up to 1,024 objects and 1,024 edges per layout graph. A flat inventory of 1,025 independent services can use `grid-columns: 32`. For connected diagrams, split the drawing into [boards](https://d2lang.com/tour/composition/).
 - **Layout plugins and postprocessing.** D2 no longer loads external `d2plugin-*` executables. Use a built-in engine. The Go packages `d2plugin` and `d2layouts/d2layoutfeatures` were removed. Drop the plugins argument when calling `d2cli.LayoutResolver` or `d2cli.RouterResolver`. To replace `PostProcess`, modify the bytes returned by `d2svg.Render`. [Layout engines](https://d2lang.com/tour/layouts/#layout-engines) · [Go example](https://github.com/d2lang/d2/blob/d70ec718/docs/examples/lib/1-d2lib/d2lib.go#L28-L35)
 - **Go struct changes.** If you set ELK graph options directly, use `EdgeEdgeSpacing` (`*int`) for spacing between edges on adjacent layers. `EdgeNode` now takes a `*float64`. `d2scenebuild.AssetOptions` and `d2themes.ThemableElement` contain slice or map fields. Code that compares them with `==` or uses them as map keys must compare or key on the fields it needs.
 
@@ -124,7 +121,7 @@ AI-generated changelog:
 
 The `@d2lang/d2` package runs in browsers and Node.js.
 
-- **Command line.** Run `npx @d2lang/d2 input.d2 output.svg` to render a single file. Omit the output path to write an SVG beside the input, or pipe source to the command for SVG on stdout. To keep a native PNG or PDF export in an npm script, invoke the native binary by its full path. [CLI usage](https://github.com/d2lang/d2/tree/644077c8/d2js/js#command-line)
+- **Command line.** Run `npx @d2lang/d2 input.d2 output.svg` to render a single file. Omit the output path to write an SVG beside the input, or pipe source to the command for SVG on stdout. After `npm install @d2lang/d2`, npm scripts can run `d2-svg input.d2 output.svg`. Use the native `d2` CLI for PNG, PDF or local imports. [CLI usage](https://github.com/d2lang/d2/tree/master/d2js/js#command-line)
 - **API.** `d2.renderSVG()` renders a D2 string or a multi-file project in one call. `d2.format()` formats a source file. TypeScript now covers theme overrides and the Playground helpers `d2.encode()` and `d2.decode()`. Decoded source is limited to 16 MiB. [JavaScript API](https://github.com/d2lang/d2/tree/e53d9644/d2js/js#api-reference)
 - **Animations and fonts.** Set `animateDuration` for step transitions. Use `forceAppendix` with `animateInterval` to show each board’s links and tooltips in its frame. Custom TrueType fonts supplied as `Uint8Array` now render correctly. Compiled diagrams retain their fonts when another diagram uses a different family or a saved diagram is rendered in a fresh worker. [Animation options](https://d2lang.com/tour/animation/#configuration)
 - **Browser workers.** Call `new D2()` inside a dedicated worker, or pass `{ workerURL }` to load a self-hosted worker. Safari 27.2 workers start correctly. The SDK surfaces startup errors and releases the embedded worker URL after startup, including on failure. [Worker options](https://github.com/d2lang/d2/blob/e53d9644/d2js/js/README.md#L119-L139)

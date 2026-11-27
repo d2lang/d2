@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = new URL("./node_modules/@d2lang/d2/", import.meta.url);
 const pkg = JSON.parse(await readFile(new URL("package.json", packageRoot), "utf8"));
-const cli = fileURLToPath(new URL(pkg.bin.d2, packageRoot));
+const cli = fileURLToPath(new URL(pkg.bin["d2-svg"], packageRoot));
 
 function run(args, options) {
   // A leaked WASM worker keeps the process alive even after the SVG is written.
@@ -21,6 +21,13 @@ function run(args, options) {
   assert.equal(result.signal, null);
   return result;
 }
+
+test("the package installs only the d2-svg command", () => {
+  assert.deepEqual(Object.keys(pkg.bin), ["d2-svg"]);
+  const bin = join("node_modules", ".bin", "d2-svg");
+  const help = execSync(`${bin} --help`, { encoding: "utf8" });
+  assert.match(help, /^Usage: d2-svg /);
+});
 
 test("npx renders piped input with the packed package", () => {
   // The shell finds npx on Unix and npx.cmd on Windows.
