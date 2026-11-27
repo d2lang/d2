@@ -65,3 +65,46 @@ func TestDottedBoardFilterSeesInheritedFieldsAsExisting(t *testing.T) {
 		t.Errorf("dotted:\n%s\nmap:\n%s", dotted, explicit)
 	}
 }
+
+func TestDottedBoardRuleOrderAndScope(t *testing.T) {
+	for _, tc := range []struct{ name, prefix, dotted, maps string }{
+		{
+			"inherited object and scoped edge", "x; steps.*.*.style.fill: orange",
+			"steps.one.(a -> b); steps.two.y", "steps: {one: {a -> b}}; steps: {two: {y}}",
+		},
+		{
+			"board rule after root rule", "*.style.fill: red; steps.*.*.style.fill: orange",
+			"steps.one.n; steps.two.m", "steps: {one: {n}}; steps: {two: {m}}",
+		},
+		{
+			"map on a dotted shape", "*.style.fill: red; scenarios.*: {p -> q}",
+			"scenarios.one.k: {p -> q}", "scenarios: {one: {k: {p -> q}}}",
+		},
+		{
+			"rule inside a glob value", "layers.*: {*.style.fill: blue}",
+			"layers.one.n; layers.two.m", "layers: {one: {n}}; layers: {two: {m}}",
+		},
+		{
+			"rule inside an intermediate layer", "layers.detail: {*.style.fill: red; steps.one: {seed}}",
+			"layers.detail.steps.one.new: ready", "layers.detail.steps.one: {new: ready}",
+		},
+		{
+			"edge rule inside an intermediate layer", "layers.detail: {(* -> *)[*]: {&label: ready; label: selected}; steps.one: {seed}}",
+			"layers.detail.steps.one.(a -> b): ready", "layers.detail.steps.one: {a -> b: ready}",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compile := func(s string) string {
+				t.Helper()
+				m, err := compileTween(t, tc.prefix+"\n"+s, d2ir.CompileOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return m.String()
+			}
+			if got, want := compile(tc.dotted), compile(tc.maps); got != want {
+				t.Errorf("dotted:\n%s\nmap:\n%s", got, want)
+			}
+		})
+	}
+}

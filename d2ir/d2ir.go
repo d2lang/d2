@@ -1361,11 +1361,8 @@ func (m *Map) ensureFieldMode(kp *d2ast.KeyPath, refctx *RefContext, create bool
 		}
 		if newTarget {
 			c.enqueueLazyPostTargets(fa...)
-			c.applyLazyGlobs(fa)
-			c.applyDottedBoardGlobs(m, fa)
-		} else {
-			c.applyLazyGlobs(nil)
 		}
+		c.applyFieldGlobs(m, fa, newTarget)
 	}
 	return fa, err
 }
@@ -1554,6 +1551,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		if _, ok := f.Composite.(*Array); ok {
 			return d2parser.Errorf(kp.Path[i].Unbox(), "cannot index into array")
 		}
+		c.applyBoardEntryGlobs(f, false)
 		if !c.ensurePathMap(f, gctx) {
 			return nil
 		}
@@ -1630,10 +1628,27 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		faAppend(f)
 		return nil
 	}
+	c.applyBoardEntryGlobs(f, true)
 	if f.Composite == nil {
 		c.openFieldMap(f)
 	}
 	return f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
+}
+
+// A dotted declaration enters its board group and its board in sequence.
+// Give each prefix the same opportunity to apply rules as opening its map.
+func (c *compiler) applyBoardEntryGlobs(f *Field, created bool) {
+	if c == nil || len(c.globContextStack) == 0 || len(c.globContexts()) == 0 || len(c.globRefContextStack) != 0 {
+		return
+	}
+	if _, group := d2ast.BoardKeywords[d2ast.Keyword(f.Name)]; !group && !isBoardGroup(ParentMap(f)) {
+		return
+	}
+	if created {
+		c.applyLazyGlobs([]*Field{f})
+	} else {
+		c.applyLazyGlobs(nil)
+	}
 }
 
 // ensurePathMap gives existing field f, which a key path continues into, a

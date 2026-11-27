@@ -28,6 +28,8 @@ type globContext struct {
 	// boardGroup is set when root is declared in the map of a board's
 	// layers, scenarios or steps.
 	boardGroup bool
+	// A rule authored inside a glob value lasts only while applying that value.
+	inGlobValue bool
 
 	// Keys (see appliedKey) of the fields this glob has already applied to.
 	appliedFields map[string]struct{}
@@ -1719,6 +1721,7 @@ func (c *compiler) ensureGlobContext(refctx *RefContext) *globContext {
 	gctx = &globContext{
 		refctx:        refctx,
 		boardGroup:    isBoardGroup(refctx.ScopeMap),
+		inGlobValue:   len(c.globRefContextStack) > 1,
 		appliedFields: make(map[string]struct{}),
 		appliedEdges:  make(map[string]struct{}),
 	}
@@ -1797,8 +1800,7 @@ func (c *compiler) compileKey(refctx *RefContext) {
 	settled := c.lazySettledVersions != nil && c.lazySettledVersions[root] == root.structureVersion
 	if oldVersion != refctx.ScopeMap.structureVersion && !c.applyingLazyWorklist && len(c.lazyPostTargets) > postTargetStart {
 		targets := c.takeLazyPostTargets(postTargetStart)
-		c.applyLazyGlobs(targets)
-		c.applyDottedBoardGlobs(refctx.ScopeMap, targets)
+		c.applyFieldGlobs(refctx.ScopeMap, targets, true)
 		settled = true
 	}
 	if oldVersion != refctx.ScopeMap.structureVersion && !c.applyingLazyWorklist && !settled {
@@ -1858,25 +1860,47 @@ func (c *compiler) enqueueLazyGlobFields(fields ...*Field) {
 	}
 }
 
-// A dotted key retains its authored reference scope for editing, but its
-// new fields must also see the glob rules inherited by their own board.
-func (c *compiler) applyDottedBoardGlobs(scope *Map, fields []*Field) {
+// An ordinary key inside a map replays rules in that map's scope. Dotted
+// writes keep their original references for editing and enter the equivalent
+// board scope only for rule evaluation.
+func (c *compiler) applyFieldGlobs(scope *Map, fields []*Field, created bool) {
+	apply := func(targets []*Field) {
+		if !created {
+			// Updates to existing fields re-evaluate the applicable rules.
+			targets = nil
+		}
+		c.applyLazyGlobs(targets)
+	}
 	if !c.hasBoardMaps || len(fields) == 0 || len(c.globRefContextStack) != 0 || c.applyingLazyWorklist {
+		apply(fields)
 		return
 	}
-	owner := enclosingBoardMap(scope)
-	for _, f := range fields {
-		board := ParentBoard(f).Map()
-		if owner == board || board == nil || board.Root() {
-			continue
+	for len(fields) > 0 {
+		board := ParentBoard(fields[0]).Map()
+		n := 1
+		for n < len(fields) && ParentBoard(fields[n]).Map() == board {
+			n++
 		}
-		globs := c.dottedBoardGlobs(owner, board, c.globContexts())
-		if len(globs) != 0 {
-			c.globContextStack = append(c.globContextStack, globs)
-			c.applyLazyGlobs([]*Field{f})
+		pushed := c.pushDottedBoardGlobs(scope, board)
+		apply(fields[:n])
+		if pushed {
 			c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
 		}
+		fields = fields[n:]
 	}
+}
+
+func (c *compiler) pushDottedBoardGlobs(scope, board *Map) bool {
+	if !c.hasBoardMaps || len(c.globRefContextStack) != 0 || board == nil || board.Root() {
+		return false
+	}
+	origin := enclosingBoardMap(scope)
+	if origin == board {
+		return false
+	}
+	globs := c.dottedBoardGlobs(origin, board, board, c.globContexts())
+	c.globContextStack = append(c.globContextStack, globs)
+	return true
 }
 
 func enclosingBoardMap(scope *Map) *Map {
@@ -1888,7 +1912,7 @@ func enclosingBoardMap(scope *Map) *Map {
 
 // Walk the same board boundaries a nested map would cross. Keep local
 // rules, and inherit newly declared parent rules in source order.
-func (c *compiler) dottedBoardGlobs(origin, board *Map, rules []*globContext) []*globContext {
+func (c *compiler) dottedBoardGlobs(origin, board, destination *Map, rules []*globContext) []*globContext {
 	if origin == board {
 		return rules
 	}
@@ -1896,7 +1920,7 @@ func (c *compiler) dottedBoardGlobs(origin, board *Map, rules []*globContext) []
 		return nil
 	}
 	parent := ParentBoard(board.Parent()).Map()
-	parentRules := c.dottedBoardGlobs(origin, parent, rules)
+	parentRules := c.dottedBoardGlobs(origin, parent, destination, rules)
 	inherited := c.inheritedGlobs(board, parentRules)
 	if len(board.globs) == 0 {
 		board.globs = inherited
@@ -1914,7 +1938,8 @@ func (c *compiler) dottedBoardGlobs(origin, board *Map, rules []*globContext) []
 	var active []*globContext
 	for _, rule := range board.globs {
 		_, fromParent := visible[rule.root]
-		if fromParent || enclosingBoardMap(rule.root.refctx.ScopeMap) == board {
+		local := board == destination && !rule.root.inGlobValue && enclosingBoardMap(rule.root.refctx.ScopeMap) == board
+		if fromParent || local {
 			active = append(active, rule)
 			visible[rule.root] = false
 		}
@@ -2413,7 +2438,11 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		}
 		c.mapRefContextStack = append(c.mapRefContextStack, refctx)
 		// A primary assignment can change the label that just matched.
+		pushed := c.hasBoardMaps && NodeBoardKind(f) == "" && c.pushDottedBoardGlobs(refctx.ScopeMap, ParentBoard(f).Map())
 		c.compileMapWithChecks(f.Map(), refctx.Key.Value.Map, scopeAST, refctx.Key.Primary.Unbox() == nil)
+		if pushed {
+			c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
+		}
 		c.mapRefContextStack = c.mapRefContextStack[:len(c.mapRefContextStack)-1]
 		if c.stopped() {
 			return
@@ -2734,21 +2763,15 @@ func (c *compiler) compileEdges(refctx *RefContext) {
 		}
 		refctx2 := *refctx
 		refctx2.ScopeMap = f.Map()
-		if c.hasBoardMaps && len(c.globRefContextStack) == 0 {
-			origin, board := enclosingBoardMap(refctx.ScopeMap), enclosingBoardMap(f.Map())
-			if origin != board && !board.Root() {
-				globs := c.dottedBoardGlobs(origin, board, c.globContexts())
-				c.globContextStack = append(c.globContextStack, globs)
-				before := f.Map().structureVersion
-				c._compileEdges(&refctx2)
-				if before != f.Map().structureVersion && !c.applyingLazyWorklist {
-					c.applyLazyGlobs(nil)
-				}
-				c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
-				continue
-			}
-		}
+		pushed := c.hasBoardMaps && c.pushDottedBoardGlobs(refctx.ScopeMap, enclosingBoardMap(f.Map()))
+		before := f.Map().structureVersion
 		c._compileEdges(&refctx2)
+		if pushed {
+			if before != f.Map().structureVersion && !c.applyingLazyWorklist {
+				c.applyLazyGlobs(nil)
+			}
+			c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
+		}
 	}
 }
 
