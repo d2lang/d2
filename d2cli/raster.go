@@ -78,7 +78,10 @@ const (
 	// charged against the retained indexed-color canvas, not the smaller source
 	// rectangles. The encoder output has a separate bound because compressed
 	// bytes and buffer capacity are not represented by this pixel accounting.
-	gifMaxNormalizedPixels int64 = 160 * 1024 * 1024
+	// A board is held for as long as its caption takes to read, and a hold is
+	// sampled like any other stretch of the clock. The ceiling admits a
+	// narrated explainer of about twenty seconds at 700 by 600.
+	gifMaxNormalizedPixels int64 = 256 * 1024 * 1024
 	gifMaxEncodedBytes     int64 = 64 * 1024 * 1024
 	// The watch preview is generated from trusted d2svg output, but it can still
 	// multiply one asset across many image elements. Bound both the input scan

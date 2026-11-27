@@ -1125,11 +1125,11 @@ func TestGIFPixelAdmissionsAcceptBoundariesAndRejectOverflow(t *testing.T) {
 		t.Fatalf("fractional GIF frame bounds = %v/%v, want (0,0)-(2,3)", bounds, err)
 	}
 
-	// 1280 * 1024 * 128 is exactly 160 Mi-pixels.
-	if err := validateGIFNormalizedFootprint(1_280, 1_024, 128); err != nil {
+	// 2048 * 1024 * 128 is exactly 256 Mi-pixels.
+	if err := validateGIFNormalizedFootprint(2_048, 1_024, 128); err != nil {
 		t.Fatalf("exact normalized-pixel boundary rejected: %v", err)
 	}
-	if err := validateGIFNormalizedFootprint(1_281, 1_024, 128); err == nil {
+	if err := validateGIFNormalizedFootprint(2_049, 1_024, 128); err == nil {
 		t.Fatal("normalized-pixel boundary accepted an over-limit canvas")
 	}
 	for _, dimensions := range [][3]int{{0, 1, 1}, {1, 0, 1}, {1, 1, 0}} {

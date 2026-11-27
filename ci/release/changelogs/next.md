@@ -4,6 +4,8 @@
 
 #### Improvements 🧹
 
+- **GIF.** The ceiling on an animation's total frame area rose from 160 to 256 Mi-pixels, enough for a narrated explainer of about twenty seconds at 700 by 600.
+
 #### Bugfixes ⛑️
 
 #### Breaking Changes
