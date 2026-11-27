@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Regenerate the bundled appendix faces with FontTools 4.69.1."""
+"""Regenerate the bundled appendix faces with FontTools 4.69.1 and Brotli 1.2.1."""
 from copy import deepcopy
 import os
 from pathlib import Path
-import subprocess
 
 from fontTools import subset
 from fontTools.ttLib import TTFont
@@ -39,11 +38,18 @@ def build(style):
     for record in font["name"].names:
         if record.nameID in names:
             record.string = names[record.nameID].encode(record.getEncoding())
-    font.save(f"ttf/{postscript}.ttf")
+    font.flavor = "woff2"
+    path = Path(f"encoded/{postscript}.woff2")
+    font.save(path)
+
+    # The Go shaping test reads SFNT. Exercise the face decoded from the
+    # shipped WOFF2, including its shaping tables, Unicode aliases and metrics.
+    with TTFont(path, recalcTimestamp=False, recalcBBoxes=False) as decoded:
+        decoded.flavor = None
+        decoded.save(f"testdata/appendix-{style.lower()}.ttf")
 
 
 if __name__ == "__main__":
     os.chdir(Path(__file__).resolve().parent)
     build("Regular")
     build("Bold")
-    subprocess.run(["go", "run", "gen_ttf_stream.go"], check=True)
