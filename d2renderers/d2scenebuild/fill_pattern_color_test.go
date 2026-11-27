@@ -95,3 +95,87 @@ func TestBuildFillPatternColor(t *testing.T) {
 		t.Fatalf("missing overlays: root=%v shape=%v", foundRootOverlay, foundShapeOverlay)
 	}
 }
+
+func TestBuildFillPatternColorCurrentColor(t *testing.T) {
+	t.Parallel()
+
+	diagram := d2target.NewDiagram()
+	diagram.Root.Fill = "#ffffff"
+	diagram.Root.FillPattern = "dots"
+	diagram.Root.FillPatternColor = "currentColor"
+
+	shape := *d2target.BaseShape()
+	shape.ID = "box"
+	shape.Pos = d2target.Point{X: 10, Y: 10}
+	shape.Width = 100
+	shape.Height = 60
+	shape.Fill = "#ffffff"
+	shape.Stroke = "#000000"
+	shape.FillPattern = "lines"
+	shape.FillPatternColor = "currentColor"
+
+	gradShape := *d2target.BaseShape()
+	gradShape.ID = "grad"
+	gradShape.Pos = d2target.Point{X: 140, Y: 10}
+	gradShape.Width = 100
+	gradShape.Height = 60
+	gradShape.Fill = "#ffffff"
+	gradShape.Stroke = "#000000"
+	gradShape.FillPattern = "dots"
+	gradShape.FillPatternColor = "linear-gradient(currentColor, red)"
+
+	diagram.Shapes = []d2target.Shape{shape, gradShape}
+
+	legendShape := *d2target.BaseShape()
+	legendShape.ID = "legend-box"
+	legendShape.Label = "Current"
+	legendShape.Fill = "#ffffff"
+	legendShape.Stroke = "#000000"
+	legendShape.FillPattern = "dots"
+	legendShape.FillPatternColor = "currentColor"
+	diagram.Legend = &d2target.Legend{Shapes: []d2target.Shape{legendShape}}
+
+	scene, err := d2scenebuild.Build(context.Background(), diagram, d2scenebuild.Options{})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	wantBlack := color.NRGBA{R: 0, G: 0, B: 0, A: 0xff}
+	var foundRoot, foundShape, foundGrad bool
+	var visit func(n *d2scene.Node)
+	visit = func(n *d2scene.Node) {
+		if n == nil {
+			return
+		}
+		switch n.ID {
+		case "root:background:fill-pattern":
+			foundRoot = true
+			pat := n.Primitive.(d2scene.Rect).Fill.(d2scene.PatternPaint)
+			solid := pat.Root.Children[0].Primitive.(d2scene.Rect).Fill.(d2scene.SolidPaint)
+			if solid.Color != wantBlack {
+				t.Fatalf("root currentColor = %+v, want %+v", solid.Color, wantBlack)
+			}
+		case "box:fill-pattern:0":
+			foundShape = true
+			pat := n.Primitive.(d2scene.Rect).Fill.(d2scene.PatternPaint)
+			solid := pat.Root.Children[0].Primitive.(d2scene.Rect).Fill.(d2scene.SolidPaint)
+			if solid.Color != wantBlack {
+				t.Fatalf("shape currentColor = %+v, want %+v", solid.Color, wantBlack)
+			}
+		case "grad:fill-pattern:0":
+			foundGrad = true
+			pat := n.Primitive.(d2scene.Rect).Fill.(d2scene.PatternPaint)
+			grad := pat.Root.Children[0].Primitive.(d2scene.Rect).Fill.(d2scene.LinearGradient)
+			if grad.Stops[0].Color != wantBlack {
+				t.Fatalf("gradient currentColor stop = %+v, want %+v", grad.Stops[0].Color, wantBlack)
+			}
+		}
+		for _, child := range n.Children {
+			visit(child)
+		}
+	}
+	visit(scene.Root)
+	if !foundRoot || !foundShape || !foundGrad {
+		t.Fatalf("missing currentColor overlays: root=%v shape=%v grad=%v", foundRoot, foundShape, foundGrad)
+	}
+}

@@ -2269,6 +2269,17 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	for _, connection := range diagram.Connections {
 		definePaint(connection.Fill)
 	}
+	if diagram.Legend != nil {
+		for _, shape := range diagram.Legend.Shapes {
+			definePaint(shape.Fill)
+			definePaint(shape.FillPatternColor)
+			definePaint(shape.Stroke)
+			definePaint(shape.Color)
+		}
+		for _, connection := range diagram.Legend.Connections {
+			definePaint(connection.Fill)
+		}
+	}
 
 	writer.finish()
 
@@ -3065,7 +3076,7 @@ func buildCustomFillPattern(spec customFillPatternSpec, diagramHash string, inli
 	key := d2themes.FillPatternColorKey(spec.color)
 	patternID := fmt.Sprintf("%s-%s-%s", spec.pattern, diagramHash, key)
 	className := fmt.Sprintf("%s-overlay-%s", spec.pattern, key)
-	cssRule := fmt.Sprintf("\n.%s {\n\tfill: url(#%s);\n}", className, patternID)
+	cssRule := fmt.Sprintf("\n.%s .%s {\n\tfill: url(#%s);\n}", diagramHash, className, patternID)
 
 	var paintAttr svg.Attribute
 	if color.IsThemeColor(spec.color) {

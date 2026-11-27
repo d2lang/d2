@@ -9159,6 +9159,724 @@ func TestDeleteLastImportedMember(t *testing.T) {
 	assert.Equal(t, 0, len(g.Objects))
 }
 
+func TestSetFillPatternColorInheritance(t *testing.T) {
+	t.Parallel()
+
+	t.Run("class_nested_map_override_leaves_class_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `classes: {
+  dotted: {
+    style.fill-pattern: dots {
+      color: red
+    }
+  }
+}
+x.class: dotted
+y.class: dotted
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "x.style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		out := d2format.Format(g.AST)
+		want := `classes: {
+  dotted: {
+    style.fill-pattern: dots {
+      color: red
+    }
+  }
+}
+x.class: dotted
+y.class: dotted
+x.style.fill-pattern.color: white
+`
+		assert.String(t, want, out)
+
+		x, ok := g.Root.HasChild([]string{"x"})
+		assert.True(t, ok)
+		y, ok := g.Root.HasChild([]string{"y"})
+		assert.True(t, ok)
+		assert.Equal(t, "dots", x.Style.FillPattern.Value)
+		assert.Equal(t, "white", x.Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", y.Style.FillPattern.Value)
+		assert.Equal(t, "red", y.Style.FillPatternColor.Value)
+	})
+
+	t.Run("class_style_block_override_leaves_class_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `classes: {
+  dotted: {
+    style: {
+      fill-pattern: dots {
+        color: red
+      }
+    }
+  }
+}
+x: {
+  class: dotted
+}
+y.class: dotted
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "x.style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		x, ok := g.Root.HasChild([]string{"x"})
+		assert.True(t, ok)
+		y, ok := g.Root.HasChild([]string{"y"})
+		assert.True(t, ok)
+		assert.Equal(t, "dots", x.Style.FillPattern.Value)
+		assert.Equal(t, "white", x.Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", y.Style.FillPattern.Value)
+		assert.Equal(t, "red", y.Style.FillPatternColor.Value)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "color: red"))
+	})
+
+	t.Run("edge_class_nested_map_override_leaves_class_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `classes: {
+  dotted: {
+    style.fill-pattern: dots {
+      color: red
+    }
+  }
+}
+a -> b: {
+  class: dotted
+}
+c -> d: {
+  class: dotted
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		assert.Equal(t, 2, len(g.Edges))
+		assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+		assert.Equal(t, "white", g.Edges[0].Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", g.Edges[1].Style.FillPattern.Value)
+		assert.Equal(t, "red", g.Edges[1].Style.FillPatternColor.Value)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "color: red"))
+	})
+
+	t.Run("shape_wildcard_dot_path_override_leaves_glob_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `*.style.fill-pattern: dots {
+  color: red
+}
+x
+y
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "x.style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		x, ok := g.Root.HasChild([]string{"x"})
+		assert.True(t, ok)
+		y, ok := g.Root.HasChild([]string{"y"})
+		assert.True(t, ok)
+		assert.Equal(t, "dots", x.Style.FillPattern.Value)
+		assert.Equal(t, "white", x.Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", y.Style.FillPattern.Value)
+		assert.Equal(t, "red", y.Style.FillPatternColor.Value)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "color: red"))
+	})
+
+	t.Run("shape_wildcard_block_override_leaves_glob_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `*: {
+  style.fill-pattern: dots {
+    color: red
+  }
+}
+x
+y
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "x.style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		x, ok := g.Root.HasChild([]string{"x"})
+		assert.True(t, ok)
+		y, ok := g.Root.HasChild([]string{"y"})
+		assert.True(t, ok)
+		assert.Equal(t, "dots", x.Style.FillPattern.Value)
+		assert.Equal(t, "white", x.Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", y.Style.FillPattern.Value)
+		assert.Equal(t, "red", y.Style.FillPatternColor.Value)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "color: red"))
+	})
+
+	t.Run("edge_wildcard_dot_path_override_leaves_glob_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `(* -> *)[*].style.fill-pattern: dots {
+  color: red
+}
+a -> b
+c -> d
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		assert.Equal(t, 2, len(g.Edges))
+		assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+		assert.Equal(t, "white", g.Edges[0].Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", g.Edges[1].Style.FillPattern.Value)
+		assert.Equal(t, "red", g.Edges[1].Style.FillPatternColor.Value)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "color: red"))
+	})
+
+	t.Run("edge_wildcard_block_override_leaves_glob_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `(* -> *)[*]: {
+  style.fill-pattern: dots {
+    color: red
+  }
+}
+a -> b
+c -> d
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		assert.Equal(t, 2, len(g.Edges))
+		assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+		assert.Equal(t, "white", g.Edges[0].Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", g.Edges[1].Style.FillPattern.Value)
+		assert.Equal(t, "red", g.Edges[1].Style.FillPatternColor.Value)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "color: red"))
+	})
+
+	t.Run("direct_nested_map_updates_in_place", func(t *testing.T) {
+		t.Parallel()
+		src := `x: {
+  style.fill-pattern: dots {
+    color: red
+  }
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "x.style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		want := `x: {
+  style.fill-pattern: dots {
+    color: white
+  }
+}
+`
+		assert.String(t, want, d2format.Format(g.AST))
+	})
+
+	t.Run("edge_style_block_update_nested_map", func(t *testing.T) {
+		t.Parallel()
+		src := `a -> b: {
+  style: {
+    fill-pattern: dots {
+      color: red
+    }
+  }
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		want := `a -> b: {
+  style: {
+    fill-pattern: dots {
+      color: white
+    }
+  }
+}
+`
+		assert.String(t, want, d2format.Format(g.AST))
+		assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+		assert.Equal(t, "white", g.Edges[0].Style.FillPatternColor.Value)
+	})
+
+	t.Run("edge_style_block_add_color_beside_pattern", func(t *testing.T) {
+		t.Parallel()
+		src := `a -> b: {
+  style: {
+    fill-pattern: dots
+  }
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		want := `a -> b: {
+  style: {
+    fill-pattern: dots
+    fill-pattern.color: white
+  }
+}
+`
+		assert.String(t, want, d2format.Format(g.AST))
+		assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+		assert.Equal(t, "white", g.Edges[0].Style.FillPatternColor.Value)
+	})
+
+	t.Run("edge_style_block_set_then_update_in_place", func(t *testing.T) {
+		t.Parallel()
+		src := `a -> b: {
+  style: {
+    fill: blue
+  }
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+		g, err = d2oracle.Set(g, nil, "(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("green"))
+		assert.Success(t, err)
+
+		want := `a -> b: {
+  style: {
+    fill: blue
+    fill-pattern.color: green
+  }
+}
+`
+		assert.String(t, want, d2format.Format(g.AST))
+		assert.Equal(t, "green", g.Edges[0].Style.FillPatternColor.Value)
+	})
+
+	t.Run("nested_shape_inside_glob_leaves_glob_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `*: {
+  x: {
+    style.fill-pattern: dots {
+      color: red
+    }
+  }
+}
+a
+b
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "a.x.style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		ax, ok := g.Root.HasChild([]string{"a", "x"})
+		assert.True(t, ok)
+		bx, ok := g.Root.HasChild([]string{"b", "x"})
+		assert.True(t, ok)
+		assert.Equal(t, "dots", ax.Style.FillPattern.Value)
+		assert.Equal(t, "white", ax.Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", bx.Style.FillPattern.Value)
+		assert.Equal(t, "red", bx.Style.FillPatternColor.Value)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "color: red"))
+	})
+
+	t.Run("nested_edge_inside_glob_leaves_glob_and_sibling_untouched", func(t *testing.T) {
+		t.Parallel()
+		src := `*: {
+  a -> b: {
+    style.fill-pattern: dots {
+      color: red
+    }
+  }
+}
+c1
+c2
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "c1.(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		e1 := d2oracle.GetEdge(g, nil, "c1.(a -> b)[0]")
+		e2 := d2oracle.GetEdge(g, nil, "c2.(a -> b)[0]")
+		assert.True(t, e1 != nil && e2 != nil)
+		assert.Equal(t, "dots", e1.Style.FillPattern.Value)
+		assert.Equal(t, "white", e1.Style.FillPatternColor.Value)
+		assert.Equal(t, "dots", e2.Style.FillPattern.Value)
+		assert.Equal(t, "red", e2.Style.FillPatternColor.Value)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "color: red"))
+	})
+
+	t.Run("edge_chain_updates_existing_nested_fill_pattern_color_in_place", func(t *testing.T) {
+		t.Parallel()
+		src := `a -> b -> c
+(a -> b)[0].style.fill-pattern: dots {
+  color: red
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Set(g, nil, "(a -> b)[0].style.fill-pattern.color", nil, go2.Pointer("white"))
+		assert.Success(t, err)
+
+		want := `a -> b -> c
+(a -> b)[0].style.fill-pattern: dots {
+  color: white
+}
+`
+		assert.String(t, want, d2format.Format(g.AST))
+		assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+		assert.Equal(t, "white", g.Edges[0].Style.FillPatternColor.Value)
+	})
+}
+
+func TestDeleteFillPatternColor(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		src   string
+		key   string
+		want  string
+		check func(t *testing.T, g *d2graph.Graph)
+	}{
+		{
+			name: "edge_nested_map",
+			src:  "a -> b: {style.fill-pattern: dots {color: red}}\n",
+			key:  "(a -> b)[0].style.fill-pattern.color",
+			want: "a -> b: {style.fill-pattern: dots}\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, 1, len(g.Edges))
+				assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+				assert.True(t, g.Edges[0].Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "edge_dot_path",
+			src:  "a -> b\n(a -> b)[0].style.fill-pattern: dots\n(a -> b)[0].style.fill-pattern.color: red\n",
+			key:  "(a -> b)[0].style.fill-pattern.color",
+			want: "a -> b\n(a -> b)[0].style.fill-pattern: dots\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, 1, len(g.Edges))
+				assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+				assert.True(t, g.Edges[0].Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "edge_dot_path_nested_map",
+			src:  "a -> b\n(a -> b)[0].style.fill-pattern: dots {color: red}\n",
+			key:  "(a -> b)[0].style.fill-pattern.color",
+			want: "a -> b\n(a -> b)[0].style.fill-pattern: dots\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, 1, len(g.Edges))
+				assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+				assert.True(t, g.Edges[0].Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "edge_style_block",
+			src:  "a -> b: {\n  style: {\n    fill-pattern: dots {\n      color: red\n    }\n  }\n}\n",
+			key:  "(a -> b)[0].style.fill-pattern.color",
+			want: "a -> b: {\n  style: {\n    fill-pattern: dots\n  }\n}\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, 1, len(g.Edges))
+				assert.Equal(t, "dots", g.Edges[0].Style.FillPattern.Value)
+				assert.True(t, g.Edges[0].Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "shape_nested_map",
+			src:  "x: {style.fill-pattern: dots {color: red}}\n",
+			key:  "x.style.fill-pattern.color",
+			want: "x: {style.fill-pattern: dots}\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				x, ok := g.Root.HasChild([]string{"x"})
+				assert.True(t, ok)
+				assert.Equal(t, "dots", x.Style.FillPattern.Value)
+				assert.True(t, x.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "shape_dot_path_with_pattern",
+			src:  "x.style.fill-pattern: dots\nx.style.fill-pattern.color: red\n",
+			key:  "x.style.fill-pattern.color",
+			want: "x.style.fill-pattern: dots\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				x, ok := g.Root.HasChild([]string{"x"})
+				assert.True(t, ok)
+				assert.Equal(t, "dots", x.Style.FillPattern.Value)
+				assert.True(t, x.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "shape_dot_path_only",
+			src:  "x.style.fill-pattern.color: red\n",
+			key:  "x.style.fill-pattern.color",
+			want: "x\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				x, ok := g.Root.HasChild([]string{"x"})
+				assert.True(t, ok)
+				assert.True(t, x.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "shape_dot_path_nested_map",
+			src:  "x.style.fill-pattern: dots {color: red}\n",
+			key:  "x.style.fill-pattern.color",
+			want: "x.style.fill-pattern: dots\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				x, ok := g.Root.HasChild([]string{"x"})
+				assert.True(t, ok)
+				assert.Equal(t, "dots", x.Style.FillPattern.Value)
+				assert.True(t, x.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "shape_style_block",
+			src:  "x: {\n  style: {\n    fill-pattern: dots {\n      color: red\n    }\n  }\n}\n",
+			key:  "x.style.fill-pattern.color",
+			want: "x: {\n  style: {\n    fill-pattern: dots\n  }\n}\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				x, ok := g.Root.HasChild([]string{"x"})
+				assert.True(t, ok)
+				assert.Equal(t, "dots", x.Style.FillPattern.Value)
+				assert.True(t, x.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "shape_preserves_sibling_child_named_color",
+			src:  "x: {\n  color: keep\n  style.fill-pattern: dots {\n    color: red\n  }\n}\n",
+			key:  "x.style.fill-pattern.color",
+			want: "x: {\n  color: keep\n  style.fill-pattern: dots\n}\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				x, ok := g.Root.HasChild([]string{"x"})
+				assert.True(t, ok)
+				assert.Equal(t, "dots", x.Style.FillPattern.Value)
+				assert.True(t, x.Style.FillPatternColor == nil)
+				c, ok := x.HasChild([]string{"color"})
+				assert.True(t, ok)
+				assert.Equal(t, "keep", c.Label.Value)
+			},
+		},
+		{
+			name: "root_nested_map",
+			src:  "style.fill-pattern: dots {color: red}\nx\n",
+			key:  "style.fill-pattern.color",
+			want: "style.fill-pattern: dots\nx\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, "dots", g.Root.Style.FillPattern.Value)
+				assert.True(t, g.Root.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "root_dot_path",
+			src:  "style.fill-pattern: dots\nstyle.fill-pattern.color: red\nx\n",
+			key:  "style.fill-pattern.color",
+			want: "style.fill-pattern: dots\n\nx\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, "dots", g.Root.Style.FillPattern.Value)
+				assert.True(t, g.Root.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "root_style_block",
+			src:  "style: {\n  fill-pattern: dots {\n    color: red\n  }\n}\nx\n",
+			key:  "style.fill-pattern.color",
+			want: "style: {\n  fill-pattern: dots\n}\nx\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, "dots", g.Root.Style.FillPattern.Value)
+				assert.True(t, g.Root.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "delete_parent_fill_pattern_shape_nested_map",
+			src:  "x: {style.fill-pattern: dots {color: red}}\n",
+			key:  "x.style.fill-pattern",
+			want: "x: {}\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				x, ok := g.Root.HasChild([]string{"x"})
+				assert.True(t, ok)
+				assert.True(t, x.Style.FillPattern == nil)
+				assert.True(t, x.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "delete_parent_fill_pattern_shape_dot_path_nested_map",
+			src:  "x.style.fill-pattern: dots {color: red}\n",
+			key:  "x.style.fill-pattern",
+			want: "x\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				x, ok := g.Root.HasChild([]string{"x"})
+				assert.True(t, ok)
+				assert.True(t, x.Style.FillPattern == nil)
+				assert.True(t, x.Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "delete_parent_fill_pattern_edge_nested_map",
+			src:  "a -> b: {style.fill-pattern: dots {color: red}}\n",
+			key:  "(a -> b)[0].style.fill-pattern",
+			want: "a -> b: {}\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, 1, len(g.Edges))
+				assert.True(t, g.Edges[0].Style.FillPattern == nil)
+				assert.True(t, g.Edges[0].Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "delete_parent_fill_pattern_edge_dot_path_nested_map",
+			src:  "a -> b\n(a -> b)[0].style.fill-pattern: dots {color: red}\n",
+			key:  "(a -> b)[0].style.fill-pattern",
+			want: "a -> b\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, 1, len(g.Edges))
+				assert.True(t, g.Edges[0].Style.FillPattern == nil)
+				assert.True(t, g.Edges[0].Style.FillPatternColor == nil)
+			},
+		},
+		{
+			name: "delete_parent_fill_pattern_root_nested_map",
+			src:  "style.fill-pattern: dots {color: red}\nx\n",
+			key:  "style.fill-pattern",
+			want: "x\n",
+			check: func(t *testing.T, g *d2graph.Graph) {
+				assert.True(t, g.Root.Style.FillPattern == nil)
+				assert.True(t, g.Root.Style.FillPatternColor == nil)
+			},
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g, _, err := d2compiler.Compile("", strings.NewReader(tc.src), nil)
+			assert.Success(t, err)
+
+			g, err = d2oracle.Delete(g, nil, tc.key)
+			assert.Success(t, err)
+
+			assert.String(t, tc.want, d2format.Format(g.AST))
+			tc.check(t, g)
+		})
+	}
+
+	t.Run("imported_shape_appends_null", func(t *testing.T) {
+		t.Parallel()
+		files := fstest.MapFS{
+			"base.d2": {Data: []byte("x: {style.fill-pattern: dots {color: red}}\n")},
+		}
+		g, _, err := d2compiler.Compile("main.d2", strings.NewReader("...@base\n"), &d2compiler.CompileOptions{FS: files})
+		assert.Success(t, err)
+
+		g, err = d2oracle.Delete(g, nil, "x.style.fill-pattern.color")
+		assert.Success(t, err)
+
+		assert.String(t, "...@base\nx.style.fill-pattern.color: null\n", d2format.Format(g.AST))
+		x, ok := g.Root.HasChild([]string{"x"})
+		assert.True(t, ok)
+		assert.Equal(t, "dots", x.Style.FillPattern.Value)
+		assert.True(t, x.Style.FillPatternColor == nil)
+	})
+
+	t.Run("scenario_root_delete_appends_null", func(t *testing.T) {
+		t.Parallel()
+		src := `style.fill-pattern: dots {
+  color: red
+}
+x
+scenarios: {
+  s1: {}
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Delete(g, []string{"s1"}, "style.fill-pattern.color")
+		assert.Success(t, err)
+
+		assert.Equal(t, "red", g.Root.Style.FillPatternColor.Value)
+		s1 := d2oracle.GetBoardGraph(g, []string{"s1"})
+		assert.True(t, s1 != nil)
+		assert.Equal(t, "dots", s1.Root.Style.FillPattern.Value)
+		assert.True(t, s1.Root.Style.FillPatternColor == nil)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "style.fill-pattern.color: null"))
+	})
+
+	t.Run("scenario_edge_delete_appends_null", func(t *testing.T) {
+		t.Parallel()
+		src := `a -> b: {
+  style.fill-pattern: dots {
+    color: red
+  }
+}
+scenarios: {
+  s1: {}
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Delete(g, []string{"s1"}, "(a -> b)[0].style.fill-pattern.color")
+		assert.Success(t, err)
+
+		assert.Equal(t, "red", g.Edges[0].Style.FillPatternColor.Value)
+		s1 := d2oracle.GetBoardGraph(g, []string{"s1"})
+		assert.True(t, s1 != nil)
+		assert.Equal(t, "dots", s1.Edges[0].Style.FillPattern.Value)
+		assert.True(t, s1.Edges[0].Style.FillPatternColor == nil)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "(a -> b)[0].style.fill-pattern.color: null"))
+	})
+
+	t.Run("scenario_shape_delete_appends_null", func(t *testing.T) {
+		t.Parallel()
+		src := `x: {
+  style.fill-pattern: dots {
+    color: red
+  }
+}
+scenarios: {
+  s1: {}
+}
+`
+		g, _, err := d2compiler.Compile("", strings.NewReader(src), nil)
+		assert.Success(t, err)
+
+		g, err = d2oracle.Delete(g, []string{"s1"}, "x.style.fill-pattern.color")
+		assert.Success(t, err)
+
+		rootX, ok := g.Root.HasChild([]string{"x"})
+		assert.True(t, ok)
+		assert.Equal(t, "red", rootX.Style.FillPatternColor.Value)
+		s1 := d2oracle.GetBoardGraph(g, []string{"s1"})
+		assert.True(t, s1 != nil)
+		s1X, ok := s1.Root.HasChild([]string{"x"})
+		assert.True(t, ok)
+		assert.Equal(t, "dots", s1X.Style.FillPattern.Value)
+		assert.True(t, s1X.Style.FillPatternColor == nil)
+		assert.True(t, strings.Contains(d2format.Format(g.AST), "x.style.fill-pattern.color: null"))
+	})
+}
+
 func TestDeleteIDDeltas(t *testing.T) {
 	t.Parallel()
 
