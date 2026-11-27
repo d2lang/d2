@@ -2,7 +2,10 @@ package d2fonts
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -17,13 +20,16 @@ func TestAppendixFacesPreserveShaping(t *testing.T) {
 		text     string
 		maxBytes int
 	}{
-		{FONT_STYLE_REGULAR, "AVATAR To Wo office ffi ffl $123.45 ﬀ ²", 24000},
-		{FONT_STYLE_BOLD, "0123456789109876543210 o H ﬀ ²", 24000},
+		{FONT_STYLE_REGULAR, "AVATAR To Wo office ffi ffl $123.45 ﬀ ²", 18000},
+		{FONT_STYLE_BOLD, "0123456789109876543210 o H ﬀ ²", 18000},
 	} {
 		original := FontFaces.Get(SourceSansPro.Font(0, tc.style))
-		woff, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(AppendixEncoding(tc.style), woffDataPrefix))
+		woff, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(AppendixEncoding(tc.style), woff2DataPrefix))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !bytes.HasPrefix(woff, []byte("wOF2")) {
+			t.Fatalf("%s appendix has invalid WOFF2 signature", tc.style)
 		}
 		if len(woff) > tc.maxBytes {
 			t.Fatalf("%s appendix subset grew to %d bytes", tc.style, len(woff))
@@ -49,7 +55,20 @@ func TestAppendixFacesPreserveShaping(t *testing.T) {
 			}
 			return glyphs
 		}
-		if !slices.Equal(shape(original), shape(woff)) {
+		// gen_appendix_faces.py decodes the shipped WOFF2 for the Go shaper.
+		path := "testdata/appendix-" + string(tc.style)
+		subset, err := os.ReadFile(path + ".ttf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest, err := os.ReadFile(path + ".sha256")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(append(woff, subset...))); got != strings.TrimSpace(string(digest)) {
+			t.Fatalf("%s appendix WOFF2 or shaping fixture changed; run gen_appendix_faces.py", tc.style)
+		}
+		if !slices.Equal(shape(original), shape(subset)) {
 			t.Fatalf("%s appendix glyph selection or positioning changed", tc.style)
 		}
 	}

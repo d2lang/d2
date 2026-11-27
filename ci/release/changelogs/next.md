@@ -4,14 +4,12 @@
 
 #### Improvements 🧹
 
-- SVG exports use 28.3% fewer bytes across the 157 documentation diagrams, or 34.9% fewer with gzip. D2 embeds smaller bundled fonts and writes more compact stylesheets, code blocks, arrowhead references, textures, sketch paths, and LaTeX glyphs.
-- SVG appendices use smaller fonts for ASCII footnotes and numbered markers while retaining their kerning, ligatures, and hinting.
-- **GIF.** The ceiling on an animation's total frame area rose from 160 to 256 Mi-pixels, enough for a narrated explainer of about twenty seconds at 700 by 600.
+- SVG exports use 28.4% fewer bytes across the 157 documentation diagrams, or 35.1% fewer with gzip. D2 embeds smaller bundled fonts and writes more compact stylesheets, code blocks, arrowhead references, textures, sketch paths, and LaTeX glyphs.
+- SVG appendices use precompressed WOFF2 fonts for ASCII footnotes and numbered markers while retaining their kerning, ligatures, and hinting.
 
 #### Bugfixes ⛑️
 
-#### Breaking Changes
-
-- **`annotation` is a keyword.** A shape named `annotation` must now be quoted: `"annotation": note`. Where the old spelling no longer compiles, the error says so. `annotation: note` on its own still compiles: it is now the board's caption.
+- Labels that mention a fill pattern class such as `paper-overlay` no longer embed an unused texture in ordinary SVG exports.
+- **GIF.** The ceiling on an animation's total frame area rose from 160 to 256 Mi-pixels, enough for a narrated explainer of about twenty seconds at 700 by 600.
 
 <!-- When this release changes D2.js, add a “#### D2.js <npm version>” section here. -->

@@ -1,38 +1,35 @@
 package d2fonts
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"sync"
-
-	"github.com/d2lang/d2/lib/font"
 )
 
-// These faces are generated with the original kerning and substitution rules.
-// D2's general-purpose subsetter omits those tables.
+// The generator retains the original kerning and substitution rules.
+//
+//go:embed encoded/D2Appendix-Regular.woff2
+var appendixRegular []byte
+
+//go:embed encoded/D2Appendix-Bold.woff2
+var appendixBold []byte
+
 var appendixFaces = [...]struct {
 	style    FontStyle
-	file     string
+	woff2    []byte
 	original string
 	encoding func() string
 }{
-	{style: FONT_STYLE_REGULAR, file: "D2Appendix-Regular.ttf"},
-	{style: FONT_STYLE_BOLD, file: "D2Appendix-Bold.ttf"},
+	{style: FONT_STYLE_REGULAR, woff2: appendixRegular},
+	{style: FONT_STYLE_BOLD, woff2: appendixBold},
 }
 
-func registerAppendixFaces(files func(string) []byte) {
+func registerAppendixFaces() {
 	for i := range appendixFaces {
 		f := &appendixFaces[i]
-		ttf := files(f.file)
-		if len(ttf) == 0 {
-			panic("d2fonts: missing bundled " + f.file)
-		}
 		f.original = FontEncodings.Get(SourceSansPro.Font(0, f.style))
 		f.encoding = sync.OnceValue(func() string {
-			data, err := font.FullWOFF(ttf)
-			if err != nil {
-				panic("d2fonts: encode " + f.file + ": " + err.Error())
-			}
-			return woffDataPrefix + base64.StdEncoding.EncodeToString(data)
+			return woff2DataPrefix + base64.StdEncoding.EncodeToString(f.woff2)
 		})
 	}
 }

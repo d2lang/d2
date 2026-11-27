@@ -2479,9 +2479,9 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	upperBuf := &bytes.Buffer{}
 	compact := UsesDefaultStylesheet()
 	styleStart := 0
+	var classes map[string]bool
 	if opts.MasterID == "" {
 		var corpora fontCorpora
-		var classes map[string]bool
 		if sketch {
 			corpora, classes, _ = collectFontCorporaAndClasses(bufStr)
 		} else {
@@ -2511,8 +2511,9 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	}
 
 	patternDefs := ""
+	usedPatterns := usedFillPatterns(bufStr, diagramHash, classes)
 	for _, pattern := range d2ast.FillPatterns {
-		if strings.Contains(bufStr, fmt.Sprintf("%s-overlay", pattern)) || strings.EqualFold(diagram.Root.FillPattern, pattern) {
+		if usedPatterns[pattern] || strings.EqualFold(diagram.Root.FillPattern, pattern) {
 			if patternDefs == "" {
 				if !compact {
 					upperBuf.WriteString(legacyStyleOpen)
