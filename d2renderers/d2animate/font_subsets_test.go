@@ -49,8 +49,8 @@ func TestAnimationFontCoverage(t *testing.T) {
 				faces = 3
 			}
 			for _, uri := range []string{
-				d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR).GetEncodedSubset(regular),
-				d2fonts.SourceCodePro.Font(0, d2fonts.FONT_STYLE_BOLD).GetEncodedSubset(bold),
+				d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR).GetSVGEncodedSubset(regular),
+				d2fonts.SourceCodePro.Font(0, d2fonts.FONT_STYLE_BOLD).GetSVGEncodedSubset(bold),
 			} {
 				if !bytes.Contains(out, []byte(uri)) {
 					t.Fatal("missing expected font subset")

@@ -1,6 +1,7 @@
 package d2fonts
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/internal/bundledfont"
@@ -62,6 +63,9 @@ func TestEncodedSubsetsAreRememberedForBundledFontsOnly(t *testing.T) {
 	if got := custom.GetEncodedSubset("subset cache"); got == want || got == custom.GetEncodedFull() {
 		t.Fatal("expected a custom subset with its source metadata")
 	}
+	if got := custom.GetSVGEncodedSubset("subset cache"); got != custom.GetEncodedSubset("subset cache") {
+		t.Fatal("SVG changed a font supplied at run time")
+	}
 	if n, _ := cache(); n != entries {
 		t.Fatal("a subset of a font supplied at run time was retained")
 	}
@@ -73,5 +77,10 @@ func TestEncodedSubsetsAreRememberedForBundledFontsOnly(t *testing.T) {
 	}
 	if n, _ := cache(); n != entries+1 {
 		t.Fatal("a second font's subset was not stored under its own key")
+	}
+	svg := bundled.GetSVGEncodedSubset("subset cache")
+	if !strings.HasPrefix(svg, "data:font/woff2;base64,") || !strings.HasPrefix(want, woffDataPrefix) ||
+		bundled.GetEncodedSubset("subset cache") != want || bundled.GetSVGEncodedSubset("cache subset") != svg {
+		t.Fatal("SVG and WOFF1 cache entries were mixed")
 	}
 }

@@ -11,6 +11,7 @@
 - SVG connections use shorter references to arrowhead markers.
 - SVG exports use shorter path coordinates for LaTeX formulas.
 - Standalone SVGs with ASCII footnotes or numbered appendix markers can embed smaller fonts while preserving kerning and ligatures.
+- SVG exports embed D2's bundled font subsets as WOFF2, preserving outlines, metrics, and hinting.
 
 #### Bugfixes ⛑️
 

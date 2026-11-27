@@ -16,7 +16,8 @@ func FontClassRule(scope, class, family string) string {
 func FontFace(scope, class, family, uri string) string {
 	// D2's generated faces are base64 data URLs. A caller can also register
 	// a fallback encoding with characters that require a quoted CSS URL.
-	if !strings.HasPrefix(uri, "data:application/font-woff;base64,") || strings.ContainsAny(uri, " \t\r\n\f()'\"\\") {
+	embedded := strings.HasPrefix(uri, "data:application/font-woff;base64,") || strings.HasPrefix(uri, "data:font/woff2;base64,")
+	if !embedded || strings.ContainsAny(uri, " \t\r\n\f()'\"\\") {
 		uri = `"` + uri + `"`
 	}
 	return FontClassRule(scope, class, family) + "@font-face{font-family:" + family + ";src:url(" + uri + ")}"

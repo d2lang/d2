@@ -87,6 +87,14 @@ func calcChecksum(buf []byte) uint32 {
 // drops redundant SFNT entries. Subsets of D2's bundled faces keep only the
 // PostScript name and omit the missing-glyph outline when the text permits.
 func SubsetWOFF(face []byte, chars string) ([]byte, error) {
+	subset, err := subsetTrueType(face, chars)
+	if err != nil {
+		return nil, err
+	}
+	return sfnt2Woff(subset, true, nil)
+}
+
+func subsetTrueType(face []byte, chars string) ([]byte, error) {
 	if !hasSFNTDirectory(face) {
 		return nil, fmt.Errorf("incomplete SFNT table directory")
 	}
@@ -106,7 +114,7 @@ func SubsetWOFF(face []byte, chars string) ([]byte, error) {
 	if len(subset) == 0 {
 		return nil, fmt.Errorf("font does not contain the tables needed for a TrueType subset")
 	}
-	return sfnt2Woff(subset, true, nil)
+	return subset, nil
 }
 
 // FullWOFF losslessly encodes a complete SFNT face for embedding. The
