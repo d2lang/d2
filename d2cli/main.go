@@ -87,6 +87,8 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	// Protocol servers own stdin and stdout and parse their own flags.
 	if len(ms.Opts.Args) > 0 {
 		switch ms.Opts.Args[0] {
+		case "mcp":
+			return mcpCmd(ctx, ms, ms.Opts.Args[1:])
 		case "lsp":
 			return lspCmd(ctx, ms, ms.Opts.Args[1:])
 		}

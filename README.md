@@ -207,7 +207,7 @@ let us know and we'll be happy to include it here!
 
 ### Official plugins
 
-- **VSCode extension**: [https://github.com/d2lang/d2-vscode](https://github.com/d2lang/d2-vscode)
+- **VS Code** — Install [d2lang, the official D2 extension](https://marketplace.visualstudio.com/items?itemName=d2lang.d2lang). [Source code](https://github.com/d2lang/d2-vscode)
 - **Vim extension**: [https://github.com/d2lang/d2-vim](https://github.com/d2lang/d2-vim)
 - **Obsidian plugin**: [https://github.com/d2lang/d2-obsidian](https://github.com/d2lang/d2-obsidian)
 

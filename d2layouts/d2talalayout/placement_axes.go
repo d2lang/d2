@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/engine"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -13,6 +12,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placementcost"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/quality"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // At most one trial of the selected seed, regardless of the number of ports
@@ -25,7 +25,7 @@ func considerPlacementAxes(ctx context.Context, input seedInput, incumbent seedR
 			return incumbent, err
 		}
 		if (n.DesiredHeight == nil) == (n.DesiredWidth == nil) || len(n.Edges) < 2 ||
-			n.FixedTopLeft != nil || !n.IsRectangular() || n.AspectRatio1() || n.IsContainer() ||
+			n.FixedTopLeft != nil || !n.Shape.IsRectangular() || n.Shape.AspectRatio1() || n.IsContainer() ||
 			n.IsTable() || n.IsClass() || n.IsImage() || n.IsInvisible {
 			continue
 		}
@@ -163,7 +163,7 @@ func parallelPortGap(n *layoutgraph.Node, freeFacesOnly bool) (float64, bool) {
 	}
 	gap := placementcost.SideEdgeSpacing
 	for _, coords := range faces {
-		slices.Sort(coords)
+		xsort.Ordered(coords)
 		for i := 1; i < len(coords); i++ {
 			gap = math.Min(gap, coords[i]-coords[i-1])
 		}
@@ -202,7 +202,7 @@ func preservesPortClearance(guard *limits.WorkGuard, before, after *layoutgraph.
 	// Pairs outside the desired spacing already have sufficient room. Sort by
 	// the new x coordinate so that only a narrow strip needs comparisons.
 	const spacing = placementcost.SideEdgeSpacing
-	slices.SortFunc(ends, func(a, b endpoint) int { return cmp.Compare(a.current.X, b.current.X) })
+	xsort.Func(ends, func(a, b endpoint) int { return cmp.Compare(a.current.X, b.current.X) })
 	for i, a := range ends {
 		for _, b := range ends[i+1:] {
 			dx := b.current.X - a.current.X

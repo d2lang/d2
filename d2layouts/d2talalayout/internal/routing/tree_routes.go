@@ -38,8 +38,8 @@ func treeEdgePathForBuild(t *layoutgraph.Tree, portNodes map[*layoutgraph.Node][
 	parent := t.SentinelNode()
 	child := t.Node
 
-	parentPortIndex := parent.CenterPortIndex(t.Orientation)
-	childPortIndex := child.CenterPortIndex(t.Orientation.GetOpposite())
+	parentPortIndex := parent.Shape.CenterPortIndex(t.Orientation)
+	childPortIndex := child.Shape.CenterPortIndex(t.Orientation.GetOpposite())
 	parentPortNode := portNodes[parent][parentPortIndex]
 	childPortNode := portNodes[child][childPortIndex]
 
@@ -54,7 +54,7 @@ func treeEdgePathForBuild(t *layoutgraph.Tree, portNodes map[*layoutgraph.Node][
 				var closestPort *OVGNode
 				closestDistance := math.Inf(1)
 				// try to find a different port since we have a mismatched arrowhead
-				for _, portIndex := range parent.PortIndices(t.Orientation) {
+				for _, portIndex := range parent.Shape.PortIndices(t.Orientation) {
 					if err := step(); err != nil {
 						return TreeEdgePath{}, err
 					}

@@ -12,6 +12,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placementcost"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type gapNormalizationOptions struct {
@@ -46,7 +47,7 @@ func gapNormalization(ctx context.Context, nodes layoutgraph.Nodes, txn *layoutg
 	// This should achieve the effect of bringing nodes into central areas of the diagram instead of isolated nodes dragging stuff to it
 	sortedByConnections := make([]*layoutgraph.Node, len(nodes))
 	copy(sortedByConnections, nodes)
-	slices.SortFunc(sortedByConnections, func(a, b *layoutgraph.Node) int {
+	xsort.Func(sortedByConnections, func(a, b *layoutgraph.Node) int {
 		if order := cmp.Compare(len(b.Edges), len(a.Edges)); order != 0 {
 			return order
 		}

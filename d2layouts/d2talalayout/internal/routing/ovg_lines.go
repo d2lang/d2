@@ -3,9 +3,9 @@ package routing
 import (
 	"cmp"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // ovgLineGroups lists connectNodes' lines in the order it connects them: the
@@ -119,7 +119,7 @@ func (scratch *ovgLineScratch) groupCounted(lines *ovgLineGroups, eligible []*OV
 	for i := range known {
 		order = append(order, int32(i))
 	}
-	slices.SortFunc(order, func(a, b int32) int {
+	xsort.Func(order, func(a, b int32) int {
 		x, y := known[a].position, known[b].position
 		switch {
 		case x < y || (math.IsNaN(x) && !math.IsNaN(y)):
@@ -158,8 +158,10 @@ func (scratch *ovgLineScratch) groupCounted(lines *ovgLineGroups, eligible []*OV
 // defeating quicksort (both are generated from one template) and consults
 // its comparison only as cmp(a, b) < 0, so every comparison, swap and the
 // resulting order are the same, without sort.Slice's reflection swapper.
+// xsort.Func is slices.SortFunc in native builds and that sort.Slice call in
+// WebAssembly builds, where one shared sorter is worth more than its speed.
 func sortSliceExact[T any](s []T, less func(a, b T) bool) {
-	slices.SortFunc(s, func(a, b T) int {
+	xsort.Func(s, func(a, b T) int {
 		if less(a, b) {
 			return -1
 		}

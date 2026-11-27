@@ -14,6 +14,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // Position familiar descendants before their ancestors. A group always moves
@@ -161,7 +162,7 @@ func (p *boardPlacement) group(root *d2graph.Object) boardGroup {
 	if len(established) == 0 {
 		established, added = added, nil
 	}
-	slices.SortStableFunc(established, func(a, b boardGroup) int { return b.retained - a.retained })
+	xsort.StableFunc(established, func(a, b boardGroup) int { return b.retained - a.retained })
 	var occupied []image.Rectangle
 	var content image.Rectangle
 	for _, child := range established {

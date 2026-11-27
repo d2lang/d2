@@ -160,6 +160,9 @@ func TestAllRouteFlavorFailuresUseDeclaredOrder(t *testing.T) {
 }
 
 func TestRouteFlavorPanicCancelsAndDrainsWorkers(t *testing.T) {
+	if !flavorsRunConcurrently {
+		t.Skip("flavors run one at a time without a scheduler")
+	}
 	routers := routeFlavorTestRouters()
 	ready := make(chan struct{}, len(routers))
 	var active atomic.Int32

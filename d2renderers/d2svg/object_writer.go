@@ -230,3 +230,19 @@ func (w *objectWriter) animatedUnderline(el *d2themes.ThemableElement, text stri
 		ink.Y += lineHeight
 	}
 }
+
+// sketch writes rough.js output for a shape, passing its error through.
+func (w *objectWriter) sketch(out string, err error) error {
+	if err == nil {
+		w.Write([]byte(out))
+	}
+	return err
+}
+
+// paths writes el once for each piece of SVG path data.
+func (w *objectWriter) paths(el *d2themes.ThemableElement, data []string) {
+	for _, d := range data {
+		el.D = d
+		w.element(el)
+	}
+}

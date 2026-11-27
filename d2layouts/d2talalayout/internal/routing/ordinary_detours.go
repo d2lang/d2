@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // RefineOrdinaryDetours repairs unnecessary wall crossings on the selected
@@ -91,7 +92,7 @@ func (env fanObstacles) repairBoundaryDetour(e *layoutgraph.Edge) error {
 			return err
 		}
 		if n != e.From && n != e.To && n.IsContainer() && (e.From.IsDescendantOf(n) || e.To.IsDescendantOf(n)) {
-			if n.IsInvisible || !n.IsRectangular() {
+			if n.IsInvisible || !n.Shape.IsRectangular() {
 				return nil
 			}
 			ancestors = append(ancestors, n)
@@ -182,7 +183,7 @@ func (env fanObstacles) detourBands(p, q *geo.Point, n *layoutgraph.Node, xAxis 
 	for _, box := range env.labels {
 		addBox(box)
 	}
-	slices.Sort(bands)
+	xsort.Ordered(bands)
 	bands = slices.Compact(bands)
 	if channelCoordinate(p, xAxis) > hi {
 		slices.Reverse(bands)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 func newWorkGuard(ctx context.Context, location string) (*limits.WorkGuard, error) {
@@ -1092,7 +1093,7 @@ func deserializeGraphContext(ctx context.Context, graph *SerializedGraph, destin
 		}
 		containerOrder = append(containerOrder, id)
 	}
-	slices.Sort(containerOrder)
+	xsort.Ordered(containerOrder)
 
 	containers := map[*layoutgraph.Node][]*layoutgraph.Node{}
 	for _, containerID := range containerOrder {
@@ -1130,7 +1131,7 @@ func deserializeGraphContext(ctx context.Context, graph *SerializedGraph, destin
 		}
 		hubOrder = append(hubOrder, id)
 	}
-	slices.Sort(hubOrder)
+	xsort.Ordered(hubOrder)
 
 	clusterOrder := make([]layoutgraph.EntityID, 0, len(graph.Clusters))
 	for id := range graph.Clusters {
@@ -1139,7 +1140,7 @@ func deserializeGraphContext(ctx context.Context, graph *SerializedGraph, destin
 		}
 		clusterOrder = append(clusterOrder, id)
 	}
-	slices.Sort(clusterOrder)
+	xsort.Ordered(clusterOrder)
 
 	clusters := map[*layoutgraph.Node]*layoutgraph.Cluster{}
 	for _, id := range clusterOrder {
@@ -1211,7 +1212,7 @@ func deserializeGraphContext(ctx context.Context, graph *SerializedGraph, destin
 		}
 		sequenceOrder = append(sequenceOrder, vessel)
 	}
-	slices.Sort(sequenceOrder)
+	xsort.Ordered(sequenceOrder)
 
 	sequences := map[*layoutgraph.Node]*layoutgraph.Sequence{}
 	for _, id := range sequenceOrder {

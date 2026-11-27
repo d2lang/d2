@@ -15,6 +15,7 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 const (
@@ -71,14 +72,14 @@ func (node *Node) fittedDimensions(width, height float64, padding Spacing) (floa
 		}
 	}
 	// TODO move type Spacing to d2 and update GetDimensionsToFit for all shapes
-	fitWidth, fitHeight := node.GetDimensionsToFit(width, height, padding.left+padding.right, padding.top+padding.bottom)
+	fitWidth, fitHeight := node.Shape.GetDimensionsToFit(width, height, padding.left+padding.right, padding.top+padding.bottom)
 	if node.DesiredWidth != nil {
 		fitWidth = math.Max(fitWidth, *node.DesiredWidth)
 	}
 	if node.DesiredHeight != nil {
 		fitHeight = math.Max(fitHeight, *node.DesiredHeight)
 	}
-	if node.AspectRatio1() {
+	if node.Shape.AspectRatio1() {
 		side := math.Max(fitWidth, fitHeight)
 		return side, side
 	}
@@ -659,7 +660,7 @@ type Node struct {
 	FontSize *int
 
 	// This defines the snap points
-	nodeshape.Shape
+	Shape     *nodeshape.Shape
 	shapeType nodeshape.Kind
 
 	StepPaint      *StepPaint
@@ -1124,8 +1125,8 @@ func (node *Node) overlapArea(otherNode *Node) float64 {
 	ys = append(ys, otherNode.TopLeft.Y)
 	ys = append(ys, otherNode.TopLeft.Y+otherNode.Height)
 
-	slices.Sort(xs)
-	slices.Sort(ys)
+	xsort.Ordered(xs)
+	xsort.Ordered(ys)
 
 	width := xs[2] - xs[1]
 	height := ys[2] - ys[1]
@@ -2050,7 +2051,7 @@ func (node *Node) area() float64 {
 func (node *Node) LabelTopLeft(labelPosition label.Position, width, height float64) *geo.Point {
 	var box *geo.Box
 	if labelPosition.IsOutside() {
-		box = node.GetBox()
+		box = node.Shape.GetBox()
 	} else {
 		box = node.InnerBox()
 	}
@@ -2071,7 +2072,7 @@ func (node *Node) NodeOverlapCount(nodes Nodes, delta float64) int {
 
 func (n Node) ports() []geo.Point {
 	ports := make([]geo.Point, 0, 12)
-	for _, relativePoints := range n.SnapPointPercentages() {
+	for _, relativePoints := range n.Shape.SnapPointPercentages() {
 		for _, point := range relativePoints {
 			ports = append(ports, *geo.NewPoint(n.TopLeft.X+math.Round(n.Width*point.XPercentage), n.TopLeft.Y+math.Round(n.Height*point.YPercentage)))
 		}
@@ -2081,7 +2082,7 @@ func (n Node) ports() []geo.Point {
 
 func (n Node) nthPortValue(index int) (geo.Point, bool) {
 	i := 0
-	for _, relativePoints := range n.SnapPointPercentages() {
+	for _, relativePoints := range n.Shape.SnapPointPercentages() {
 		for _, point := range relativePoints {
 			if i == index {
 				return geo.Point{
@@ -2105,7 +2106,7 @@ func (n Node) nthPort(index int) *geo.Point {
 
 func (node Node) pointToPortOrientation(p *geo.Point) geo.Orientation {
 	for _, o := range []geo.Orientation{geo.Top, geo.Right, geo.Left, geo.Bottom} {
-		indices := node.PortIndices(o)
+		indices := node.Shape.PortIndices(o)
 		for _, i := range indices {
 			port := node.nthPort(i)
 			if p.Equals(port) {
@@ -2117,7 +2118,7 @@ func (node Node) pointToPortOrientation(p *geo.Point) geo.Orientation {
 }
 
 func (node Node) nthPortOnSideValue(orientation geo.Orientation, n int) (geo.Point, bool) {
-	indices := node.PortIndices(orientation)
+	indices := node.Shape.PortIndices(orientation)
 	return node.nthPortValue(indices[n])
 }
 
@@ -2130,7 +2131,7 @@ func (node Node) tableColumnPortValue(orientation geo.Orientation, columnIndex i
 
 func (n Node) centerPorts() []geo.Point {
 	ports := n.ports()
-	indices := n.CenterPortIndices()
+	indices := n.Shape.CenterPortIndices()
 
 	centerPorts := make([]geo.Point, 0, len(indices))
 	for _, index := range indices {
@@ -2141,7 +2142,7 @@ func (n Node) centerPorts() []geo.Point {
 
 func (n Node) portsByOrientation(orientation geo.Orientation) []geo.Point {
 	ports := n.ports()
-	indices := n.PortIndices(orientation)
+	indices := n.Shape.PortIndices(orientation)
 
 	portsForOrientation := make([]geo.Point, 0, len(indices))
 	for _, index := range indices {
@@ -2154,7 +2155,7 @@ func (n Node) mirroredPorts() map[geo.Point]geo.Point {
 	ports := n.ports()
 
 	portToMirrored := make(map[geo.Point]geo.Point)
-	for index, mirrorIndex := range n.MirroredPortIndices() {
+	for index, mirrorIndex := range n.Shape.MirroredPortIndices() {
 		portToMirrored[ports[index]] = ports[mirrorIndex]
 	}
 	return portToMirrored
@@ -2258,7 +2259,7 @@ func (n Node) CanContain() bool {
 // A wide automatic caption beside an anchored icon has fewer usable sides.
 // Leave the shared margin available until its final position is known.
 func (frame *Node) NeedsAutomaticCaptionRoom(nodes Nodes) bool {
-	if !frame.IsRectangular() || frame.FixedTopLeft != nil || frame.DesiredWidth != nil || frame.DesiredHeight != nil {
+	if !frame.Shape.IsRectangular() || frame.FixedTopLeft != nil || frame.DesiredWidth != nil || frame.DesiredHeight != nil {
 		return false
 	}
 	// One undetermined side can use the spare band. Competing automatic

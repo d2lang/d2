@@ -152,9 +152,11 @@ func borderLabelMaskBox(position label.Position, topLeft *geo.Point, labelWidth,
 	return box, true
 }
 
-func shapeLabelPlacement(targetShape d2target.Shape) (*geo.Box, *geo.Point) {
+// shapeLabelBox is the box a shape label at position is placed against:
+// the outer box, grown by a 3D or multiple offset, for outside and border
+// labels, and the inner box otherwise.
+func shapeLabelBox(targetShape d2target.Shape, position label.Position) *geo.Box {
 	geometry := targetGeometry(targetShape)
-	position := label.FromString(targetShape.LabelPosition)
 	var box *geo.Box
 	if position.IsOutside() || position.IsBorder() {
 		box = geometry.GetBox().Copy()
@@ -174,6 +176,12 @@ func shapeLabelPlacement(targetShape d2target.Shape) (*geo.Box, *geo.Point) {
 	} else {
 		box = geometry.GetInnerBox()
 	}
+	return box
+}
+
+func shapeLabelPlacement(targetShape d2target.Shape) (*geo.Box, *geo.Point) {
+	position := label.FromString(targetShape.LabelPosition)
+	box := shapeLabelBox(targetShape, position)
 	return box, targetShape.LabelTopLeft(position, box)
 }
 

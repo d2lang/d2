@@ -1,0 +1,17 @@
+# The go statements that D2's WebAssembly module can reach.
+#
+# The module is built without a goroutine scheduler (ci/wasm-flags.sh), so none
+# of them starts anything. ci/test-wasm.sh fails when this list no longer
+# matches the module. Before adding a line, make sure that the module can do
+# without that goroutine: nothing waits for it, and nothing needs what it would
+# have done. Code that fans out and collects, like TALA's seeds and route
+# flavors, needs a variant that runs in the caller instead (see the files with
+# the scheduler.none build tag).
+
+# A cancelable context derived from one that is not the standard library's own
+# is watched by a goroutine. D2 derives from the standard ones only.
+context/context.go:523:2
+
+# The clock behind regexp2's match timeouts, which Chroma's lexers set. It
+# could not tick during a call either.
+github.com/dlclark/regexp2/v2@v2.13.2/fastclock.go:90:3

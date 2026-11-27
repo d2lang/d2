@@ -3,7 +3,6 @@ package d2ir
 import (
 	"context"
 	"errors"
-	"html"
 	"io/fs"
 	"math"
 	"net/url"
@@ -20,15 +19,19 @@ import (
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	"github.com/d2lang/d2/internal/htmlentity"
 )
 
 type globContext struct {
 	root   *globContext
 	refctx *RefContext
+	// boardGroup is set when root is declared in the map of a board's
+	// layers, scenarios or steps.
+	boardGroup bool
 
-	// Set of BoardIDA that this glob has already applied to.
+	// Keys (see appliedKey) of the fields this glob has already applied to.
 	appliedFields map[string]struct{}
-	// Set of Edge IDs that this glob has already applied to.
+	// Keys (see appliedKey) of the edges this glob has already applied to.
 	appliedEdges map[string]struct{}
 }
 
@@ -39,6 +42,9 @@ type compiler struct {
 	spreadNulls         []spreadNull
 	hasMapSpread        bool
 	hasEdgePropertyGlob bool
+	// unreferencedFields is set when an edge's common prefix is left
+	// without references (see removeFieldsWithoutReferences).
+	unreferencedFields  bool
 	spreadRuleCopies    map[spreadRuleScope]*globContext
 	fieldOrder          uint64
 	err                 *d2parser.ParseError
@@ -86,6 +92,14 @@ type compiler struct {
 	filterOperands       map[filterOperand]filterResult
 	lazyGlobBeingApplied bool
 	replayingSpreadGlobs bool
+	// Steps that the glob being applied has entered, and steps with no map
+	// that are to be copied from them once it has applied (see awaitsBase).
+	globSteps         map[*Field]struct{}
+	pendingStepCopies []*Field
+	// Scenarios and steps with no map that a glob made boards by inheritance
+	// (see inheritsApplication). Each is made a copy of its base after the key
+	// that created it, unless its own value gave it a map.
+	inheritingBoards []*Field
 
 	// Lazy field globs are evaluated against newly created fields through a
 	// deterministic worklist. This avoids rescanning the entire IR after each
@@ -316,6 +330,9 @@ func (c *compiler) overlayClasses(m *Map) {
 }
 
 func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
+	if c.unreferencedFields {
+		removeFieldsWithoutReferences(m)
+	}
 	outerNulls := c.spreadNulls
 	outerChecks, outerFields := c.arrayAccess, c.fieldArrayAccess
 	c.spreadNulls, c.arrayAccess, c.fieldArrayAccess = nil, nil, nil
@@ -331,6 +348,31 @@ func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
 		}
 	}
 	c.spreadNulls, c.arrayAccess, c.fieldArrayAccess = outerNulls, outerChecks, outerFields
+}
+
+// removeFieldsWithoutReferences removes, from m and the maps in it, every field
+// that holds nothing and that no key made. createEdge makes the fields of an
+// edge's common prefix without a reference, for the edge's keys to add theirs,
+// so they have none if the edge fails or its globs match nothing (near.a ->
+// near.b, a.b.*.x -> a.b.*.y); it then sets unreferencedFields, and
+// compileSubstitutions calls this. Every pass after that one reads a field's
+// references.
+func removeFieldsWithoutReferences(m *Map) {
+	for i := 0; i < len(m.Fields); i++ {
+		f := m.Fields[i]
+		fm := f.Map()
+		if fm != nil {
+			removeFieldsWithoutReferences(fm)
+		}
+		if len(f.References) > 0 || f.Primary() != nil {
+			continue
+		}
+		if f.Composite != nil && (fm == nil || len(fm.Fields) > 0 || len(fm.Edges) > 0) {
+			continue
+		}
+		m.removeField(i)
+		i--
+	}
 }
 
 func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, source d2ast.Node) {
@@ -1118,6 +1160,18 @@ func lookupVariableField(scope *Map, name d2ast.String, fallback bool) *Field {
 	return scope.fieldIndex[key]
 }
 
+// stepBase returns the map that step i of stepsMap builds on: the map of the
+// closest step before it that has one, or else its board's. A step without a
+// map is no board.
+func stepBase(stepsMap *Map, i int, f *Field) *Map {
+	for j := i - 1; j >= 0; j-- {
+		if m := stepsMap.Fields[j].Map(); m != nil {
+			return m
+		}
+	}
+	return ParentBoard(f).Map()
+}
+
 func (c *compiler) overlay(base *Map, f *Field) {
 	if f.Map() == nil {
 		c.errorf(f.References[0].Context_.Key, "invalid %s", NodeBoardKind(f))
@@ -1127,6 +1181,8 @@ func (c *compiler) overlay(base *Map, f *Field) {
 	if !c.reserveVariableCopy(f.LastRef().AST(), base) {
 		return
 	}
+	from := base
+	c.inheritApplications(base, f)
 	base = base.CopyBase(f)
 	// Certain fields should never carry forward.
 	// If you give your scenario a label, you don't want all steps in a scenario to be labeled the same.
@@ -1136,6 +1192,62 @@ func (c *compiler) overlay(base *Map, f *Field) {
 	}
 	overlayMapIndexed(base, f.Map())
 	f.setComposite(base)
+	if NodeBoardKind(f) == BoardStep {
+		base.globs = c.stepGlobs(from, base)
+	}
+}
+
+// stepGlobs returns the copies of the globs in scope for step dst, which has
+// just been made a copy of board from. Each starts with what its glob has
+// applied to in from, as dst's objects are copies of from's. A glob declared
+// after this applied to none of them, and its copy in dst starts empty (see
+// boardGlob).
+func (c *compiler) stepGlobs(from, dst *Map) []*globContext {
+	if len(c.globContextStack) == 0 {
+		return nil
+	}
+	var globs []*globContext
+	seen := make(map[*globContext]struct{})
+	for _, g := range c.globContexts() {
+		if _, ok := seen[g.root]; ok || g.refctx.Key.HasTripleGlob() || g.boardGroup {
+			continue
+		}
+		seen[g.root] = struct{}{}
+		g2 := g.copy()
+		g2.refctx.ScopeMap = dst
+		if NodeBoardKind(from) == BoardStep && g.refctx.ScopeMap != from {
+			// The previous step's copy, or nil if the glob was declared
+			// after that step was made.
+			g2.copyApplied(priorBoardCopy(from, g))
+		} else {
+			g2.copyApplied(appliedIn(from, g))
+		}
+		globs = append(globs, g2)
+	}
+	return globs
+}
+
+// overlayBase makes scenario or step f, whose map was just created, start as
+// a copy of the board it builds on.
+func (c *compiler) overlayBase(f *Field) {
+	if base := boardBase(f); base != nil {
+		c.overlay(base, f)
+	}
+}
+
+// boardBase returns the map of the board that scenario or step f builds on, or
+// nil if f is neither.
+func boardBase(f *Field) *Map {
+	switch NodeBoardKind(f) {
+	case BoardScenario:
+		return ParentBoard(f).Map()
+	case BoardStep:
+		steps := ParentMap(f)
+		if i := slices.Index(steps.Fields, f); i >= 0 {
+			return stepBase(steps, i, f)
+		}
+	}
+	return nil
 }
 
 func (g *globContext) copy() *globContext {
@@ -1144,12 +1256,187 @@ func (g *globContext) copy() *globContext {
 	return &g2
 }
 
+// boardGlob returns the copy of glob g, in scope where scenario or step dst is
+// declared, that applies while dst's map is compiled, or nil if g does not
+// apply there.
+func (c *compiler) boardGlob(dst *Map, g *globContext) *globContext {
+	triple := g.refctx.Key.HasTripleGlob()
+	group := !triple && g.boardGroup
+	if group && !recursesIntoBoards(g.refctx.Key) && !connectsInBoards(g.refctx.Key) {
+		// A glob in a board group's own map, such as * in
+		// scenarios: {*: {...}}, selects the boards themselves: scoped to dst,
+		// it would select dst's objects instead. A glob whose paths all start
+		// with ** reaches the same objects either way, and a connection glob
+		// that connectsInBoards applies only in the boards. Their copies apply
+		// as objects are created, as a glob declared in dst would, and share
+		// what has been applied with g (see appliedKey).
+		return nil
+	}
+	if prior := priorBoardCopy(dst, g); prior != nil {
+		// dst is compiled again, as by a glob over boards, or is a step whose
+		// copies were made with it. Keep what its copy has applied to.
+		return prior
+	}
+	g2 := g.copy()
+	g2.refctx.ScopeMap = dst
+	if !triple && !group {
+		// Triple globs already apply independently to each board. Any other
+		// glob keeps what it applies to in dst to itself. In a scenario, it
+		// starts with what it applied to in the base board. In a step, the
+		// glob was declared after the step was made (see stepGlobs).
+		if NodeBoardKind(dst) == BoardScenario {
+			g2.copyApplied(appliedIn(ParentBoard(ParentField(dst)).Map(), g))
+		} else {
+			g2.copyApplied(nil)
+		}
+	}
+	return g2
+}
+
+// appliedIn returns the context that holds what glob g has applied to in
+// board map m: its copy in m if g is not scoped to m and m has one, else g.
+// A board's scenarios declared by a dotted key, as in steps.s1.scenarios:
+// {...}, are compiled with the globs in scope where the key is, which are not
+// the copies in their base board s1.
+func appliedIn(m *Map, g *globContext) *globContext {
+	if g.refctx.ScopeMap != m {
+		if prior := priorBoardCopy(m, g); prior != nil {
+			return prior
+		}
+	}
+	return g
+}
+
+// connectsInBoards reports whether key k, written in the map of a board's
+// layers, scenarios or steps, is a connection glob that can only apply inside
+// each board: it has no common key, and an endpoint is a single path element
+// other than ** (k has no ***). In that map such an endpoint would name a
+// board, and boards cannot be connected, so k is not applied there. Each board
+// of the map applies a copy instead, as in steps: {(* -> *)[*].style.stroke:
+// red} or scenarios: {* -> hub}.
+func connectsInBoards(k *d2ast.Key) bool {
+	if k.Key != nil || len(k.Edges) == 0 || !k.HasGlob() || k.HasTripleGlob() {
+		return false
+	}
+	for _, e := range k.Edges {
+		for _, kp := range []*d2ast.KeyPath{e.Src, e.Dst} {
+			if kp == nil || len(kp.Path) != 1 {
+				continue
+			}
+			if us := kp.Path[0].UnquotedString; us == nil || !d2ast.IsDoubleGlob(us.Pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// applyInBoards applies glob g, which connectsInBoards in board group m, in
+// each board of m that has a map, and in their scenarios and steps, as a glob
+// declared in the board after its keys would apply. A board whose map is
+// compiled later gets its copy then (see boardGlob).
+func (c *compiler) applyInBoards(m *Map, g *globContext) {
+	for _, f := range slices.Clone(m.Fields) {
+		if c.stopped() {
+			return
+		}
+		bm := f.Map()
+		if bm == nil || NodeBoardKind(f) == "" {
+			continue
+		}
+		g2 := c.boardGlob(bm, g)
+		if g2 == nil {
+			continue
+		}
+		globs := slices.Clip(bm.globs)
+		if !slices.Contains(globs, g2) {
+			globs = append(globs, g2)
+		}
+		c.globContextStack = append(c.globContextStack, globs)
+		old := c.lazyGlobBeingApplied
+		c.lazyGlobBeingApplied = true
+		c.compileKey(g2.refctx)
+		c.lazyGlobBeingApplied = old
+		bm.globs = c.globContexts()
+		c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
+		for _, group := range bm.Fields {
+			if group.Name == nil {
+				continue
+			}
+			switch d2ast.Keyword(group.Name) {
+			case "scenarios", "steps":
+				// Layers do not inherit the globs of their board.
+				if group.Map() != nil {
+					c.applyInBoards(group.Map(), g2)
+				}
+			}
+		}
+	}
+}
+
+// recursesIntoBoards reports whether every path of key k starts with **,
+// which goes through boards without matching them.
+func recursesIntoBoards(k *d2ast.Key) bool {
+	if k.Key != nil {
+		return startsWithDoubleGlob(k.Key)
+	}
+	for _, e := range k.Edges {
+		if !startsWithDoubleGlob(e.Src) || !startsWithDoubleGlob(e.Dst) {
+			return false
+		}
+	}
+	return len(k.Edges) > 0
+}
+
+func startsWithDoubleGlob(kp *d2ast.KeyPath) bool {
+	if kp == nil || len(kp.Path) == 0 {
+		return false
+	}
+	us := kp.Path[0].UnquotedString
+	return us != nil && d2ast.IsDoubleGlob(us.Pattern)
+}
+
+// priorBoardCopy returns the copy of g that an earlier compileMap of dst made.
+func priorBoardCopy(dst *Map, g *globContext) *globContext {
+	for _, prior := range dst.globs {
+		if prior.root == g.root && prior.refctx.ScopeMap == dst {
+			return prior
+		}
+	}
+	return nil
+}
+
+// fields returns the set that holds key k (see appliedKey) of g's
+// applications to fields. An absolute key names a board, or a node in a board
+// other than g's own. All copies of the glob share these keys, so that a copy
+// recognizes what the glob, or another copy of it, applied to in the board
+// that a scenario or step is a copy of (see inheritApplications).
+func (g *globContext) fields(k string) map[string]struct{} {
+	if isAbsoluteAppliedKey(k) {
+		return g.root.appliedFields
+	}
+	return g.appliedFields
+}
+
+// edges is fields for g's applications to edges.
+func (g *globContext) edges(k string) map[string]struct{} {
+	if isAbsoluteAppliedKey(k) {
+		return g.root.appliedEdges
+	}
+	return g.appliedEdges
+}
+
+// copyApplied gives g its own copy of what from has applied to, or nothing if
+// from is nil.
 func (g *globContext) copyApplied(from *globContext) {
 	g.appliedFields = make(map[string]struct{})
+	g.appliedEdges = make(map[string]struct{})
+	if from == nil {
+		return
+	}
 	for k, v := range from.appliedFields {
 		g.appliedFields[k] = v
 	}
-	g.appliedEdges = make(map[string]struct{})
 	for k, v := range from.appliedEdges {
 		g.appliedEdges[k] = v
 	}
@@ -1178,14 +1465,9 @@ func (c *compiler) ampersandFilterMap(dst *Map, ast, scopeAST *d2ast.Map) bool {
 				if gctx == nil {
 					return false
 				}
-				var ks string
-				if gctx.refctx.Key.HasTripleGlob() {
-					ks = d2format.FormatKeyPath(IDA(dst))
-				} else {
-					ks = d2format.FormatKeyPath(BoardIDA(dst))
-				}
-				delete(gctx.appliedFields, ks)
-				delete(gctx.appliedEdges, ks)
+				ks := gctx.appliedKey(dst)
+				delete(gctx.fields(ks), ks)
+				delete(gctx.edges(ks), ks)
 				return false
 			}
 		}
@@ -1208,35 +1490,31 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 					gctx2 := g.copy()
 					gctx2.refctx.ScopeMap = dst
 					globs = append(globs, gctx2)
+				} else if g.boardGroup && g.root.refctx.ScopeMap == ParentMap(ParentField(dst)) && connectsInBoards(g.refctx.Key) {
+					// Written in the map of this layer's own layers.
+					if g2 := c.boardGlob(dst, g); g2 != nil {
+						globs = append(globs, g2)
+					}
 				}
 			}
 		} else if NodeBoardKind(dst) == BoardScenario {
-			for _, g := range previousGlobs {
-				gctx2 := g.copy()
-				gctx2.refctx.ScopeMap = dst
-				if !g.refctx.Key.HasTripleGlob() {
-					// Triple globs already apply independently to each board
-					gctx2.copyApplied(g)
+			// Each glob is listed twice (see boardGlob for the copies). Only
+			// the first is ever looked up, but both run, and dropping one
+			// changes the order globs apply in. When the scenario is compiled
+			// again, both are its earlier copy.
+			for range 2 {
+				for _, g := range previousGlobs {
+					if g2 := c.boardGlob(dst, g); g2 != nil {
+						globs = append(globs, g2)
+					}
 				}
-				globs = append(globs, gctx2)
-			}
-			for _, g := range previousGlobs {
-				g2 := g.copy()
-				g2.refctx.ScopeMap = dst
-				// We don't want globs applied in a given scenario to affect future boards
-				// Copying the applied fields and edges keeps the applications scoped to this board
-				// Note that this is different from steps, where applications carry over
-				if !g.refctx.Key.HasTripleGlob() {
-					// Triple globs already apply independently to each board
-					g2.copyApplied(g)
-				}
-				globs = append(globs, g2)
 			}
 		} else if NodeBoardKind(dst) == BoardStep {
+			// Most copies were made with the step (see stepGlobs).
 			for _, g := range previousGlobs {
-				gctx2 := g.copy()
-				gctx2.refctx.ScopeMap = dst
-				globs = append(globs, gctx2)
+				if g2 := c.boardGlob(dst, g); g2 != nil {
+					globs = append(globs, g2)
+				}
 			}
 		} else {
 			globs = append(globs, previousGlobs...)
@@ -1346,6 +1624,7 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 				return
 			}
 			overlayMapIndexed(dst, impn.Map())
+			c.recordImport(dst, impn.Map())
 			impDir := n.Import.Dir()
 			c.extendLinks(dst, ParentField(dst), impDir)
 
@@ -1381,6 +1660,7 @@ func (c *compiler) ensureGlobContext(refctx *RefContext) *globContext {
 	}
 	gctx = &globContext{
 		refctx:        refctx,
+		boardGroup:    isBoardGroup(refctx.ScopeMap),
 		appliedFields: make(map[string]struct{}),
 		appliedEdges:  make(map[string]struct{}),
 	}
@@ -1394,6 +1674,7 @@ func (c *compiler) compileKey(refctx *RefContext) {
 		return
 	}
 	postTargetStart := len(c.lazyPostTargets)
+	pendingSteps, inheritingBoards := len(c.pendingStepCopies), len(c.inheritingBoards)
 	if refctx.Key.HasGlob() || len(c.globRefContextStack) > 0 {
 		if !c.reserveGlobWork(refctx.Key, 1) {
 			return
@@ -1402,6 +1683,8 @@ func (c *compiler) compileKey(refctx *RefContext) {
 	if refctx.order.sequence == 0 {
 		refctx.order = c.assignmentOrder()
 	}
+	var g *globContext
+	var declared, inBoards bool
 	if refctx.Key.HasGlob() {
 		// Replaying a property may first create its style map. Finish that
 		// write before evaluating the next deferred selector in source order.
@@ -1416,20 +1699,41 @@ func (c *compiler) compileKey(refctx *RefContext) {
 			}
 		}
 		c.globRefContextStack = append(c.globRefContextStack, refctx)
+		globSteps := c.globSteps
+		c.globSteps = nil
 		defer func() {
 			c.globRefContextStack = c.globRefContextStack[:len(c.globRefContextStack)-1]
+			c.globSteps = globSteps
 		}()
-		g := c.ensureGlobContext(refctx)
-		if !c.lazyGlobBeingApplied && replaysEdgeProperties(refctx.Key) {
+		declared = c.getGlobContext(refctx) == nil
+		g = c.ensureGlobContext(refctx)
+		inBoards = isBoardGroup(refctx.ScopeMap) && connectsInBoards(refctx.Key)
+		if !inBoards && !c.lazyGlobBeingApplied && replaysEdgeProperties(refctx.Key) {
 			refctx.ScopeMap.addEdgeRule(g)
 			c.hasEdgePropertyGlob = true
 		}
 	}
 	oldVersion := refctx.ScopeMap.structureVersion
-	if len(refctx.Key.Edges) == 0 {
+	switch {
+	case inBoards:
+		// It applies only through each board's copy (see boardGlob). Boards
+		// compiled before it get theirs now. The copies are not the glob
+		// applying to itself (RefContext.Equal ignores ScopeMap).
+		if declared {
+			stack := c.globRefContextStack
+			c.globRefContextStack = slices.Clip(stack[:len(stack)-1])
+			c.applyInBoards(refctx.ScopeMap, g)
+			c.globRefContextStack = stack
+		}
+	case len(refctx.Key.Edges) == 0:
 		c.compileField(refctx.ScopeMap, refctx.Key.Key, refctx)
-	} else {
+	default:
 		c.compileEdges(refctx)
+	}
+	if refctx.Key.HasGlob() {
+		c.copyBases(&c.pendingStepCopies, pendingSteps)
+	} else {
+		c.copyBases(&c.inheritingBoards, inheritingBoards)
 	}
 	root := RootMap(refctx.ScopeMap)
 	settled := c.lazySettledVersions != nil && c.lazySettledVersions[root] == root.structureVersion
@@ -1933,7 +2237,8 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 	}
 	// In case of filters, we need to pass filters before continuing
 	if refctx.Key.Value.Map != nil && refctx.Key.Value.Map.HasFilter() {
-		if f.Map() == nil {
+		created := f.Map() == nil
+		if created {
 			f.Composite = &Map{
 				parent: f,
 			}
@@ -1944,8 +2249,20 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		if c.stopped() {
 			return
 		}
+		board := NodeBoardKind(f) == BoardScenario || NodeBoardKind(f) == BoardStep
 		if !ok {
+			if created && board && len(f.Map().Fields) == 0 && len(f.Map().Edges) == 0 {
+				// A board that the glob filtered out gets its map, a copy of
+				// its base, from its own value.
+				f.Composite = nil
+			}
 			return
+		}
+		if created && board {
+			c.overlayBase(f)
+			if c.stopped() {
+				return
+			}
 		}
 	}
 
@@ -1999,25 +2316,10 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 				parent: f,
 			}
 			switch NodeBoardKind(f) {
-			case BoardScenario:
-				c.overlay(ParentBoard(f).Map(), f)
+			case BoardScenario, BoardStep:
+				c.overlayBase(f)
 				if c.stopped() {
 					return
-				}
-			case BoardStep:
-				stepsMap := ParentMap(f)
-				for i := range stepsMap.Fields {
-					if stepsMap.Fields[i] == f {
-						if i == 0 {
-							c.overlay(ParentBoard(f).Map(), f)
-						} else {
-							c.overlay(stepsMap.Fields[i-1].Map(), f)
-						}
-						if c.stopped() {
-							return
-						}
-						break
-					}
 				}
 			case BoardLayer:
 			default:
@@ -2083,27 +2385,9 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			f.Composite = &Map{
 				parent: f,
 			}
-			switch NodeBoardKind(f) {
-			case BoardScenario:
-				c.overlay(ParentBoard(f).Map(), f)
-				if c.stopped() {
-					return
-				}
-			case BoardStep:
-				stepsMap := ParentMap(f)
-				for i := range stepsMap.Fields {
-					if stepsMap.Fields[i] == f {
-						if i == 0 {
-							c.overlay(ParentBoard(f).Map(), f)
-						} else {
-							c.overlay(stepsMap.Fields[i-1].Map(), f)
-						}
-						if c.stopped() {
-							return
-						}
-						break
-					}
-				}
+			c.overlayBase(f)
+			if c.stopped() {
+				return
 			}
 			if !c.reserveVariableCopy(refctx.Key.Value.Import, n) {
 				return
@@ -2123,6 +2407,12 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			return
 		}
 		overlayFieldIndexed(f, originalF)
+		switch n := n.(type) {
+		case *Field:
+			c.recordImport(f.Map(), n.Map())
+		case *Map:
+			c.recordImport(f.Map(), n)
+		}
 		if existingEdges != nil && f.Map() != nil {
 			for _, edge := range existingEdges {
 				exists := false
@@ -2147,6 +2437,32 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		if d2ast.Keyword(f.Name) == "link" {
 			c.compileLink(f, refctx)
 		}
+	}
+}
+
+// recordImport records the fields that import src added to dst, which the
+// globs being applied reach, as applied by those globs, as ensureField does for
+// the fields that a glob's map value creates. Otherwise a glob such as
+// p.**: @f, where f declares p, applies to what its own import added, and again
+// to what that adds.
+func (c *compiler) recordImport(dst, src *Map) {
+	if len(c.globRefContextStack) == 0 || dst == nil || src == nil {
+		return
+	}
+	for _, sf := range src.Fields {
+		df := dst.lookupField(sf.Name)
+		if df == nil {
+			continue
+		}
+		for _, grefctx := range c.globRefContextStack {
+			g := c.getGlobContext(grefctx)
+			if g == nil || (g.refctx.ScopeMap != nil && treeRoot(df) != treeRoot(g.refctx.ScopeMap)) {
+				continue
+			}
+			ks := g.appliedKey(df)
+			g.fields(ks)[ks] = struct{}{}
+		}
+		c.recordImport(df.Map(), sf.Map())
 	}
 }
 
@@ -2183,7 +2499,7 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 			}
 			val := f.Primary().Value.ScalarString()
 
-			u, err := url.Parse(html.UnescapeString(val))
+			u, err := url.Parse(htmlentity.Unescape(val))
 			isRemote := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
 			if isRemote {
 				continue
@@ -2220,7 +2536,7 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 			if val == "" {
 				continue
 			}
-			u, err := url.Parse(html.UnescapeString(val))
+			u, err := url.Parse(htmlentity.Unescape(val))
 			isRemoteImg := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
 			if isRemoteImg {
 				continue
@@ -2631,7 +2947,7 @@ func (c *compiler) compileArray(dst *Array, a *d2ast.Array, scopeAST *d2ast.Map)
 					Value: []d2ast.InterpolationBox{{Substitution: an.Substitution}},
 				},
 			}
-		case *d2ast.Comment:
+		case *d2ast.Comment, *d2ast.BlockComment:
 			continue
 		}
 

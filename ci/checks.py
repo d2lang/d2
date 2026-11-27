@@ -48,11 +48,15 @@ def select_jobs(event, tag=False, paths=(), toolchain_changed=False):
         if path.startswith("d2layouts/d2talalayout/") or path in (".github/workflows/tala-fuzz.yml", "go.mod", "go.sum"):
             jobs["fuzz"] = True
 
-        wasm_specific = re.search(r"(?:^|[/_])(?:wasm|tinygo)(?:[_.]|$)", path)
+        wasm_specific = re.search(r"(?:^|[/_])(?:wasm|tinygo)(?:[-_.]|$)", path)
         wasm_test = path.endswith("_test.go") and (
             path.startswith("d2js/d2wasm/") or (path.startswith("d2layouts/d2elklayout/") and wasm_specific)
         )
-        if ci_policy or wasm_test or path in (".github/workflows/wasm.yml", "ci/test-wasm.sh"):
+        # ci/test-wasm.sh builds the module with ci/wasm-flags.sh and checks its go statements against
+        # ci/wasm-goroutines.txt. The module runs the *_nosched.go variants instead of goroutines.
+        if ci_policy or wasm_test or path.endswith("_nosched.go") or path in (
+            ".github/workflows/wasm.yml", "ci/test-wasm.sh", "ci/wasm-flags.sh", "ci/wasm-goroutines.txt",
+        ):
             jobs["wasm"] = True
         if path.startswith(("d2js/", ".github/actions/browser-smoke/")) or path in (
             ".github/workflows/browser-smoke.yml", ".github/workflows/npm-stage.yml", "ci/sub", ".gitmodules",

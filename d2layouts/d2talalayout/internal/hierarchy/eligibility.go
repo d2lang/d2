@@ -23,7 +23,7 @@ func Candidates(graph *layoutgraph.Graph) map[*layoutgraph.Node]struct{} {
 			candidates[node] = struct{}{}
 			continue
 		}
-		if node.IsContainer() && shapeCanBeContainer(node.Shape) && !node.AspectRatio1() && isEligibleContainer(graph, node) {
+		if node.IsContainer() && shapeCanBeContainer(node.Shape) && !node.Shape.AspectRatio1() && isEligibleContainer(graph, node) {
 			candidates[node] = struct{}{}
 		}
 	}
@@ -37,7 +37,7 @@ func isSimpleCandidate(graph *layoutgraph.Graph, node *layoutgraph.Node) bool {
 
 // Hierarchy containers grow only horizontally. These shapes can grow in one
 // direction without distorting their visual meaning.
-func shapeCanBeContainer(candidate nodeshape.Shape) bool {
+func shapeCanBeContainer(candidate *nodeshape.Shape) bool {
 	switch candidate.GetType() {
 	case "", shape.SQUARE_TYPE, shape.PACKAGE_TYPE, shape.STORED_DATA_TYPE, shape.QUEUE_TYPE, shape.STEP_TYPE:
 		return true

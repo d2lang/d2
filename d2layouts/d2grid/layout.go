@@ -652,6 +652,9 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 	// Note: we want a low threshold to explore good options within attemptLimit,
 	// but the best option may require a few rows that are far from the target size.
 	okThreshold := STARTING_THRESHOLD
+	// The smallest row this pass rejected as too large and the largest it
+	// rejected as too small: the first rows a higher okThreshold accepts.
+	minTooLarge, maxTooSmall := math.Inf(1), math.Inf(-1)
 	rowOk := func(start, end int, starting bool) (ok bool) {
 		n := end - start
 		if starting {
@@ -672,6 +675,7 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 			// if multiple nodes are too big, it isn't ok. but a single node can't shrink so only check here
 			if rowSize > okThreshold*targetSize {
 				skipCount++
+				minTooLarge = math.Min(minTooLarge, rowSize)
 				// there may even be too many to skip
 				return skipCount >= SKIP_LIMIT
 			}
@@ -679,6 +683,7 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 		// row is too small to be good overall
 		if rowSize < targetSize/okThreshold {
 			skipCount++
+			maxTooSmall = math.Max(maxTooSmall, rowSize)
 			return skipCount >= SKIP_LIMIT
 		}
 		return true
@@ -735,6 +740,7 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 	for i := 0; i < thresholdAttempts || bestLayout == nil; i++ {
 		count = 0.
 		skipCount = 0.
+		minTooLarge, maxTooSmall = math.Inf(1), math.Inf(-1)
 		iterDivisions(len(gd.objects), nCuts, tryDivision, rowOk)
 		okThreshold += THRESHOLD_STEP_SIZE
 		startingCache = make(map[int]bool)
@@ -746,9 +752,70 @@ func (gd *gridDiagram) getBestLayout(targetSize float64, columns bool) [][]*d2gr
 		if count == 0 && thresholdAttempts < MAX_THRESHOLD_ATTEMPTS {
 			thresholdAttempts++
 		}
+		if count == 0 && bestLayout == nil {
+			// No division passed, and the passes that follow repeat this one
+			// until okThreshold accepts a row it rejected. Skip those passes.
+			// With one object far larger than the rest, that can take more
+			// passes than finish in any reasonable time, or never happen.
+			passes, ok := passesBeforeAccepting(okThreshold, targetSize, minTooLarge, maxTooSmall)
+			if !ok {
+				// Score divisions without the size checks instead.
+				count, skipCount = 0, 0
+				iterDivisions(len(gd.objects), nCuts, func(division []int) bool {
+					if bestLayout == nil {
+						bestLayout = GenLayout(gd.objects, division)
+					}
+					return tryDivision(division)
+				}, func(int, int, bool) bool { return true })
+				break
+			}
+			for ; passes > 0; passes-- {
+				okThreshold += THRESHOLD_STEP_SIZE
+				i++
+				if thresholdAttempts < MAX_THRESHOLD_ATTEMPTS {
+					thresholdAttempts++
+				}
+			}
+		}
 	}
 
 	return bestLayout
+}
+
+// maxRepeatedPasses bounds the passes of getBestLayout that
+// passesBeforeAccepting skips. Each costs at least a search over the cuts, so
+// more of them would take minutes or longer.
+const maxRepeatedPasses = 1 << 24
+
+// passesBeforeAccepting returns how many passes, each adding
+// THRESHOLD_STEP_SIZE to okThreshold, come before the first okThreshold that
+// accepts a row too large (minTooLarge) or too small (maxTooSmall) for the
+// last pass. It reports false if none comes within maxRepeatedPasses.
+func passesBeforeAccepting(okThreshold, targetSize, minTooLarge, maxTooSmall float64) (int, bool) {
+	accepts := func(okThreshold float64) bool {
+		return !(minTooLarge > okThreshold*targetSize) || !(maxTooSmall < targetSize/okThreshold)
+	}
+	// A rejected row is accepted once okThreshold reaches its ratio to the
+	// target size (for a positive target size). Give up early when that is
+	// out of reach.
+	need := math.Inf(1)
+	if targetSize > 0 {
+		need = math.Min(minTooLarge/targetSize, need)
+		if maxTooSmall > 0 {
+			need = math.Min(targetSize/maxTooSmall, need)
+		}
+	}
+	if !((need-okThreshold)/THRESHOLD_STEP_SIZE < maxRepeatedPasses) {
+		return 0, false
+	}
+	// Step as the loop does, so okThreshold rounds the same way.
+	for passes := 0; passes <= maxRepeatedPasses; passes++ {
+		if accepts(okThreshold) {
+			return passes, true
+		}
+		okThreshold += THRESHOLD_STEP_SIZE
+	}
+	return 0, false
 }
 
 func sum(values []float64) float64 {

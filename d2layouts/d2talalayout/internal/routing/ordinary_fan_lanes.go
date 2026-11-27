@@ -250,7 +250,7 @@ func (env fanObstacles) arrivalLaneClear(e *layoutgraph.Edge, points []*geo.Poin
 			continue
 		}
 		if n.IsContainer() && (e.From.IsDescendantOf(n) || e.To.IsDescendantOf(n)) {
-			if !n.IsRectangular() {
+			if !n.Shape.IsRectangular() {
 				return false, nil
 			}
 			bottom := geo.NewPoint(n.TopLeft.X+n.Width, n.TopLeft.Y+n.Height)

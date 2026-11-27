@@ -2,6 +2,10 @@
 
 - Run the native D2 CLI with `uvx d2lang input.d2 output.svg` on Linux, macOS, and Windows.
 
+- Install D2 on Debian or Ubuntu using the amd64 or arm64 `.deb` from the GitHub release.
+
+- Install a specific D2 release with DNF using the `x86_64` or `aarch64` RPM from GitHub Releases.
+
 - Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with board or container variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
 
 - Animate grid edits between steps with the same `animate-duration` setting. Cells slide to their new positions, arrivals grow in, and departures shrink away. An inserted row or column opens as a group. A replacement can hand off in place, and a summary cell can unfold to show a nested grid.
@@ -14,6 +18,8 @@
 - Set the time each board is displayed in an animated SVG or GIF directly in the diagram with `vars: {d2-config: {animate-interval: 800ms}}`. Override it at export time with `--animate-interval`.
 
 - elk: choose the layout algorithm in `vars.d2-config.data`. Configure the force model and repulsion, target edge length for stress, tree traversal and sibling order, and radial spacing, branch angles and compaction in D2 or on the CLI. Layered layout also supports edge merging and routing, spacing within layers, pipeline wrapping, declaration order and feedback edges. Set `elk-layer-constraint` on a shape to place it in the first or last layer.
+
+- `d2 mcp` runs a Model Context Protocol server on stdin and stdout. AI clients get three tools: `guide` returns the language guide for the running D2 version, `check` reports errors with line and column, and `render` returns a PNG, SVG or text drawing. Hosts that support MCP Apps display the diagram inline. Local files are readable only beneath `--root`.
 
 - Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
 - elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
@@ -35,6 +41,10 @@
 - Ordinary labeled diagrams render faster and allocate fewer bytes because the SVG writer records fonts and theme colors as it draws. [#2995](https://github.com/d2lang/d2/pull/2995)
 
 - Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer.
+
+- D2.js: the WebAssembly module is built with TinyGo instead of Go, reducing its Brotli-compressed size by about 40%. [#2966](https://github.com/d2lang/d2/pull/2966)
+
+- D2.js: the TinyGo-built WebAssembly module is less than half the size (11.9 MB smaller) and a third smaller when compressed with Brotli (2.0 MB), and runs D2's end-to-end corpus in less than half the time, with identical output on that corpus. D2.js calls into the module and every call runs to completion, so the module is now built without a goroutine scheduler, which on WebAssembly rewrote every function that could be running when a goroutine is switched out and made the code about two thirds larger. The build needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases), which also gives each pointer a garbage-collector stack slot only while a collection can find it in use. The module also drops its function names, a second HTML entity table, two unused Unicode segmentation tables and four separately encoded copies of bundled fonts, stores the tables of the formula renderer and of the ELK layout engine as constant data, keeps the formula renderer's glyph outlines compressed until a formula needs them and its bundled fonts compressed until it starts, and runs D2's own sorts through one shared routine. [#3046](https://github.com/d2lang/d2/pull/3046)
 
 - The d2 binary is about 3 MB smaller: PPTX export writes its XML parts without `text/template`, whose method lookups by name kept unused methods throughout the program. [#3000](https://github.com/d2lang/d2/pull/3000)
 
@@ -72,6 +82,7 @@
 
 #### Bugfixes ⛑️
 
+- Dagre lays out nested diagrams on which its ordering lost containers, which failed with `dagre fails on this input: it sets "order" on a node missing from a layer` or `not possible to find intersection inside of the rectangle`. Diagrams that laid out before keep their exact layout. [dagro v0.4.1](https://github.com/d2lang/dagro/pull/11)
 - `d2 fmt` preserves imported boards, board declaration order, explicit empty maps, block comments in arrays, and the parentheses around connections such as `("api" *- "db")`.
 - A file ending in the object name `!` parses with or without a final newline. Standalone key and value parsers reject trailing input, including an editor target such as `a; b`.
 - Empty filters (`&` or `!&`) now report an error. Supply a condition such as `&shape: circle`. A trailing dot needs a path segment. Write `a` for the object or `"a."` for a name ending in a literal dot. Use `"svc".(a -> b)[0]` to scope a connection.
@@ -175,6 +186,49 @@
   - Render forced appendices inside their animated SVG frames and size the
     animation to include every board's footnotes.
 - sequence diagrams: fix a compile error ("invalid position with infinity value") when a group nested in another group contains only a note. [#2750](https://github.com/d2lang/d2/issues/2750)
+- The compiler reports an error instead of crashing on a connection endpoint of only underscores (`x: {y: {_._.b -> _}}`), a reserved keyword in a connection after a shared path or underscores (`c.left -> c.t`, `x: {_.a -> left}`), a reserved keyword as a connection's shared path (`near.a -> near.b`), `constraint` with a child (`constraint.x`), and connections in a `label`, `icon` or `tooltip` map.
+- Diagrams that crashed the compiler now compile: a step with a map after a step without one, a glob connection whose shared path matches nothing (`a.b.*.x -> a.b.*.y`), a reference from inside a `sql_table` column or `class` field to an object outside it (`t.a: {_._.x}`), a glob with a map value in `layers` (`layers: {w: {b}; *: {a}}`), and a block comment inside an array (`class: [a; """ note """; b]`).
+- Grids with `grid-rows` or `grid-columns` no longer hang when one cell is far larger than the rest, such as one 10^17 wide among 50.
+- Dagre lays out a diagram the same way every time. Diagrams with containers could get slightly different container sizes from run to run, and in D2.js from build to build.
+- Globs over boards:
+  - A glob that selects layers, scenarios or steps applies to every board it
+    selects, once. `scenarios: {w: {b}; v: {c}; *: {a}}`, `layers.*.a` and
+    `scenarios.*.(x -> y)[0].style.stroke: red` reached only the first board,
+    also in steps, nested boards, imported boards and filtered globs.
+  - A glob in a `layers`, `scenarios` or `steps` map applies in that map, where
+    its first element selects the boards, and no longer also inside each board:
+    `scenarios: {*: {a}; w: {b}}` no longer gives `w.b` an `a`, and
+    `scenarios: {*.style.fill: red}` now fills each scenario's background, not
+    its objects. A glob whose paths all start with `**` still reaches the
+    objects of each board, once: `scenarios: {**.style.fill: red}` fills them.
+  - A connection glob in such a map that has an endpoint of one element other
+    than `**` applies inside each board instead, as if written there, in boards
+    declared before it too and in their scenarios and steps, but not in their
+    layers: `steps: {(* -> *)[*].style.stroke: red}`,
+    `layers: {(* -> *)[*].style.stroke: red}`, `scenarios: {* -> hub}`, which
+    reported "cannot create edges between boards", and `steps: {** -> hub}`,
+    which also made a step named `hub`.
+  - Glob connections such as `scenarios.*.x -> scenarios.*.y` connect the
+    objects within each board and skip pairs in different boards, as `**` does,
+    so `scenarios.*.a -> x`, whose pairs all cross boards, creates nothing
+    instead of reporting an error.
+  - A scenario or step that a glob reaches before it has a map starts as a copy
+    of its base board: `x; scenarios.*.y; scenarios: {w: {z}}` gives `w` the
+    `x`. A step without a map that a glob gives content starts as a copy of the
+    step before it, once: `steps: {w; v; *: {a -> b}}` gives `v` one `a -> b`
+    instead of none. A glob whose filter fails no longer stops a scenario or
+    step from copying its base: `r; scenarios: {*: {&label: Z; k}; w: {x}}`
+    gives `w` the `r`.
+  - Steps no longer stop their board's globs from applying to a later object of
+    the same name: `*.style.fill: red; steps: {s1: {y}}; y` fills the root `y`.
+  - A glob no longer applies again to what its own import added: `**: @f; a`,
+    where `f` declares `p`, gives `a` one `p`, not `p.p`, and such globs no
+    longer report a false cyclic import. `x; *: @f; p` gives the importer's `p`
+    the import too. `***` no longer applies again to what a scenario or step
+    inherits: `***: {u -> v}; a; steps: {s1: {b}}` gave `s1.a` a second
+    `u -> v`.
+  - As globs reach more boards, a diagram with many glob connections can now
+    exceed the glob or connection expansion limit.
 
 ---
 

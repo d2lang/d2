@@ -9,6 +9,8 @@ You may install `d2` through any of the following methods.
 - [GitHub Actions](#github-actions)
 - [macOS (Homebrew)](#macos-homebrew)
 - [Linux](#linux)
+  - [Debian and Ubuntu](#debian-and-ubuntu)
+  - [Fedora and RHEL](#fedora-and-rhel)
   - [Void Linux](#void-linux)
 - [Standalone](#standalone)
   - [Manual](#manual)
@@ -152,7 +154,38 @@ brew install d2 --HEAD
 
 ## Linux
 
-The following distributions have packages for d2:
+### Debian and Ubuntu
+
+For D2 releases after v0.9.0, download the `.deb` matching `dpkg --print-architecture`
+(`amd64` or `arm64`) from [GitHub Releases](https://github.com/d2lang/d2/releases).
+From the directory containing the download, run:
+
+```sh
+sudo apt install ./d2_*_"$(dpkg --print-architecture)".deb
+d2 --version
+```
+
+To upgrade, download the newer package and pass its path to `sudo apt install`.
+To uninstall, run `sudo apt remove d2`.
+
+### Fedora and RHEL
+
+On Fedora, `sudo dnf install d2` installs the version packaged by Fedora.
+For a specific D2 release after v0.9.0, download the `.rpm` matching
+`uname -m` (`x86_64` or `aarch64`) from [GitHub Releases](https://github.com/d2lang/d2/releases).
+From the directory containing the download, run:
+
+```sh
+sudo dnf install ./d2-*."$(uname -m)".rpm
+d2 --version
+```
+
+To upgrade, pass the newer RPM's path to `sudo dnf install`. To uninstall, run
+`sudo dnf remove d2`.
+
+To verify a downloaded RPM before installing, run `gh attestation verify` on
+the file with `--repo d2lang/d2 --signer-workflow d2lang/d2/.github/workflows/release-archives.yml`
+and `--source-ref refs/tags/<tag>` for the release you downloaded.
 
 ### Void Linux
 
@@ -309,6 +342,5 @@ docker run --rm -it -u "$(id -u):$(id -g)" -v "$PWD:/home/debian/src" \
 
 ## Coming soon
 
-- rpm and deb packages
-    - with repositories and standalone
+- package repositories for APT and RPM
 - homebrew core

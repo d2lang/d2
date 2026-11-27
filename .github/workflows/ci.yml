@@ -96,12 +96,22 @@ jobs:
           # Disable chat notifications from the shared CI helper.
           CI_MAKE_ROOT: "0"
           GITHUB_TOKEN: ${{ github.token }}
+      - name: Test the MCP server with the race detector
+        run: go test -race ./d2cli/ -run TestMCP
+      - name: Build without the MCP server
+        run: |
+          go build -tags d2nomcp ./...
+          go build -tags d2nomcp -o "$RUNNER_TEMP/d2nomcp" .
+          if output=$("$RUNNER_TEMP/d2nomcp" mcp 2>&1); then exit 1; fi
+          grep -F 'this build of d2 does not include the MCP server' <<< "$output"
       - name: Test TALA and geometry with the race detector
         run: go test -race ./d2layouts/d2talalayout/... ./internal/geomath -count=1 -timeout=15m
       - name: Test language server with the race detector
         run: go test -race ./d2lsp/lspserver -count=1
-      - name: Test the dagre adapter with its TinyGo-only shadow maps compiled in
-        run: go test -tags dagre_shadowmaps ./d2layouts/d2dagrelayout -count=1
+      - name: Test TALA with the goroutine-free variants the WebAssembly module runs
+        run: go test -tags scheduler.none ./d2layouts/d2talalayout/... -count=1 -timeout=15m
+      - name: Test the sort callers with the TinyGo-only shared sorter compiled in
+        run: go test -tags xsort_small ./lib/xsort ./lib/textmeasure ./d2ir ./d2lib ./d2renderers/d2fonts ./d2layouts/... ./e2etests -count=1 -timeout=30m
       - name: Verify representative release archive and size budget
         run: ./ci/release/build.sh --rebuild --run=linux/amd64 --version=v0.0.0-ci
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -121,6 +131,8 @@ jobs:
         run: go test -v -run '^(TestImportRelativeToNativeInputPath|TestImportVirtualDirectoryWithBackslash|TestResolveImportPathOnWindows)$' ./d2ir ./lib/localfile
       - name: Test language server with native Windows paths
         run: go test ./d2lsp/lspserver -count=1
+      - name: Test rooted MCP file input and diagnostics
+        run: go test -v -run '^TestMCP(DiagramPaths|UTF16Diagram|Root)$' ./d2cli
       - name: Render a diagram from outside its directory
         run: go test -v -run '^TestCLI_E2E$/^import_from_another_directory$' ./e2etests-cli
   wasm:

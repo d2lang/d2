@@ -2,9 +2,9 @@ package proximity
 
 import (
 	"cmp"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // CommonUncleSiblings finds siblings that connect to the same node at their
@@ -39,7 +39,7 @@ func CommonUncleSiblings(graph *layoutgraph.Graph) map[*layoutgraph.Node]layoutg
 		}
 		// Equal-sized groups retain the first destination discovered across
 		// the graph. Only destinations present in this container can win.
-		slices.SortFunc(orderedUncles, func(a, b *layoutgraph.Node) int {
+		xsort.Func(orderedUncles, func(a, b *layoutgraph.Node) int {
 			return cmp.Compare(firstSeen[a], firstSeen[b])
 		})
 		for _, uncle := range orderedUncles {

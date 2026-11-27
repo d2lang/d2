@@ -3,10 +3,10 @@ package hierarchy
 import (
 	"context"
 	"math"
-	"slices"
 	"sort"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -211,7 +211,7 @@ func median(numbers []float64) float64 {
 	ordered := make([]float64, len(numbers))
 	copy(ordered, numbers)
 
-	slices.Sort(ordered)
+	xsort.Ordered(ordered)
 
 	if len(ordered)%2 == 1 {
 		return ordered[(len(ordered) / 2)]

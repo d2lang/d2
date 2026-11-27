@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
-	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/nodeshape"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/shape"
 )
@@ -40,7 +39,7 @@ func (ctx *cancelWhenEdgeIsRouted) Err() error {
 }
 
 type panicOnShiftedShapeTrace struct {
-	nodeshape.Shape
+	shape.Shape
 
 	node             *layoutgraph.Node
 	edge             *layoutgraph.Edge
@@ -278,13 +277,13 @@ func TestRouteEdgesRestoresModifierShiftBeforePropagatingShapeTracePanic(t *test
 	topLeft := edge.From.TopLeft
 	topLeftValue := *topLeft
 	panicShape := &panicOnShiftedShapeTrace{
-		Shape:        edge.From.Shape,
+		Shape:        edge.From.Shape.Shape,
 		node:         edge.From,
 		edge:         edge,
 		topLeft:      topLeft,
 		topLeftValue: topLeftValue,
 	}
-	edge.From.Shape = panicShape
+	edge.From.Shape.Shape = panicShape
 	edge.Points = routeWithSpareCapacity(geo.NewPoint(17, 19), geo.NewPoint(18, 19))
 	snapshot := captureExactRouteTest(edge)
 

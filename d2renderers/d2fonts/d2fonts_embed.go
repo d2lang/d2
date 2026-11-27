@@ -1,5 +1,8 @@
 //go:build !js || !wasm
 
+// WebAssembly builds load the same TTF faces from ttf_stream.br instead
+// (d2fonts_embed_wasm.go).
+
 package d2fonts
 
 import (
@@ -10,225 +13,55 @@ import (
 	"github.com/d2lang/d2/lib/syncmap"
 )
 
-//go:embed encoded/SourceSansPro-Regular.txt
-var sourceSansProRegularBase64 string
-
-//go:embed encoded/SourceSansPro-Bold.txt
-var sourceSansProBoldBase64 string
-
-//go:embed encoded/SourceSansPro-Italic.txt
-var sourceSansProItalicBase64 string
-
-//go:embed encoded/SourceCodePro-Regular.txt
-var sourceCodeProRegularBase64 string
-
-//go:embed encoded/FuzzyBubbles-Regular.txt
-var fuzzyBubblesRegularBase64 string
-
-//go:embed encoded/FuzzyBubbles-Bold.txt
-var fuzzyBubblesBoldBase64 string
-
-// These four SVG encodings contain WOFF data. The other encodings already
-// contain the full TTF, so each native binary only needs one copy of those faces.
-//
-//go:embed ttf/SourceSansPro-Semibold.ttf ttf/SourceCodePro-Bold.ttf
-//go:embed ttf/SourceCodePro-Semibold.ttf ttf/SourceCodePro-Italic.ttf
+//go:embed ttf/*.ttf
 var fontFacesFS embed.FS
 
 func init() {
+	FontFaces = syncmap.New[Font, []byte]()
 	FontEncodings = syncmap.New[Font, string]()
 
-	FontEncodings.Set(
-		Font{
-			Family: SourceSansPro,
-			Style:  FONT_STYLE_REGULAR,
-		},
-		sourceSansProRegularBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: SourceSansPro,
-			Style:  FONT_STYLE_BOLD,
-		},
-		sourceSansProBoldBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: SourceSansPro,
-			Style:  FONT_STYLE_SEMIBOLD,
-		},
-		sourceSansProSemiboldBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: SourceSansPro,
-			Style:  FONT_STYLE_ITALIC,
-		},
-		sourceSansProItalicBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: SourceCodePro,
-			Style:  FONT_STYLE_REGULAR,
-		},
-		sourceCodeProRegularBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: SourceCodePro,
-			Style:  FONT_STYLE_BOLD,
-		},
-		sourceCodeProBoldBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: SourceCodePro,
-			Style:  FONT_STYLE_SEMIBOLD,
-		},
-		sourceCodeProSemiboldBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: SourceCodePro,
-			Style:  FONT_STYLE_ITALIC,
-		},
-		sourceCodeProItalicBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: HandDrawn,
-			Style:  FONT_STYLE_REGULAR,
-		},
-		fuzzyBubblesRegularBase64)
-
-	FontEncodings.Set(
-		Font{
-			Family: HandDrawn,
-			Style:  FONT_STYLE_ITALIC,
-			// This font has no italic, so just reuse regular
-		}, fuzzyBubblesRegularBase64)
-	FontEncodings.Set(
-		Font{
-			Family: HandDrawn,
-			Style:  FONT_STYLE_BOLD,
-		}, fuzzyBubblesBoldBase64)
-	FontEncodings.Set(
-		Font{
-			Family: HandDrawn,
-			Style:  FONT_STYLE_SEMIBOLD,
-			// This font has no semibold, so just reuse bold
-		}, fuzzyBubblesBoldBase64)
-
-	FontEncodings.Range(func(k Font, v string) bool {
-		FontEncodings.Set(k, strings.TrimSuffix(v, "\n"))
-		return true
-	})
-
-	FontFaces = syncmap.New[Font, []byte]()
-
-	b, err := decodeEmbeddedTTF(sourceSansProRegularBase64)
-	if err != nil {
-		panic(err)
+	for _, face := range []struct {
+		filename string
+		family   FontFamily
+		style    FontStyle
+		woff     string
+	}{
+		{"SourceSansPro-Regular.ttf", SourceSansPro, FONT_STYLE_REGULAR, ""},
+		{"SourceSansPro-Bold.ttf", SourceSansPro, FONT_STYLE_BOLD, ""},
+		{"SourceSansPro-Semibold.ttf", SourceSansPro, FONT_STYLE_SEMIBOLD, sourceSansProSemiboldBase64},
+		{"SourceSansPro-Italic.ttf", SourceSansPro, FONT_STYLE_ITALIC, ""},
+		{"SourceCodePro-Regular.ttf", SourceCodePro, FONT_STYLE_REGULAR, ""},
+		{"SourceCodePro-Bold.ttf", SourceCodePro, FONT_STYLE_BOLD, sourceCodeProBoldBase64},
+		{"SourceCodePro-Semibold.ttf", SourceCodePro, FONT_STYLE_SEMIBOLD, sourceCodeProSemiboldBase64},
+		{"SourceCodePro-Italic.ttf", SourceCodePro, FONT_STYLE_ITALIC, sourceCodeProItalicBase64},
+		{"FuzzyBubbles-Regular.ttf", HandDrawn, FONT_STYLE_REGULAR, ""},
+		{"FuzzyBubbles-Bold.ttf", HandDrawn, FONT_STYLE_BOLD, ""},
+	} {
+		ttf, err := fontFacesFS.ReadFile("ttf/" + face.filename)
+		if err != nil {
+			panic(err)
+		}
+		uri := strings.TrimSuffix(face.woff, "\n")
+		if uri == "" {
+			// These six SVG encodings use the original TTF bytes with the historical WOFF media type.
+			uri = "data:application/font-woff;base64," + base64.StdEncoding.EncodeToString(ttf)
+		}
+		font := Font{Family: face.family, Style: face.style}
+		FontFaces.Set(font, ttf)
+		FontEncodings.Set(font, uri)
 	}
-	FontFaces.Set(Font{
-		Family: SourceSansPro,
-		Style:  FONT_STYLE_REGULAR,
-	}, b)
 
-	b, err = decodeEmbeddedTTF(sourceCodeProRegularBase64)
-	if err != nil {
-		panic(err)
+	// HandDrawn uses its regular and bold faces for italic and semibold.
+	for _, pair := range []struct{ alias, source FontStyle }{
+		{FONT_STYLE_ITALIC, FONT_STYLE_REGULAR},
+		{FONT_STYLE_SEMIBOLD, FONT_STYLE_BOLD},
+	} {
+		alias := Font{Family: HandDrawn, Style: pair.alias}
+		source := Font{Family: HandDrawn, Style: pair.source}
+		FontFaces.Set(alias, FontFaces.Get(source))
+		FontEncodings.Set(alias, FontEncodings.Get(source))
 	}
-	FontFaces.Set(Font{
-		Family: SourceCodePro,
-		Style:  FONT_STYLE_REGULAR,
-	}, b)
-
-	b, err = fontFacesFS.ReadFile("ttf/SourceCodePro-Bold.ttf")
-	if err != nil {
-		panic(err)
-	}
-	FontFaces.Set(Font{
-		Family: SourceCodePro,
-		Style:  FONT_STYLE_BOLD,
-	}, b)
-
-	b, err = fontFacesFS.ReadFile("ttf/SourceCodePro-Semibold.ttf")
-	if err != nil {
-		panic(err)
-	}
-	FontFaces.Set(Font{
-		Family: SourceCodePro,
-		Style:  FONT_STYLE_SEMIBOLD,
-	}, b)
-
-	b, err = fontFacesFS.ReadFile("ttf/SourceCodePro-Italic.ttf")
-	if err != nil {
-		panic(err)
-	}
-	FontFaces.Set(Font{
-		Family: SourceCodePro,
-		Style:  FONT_STYLE_ITALIC,
-	}, b)
-
-	b, err = decodeEmbeddedTTF(sourceSansProBoldBase64)
-	if err != nil {
-		panic(err)
-	}
-	FontFaces.Set(Font{
-		Family: SourceSansPro,
-		Style:  FONT_STYLE_BOLD,
-	}, b)
-
-	b, err = fontFacesFS.ReadFile("ttf/SourceSansPro-Semibold.ttf")
-	if err != nil {
-		panic(err)
-	}
-	FontFaces.Set(Font{
-		Family: SourceSansPro,
-		Style:  FONT_STYLE_SEMIBOLD,
-	}, b)
-
-	b, err = decodeEmbeddedTTF(sourceSansProItalicBase64)
-	if err != nil {
-		panic(err)
-	}
-	FontFaces.Set(Font{
-		Family: SourceSansPro,
-		Style:  FONT_STYLE_ITALIC,
-	}, b)
-
-	b, err = decodeEmbeddedTTF(fuzzyBubblesRegularBase64)
-	if err != nil {
-		panic(err)
-	}
-	FontFaces.Set(Font{
-		Family: HandDrawn,
-		Style:  FONT_STYLE_REGULAR,
-	}, b)
-	FontFaces.Set(Font{
-		Family: HandDrawn,
-		Style:  FONT_STYLE_ITALIC,
-	}, b)
-
-	b, err = decodeEmbeddedTTF(fuzzyBubblesBoldBase64)
-	if err != nil {
-		panic(err)
-	}
-	FontFaces.Set(Font{
-		Family: HandDrawn,
-		Style:  FONT_STYLE_BOLD,
-	}, b)
-	FontFaces.Set(Font{
-		Family: HandDrawn,
-		Style:  FONT_STYLE_SEMIBOLD,
-	}, b)
-
 	if err := registerBundledFontFaces(); err != nil {
 		panic(err)
 	}
-}
-
-func decodeEmbeddedTTF(dataURI string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(strings.TrimPrefix(dataURI, "data:application/font-woff;base64,"))
 }

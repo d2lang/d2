@@ -4,9 +4,9 @@ import (
 	"cmp"
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/hierarchy"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -134,7 +134,7 @@ func newOVGForHierarchy(g *layoutgraph.Graph, h *layoutgraph.Hierarchy, guard *o
 	if err := guard.reserveSortWork(len(nodes)); err != nil {
 		return nil, err
 	}
-	slices.SortFunc(nodes, func(a, b *layoutgraph.Node) int {
+	xsort.Func(nodes, func(a, b *layoutgraph.Node) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
 	if err := guard.check(); err != nil {
@@ -275,14 +275,14 @@ func (ovg *OVG) addHierarchyLevelNodes(g *layoutgraph.Graph, hierarchy *layoutgr
 	if err := guard.reserveSortWork(len(levels)); err != nil {
 		return err
 	}
-	slices.Sort(levels)
+	xsort.Ordered(levels)
 	rows := make([][]*layoutgraph.Node, 0, len(levels))
 	for _, level := range levels {
 		nodes := levelToNodes[level]
 		if err := guard.reserveSortWork(len(nodes)); err != nil {
 			return err
 		}
-		slices.SortFunc(nodes, func(a, b *layoutgraph.Node) int {
+		xsort.Func(nodes, func(a, b *layoutgraph.Node) int {
 			if c := cmp.Compare(a.TopLeft.X, b.TopLeft.X); c != 0 {
 				return c
 			}

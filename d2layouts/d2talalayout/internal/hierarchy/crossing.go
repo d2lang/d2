@@ -2,9 +2,9 @@ package hierarchy
 
 import (
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 )
@@ -154,7 +154,7 @@ func (scratch *crossingScratch) crossLevelSegments(nodes []*placementNode, above
 			}
 		}
 	})
-	slices.SortStableFunc(scratch.segments, func(a, b layoutgraph.CrossingSegment) int {
+	xsort.StableFunc(scratch.segments, func(a, b layoutgraph.CrossingSegment) int {
 		if a.Start.X == b.Start.X {
 			switch {
 			case a.End.X < b.End.X:
@@ -271,7 +271,7 @@ func sortLevelNodesByAdacencyPosition(nodes []*placementNode, useConnectionsAbov
 		return float64(sum) / float64(len(nodes))
 	}
 
-	slices.SortStableFunc(nodes, func(a, b *placementNode) int {
+	xsort.StableFunc(nodes, func(a, b *placementNode) int {
 		aAverage := adjacentLevelAverage(a)
 		bAverage := adjacentLevelAverage(b)
 		switch {

@@ -1,9 +1,8 @@
 package d2ir
 
 import (
-	"slices"
-
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // A copied board must bind any captured glob to its own scope, even when
@@ -68,7 +67,7 @@ func (c *compiler) edgePropertyGlobsForSpread(m *Map, source d2ast.Node) []*glob
 			globs = append(globs, g)
 		}
 	}
-	slices.SortStableFunc(globs, func(a, b *globContext) int {
+	xsort.StableFunc(globs, func(a, b *globContext) int {
 		if a.refctx.order.before(b.refctx.order) {
 			return -1
 		}

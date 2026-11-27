@@ -15,7 +15,7 @@ import { pipeline } from "node:stream/promises";
 
 const help = `Usage: d2 [input.d2|-] [output.svg|-]
 
-Render one D2 source file to SVG with WebAssembly.
+Render the root board of one D2 source file to SVG with WebAssembly.
 File input defaults to a sibling .svg file. Piped input defaults to stdout.
 Use - for stdin or stdout. Use the native D2 CLI for multi-file imports.
 

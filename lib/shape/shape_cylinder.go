@@ -7,20 +7,23 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeCylinder struct {
-	*baseShape
-}
-
 const (
 	defaultArcDepth = 24.
 )
 
+var cylinderKind = shapeKind{
+	typ:             CYLINDER_TYPE,
+	paddingX:        defaultPadding,
+	paddingY:        defaultPadding / 2,
+	innerBox:        cylinderInnerBox,
+	dimensionsToFit: cylinderDimensionsToFit,
+	path:            cylinderOuterPath,
+	extraPath:       cylinderInnerPath,
+	trace:           cylinderTrace,
+}
+
 func NewCylinder(box *geo.Box) Shape {
-	shape := shapeCylinder{
-		baseShape: newShapeBase(CYLINDER_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&cylinderKind, box)
 }
 
 func getArcHeight(box *geo.Box) float64 {
@@ -33,7 +36,7 @@ func getArcHeight(box *geo.Box) float64 {
 	return arcHeight
 }
 
-func (s shapeCylinder) GetInnerBox() *geo.Box {
+func cylinderInnerBox(s *shape) *geo.Box {
 	height := s.Box.Height
 	tl := s.Box.TopLeft.Copy()
 	arc := getArcHeight(s.Box)
@@ -72,31 +75,12 @@ func cylinderInnerPath(box *geo.Box) *svg.SvgPathContext {
 	return pc
 }
 
-func (s shapeCylinder) Perimeter() []geo.Intersectable {
-	return cylinderOuterPath(s.Box).Path
+func cylinderTrace(box *geo.Box, t *borderTracer) {
+	cylinderOuterOutline(box, t.newPath)
 }
 
-func (s shapeCylinder) traceBorder(t *borderTracer) {
-	cylinderOuterOutline(s.Box, t.newPath)
-}
-
-func (s shapeCylinder) GetSVGPathData() []string {
-	return []string{
-		cylinderOuterPath(s.Box).PathData(),
-		cylinderInnerPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeCylinder) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(cylinderOuterPath(s.Box), cylinderInnerPath(s.Box))
-}
-
-func (s shapeCylinder) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func cylinderDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	// 2 arcs top, height + padding, 1 arc bottom
 	totalHeight := height + paddingY + 3*defaultArcDepth
 	return math.Ceil(width + paddingX), math.Ceil(totalHeight)
-}
-
-func (s shapeCylinder) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding, defaultPadding / 2
 }

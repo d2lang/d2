@@ -17,7 +17,7 @@ func measureGeometry(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGua
 		if err := guard.Step(); err != nil {
 			return err
 		}
-		rectangular := node.IsRectangular()
+		rectangular := node.Shape.IsRectangular()
 		if node.IsInvisible || (!rectangular && issues == nil) {
 			continue
 		}
@@ -25,7 +25,7 @@ func measureGeometry(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGua
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			known := rectangular && other.IsRectangular()
+			known := rectangular && other.Shape.IsRectangular()
 			if other.IsInvisible || (!known && issues == nil) || !boxesOverlapWithPadding(node.Box, other.Box, 0) {
 				continue
 			}

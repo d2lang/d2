@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // Six rows bound the joint ordering search to 720 arrangements. Both columns
@@ -146,7 +147,7 @@ func PlaceHandoffs(ctx context.Context, g *layoutgraph.Graph, declaration map[la
 		seen[pair] = true
 	}
 	from = slices.Clone(from)
-	slices.SortFunc(from, func(a, b *layoutgraph.Node) int { return declaration[a.ID] - declaration[b.ID] })
+	xsort.Func(from, func(a, b *layoutgraph.Node) int { return declaration[a.ID] - declaration[b.ID] })
 	rows := uniqueHandoffRows(from, to)
 	if rows == nil {
 		return false, nil
@@ -218,7 +219,7 @@ func PlaceHandoffs(ctx context.Context, g *layoutgraph.Graph, declaration map[la
 					return false, nil
 				}
 				multiplier := 2*sign - 1
-				slices.SortFunc(group, func(a, b *layoutgraph.Edge) int { return multiplier * (delta(a) - delta(b)) })
+				xsort.Func(group, func(a, b *layoutgraph.Edge) int { return multiplier * (delta(a) - delta(b)) })
 				for i, e := range group {
 					offset := float64(multiplier*(i+1)) * pitch
 					p := slots[e]

@@ -3,13 +3,13 @@ package d2talalayout
 import (
 	"context"
 	"math"
-	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type boardAnchor struct {
@@ -214,8 +214,8 @@ func selectBoardOffset(anchors []boardAnchor, bounds offsetRange) (dx, dy float6
 	if original == 0 {
 		return 0, 0
 	}
-	slices.Sort(xs)
-	slices.Sort(ys)
+	xsort.Ordered(xs)
+	xsort.Ordered(ys)
 	// For an even number of anchors the entire interval between the two
 	// medians has the same travel. Prefer its point closest to zero.
 	mid := func(values []float64) float64 {

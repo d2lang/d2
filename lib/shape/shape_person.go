@@ -7,25 +7,27 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapePerson struct {
-	*baseShape
-}
-
-func NewPerson(box *geo.Box) Shape {
-	shape := shapePerson{
-		baseShape: newShapeBase(PERSON_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
-}
-
 const (
 	PERSON_AR_LIMIT = 1.5
 
 	personShoulderWidthFactor = 20.2 / 68.3
 )
 
-func (s shapePerson) GetInnerBox() *geo.Box {
+var personKind = shapeKind{
+	typ:             PERSON_TYPE,
+	paddingX:        10,
+	paddingY:        defaultPadding,
+	innerBox:        personInnerBox,
+	dimensionsToFit: personDimensionsToFit,
+	path:            personPath,
+	trace:           personTrace,
+}
+
+func NewPerson(box *geo.Box) Shape {
+	return newShape(&personKind, box)
+}
+
+func personInnerBox(s *shape) *geo.Box {
 	width := s.Box.Width
 	tl := s.Box.TopLeft.Copy()
 	shoulderWidth := personShoulderWidthFactor * width
@@ -63,26 +65,11 @@ func personOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64
 	return pc
 }
 
-func (s shapePerson) Perimeter() []geo.Intersectable {
-	return personPath(s.Box).Path
-
+func personTrace(box *geo.Box, t *borderTracer) {
+	personOutline(box, t.newPath)
 }
 
-func (s shapePerson) traceBorder(t *borderTracer) {
-	personOutline(s.Box, t.newPath)
-}
-
-func (s shapePerson) GetSVGPathData() []string {
-	return []string{
-		personPath(s.Box).PathData(),
-	}
-}
-
-func (s shapePerson) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(personPath(s.Box))
-}
-
-func (s shapePerson) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func personDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	totalWidth := width + paddingX
 	// see shapePackage
 	shoulderWidth := totalWidth * personShoulderWidthFactor / (1 - 2*personShoulderWidthFactor)
@@ -92,8 +79,4 @@ func (s shapePerson) GetDimensionsToFit(width, height, paddingX, paddingY float6
 	// prevent the shape's aspect ratio from becoming too extreme
 	totalWidth, totalHeight = LimitAR(totalWidth, totalHeight, PERSON_AR_LIMIT)
 	return math.Ceil(totalWidth), math.Ceil(totalHeight)
-}
-
-func (s shapePerson) GetDefaultPadding() (paddingX, paddingY float64) {
-	return 10, defaultPadding
 }
