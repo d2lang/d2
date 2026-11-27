@@ -3,6 +3,7 @@ package d2svg
 import (
 	"bytes"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -329,6 +330,7 @@ func TestRestrictFontCorporaConservativeAlphabet(t *testing.T) {
 }
 
 func TestRenderAppendixFontCorporaLegacyParity(t *testing.T) {
+	fonts := regexp.MustCompile(`data:application/font-woff;base64,[A-Za-z0-9+/=]+`)
 	for _, appendixText := range [][2]string{{"**footer XYZ & <raw>**", "Pretty URL"}, {"**éЖ Ω & <raw>**", "Pretty Δ"}} {
 		for _, family := range []d2fonts.FontFamily{d2fonts.SourceSansPro, d2fonts.HandDrawn} {
 			for _, labels := range [][2]string{{"1", "ABC"}, {"", "ABC"}, {"1", ""}, {"", ""}} {
@@ -356,9 +358,9 @@ func TestRenderAppendixFontCorporaLegacyParity(t *testing.T) {
 				}
 				var want bytes.Buffer
 				legacyEmbedFonts(&want, hash, string(out), &family, &mono, diagram.GetCorpus())
-				start := bytes.Index(out, []byte(`<style type="text/css">`))
-				end := bytes.Index(out[start:], []byte(`</style>`)) + start + len(`</style>`)
-				if !bytes.Equal(out[start:end], want.Bytes()) {
+				// Match the ordered legacy face payloads independently of the
+				// whitespace, quoting and container used to serialize their CSS.
+				if !reflect.DeepEqual(fonts.FindAll(out, -1), fonts.FindAll(want.Bytes(), -1)) {
 					t.Fatalf("%s, labels %q: fonts differ from legacy before appendix adds new characters", family, labels)
 				}
 			}

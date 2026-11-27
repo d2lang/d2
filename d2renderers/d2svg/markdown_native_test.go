@@ -148,7 +148,7 @@ a -> b: |md
 		t.Fatal("positioned tooltip did not use theme-aware background colors")
 	}
 	for _, fontClass := range []string{"text-semibold", "text-bold", "text-italic", "text-mono", "text-mono-semibold"} {
-		if !strings.Contains(svg, "."+fontClass+" {") {
+		if !strings.Contains(svg, "."+fontClass+"{font-family:") {
 			t.Fatalf("native Markdown did not embed the %s font face", fontClass)
 		}
 	}

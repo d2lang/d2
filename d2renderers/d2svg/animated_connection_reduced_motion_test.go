@@ -94,10 +94,10 @@ func TestAnimatedConnectionReducedMotion(t *testing.T) {
 			}
 
 			reducedMotionRule := fmt.Sprintf(
-				"@media (prefers-reduced-motion: reduce) {\n\t.%s .animated-connection {\n\t\tanimation: none !important;\n\t}\n}",
+				"@media (prefers-reduced-motion:reduce){.%s .animated-connection{animation:none !important}}",
 				diagramHash,
 			)
-			const unscopedReducedMotionSelector = "\t.animated-connection {"
+			const unscopedReducedMotionSelector = "{.animated-connection{"
 			if tc.animated {
 				if !strings.Contains(svg, "@keyframes dashdraw") {
 					t.Fatal("animated connection missing @keyframes dashdraw")
@@ -168,13 +168,13 @@ steps: {
 		t.Fatalf("multiboard SVG missing expected master hash class %q", boardClass)
 	}
 	reducedMotionRule := fmt.Sprintf(
-		"@media (prefers-reduced-motion: reduce) {\n\t.%s .animated-connection {\n\t\tanimation: none !important;\n\t}\n}",
+		"@media (prefers-reduced-motion:reduce){.%s .animated-connection{animation:none !important}}",
 		masterID,
 	)
 	if !strings.Contains(svg, reducedMotionRule) {
 		t.Fatalf("multiboard animated connection missing scoped reduced-motion override %q", reducedMotionRule)
 	}
-	const unscopedReducedMotionSelector = "\t.animated-connection {"
+	const unscopedReducedMotionSelector = "{.animated-connection{"
 	if strings.Contains(svg, unscopedReducedMotionSelector) {
 		t.Fatalf("multiboard animated connection unexpectedly emitted unscoped selector %q", unscopedReducedMotionSelector)
 	}

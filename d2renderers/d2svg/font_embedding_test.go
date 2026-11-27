@@ -42,7 +42,7 @@ func TestAppendOnTriggerLazy(t *testing.T) {
 	for _, source := range []string{"no matching class", "first", "second first", "prefix-first-suffix"} {
 		var want, got bytes.Buffer
 		triggers := []string{"first", "second"}
-		appendOnTrigger(&want, source, triggers, "content")
+		legacyAppendOnTrigger(&want, source, triggers, "content")
 		calls := 0
 		appendOnTriggerLazy(&got, source, triggers, func() string {
 			calls++
