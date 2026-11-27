@@ -11,13 +11,14 @@ import (
 // https://github.com/alecthomas/chroma
 // >>> BEGIN
 
+// Code tokens are XML character data. Emit real nonbreaking spaces to retain
+// indentation, including the existing four-space tab expansion.
 var svgEscaper = strings.NewReplacer(
 	`&`, "&amp;",
 	`<`, "&lt;",
 	`>`, "&gt;",
-	`"`, "&quot;",
-	` `, "&#160;",
-	`	`, "&#160;&#160;&#160;&#160;",
+	` `, "\u00a0",
+	`	`, "\u00a0\u00a0\u00a0\u00a0",
 )
 
 func styleToSVG(style *chroma.Style) map[chroma.TokenType]string {
