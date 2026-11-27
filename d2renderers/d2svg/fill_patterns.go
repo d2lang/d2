@@ -16,7 +16,7 @@ import (
 func usedFillPatterns(source, diagramHash string, classes map[string]bool) map[string]bool {
 	var candidates map[string]bool
 	custom := !UsesDefaultStylesheet()
-	needScan := strings.Contains(source, "&#")
+	needScan := encodedPatternName(source)
 	for _, p := range d2ast.FillPatterns {
 		class := p + "-overlay"
 		if !classes[class] && !strings.Contains(source, p) && !(custom && strings.Contains(BaseStylesheet, p)) {
@@ -24,7 +24,7 @@ func usedFillPatterns(source, diagramHash string, classes map[string]bool) map[s
 		}
 		ref := "#" + p + "-" + diagramHash
 		hasRef := strings.Contains(source, ref)
-		unknownClass := classes == nil && strings.Contains(source, class)
+		unknownClass := (custom || classes == nil) && strings.Contains(source, class)
 		needScan = needScan || hasRef || unknownClass
 		if classes[class] || unknownClass || hasRef || custom && strings.Contains(BaseStylesheet, ref) {
 			if candidates == nil {
@@ -42,14 +42,11 @@ func usedFillPatterns(source, diagramHash string, classes map[string]bool) map[s
 	decoder := xml.NewDecoder(strings.NewReader(source))
 	for {
 		token, err := decoder.Token()
-		if err == io.EOF {
-			if opaque {
+		if err != nil {
+			if err != io.EOF || opaque {
 				maps.Copy(used, candidates)
 			}
 			return used
-		}
-		if err != nil {
-			return candidates
 		}
 		el, ok := token.(xml.StartElement)
 		if !ok {
@@ -59,7 +56,18 @@ func usedFillPatterns(source, diagramHash string, classes map[string]bool) map[s
 		// Keep the legacy candidates in those cases, including any classes or
 		// resource names mentioned by their source text.
 		switch el.Name.Local {
-		case "style", "script", "animate", "animateTransform", "animateMotion", "set", "foreignObject":
+		case "style", "script":
+			opaque = true
+			var text string
+			if err := decoder.DecodeElement(&text, &el); err != nil {
+				return candidates
+			}
+			for _, p := range d2ast.FillPatterns {
+				if strings.Contains(text, p+"-overlay") || strings.Contains(text, "#"+p+"-"+diagramHash) {
+					used[p] = true
+				}
+			}
+		case "animate", "animateTransform", "animateMotion", "set", "foreignObject":
 			opaque = true
 		}
 		for _, a := range el.Attr {
@@ -68,6 +76,9 @@ func usedFillPatterns(source, diagramHash string, classes map[string]bool) map[s
 			}
 			switch a.Name.Local {
 			case "class":
+				if a.Name.Space != "" {
+					continue
+				}
 				for class := range strings.FieldsFuncSeq(a.Value, func(r rune) bool {
 					return r < 128 && themeRuleWhitespace(byte(r))
 				}) {
@@ -87,6 +98,25 @@ func usedFillPatterns(source, diagramHash string, classes map[string]bool) map[s
 					markPatternID(used, ref[1], diagramHash)
 				}
 			}
+		}
+	}
+}
+
+// The XML serializer escapes quotes and whitespace too. Those cannot encode
+// any part of a pattern class or resource ID. Ignore them so ordinary quoted
+// labels can use the writer's class metadata without a second XML pass.
+func encodedPatternName(source string) bool {
+	for {
+		_, tail, found := strings.Cut(source, "&#")
+		if !found {
+			return false
+		}
+		entity, rest, _ := strings.Cut(tail, ";")
+		switch entity {
+		case "34", "39", "x9", "xA", "xD":
+			source = rest
+		default:
+			return true
 		}
 	}
 }

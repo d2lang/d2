@@ -56,6 +56,8 @@ func TestFillPatternReferences(t *testing.T) {
 		{`<rect style="fill: url( '#paper-d2-test' );"/>`, true},
 		{`<pattern href="#paper-d2-test"/>`, true},
 		{`<style>.highlight { fill: url(#paper-d2-test) }</style>`, true},
+		{`<style>.highlight { fill: url(#pap&#101;r-d2-test) }</style>`, true},
+		{`<g xmlns:custom="urn:custom" custom:class="paper-overlay"/>`, false},
 		{`<script>shape.classList.add("paper-overlay")</script>`, true},
 		{`<g onload="use('paper-overlay')"/>`, true},
 	} {
@@ -69,7 +71,7 @@ func TestFillPatternCustomStylesheet(t *testing.T) {
 	original := BaseStylesheet
 	t.Cleanup(func() { BaseStylesheet = original })
 	BaseStylesheet += `.custom { fill: url(#lines-d2-test) }`
-	got := usedFillPatterns(`<text>paper-overlay</text>`, "d2-test", nil)
+	got := usedFillPatterns(`<text>paper-overlay</text>`, "d2-test", map[string]bool{"text": true})
 	if !got["paper"] || !got["lines"] || got["grain"] {
 		t.Fatalf("patterns for custom stylesheet: %v", got)
 	}
