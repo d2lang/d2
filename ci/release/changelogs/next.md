@@ -110,7 +110,12 @@
 - PNG, GIF, PDF and PPTX exports now render SVG icons that use default gradients, masks, Gaussian blur and common editor metadata. [#2937](https://github.com/d2lang/d2/issues/2937)
 
 - d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
+- The formatter preserves shape names and labels split across line continuations. The Go editor distinguishes quoted shape names from property names and preserves the capitalization of labels such as `SUSPEND`.
 - compiler:
+  - Dotted steps and scenarios inherit their shapes, connections and rules. Array spreads preserve declaration order and later entries.
+  - Selected imports keep module-defined values and resolve missing variables from the caller. Unselected exports can have their own variable requirements.
+  - Edge filters operate on matching connections and use each endpoint’s effective label and shape. Class filters accept lists and variables, and a shape named `root` has ordinary nesting depth.
+  - Animated steps interpolate numeric variables with metadata and keep template references in their declaration scope. Markdown substitutions preserve escaped placeholders, shortcut links and variable names containing Markdown punctuation.
   - Resolve forward variable references in full. Map templates keep the scope where they were declared, and local aliases read the same value as direct references.
   - Glob filters match labels and properties supplied by variables. Markdown links can use variables in their URLs and titles.
   - Apply recursive connection styles efficiently to diagrams with few or no

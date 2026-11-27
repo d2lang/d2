@@ -1584,7 +1584,7 @@ func RawString(s string, inKey bool) String {
 				return &SingleQuotedString{Value: s}
 			}
 		}
-	} else if s == "null" || s == "suspend" || s == "unsuspend" || strings.ContainsAny(s, UnquotedValueSpecials) {
+	} else if strings.EqualFold(s, "null") || strings.EqualFold(s, "suspend") || strings.EqualFold(s, "unsuspend") || strings.ContainsAny(s, UnquotedValueSpecials) {
 		if !strings.ContainsRune(s, '"') && !strings.ContainsRune(s, '$') {
 			return FlatDoubleQuotedString(s)
 		}

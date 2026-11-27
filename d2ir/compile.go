@@ -28,6 +28,8 @@ type globContext struct {
 	// boardGroup is set when root is declared in the map of a board's
 	// layers, scenarios or steps.
 	boardGroup bool
+	// A rule authored inside a glob value lasts only while applying that value.
+	inGlobValue bool
 
 	// Keys (see appliedKey) of the fields this glob has already applied to.
 	appliedFields map[string]struct{}
@@ -40,26 +42,28 @@ type compiler struct {
 	fieldArrayAccess    map[*Field][]*arrayAccessCheck
 	hasTemplateNull     bool
 	spreadNulls         []spreadNull
+	hasBoardMaps        bool
 	hasMapSpread        bool
 	hasEdgePropertyGlob bool
 	// unreferencedFields is set when an edge's common prefix is left
 	// without references (see removeFieldsWithoutReferences).
-	unreferencedFields  bool
-	spreadRuleCopies    map[spreadRuleScope]*globContext
-	fieldOrder          uint64
-	err                 *d2parser.ParseError
-	ctx                 context.Context
-	contextErr          error
-	expansionErr        error
-	globExpansionErr    error
-	halted              bool
-	variableExpansion   *variableExpansionBudget
-	tweenExpansion      *variableExpansionBudget
-	retainTweenBindings bool
-	globExpansion       *globExpansionBudget
-	edgeExpansion       *edgeExpansionBudget
-	edgeExpansionWork   *edgeExpansionWorkBudget
-	edgeExpansionPairs  map[edgeExpansionPair]struct{}
+	unreferencedFields    bool
+	spreadRuleCopies      map[spreadRuleScope]*globContext
+	fieldOrder            uint64
+	err                   *d2parser.ParseError
+	ctx                   context.Context
+	contextErr            error
+	expansionErr          error
+	globExpansionErr      error
+	halted                bool
+	variableExpansion     *variableExpansionBudget
+	tweenExpansion        *variableExpansionBudget
+	retainTweenBindings   bool
+	sampledTemplateScopes map[*Scalar][]*Map
+	globExpansion         *globExpansionBudget
+	edgeExpansion         *edgeExpansionBudget
+	edgeExpansionWork     *edgeExpansionWorkBudget
+	edgeExpansionPairs    map[edgeExpansionPair]struct{}
 
 	fs      fs.FS
 	imports []string
@@ -420,17 +424,7 @@ func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, source d2a
 			}
 		}
 		if arr, ok := f.Composite.(*Array); ok {
-			if !c.visitSubstitutionNode(arr, f.LastRef().AST(), seen) {
-				return
-			}
-			for _, val := range arr.Values {
-				if !c.visitSubstitutionNode(val, f.LastRef().AST(), seen) {
-					return
-				}
-				if scalar, ok := val.(*Scalar); ok {
-					c.resolveSubstitutions(scopes, scalar)
-				}
-			}
+			c.compileArraySubstitutions(arr, scopes, f.LastRef().AST())
 		} else if f.Map() != nil {
 			c.compileSubstitutionsWalk(f.Map(), scopes, f.LastRef().AST())
 			if f.Name != nil && d2ast.Keyword(f.Name) == "vars" {
@@ -454,6 +448,24 @@ func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, source d2a
 		if e.Map() != nil {
 			c.compileSubstitutionsWalk(e.Map(), varsStack, e.LastRef().AST())
 		}
+	}
+}
+
+func (c *compiler) compileArraySubstitutions(arr *Array, scopes []*Map, source d2ast.Node) {
+	if !c.visitSubstitutionNode(arr, source, c.substitutionVisits) {
+		return
+	}
+	for i := 0; i < len(arr.Values) && !c.stopped(); {
+		val := arr.Values[i]
+		if !c.visitSubstitutionNode(val, source, c.substitutionVisits) {
+			return
+		}
+		before := len(arr.Values)
+		if scalar, ok := val.(*Scalar); ok {
+			c.resolveSubstitutions(scopes, scalar)
+		}
+		// A spread replaces this element with already visited source elements.
+		i += 1 + len(arr.Values) - before
 	}
 }
 
@@ -630,11 +642,16 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 			c.scalarResolutions[primary] = resolvedScalar
 		}
 	}()
+	if scopes := c.sampledTemplateScopes[primary]; scopes != nil {
+		varsStack = scopes
+	}
 	markdownOuterStart := -1
 	if c.retainTweenBindings {
 		markdownOuterStart = c.saveTweenBinding(node, varsStack)
 	}
-	var subbed bool
+	// Partially bound imported strings keep their successful boxes. Visit later
+	// references as well so their module-local values survive selection.
+	var subbed, missing bool
 
 	switch s := node.Primary().Value.(type) {
 	case *d2ast.UnquotedString:
@@ -642,19 +659,22 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 			if c.stopped() {
 				return
 			}
-			if box.Substitution != nil {
+			if box.Substitution != nil && box.String == nil {
 				resolvedField, _, ok := c.readVariable(varsStack, node, box.Substitution)
-				if !ok {
-					return
-				}
 				if resolvedField != nil && resolvedField.Primary() != nil {
 					if _, ok := resolvedField.Primary().Value.(*d2ast.Null); ok {
 						resolvedField = nil
 					}
 				}
-				if resolvedField == nil {
-					c.errorf(node.LastRef().AST(), `could not resolve variable "%s"`, strings.Join(box.Substitution.IDA(), "."))
-					return
+				if !ok || resolvedField == nil {
+					if ok {
+						c.errorf(node.LastRef().AST(), `could not resolve variable "%s"`, strings.Join(box.Substitution.IDA(), "."))
+					}
+					if len(c.importStack) <= 1 {
+						return
+					}
+					missing = true
+					continue
 				}
 				if resolvedField.Composite != nil && substitutionUsesComposite(node, box.Substitution.Spread) {
 					if compositeContainsNode(resolvedField.Composite, node) ||
@@ -689,6 +709,15 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 							c.errorf(box.Substitution, "cannot spread non-array into array")
 							continue
 						}
+						if _, visited := c.substitutionVisits[resolvedArr]; !visited {
+							if !c.reserveVariableExpansion(box.Substitution, 1) {
+								return
+							}
+							c.compileArraySubstitutions(resolvedArr, compositeDeclarationScopes(resolvedField, varsStack), box.Substitution)
+							if c.stopped() {
+								return
+							}
+						}
 						arr := n.parent.(*Array)
 						// The values remain shared in the IR, but public IR consumers may
 						// later copy or marshal every logical occurrence. Charge the full
@@ -698,7 +727,7 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 						}
 						for i, s := range arr.Values {
 							if s == n {
-								arr.Values = append(append(arr.Values[:i], resolvedArr.Values...), arr.Values[i+1:]...)
+								arr.Values = slices.Replace(arr.Values, i, i+1, resolvedArr.Values...)
 								break
 							}
 						}
@@ -807,7 +836,7 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				}
 			}
 		}
-		if subbed {
+		if subbed && !missing {
 			units := interpolationBytes(s.Value)
 			if s.Pattern != nil {
 				// At most one literal span per parsed token plus the tail.
@@ -827,14 +856,17 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 			if c.stopped() {
 				return
 			}
-			if box.Substitution != nil {
+			if box.Substitution != nil && box.String == nil {
 				resolvedField, _, ok := c.readVariable(varsStack, node, box.Substitution)
-				if !ok {
-					return
-				}
-				if resolvedField == nil {
-					c.errorf(node.LastRef().AST(), `could not resolve variable "%s"`, strings.Join(box.Substitution.IDA(), "."))
-					return
+				if !ok || resolvedField == nil {
+					if ok {
+						c.errorf(node.LastRef().AST(), `could not resolve variable "%s"`, strings.Join(box.Substitution.IDA(), "."))
+					}
+					if len(c.importStack) <= 1 {
+						return
+					}
+					missing = true
+					continue
 				}
 				primary := resolvedField.Primary()
 				if primary == nil {
@@ -853,7 +885,7 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				subbed = true
 			}
 		}
-		if subbed {
+		if subbed && !missing {
 			if !c.reserveVariableExpansion(node.LastRef().AST(), interpolationBytes(s.Value)) {
 				return
 			}
@@ -1160,6 +1192,20 @@ func lookupVariableField(scope *Map, name d2ast.String, fallback bool) *Field {
 	return scope.fieldIndex[key]
 }
 
+// A map literal and a dotted key can both create a board. Apply the same
+// inheritance rules as soon as either spelling opens its map.
+func (c *compiler) openFieldMap(f *Field) {
+	f.Composite = &Map{parent: f}
+	if c == nil {
+		return
+	}
+	switch NodeBoardKind(f) {
+	case BoardScenario, BoardStep, BoardLayer:
+		c.hasBoardMaps = true
+		c.overlayBase(f)
+	}
+}
+
 // stepBase returns the map that step i of stepsMap builds on: the map of the
 // closest step before it that has one, or else its board's. A step without a
 // map is no board.
@@ -1178,7 +1224,11 @@ func (c *compiler) overlay(base *Map, f *Field) {
 		return
 	}
 
-	if !c.reserveVariableCopy(f.LastRef().AST(), base) {
+	var source d2ast.Node = f.Name
+	if len(f.References) > 0 {
+		source = f.LastRef().AST()
+	}
+	if !c.reserveVariableCopy(source, base) {
 		return
 	}
 	from := base
@@ -1187,7 +1237,7 @@ func (c *compiler) overlay(base *Map, f *Field) {
 	// Certain fields should never carry forward.
 	// If you give your scenario a label, you don't want all steps in a scenario to be labeled the same.
 	base.DeleteField("label")
-	if !c.reserveVariableCopy(f.LastRef().AST(), f.Map()) {
+	if !c.reserveVariableCopy(source, f.Map()) {
 		return
 	}
 	overlayMapIndexed(base, f.Map())
@@ -1446,7 +1496,7 @@ func (c *compiler) ampersandFilterMap(dst *Map, ast, scopeAST *d2ast.Map) bool {
 	for _, n := range ast.Nodes {
 		switch {
 		case n.MapKey != nil:
-			filter := globFilter{compiler: c}
+			filter := globFilter{compiler: c, candidate: dst.Parent()}
 			ok := filter.ampersandFilter(&RefContext{
 				Key:      n.MapKey,
 				Scope:    ast,
@@ -1475,13 +1525,9 @@ func (c *compiler) ampersandFilterMap(dst *Map, ast, scopeAST *d2ast.Map) bool {
 	return true
 }
 
-func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
-	if c.stopped() {
-		return
-	}
+func (c *compiler) inheritedGlobs(dst *Map, previousGlobs []*globContext) []*globContext {
 	var globs []*globContext
-	if len(c.globContextStack) > 0 {
-		previousGlobs := c.globContexts()
+	if len(previousGlobs) > 0 {
 		// A root layer with existing glob context stack implies it's an import
 		// In which case, the previous globs should be inherited (the else block)
 		if NodeBoardKind(dst) == BoardLayer && !dst.Root() {
@@ -1520,14 +1566,28 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 			globs = append(globs, previousGlobs...)
 		}
 	}
+	return globs
+}
+
+func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
+	c.compileMapWithChecks(dst, ast, scopeAST, true)
+}
+
+func (c *compiler) compileMapWithChecks(dst *Map, ast, scopeAST *d2ast.Map, checkFilters bool) {
+	if c.stopped() {
+		return
+	}
+	var globs []*globContext
+	if len(c.globContextStack) > 0 {
+		globs = c.inheritedGlobs(dst, c.globContexts())
+	}
 	c.globContextStack = append(c.globContextStack, globs)
 	defer func() {
 		dst.globs = c.globContexts()
 		c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
 	}()
 
-	ok := c.ampersandFilterMap(dst, ast, scopeAST)
-	if !ok {
+	if checkFilters && !c.ampersandFilterMap(dst, ast, scopeAST) {
 		return
 	}
 
@@ -1661,6 +1721,7 @@ func (c *compiler) ensureGlobContext(refctx *RefContext) *globContext {
 	gctx = &globContext{
 		refctx:        refctx,
 		boardGroup:    isBoardGroup(refctx.ScopeMap),
+		inGlobValue:   len(c.globRefContextStack) > 1,
 		appliedFields: make(map[string]struct{}),
 		appliedEdges:  make(map[string]struct{}),
 	}
@@ -1739,7 +1800,7 @@ func (c *compiler) compileKey(refctx *RefContext) {
 	settled := c.lazySettledVersions != nil && c.lazySettledVersions[root] == root.structureVersion
 	if oldVersion != refctx.ScopeMap.structureVersion && !c.applyingLazyWorklist && len(c.lazyPostTargets) > postTargetStart {
 		targets := c.takeLazyPostTargets(postTargetStart)
-		c.applyLazyGlobs(targets)
+		c.applyFieldGlobs(refctx.ScopeMap, targets, true)
 		settled = true
 	}
 	if oldVersion != refctx.ScopeMap.structureVersion && !c.applyingLazyWorklist && !settled {
@@ -1797,6 +1858,99 @@ func (c *compiler) enqueueLazyGlobFields(fields ...*Field) {
 		c.lazyGlobQueued[f] = struct{}{}
 		c.lazyGlobWorklist = append(c.lazyGlobWorklist, f)
 	}
+}
+
+// An ordinary key inside a map replays rules in that map's scope. Dotted
+// writes keep their original references for editing and enter the equivalent
+// board scope only for rule evaluation.
+func (c *compiler) applyFieldGlobs(scope *Map, fields []*Field, created bool) {
+	apply := func(targets []*Field) {
+		if !created {
+			// Updates to existing fields re-evaluate the applicable rules.
+			targets = nil
+		}
+		c.applyLazyGlobs(targets)
+	}
+	if !c.hasBoardMaps || len(fields) == 0 || len(c.globRefContextStack) != 0 || c.applyingLazyWorklist {
+		apply(fields)
+		return
+	}
+	for len(fields) > 0 {
+		board := ParentBoard(fields[0]).Map()
+		n := 1
+		for n < len(fields) && ParentBoard(fields[n]).Map() == board {
+			n++
+		}
+		pushed := c.pushDottedBoardGlobs(scope, board)
+		apply(fields[:n])
+		if pushed {
+			c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
+		}
+		fields = fields[n:]
+	}
+}
+
+func (c *compiler) pushDottedBoardGlobs(scope, board *Map) bool {
+	if !c.hasBoardMaps || len(c.globRefContextStack) != 0 || board == nil || board.Root() {
+		return false
+	}
+	origin := enclosingBoardMap(scope)
+	if origin == board {
+		return false
+	}
+	globs := c.dottedBoardGlobs(origin, board, board, c.globContexts())
+	c.globContextStack = append(c.globContextStack, globs)
+	return true
+}
+
+func enclosingBoardMap(scope *Map) *Map {
+	if NodeBoardKind(scope) != "" {
+		return scope
+	}
+	return ParentBoard(scope).Map()
+}
+
+// Walk the same board boundaries a nested map would cross. Keep local
+// rules, and inherit newly declared parent rules in source order.
+func (c *compiler) dottedBoardGlobs(origin, board, destination *Map, rules []*globContext) []*globContext {
+	if origin == board {
+		return rules
+	}
+	if board.Root() {
+		return nil
+	}
+	parent := ParentBoard(board.Parent()).Map()
+	parentRules := c.dottedBoardGlobs(origin, parent, destination, rules)
+	inherited := c.inheritedGlobs(board, parentRules)
+	if len(board.globs) == 0 {
+		board.globs = inherited
+		return inherited
+	}
+
+	// The saved applications also include rules from the scope where the
+	// board was opened. A later dotted write can be outside that scope.
+	// Replay rules declared in this board and rules visible across each
+	// intervening board boundary, retaining their source order.
+	visible := make(map[*globContext]bool, len(inherited))
+	for _, rule := range inherited {
+		visible[rule.root] = true
+	}
+	var active []*globContext
+	for _, rule := range board.globs {
+		_, fromParent := visible[rule.root]
+		local := board == destination && !rule.root.inGlobValue && enclosingBoardMap(rule.root.refctx.ScopeMap) == board
+		if fromParent || local {
+			active = append(active, rule)
+			visible[rule.root] = false
+		}
+	}
+	for _, rule := range inherited {
+		if visible[rule.root] {
+			active = append(active, rule)
+			board.globs = append(board.globs, rule)
+		}
+	}
+	return active
 }
 
 func (c *compiler) applyLazyGlobs(created []*Field) {
@@ -1960,73 +2114,57 @@ func (evaluation *globFilter) ampersandFilter(refctx *RefContext) bool {
 		}
 	}
 
+	owner := refctx.ScopeMap.Parent()
+	scope := refctx.ScopeMap
 	firstPart := globFilterKey(keyPath.Path[0].Unbox())
-	if (firstPart == "src" || firstPart == "dst") && len(keyPath.Path) > 1 {
-		if len(c.mapRefContextStack) == 0 {
-			return false
-		}
-
-		edge := ParentEdge(refctx.ScopeMap)
+	endpoint := (firstPart == "src" || firstPart == "dst") && len(keyPath.Path) > 1
+	if endpoint {
+		edge := ParentEdge(scope)
 		if edge == nil {
 			return false
 		}
-
-		var nodePath []d2ast.String
-		if firstPart == "src" {
-			nodePath = edge.ID.SrcPath
-		} else {
-			nodePath = edge.ID.DstPath
+		path := edge.ID.SrcPath
+		if firstPart == "dst" {
+			path = edge.ID.DstPath
 		}
-
-		rootMap := RootMap(refctx.ScopeMap)
-		node := rootMap.getFieldIndexed(nodePath...)
+		node := ParentMap(edge).getFieldIndexed(path...)
 		if node == nil {
 			return false
 		}
-
-		secondPart := globFilterKey(keyPath.Path[1].Unbox())
-
-		if len(keyPath.Path) == 2 && evaluation.propertyFilter(secondPart, filter, node, refctx.Key) {
-			return true
-		}
-
-		if node.Map() == nil {
-			return false
-		}
-		propKeyPath := &d2ast.KeyPath{
-			Path: keyPath.Path[1:],
-		}
-
-		propKey := &d2ast.Key{
-			Key:   propKeyPath,
-			Value: refctx.Key.Value,
-		}
-
-		propRefCtx := &RefContext{
-			Key:      propKey,
-			ScopeMap: node.Map(),
-			ScopeAST: refctx.ScopeAST,
-		}
-
-		fa, err := node.Map().ensureFieldIndexed(propKeyPath, propRefCtx, false, c)
-		if err != nil || len(fa) == 0 {
-			return false
-		}
-
-		for _, f := range fa {
-			if evaluation.matches(f, filter) {
-				return true
+		owner, scope = node, node.Map()
+		keyPath = &d2ast.KeyPath{Path: keyPath.Path[1:]}
+		if len(keyPath.Path) == 1 {
+			switch key := globFilterKey(keyPath.Last().Unbox()); key {
+			case "level", "leaf", "connected":
+				return evaluation.propertyFilter(key, filter, node, refctx.Key)
 			}
 		}
-		return false
+		refctx = &RefContext{
+			Key:      &d2ast.Key{Key: keyPath, Value: refctx.Key.Value},
+			ScopeMap: scope,
+			ScopeAST: refctx.ScopeAST,
+		}
 	}
 
-	fa, err := refctx.ScopeMap.ensureFieldIndexed(refctx.Key.Key, refctx, false, c)
-	if err != nil {
-		c.err.Errors = append(c.err.Errors, err.(d2ast.Error))
-		return false
+	var fa []*Field
+	if scope != nil {
+		var err error
+		fa, err = scope.ensureFieldIndexed(keyPath, refctx, false, c)
+		if err != nil {
+			c.err.Errors = append(c.err.Errors, err.(d2ast.Error))
+			return false
+		}
+	}
+	// A missing or position-only label inherits the owner's primary or ID.
+	if len(keyPath.Path) == 1 && globFilterKey(keyPath.Last().Unbox()) == "label" {
+		if len(fa) == 0 || fa[0].Primary() == nil {
+			return evaluation.labelMatches(owner, filter)
+		}
 	}
 	if len(fa) == 0 {
+		if endpoint && len(keyPath.Path) > 1 && !(len(keyPath.Path) == 2 && d2ast.Keyword(keyPath.Path[0].Unbox()) == "style") {
+			return false
+		}
 		if filter.ScalarString() == "*" {
 			return false
 		}
@@ -2035,7 +2173,7 @@ func (evaluation *globFilter) ampersandFilter(refctx *RefContext) bool {
 		// So we make a fake field for the default
 		// NOTE: this does not apply to things that themes control, like stroke and fill
 		// Nor does it apply to layout things like width and height
-		last := globFilterKey(refctx.Key.Key.Last().Unbox())
+		last := globFilterKey(keyPath.Last().Unbox())
 		switch last {
 		case "shape":
 			return matchesFilterValue(d2ast.FlatUnquotedString("rectangle"), filter)
@@ -2051,90 +2189,37 @@ func (evaluation *globFilter) ampersandFilter(refctx *RefContext) bool {
 			return matchesFilterValue(d2ast.FlatUnquotedString("false"), filter)
 
 		case "label":
-			return evaluation.labelMatches(refctx.ScopeMap.Parent(), filter)
-		case "src":
-			if len(c.mapRefContextStack) == 0 {
+			return evaluation.labelMatches(owner, filter)
+		case "src", "dst":
+			edge, ok := owner.(*Edge)
+			if !ok {
 				return false
 			}
-
-			edge := ParentEdge(refctx.ScopeMap)
-			if edge == nil {
-				return false
+			path := edge.ID.SrcPath
+			if last == "dst" {
+				path = edge.ID.DstPath
 			}
-
-			var srcParts []string
-			for _, part := range edge.ID.SrcPath {
-				srcParts = append(srcParts, part.ScalarString())
+			// Edge IDs are relative to their owning map.
+			path = append(RelIDA(nil, ParentMap(edge)), path...)
+			parts := make([]string, len(path))
+			for i, part := range path {
+				parts[i] = part.ScalarString()
 			}
-
-			container := ParentField(edge)
-			if container != nil && container.Name.ScalarString() != "root" {
-				containerPath := []string{}
-				curr := container
-				for curr != nil && curr.Name.ScalarString() != "root" {
-					containerPath = append([]string{curr.Name.ScalarString()}, containerPath...)
-					curr = ParentField(curr)
-				}
-
-				srcStart := srcParts[0]
-				if !strings.EqualFold(srcStart, containerPath[0]) {
-					srcParts = append(containerPath, srcParts...)
-				}
-			}
-
-			srcPath := strings.Join(srcParts, ".")
-
-			return srcPath == filter.ScalarString()
-
-		case "dst":
-			if len(c.mapRefContextStack) == 0 {
-				return false
-			}
-
-			edge := ParentEdge(refctx.ScopeMap)
-			if edge == nil {
-				return false
-			}
-
-			var dstParts []string
-			for _, part := range edge.ID.DstPath {
-				dstParts = append(dstParts, part.ScalarString())
-			}
-
-			// Find the container that holds this edge
-			// Build the absolute path by prepending the container's path
-			container := ParentField(edge)
-			if container != nil && container.Name.ScalarString() != "root" {
-				containerPath := []string{}
-				curr := container
-				for curr != nil && curr.Name.ScalarString() != "root" {
-					containerPath = append([]string{curr.Name.ScalarString()}, containerPath...)
-					curr = ParentField(curr)
-				}
-
-				dstStart := dstParts[0]
-				if !strings.EqualFold(dstStart, containerPath[0]) {
-					dstParts = append(containerPath, dstParts...)
-				}
-			}
-			dstPath := strings.Join(dstParts, ".")
-
-			return dstPath == filter.ScalarString()
+			return strings.Join(parts, ".") == filter.ScalarString()
 		default:
-			parent := refctx.ScopeMap.Parent()
-			if field, ok := parent.(*Field); ok {
+			if field, ok := owner.(*Field); ok {
 				return evaluation.propertyFilter(last, filter, field, refctx.Key)
 			}
 			return false
 		}
 	}
 	for _, f := range fa {
-		ok := evaluation.matches(f, filter)
-		if !ok {
-			return false
+		matches := evaluation.matches(f, filter)
+		if endpoint && matches || !endpoint && !matches {
+			return matches
 		}
 	}
-	return true
+	return !endpoint
 }
 
 // handles filters that are not based on fields
@@ -2155,7 +2240,7 @@ func (evaluation *globFilter) propertyFilter(propName string, filter d2ast.Scala
 
 		level := 0
 		parent := ParentField(node)
-		for parent != nil && parent.Name.ScalarString() != "root" && NodeBoardKind(parent) == "" {
+		for parent != nil && NodeBoardKind(parent) == "" {
 			level++
 			parent = ParentField(parent)
 		}
@@ -2182,8 +2267,6 @@ func (evaluation *globFilter) propertyFilter(propName string, filter d2ast.Scala
 			}
 		}
 		return isConnected == boolVal
-	case "label":
-		return evaluation.labelMatches(node, filter)
 	}
 	return false
 }
@@ -2203,19 +2286,50 @@ func (evaluation *globFilter) labelMatches(node Node, filter d2ast.Scalar) bool 
 }
 
 func (evaluation *globFilter) matches(f *Field, filter d2ast.Scalar) bool {
-	if a, ok := f.Composite.(*Array); ok {
-		for _, v := range a.Values {
-			if s, ok := v.(*Scalar); ok {
-				if value := evaluation.scalar(s, false); value != nil && filter.ScalarString() == value.ScalarString() {
-					return true
-				}
+	array, _ := f.Composite.(*Array)
+	if f.Primary_ != nil {
+		value, resolved := evaluation.value(f.Primary_, false)
+		if matchesFilterValue(value, filter) {
+			return true
+		}
+		if resolved != nil {
+			if !evaluation.reserveVariableExpansion(f.Primary_.Value, int64(len(resolved.Values))) {
+				return false
+			}
+			array = resolved
+		}
+	}
+	return array != nil && evaluation.arrayMatches(array, filter)
+}
+
+func (evaluation *globFilter) arrayMatches(array *Array, filter d2ast.Scalar) bool {
+	for _, v := range array.Values {
+		if evaluation.stopped() {
+			return false
+		}
+		s, ok := v.(*Scalar)
+		if !ok {
+			continue
+		}
+		value, nested := evaluation.value(s, false)
+		if matchesFilterValue(value, filter) {
+			return true
+		}
+		if nested != nil {
+			// Only a spread contributes the referenced array's elements.
+			text := s.Value.(*d2ast.UnquotedString)
+			if !text.Value[0].Substitution.Spread {
+				continue
+			}
+			if !evaluation.reserveVariableExpansion(s.Value, int64(len(nested.Values))) {
+				return false
+			}
+			if evaluation.arrayMatches(nested, filter) {
+				return true
 			}
 		}
 	}
-	if f.Primary_ == nil {
-		return false
-	}
-	return matchesFilterValue(evaluation.scalar(f.Primary_, false), filter)
+	return false
 }
 
 func matchesFilterValue(value, filter d2ast.Scalar) bool {
@@ -2312,25 +2426,23 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		f.compositeOrder = c.assignmentOrder()
 		scopeAST := refctx.Key.Value.Map
 		if f.Map() == nil {
-			f.Composite = &Map{
-				parent: f,
+			c.openFieldMap(f)
+			if c.stopped() {
+				return
 			}
-			switch NodeBoardKind(f) {
-			case BoardScenario, BoardStep:
-				c.overlayBase(f)
-				if c.stopped() {
-					return
-				}
-			case BoardLayer:
-			default:
-				// If new board type, use that as the new scope AST, otherwise, carry on
+			if NodeBoardKind(f) == "" {
 				scopeAST = refctx.ScopeAST
 			}
 		} else {
 			scopeAST = refctx.ScopeAST
 		}
 		c.mapRefContextStack = append(c.mapRefContextStack, refctx)
-		c.compileMap(f.Map(), refctx.Key.Value.Map, scopeAST)
+		// A primary assignment can change the label that just matched.
+		pushed := c.hasBoardMaps && NodeBoardKind(f) == "" && c.pushDottedBoardGlobs(refctx.ScopeMap, ParentBoard(f).Map())
+		c.compileMapWithChecks(f.Map(), refctx.Key.Value.Map, scopeAST, refctx.Key.Primary.Unbox() == nil)
+		if pushed {
+			c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
+		}
 		c.mapRefContextStack = c.mapRefContextStack[:len(c.mapRefContextStack)-1]
 		if c.stopped() {
 			return
@@ -2382,10 +2494,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 			}
 		case *Map:
 			f.compositeOrder = fallback
-			f.Composite = &Map{
-				parent: f,
-			}
-			c.overlayBase(f)
+			c.openFieldMap(f)
 			if c.stopped() {
 				return
 			}
@@ -2647,13 +2756,22 @@ func (c *compiler) compileEdges(refctx *RefContext) {
 			return
 		}
 		if f.Map() == nil {
-			f.Composite = &Map{
-				parent: f,
+			c.openFieldMap(f)
+			if c.stopped() {
+				return
 			}
 		}
 		refctx2 := *refctx
 		refctx2.ScopeMap = f.Map()
+		pushed := c.hasBoardMaps && c.pushDottedBoardGlobs(refctx.ScopeMap, enclosingBoardMap(f.Map()))
+		before := f.Map().structureVersion
 		c._compileEdges(&refctx2)
+		if pushed {
+			if before != f.Map().structureVersion && !c.applyingLazyWorklist {
+				c.applyLazyGlobs(nil)
+			}
+			c.globContextStack = c.globContextStack[:len(c.globContextStack)-1]
+		}
 	}
 }
 
@@ -2684,7 +2802,8 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 		refctx.Edge = refctx.Key.Edges[i]
 
 		var ea []*Edge
-		if eid.Index != nil || eid.Glob || clearing {
+		selectExisting := eid.Index != nil || eid.Glob || clearing
+		if selectExisting {
 			ea = refctx.ScopeMap.getEdgesForCompile(eid, refctx, c)
 			if len(ea) == 0 {
 				if clearing && !eid.Glob {
@@ -2694,16 +2813,11 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 				}
 				continue
 			}
+			matched := ea[:0]
 			for _, e := range ea {
 				if c.stopped() {
 					return
 				}
-				if deleteEdge {
-					c.recordSpreadDeletion(ParentMap(e), &spreadMember{edge: e.ID}, refctx.Key)
-					refctx.ScopeMap.DeleteEdge(e.ID)
-					continue
-				}
-
 				if refctx.Key.Value.Map != nil && refctx.Key.Value.Map.HasFilter() {
 					if e.Map_ == nil {
 						e.Map_ = &Map{
@@ -2721,26 +2835,14 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 					}
 				}
 
+				if deleteEdge {
+					c.recordSpreadDeletion(ParentMap(e), &spreadMember{edge: e.ID}, refctx.Key)
+					ParentMap(e).DeleteEdge(e.ID)
+					continue
+				}
+
 				if refctx.Key.Primary.Suspension != nil || refctx.Key.Value.Suspension != nil {
 					if !c.lazyGlobBeingApplied {
-						// Check if edge passes filter before applying suspension
-						if refctx.Key.Value.Map != nil && refctx.Key.Value.Map.HasFilter() {
-							if e.Map_ == nil {
-								e.Map_ = &Map{
-									parent: e,
-								}
-							}
-							c.mapRefContextStack = append(c.mapRefContextStack, refctx)
-							ok := c.ampersandFilterMap(e.Map_, refctx.Key.Value.Map, refctx.ScopeAST)
-							c.mapRefContextStack = c.mapRefContextStack[:len(c.mapRefContextStack)-1]
-							if c.stopped() {
-								return
-							}
-							if !ok {
-								continue
-							}
-						}
-
 						var suspensionValue bool
 						if refctx.Key.Primary.Suspension != nil {
 							suspensionValue = refctx.Key.Primary.Suspension.Value
@@ -2749,59 +2851,18 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 						}
 						e.suspended = suspensionValue
 
-						// If we're unsuspending an edge, we should also unsuspend its src and dst objects
-						// And their ancestors
 						if !suspensionValue {
-							srcPath, dstPath := e.ID.SrcPath, e.ID.DstPath
-
-							// Make paths absolute if they're relative
-							container := ParentField(e)
-							if container != nil && container.Name.ScalarString() != "root" {
-								containerPath := []d2ast.String{}
-								curr := container
-								for curr != nil && curr.Name.ScalarString() != "root" {
-									containerPath = append([]d2ast.String{curr.Name}, containerPath...)
-									curr = ParentField(curr)
-								}
-
-								if len(srcPath) > 0 && !strings.EqualFold(srcPath[0].ScalarString(), containerPath[0].ScalarString()) {
-									absSrcPath := append([]d2ast.String{}, containerPath...)
-									srcPath = append(absSrcPath, srcPath...)
-								}
-
-								if len(dstPath) > 0 && !strings.EqualFold(dstPath[0].ScalarString(), containerPath[0].ScalarString()) {
-									absDstPath := append([]d2ast.String{}, containerPath...)
-									dstPath = append(absDstPath, dstPath...)
-								}
-							}
-
-							rootMap := RootMap(refctx.ScopeMap)
-							srcObj := rootMap.getFieldIndexed(srcPath...)
-							dstObj := rootMap.getFieldIndexed(dstPath...)
-
-							// Unsuspend source node and all its ancestors
-							if srcObj != nil {
-								srcObj.suspended = false
-								parent := ParentField(srcObj)
-								for parent != nil && parent.Name.ScalarString() != "root" {
-									parent.suspended = false
-									parent = ParentField(parent)
-								}
-							}
-
-							// Unsuspend destination node and all its ancestors
-							if dstObj != nil {
-								dstObj.suspended = false
-								parent := ParentField(dstObj)
-								for parent != nil && parent.Name.ScalarString() != "root" {
-									parent.suspended = false
-									parent = ParentField(parent)
+							// Restore both endpoints and their containing shapes.
+							for _, path := range [][]d2ast.String{e.ID.SrcPath, e.ID.DstPath} {
+								for f := ParentMap(e).getFieldIndexed(path...); f != nil && NodeBoardKind(f) == ""; f = ParentField(f) {
+									f.suspended = false
 								}
 							}
 						}
 					}
 				}
 
+				matched = append(matched, e)
 				e.appendReference(&EdgeReference{
 					Context_:       refctx,
 					DueToGlob_:     len(c.globRefContextStack) > 0,
@@ -2810,6 +2871,7 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 				refctx.ScopeMap.appendFieldReferences(0, refctx.Edge.Src, refctx, c)
 				refctx.ScopeMap.appendFieldReferences(0, refctx.Edge.Dst, refctx, c)
 			}
+			ea = matched
 		} else {
 			var err error
 			ea, err = refctx.ScopeMap.createEdgeForCompile(eid, refctx, c)
@@ -2851,7 +2913,7 @@ func (c *compiler) _compileEdges(refctx *RefContext) {
 						}
 					}
 					c.mapRefContextStack = append(c.mapRefContextStack, refctx)
-					c.compileMap(e.Map_, refctx.Key.Value.Map, refctx.ScopeAST)
+					c.compileMapWithChecks(e.Map_, refctx.Key.Value.Map, refctx.ScopeAST, !selectExisting || refctx.Key.Primary.Unbox() == nil)
 					c.mapRefContextStack = c.mapRefContextStack[:len(c.mapRefContextStack)-1]
 				} else if refctx.Key.Value.ScalarBox().Unbox() != nil && refctx.Key.Value.Suspension == nil {
 					if c.ignoreLazyGlob(e) {
