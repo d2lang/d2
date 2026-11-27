@@ -377,7 +377,7 @@ func indexPagedBoards(ctx context.Context, root *d2target.Diagram) (map[string]i
 				if child != nil {
 					childName = child.Name
 				}
-				childID := boardID + "." + group.name + "." + childName
+				childID := boardLinkID(boardID, group.name, childName)
 				if err := walk(child, childID, depth+1); err != nil {
 					return err
 				}
@@ -447,7 +447,7 @@ func renderPDFWithExporter(ctx context.Context, opts d2svg.RenderOpts, inputPath
 			children []*d2target.Diagram
 		}{{LAYERS, board.Layers}, {SCENARIOS, board.Scenarios}, {STEPS, board.Steps}} {
 			for _, child := range group.children {
-				childID := boardID + "." + group.name + "." + child.Name
+				childID := boardLinkID(boardID, group.name, child.Name)
 				path := boardPath
 				if !child.IsFolderOnly {
 					path = appendPDFBoardTitle(boardPath, pdf.BoardTitle{Name: child.Root.Label, BoardID: childID})
@@ -519,7 +519,7 @@ func renderPPTX(ctx context.Context, presentation *pptx.Presentation, opts d2svg
 			children []*d2target.Diagram
 		}{{LAYERS, board.Layers}, {SCENARIOS, board.Scenarios}, {STEPS, board.Steps}} {
 			for _, child := range group.children {
-				childID := boardID + "." + group.name + "." + child.Name
+				childID := boardLinkID(boardID, group.name, child.Name)
 				path := boardPath
 				if !child.IsFolderOnly {
 					page, ok := renderer.boardIDToPage[childID]
