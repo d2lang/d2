@@ -135,6 +135,25 @@ func TestRenderPartlyDrawnAnnotations(t *testing.T) {
 	}
 }
 
+func TestRenderCaptionInItsPen(t *testing.T) {
+	t.Parallel()
+
+	d := annotationDiagram()
+	d.Shapes[0].Annotation, d.Shapes[1].Annotation, d.Connections[0].Annotation = nil, nil, nil
+	plain, err := d2svg.Render(d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Root.Annotation.Stroke = "#1971c2"
+	penned, err := d2svg.Render(d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "#1971c2") || !strings.Contains(string(penned), "#1971c2") {
+		t.Fatal("a caption's stroke should paint its text, and only then")
+	}
+}
+
 func TestRenderCaptionCrossFade(t *testing.T) {
 	t.Parallel()
 

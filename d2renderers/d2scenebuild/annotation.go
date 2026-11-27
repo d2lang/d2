@@ -77,7 +77,7 @@ func (b *builder) buildAnnotations() ([]*d2scene.Node, error) {
 		if i == 0 {
 			id += ":leaving"
 		}
-		node, err := b.buildAnnotationText("board caption", id, caption.Label, "", d2target.CaptionFontSize, box, libcolor.N1)
+		node, err := b.buildAnnotationText("board caption", id, caption.Label, "", d2target.CaptionFontSize, box, caption.CaptionPaint(libcolor.N1))
 		if err != nil {
 			return nil, err
 		}

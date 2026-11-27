@@ -71,6 +71,15 @@ func (a *Annotation) GetStroke() string {
 	return DefaultAnnotationStroke
 }
 
+// CaptionPaint returns the paint for a caption's text. A caption is set in
+// the board's own text color unless its author gave it a pen.
+func (a *Annotation) CaptionPaint(text string) string {
+	if a.Stroke != "" {
+		return a.Stroke
+	}
+	return text
+}
+
 func (a *Annotation) drawn() (from, to float64) {
 	if a.Drawn == nil {
 		return 0, 1

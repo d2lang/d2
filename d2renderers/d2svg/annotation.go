@@ -71,7 +71,7 @@ func drawAnnotations(writer *objectWriter, diagram *d2target.Diagram, inkTL, ink
 			continue
 		}
 		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("class", "annotation caption")))
-		if err := drawAnnotationText(writer, markdown, caption.Label, "", d2target.CaptionFontSize, box, color.N1, caption.CaptionOpacity()); err != nil {
+		if err := drawAnnotationText(writer, markdown, caption.Label, "", d2target.CaptionFontSize, box, caption.CaptionPaint(color.N1), caption.CaptionOpacity()); err != nil {
 			return err
 		}
 		fmt.Fprint(writer, svg.CloseElement("g"))

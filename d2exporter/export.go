@@ -90,12 +90,17 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 	}
 
 	// A caption that links to an object points at it, even when nothing else
-	// on the board annotates that object.
+	// on the board annotates that object. The caption draws that mark, so it
+	// is drawn in the caption's pen.
 	if caption := g.Root.Annotation; caption != nil {
+		pen := ""
+		if caption.Stroke != nil {
+			pen = caption.Stroke.Value
+		}
 		for _, id := range caption.Cues {
 			for i, obj := range g.Objects {
 				if diagram.Shapes[i].Annotation == nil && obj.AbsID() == id {
-					diagram.Shapes[i].Annotation = &d2target.Annotation{Shape: defaultAnnotationMark(obj)}
+					diagram.Shapes[i].Annotation = &d2target.Annotation{Shape: defaultAnnotationMark(obj), Stroke: pen}
 				}
 			}
 		}

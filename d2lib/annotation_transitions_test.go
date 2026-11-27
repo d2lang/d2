@@ -348,6 +348,35 @@ func TestAnnotationsLeaveOtherTransitionsAlone(t *testing.T) {
 	}
 }
 
+func TestCaptionPenColorsWhatTheCaptionDraws(t *testing.T) {
+	d := compileAnnotated(t, `a -> b -> c
+b.annotation: mine {style.stroke: green}
+annotation: |md From [a](a) through [b](b) to [c](c). | {style.stroke: "#1971C2"}
+`)
+	if got := d.Root.Annotation; got == nil || got.Stroke != "#1971C2" || got.CaptionPaint("N1") != "#1971C2" {
+		t.Fatalf("caption exported as %+v", got)
+	}
+	// The rings the caption draws take its pen. A shape with its own
+	// annotation keeps its own.
+	for id, want := range map[string]string{"a": "#1971C2", "b": "green", "c": "#1971C2"} {
+		if got := shapeOf(t, d, id).Annotation; got == nil || got.GetStroke() != want {
+			t.Errorf("%s is marked with %+v, want the pen %s", id, got, want)
+		}
+	}
+
+	// Without a pen the caption is set in the board's text color and its
+	// rings use the default pen.
+	plain := compileAnnotated(t, `a -> b
+annotation: |md Only [a](a). |
+`)
+	if got := plain.Root.Annotation.CaptionPaint("N1"); got != "N1" {
+		t.Errorf("caption without a pen is painted %q", got)
+	}
+	if got := shapeOf(t, plain, "a").Annotation.GetStroke(); got != d2target.DefaultAnnotationStroke {
+		t.Errorf("cue ring without a pen is painted %q", got)
+	}
+}
+
 func TestAnnotationDefaultMarks(t *testing.T) {
 	d := compileAnnotated(t, `box: {
   inner
