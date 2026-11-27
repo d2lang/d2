@@ -4,6 +4,8 @@
 
 - Install D2 on Debian or Ubuntu using the amd64 or arm64 `.deb` from the GitHub release.
 
+- Install a specific D2 release with DNF using the `x86_64` or `aarch64` RPM from GitHub Releases.
+
 - Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with board or container variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
 
 - Animate grid edits between steps with the same `animate-duration` setting. Cells slide to their new positions, arrivals grow in, and departures shrink away. An inserted row or column opens as a group. A replacement can hand off in place, and a summary cell can unfold to show a nested grid.
