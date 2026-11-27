@@ -1,242 +1,148 @@
+AI is ripping. Finally got around to clearing out some long-standing issues, formalize a grammar (though it's still wip), fix a bunch of corner cases, tedious issues, etc. I'm focusing on 2 things:
+1. Performance -- across size of build (mainly for client-side/JS use case), size of output, and speed. All 3 have advanced significantly in this release, somewhat near capabilities of public frontier models. We'll revisit when the Reimann Hypothesis-solving generation of models come out.
+2. Animations. I make a lot of [3b1b-type explainer videos](https://github.com/d2lang/d2/pull/2986) to understand things in my day-to-day work and the quality is tempermental. There's a 3b1b library for their animations but it didn't work well for me and I've removed it from my prompts. I'm more motivated to do well here for my own use case, so I want to make animations in D2 really nice throughout the 0.10 series of releases.
+
+I plan to cut a 1.0 soon finally. There'll be more one-time breaking changes like consolidating casing/hyphenation (e.g. `sequence_diagram` to `sequence-diagram`).
+
+AI-generated changelog:
+
 #### Features 🚀
 
-- Run the native D2 CLI with `uvx d2lang input.d2 output.svg` on Linux, macOS, and Windows.
+- **Animated transitions.** Set `animate-duration` to animate styles, gradients, text decorations, grid edits, and sketch shading in SVG or GIF. It defaults to zero. `animate-interval` sets the minimum time per board. [Timing](https://d2lang.com/tour/animation/#configuration) · [Grid examples](https://d2lang.com/tour/animation/#grid-animations)
 
-- Install D2 on Debian or Ubuntu using the amd64 or arm64 `.deb` from the GitHub release.
+<a href="https://d2lang.com/img/generated/cache-stampede.svg" aria-label="Open the full-size cache-stampede animation">
+  <img src="https://d2lang.com/img/generated/cache-stampede.svg" width="1018" alt="A shield cache combines 1,200 requests from six edge locations into one origin read." />
+</a>
 
-- Install a specific D2 release with DNF using the `x86_64` or `aarch64` RPM from GitHub Releases.
+[Cache stampede source](https://d2lang.com/tour/animation/)
 
-- Set `animate-duration` in `vars.d2-config` to animate changes across steps in SVG and GIF exports. Set numeric properties or colors directly, or drive them with board or container variables. Gradients with the same kind, direction, and stop count interpolate each stop’s color and position.
+- **TALA step animations.** Small edits can preserve node positions and routes across steps and scenarios. Connections draw in, groups move between containers, trailing SQL rows slide in or out, and sequence messages travel to their receivers. [Animated steps and source](https://d2lang.com/tour/animation/#animated-steps) · [Go API](https://github.com/d2lang/d2/blob/d70ec718/d2layouts/d2talalayout/README.md#L21-L33)
 
-- Animate grid edits between steps with the same `animate-duration` setting. Cells slide to their new positions, arrivals grow in, and departures shrink away. An inserted row or column opens as a group. A replacement can hand off in place, and a summary cell can unfold to show a nested grid.
+<a href="https://d2lang.com/img/animation/night-signal.svg" aria-label="Open the full-size Night Signal animation">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="https://d2lang.com/img/animation/night-signal-still.svg" />
+    <img src="https://d2lang.com/img/animation/night-signal.svg" width="1188" loading="lazy" alt="A telescope detects a signal. An outbox saves the receipt and reuses it when the publisher retries." />
+  </picture>
+</a>
 
-- TALA keeps familiar nodes and links in place across compatible edits to steps and scenarios. With `animate-duration`, new connections can draw toward arriving nodes, containers can form around their contents, services can move between containers, SQL rows can drop into place, and sequence messages can travel to their receivers.
+> [!WARNING]
+> Animated transitions are in alpha. [Send feedback or suggestions](https://github.com/d2lang/d2/issues/new).
 
-- Set `scale` and `force-appendix` in `vars.d2-config`. Scaled SVGs and raster exports now retain their requested display size when tooltips or links add an appendix.
-- Configure Dagre's node and edge spacing in `vars.d2-config.data` with `dagre-nodesep` and `dagre-edgesep`.
-
-- Set the time each board is displayed in an animated SVG or GIF directly in the diagram with `vars: {d2-config: {animate-interval: 800ms}}`. Override it at export time with `--animate-interval`.
-
-- elk: choose the layout algorithm in `vars.d2-config.data`. Configure the force model and repulsion, target edge length for stress, tree traversal and sibling order, and radial spacing, branch angles and compaction in D2 or on the CLI. Layered layout also supports edge merging and routing, spacing within layers, pipeline wrapping, declaration order and feedback edges. Set `elk-layer-constraint` on a shape to place it in the first or last layer.
-
-- `d2 mcp` runs a Model Context Protocol server on stdin and stdout. AI clients get three tools: `guide` returns the language guide for the running D2 version, `check` reports errors with line and column, and `render` returns a PNG, SVG or text drawing. Hosts that support MCP Apps display the diagram inline. Local files are readable only beneath `--root`.
-
-- Windows users can install D2 without administrator rights by choosing the `-user.msi` download.
-- elk: configure the spacing between edges routed between the same pair of layers with `--elk-edgeEdgeBetweenLayers`. It was previously fixed at 50, which forced large gaps between layers on graphs with many links between adjacent layers.
-
-- `d2 lsp` runs a language server on stdin and stdout. Editors get errors as you type, formatting, completion, hover, outline, folding, links, go to definition, find references and rename for shapes, including across imported files. See the [editor setup guide](https://github.com/d2lang/d2/blob/master/docs/LSP.md).
+- **Language server.** Run `d2 lsp` for live diagnostics, completion, and formatting in your editor. Go to definition, find references, and rename shapes across open diagrams and their imports. In VS Code, install the official extension with `code --install-extension d2lang.d2lang`. [VS Code guide](https://d2lang.com/tour/vscode/) · [Other editors](https://github.com/d2lang/d2/blob/e53d964/docs/LSP.md)
+- **MCP server.** Run `d2 mcp` to let an AI client look up D2 syntax, check diagrams, and render PNG, SVG, or text. Starting with v0.10.0, stable releases publish `io.github.d2lang/d2` to the official MCP Registry after the PyPI package ships. [Set up Codex or Claude Code](https://d2lang.com/tour/mcp/) · [Registry listing manifest](https://github.com/d2lang/d2/blob/e53d964/server.json)
+- **ELK.** Set `elk-algorithm` in the diagram. New options control edge routing, layer placement, tree ordering, and spacing. [Compare algorithms](https://d2lang.com/tour/elk/#choose-an-algorithm) · [Layered options](https://d2lang.com/tour/elk/#layered-layout-options)
+- **Configuration.** Set `scale` and `force-appendix` in `vars.d2-config`, and `dagre-nodesep` and `dagre-edgesep` in `vars.d2-config.data`. [Export options](https://d2lang.com/tour/vars/#output-scale-and-svg-appendix) · [Dagre spacing](https://d2lang.com/tour/dagre/#spacing)
+- **Connections.** Crossing lines now leave a transparent gap in the back line where there’s room. [#3011](https://github.com/d2lang/d2/pull/3011)
+- **Themes.** Select light and dark themes by name, for example `theme-id: Terminal` or `--dark-theme dark-mauve`. [Themes](https://d2lang.com/tour/themes/)
+- **Syntax.** Use unquoted labels like `cost $5` and `#oncall`, colors like `#abc`, and names like `R&D`. Variables can use keyword names, and nested shapes can be named `layers`, `scenarios`, or `steps`. [Punctuation](https://github.com/d2lang/d2/pull/3054) · [Hash-prefixed labels and keyword names](https://github.com/d2lang/d2/pull/3056)
+- **Formatter.** `d2 fmt README.md` formats D2 fences in Markdown. Use `d2 fmt --check --diff README.md` to show a diff in CI. [Formatter options](https://github.com/d2lang/d2/pull/3052)
+- **Installation.** Run the CLI with `uvx d2lang`, or install it in CI with `d2lang/setup-d2@v1`. Windows x64 now has a `-user.msi` installer for users without administrator rights. [uv and uvx](https://github.com/d2lang/d2/blob/d70ec718/docs/INSTALL.md#uv-and-uvx) · [GitHub Actions](https://github.com/d2lang/d2/blob/d70ec718/docs/INSTALL.md#github-actions) · [Windows](https://d2lang.com/tour/install/#windows)
+- **Linux packages.** Install a specific GitHub release with APT on Debian or Ubuntu (`amd64`, `arm64`) or DNF on Fedora or RHEL (`x86_64`, `aarch64`). Download the matching `.deb` or `.rpm` and pass its local path to the package manager. [Debian and Ubuntu](https://github.com/d2lang/d2/blob/e53d964/docs/INSTALL.md#debian-and-ubuntu) · [Fedora and RHEL](https://github.com/d2lang/d2/blob/e53d964/docs/INSTALL.md#fedora-and-rhel)
+- **Language reference.** Explore the grammar with railroad diagrams, EBNF, and parser conformance cases. Download the docs as Markdown, by page or in one file. [Grammar reference](https://d2lang.com/tour/grammar/) · [Conformance cases](https://github.com/d2lang/d2/tree/d70ec718/docs/grammar/testdata) · [Page index](https://d2lang.com/llms.txt) · [Full text](https://d2lang.com/llms-full.txt)
 
 #### Improvements 🧹
 
-- Parser authors can use the [D2 grammar](https://github.com/d2lang/d2/tree/master/docs/grammar) and [conformance cases](https://github.com/d2lang/d2/tree/master/docs/grammar/testdata) to check their implementations.
+**CLI export time** on an Apple M4, including startup, layout, and SVG output. Timings use [`d70ec718`](https://github.com/d2lang/d2/commit/d70ec718).
 
-- Grids with one specified axis choose more evenly sized rows or columns. For common integral cell sizes the partition search finds the minimum total deviation from the average track length.
+| Workload | v0.9.0 | v0.10.0 candidate | Speedup |
+| --- | ---: | ---: | ---: |
+| [3,000 rectangles in a grid](https://github.com/d2lang/d2/pull/2893) | 8.29 s | 159 ms | 52.1× |
+| [Ten real-world diagrams](https://github.com/d2lang/d2/blob/d70ec718/e2etests/testdata/files/REAL_WORLD.md), sum of medians | 451 ms | 307 ms | 1.47× |
 
-- Standalone installs check the archive against a SHA-256 verified during release review. Use `--verify-provenance` to also check the signed build provenance locally. [#315](https://github.com/d2lang/d2/issues/315)
+**Layout and rendering.** Native timings compare each optimization with its preceding implementation. Engine rows total layout time across the test suite. [Layout benchmarks](https://github.com/d2lang/d2/pull/2999)
 
-- cli: `--allow-local-files=false` (or `$D2_ALLOW_LOCAL_FILES=false`) denies every local-file access, so imports and local images fail instead of reading files on the host. Use it with the default network policy to render untrusted diagrams. [#3002](https://github.com/d2lang/d2/pull/3002)
+| Workload | Before | After |
+| --- | ---: | ---: |
+| Dagre | 298 ms | 22.9 ms |
+| ELK | 190 ms | 28.1 ms |
+| TALA, one seed, including routing | 11.47 s | 3.08 s |
+| [Choose grid row breaks](https://github.com/d2lang/d2/pull/3036), 100 cells in 10 rows | 27.94 ms | 11.38 µs |
+| [Compile two SQL tables with a global edge style declared first](https://github.com/d2lang/d2/pull/2979) | 936 µs | 73 µs |
+| [Re-render a 1,000-message sequence after a label edit](https://github.com/d2lang/d2/pull/2995) | 24.4 ms | 16.3 ms |
+| [Write a 30-slide PowerPoint deck](https://github.com/d2lang/d2/pull/3000) | 3.3 ms | 2.1 ms |
 
-- performance: layouts are faster with identical output: Dagre about 13× and ELK about 7× in the end-to-end suite (17.5× and 10.7× for the layout calls alone), and about 12× each in D2.js. TALA lays out about 3.7× faster, and a few of its layouts change slightly. [#2999](https://github.com/d2lang/d2/pull/2999)
+**SVG output size.** Each file uses gzip level 9. The two candidate builds produced identical SVGs for all 16 fixtures with version metadata omitted. [SVG changes](https://github.com/d2lang/d2/pull/3030)
 
-- Ordinary labeled diagrams render faster and allocate fewer bytes because the SVG writer records fonts and theme colors as it draws. [#2995](https://github.com/d2lang/d2/pull/2995)
+| Diagram | v0.9.0 | v0.10.0 candidate | Reduction |
+| --- | ---: | ---: | ---: |
+| [Links example](https://github.com/d2lang/d2-docs/blob/03e8b5f0/static/d2/links.d2) with forced appendix | 274.6 KB | 117.8 KB | 57.1% |
+| Five [multiboard animations](https://github.com/d2lang/d2-docs/tree/03e8b5f0/static/bespoke-d2) | 37.9 KB | 30.4 KB | 19.6% |
+| Ten real-world diagrams | 200.8 KB | 198.9 KB | 1.0% |
 
-- Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer.
+**CLI and Docker sizes.** The macOS candidate was built at [`e53d9644`](https://github.com/d2lang/d2/commit/e53d9644).
 
-- D2.js: the WebAssembly module is built with TinyGo instead of Go, reducing its Brotli-compressed size by about 40%. [#2966](https://github.com/d2lang/d2/pull/2966)
+| Artifact | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| [Docker layers](https://github.com/d2lang/d2/pull/3003), Linux x86-64, before/after deduplication | 92.16 MB | 54.60 MB | −41% |
+| Docker layers, Linux arm64, same change | 86.55 MB | 52.16 MB | −40% |
+| macOS arm64 CLI, v0.9.0 → candidate | 40.04 MB | 39.28 MB | −1.9% |
+| Linux x86-64 CLI, [PowerPoint writer change alone](https://github.com/d2lang/d2/pull/3000) | 43.47 MB | 40.42 MB | −7% |
 
-- D2.js: the TinyGo-built WebAssembly module is less than half the size (11.9 MB smaller) and a third smaller when compressed with Brotli (2.0 MB), and runs D2's end-to-end corpus in less than half the time, with identical output on that corpus. D2.js calls into the module and every call runs to completion, so the module is now built without a goroutine scheduler, which on WebAssembly rewrote every function that could be running when a goroutine is switched out and made the code about two thirds larger. The build needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases), which also gives each pointer a garbage-collector stack slot only while a collection can find it in use. The module also drops its function names, a second HTML entity table, two unused Unicode segmentation tables and four separately encoded copies of bundled fonts, stores the tables of the formula renderer and of the ELK layout engine as constant data, keeps the formula renderer's glyph outlines compressed until a formula needs them and its bundled fonts compressed until it starts, and runs D2's own sorts through one shared routine. [#3046](https://github.com/d2lang/d2/pull/3046)
-
-- The d2 binary is about 3 MB smaller: PPTX export writes its XML parts without `text/template`, whose method lookups by name kept unused methods throughout the program. [#3000](https://github.com/d2lang/d2/pull/3000)
-
-- TALA routes larger cross-container diagrams within its existing search budget. It preserves the original hierarchy lanes on compact diagrams and indexes previously routed segments. [#2891](https://github.com/d2lang/d2/issues/2891)
-
-- Processes that render more than once (watch mode, D2.js, the Go API) reuse the glyph metrics and embedded-font subsets of the bundled fonts, held in bounded caches of about 10 MB and 8 MB. Output is unchanged. [#2992](https://github.com/d2lang/d2/pull/2992)
-
-- d2svg:
-  - Prevent malformed diagram or raw render values from breaking out of SVG text
-    and attributes. [#2919](https://github.com/d2lang/d2/pull/2919)
-  - Encode unsafe local IDs consistently so definitions and references continue
-    to match. [#2919](https://github.com/d2lang/d2/pull/2919)
-  - Disable animated connection CSS animations when
-    `prefers-reduced-motion: reduce` is active. [#1979](https://github.com/d2lang/d2/issues/1979)
-- assets:
-  - Apply the same local/network access policy and cumulative resource budgets to
-    SVG and raster exports. [#2918](https://github.com/d2lang/d2/pull/2918)
-  - Accept only valid PNG, JPEG, GIF, WebP, and SVG resources during image
-    bundling; malformed data and other formats now fail instead of being embedded
-    based only on a response `Content-Type`. [#2918](https://github.com/d2lang/d2/pull/2918)
-  - Block private and reserved network destinations by default; trusted fetching
-    requires `--allow-private-network` or `D2_ALLOW_PRIVATE_NETWORK`. [#2899](https://github.com/d2lang/d2/pull/2899)
-  - Require Go API callers to choose an explicit rooted or trusted unrestricted
-    policy for local imports and image assets. CLI and watch retain trusted
-    local-file access. [#2901](https://github.com/d2lang/d2/pull/2901)
-- Remove the legacy `d2plugin` system; Dagre, ELK, and TALA remain built in. [#2920](https://github.com/d2lang/d2/pull/2920)
-- watch: authenticate HTTP and WebSocket access with a fresh per-process
-  capability, exchanged for a token-free browser session. [#2910](https://github.com/d2lang/d2/pull/2910)
-- exports:
-  - Map unsafe board names to bounded portable output paths. [#2900](https://github.com/d2lang/d2/pull/2900)
-  - Publish multiboard output transactionally within the selected output root. [#2900](https://github.com/d2lang/d2/pull/2900)
-  - Preserve unrelated or user-modified files when generated output is updated. [#2900](https://github.com/d2lang/d2/pull/2900)
-  - Prevent concurrent local path replacement from redirecting publication
-    outside the selected tree. [#2908](https://github.com/d2lang/d2/pull/2908)
+- **TALA** aligns connections across containers, centers parallel branches, packs hierarchies more tightly, and routes larger diagrams. [#3034](https://github.com/d2lang/d2/pull/3034) · [#2986](https://github.com/d2lang/d2/pull/2986) · [#3025](https://github.com/d2lang/d2/pull/3025)
+- **Grids** balance row widths with `grid-rows` alone and column heights with `grid-columns` alone. [Grid layouts](https://d2lang.com/tour/grid-diagrams/)
+- **Exports.** Repeated renders reuse bundled font measurements and subsets. Animated SVG connections respect `prefers-reduced-motion`. Multiboard exports preserve user edits, roll back on failure, and give reserved or nonportable board names hashed filenames. Links between boards follow the new paths. [Font caching](https://github.com/d2lang/d2/pull/2992) · [#2976](https://github.com/d2lang/d2/pull/2976) · [#2900](https://github.com/d2lang/d2/pull/2900)
+- **File and image access.** Exports validate image contents and sizes. Use `--allow-private-network` for trusted internal images or `--allow-local-files=false` to disable local reads by diagrams. Go callers must set `CompileOptions.FS` to enable imports. Image access is configured separately. [Go import options](https://github.com/d2lang/d2/blob/d70ec718/d2lib/d2.go#L45-L53) · [Image options](https://github.com/d2lang/d2/blob/d70ec718/lib/imageasset/imageasset.go#L368-L376)
+- **Watch mode** authenticates browser sessions through the URL printed by `d2 --watch`. [#2910](https://github.com/d2lang/d2/pull/2910)
+- **Installation.** Standalone installs verify SHA-256 checksums. Add `--verify-provenance` to verify signed builds locally. Source builds require Go 1.27.4 or newer. [Installer verification](https://github.com/d2lang/d2/blob/d70ec718/docs/INSTALL.md#security) · [Build from source](https://github.com/d2lang/d2/blob/d70ec718/docs/INSTALL.md#from-source)
 
 #### Bugfixes ⛑️
 
-- Dagre lays out nested diagrams on which its ordering lost containers, which failed with `dagre fails on this input: it sets "order" on a node missing from a layer` or `not possible to find intersection inside of the rectangle`. Diagrams that laid out before keep their exact layout. [dagro v0.4.1](https://github.com/d2lang/dagro/pull/11)
-- `d2 fmt` preserves imported boards, board declaration order, explicit empty maps, block comments in arrays, and the parentheses around connections such as `("api" *- "db")`.
-- A file ending in the object name `!` parses with or without a final newline. Standalone key and value parsers reject trailing input, including an editor target such as `a; b`.
-- Empty filters (`&` or `!&`) now report an error. Supply a condition such as `&shape: circle`. A trailing dot needs a path segment. Write `a` for the object or `"a."` for a name ending in a literal dot. Use `"svc".(a -> b)[0]` to scope a connection.
-- A lone hyphen after a quoted name now reports a syntax error. Change `"build" - server` to `"build" -- server`. An unquoted name such as `build-server` still names one object.
-- Reserved keys work in any letter case. For example, `service.STYLE.Stroke: blue` sets the stroke color when you compile the diagram directly. To keep an object named `STYLE`, write `"STYLE"`.
-- Unquoted labels such as `10${unit}` resolve their substitutions even when the prefix looks like a number, boolean, or other special value. An undefined variable in that position now reports an error.
-- `d2 fmt` preserves escaped label text after a substitution, including the literal hash in `before${v}\#tag`.
-- Grouped connections require a closing `)` and at least one connection. A semicolon can follow the group, and names such as `call()` work in its property path. Invalid or oversized edge indices report errors.
-- Block strings close at the exact opening fence followed by a pipe, including mixed and Unicode fences. For an opener of `|!#md`, use `!#|` to close. Block strings and comments preserve Unicode text when removing indentation.
-- A name ending in `-` keeps its final hyphen before punctuation or end of file. An incomplete substitution or empty import now gives a diagnostic. Write `\$` for a literal dollar in a label.
-- Formatting preserves label capitalization, quoted objects named `"layers"`, `"scenarios"`, or `"steps"`, case-sensitive import filenames, and imports selecting a field named `d2`. Arrays retain `suspend` and `unsuspend` elements.
+- **CLI exports.** Navigating the watch preview keeps the complete export on disk. Watch resolves Windows imports relative to their diagram. Links open boards with dotted names in SVG, PDF, and PowerPoint. The CLI preserves the source when input and output identify the same file. Text export honors source-selected TALA, and `D2_STDOUT_FORMAT` selects the format for stdout. [#3076](https://github.com/d2lang/d2/pull/3076)
 
-- `d2 fmt` puts top-level entries on separate lines on the first pass, including files with no final newline. Nested maps can still use semicolons.
+- **Dagre.** Containers keep the same dimensions across runs. Nested diagrams with connections between sibling containers can now render when Dagre previously failed during ordering or edge routing. [Deterministic layouts](https://github.com/d2lang/d2/pull/3066) · [Nested diagrams](https://github.com/d2lang/d2/pull/3070)
+- **ELK.** Force, stress, and Mr. Tree route labeled self-loops. These layouts and radial attach cross-container edges to the correct shape or SQL column. Loop labels clear rounded bends where space permits. Mr. Tree routes avoid crossing intervening nodes. [#3016](https://github.com/d2lang/d2/pull/3016) · [#3017](https://github.com/d2lang/d2/pull/3017) · [#3018](https://github.com/d2lang/d2/pull/3018) · [#2981](https://github.com/d2lang/d2/pull/2981)
+- **TALA.** Fixed overlapping nodes and captions, reversed dependencies, and misplaced endpoint labels. Chains of `step` shapes retain connection order and annotations. Pinned junctions stay in place. SQL edges attach to the correct row, and routes stay attached when containers move. [#3032](https://github.com/d2lang/d2/pull/3032) · [#3022](https://github.com/d2lang/d2/pull/3022) · [#3028](https://github.com/d2lang/d2/pull/3028) · [#3031](https://github.com/d2lang/d2/pull/3031) · [#2889](https://github.com/d2lang/d2/pull/2889)
+- **Grids.** Grids with only `grid-rows` or `grid-columns` finish laying out even when one cell is much larger than the others. Cells keep their order through imports and variable spreads. Circles stay round, nested content fits, and routes retain SQL row targets and make room for self-loops. TALA routes around intervening cells and accepts grid containers as `near` targets. [Grid connections](https://d2lang.com/tour/grid-diagrams/#connections) · [#3036](https://github.com/d2lang/d2/pull/3036)
+- **Sequence diagrams.** A nested group containing only a note now renders. [Sequence groups](https://d2lang.com/tour/sequence-diagrams/#groups) · [#3035](https://github.com/d2lang/d2/pull/3035)
+- **SVG.** Stroke gradients continue through arrowheads. Link and tooltip numbering matches the appendix, including in animated frames. Board changes switch the drawing, links, and keyboard targets together. Scaled exports retain their size with footnotes. SVG text, attributes, links, paint values, and IDs are validated or escaped as appropriate. [#3020](https://github.com/d2lang/d2/pull/3020) · [#2962](https://github.com/d2lang/d2/pull/2962) · [#2964](https://github.com/d2lang/d2/pull/2964) · [#2919](https://github.com/d2lang/d2/pull/2919)
+- **Native exports.** SVG icons render with gradients, masks, and blur. PDF backgrounds fill the margins on pages without navigation. PNG watch previews embed local images and show placeholders for missing images. [#2982](https://github.com/d2lang/d2/pull/2982) · [#2932](https://github.com/d2lang/d2/pull/2932) · [#2980](https://github.com/d2lang/d2/pull/2980)
+- **Labels.** SQL and class members retain types that match their names. Rounded tables and classes clip their contents to the outline. Fixed LaTeX font colors, paired delimiters, and `bigtimes`. ASCII aligns multibyte labels and keeps arrowheads visible under long labels. [SQL tables](https://d2lang.com/tour/sql-tables/) · [UML classes](https://d2lang.com/tour/uml-classes/) · [ASCII export](https://d2lang.com/tour/exports/#ascii)
+- **Syntax.** Unquoted reserved keys ignore case. Quote `"STYLE"` for an object name. Labels like `10${unit}` interpolate correctly. Undirected edges require `--`, block fences must match, and invalid groups, indices, filters, and paths report errors. `d2 fmt` preserves board order, import filename case, escapes, and empty maps. `d2 fmt -` writes already-formatted stdin to stdout. [Formatter](https://d2lang.com/tour/auto-formatter/) · [Syntax fixes](https://github.com/d2lang/d2/pull/3043)
+- **Board globs.** Globs apply once to each matching layer, scenario, or step, including imported boards. In a `scenarios` map, `*.style.fill: red` sets each scenario’s background. Use `**.style.fill: red` to fill its objects. Glob connections pair endpoints within the same board. [Board glob fixes](https://github.com/d2lang/d2/pull/3071)
+- **Variables.** Map spreads apply where they appear, so later assignments win. Templates keep their declaration scope and can style existing connections. Forward references resolve fully, glob filters see substituted values, and Markdown uses the nearest variable binding, including in link URLs and titles. [Markdown variables](https://github.com/d2lang/d2/pull/3057) · [Variable fixes](https://github.com/d2lang/d2/pull/3060) · [Spread substitutions](https://d2lang.com/tour/vars/#spread-substitutions) · [#3044](https://github.com/d2lang/d2/pull/3044)
+- **Compiler and API.** Parsing and compilation honor cancellation, including before `d2 fmt` writes. A step with a map can follow one without a map. Glob connections whose shared path matches nothing now compile, and invalid connection endpoints report errors. Cyclic variables, oversized expansions, invalid board trees, and oversized grids return errors. Go callers can configure expansion budgets. Each graph passed to Dagre or ELK is limited to 1,024 objects and 1,024 edges. LaTeX labels are limited to 4 KiB and 128 nested groups. [Compiler and renderer limits](https://github.com/d2lang/d2/blob/d70ec718/ci/release/changelogs/next.md#L108-L158)
+- **Windows and standalone installs.** Nested imports resolve relative to the importing file, including on UNC shares. Git Bash can acquire the installer lock. Failed upgrades preserve the existing install. [#2993](https://github.com/d2lang/d2/pull/2993) · [#3026](https://github.com/d2lang/d2/pull/3026) · [#3024](https://github.com/d2lang/d2/pull/3024)
+- **Formatter and Go editor.** `d2 fmt` preserves names and labels split across lines. The Go editor distinguishes quoted shape names from properties and keeps label capitalization.
+- **Dotted boards and arrays.** Dotted steps and scenarios inherit shapes, connections, and rules. Array spreads preserve declaration order and later entries.
+- **Selected imports.** Imported values keep their module bindings and can use caller variables as fallbacks. Variables required only by unselected exports can be omitted.
+- **Filters.** Edge filters use each endpoint’s effective label and shape. Class filters accept lists and variables. Nesting depth is correct for shapes named `root`.
+- **Animation and Markdown variables.** Numeric variables with metadata interpolate across steps. Templates keep their declaration scope. Markdown substitutions preserve escaped placeholders, shortcut links, and variable names containing Markdown punctuation. [#3063](https://github.com/d2lang/d2/pull/3063)
 
-- Grids retain cell order across repeated dimensions, imports and variable spreads. [#2115](https://github.com/d2lang/d2/issues/2115)
-- Grid cells preserve shape proportions and keep nested children, routed connections and their captions inside the container. Border icons and labels fit in zero-padding exports. [#1405](https://github.com/d2lang/d2/issues/1405)
-- Grid connections retain SQL row attachments as cells move, separate reciprocal captions, and make room for self-loops between neighboring cells. TALA routes around intervening cells and accepts a grid container as a `near` target. [#1741](https://github.com/d2lang/d2/issues/1741)
+#### Breaking Changes
 
-- Standalone upgrades and forced reinstalls preserve the working installation if the replacement fails. The installer rejects install-only flags with `--uninstall` and falls back to the GitHub API when the latest-release redirect fails. [#84](https://github.com/d2lang/d2/issues/84)
+- **Layout plugins and postprocessing.** D2 no longer loads external `d2plugin-*` executables. Use a built-in engine. The Go `d2plugin` package was removed. To replace `PostProcess`, modify the bytes returned by `d2svg.Render`. [Layout engines](https://d2lang.com/tour/layouts/#layout-engines) · [Go example](https://github.com/d2lang/d2/blob/d70ec718/docs/examples/lib/1-d2lib/d2lib.go#L28-L35)
 
-- TALA keeps hierarchy nodes and containers separated, preserves directed dependencies when orienting cycles and undirected links, and respects nested directions, container dimensions, edge labels, and proximity hints.
+<a name="d2js"></a>
 
-- CLI: keep all exported boards when navigating the watch preview. Links to boards with dotted or reserved names now open their generated files.
-- CLI: refuse to overwrite the input file, honor source-selected TALA in text exports, and use `D2_STDOUT_FORMAT` for standard output.
-- Windows: resolve nested imports relative to the importing diagram in regular and watch-mode exports, including on UNC shares. [#2642](https://github.com/d2lang/d2/issues/2642)
+#### D2.js 0.2.0
 
-- PNG, GIF, PDF and PPTX exports now render SVG icons that use default gradients, masks, Gaussian blur and common editor metadata. [#2937](https://github.com/d2lang/d2/issues/2937)
+The `@d2lang/d2` package runs in browsers and Node.js.
 
-- d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
-- The formatter preserves shape names and labels split across line continuations. The Go editor distinguishes quoted shape names from property names and preserves the capitalization of labels such as `SUSPEND`.
-- compiler:
-  - Dotted steps and scenarios inherit their shapes, connections and rules. Array spreads preserve declaration order and later entries.
-  - Selected imports keep module-defined values and resolve missing variables from the caller. Unselected exports can have their own variable requirements.
-  - Edge filters operate on matching connections and use each endpoint’s effective label and shape. Class filters accept lists and variables, and a shape named `root` has ordinary nesting depth.
-  - Animated steps interpolate numeric variables with metadata and keep template references in their declaration scope. Markdown substitutions preserve escaped placeholders, shortcut links and variable names containing Markdown punctuation.
-  - Resolve forward variable references in full. Map templates keep the scope where they were declared, and local aliases read the same value as direct references.
-  - Glob filters match labels and properties supplied by variables. Markdown links can use variables in their URLs and titles.
-  - Apply recursive connection styles efficiently to diagrams with few or no
-    connections, including large SQL tables. [#2946](https://github.com/d2lang/d2/issues/2946)
-  - Limit combined map/array nesting to 128. [#2894](https://github.com/d2lang/d2/pull/2894)
-  - Honor cancellation during parsing and IR compilation, and prevent `d2 fmt`
-    from writing output after cancellation. [#2894](https://github.com/d2lang/d2/pull/2894)
-  - Limit active import chains to 128. [#2904](https://github.com/d2lang/d2/pull/2904)
-  - Reject cyclic composite variables with source diagnostics instead of allowing
-    unbounded recursion. [#2907](https://github.com/d2lang/d2/pull/2907)
-  - Limit variable substitution output and automatic board, import, and class
-    copies to a 65,536-unit compilation budget by default; Go callers can
-    configure the limit. [#2923](https://github.com/d2lang/d2/pull/2923)
-  - Honor cancellation while expanding substitutions and materializing compiled
-    graphs. [#2923](https://github.com/d2lang/d2/pull/2923)
-  - Limit recursive glob matching and generated-field work so small diagrams
-    fail with a clear error instead of consuming excessive CPU or memory.
-    [#2925](https://github.com/d2lang/d2/pull/2925)
-  - Limit wildcard edge connections and selectors to bounded expansion work,
-    returning a clear error before excessive fanout consumes resources.
-    [#2926](https://github.com/d2lang/d2/pull/2926)
-  - Keep `sql_table` column types that match the column name, such as
-    `date: date`, instead of rendering an empty type. [#2950](https://github.com/d2lang/d2/pull/2950)
-  - Keep `class` field types and method return types that match the name, such
-    as `date: date`, instead of dropping them. [#2952](https://github.com/d2lang/d2/pull/2952)
-- watch: embed local images in PNG watch previews instead of treating their URLs
-  as board navigation. Unavailable images show the same placeholder in the
-  preview and the exported PNG. [#2945](https://github.com/d2lang/d2/issues/2945)
-- decoding and assets:
-  - Cap decompressed URL-encoded D2 input at 16 MiB. [#2902](https://github.com/d2lang/d2/pull/2902)
-  - Bound image references, locators, fetched and decoded bytes, cached data, and
-    final output during SVG image bundling. [#2911](https://github.com/d2lang/d2/pull/2911)
-- ELK moves a self-loop label beside the edge when it would cover a bend and there is room.
-- elk: fix Mr. Tree arrows doubling back through their target shapes and shortcut edges cutting through intervening nodes. [#2981](https://github.com/d2lang/d2/pull/2981)
-- elk: route self-loops in Stress, Force and Mr. Tree layouts, including labeled loops and multiple loops on the same shape. [#2997](https://github.com/d2lang/d2/issues/2997)
-- elk: route arrows across container boundaries in Stress, Force, Mr. Tree and Radial, including connections to SQL columns. [#2717](https://github.com/d2lang/d2/issues/2717)
-- rendering:
-  - Reject malformed, cyclic, reused, or nil raw diagram board graphs with
-    ordinary errors instead of panics or fatal recursion. [#2912](https://github.com/d2lang/d2/pull/2912)
-  - Validate raw geometry, routes, arrows, fonts, and arithmetic before recursive
-    rendering. [#2912](https://github.com/d2lang/d2/pull/2912)
-  - Limit render targets to 1,024 levels and 16,384 boards, including animation samples. Longer grid animations share the available samples across transitions. [#2912](https://github.com/d2lang/d2/pull/2912) [#3021](https://github.com/d2lang/d2/pull/3021)
-  - Limit LaTeX labels to 4 KiB and 128 nested groups. [#2922](https://github.com/d2lang/d2/pull/2922)
-  - Render LaTeX labels with the shape's font color instead of its stroke color. [#2943](https://github.com/d2lang/d2/pull/2943)
-  - Limit grids to 10,000 rows or columns and 1,000,000 total cells, returning
-    a clear error for oversized dimensions instead of crashing or exhausting
-    memory. [#2924](https://github.com/d2lang/d2/pull/2924)
-  - Limit Dagre and ELK inputs to 1,024 objects and 1,024 edges, and reject
-    overly interconnected graphs before entering non-cancellable layout.
-    [#2926](https://github.com/d2lang/d2/pull/2926)
-- links and paints:
-  - Reject dangerous ordinary link schemes after decoding common obfuscation. [#2896](https://github.com/d2lang/d2/pull/2896)
-  - Require gradient stop positions to be finite numbers or percentages. [#2905](https://github.com/d2lang/d2/pull/2905)
-  - Reject external SVG paint URLs and unsafe fill-pattern or theme values in raw
-    render targets. [#2916](https://github.com/d2lang/d2/pull/2916)
-  - Apply the dangerous-link policy to legend shapes. [#2917](https://github.com/d2lang/d2/pull/2917)
-- d2svg:
-  - Escape custom shape and connection classes. [#2895](https://github.com/d2lang/d2/pull/2895)
-  - Sanitize bundled-image media types and escape serialized image URLs. [#2898](https://github.com/d2lang/d2/pull/2898)
-  - Escape SQL-table constraint text. [#2903](https://github.com/d2lang/d2/pull/2903)
-  - Encode and escape clip-path identifiers consistently in definitions and
-    references. [#2906](https://github.com/d2lang/d2/pull/2906)
-  - Escape color attributes across shapes, connections, labels, and themes. [#2909](https://github.com/d2lang/d2/pull/2909)
-- d2ascii:
-  - Measure label widths in runes instead of bytes, so multi-byte characters
-    (e.g. Vietnamese) no longer get extra spaces inserted inside words and
-    labels are centered and sized correctly. [#2963](https://github.com/d2lang/d2/pull/2963)
-  - Keep horizontal arrowheads visible when an edge label fills the space between endpoints.
-- appendix:
-  - Keep numbered link and tooltip markers in one sequence with the appendix:
-    every link marker now has an entry, falling back to the link when no board
-    label is available (e.g. `link: _` in a scenario). [#2961](https://github.com/d2lang/d2/issues/2961)
-  - Render forced appendices inside their animated SVG frames and size the
-    animation to include every board's footnotes.
-- sequence diagrams: fix a compile error ("invalid position with infinity value") when a group nested in another group contains only a note. [#2750](https://github.com/d2lang/d2/issues/2750)
-- The compiler reports an error instead of crashing on a connection endpoint of only underscores (`x: {y: {_._.b -> _}}`), a reserved keyword in a connection after a shared path or underscores (`c.left -> c.t`, `x: {_.a -> left}`), a reserved keyword as a connection's shared path (`near.a -> near.b`), `constraint` with a child (`constraint.x`), and connections in a `label`, `icon` or `tooltip` map.
-- Diagrams that crashed the compiler now compile: a step with a map after a step without one, a glob connection whose shared path matches nothing (`a.b.*.x -> a.b.*.y`), a reference from inside a `sql_table` column or `class` field to an object outside it (`t.a: {_._.x}`), a glob with a map value in `layers` (`layers: {w: {b}; *: {a}}`), and a block comment inside an array (`class: [a; """ note """; b]`).
-- Grids with `grid-rows` or `grid-columns` no longer hang when one cell is far larger than the rest, such as one 10^17 wide among 50.
-- Dagre lays out a diagram the same way every time. Diagrams with containers could get slightly different container sizes from run to run, and in D2.js from build to build.
-- Globs over boards:
-  - A glob that selects layers, scenarios or steps applies to every board it
-    selects, once. `scenarios: {w: {b}; v: {c}; *: {a}}`, `layers.*.a` and
-    `scenarios.*.(x -> y)[0].style.stroke: red` reached only the first board,
-    also in steps, nested boards, imported boards and filtered globs.
-  - A glob in a `layers`, `scenarios` or `steps` map applies in that map, where
-    its first element selects the boards, and no longer also inside each board:
-    `scenarios: {*: {a}; w: {b}}` no longer gives `w.b` an `a`, and
-    `scenarios: {*.style.fill: red}` now fills each scenario's background, not
-    its objects. A glob whose paths all start with `**` still reaches the
-    objects of each board, once: `scenarios: {**.style.fill: red}` fills them.
-  - A connection glob in such a map that has an endpoint of one element other
-    than `**` applies inside each board instead, as if written there, in boards
-    declared before it too and in their scenarios and steps, but not in their
-    layers: `steps: {(* -> *)[*].style.stroke: red}`,
-    `layers: {(* -> *)[*].style.stroke: red}`, `scenarios: {* -> hub}`, which
-    reported "cannot create edges between boards", and `steps: {** -> hub}`,
-    which also made a step named `hub`.
-  - Glob connections such as `scenarios.*.x -> scenarios.*.y` connect the
-    objects within each board and skip pairs in different boards, as `**` does,
-    so `scenarios.*.a -> x`, whose pairs all cross boards, creates nothing
-    instead of reporting an error.
-  - A scenario or step that a glob reaches before it has a map starts as a copy
-    of its base board: `x; scenarios.*.y; scenarios: {w: {z}}` gives `w` the
-    `x`. A step without a map that a glob gives content starts as a copy of the
-    step before it, once: `steps: {w; v; *: {a -> b}}` gives `v` one `a -> b`
-    instead of none. A glob whose filter fails no longer stops a scenario or
-    step from copying its base: `r; scenarios: {*: {&label: Z; k}; w: {x}}`
-    gives `w` the `r`.
-  - Steps no longer stop their board's globs from applying to a later object of
-    the same name: `*.style.fill: red; steps: {s1: {y}}; y` fills the root `y`.
-  - A glob no longer applies again to what its own import added: `**: @f; a`,
-    where `f` declares `p`, gives `a` one `p`, not `p.p`, and such globs no
-    longer report a false cyclic import. `x; *: @f; p` gives the importer's `p`
-    the import too. `***` no longer applies again to what a scenario or step
-    inherits: `***: {u -> v}; a; steps: {s1: {b}}` gave `s1.a` a second
-    `u -> v`.
-  - As globs reach more boards, a diagram with many glob connections can now
-    exceed the glob or connection expansion limit.
+- **Command line.** Run `npx @d2lang/d2 input.d2 output.svg` to render a single file. Omit the output path to write an SVG beside the input, or pipe source to the command for SVG on stdout. [CLI usage](https://github.com/d2lang/d2/tree/644077c8/d2js/js#command-line)
+- **API.** `d2.renderSVG()` renders a D2 string or a multi-file project in one call. `d2.format()` formats a source file. TypeScript now covers theme overrides and the Playground helpers `d2.encode()` and `d2.decode()`. Decoded source is limited to 16 MiB. [JavaScript API](https://github.com/d2lang/d2/tree/e53d9644/d2js/js#api-reference)
+- **Animations and fonts.** Set `animateDuration` for step transitions. Use `forceAppendix` with `animateInterval` to show each board’s links and tooltips in its frame. Custom TrueType fonts supplied as `Uint8Array` now render correctly. [Animation options](https://d2lang.com/tour/animation/#configuration)
+- **Browser workers.** Call `new D2()` inside a dedicated worker, or pass `{ workerURL }` to load a self-hosted worker. Safari 27.2 workers start correctly. The SDK surfaces startup errors and releases the embedded worker URL after startup, including on failure. [Worker options](https://github.com/d2lang/d2/blob/e53d9644/d2js/js/README.md#L119-L139)
+- **Nightlies.** Install the latest nightly with `npm install @d2lang/d2@nightly`.
+
+**Package size.** Removing the goroutine scheduler and deduplicating fonts and tables cut the WebAssembly module by 53% compared with the preceding build. It still includes all three layout engines. All 24,824 outputs matched in the 519-script comparison. Building from source requires D2’s TinyGo fork. Sizes were measured at `e53d9644`. [Build instructions](https://github.com/d2lang/d2/tree/d70ec718/d2js/js#development) · [Build changes and comparison](https://github.com/d2lang/d2/pull/3046)
+
+| Artifact | 0.1.34 (npm) | Before #3046 | 0.2.0 candidate | Reduction vs. 0.1.34 |
+| --- | ---: | ---: | ---: | ---: |
+| npm download | 31.66 MB | 13.65 MB | 8.28 MB | 73.8% |
+| Unpacked npm package | 95.88 MB | 30.41 MB | 15.85 MB | 83.5% |
+| WebAssembly, uncompressed | 42.12 MB | 22.49 MB | 10.59 MB | 74.8% |
+| WebAssembly, Brotli-compressed inside browser module | 8.50 MB | 5.58 MB | 3.58 MB | 57.9% |
+| Complete browser module, HTTP Brotli quality 5 | 8.52 MB | 5.64 MB | 3.65 MB | 57.1% |
+
+**Chrome performance.** Median times on an Apple M4 at [`d70ec718`](https://github.com/d2lang/d2/commit/d70ec718), with the browser module served from localhost. WebAssembly now decompresses in the worker, freeing the main thread during startup. The first SVG uses a fresh worker. The ten-diagram run reuses one worker for all ten compiles and renders. [Benchmark diagrams](https://github.com/d2lang/d2/blob/d70ec718/e2etests/testdata/files/REAL_WORLD.md)
+
+| Workload | 0.1.34 (npm) | Before #3046 | 0.2.0 candidate | Speedup vs. 0.1.34 |
+| --- | ---: | ---: | ---: | ---: |
+| First two-node SVG, including module download and import | 765 ms | 296 ms | 191 ms | 4.00× |
+| First two-node SVG, after module import | 714 ms | 262 ms | 167 ms | 4.27× |
+| [Main-thread delay during startup](https://github.com/d2lang/d2/pull/2984) (zero-delay timer) | 501 ms | 1.9 ms | 1.5 ms | — |
+| Ten real-world diagrams, warm worker | 748 ms | 310 ms | 208 ms | 3.59× |
 
 ---
 
-For the latest d2.js changes, see separate [changelog](https://github.com/d2lang/d2/blob/master/d2js/js/CHANGELOG.md).
+[Install D2](https://d2lang.com/tour/install/) · [All changes since v0.9.0](https://github.com/d2lang/d2/compare/v0.9.0...d10e34079)
