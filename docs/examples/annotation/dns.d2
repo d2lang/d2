@@ -1,0 +1,47 @@
+# d2 dns.d2 dns.svg
+vars: {
+  d2-config: {
+    sketch: true
+    animate-interval: 1500ms
+    animate-duration: 900ms
+    pad: 30
+  }
+}
+direction: right
+
+laptop: Your laptop
+resolver: Resolver
+root: Root servers
+tld: .com servers
+auth: "example.com\nname server"
+
+laptop -> resolver
+resolver -> root
+resolver -> tld
+resolver -> auth
+
+steps: {
+  ask: {
+    annotation: |md Your laptop asks its [resolver](resolver) where example.com lives. |
+    (laptop -> resolver)[0].annotation: example.com?
+  }
+  root: {
+    annotation: |md The resolver starts at the [root](root), which only knows who runs .com. |
+    (resolver -> root)[0].annotation: try .com
+  }
+  tld: {
+    annotation: |md The [.com servers](tld) know which name server is in charge. |
+    (resolver -> tld)[0].annotation: try its name server
+  }
+  auth: {
+    annotation: |md That [name server](auth) has the answer. |
+    (resolver -> auth)[0].annotation: 203.0.113.7
+  }
+  cache: {
+    annotation: |md The [resolver](resolver) remembers it, so next time it asks nobody. |
+    resolver.annotation: cached for 1 hour {shape: box}
+    (resolver -> root)[0].annotation.shape: cross
+    (resolver -> tld)[0].annotation.shape: cross
+    (resolver -> auth)[0].annotation.shape: cross
+  }
+}

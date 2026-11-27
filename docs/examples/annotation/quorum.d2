@@ -1,0 +1,49 @@
+# d2 quorum.d2 quorum.svg
+vars: {
+  d2-config: {
+    animate-interval: 1500ms
+    animate-duration: 900ms
+    pad: 30
+  }
+}
+direction: right
+
+client: Client
+db: orders-db {
+  primary: {shape: cylinder}
+  r1: replica 1 {shape: cylinder}
+  r2: replica 2 {shape: cylinder}
+  primary -> r1
+  primary -> r2
+}
+client -> db.primary
+
+steps: {
+  write: {
+    annotation: |md A write lands on the [primary](db.primary). |
+    (client -> db.primary)[0].annotation: INSERT
+  }
+  replicate: {
+    annotation: |md The primary copies it to both replicas. |
+    db: {
+      (primary -> r1)[0].annotation: 3 ms
+      (primary -> r2)[0].annotation: still waiting
+    }
+  }
+  lag: {
+    annotation: |md [Replica 2](db.r2) is slow today. |
+    db.r2.annotation: 4 s behind
+  }
+  quorum: {
+    annotation: |md The write commits anyway: [two of three](db) have it. |
+    db.annotation: quorum = 2 of 3
+    db.primary.annotation.shape: underline
+    db.r1.annotation.shape: underline
+  }
+  moral: {
+    annotation: |md One slow replica cannot hold up a write. |
+    db: {
+      (primary -> r2)[0].annotation.shape: cross
+    }
+  }
+}
