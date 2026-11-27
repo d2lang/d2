@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 )
 
 func annotatedShape(id string, x, y, w, h int, a *Annotation) Shape {
@@ -35,7 +36,8 @@ func TestAnnotationMarksSurroundTheirTarget(t *testing.T) {
 	}{
 		{AnnotationCircle, 1, true},
 		{AnnotationBox, 1, true},
-		{AnnotationCross, 2, false},
+		// A cross runs on past all four corners.
+		{AnnotationCross, 2, true},
 		{AnnotationUnderline, 1, false},
 		{AnnotationBrace, 1, false},
 	} {
@@ -199,11 +201,147 @@ func TestAnnotationOnConnection(t *testing.T) {
 		t.Fatalf("note at %v is not beside the middle of the route", note.TopLeft)
 	}
 
-	d.Connections[0].Annotation = &Annotation{Shape: AnnotationCross}
+	// A cross sits on the middle of the route and stands well clear of the
+	// line on both sides.
+	d.Connections[0].Annotation = &Annotation{Shape: AnnotationCross, Label: "no", LabelWidth: 20, LabelHeight: 20}
 	cross := d.AnnotationMarks()[0]
 	x1, y1, x2, y2 := cross.Bounds()
-	if len(cross.Strokes) != 2 || x1 < 180 || x2 > 220 || y1 < 10 || y2 > 50 {
-		t.Fatalf("cross is not a small mark on the middle of the route: (%v,%v)-(%v,%v)", x1, y1, x2, y2)
+	if len(cross.Strokes) != 2 || x2-x1 < 30 || y2-y1 < 30 || x2-x1 > 48 || y2-y1 > 48 {
+		t.Fatalf("cross spans %v by %v, want between 30 and 48 each way", x2-x1, y2-y1)
+	}
+	if cx, cy := (x1+x2)/2, (y1+y2)/2; math.Abs(cx-200) > 3 || math.Abs(cy-30) > 3 {
+		t.Fatalf("cross is centered on (%v,%v), want the middle of the route at (200,30)", cx, cy)
+	}
+	for i, stroke := range cross.Strokes {
+		first, last := stroke[0], stroke[len(stroke)-1]
+		if (first.Y-30)*(last.Y-30) >= 0 || math.Abs(first.Y-30) < 12 || math.Abs(last.Y-30) < 12 {
+			t.Fatalf("stroke %d runs from %v to %v and does not stand clear of the route on both sides", i, first, last)
+		}
+	}
+	if note := cross.LabelBox; overlapArea(note, geo.NewBox(geo.NewPoint(x1, y1), x2-x1, y2-y1)) > 0 {
+		t.Fatalf("note at %v lies on the cross", note.TopLeft)
+	}
+
+	// On a diagonal route an upright X would lay one stroke along the line.
+	// It turns enough for both strokes to cross the route, and no further,
+	// so that it still reads as an X and not as a plus.
+	for _, end := range [][2]float64{{300, 230}, {300, -170}, {-100, 230}, {-100, -170}} {
+		d.Connections[0] = straight("(a -> b)[0]", 100, 30, end[0], end[1], &Annotation{Shape: AnnotationCross})
+		// Signed distance from the route, which passes through (100,30).
+		ux, uy := (end[0]-100)/math.Hypot(end[0]-100, end[1]-30), (end[1]-30)/math.Hypot(end[0]-100, end[1]-30)
+		off := func(p geo.Point) float64 { return (p.X-100)*uy - (p.Y-30)*ux }
+		for i, stroke := range d.AnnotationMarks()[0].Strokes {
+			first, last := stroke[0], stroke[len(stroke)-1]
+			if off(first)*off(last) >= 0 || math.Abs(off(first)) < 8 || math.Abs(off(last)) < 8 {
+				t.Fatalf("route to %v: stroke %d runs from %v to %v and does not cross the route cleanly", end, i, first, last)
+			}
+			// Each stroke stays within 25 degrees of a diagonal of the page.
+			lean := math.Abs(math.Atan2(math.Abs(last.Y-first.Y), math.Abs(last.X-first.X))-math.Pi/4) * 180 / math.Pi
+			if lean > 25 {
+				t.Fatalf("route to %v: stroke %d leans %v degrees from a diagonal", end, i, lean)
+			}
+		}
+	}
+}
+
+func TestCrossRunsPastTheShape(t *testing.T) {
+	d := &Diagram{Shapes: []Shape{annotatedShape("a", 100, 200, 160, 70, &Annotation{Shape: AnnotationCross, Label: "gone", LabelWidth: 40, LabelHeight: 20})}}
+	mark := d.AnnotationMarks()[0]
+	// Each stroke starts and ends outside the box, beyond opposite corners.
+	corners := 0
+	for i, stroke := range mark.Strokes {
+		for _, end := range []geo.Point{stroke[0], stroke[len(stroke)-1]} {
+			dx := math.Max(100-end.X, end.X-260)
+			dy := math.Max(200-end.Y, end.Y-270)
+			if dx <= 0 || dy <= 0 {
+				t.Fatalf("stroke %d ends at %v, inside the shape's sides", i, end)
+			}
+			if past := math.Hypot(dx, dy); past < 9 || past > 18 {
+				t.Fatalf("stroke %d ends %v past its corner, want between 9 and 18", i, past)
+			}
+			corners++
+		}
+	}
+	if corners != 4 {
+		t.Fatalf("checked %d ends, want 4", corners)
+	}
+	// The two strokes are not mirror images of each other.
+	a, b := mark.Strokes[0], mark.Strokes[1]
+	if math.Abs((a[0].X-100)+(b[0].X-260)) < 0.2 && math.Abs(a[0].Y-b[0].Y) < 0.2 {
+		t.Fatalf("strokes start at %v and %v, mirror images", a[0], b[0])
+	}
+	// The note keeps clear of the larger mark.
+	x1, y1, x2, y2 := mark.Bounds()
+	if overlapArea(mark.LabelBox, geo.NewBox(geo.NewPoint(x1, y1), x2-x1, y2-y1)) > 0 {
+		t.Fatalf("note at %v lies on the cross", mark.LabelBox.TopLeft)
+	}
+}
+
+// reversals counts how often a stroke turns back on itself along x. Movement
+// under a pixel is the hand wavering, not a change of direction.
+func reversals(stroke []geo.Point) int {
+	n, heading, anchor := 0, 0., stroke[0].X
+	for _, p := range stroke[1:] {
+		step := p.X - anchor
+		if math.Abs(step) < 4 {
+			continue
+		}
+		if heading != 0 && step*heading < 0 {
+			n++
+		}
+		heading, anchor = step, p.X
+	}
+	return n
+}
+
+func TestUnderlineIsOneStrokeDrawnThreeTimes(t *testing.T) {
+	labeled := func(a *Annotation) *Diagram {
+		s := annotatedShape("a", 0, 0, 140, 66, a)
+		s.Label, s.LabelWidth, s.LabelHeight = "worker", 60, 21
+		s.LabelPosition = label.InsideMiddleCenter.String()
+		return &Diagram{Shapes: []Shape{s}}
+	}
+	d := labeled(&Annotation{Shape: AnnotationUnderline})
+	mark := d.AnnotationMarks()[0]
+	if len(mark.Strokes) != 1 {
+		t.Fatalf("underline has %d strokes, want one that never lifts", len(mark.Strokes))
+	}
+	stroke := mark.Strokes[0]
+	if got := reversals(stroke); got != 2 {
+		t.Fatalf("underline turns back %d times, want 2: out, back and out again", got)
+	}
+	// Each pass is lower than the last: the pen ends below where it began.
+	x1, y1, x2, y2 := mark.Bounds()
+	if drop := stroke[len(stroke)-1].Y - stroke[0].Y; drop < 4 {
+		t.Fatalf("the last pass is %v below the first, want layers", drop)
+	}
+	if h := y2 - y1 - mark.Width; h < 6 || h > 11 {
+		t.Fatalf("underline is %v tall, want a tight scribble of 6 to 11", h)
+	}
+	// It sits under the label, which is centered in the shape and ends at
+	// y 43.5, and it stays inside the shape. The pen's own width may touch
+	// the bottom of the label's box.
+	if y1 < 43.5-2 || y2 > 66-2 || x1 < 40-8 || x2 > 100+8 {
+		t.Fatalf("underline (%v,%v)-(%v,%v) is not under the label and inside the 66 tall shape", x1, y1, x2, y2)
+	}
+
+	// Drawn part by part, it goes out, then comes back, then goes out again.
+	for _, tc := range []struct {
+		to   float64
+		want int
+	}{{0.3, 0}, {0.6, 1}, {0.95, 2}} {
+		part := labeled(&Annotation{Shape: AnnotationUnderline, Drawn: &[2]float64{0, tc.to}}).AnnotationMarks()[0].Strokes
+		if len(part) != 1 || reversals(part[0]) != tc.want {
+			t.Fatalf("drawn to %v the underline has turned back %d times, want %d", tc.to, reversals(part[0]), tc.want)
+		}
+	}
+
+	// Under bare text it spans the words the same way.
+	text := annotatedShape("t", 0, 0, 200, 24, &Annotation{Shape: AnnotationUnderline})
+	text.Type, text.Label, text.LabelWidth, text.LabelHeight = ShapeText, "Checkout flow", 200, 24
+	text.LabelPosition = label.InsideMiddleCenter.String()
+	if got := (&Diagram{Shapes: []Shape{text}}).AnnotationMarks()[0].Strokes; len(got) != 1 || reversals(got[0]) != 2 {
+		t.Fatalf("underline of bare text is not one stroke with two turns")
 	}
 }
 

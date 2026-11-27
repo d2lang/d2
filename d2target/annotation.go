@@ -227,8 +227,7 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 			// The note sits beside the middle of the route, not beside all of it.
 			var anchor *geo.Box
 			if a.Shape == AnnotationCross {
-				const r = 11
-				m.Strokes = crossStrokes(geo.NewBox(geo.NewPoint(mid.X-r, mid.Y-r), 2*r, 2*r), 0)
+				m.Strokes = routeCrossStrokes(route, markSeed(c.ID))
 				x1, y1, x2, y2 := m.Bounds()
 				anchor = geo.NewBox(geo.NewPoint(x1, y1), x2-x1, y2-y1)
 			} else {
@@ -471,8 +470,10 @@ func boxStroke(box *geo.Box, seed float64) []geo.Point {
 	return simplify(pts)
 }
 
-// underlineStroke runs under the target's own label when the label is inside
-// the shape, and under the whole shape otherwise.
+// underlineStroke scribbles under the target's own label when the label is
+// inside the shape, and under the whole shape otherwise. It is one stroke
+// that goes out, comes back and goes out again, each pass a little lower
+// than the last, the way a pen underlines a word it means.
 func underlineStroke(s *Shape, box *geo.Box, seed float64) []geo.Point {
 	x1, x2 := box.TopLeft.X, box.TopLeft.X+box.Width
 	y := box.TopLeft.Y + box.Height + 7
@@ -485,17 +486,52 @@ func underlineStroke(s *Shape, box *geo.Box, seed float64) []geo.Point {
 			labelBox = s.OuterLabelBox(geometry.GetBox())
 		}
 		tl := s.LabelTopLeft(position, labelBox)
-		x1, x2 = tl.X-2, tl.X+float64(s.LabelWidth)+2
+		x1, x2 = tl.X-5, tl.X+float64(s.LabelWidth)+5
 		y = tl.Y + float64(s.LabelHeight) + 2
 	}
 	length := x2 - x1
-	steps := int(math.Max(8, length/6))
-	waves := math.Max(1, math.Round(length/90))
-	pts := make([]geo.Point, 0, steps+1)
-	for i := 0; i <= steps; i++ {
-		t := float64(i) / float64(steps)
-		pts = append(pts, geo.Point{X: x1 + length*t, Y: y + 1.3*math.Sin(2*math.Pi*waves*t*0.5+seed) - 1.2*t})
+	const (
+		// turn is the radius of each reversal, so a pass starts two of them
+		// below where the last one ended.
+		turn = 1.3
+		// spread opens the passes away from each reversal, so the three read
+		// as layers of one zigzag and not as ruled lines.
+		spread = 2.8
+	)
+	// Two numbers between 0 and 1 that differ from target to target.
+	u, v := 0.5+0.5*math.Sin(seed), 0.5+0.5*math.Cos(1.7*seed)
+	// A pass climbs a little from left to right. The second stops short of
+	// where the pen started, and the third trails off before the end.
+	rise := math.Min(1.4, length*0.02)
+	inset := float64(math.Min(8, length*0.12) * (0.5 + u))
+	short := float64(math.Min(18, length*0.22) * (0.5 + v))
+
+	pts := make([]geo.Point, 0, 64)
+	pass := func(ax, ay, bx, by, phase float64) {
+		span := math.Abs(bx - ax)
+		steps := int(math.Max(6, span/6))
+		waves := math.Max(1, math.Round(span/90))
+		for i := 0; i <= steps; i++ {
+			t := float64(i) / float64(steps)
+			// The hand wavers along a pass and is steady where it turns.
+			waver := float64(0.6 * math.Sin(math.Pi*t) * math.Sin(math.Pi*waves*t+phase))
+			pts = append(pts, geo.Point{X: ax + float64((bx-ax)*t), Y: ay + float64((by-ay)*t) + waver})
+		}
 	}
+	reverse := func(x, y, side float64) {
+		for i := 1; i < 6; i++ {
+			a := -math.Pi/2 + float64(i)/6*math.Pi
+			pts = append(pts, geo.Point{X: x + float64(side*turn*math.Cos(a)), Y: y + turn + float64(turn*math.Sin(a))})
+		}
+	}
+	left := x1 + inset
+	second := y + 2*turn + spread
+	third := second + 2*turn
+	pass(x1, y, x2, y-rise, seed)
+	reverse(x2, y-rise, 1)
+	pass(x2, y-rise+2*turn, left, second, seed+2)
+	reverse(left, second, -1)
+	pass(left, third, x2-short, third-rise, seed+4)
 	return simplify(pts)
 }
 
@@ -548,27 +584,96 @@ func braceStroke(box *geo.Box, side string) []geo.Point {
 	return simplify(pts)
 }
 
-// crossStrokes strikes the box out with two slightly bowed strokes.
-func crossStrokes(box *geo.Box, seed float64) [][]geo.Point {
-	inset := math.Min(box.Width, box.Height) * 0.1
-	x1, y1 := box.TopLeft.X+inset, box.TopLeft.Y+inset
-	x2, y2 := box.TopLeft.X+box.Width-inset, box.TopLeft.Y+box.Height-inset
-	stroke := func(ax, ay, bx, by, bow float64) []geo.Point {
-		length := math.Hypot(bx-ax, by-ay)
-		nx, ny := -(by-ay)/length, (bx-ax)/length
-		steps := int(math.Max(6, length/10))
-		pts := make([]geo.Point, 0, steps+1)
-		for i := 0; i <= steps; i++ {
-			t := float64(i) / float64(steps)
-			off := bow * math.Sin(math.Pi*t)
-			pts = append(pts, geo.Point{X: ax + (bx-ax)*t + nx*off, Y: ay + (by-ay)*t + ny*off})
-		}
-		return simplify(pts)
+// strike is one pen stroke from a to b that bows to one side on the way.
+func strike(ax, ay, bx, by, bow float64) []geo.Point {
+	length := math.Hypot(bx-ax, by-ay)
+	if length == 0 {
+		return nil
 	}
-	bow := math.Min(4, math.Hypot(x2-x1, y2-y1)*0.02)
+	nx, ny := -(by-ay)/length, (bx-ax)/length
+	steps := int(math.Max(6, length/10))
+	pts := make([]geo.Point, 0, steps+1)
+	for i := 0; i <= steps; i++ {
+		t := float64(i) / float64(steps)
+		off := float64(bow * math.Sin(math.Pi*t))
+		pts = append(pts, geo.Point{X: ax + float64((bx-ax)*t) + float64(nx*off), Y: ay + float64((by-ay)*t) + float64(ny*off)})
+	}
+	return simplify(pts)
+}
+
+// crossStrokes strikes the box out with two strokes that run on past its
+// corners, each end by its own amount, as a pen does crossing something out.
+func crossStrokes(box *geo.Box, seed float64) [][]geo.Point {
+	x1, y1 := box.TopLeft.X, box.TopLeft.Y
+	x2, y2 := x1+box.Width, y1+box.Height
+	diagonal := math.Hypot(box.Width, box.Height)
+	if diagonal == 0 {
+		return nil
+	}
+	ux, uy := box.Width/diagonal, box.Height/diagonal
+	past := math.Max(9, math.Min(15, math.Min(box.Width, box.Height)*0.22))
+	u, v := 0.5+0.5*math.Sin(seed), 0.5+0.5*math.Cos(1.7*seed)
+	a, b := float64(past*(0.85+0.25*u)), float64(past*(1.08-0.2*u))
+	c, d := float64(past*(1-0.18*v)), float64(past*(0.82+0.26*v))
+	bow := math.Min(4, diagonal*0.02)
 	return [][]geo.Point{
-		stroke(x1, y1, x2, y2, bow*(1+0.3*math.Sin(seed))),
-		stroke(x2, y1, x1, y2, -bow*(1+0.3*math.Cos(seed))),
+		strike(x1-float64(ux*a), y1-float64(uy*a), x2+float64(ux*b), y2+float64(uy*b), bow*(1+0.3*math.Sin(seed))),
+		strike(x2+float64(ux*c), y1-float64(uy*c), x1-float64(ux*d), y2+float64(uy*d), -bow*(1+0.3*math.Cos(seed))),
+	}
+}
+
+// routeCrossStrokes strikes a route out at its middle with an X about 37
+// across, so that its arms stand clear of the line on both sides. The X is
+// upright, as it is on a page. Where the route runs close to one of its
+// strokes, it turns just far enough for that stroke to cross the route
+// instead of lying along it.
+func routeCrossStrokes(route []geo.Point, seed float64) [][]geo.Point {
+	const (
+		// arm is half the length of a stroke.
+		arm = 26.
+		// clearance is the least angle between the route and either stroke.
+		clearance = 24 * math.Pi / 180
+	)
+	mid := pointAlong(route, 0.5)
+	turn := 0.
+	if total := strokeLength(route); total > 0 {
+		reach := math.Min(6, total/4) / total
+		p, q := pointAlong(route, 0.5-reach), pointAlong(route, 0.5+reach)
+		// The heading is read off the tenth-of-a-pixel grid. A route that
+		// runs exactly along a stroke is then a tie on every machine, and
+		// the choice of which way to turn is made on whole numbers.
+		dx, dy := tenths(q.X)-tenths(p.X), tenths(q.Y)-tenths(p.Y)
+		if dx < 0 {
+			dx, dy = -dx, -dy
+		}
+		rise := dy
+		if rise < 0 {
+			rise = -rise
+		}
+		if dx != 0 && rise != 0 {
+			near := math.Pi/4 - math.Atan2(float64(min(dx, rise)), float64(max(dx, rise)))
+			if near < clearance {
+				// Turn the nearer stroke away from the route: steeper when
+				// the route is the shallower of the two, and the reverse.
+				turn = clearance - near
+				if rise > dx {
+					turn = -turn
+				}
+				if dy < 0 {
+					turn = -turn
+				}
+			}
+		}
+	}
+	// The strokes of an upright X, turned together.
+	ax, ay := math.Cos(math.Pi/4+turn), math.Sin(math.Pi/4+turn)
+	bx, by := math.Cos(turn-math.Pi/4), math.Sin(turn-math.Pi/4)
+	u, v := 0.5+0.5*math.Sin(seed), 0.5+0.5*math.Cos(1.7*seed)
+	a1, a2 := float64(arm*(0.92+0.12*u)), float64(arm*(1.06-0.1*u))
+	b1, b2 := float64(arm*(1.04-0.1*v)), float64(arm*(0.9+0.14*v))
+	return [][]geo.Point{
+		strike(mid.X-float64(ax*a1), mid.Y-float64(ay*a1), mid.X+float64(ax*a2), mid.Y+float64(ay*a2), 1+0.4*math.Sin(seed)),
+		strike(mid.X+float64(bx*b1), mid.Y+float64(by*b1), mid.X-float64(bx*b2), mid.Y-float64(by*b2), -1-0.4*math.Cos(seed)),
 	}
 }
 
