@@ -2,7 +2,9 @@ package d2fonts
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -54,9 +56,17 @@ func TestAppendixFacesPreserveShaping(t *testing.T) {
 			return glyphs
 		}
 		// gen_appendix_faces.py decodes the shipped WOFF2 for the Go shaper.
-		subset, err := os.ReadFile("testdata/appendix-" + string(tc.style) + ".ttf")
+		path := "testdata/appendix-" + string(tc.style)
+		subset, err := os.ReadFile(path + ".ttf")
 		if err != nil {
 			t.Fatal(err)
+		}
+		digest, err := os.ReadFile(path + ".sha256")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(append(woff, subset...))); got != strings.TrimSpace(string(digest)) {
+			t.Fatalf("%s appendix WOFF2 or shaping fixture changed; run gen_appendix_faces.py", tc.style)
 		}
 		if !slices.Equal(shape(original), shape(subset)) {
 			t.Fatalf("%s appendix glyph selection or positioning changed", tc.style)

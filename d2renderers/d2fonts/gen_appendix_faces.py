@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the bundled appendix faces with FontTools 4.69.1 and Brotli 1.2.1."""
 from copy import deepcopy
+from hashlib import sha256
 import os
 from pathlib import Path
 
@@ -44,9 +45,12 @@ def build(style):
 
     # The Go shaping test reads SFNT. Exercise the face decoded from the
     # shipped WOFF2, including its shaping tables, Unicode aliases and metrics.
+    fixture = Path(f"testdata/appendix-{style.lower()}.ttf")
     with TTFont(path, recalcTimestamp=False, recalcBBoxes=False) as decoded:
         decoded.flavor = None
-        decoded.save(f"testdata/appendix-{style.lower()}.ttf")
+        decoded.save(fixture)
+    digest = sha256(path.read_bytes() + fixture.read_bytes()).hexdigest()
+    fixture.with_suffix(".sha256").write_text(digest + "\n", encoding="ascii")
 
 
 if __name__ == "__main__":
