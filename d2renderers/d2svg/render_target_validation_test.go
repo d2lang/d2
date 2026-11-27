@@ -1,10 +1,13 @@
 package d2svg_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/PuerkitoBio/goquery"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2svg"
@@ -320,12 +323,22 @@ func TestRenderAcceptsLegendConnectionWithSynthesizedRoute(t *testing.T) {
 	diagram := validRenderTarget()
 	connection := *d2target.BaseConnection()
 	connection.Label = "connection"
+	connection.SrcArrow, connection.DstArrow = d2target.TriangleArrowhead, d2target.TriangleArrowhead
 	diagram.Legend = &d2target.Legend{Connections: []d2target.Connection{connection}}
 	diagram = roundTripRenderTarget(t, diagram)
 
-	if _, err := renderWithoutPanic(t, diagram); err != nil {
+	out, err := renderWithoutPanic(t, diagram)
+	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Find("path[marker-start][marker-end]").Length(); got != 1 {
+		t.Fatalf("got %d bidirectional legend paths, want 1", got)
+	}
+	assertUniqueResolvableLocalIRIs(t, out)
 }
 
 func TestRenderRejectsCyclicBoardBeforeHashing(t *testing.T) {

@@ -439,7 +439,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, connectionMasks{}, legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -798,7 +798,12 @@ func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
 		svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", c.X, c.Y, c.Width, c.Height)), svg.Attr("overflow", "hidden")))
 }
 
-func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+type connectionMasks struct {
+	labelID    string
+	crossingID string
+}
+
+func drawConnection(writer *objectWriter, markerScope string, masks connectionMasks, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
 	if c := connection.MotionClip; c != nil {
 		openMotionViewport(writer, c)
 		defer writer.buf.WriteString("</svg>")
@@ -832,7 +837,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		if gradient != nil {
 			position = fmt.Sprint(placement)
 		}
-		id := arrowheadMarkerID(diagramHash, target, connection, position, writer.compactMarkerIDs)
+		id := arrowheadMarkerID(markerScope, target, connection, position, writer.compactMarkerIDs)
 		if _, exists := defined[id]; !exists {
 			markup := arrowheadMarker(target, id, connection, inlineTheme, gradient, placement)
 			if markup == "" {
@@ -902,13 +907,16 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		labelMask = ""
 	}
 	path := pathData(connection, srcAdj, dstAdj)
-	mask := svg.Attr("mask", svg.LocalIRI(svg.LiteralID(diagramHash)))
-	if crossingMask != "" {
-		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(crossingMask)))))
+	var pathAttrs []svg.Attribute
+	if masks.labelID != "" {
+		pathAttrs = []svg.Attribute{svg.Attr("mask", svg.LocalIRI(svg.LiteralID(masks.labelID)))}
+	}
+	if masks.crossingID != "" {
+		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(masks.crossingID)))))
 	}
 
 	if sketch {
-		out, err := d2sketch.ConnectionWithAttributes(connection, path, []svg.Attribute{mask})
+		out, err := d2sketch.ConnectionWithAttributes(connection, path, pathAttrs)
 		if err != nil {
 			return "", err
 		}
@@ -940,7 +948,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 			pathEl.Stroke = connection.Stroke
 			pathEl.ClassName = className
 			pathEl.Style = connection.CSSStyle() + extraStyle
-			pathEl.AddAttributes(append(attrs, mask)...)
+			pathEl.AddAttributes(append(attrs, pathAttrs...)...)
 			writer.element(pathEl)
 		}
 		// If connection is animated and bidirectional
@@ -957,7 +965,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		}
 	}
 
-	if crossingMask != "" {
+	if masks.crossingID != "" {
 		fmt.Fprint(writer, svg.CloseElement("g"))
 	}
 
@@ -2324,11 +2332,11 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 			return nil, err
 		}
 		if c, is := obj.(indexedConnection); is {
-			maskID := ""
+			masks := connectionMasks{labelID: isolatedDiagramHash}
 			if len(crossings[c.index]) != 0 {
-				maskID = crossingMaskID(isolatedDiagramHash, c.index)
+				masks.crossingID = crossingMaskID(isolatedDiagramHash, c.index)
 			}
-			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
+			labelMask, err := drawConnection(writer, isolatedDiagramHash, masks, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
 			}
