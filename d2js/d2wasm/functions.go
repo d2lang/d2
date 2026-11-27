@@ -494,6 +494,11 @@ func render(input RenderRequest) ([]byte, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
 	}
+	// Validation checks that the target refers to registered font families.
+	ruler, _, err := input.fonts.newRuler()
+	if err != nil {
+		return nil, err
+	}
 	if err := d2target.ValidateRenderTarget(input.Diagram); err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid diagram: %s", err.Error()), Code: 400}
 	}
@@ -569,10 +574,6 @@ func render(input RenderRequest) ([]byte, error) {
 		ThemeOverrides:     input.Opts.ThemeOverrides,
 		DarkThemeOverrides: input.Opts.DarkThemeOverrides,
 		NoXMLTag:           input.Opts.NoXMLTag,
-	}
-	ruler, _, err := input.fonts.newRuler()
-	if err != nil {
-		return nil, err
 	}
 
 	if input.Opts.ASCII != nil && *input.Opts.ASCII {

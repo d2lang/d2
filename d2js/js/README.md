@@ -244,7 +244,8 @@ Go version in the root `go.mod`, TinyGo 0.44.0-d2.3 from
 says why the build needs it), Binaryen (CI uses version 133), the Bun version in
 `package.json`, and Node.js 24 with npm. Put `tinygo` and `wasm-opt` on PATH. The
 build bundles the JavaScript runtime from the same TinyGo installation as the
-compiler.
+compiler. The fork publishes a prebuilt compiler for Linux amd64. On other hosts,
+use a Linux amd64 build environment or build the pinned fork from source.
 
 ### Building from source
 
