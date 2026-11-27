@@ -1,14 +1,1 @@
-<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" d2Version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 0 0"><svg class="d2-svg" width="0" height="0" viewBox="0 0 0 0"><style type="text/css"><![CDATA[.shape {
-  shape-rendering: geometricPrecision;
-  stroke-linejoin: round;
-}
-.connection {
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.blend {
-  mix-blend-mode: multiply;
-  opacity: 0.5;
-}
-
-		.d2-3003375094 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><style type="text/css"><![CDATA[]]></style></svg></svg>
+<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" d2Version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 0 0"><svg class="d2-svg" width="0" height="0" viewBox="0 0 0 0"><style>.shape{shape-rendering:geometricPrecision;stroke-linejoin:round}.connection{stroke-linecap:round;stroke-linejoin:round}.d2-3003375094 .stroke-B2{stroke:#0D32B2}.appendix text.text{fill:#0A0F25}</style></svg></svg>
