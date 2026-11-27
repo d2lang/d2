@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 105 92"><svg class="d2-3650778271 d2-svg" width="105" height="92" viewBox="-4 -22 105 92"><rect x="-4" y="-22" width="105" height="92" rx="0" fill="#FFFFFF" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[
+<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 105 92"><svg class="d2-3650778271 d2-svg" width="105" height="92" viewBox="-4 -22 105 92"><rect x="-4" y="-22" width="105" height="92" fill="#FFFFFF" class=" fill-N7" stroke-width="0"/><style type="text/css"><![CDATA[
 .d2-3650778271 .text-bold {
 	font-family: "d2-3650778271-font-bold";
 }
@@ -20,6 +20,6 @@
 
 		.d2-3650778271 .fill-N1{fill:#0A0F25;}
 		.d2-3650778271 .fill-N7{fill:#FFFFFF;}
-		.d2-3650778271 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><g class="Y3ViZQ==" style='opacity:0.5'><g class="shape" ><defs><mask id="border-mask-d2-3650778271-cube" maskUnits="userSpaceOnUse" x="0" y="-15" width="94" height="81">
+		.d2-3650778271 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><g class="Y3ViZQ==" style='opacity:0.5'><g class="shape"><defs><mask id="border-mask-d2-3650778271-cube" maskUnits="userSpaceOnUse" x="0" y="-15" width="94" height="81">
 <rect x="0" y="-15" width="94" height="81" fill="white"></rect>
-<path d="M0,0L15,-15L94,-15L94,51L79,66L0,66L0,0L79,0L79,66M79,0L94,-15" style="stroke-width:7;;stroke:#000;fill:none;opacity:1;"/></mask></defs><rect x="0" y="0" width="79" height="66" mask="url(#border-mask-d2-3650778271-cube)" stroke="none" fill="orange" style="stroke-width:7;" /><polygon mask="url(#border-mask-d2-3650778271-cube)" points="0,0 15,-15 94,-15 94,51 79,66 79,0" fill="#cc8400" style="stroke-width:7;" /><path d="M0,0 L15,-15 L94,-15 L94,51 L79,66 L0,66 L0,0 L79,0 L79,66 M79,0 L94,-15" stroke="#53C0D8" fill="none" style="stroke-width:7;" /></g><text x="39.5" y="38.5" fill="#0A0F25" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">cube</text></g></svg></svg>
+<path d="M0,0L15,-15L94,-15L94,51L79,66L0,66L0,0L79,0L79,66M79,0L94,-15" style="stroke-width:7;;stroke:#000;fill:none;opacity:1;"/></mask></defs><rect x="0" y="0" width="79" height="66" mask="url(#border-mask-d2-3650778271-cube)" stroke="none" fill="orange" style="stroke-width:7;"/><polygon mask="url(#border-mask-d2-3650778271-cube)" points="0,0 15,-15 94,-15 94,51 79,66 79,0" fill="#cc8400" style="stroke-width:7;"/><path d="M0,0 L15,-15 L94,-15 L94,51 L79,66 L0,66 L0,0 L79,0 L79,66 M79,0 L94,-15" stroke="#53C0D8" fill="none" style="stroke-width:7;"/></g><text x="39.5" y="38.5" fill="#0A0F25" class="text-bold fill-N1" style="text-anchor:middle;font-size:16px">cube</text></g></svg></svg>
