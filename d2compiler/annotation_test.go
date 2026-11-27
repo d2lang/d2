@@ -204,6 +204,8 @@ func TestAnnotationErrors(t *testing.T) {
 		{"shape named annotation", `annotation: {shape: text; near: a}`, `If "annotation" is the name of a shape here, quote it`},
 		{"shape named annotation placed near another", `a; annotation: note {near: a}`, `If "annotation" is the name of a shape here, quote it`},
 		{"container named annotation", `annotation: {child}`, `If "annotation" is the name of a shape here, quote it`},
+		{"shape named annotation in a connection", `annotation -> a`, `reserved keywords are prohibited in edges. If "annotation" is the name of a shape here, quote it`},
+		{"shape named annotation inside a connection's path", `a -> b.annotation`, `If "annotation" is the name of a shape here, quote it`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := d2compiler.Compile("test.d2", strings.NewReader(tc.source), nil)

@@ -2502,6 +2502,11 @@ func checkEdgeKeyword(kp *d2ast.KeyPath, path []d2ast.String) error {
 	if k := len(kp.Path) - len(path) + ij; k >= 0 {
 		n = kp.Path[k].Unbox()
 	}
+	if d2ast.Keyword(path[ij]) == "annotation" {
+		// The name was an ordinary one before it became a keyword, so an
+		// existing diagram can have a shape called annotation in an edge.
+		return d2parser.Errorf(n, `reserved keywords are prohibited in edges. If "annotation" is the name of a shape here, quote it`)
+	}
 	return d2parser.Errorf(n, "reserved keywords are prohibited in edges")
 }
 
