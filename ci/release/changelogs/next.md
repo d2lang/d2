@@ -4,6 +4,7 @@
 
 #### Improvements 🧹
 
+- SVG exports embed smaller subsets of D2's bundled fonts. The 157 documentation examples use about 17% fewer bytes in total, or 27% fewer with gzip.
 - **GIF.** The ceiling on an animation's total frame area rose from 160 to 256 Mi-pixels, enough for a narrated explainer of about twenty seconds at 700 by 600.
 
 #### Bugfixes ⛑️

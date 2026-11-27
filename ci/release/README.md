@@ -1,5 +1,21 @@
 # release
 
+## Playground and docs dependency review
+
+Before each D2 release, review the dependencies in both sites and test compatible updates
+in their respective repositories.
+
+- In the [Playground](https://github.com/d2lang/d2-playground), review `src/js/package.json` and
+  `src/js/yarn.lock`. Keep the development esbuild pin in `go.mod` and `go.sum` in sync
+  with the production pin in `ci/vercel-build.sh`.
+- In the [docs](https://github.com/d2lang/d2-docs), review `package.json` and `yarn.lock`,
+  including Docusaurus and its plugins.
+
+Install from each updated lockfile with `yarn install --frozen-lockfile`, build the Vercel
+previews, and check them in Chrome and Safari. After D2.js is published, update the
+Playground's D2.js dependency and lockfile to the published version and render a diagram
+with each layout in its preview.
+
 ## npm publishing
 
 `@d2lang/d2` is the canonical JavaScript package. `@terrastruct/d2` is published from the

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"github.com/d2lang/d2/internal/bundledfont"
 )
 
 var (
@@ -82,8 +84,8 @@ func calcChecksum(buf []byte) uint32 {
 }
 
 // SubsetWOFF produces a self-contained font for an SVG. The compact subset
-// drops redundant SFNT entries, retains every selected glyph and its metrics,
-// and uses the same WOFF container as the full-font fallback.
+// drops redundant SFNT entries. Subsets of D2's bundled faces keep only the
+// PostScript name and omit the missing-glyph outline when the text permits.
 func SubsetWOFF(face []byte, chars string) ([]byte, error) {
 	if !hasSFNTDirectory(face) {
 		return nil, fmt.Errorf("incomplete SFNT table directory")
@@ -95,7 +97,12 @@ func SubsetWOFF(face []byte, chars string) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported outline format %q", face[:4])
 	}
-	subset := cutFont(bytes.Clone(face), chars, true)
+	f := utf8FontFile{
+		fileReader: &fileReader{array: bytes.Clone(face)},
+		compact:    true,
+		bundled:    bundledfont.Is(face),
+	}
+	subset := f.cutFont(chars)
 	if len(subset) == 0 {
 		return nil, fmt.Errorf("font does not contain the tables needed for a TrueType subset")
 	}
