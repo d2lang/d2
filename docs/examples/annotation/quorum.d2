@@ -8,6 +8,12 @@ vars: {
 }
 direction: right
 
+classes: {
+  acked: {
+    annotation: quorum = 2 of 3 {shape: lasso; near: bottom-center}
+  }
+}
+
 client: Client
 db: orders-db {
   primary: {shape: cylinder}
@@ -16,12 +22,12 @@ db: orders-db {
   primary -> r1
   primary -> r2
 }
-client -> db.primary
+client -> db.primary: INSERT
 
 steps: {
   write: {
     annotation: |md A write lands on the [primary](db.primary). |
-    (client -> db.primary)[0].annotation: INSERT
+    (client -> db.primary)[0].annotation.shape: highlight
   }
   replicate: {
     annotation: |md The primary copies it to both replicas. |
@@ -31,14 +37,13 @@ steps: {
     }
   }
   lag: {
-    annotation: |md [Replica 2](db.r2) is slow today. |
-    db.r2.annotation: 4 s behind
+    annotation: |md Replica 2 is slow today. |
+    db.r2.annotation: 4 s behind {shape: arrow}
   }
   quorum: {
-    annotation: |md The write commits anyway: [two of three](db) have it. |
-    db.annotation: quorum = 2 of 3
-    db.primary.annotation.shape: underline
-    db.r1.annotation.shape: underline
+    annotation: |md The write commits anyway: two of three have it. |
+    db.primary.class: acked
+    db.r1.class: acked
   }
   moral: {
     annotation: |md One slow replica cannot hold up a write. |
