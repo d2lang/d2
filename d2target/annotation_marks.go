@@ -346,6 +346,10 @@ func lassoStroke(held, others []*geo.Box, seed float64) []geo.Point {
 		i := (first + k) % n
 		prev, v, next := hull[(i+n-1)%n], hull[i], hull[(i+1)%n]
 		in, out := math.Hypot(v.X-prev.X, v.Y-prev.Y), math.Hypot(next.X-v.X, next.Y-v.Y)
+		if in == 0 || out == 0 {
+			// Two corners in the same place: there is no turn to round.
+			continue
+		}
 		r := math.Min(radius, math.Min(in, out)/2)
 		ax, ay := v.X+float64((prev.X-v.X)/in*r), v.Y+float64((prev.Y-v.Y)/in*r)
 		bx, by := v.X+float64((next.X-v.X)/out*r), v.Y+float64((next.Y-v.Y)/out*r)
@@ -357,6 +361,9 @@ func lassoStroke(held, others []*geo.Box, seed float64) []geo.Point {
 				Y: float64(p*ay) + float64(q*v.Y) + float64(s*by),
 			})
 		}
+	}
+	if len(ring) < 3 {
+		return nil
 	}
 	lengths := make([]float64, len(ring))
 	total, cx, cy := 0., 0., 0.
