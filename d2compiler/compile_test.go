@@ -2480,6 +2480,289 @@ b: {
 			},
 		},
 		{
+			name: "import-near-key",
+
+			text: `b: @x
+`,
+			files: map[string]string{
+				"x.d2": `x
+box2
+x.near: box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				var obj *d2graph.Object
+				for _, o := range g.Objects {
+					if o.AbsID() == "b.x" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"b", "box2"}, d2graph.Key(obj.NearKey))
+				target, ok := obj.NearTarget()
+				tassert.True(t, ok)
+				tassert.Equal(t, "b.box2", target.AbsID())
+			},
+		},
+		{
+			name: "import-near-key-spread",
+
+			text: `b: {...@x}
+`,
+			files: map[string]string{
+				"x.d2": `x
+box2
+x.near: box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				var obj *d2graph.Object
+				for _, o := range g.Objects {
+					if o.AbsID() == "b.x" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"b", "box2"}, d2graph.Key(obj.NearKey))
+				target, ok := obj.NearTarget()
+				tassert.True(t, ok)
+				tassert.Equal(t, "b.box2", target.AbsID())
+			},
+		},
+		{
+			name: "import-near-key-nested",
+
+			text: `b: @y
+`,
+			files: map[string]string{
+				"y.d2": `m: @x
+`,
+				"x.d2": `x
+box2
+x.near: box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				var obj *d2graph.Object
+				for _, o := range g.Objects {
+					if o.AbsID() == "b.m.x" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"b", "m", "box2"}, d2graph.Key(obj.NearKey))
+				target, ok := obj.NearTarget()
+				tassert.True(t, ok)
+				tassert.Equal(t, "b.m.box2", target.AbsID())
+			},
+		},
+		{
+			name: "import-near-key-board",
+
+			text: `layers: {
+  l: @x
+}
+`,
+			files: map[string]string{
+				"x.d2": `x
+box2
+x.near: box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				l := g.Layers[0]
+				var obj *d2graph.Object
+				for _, o := range l.Objects {
+					if o.AbsID() == "x" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"box2"}, d2graph.Key(obj.NearKey))
+				_, ok := obj.NearTarget()
+				tassert.True(t, ok)
+			},
+		},
+		{
+			name: "import-near-key-unresolved",
+
+			text: `b: @x
+`,
+			files: map[string]string{
+				"x.d2": `x.near: nothing
+`,
+			},
+			expErr: `d2/testdata/d2compiler/TestCompile/x.d2:1:9: near key "nothing" must be the absolute path to a shape or one of the following constants: top-left, top-center, top-right, center-left, center-right, bottom-left, bottom-center, bottom-right`,
+		},
+		{
+			name: "import-near-key-importer-collision",
+
+			text: `b: {
+  box2
+  ...@x
+}
+`,
+			files: map[string]string{
+				"x.d2": `x
+x.near: box2
+`,
+			},
+			expErr: `d2/testdata/d2compiler/TestCompile/x.d2:2:9: near key "box2" must be the absolute path to a shape or one of the following constants: top-left, top-center, top-right, center-left, center-right, bottom-left, bottom-center, bottom-right`,
+		},
+		{
+			name: "import-near-key-both-declare",
+
+			text: `b: {
+  box2
+  ...@x
+}
+`,
+			files: map[string]string{
+				"x.d2": `x
+box2
+x.near: box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				var obj *d2graph.Object
+				for _, o := range g.Objects {
+					if o.AbsID() == "b.x" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"b", "box2"}, d2graph.Key(obj.NearKey))
+			},
+		},
+		{
+			name: "import-near-key-qualified",
+
+			text: `b: @x
+`,
+			files: map[string]string{
+				"x.d2": `x
+g.h
+x.near: g.h
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				var obj *d2graph.Object
+				for _, o := range g.Objects {
+					if o.AbsID() == "b.x" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"b", "g", "h"}, d2graph.Key(obj.NearKey))
+				_, ok := obj.NearTarget()
+				tassert.True(t, ok)
+			},
+		},
+		{
+			name: "import-near-key-inside-board",
+
+			text: `layers: {
+  l: {
+    b: @x
+  }
+}
+`,
+			files: map[string]string{
+				"x.d2": `x
+box2
+x.near: box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				var obj *d2graph.Object
+				for _, o := range g.Layers[0].Objects {
+					if o.AbsID() == "b.x" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"b", "box2"}, d2graph.Key(obj.NearKey))
+				_, ok := obj.NearTarget()
+				tassert.True(t, ok)
+			},
+		},
+		{
+			name: "import-near-key-importer-owned",
+
+			text: `box2
+b: {
+  y
+  y.near: box2
+  ...@x
+}
+`,
+			files: map[string]string{
+				"x.d2": `box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				var obj *d2graph.Object
+				for _, o := range g.Objects {
+					if o.AbsID() == "b.y" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"box2"}, d2graph.Key(obj.NearKey))
+				target, ok := obj.NearTarget()
+				tassert.True(t, ok)
+				tassert.Equal(t, "box2", target.AbsID())
+			},
+		},
+		{
+			name: "import-near-key-importer-owned-value",
+
+			text: `box2
+b.y
+b.y.near: box2
+b: @x
+`,
+			files: map[string]string{
+				"x.d2": `box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				var obj *d2graph.Object
+				for _, o := range g.Objects {
+					if o.AbsID() == "b.y" {
+						obj = o
+					}
+				}
+				tassert.NotNil(t, obj)
+				tassert.Equal(t, []string{"box2"}, d2graph.Key(obj.NearKey))
+			},
+		},
+		{
+			name: "import-near-key-twice",
+
+			text: `a: @x
+b: {...@x}
+`,
+			files: map[string]string{
+				"x.d2": `x
+box2
+x.near: box2
+`,
+			},
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				got := map[string][]string{}
+				for _, o := range g.Objects {
+					if o.NearKey != nil {
+						got[o.AbsID()] = d2graph.Key(o.NearKey)
+					}
+				}
+				tassert.Equal(t, map[string][]string{
+					"a.x": {"a", "box2"},
+					"b.x": {"b", "box2"},
+				}, got)
+			},
+		},
+		{
 			name: "near_constant",
 
 			text: `x.near: top-center
