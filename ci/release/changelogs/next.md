@@ -100,6 +100,11 @@ AI-generated changelog:
 - **Variables.** Map spreads apply where they appear, so later assignments win. Templates keep their declaration scope and can style existing connections. Forward references resolve fully, glob filters see substituted values, and Markdown uses the nearest variable binding, including in link URLs and titles. [Markdown variables](https://github.com/d2lang/d2/pull/3057) · [Variable fixes](https://github.com/d2lang/d2/pull/3060) · [Spread substitutions](https://d2lang.com/tour/vars/#spread-substitutions) · [#3044](https://github.com/d2lang/d2/pull/3044)
 - **Compiler and API.** Parsing and compilation honor cancellation, including before `d2 fmt` writes. A step with a map can follow one without a map. Glob connections whose shared path matches nothing now compile, and invalid connection endpoints report errors. Cyclic variables, oversized expansions, invalid board trees, and oversized grids return errors. Go callers can configure expansion budgets. Each graph passed to Dagre or ELK is limited to 1,024 objects and 1,024 edges. LaTeX labels are limited to 4 KiB and 128 nested groups. [Compiler and renderer limits](https://github.com/d2lang/d2/blob/d70ec718/ci/release/changelogs/next.md#L108-L158)
 - **Windows and standalone installs.** Nested imports resolve relative to the importing file, including on UNC shares. Git Bash can acquire the installer lock. Failed upgrades preserve the existing install. [#2993](https://github.com/d2lang/d2/pull/2993) · [#3026](https://github.com/d2lang/d2/pull/3026) · [#3024](https://github.com/d2lang/d2/pull/3024)
+- **Formatter and Go editor.** `d2 fmt` preserves names and labels split across lines. The Go editor distinguishes quoted shape names from properties and keeps label capitalization.
+- **Dotted boards and arrays.** Dotted steps and scenarios inherit shapes, connections, and rules. Array spreads preserve declaration order and later entries.
+- **Selected imports.** Imported values keep their module bindings and can use caller variables as fallbacks. Variables required only by unselected exports can be omitted.
+- **Filters.** Edge filters use each endpoint’s effective label and shape. Class filters accept lists and variables. Nesting depth is correct for shapes named `root`.
+- **Animation and Markdown variables.** Numeric variables with metadata interpolate across steps. Templates keep their declaration scope. Markdown substitutions preserve escaped placeholders, shortcut links, and variable names containing Markdown punctuation. [#3063](https://github.com/d2lang/d2/pull/3063)
 
 #### Breaking Changes
 
@@ -138,4 +143,4 @@ The `@d2lang/d2` package runs in browsers and Node.js.
 
 ---
 
-[Install D2](https://d2lang.com/tour/install/) · [All changes since v0.9.0](https://github.com/d2lang/d2/compare/v0.9.0...644077c8)
+[Install D2](https://d2lang.com/tour/install/) · [All changes since v0.9.0](https://github.com/d2lang/d2/compare/v0.9.0...d10e34079)
