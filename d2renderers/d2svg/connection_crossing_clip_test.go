@@ -27,7 +27,11 @@ func TestCrossingClipFallback(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var defs bytes.Buffer
-			effect := viewport.writeCrossing(&defs, "board-cg0", tc.gaps, true)
+			crossings := [][]d2target.ConnectionGap{tc.gaps}
+			diagram := &d2target.Diagram{Connections: []d2target.Connection{{Animated: true}}}
+			effects := viewport.planCrossings("board", crossings, diagram, false)
+			viewport.writeCrossings(&defs, effects, crossings)
+			effect := effects[0]
 			if effect.mask != tc.mask {
 				t.Fatalf("mask = %t, want %t", effect.mask, tc.mask)
 			}

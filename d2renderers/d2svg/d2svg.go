@@ -2321,9 +2321,8 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		return nil, invalidPaddingError(int64(pad))
 	}
 
-	var crossingDefs bytes.Buffer
 	viewport := crossingViewport{left, top, w, h}
-	effects := viewport.writeCrossings(&crossingDefs, isolatedDiagramHash, crossings, diagram, opts.MasterID != "")
+	effects := viewport.planCrossings(isolatedDiagramHash, crossings, diagram, opts.MasterID != "")
 
 	sortObjects(allObjects)
 
@@ -2389,7 +2388,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		buf.WriteString(svg.CloseElement("mask"))
 	}
 
-	buf.Write(crossingDefs.Bytes())
+	viewport.writeCrossings(buf, effects, crossings)
 
 	// Validate the theme before expanding the background, preserving error order.
 	var themeStylesheet string

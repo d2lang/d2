@@ -36,7 +36,7 @@ type crossingViewport struct {
 // or immediately if a masked shaft or its board will animate.
 const staticCrossingMaskElements = 48
 
-func (v crossingViewport) writeCrossings(buf *bytes.Buffer, boardID string, crossings [][]d2target.ConnectionGap, diagram *d2target.Diagram, frame bool) map[int]crossingEffect {
+func (v crossingViewport) planCrossings(boardID string, crossings [][]d2target.ConnectionGap, diagram *d2target.Diagram, frame bool) map[int]crossingEffect {
 	elements := 0
 	animated := frame
 	for i, gaps := range crossings {
@@ -65,33 +65,50 @@ func (v crossingViewport) writeCrossings(buf *bytes.Buffer, boardID string, cros
 			// Custom stylesheets may select the original groups and IDs.
 			id = "crossings-" + boardID + "-" + strconv.Itoa(i)
 		}
-		effect := v.writeCrossing(buf, id, gaps, useClips)
-		effect.replacesEmptyMask = emptyMask
-		effects[i] = effect
+		effects[i] = crossingEffect{id: id, mask: !useClips || !v.canClip(gaps), replacesEmptyMask: emptyMask}
 	}
 	return effects
 }
 
+// Write definitions in connection order even when z-index changes paint order.
+func (v crossingViewport) writeCrossings(buf *bytes.Buffer, effects map[int]crossingEffect, crossings [][]d2target.ConnectionGap) {
+	if len(effects) == 0 {
+		return
+	}
+	var bounds []svg.Attribute
+	var backdrop, shell string
+	for i, gaps := range crossings {
+		if len(gaps) == 0 {
+			continue
+		}
+		effect := effects[i]
+		if effect.mask {
+			if bounds == nil {
+				bounds = []svg.Attribute{svg.IntAttr("x", v.left), svg.IntAttr("y", v.top), svg.IntAttr("width", v.width), svg.IntAttr("height", v.height)}
+				backdrop = svg.EmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...)
+			}
+			attrs := []svg.Attribute{svg.Attr("id", effect.id), svg.Attr("maskUnits", "userSpaceOnUse")}
+			buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
+			buf.WriteString(backdrop)
+			for _, g := range gaps {
+				buf.WriteString(svg.EmptyElement("circle", svg.FloatAttr("cx", g.Center.X), svg.FloatAttr("cy", g.Center.Y), svg.FloatAttr("r", g.Radius), svg.Attr("fill", "black")))
+			}
+			buf.WriteString(svg.CloseElement("mask"))
+			continue
+		}
+		if shell == "" {
+			x := strconv.Itoa(v.left)
+			shell = "M" + x + " " + strconv.Itoa(v.top) + "h" + strconv.Itoa(v.width) + "v" + strconv.Itoa(v.height) + "H" + x + "Z"
+		}
+		writeCrossingClip(buf, effect.id, shell, gaps)
+	}
+}
+
 // The rectangle and the circular holes wind in opposite directions. Clipping
 // the original shaft preserves its markers and its dash phase through each gap.
-func (v crossingViewport) writeCrossing(buf *bytes.Buffer, id string, gaps []d2target.ConnectionGap, useClips bool) crossingEffect {
-	effect := crossingEffect{id: id}
-	if !useClips || !v.canClip(gaps) {
-		effect.mask = true
-		bounds := []svg.Attribute{svg.IntAttr("x", v.left), svg.IntAttr("y", v.top), svg.IntAttr("width", v.width), svg.IntAttr("height", v.height)}
-		attrs := []svg.Attribute{svg.Attr("id", effect.id), svg.Attr("maskUnits", "userSpaceOnUse")}
-		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
-		buf.WriteString(svg.EmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
-		for _, g := range gaps {
-			buf.WriteString(svg.EmptyElement("circle", svg.FloatAttr("cx", g.Center.X), svg.FloatAttr("cy", g.Center.Y), svg.FloatAttr("r", g.Radius), svg.Attr("fill", "black")))
-		}
-		buf.WriteString(svg.CloseElement("mask"))
-		return effect
-	}
-
+func writeCrossingClip(buf *bytes.Buffer, id, shell string, gaps []d2target.ConnectionGap) {
 	var path strings.Builder
-	x := strconv.Itoa(v.left)
-	path.WriteString("M" + x + " " + strconv.Itoa(v.top) + "h" + strconv.Itoa(v.width) + "v" + strconv.Itoa(v.height) + "H" + x + "Z")
+	path.WriteString(shell)
 	for _, g := range gaps {
 		// SVG scales undersized circular arc radii to half the distance
 		// between their endpoints. Only the diameter needs to vary per gap.
@@ -100,10 +117,9 @@ func (v crossingViewport) writeCrossing(buf *bytes.Buffer, id string, gaps []d2t
 		arc := r + " " + r + " 0 0 0 "
 		path.WriteString("M" + svg.FormatFloat(g.Center.X-g.Radius) + " " + svg.FormatFloat(g.Center.Y) + "a" + arc + d + " 0 " + arc + "-" + d + " 0Z")
 	}
-	buf.WriteString(svg.OpenElement("clipPath", svg.Attr("id", effect.id)))
+	buf.WriteString(svg.OpenElement("clipPath", svg.Attr("id", id)))
 	buf.WriteString(svg.CompactEmptyElement("path", svg.Attr("d", path.String())))
 	buf.WriteString(svg.CloseElement("clipPath"))
-	return effect
 }
 
 func (v crossingViewport) canClip(gaps []d2target.ConnectionGap) bool {
