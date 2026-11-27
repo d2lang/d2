@@ -42,10 +42,6 @@
 
 - Build D2 with Go 1.27.4 and update its Go dependencies, including Brotli and the Go networking libraries. Source installs require Go 1.27.4 or newer.
 
-- D2.js: the WebAssembly module is built with TinyGo instead of Go, reducing its Brotli-compressed size by about 40%. [#2966](https://github.com/d2lang/d2/pull/2966)
-
-- D2.js: the TinyGo-built WebAssembly module is less than half the size (11.9 MB smaller) and a third smaller when compressed with Brotli (2.0 MB), and runs D2's end-to-end corpus in less than half the time, with identical output on that corpus. D2.js calls into the module and every call runs to completion, so the module is now built without a goroutine scheduler, which on WebAssembly rewrote every function that could be running when a goroutine is switched out and made the code about two thirds larger. The build needs TinyGo from [d2lang/tinygo](https://github.com/d2lang/tinygo/releases), which also gives each pointer a garbage-collector stack slot only while a collection can find it in use. The module also drops its function names, a second HTML entity table, two unused Unicode segmentation tables and four separately encoded copies of bundled fonts, stores the tables of the formula renderer and of the ELK layout engine as constant data, keeps the formula renderer's glyph outlines compressed until a formula needs them and its bundled fonts compressed until it starts, and runs D2's own sorts through one shared routine. [#3046](https://github.com/d2lang/d2/pull/3046)
-
 - The d2 binary is about 3 MB smaller: PPTX export writes its XML parts without `text/template`, whose method lookups by name kept unused methods throughout the program. [#3000](https://github.com/d2lang/d2/pull/3000)
 
 - TALA routes larger cross-container diagrams within its existing search budget. It preserves the original hierarchy lanes on compact diagrams and indexes previously routed segments. [#2891](https://github.com/d2lang/d2/issues/2891)
@@ -109,7 +105,6 @@
 
 - PNG, GIF, PDF and PPTX exports now render SVG icons that use default gradients, masks, Gaussian blur and common editor metadata. [#2937](https://github.com/d2lang/d2/issues/2937)
 
-- d2.js can render diagrams in Safari 27.2 workers again. [#2956](https://github.com/d2lang/d2/issues/2956)
 - compiler:
   - Resolve forward variable references in full. Map templates keep the scope where they were declared, and local aliases read the same value as direct references.
   - Glob filters match labels and properties supplied by variables. Markdown links can use variables in their URLs and titles.
@@ -230,6 +225,12 @@
   - As globs reach more boards, a diagram with many glob connections can now
     exceed the glob or connection expansion limit.
 
----
+#### D2.js 0.2.0
 
-For the latest d2.js changes, see separate [changelog](https://github.com/d2lang/d2/blob/master/d2js/js/CHANGELOG.md).
+- Run `npx @d2lang/d2 input.d2 output.svg` to render a single file with the npm package. Installing it adds a local `d2` command that takes precedence over a system-installed D2 in npm scripts. [#3064](https://github.com/d2lang/d2/pull/3064)
+- Use `d2.renderSVG()` to render source or a multi-file project in one call and `d2.format()` to format source. TypeScript now includes `themeOverrides`, `darkThemeOverrides` and the Playground link helpers `d2.encode()` and `d2.decode()`. [Rendering](https://github.com/d2lang/d2/pull/3007) · [Formatting](https://github.com/d2lang/d2/pull/3009) · [Playground links](https://github.com/d2lang/d2/pull/3014)
+- Set `animateDuration` to animate changes between steps. Use `forceAppendix` with `animateInterval` to include each board’s numbered tooltips and links in its frame. [Step transitions](https://github.com/d2lang/d2/pull/3006) · [Animated appendix](https://github.com/d2lang/d2/pull/2964)
+- Start D2 from a dedicated browser worker or pass `new D2({ workerURL })` to load a self-hosted worker. The default worker releases its blob URL after startup. Custom fonts passed as `Uint8Array` work again. Safari 27.2 workers start correctly, and `d2.ready` reports startup errors. [Worker options](https://github.com/d2lang/d2/pull/3004) · [Worker cleanup](https://github.com/d2lang/d2/pull/3013) · [Safari](https://github.com/d2lang/d2/pull/2965)
+- Compared with `@d2lang/d2@0.1.34`, the npm download is about 74% smaller and the complete browser module is about 57% smaller with HTTP Brotli compression. WebAssembly decompression runs in the browser worker. [Worker startup](https://github.com/d2lang/d2/pull/2984)
+- The optimized TinyGo build more than halved the time to render D2’s end-to-end corpus, with identical output to the previous build. Building D2.js from source requires [D2’s TinyGo fork](https://github.com/d2lang/tinygo/releases). [WebAssembly build](https://github.com/d2lang/d2/pull/3046)
+- Try development builds with `npm install @d2lang/d2@nightly`. [Nightly packages](https://github.com/d2lang/d2/pull/3055)

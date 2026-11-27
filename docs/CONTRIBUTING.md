@@ -164,6 +164,8 @@ cover your manual tests.
 
 ### Documentation
 
+Record user-facing D2 and D2.js changes in the [upcoming D2 release notes](../ci/release/changelogs/next.md). Include the npm package version for D2.js changes.
+
 The code itself should be documented as appropriate with Go-style comments. No rules here,
 `GetX()` doesn't need a `// GetX gets X`.
 
