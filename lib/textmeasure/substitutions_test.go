@@ -420,3 +420,40 @@ func TestMarkdownNestedReferenceImage(t *testing.T) {
 		t.Errorf("nested reference image rendered %q from %q, %v", rendered, out, err)
 	}
 }
+
+func TestMarkdownReferenceIdentity(t *testing.T) {
+	const defs = "[${first}]: /api \"API guide\"\n[${second}]: /ops \"Ops guide\"\n[runbook]: /static"
+	vars := map[string]string{"first": "Runbook", "second": "RUNBOOK", "suffix": "!"}
+	for _, tc := range []struct{ name, use, want string }{
+		{"shortcut", `[${first}]${suffix} [${second}] [runbook]`, `<a href="/api" title="API guide">Runbook</a>! <a href="/ops" title="Ops guide">RUNBOOK</a> <a href="/static">runbook</a>`},
+		{"collapsed", `[${first}][] [${second}][ ] [runbook][]`, `<a href="/api" title="API guide">Runbook</a> <a href="/ops" title="Ops guide">RUNBOOK</a> <a href="/static">runbook</a>`},
+		{"full", `[API][${first}] [Ops][${second}] [static][runbook]`, `<a href="/api" title="API guide">API</a> <a href="/ops" title="Ops guide">Ops</a> <a href="/static">static</a>`},
+		{"images", `![${first}][] ![alt][${second}]`, `<img src="/api" alt="Runbook" title="API guide" /> <img src="/ops" alt="alt" title="Ops guide" />`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, input := range []string{tc.use + "\n\n" + defs, defs + "\n\n" + tc.use} {
+				out, used, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, 1024)
+				rendered, renderErr := RenderMarkdown(out)
+				if err != nil || renderErr != nil || !strings.Contains(rendered, tc.want) {
+					t.Fatalf("rendering %q gave %q, errors: %v, %v", out, rendered, err, renderErr)
+				}
+				if used > 0 {
+					if _, _, err := ReplaceSubstitutionsMarkdownBounded(context.Background(), input, vars, used-1); err == nil {
+						t.Fatal("a reference must fit within the expansion budget")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMultilineMarkdownReferenceIdentity(t *testing.T) {
+	for _, tail := range []string{"", "[]", "[\n> ]"} {
+		input := "> [Launch\n> ${stage}]" + tail + "\n\n> [Launch\n> ${stage}]: /guide"
+		out := ReplaceSubstitutionsMarkdown(input, map[string]string{"stage": "prod"})
+		rendered, err := RenderMarkdown(out)
+		if err != nil || !strings.Contains(rendered, `href="/guide"`) || !strings.Contains(rendered, "prod</a>") {
+			t.Fatalf("reference in a block quote: %q rendered as %q, %v", out, rendered, err)
+		}
+	}
+}

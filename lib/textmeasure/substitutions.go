@@ -86,19 +86,7 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 		return nil
 	}
 	replaceParts := func(parts text.MultiLineValue, escapes *markdownEscapes) error {
-		indices := parts.Indices()
-		if escapes == &referenceEscapes && len(indices) > 0 {
-			// A shortcut's visible code is literal. Apply that same rule to
-			// its lookup key so changing the definition cannot break the link.
-			start, stop := indices[0].Start, indices[len(indices)-1].Stop
-			if strings.Contains(mdText[start:stop], "`") && strings.Contains(mdText[start:stop], "${") {
-				indices, err = referenceProseIndices(ctx, mdText[start:stop], start, indices)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		for _, segment := range indices {
+		for _, segment := range parts.Indices() {
 			if err := replace(segment, escapes); err != nil {
 				return err
 			}
@@ -107,10 +95,8 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	}
 	replaceLink := func(dest text.SingleLineValue, title text.MultiLineValue, ref *ast.ReferenceLink) error {
 		if ref != nil {
-			// Shortcut and collapsed references use their visible text as the key.
-			if ref.ReferenceLinkKind == ast.ReferenceLinkKindFull {
-				return replaceParts(ref.Value, &referenceEscapes)
-			}
+			// The lookup key identifies the author's chosen definition, independently
+			// of other variables that can expand to the same visible text.
 			return nil
 		}
 		if err := replace(dest.Index(), &destinationEscapes); err != nil {
@@ -119,20 +105,35 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 		return replaceParts(title, &titleEscapes)
 	}
 
-	shortcutDepth := 0
+	// Keep authored reference IDs stable. When interpolation changes the
+	// visible text of a shortcut or collapsed reference, make its ID explicit.
+	// A target's source index identifies its definition, including multiline
+	// labels inside lists and block quotes.
+	definitions := make(map[text.Index]text.MultiLineValue)
+	type changedReference struct {
+		dest text.Index
+		ref  *ast.ReferenceLink
+	}
+	var changed []changedReference
+	var shortcutStarts []int
 	err = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if err := ctx.Err(); err != nil {
 			return ast.WalkStop, err
 		}
-		if !entering {
-			if referenceUsesText(n) {
-				shortcutDepth--
+		dest, ref := visibleReference(n)
+		if ref != nil {
+			if entering {
+				shortcutStarts = append(shortcutStarts, len(substitutions))
+			} else {
+				last := len(shortcutStarts) - 1
+				if len(substitutions) > shortcutStarts[last] {
+					changed = append(changed, changedReference{dest, ref})
+				}
+				shortcutStarts = shortcutStarts[:last]
 			}
-			return ast.WalkContinue, nil
 		}
-
-		if referenceUsesText(n) {
-			shortcutDepth++
+		if !entering {
+			return ast.WalkContinue, nil
 		}
 		if isCodeNode(n) {
 			return ast.WalkSkipChildren, nil
@@ -140,7 +141,7 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 
 		switch n := n.(type) {
 		case *ast.Text:
-			if shortcutDepth > 0 {
+			if len(shortcutStarts) > 0 {
 				return ast.WalkContinue, replace(n.Value.Index(), &referenceEscapes)
 			}
 			return ast.WalkContinue, replace(n.Value.Index(), nil)
@@ -152,9 +153,7 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 			return ast.WalkContinue, replaceLink(n.Destination, n.Title, n.Reference)
 		case *ast.LinkReferenceDefinition:
 			// Every use shares these source offsets. Edit the definition once.
-			if err := replaceParts(n.Label, &referenceEscapes); err != nil {
-				return ast.WalkStop, err
-			}
+			definitions[n.Destination.Index()] = n.Label
 			return ast.WalkContinue, replaceLink(n.Destination, n.Title, nil)
 		}
 		return ast.WalkContinue, nil
@@ -163,11 +162,41 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 		return "", 0, err
 	}
 
+	for _, use := range changed {
+		if err := ctx.Err(); err != nil {
+			return "", 0, err
+		}
+		// Preserve the source spelling of escapes in the key. Whitespace in
+		// reference labels is normalized by CommonMark for lookup.
+		key := string(util.ReplaceSpaces(definitions[use.dest].Bytes(source), ' '))
+		parts := use.ref.Value.Indices()
+		index := text.NewIndex(parts[0].Start, parts[len(parts)-1].Stop)
+		shortcut := use.ref.ReferenceLinkKind == ast.ReferenceLinkKindShortcut
+		cost := int64(len(key))
+		if shortcut {
+			cost += 2
+		}
+		if cost > maxExpansion-expansion {
+			return "", 0, errors.New("Markdown substitution expansion limit exceeded")
+		}
+		expansion += cost
+		if shortcut {
+			// The explicit key follows the original closing bracket.
+			index = text.NewIndex(index.Stop+1, index.Stop+1)
+			key = "[" + key + "]"
+		}
+		substitutions = append(substitutions, substitution{index.Start, index.Stop, key})
+	}
+
 	if len(substitutions) == 0 {
 		return mdText, expansion, nil
 	}
 
 	sort.Slice(substitutions, func(i, j int) bool {
+		if substitutions[i].start == substitutions[j].start {
+			// Insert the reference ID before replacing adjacent prose.
+			return substitutions[i].stop < substitutions[j].stop
+		}
 		return substitutions[i].start < substitutions[j].start
 	})
 
@@ -186,48 +215,6 @@ func ResolveSubstitutionsMarkdownBounded(ctx context.Context, mdText string, var
 	result.Write(source[start:])
 
 	return result.String(), expansion, nil
-}
-
-// A label can span several source segments in a Markdown block quote or list.
-// Goldmark supplies code span boundaries and the original segments retain
-// indentation and block prefixes outside the label.
-func referenceProseIndices(ctx context.Context, label string, start int, segments []text.Index) ([]text.Index, error) {
-	const prefix = "x " // Parse the label as inline paragraph content.
-	src := prefix + label
-	doc, _, err := parseMarkdownSubstitutions(ctx, []byte(src), src)
-	if err != nil {
-		return nil, err
-	}
-	var code []text.Index
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if span, ok := n.(*ast.CodeSpan); entering && ok {
-			indices := span.Value.Indices()
-			if len(indices) > 0 {
-				code = append(code, text.NewIndex(start+indices[0].Start-len(prefix), start+indices[len(indices)-1].Stop-len(prefix)))
-			}
-		}
-		return ast.WalkContinue, nil
-	})
-	if len(code) == 0 {
-		return segments, nil
-	}
-	var prose []text.Index
-	for _, segment := range segments {
-		for len(code) > 0 && code[0].Start < segment.Stop {
-			if segment.Start < code[0].Start {
-				prose = append(prose, text.NewIndex(segment.Start, code[0].Start))
-			}
-			segment.Start = max(segment.Start, code[0].Stop)
-			if code[0].Stop > segment.Stop {
-				break
-			}
-			code = code[1:]
-		}
-		if segment.Start < segment.Stop {
-			prose = append(prose, segment)
-		}
-	}
-	return prose, nil
 }
 
 // During substitution, D2 owns the complete reference in prose. Otherwise a
@@ -277,15 +264,18 @@ func (referenceInlineParser) Parse(_ ast.Node, block text.Reader, pc parser.Cont
 	return ast.NewText(text.NewSingleLineValueFromSegment(segment.WithStop(end), block.Decoder()))
 }
 
-func referenceUsesText(n ast.Node) bool {
-	var ref *ast.ReferenceLink
+func visibleReference(n ast.Node) (text.Index, *ast.ReferenceLink) {
 	switch n := n.(type) {
 	case *ast.Link:
-		ref = n.Reference
+		if n.Reference != nil && n.Reference.ReferenceLinkKind != ast.ReferenceLinkKindFull {
+			return n.Destination.Index(), n.Reference
+		}
 	case *ast.Image:
-		ref = n.Reference
+		if n.Reference != nil && n.Reference.ReferenceLinkKind != ast.ReferenceLinkKindFull {
+			return n.Destination.Index(), n.Reference
+		}
 	}
-	return ref != nil && ref.ReferenceLinkKind != ast.ReferenceLinkKindFull
+	return text.Index{}, nil
 }
 
 func isCodeNode(n ast.Node) bool {
@@ -309,8 +299,7 @@ var literalKeyEscapes = func() (escapes markdownEscapes) {
 	return escapes
 }()
 
-// Reference labels compare source spellings. Use the same escapes on the
-// definition and each use so brackets and backslashes still match.
+// Keep interpolated brackets and backslashes inside the link's visible label.
 var referenceEscapes = markdownEscapes{'[': `\[`, ']': `\]`, '\\': `\\`, '\n': "&#10;", '\r': "&#13;"}
 
 var destinationEscapes = markdownEscapes{
