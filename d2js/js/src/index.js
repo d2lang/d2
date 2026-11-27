@@ -14,7 +14,12 @@ function inheritCustomFonts(diagram) {
   const pending = [diagram];
   while (pending.length) {
     const board = pending.pop();
-    for (const children of [board.layers, board.scenarios, board.steps, board.tweenFrames]) {
+    for (const children of [
+      board.layers,
+      board.scenarios,
+      board.steps,
+      board.tweenFrames,
+    ]) {
       for (const child of children ?? []) {
         if (!child) continue;
         Object.defineProperty(child, "customFonts", { value: fonts, configurable: true });
