@@ -185,6 +185,7 @@
   - Render forced appendices inside their animated SVG frames and size the
     animation to include every board's footnotes.
 - sequence diagrams: fix a compile error ("invalid position with infinity value") when a group nested in another group contains only a note. [#2750](https://github.com/d2lang/d2/issues/2750)
+- Dagre lays out nested diagrams on which its ordering lost containers, which failed with `dagre fails on this input: it sets "order" on a node missing from a layer` or `not possible to find intersection inside of the rectangle`. Diagrams that laid out before keep their exact layout. [dagro#11](https://github.com/d2lang/dagro/pull/11)
 
 ---
 
