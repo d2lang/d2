@@ -73,3 +73,41 @@ esac
 		})
 	}
 }
+
+func TestHomebrewInstallShadowWarning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the generated installer is a POSIX shell script")
+	}
+	dir := t.TempDir()
+	const brew = `#!/bin/sh
+case "$*" in
+  update|'install d2') ;;
+  'info d2') echo '==> d2: stable 0.10.0 (bottled), HEAD' ;;
+  *) exit 1 ;;
+esac
+`
+	for name, script := range map[string]string{
+		"brew": brew,
+		"d2":   "#!/bin/sh\necho \"$PATH_VERSION\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, pathVersion := range []string{"v0.10.0", "v0.9.0"} {
+		t.Run(pathVersion, func(t *testing.T) {
+			cmd := exec.Command("sh", "../../install.sh", "--prefix="+dir)
+			cmd.Env = []string{
+				"PATH=" + dir + ":/usr/bin:/bin", "OS=macos", "ARCH=arm64",
+				"XDG_CACHE_HOME=" + filepath.Join(dir, "cache"), "PATH_VERSION=" + pathVersion,
+			}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("installer failed: %v\n%s", err, out)
+			}
+			if got, want := strings.Contains(string(out), "is shadowed by"), pathVersion == "v0.9.0"; got != want {
+				t.Errorf("shadow warning = %v, want %v for %s:\n%s", got, want, pathVersion, out)
+			}
+		})
+	}
+}
