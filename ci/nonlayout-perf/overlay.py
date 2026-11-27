@@ -38,11 +38,11 @@ def prepare(repo, output, base_ref):
         "time"''')
     source = replace(
         source, "\tg, config, err := d2compiler.Compile",
-        '\tprobeCompiler := NonlayoutProbe(ctx, "compiler")\n'
+        '\tprobeCompiler := nonlayoutCompileProbe(ctx, "compiler")\n'
         "\tg, config, err := d2compiler.Compile",
     )
-    source = replace(source, "\t\tFS:       compileOpts.FS,\n\t})",
-                     "\t\tFS:       compileOpts.FS,\n\t})\n probeCompiler()")
+    end = "compileOpts.FS,\n\t})"
+    source = replace(source, end, end + "\nprobeCompiler()")
 
     # These statements are disjoint. The enclosing compile_total is reported
     # separately and is never added to its own component measurements.
@@ -58,7 +58,7 @@ def prepare(repo, output, base_ref):
     for phase, statement in statements:
         variable = "probe_" + phase
         source = replace(source, statement,
-                         f'\n{variable} := NonlayoutProbe(ctx, "{phase}")\n'
+                         f'\n{variable} := nonlayoutCompileProbe(ctx, "{phase}")\n'
                          + statement + f"\n{variable}()")
     helper = (HERE / "probe.go.txt").read_text()
     source += "\n" + replace(helper, "package d2lib\n\n", "")
@@ -104,9 +104,9 @@ def prepare(repo, output, base_ref):
     # Two runners execute the real active cases: ordinary E2E and ASCII txtar.
     # Newline prefixes prevent matching a statement with deeper indentation.
     for indent in ("\n\t", "\n\t\t"):
+        compile_call = indent + "diagram, g, err := d2lib.Compile(ctx, tc.script, compileOpts, renderOpts)"
+        test = replace(test, compile_call, compile_call.replace("d2lib.Compile(", "d2lib.NonlayoutCompile("))
         statements = [
-            ("compile_total", indent + "diagram, g, err := d2lib.Compile(ctx, "
-             "tc.script, compileOpts, renderOpts)"),
             ("svg_render", indent + "boards, err := d2svg.RenderMultiboard(diagram, renderOpts)"),
             ("xml_verify", indent + "err = xml.Unmarshal(svgBytes, &xmlParsed)"),
             ("animation", indent + "\tsvgBytes, err = d2animate.Wrap(diagram, boards, *renderOpts, 1000)"),

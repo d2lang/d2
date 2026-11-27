@@ -26,6 +26,21 @@ func NonlayoutCase(ctx context.Context, name string) context.Context {
 	return ctx
 }
 func nonlayoutCaseName(ctx context.Context) string { name, _ := pprof.Label(ctx, "case"); return name }
+
+// The E2E formatter assertion can compile a second time. Measure compiler
+// phases only inside the primary call whose compile_total includes them.
+func NonlayoutCompile(ctx context.Context, input string, opts *CompileOptions, renderOpts *d2svg.RenderOpts) (*d2target.Diagram, *d2graph.Graph, error) {
+	defer NonlayoutProbe(ctx, "compile_total")()
+	return Compile(pprof.WithLabels(ctx, pprof.Labels("phase", "compile_total")), input, opts, renderOpts)
+}
+
+func nonlayoutCompileProbe(ctx context.Context, phase string) func() {
+	if outer, _ := pprof.Label(ctx, "phase"); outer != "compile_total" {
+		return func() {}
+	}
+	return NonlayoutProbe(ctx, phase)
+}
+
 func NonlayoutProbe(ctx context.Context, phase string) func() {
 	name := nonlayoutCaseName(ctx)
 	pprof.SetGoroutineLabels(pprof.WithLabels(ctx, pprof.Labels("phase", phase)))
