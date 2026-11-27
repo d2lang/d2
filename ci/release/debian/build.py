@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
 """Build a Debian package from a checksummed native D2 Linux release archive."""
 
-import argparse
 from datetime import datetime, timezone
 from email.utils import format_datetime
-import gzip
-import hashlib
-import io
 import os
 from pathlib import Path
-import re
 import subprocess
-import tarfile
+import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from linux_package import parse_args, read_payload, write_gzip
 
-RELEASE_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?")
+
 MAINTAINER = "D2 maintainers <hi@d2lang.com>"
 REPOSITORY = "https://github.com/d2lang/d2"
 PAYLOAD = {
@@ -26,45 +23,18 @@ PAYLOAD = {
 }
 
 
-def write_gzip(path, contents):
-    with path.open("wb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as compressed:
-        compressed.write(contents)
-
-
 def stage_payload(version, arch, archives, root):
-    archive = archives / f"d2-{version}-linux-{arch}.tar.gz"
-    data = archive.read_bytes()
-    manifest = (archives / "SHA256SUMS").read_text().splitlines()
-    matches = [line for line in manifest if line.endswith(f"  {archive.name}")]
-    if matches != [f"{hashlib.sha256(data).hexdigest()}  {archive.name}"]:
-        raise ValueError(f"missing, duplicate, or incorrect SHA-256 for {archive.name}")
-
-    # Read selected members as data so archive paths and links never control
-    # the destination tree. Use the binary's release timestamp for the .deb.
-    members = {f"d2-{version}/{name}": output for name, output in PAYLOAD.items()}
-    seen = set()
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r|gz") as tar:
-        for member in tar:
-            if member.name not in members:
-                continue
-            if member.name in seen or not member.isfile():
-                raise ValueError(f"expected one regular archive member: {member.name}")
-            seen.add(member.name)
-            output = root / members[member.name]
-            output.parent.mkdir(parents=True, exist_ok=True)
-            with tar.extractfile(member) as stream:
-                contents = stream.read()
-            if output.suffix == ".gz":
-                write_gzip(output, contents)
-            elif output.name == "copyright":
-                output.write_bytes(f"Upstream source: {REPOSITORY}/tree/{version}\n\n".encode() + contents)
-            else:
-                output.write_bytes(contents)
-            if members[member.name] == "usr/bin/d2":
-                epoch = int(member.mtime)
-    missing = members.keys() - seen
-    if missing:
-        raise ValueError(f"missing archive members: {', '.join(sorted(missing))}")
+    files, epoch = read_payload(version, arch, archives)
+    for name, destination in PAYLOAD.items():
+        output = root / destination
+        output.parent.mkdir(parents=True, exist_ok=True)
+        contents = files[name]
+        if output.suffix == ".gz":
+            write_gzip(output, contents)
+        elif output.name == "copyright":
+            output.write_bytes(f"Upstream source: {REPOSITORY}/tree/{version}\n\n".encode() + contents)
+        else:
+            output.write_bytes(contents)
     return epoch
 
 
@@ -111,14 +81,7 @@ def build(version, arch, archives, output):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("version")
-    parser.add_argument("arch", choices=("amd64", "arm64"))
-    parser.add_argument("archives", type=Path)
-    parser.add_argument("output", type=Path)
-    args = parser.parse_args()
-    if not RELEASE_TAG.fullmatch(args.version):
-        parser.error("version must be a v-prefixed release tag such as v1.2.3 or v1.2.3-rc.1")
+    args = parse_args(__doc__)
     build(args.version, args.arch, args.archives, args.output)
 
 

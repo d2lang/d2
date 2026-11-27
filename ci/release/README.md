@@ -134,15 +134,15 @@ Pushing the tag starts one `Release archives` dependency graph:
    all six archives twice using the pinned Go toolchain, compares SHA-256 digests, verifies
    stripped binaries and normalized archives, enforces size budgets, and generates an SBOM.
 2. Each archive runs natively on its supported platform, checking its version, SVG, and PNG.
-   The Linux archives also supply the binary, man page, and license notices for the amd64
-   and arm64 Debian packages. CI builds each package twice and tests installation, rendering,
-   and removal with APT on its native architecture.
+   The Linux archives also supply the binary, man page, and licenses for the Debian
+   packages and RPMs. CI builds each package twice and tests installation, rendering,
+   and removal with APT or DNF on its native architecture.
 3. The reusable `Windows MSI` workflow consumes that run's Windows amd64 archive, verifies
    its checksum, and builds and verifies both installers on `windows-2022`. It always packages
    notices from the new archive, so an old published release is no longer a PR test fixture.
-4. After the tests pass, the workflow attests provenance for the archives and Debian
+4. After the tests pass, the workflow attests provenance for the archives and Linux
    packages, and attests the archive SBOM and checksum manifest. A separate write-scoped
-   job creates or resumes a draft and uploads the six archives, both Debian packages,
+   job creates or resumes a draft and uploads the six archives, both Debian packages, both RPMs,
    their signed `d2-<version>-provenance.sigstore.json` bundle, `SHA256SUMS`, both MSIs,
    and `d2.spdx.json`.
 
@@ -211,7 +211,7 @@ gh attestation verify "d2-$VERSION-linux-amd64.tar.gz" --repo d2lang/d2 \
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
-To verify a Debian package, pass its `.deb` path to the same `gh attestation verify`
+To verify a Linux package, pass its `.deb` or `.rpm` path to the same `gh attestation verify`
 command. `SHA256SUMS` lists the six standalone archives.
 
 The MSI remains unsigned. Authenticode signing is tracked separately in

@@ -10,7 +10,7 @@ import (
 
 // Include subprocess inputs in the test binary so script edits invalidate Go's test cache.
 //
-//go:embed prepare.py prepare_test.py upload-draft.py upload_draft_test.py promote-checksums.py promote_checksums_test.py checksums/*.txt checksum.sh verifier.sh _install.sh
+//go:embed prepare.py prepare_test.py upload-draft.py upload_draft_test.py linux_package.py promote-checksums.py promote_checksums_test.py checksums/*.txt checksum.sh verifier.sh _install.sh
 var scriptSources embed.FS
 
 func TestMain(m *testing.M) {
