@@ -76,10 +76,9 @@ func (g *globFilter) value(s *Scalar, operand bool) (d2ast.Scalar, *Array) {
 	}
 	g.filterReads++
 	local := ParentMap(s)
-	var origin Node = local
 	scopes := g.filterVarScopes(local, nil)
-	for i := len(g.filterImports) - 1; i >= 0; i-- {
-		origin, scopes = g.filterImportScopes(g.filterImports[i], origin, scopes)
+	if len(g.filterImports) > 0 {
+		scopes = g.importedFilterScopes(local, scopes)
 	}
 	if !g.reserveVariableExpansion(s.Value, variableExpansionScalarValueUnits(s.Value)) {
 		return nil, nil
@@ -124,27 +123,41 @@ type filterImport struct {
 	errors []filterImportError
 }
 
-func (c *compiler) filterImportScopes(entry filterImport, origin Node, scopes []*Map) (Node, []*Map) {
-	site := entry.site
-	parent := ParentMap(site)
-	if path := entry.source.IDA(); len(path) > 0 && origin != nil {
-		// The selected field's own primary lives in the caller's outer
-		// scope. Only its descendants inherit the attachment's local vars.
-		m, ok := origin.(*Map)
-		if !ok {
-			m = ParentMap(origin)
+func (c *compiler) importedFilterScopes(local *Map, scopes []*Map) []*Map {
+	location := importFilterPath(local)
+	for i := len(c.filterImports) - 1; i >= 0; i-- {
+		entry := c.filterImports[i]
+		selected := entry.source.IDA()
+		if len(selected) > 0 && local != nil {
+			// The enclosing import can still be compiling. When available,
+			// use its resolved field names (including quoted reserved names).
+			if f := RootMap(local).getFieldIndexedMode(selected, true); f != nil {
+				selected = importFilterPath(f)
+			}
 		}
-		inside := false
-		if m != nil {
-			selected := RootMap(m).getFieldIndexedMode(path, true)
-			inside = withinImport(origin, selected)
+		parent := ParentMap(entry.site)
+		if len(location) < len(selected) || !sameFilterPath(selected, location[:len(selected)]) {
+			// The selected field's own primary reads the outer scope.
+			local = parent
+			scopes = c.filterVarScopes(parent, scopes)
+			location = importFilterPath(parent)
+			continue
 		}
-		if !inside {
-			return parent, c.filterVarScopes(parent, scopes)
+		scopes = c.filterAttachmentScopes(entry.site, parent, scopes)
+		if i > 0 {
+			location = append(importFilterPath(entry.site), location[len(selected):]...)
+			local = entry.site.Map()
+			if local == nil {
+				local = parent
+			}
 		}
 	}
+	return scopes
+}
+
+func (c *compiler) filterAttachmentScopes(site Node, parent *Map, scopes []*Map) []*Map {
 	if m := site.Map(); m != nil {
-		return m, c.filterVarScopes(m, scopes)
+		return c.filterVarScopes(m, scopes)
 	}
 	// A field import can create its map before declarations later in the
 	// caller supply that map's vars. A spread imports directly into its map.
@@ -157,7 +170,7 @@ func (c *compiler) filterImportScopes(entry filterImport, origin Node, scopes []
 			}
 		}
 	}
-	return site, c.filterVarScopes(parent, scopes)
+	return c.filterVarScopes(parent, scopes)
 }
 
 func (c *compiler) filterVarScopes(scope *Map, scopes []*Map) []*Map {

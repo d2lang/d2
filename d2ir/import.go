@@ -3,6 +3,7 @@ package d2ir
 import (
 	"errors"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2ast"
@@ -84,35 +85,59 @@ func (c *compiler) _import(imp *d2ast.Import, importer Node) (Node, bool) {
 	node, ok := c.__import(imp, importTemplateSafeAt(importer), fieldImport)
 	errors := c.filterImports[i].errors
 	c.filterImports = c.filterImports[:i]
-	if ok && len(errors) != 0 {
-		reported := make(map[d2ast.Error]struct{})
-		for _, e := range errors {
-			if _, seen := reported[e.err]; seen {
-				continue
-			}
-			if len(imp.Path) == 1 || withinImport(node, e.site) || withinImport(e.site, node) {
-				c.reportFilterImportError(importer, e.err)
-				reported[e.err] = struct{}{}
-			}
+	if !ok || len(errors) == 0 {
+		return node, ok
+	}
+	selected := importFilterPath(node)
+	destination := importFilterPath(importer)
+	reported := make(map[d2ast.Error]struct{})
+	for _, e := range errors {
+		// An error on a selected field or one of its ancestors/descendants
+		// can affect the result. A sibling export's filters cannot.
+		n := min(len(selected), len(e.path))
+		if !sameFilterPath(selected[:n], e.path[:n]) {
+			continue
+		}
+		if i > 0 {
+			// Keep the candidate's path below the attachment. An importing
+			// file may select a narrower export from this module in turn.
+			e.path = append(slices.Clip(destination), e.path[n:]...)
+			parent := &c.filterImports[i-1]
+			parent.errors = append(parent.errors, e)
+		} else if _, seen := reported[e.err]; !seen {
+			c.err.Errors = append(c.err.Errors, e.err)
+			reported[e.err] = struct{}{}
 		}
 	}
 	return node, ok
 }
 
-// A module compiles as a unit, including filters in exports the caller may
-// never select. Retain substitution diagnostics only for the selected tree.
 type filterImportError struct {
-	site Node
+	path []d2ast.String
 	err  d2ast.Error
 }
 
-func withinImport(node, ancestor Node) bool {
-	for ; node != nil; node = node.Parent() {
-		if node == ancestor {
-			return true
+// Use the effective field names so a path survives an import overlay or copy.
+// An edge belongs to its containing export, but cannot be selected by name.
+func importFilterPath(n Node) (path []d2ast.String) {
+	for ; n != nil; n = n.Parent() {
+		switch n := n.(type) {
+		case *Field:
+			if !n.Root() {
+				path = append(path, n.Name)
+			}
+		case *Edge:
+			path = append(path, nil)
 		}
 	}
-	return false
+	slices.Reverse(path)
+	return path
+}
+
+func sameFilterPath(a, b []d2ast.String) bool {
+	return slices.EqualFunc(a, b, func(x, y d2ast.String) bool {
+		return x == y || (x != nil && y != nil && makeFieldIndexKey(x) == makeFieldIndexKey(y))
+	})
 }
 
 func (c *compiler) reportFilterImportError(site Node, err d2ast.Error) {
@@ -121,7 +146,7 @@ func (c *compiler) reportFilterImportError(site Node, err d2ast.Error) {
 		return
 	}
 	frame := &c.filterImports[len(c.filterImports)-1]
-	frame.errors = append(frame.errors, filterImportError{site, err})
+	frame.errors = append(frame.errors, filterImportError{importFilterPath(site), err})
 }
 
 func (c *compiler) selectImport(ir *Map, imp *d2ast.Import) (Node, bool) {
