@@ -67,6 +67,15 @@ func (f Font) GetEncodedFull() string {
 }
 
 func (f Font) GetEncodedSubset(corpus string) string {
+	return f.encodedSubset(corpus, false)
+}
+
+// GetSVGEncodedSubset returns a data URL for a font embedded by the SVG renderer.
+func (f Font) GetSVGEncodedSubset(corpus string) string {
+	return f.encodedSubset(corpus, true)
+}
+
+func (f Font) encodedSubset(corpus string, svg bool) string {
 	seen := make(map[rune]bool)
 	var chars []rune
 	for _, char := range corpus {
@@ -88,18 +97,29 @@ func (f Font) GetEncodedSubset(corpus string) string {
 	cacheable := bundledfont.Is(face)
 	var key encodedSubsetKey
 	if cacheable {
-		key = encodedSubsetKey{face: &face[0], chars: uniqueChars}
+		key = encodedSubsetKey{face: &face[0], chars: uniqueChars, svg: svg}
 		if encoded, ok := encodedSubsets[key]; ok {
 			return encoded
 		}
 	}
-	fontBuf, err := font.SubsetWOFF(face, uniqueChars)
+	var fontBuf []byte
+	var err error
+	prefix := woffDataPrefix
+	if svg && cacheable {
+		fontBuf, err = font.SubsetWOFF2(face, uniqueChars)
+		if err == nil {
+			prefix = "data:font/woff2;base64,"
+		}
+	}
+	if fontBuf == nil {
+		fontBuf, err = font.SubsetWOFF(face, uniqueChars)
+	}
 	if err != nil {
 		// If subset fails, return full encoding
 		return f.GetEncodedFull()
 	}
 
-	encoded := fmt.Sprintf("data:application/font-woff;base64,%v", base64.StdEncoding.EncodeToString(fontBuf))
+	encoded := prefix + base64.StdEncoding.EncodeToString(fontBuf)
 	if cacheable {
 		// The key is retained too, and characters the font lacks lengthen it
 		// without adding anything to the subset.
@@ -122,6 +142,7 @@ func (f Font) GetEncodedSubset(corpus string) string {
 type encodedSubsetKey struct {
 	face  *byte
 	chars string
+	svg   bool
 }
 
 // A subset is a pure function of the font file and its characters, and

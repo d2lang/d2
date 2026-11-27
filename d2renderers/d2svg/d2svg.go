@@ -2048,10 +2048,10 @@ func writeFontCSS(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2f
 	corpora = restrictFontCorpora(corpora, corpus)
 	appendFace := func(class, face string, font *d2fonts.FontFamily, style d2fonts.FontStyle, triggers ...string) {
 		appendFontOnTrigger(buf, source, triggers, corpora, class, corpus, func(corpus string) string {
-			uri := font.Font(0, style).GetEncodedSubset(corpus)
+			subsetFont := font.Font(0, style)
 			family := diagramHash + "-font-" + face
 			if compact {
-				return svgstyle.FontFace(diagramHash, class, family, uri)
+				return svgstyle.FontFace(diagramHash, class, family, subsetFont.GetSVGEncodedSubset(corpus))
 			}
 			return fmt.Sprintf(`
 .%s .%s {
@@ -2060,7 +2060,7 @@ func writeFontCSS(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2f
 @font-face {
 	font-family: %s;
 	src: url("%s");
-}`, diagramHash, class, family, family, uri)
+}`, diagramHash, class, family, family, subsetFont.GetEncodedSubset(corpus))
 		})
 	}
 	appendRule := func(trigger, css string) {

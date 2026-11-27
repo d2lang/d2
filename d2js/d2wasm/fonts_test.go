@@ -35,9 +35,9 @@ func TestBundledSVGFontEncodings(t *testing.T) {
 			if _, err := font.SubsetWOFF(ttf, ""); err != nil {
 				t.Errorf("%s %s cannot be subset, so SVGs would embed its whole-font encoding: %v", family, style, err)
 			}
-			subset := f.GetEncodedSubset("Az09 ")
-			woff, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(subset, prefix))
-			if err != nil || !strings.HasPrefix(string(woff), "wOFF") || subset == f.GetEncodedFull() || subset == d2fonts.FontEncodings.Get(f) {
+			subset := f.GetSVGEncodedSubset("Az09 ")
+			woff, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(subset, "data:font/woff2;base64,"))
+			if err != nil || !strings.HasPrefix(string(woff), "wOF2") || subset == f.GetEncodedFull() || subset == d2fonts.FontEncodings.Get(f) {
 				t.Errorf("%s %s subset fell back to the whole-font encoding", family, style)
 			}
 		}

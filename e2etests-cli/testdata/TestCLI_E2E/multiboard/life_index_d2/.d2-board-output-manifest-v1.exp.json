@@ -4,23 +4,23 @@
   "files": [
     {
       "path": "index.svg",
-      "sha256": "6d0d62c433646ffd331d07c7a9f2de6537fdb9a998ecbdd51b3c782ba76537f3"
+      "sha256": "753fe834cabd9743de8faaa44586a0cd7800e04d40f3e845d27935f2d0823f29"
     },
     {
       "path": "layers/broker.svg",
-      "sha256": "abd19f4761d3e2cbbf222dcf9fa8995eaf702c0b3ce59fd5a03b21937a9cc4cb"
+      "sha256": "ca0c919b0a60cf9eebd6297cab8c3c6f5d047b3ef66cdfff64dcd1f7d8068ca7"
     },
     {
       "path": "layers/core.svg",
-      "sha256": "1d22a08c0dbf1095b3283c0fd6ede59ee86371028b9216cab52893650d3c5bb6"
+      "sha256": "a8df6df3d2fef9840b05bb44a0a4af481ab0a0e100c83c77254b562cfa8ba21a"
     },
     {
       "path": "layers/stocks.svg",
-      "sha256": "908abc2b34c34c6c874ed17ac2407f0adbbb31a6c4a9c2c9b273c028bf0c6e64"
+      "sha256": "ca24c292bc26399b45dbdad5537bf498a9bfe5b41bd92a6512904ed48d3738d9"
     },
     {
       "path": "scenarios/why.svg",
-      "sha256": "d726abc9a78f0a950c9b03fc9ece415d3c80aeb03746ca6ae7678e3a96ee087f"
+      "sha256": "9c8239e81c9f54f8fa63bdf0b25c2caef900ab7ebd2a3f47959777e928f974b3"
     }
   ],
   "directories": [
