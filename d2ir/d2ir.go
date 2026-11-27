@@ -1778,6 +1778,28 @@ func (m *Map) DeleteField(ida ...string) *Field {
 	return nil
 }
 
+// deleteAnnotations removes the annotation of the board and of every object
+// and connection on it. Classes and variables keep theirs: those are
+// declarations, and they apply again wherever they are used.
+func (m *Map) deleteAnnotations() {
+	for i := len(m.Fields) - 1; i >= 0; i-- {
+		f := m.Fields[i]
+		switch d2ast.Keyword(f.Name) {
+		case "annotation":
+			m.deleteFieldAt(i)
+		case "":
+			if child := f.Map(); child != nil {
+				child.deleteAnnotations()
+			}
+		}
+	}
+	for _, e := range m.Edges {
+		if child := e.Map(); child != nil {
+			child.deleteAnnotations()
+		}
+	}
+}
+
 func (m *Map) deleteField(f *Field) {
 	if i := slices.Index(m.Fields, f); i >= 0 {
 		m.deleteFieldAt(i)

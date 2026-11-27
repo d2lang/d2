@@ -28,6 +28,7 @@ var SimpleReservedKeywords = map[string]struct{}{
 	"icon":                 {},
 	"constraint":           {},
 	"tooltip":              {},
+	"annotation":           {},
 	"link":                 {},
 	"near":                 {},
 	"width":                {},
@@ -59,6 +60,7 @@ var CompositeReservedKeywords = map[string]struct{}{
 	"label":            {},
 	"icon":             {},
 	"tooltip":          {},
+	"annotation":       {},
 }
 
 // StyleKeywords are reserved keywords which cannot exist outside of the "style" keyword
@@ -171,6 +173,29 @@ var TooltipPositionsArray = []string{
 }
 var TooltipPositions map[string]struct{}
 
+// AnnotationShapesArray are the marks an annotation can draw over its target.
+// A trace follows a connection's route. The other marks surround a shape, and
+// a cross can strike out either.
+var AnnotationShapesArray = []string{
+	"circle",
+	"box",
+	"underline",
+	"brace",
+	"cross",
+	"trace",
+}
+var AnnotationShapes map[string]struct{}
+
+// AnnotationPositionsArray are the sides of its target an annotation's text
+// can be placed on.
+var AnnotationPositionsArray = []string{
+	"top-center",
+	"center-left",
+	"center-right",
+	"bottom-center",
+}
+var AnnotationPositions map[string]struct{}
+
 var LabelPositionsMapping = map[string]label.Position{
 	"top-left":   label.InsideTopLeft,
 	"top-center": label.InsideTopCenter,
@@ -266,5 +291,15 @@ func init() {
 	TooltipPositions = make(map[string]struct{}, len(TooltipPositionsArray))
 	for _, k := range TooltipPositionsArray {
 		TooltipPositions[k] = struct{}{}
+	}
+
+	AnnotationShapes = make(map[string]struct{}, len(AnnotationShapesArray))
+	for _, k := range AnnotationShapesArray {
+		AnnotationShapes[k] = struct{}{}
+	}
+
+	AnnotationPositions = make(map[string]struct{}, len(AnnotationPositionsArray))
+	for _, k := range AnnotationPositionsArray {
+		AnnotationPositions[k] = struct{}{}
 	}
 }

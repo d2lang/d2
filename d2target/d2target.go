@@ -477,6 +477,19 @@ func (diagram Diagram) NestedBoundingBox() (topLeft, bottomRight Point) {
 }
 
 func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
+	tl, br := diagram.InkBoundingBox()
+	if caption := diagram.CaptionBox(tl, br); caption != nil {
+		tl.X = min(tl.X, int(math.Floor(caption.TopLeft.X)))
+		tl.Y = min(tl.Y, int(math.Floor(caption.TopLeft.Y)))
+		br.X = max(br.X, int(math.Ceil(caption.TopLeft.X+caption.Width)))
+		br.Y = max(br.Y, int(math.Ceil(caption.TopLeft.Y+caption.Height)))
+	}
+	return tl, br
+}
+
+// InkBoundingBox bounds everything drawn on the board except its caption,
+// which is placed under this box.
+func (diagram Diagram) InkBoundingBox() (topLeft, bottomRight Point) {
 	if len(diagram.Shapes) == 0 {
 		return Point{0, 0}, Point{0, 0}
 	}
@@ -600,6 +613,20 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 		}
 	}
 
+	// Annotations sit outside layout, so the viewport grows to hold them. A
+	// frame that has drawn only part of a mark still reserves all of it.
+	for _, mark := range diagram.annotationMarks(false) {
+		if len(mark.Strokes) != 0 {
+			mx1, my1, mx2, my2 := mark.Bounds()
+			x1, y1 = min(x1, int(math.Floor(mx1))), min(y1, int(math.Floor(my1)))
+			x2, y2 = max(x2, int(math.Ceil(mx2))), max(y2, int(math.Ceil(my2)))
+		}
+		if box := mark.LabelBox; box != nil {
+			x1, y1 = min(x1, int(math.Floor(box.TopLeft.X))), min(y1, int(math.Floor(box.TopLeft.Y)))
+			x2, y2 = max(x2, int(math.Ceil(box.TopLeft.X+box.Width))), max(y2, int(math.Ceil(box.TopLeft.Y+box.Height)))
+		}
+	}
+
 	return Point{x1, y1}, Point{x2, y2}
 }
 
@@ -719,8 +746,20 @@ func (diagram Diagram) GetCorpus() string {
 
 func (diagram Diagram) appendCorpus(corpus *strings.Builder) {
 	appendixCount := 0
+	if a := diagram.Root.Annotation; a != nil {
+		corpus.WriteString(a.Label)
+	}
+	if a := diagram.Root.LeavingAnnotation; a != nil {
+		corpus.WriteString(a.Label)
+	}
 	for _, s := range diagram.Shapes {
 		corpus.WriteString(s.Label)
+		if s.Annotation != nil {
+			corpus.WriteString(s.Annotation.Label)
+		}
+		if s.LeavingAnnotation != nil {
+			corpus.WriteString(s.LeavingAnnotation.Label)
+		}
 		if s.Tooltip != "" {
 			corpus.WriteString(s.Tooltip)
 			appendixCount++
@@ -753,6 +792,12 @@ func (diagram Diagram) appendCorpus(corpus *strings.Builder) {
 	}
 	for _, c := range diagram.Connections {
 		corpus.WriteString(c.Label)
+		if c.Annotation != nil {
+			corpus.WriteString(c.Annotation.Label)
+		}
+		if c.LeavingAnnotation != nil {
+			corpus.WriteString(c.LeavingAnnotation.Label)
+		}
 		if c.SrcLabel != nil {
 			corpus.WriteString(c.SrcLabel.Label)
 		}
@@ -860,6 +905,13 @@ type Shape struct {
 
 	LabelPosition   string `json:"labelPosition,omitempty"`
 	TooltipPosition string `json:"tooltipPosition,omitempty"`
+
+	// Annotation is drawn over the shape without taking part in layout. On a
+	// diagram's root it is the board's caption.
+	Annotation *Annotation `json:"annotation,omitempty"`
+	// LeavingAnnotation is the previous board's annotation while a sampled
+	// frame erases it.
+	LeavingAnnotation *Annotation `json:"leavingAnnotation,omitempty"`
 
 	ZIndex int `json:"zIndex"`
 	Level  int `json:"level"`
@@ -1083,6 +1135,12 @@ type Connection struct {
 	Icon             *url.URL `json:"icon"`
 	IconPosition     string   `json:"iconPosition,omitempty"`
 	IconBorderRadius float64  `json:"iconBorderRadius,omitempty"`
+
+	// Annotation is drawn over the connection without taking part in layout.
+	Annotation *Annotation `json:"annotation,omitempty"`
+	// LeavingAnnotation is the previous board's annotation while a sampled
+	// frame erases it.
+	LeavingAnnotation *Annotation `json:"leavingAnnotation,omitempty"`
 
 	ZIndex int `json:"zIndex"`
 }

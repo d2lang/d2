@@ -15,6 +15,7 @@ var keywordDocs = map[string]keywordDoc{
 	"vars":                 {"board", "Map of variables. Use one with `${name}`. Also holds `d2-config`."},
 	"link":                 {"attribute", "URL to open when the shape is clicked, or a board path such as `layers.detail`."},
 	"tooltip":              {"attribute", "Text shown on hover."},
+	"annotation":           {"attribute", "A mark and a Markdown note drawn over the shape or connection for this board only. On a board's root it is the caption. Also holds `annotation.shape` (`circle`, `box`, `underline`, `brace`, `cross`, or `trace` on a connection), `annotation.near` and `annotation.style.stroke`."},
 	"near":                 {"attribute", "Position: a constant such as `top-center` on a top-level shape, or another shape's name."},
 	"width":                {"attribute", "Width in pixels. Integer."},
 	"height":               {"attribute", "Height in pixels. Integer."},

@@ -91,6 +91,12 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		return getNearCompletions(), nil
 	case "tooltip:", "tooltip":
 		return getTooltipCompletions(), nil
+	case "annotation", "annotation.":
+		return getAnnotationCompletions(), nil
+	case "annotation.shape:":
+		return getAnnotationShapeCompletions(), nil
+	case "annotation.near:":
+		return getAnnotationNearCompletions(), nil
 	case "direction:", "direction":
 		return getDirectionCompletions(), nil
 	default:
@@ -176,11 +182,17 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		// Check nested map
 		if n.MapKey.Value.Map != nil && isPositionInMap(line, column, n.MapKey.Value.Map) {
 			if nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos); nested != "" {
-				if isHolder {
+				holder, inHolder := firstPart, isHolder
+				if strings.EqualFold(lastPart, "annotation") {
+					// x.annotation: note {shape: } completes the annotation's
+					// marks, not the shapes of x.
+					holder, inHolder = "annotation", true
+				}
+				if inHolder {
 					// If we got a direct key completion from inside a holder's map,
 					// prefix it with the holder's name
 					if strings.HasSuffix(nested, ":") && !strings.Contains(nested, ".") {
-						return firstPart + "." + strings.TrimSuffix(nested, ":") + ":"
+						return holder + "." + strings.TrimSuffix(nested, ":") + ":"
 					}
 				}
 				return nested
@@ -214,6 +226,9 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 			if key != nil && len(key.Path) > 1 {
 				if isHolder && (firstPart == "source-arrowhead" || firstPart == "target-arrowhead") {
 					return firstPart + "." + lastPart + ":"
+				}
+				if parent := key.Path[len(key.Path)-2].Unbox(); parent.IsUnquoted() && strings.EqualFold(parent.ScalarString(), "annotation") {
+					return "annotation." + lastPart + ":"
 				}
 
 				_, isHolder := d2ast.ReservedKeywordHolders[lastPart]
@@ -456,6 +471,57 @@ func getTooltipCompletions() []CompletionItem {
 			InsertText: "|md\n  # Tooltip\n  Hello world\n|",
 		},
 	}
+}
+
+func getAnnotationCompletions() []CompletionItem {
+	completions := []struct{ label, detail string }{
+		{"shape", "the mark to draw"},
+		{"near", "side of the target for the note"},
+		{"style.stroke", "color of the mark and its note"},
+	}
+	items := make([]CompletionItem, len(completions))
+	for i, c := range completions {
+		items[i] = CompletionItem{
+			Label:      c.label,
+			Kind:       StyleCompletion,
+			Detail:     c.detail,
+			InsertText: c.label + ": ",
+		}
+	}
+	return items
+}
+
+func getAnnotationShapeCompletions() []CompletionItem {
+	details := map[string]string{
+		"circle":    "ring around a shape (default)",
+		"box":       "frame around a shape",
+		"underline": "line under the shape's label (default for text)",
+		"brace":     "curly brace along one side (default for containers)",
+		"cross":     "strike a shape or connection out",
+		"trace":     "highlight a connection's route (default for connections)",
+	}
+	items := make([]CompletionItem, len(d2ast.AnnotationShapesArray))
+	for i, shape := range d2ast.AnnotationShapesArray {
+		items[i] = CompletionItem{
+			Label:      shape,
+			Kind:       ShapeCompletion,
+			Detail:     details[shape],
+			InsertText: shape,
+		}
+	}
+	return items
+}
+
+func getAnnotationNearCompletions() []CompletionItem {
+	items := make([]CompletionItem, len(d2ast.AnnotationPositionsArray))
+	for i, position := range d2ast.AnnotationPositionsArray {
+		items[i] = CompletionItem{
+			Label:      position,
+			Kind:       KeywordCompletion,
+			InsertText: position,
+		}
+	}
+	return items
 }
 
 func getIconCompletions() []CompletionItem {

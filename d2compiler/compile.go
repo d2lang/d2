@@ -204,6 +204,10 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 	if c.stopped() {
 		return g
 	}
+	c.validateAnnotations(g)
+	if c.stopped() {
+		return g
+	}
 
 	c.compileLegend(g, ir)
 	if c.stopped() {
@@ -962,6 +966,8 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 				}
 			case "label", "icon", "tooltip":
 				c.compilePosition(attrs, f)
+			case "annotation":
+				c.compileAnnotation(attrs, f)
 			default:
 				c.errorf(fieldErrorNode(f), "reserved field %v does not accept composite", f.Name.ScalarString())
 			}
@@ -1041,6 +1047,8 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 		}
 
 		c.compilePosition(attrs, f)
+	case "annotation":
+		c.compileAnnotation(attrs, f)
 	case "width":
 		_, err := strconv.Atoi(scalar.ScalarString())
 		if err != nil {
@@ -1437,7 +1445,10 @@ func (c *compiler) compileArrowheads(edge *d2graph.Edge, f *d2ir.Field) {
 			}
 			keyword := d2ast.Keyword(f2.Name)
 			_, isReserved := d2ast.SimpleReservedKeywords[keyword]
-			if isReserved {
+			if keyword == "annotation" {
+				c.errorf(f2.LastRef().AST(), `an arrowhead cannot be annotated; annotate its connection`)
+				continue
+			} else if isReserved {
 				c.compileReserved(attrs, f2)
 				continue
 			} else if keyword == "style" {

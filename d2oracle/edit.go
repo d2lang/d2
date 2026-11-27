@@ -1378,7 +1378,7 @@ func deleteReserved(g *d2graph.Graph, boardPath []string, baseAST *d2ast.Map, mk
 	for i, id := range parts {
 		if keyword := d2ast.Keyword(targetKey.Path[i].Unbox()); reservedField(keyword, obj.Parent == nil) {
 			if (i < len(parts)-1 && (keyword == "style" || keyword == "label")) || keyword == "icon" ||
-				keyword == "near" || keyword == "tooltip" || keyword == "width" || keyword == "height" ||
+				keyword == "near" || keyword == "tooltip" || keyword == "annotation" || keyword == "width" || keyword == "height" ||
 				keyword == "left" || keyword == "top" || keyword == "link" {
 				deleted, err := deleteObjField(g, baseAST, obj, targetKey.Path[i:])
 				if err != nil {
