@@ -2,8 +2,10 @@
 package d2fonts
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -186,97 +188,63 @@ var D2_FONT_TO_FAMILY = map[string]FontFamily{
 	"mono":    SourceCodePro,
 }
 
-func AddFontStyle(f Font, style FontStyle, ttf []byte) error {
-	FontFaces.Set(f, ttf)
-
-	woff, err := font.Sfnt2Woff(ttf)
+func encodeFontFace(ttf []byte) (string, error) {
+	// The legacy WOFF encoder adjusts the input checksum. Keep the original
+	// face available for measuring, comparing and serializing compiled diagrams.
+	woff, err := font.Sfnt2Woff(bytes.Clone(ttf))
 	if err != nil {
-		return fmt.Errorf("failed to encode ttf to woff: %v", err)
+		return "", fmt.Errorf("failed to encode ttf to woff: %v", err)
 	}
-	encodedWoff := fmt.Sprintf("data:application/font-woff;base64,%v", base64.StdEncoding.EncodeToString(woff))
-	FontEncodings.Set(f, encodedWoff)
+	return woffDataPrefix + base64.StdEncoding.EncodeToString(woff), nil
+}
 
+func AddFontStyle(f Font, style FontStyle, ttf []byte) error {
+	encoded, err := encodeFontFace(ttf)
+	if err != nil {
+		return err
+	}
+	FontFaces.Set(f, ttf)
+	FontEncodings.Set(f, encoded)
 	return nil
 }
 
 func AddFontFamily(name string, regularTTF, italicTTF, boldTTF, semiboldTTF []byte) (*FontFamily, error) {
 	FontFamiliesMu.Lock()
 	defer FontFamiliesMu.Unlock()
-	customFontFamily := FontFamily(name)
-
-	regularFont := Font{
-		Family: customFontFamily,
-		Style:  FONT_STYLE_REGULAR,
+	family := FontFamily(name)
+	faces := [...]struct {
+		style    FontStyle
+		ttf      []byte
+		encoding string
+	}{
+		{style: FONT_STYLE_REGULAR, ttf: regularTTF},
+		{style: FONT_STYLE_ITALIC, ttf: italicTTF},
+		{style: FONT_STYLE_BOLD, ttf: boldTTF},
+		{style: FONT_STYLE_SEMIBOLD, ttf: semiboldTTF},
 	}
-	if regularTTF != nil {
-		err := AddFontStyle(regularFont, FONT_STYLE_REGULAR, regularTTF)
-		if err != nil {
-			return nil, err
+	// Prepare every face before replacing an existing family. A failure in a
+	// later style must leave earlier diagrams' measurement and encoding intact.
+	for i := range faces {
+		face := &faces[i]
+		if face.ttf == nil {
+			fallback := Font{Family: SourceSansPro, Style: face.style}
+			face.ttf = FontFaces.Get(fallback)
+			face.encoding = FontEncodings.Get(fallback)
+		} else {
+			encoded, err := encodeFontFace(face.ttf)
+			if err != nil {
+				return nil, err
+			}
+			face.encoding = encoded
 		}
-	} else {
-		fallbackFont := Font{
-			Family: SourceSansPro,
-			Style:  FONT_STYLE_REGULAR,
-		}
-		FontFaces.Set(regularFont, FontFaces.Get(fallbackFont))
-		FontEncodings.Set(regularFont, FontEncodings.Get(fallbackFont))
 	}
-
-	italicFont := Font{
-		Family: customFontFamily,
-		Style:  FONT_STYLE_ITALIC,
+	for _, face := range faces {
+		f := Font{Family: family, Style: face.style}
+		FontFaces.Set(f, face.ttf)
+		FontEncodings.Set(f, face.encoding)
 	}
-	if italicTTF != nil {
-		err := AddFontStyle(italicFont, FONT_STYLE_ITALIC, italicTTF)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		fallbackFont := Font{
-			Family: SourceSansPro,
-			Style:  FONT_STYLE_ITALIC,
-		}
-		FontFaces.Set(italicFont, FontFaces.Get(fallbackFont))
-		FontEncodings.Set(italicFont, FontEncodings.Get(fallbackFont))
+	if !slices.Contains(FontFamilies, family) {
+		FontFamilies = append(FontFamilies, family)
 	}
-
-	boldFont := Font{
-		Family: customFontFamily,
-		Style:  FONT_STYLE_BOLD,
-	}
-	if boldTTF != nil {
-		err := AddFontStyle(boldFont, FONT_STYLE_BOLD, boldTTF)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		fallbackFont := Font{
-			Family: SourceSansPro,
-			Style:  FONT_STYLE_BOLD,
-		}
-		FontFaces.Set(boldFont, FontFaces.Get(fallbackFont))
-		FontEncodings.Set(boldFont, FontEncodings.Get(fallbackFont))
-	}
-
-	semiboldFont := Font{
-		Family: customFontFamily,
-		Style:  FONT_STYLE_SEMIBOLD,
-	}
-	if semiboldTTF != nil {
-		err := AddFontStyle(semiboldFont, FONT_STYLE_SEMIBOLD, semiboldTTF)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		fallbackFont := Font{
-			Family: SourceSansPro,
-			Style:  FONT_STYLE_SEMIBOLD,
-		}
-		FontFaces.Set(semiboldFont, FontFaces.Get(fallbackFont))
-		FontEncodings.Set(semiboldFont, FontEncodings.Get(fallbackFont))
-	}
-
-	FontFamilies = append(FontFamilies, customFontFamily)
-
-	return &customFontFamily, nil
+	return &family, nil
 }

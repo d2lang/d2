@@ -189,7 +189,8 @@ const svg = await d2.render(diagram, renderOptions);
 
 ### `render(diagram: Diagram, options?: RenderOptions): Promise<string>`
 
-Renders a compiled diagram to SVG.
+Renders a compiled diagram to SVG. A compiled diagram retains its custom font faces,
+including when you serialize the root diagram to JSON and render it in another D2 instance.
 
 ### `dispose(): Promise<void>`
 

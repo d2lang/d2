@@ -89,8 +89,7 @@ func TestSfnt2WoffConcurrentAndOwnedOutput(t *testing.T) {
 }
 
 func TestSfnt2WoffPoolAfterMalformedInput(t *testing.T) {
-	// The first table is valid and borrows a compressor. The short head table
-	// panics afterwards, exercising deferred return of that workspace.
+	// Reject the short head table and keep the compressor usable for later fonts.
 	buf := make([]byte, SIZE_OF_SFNT_HEADER+2*SIZE_OF_SFNT_TABLE_ENTRY+8)
 	binary.BigEndian.PutUint16(buf[4:], 2)
 	for i, tag := range []string{"aaaa", "head"} {
@@ -99,13 +98,8 @@ func TestSfnt2WoffPoolAfterMalformedInput(t *testing.T) {
 		binary.BigEndian.PutUint32(record[SFNT_OFFSET_OFFSET:], uint32(SIZE_OF_SFNT_HEADER+2*SIZE_OF_SFNT_TABLE_ENTRY+4*i))
 		binary.BigEndian.PutUint32(record[SFNT_OFFSET_LENGTH:], 4)
 	}
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("malformed head unexpectedly accepted")
-			}
-		}()
-		Sfnt2Woff(buf)
-	}()
+	if _, err := Sfnt2Woff(buf); err == nil {
+		t.Error("malformed head unexpectedly accepted")
+	}
 	testWoffCompressionIndependentStreams(t)
 }
