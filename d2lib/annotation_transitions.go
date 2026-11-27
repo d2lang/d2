@@ -87,7 +87,27 @@ func sameAnnotation(a, b *d2target.Annotation) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.Label == b.Label && a.Shape == b.Shape && a.Position == b.Position && a.Stroke == b.Stroke
+	return a.Label == b.Label && a.Shape == b.Shape && a.Position == b.Position && a.Stroke == b.Stroke &&
+		a.FontColor == b.FontColor && slices.Equal(a.Members, b.Members)
+}
+
+// showsOn reports whether the plan changes anything the board can draw. A
+// mark whose target the board no longer has cannot be erased on it.
+func (m *boardMarks) showsOn(board *d2target.Diagram) bool {
+	if m.count > 0 || m.captionChanged {
+		return true
+	}
+	for i := range board.Shapes {
+		if _, leaving := m.leavingShapes[board.Shapes[i].ID]; leaving {
+			return true
+		}
+	}
+	for i := range board.Connections {
+		if _, leaving := m.leavingEdges[board.Connections[i].ID]; leaving {
+			return true
+		}
+	}
+	return false
 }
 
 func planBoardMarks(before, now *boardAnnotations, board *d2target.Diagram) *boardMarks {
@@ -289,8 +309,8 @@ func sampleAnnotations(ctx context.Context, root *d2target.Diagram, lifted map[*
 	elementsLeft := maxBoardSampleElements
 
 	var previous *d2target.Diagram
-	var walk func(*d2target.Diagram) error
-	walk = func(board *d2target.Diagram) error {
+	var walk func(board *d2target.Diagram, clean bool) error
+	walk = func(board *d2target.Diagram, clean bool) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -298,9 +318,15 @@ func sampleAnnotations(ctx context.Context, root *d2target.Diagram, lifted map[*
 			now := lifted[board]
 			var plan *boardMarks
 			if duration > 0 && previous != nil {
-				plan = planBoardMarks(lifted[previous], now, board)
+				// A layer is a page of its own. Nothing from the board shown
+				// before it is erased on it.
+				var before *boardAnnotations
+				if !clean {
+					before = lifted[previous]
+				}
+				plan = planBoardMarks(before, now, board)
 			}
-			if plan != nil && len(board.TweenFrames) == 0 {
+			if plan != nil && len(board.TweenFrames) == 0 && plan.showsOn(board) {
 				// Nothing else changes on this step, so the marks set its frames.
 				cost := max(1, len(board.Shapes)+len(board.Connections))
 				n := min(d2target.TweenFrameCount(duration), framesLeft, elementsLeft/cost)
@@ -317,6 +343,13 @@ func sampleAnnotations(ctx context.Context, root *d2target.Diagram, lifted map[*
 					elementsLeft -= n * cost
 				}
 			}
+			// The frames can end before the transition's time is up, and the
+			// board then shows whole. The marks are paced to finish with the
+			// frames, so that nothing is left to pop in.
+			span := board.TweenDurationMS
+			if ends := board.TweenFrameEndsMS; len(ends) != 0 {
+				span = ends[len(ends)-1]
+			}
 			for i, frame := range board.TweenFrames {
 				start := int(int64(i) * int64(board.TweenDurationMS) / int64(len(board.TweenFrames)))
 				if ends := board.TweenFrameEndsMS; len(ends) != 0 {
@@ -325,21 +358,21 @@ func sampleAnnotations(ctx context.Context, root *d2target.Diagram, lifted map[*
 						start = ends[i-1]
 					}
 				}
-				now.attach(frame, plan, float64(start)/float64(board.TweenDurationMS))
+				now.attach(frame, plan, float64(start)/float64(span))
 			}
 			now.restore(board)
 			previous = board
 		}
-		for _, children := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
+		for kind, children := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
 			for _, child := range children {
-				if err := walk(child); err != nil {
+				if err := walk(child, kind == 0); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	return walk(root)
+	return walk(root, true)
 }
 
 // alignCaptions pins every board's caption to one lower third. An animation

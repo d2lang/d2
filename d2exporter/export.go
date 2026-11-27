@@ -36,22 +36,45 @@ func defaultAnnotationMark(obj *d2graph.Object) string {
 // which is what a class or a glob does for every shape it applies to. The
 // first of them carries the annotation and names the others; one loop is
 // drawn round them all. A lasso declared on a shape itself holds that shape.
-func groupLassos(g *d2graph.Graph, diagram *d2target.Diagram) {
+// It returns the IDs of every shape a lasso holds.
+func groupLassos(g *d2graph.Graph, diagram *d2target.Diagram) (held map[string]struct{}) {
 	owners := make(map[string]*d2target.Annotation)
 	for i, obj := range g.Objects {
 		a := obj.Annotation
-		held := diagram.Shapes[i].Annotation
-		if a == nil || held == nil || held.Shape != d2target.AnnotationLasso || a.Shape == nil || a.Shape.MapKey == nil {
+		mark := diagram.Shapes[i].Annotation
+		if a == nil || mark == nil || mark.Shape != d2target.AnnotationLasso {
 			continue
 		}
-		declared := a.Shape.MapKey.Range.String()
-		if owner, ok := owners[declared]; ok {
-			owner.Members = append(owner.Members, diagram.Shapes[i].ID)
-			diagram.Shapes[i].Annotation = nil
+		if held == nil {
+			held = make(map[string]struct{})
+		}
+		held[diagram.Shapes[i].ID] = struct{}{}
+		if a.Group == "" {
 			continue
 		}
-		owners[declared] = held
+		owner, ok := owners[a.Group]
+		if !ok {
+			owners[a.Group] = mark
+			continue
+		}
+		owner.Members = append(owner.Members, diagram.Shapes[i].ID)
+		// The loop has one note and one pen. Each comes from the first of its
+		// shapes to set one.
+		if owner.Label == "" {
+			owner.Label, owner.LabelWidth, owner.LabelHeight = mark.Label, mark.LabelWidth, mark.LabelHeight
+		}
+		if owner.Stroke == "" {
+			owner.Stroke = mark.Stroke
+		}
+		if owner.FontColor == "" {
+			owner.FontColor = mark.FontColor
+		}
+		if owner.Position == "" {
+			owner.Position = mark.Position
+		}
+		diagram.Shapes[i].Annotation = nil
 	}
+	return held
 }
 
 // toAnnotation resolves an annotation for rendering. defaultShape is the mark
@@ -114,7 +137,7 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 		diagram.Shapes[i] = toShape(obj, g)
 	}
 
-	groupLassos(g, diagram)
+	lassoed := groupLassos(g, diagram)
 
 	// A caption that links to an object points at it, even when nothing else
 	// on the board annotates that object. The caption draws that mark, so it
@@ -126,6 +149,10 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 		}
 		for _, id := range caption.Cues {
 			for i, obj := range g.Objects {
+				// A shape in a lasso is already marked, whichever shape carries the loop.
+				if _, held := lassoed[id]; held {
+					continue
+				}
 				if diagram.Shapes[i].Annotation == nil && obj.AbsID() == id {
 					diagram.Shapes[i].Annotation = &d2target.Annotation{Shape: defaultAnnotationMark(obj), Stroke: pen}
 				}

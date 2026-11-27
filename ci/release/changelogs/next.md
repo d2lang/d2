@@ -12,6 +12,6 @@
 
 #### Breaking Changes
 
-- **`annotation` is a keyword.** A shape named `annotation` must now be quoted: `"annotation": note`. The compiler says so when it meets one.
+- **`annotation` is a keyword.** A shape named `annotation` must now be quoted: `"annotation": note`. Where the old spelling no longer compiles, the error says so. `annotation: note` on its own still compiles: it is now the board's caption.
 
 <!-- When this release changes D2.js, add a “#### D2.js <npm version>” section here. -->

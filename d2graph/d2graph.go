@@ -299,6 +299,9 @@ type Annotation struct {
 	Stroke   *Scalar `json:"stroke,omitempty"`
 	// FontColor colors the text alone. Unset, the text is written in the pen.
 	FontColor *Scalar `json:"fontColor,omitempty"`
+	// Group names the class or glob that gave the shape a lasso. Shapes with
+	// the same group share one loop. Empty, the lasso holds this shape alone.
+	Group string `json:"group,omitempty"`
 	// Cues are the objects a board's caption links to, by absolute ID, in the
 	// order the caption names them. Text is that caption as painted, with each
 	// cue link replaced by emphasis.

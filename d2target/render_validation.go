@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/svg"
 )
@@ -228,6 +229,13 @@ func validateRenderAnnotation(a *Annotation, path string, target annotationTarge
 	}
 	if !valid {
 		return invalidRenderField(path, "shape", a.Shape, "is not a mark this target can carry")
+	}
+	// A pen is one color. A gradient or a paint server has no place in a stroke
+	// that both renderers draw point by point.
+	for field, paint := range map[string]string{"stroke": a.Stroke, "fontColor": a.FontColor} {
+		if paint != "" && !color.IsThemeColor(paint) && (color.IsGradient(paint) || !color.ValidColor(paint)) {
+			return invalidRenderField(path, field, paint, "must be a named color or a hex code")
+		}
 	}
 	if len(a.Members) > 0 && (target != annotationOnShape || a.Shape != AnnotationLasso) {
 		return invalidRenderField(path, "members", a.Members, "belong to a lasso on a shape")

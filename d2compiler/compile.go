@@ -453,9 +453,11 @@ type compiler struct {
 	err             *d2parser.ParseError
 	activeClassMaps map[*d2ir.Map]struct{}
 	classMapsByRoot map[*d2ir.Map]map[string]*d2ir.Map
-	explicitLabels  map[*d2graph.Attributes]struct{}
-	ctx             context.Context
-	fatalErr        error
+	// classNames are the classes being applied to the object now, outermost first.
+	classNames     []string
+	explicitLabels map[*d2graph.Attributes]struct{}
+	ctx            context.Context
+	fatalErr       error
 }
 
 func (c *compiler) stopped() bool {
@@ -529,7 +531,9 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 						c.endClass(classMap)
 						return
 					}
+					c.classNames = append(c.classNames, className)
 					c.compileMap(obj, classMap)
+					c.classNames = c.classNames[:len(c.classNames)-1]
 					c.endClass(classMap)
 				}
 			} else {

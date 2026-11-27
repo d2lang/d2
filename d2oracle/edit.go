@@ -703,6 +703,13 @@ func _set(g *d2graph.Graph, baseAST *d2ast.Map, key string, tag, value *string) 
 					attrs.Tooltip.MapKey.SetScalar(mk.Value.ScalarBox())
 					return nil
 				}
+			case "annotation":
+				// Only the note itself is rewritten in place. A key under it,
+				// such as annotation.shape, is set like any other.
+				if reservedTargetKey == "" && len(mk.Key.Path) == reservedIndex+1 && attrs.Annotation != nil && inlined(&attrs.Annotation.Label) {
+					attrs.Annotation.Label.MapKey.SetScalar(mk.Value.ScalarBox())
+					return nil
+				}
 			case "width":
 				if inlined(attrs.WidthAttr) {
 					attrs.WidthAttr.MapKey.SetScalar(mk.Value.ScalarBox())

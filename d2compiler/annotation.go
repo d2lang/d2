@@ -22,6 +22,10 @@ const annotationNameHint = `. If "annotation" is the name of a shape here, quote
 // form `annotation.shape: circle`. A class and the object using it can each
 // set part of the same annotation, so later fields refine earlier ones.
 func (c *compiler) compileAnnotation(attrs *d2graph.Attributes, f *d2ir.Field) {
+	if _, list := f.Composite.(*d2ir.Array); list {
+		c.errorf(fieldErrorNode(f), "annotation takes text, a map of shape, near and style, or both; not a list")
+		return
+	}
 	annotation := attrs.Annotation
 	if annotation == nil {
 		annotation = &d2graph.Annotation{}
@@ -98,6 +102,10 @@ func (c *compiler) compileAnnotation(attrs *d2graph.Attributes, f *d2ir.Field) {
 					continue
 				}
 				annotation.Shape = set
+				annotation.Group = ""
+				if value == d2target.AnnotationLasso {
+					annotation.Group = c.lassoGroup(f, child)
+				}
 			} else {
 				if _, ok := d2ast.AnnotationPositions[value]; !ok {
 					c.errorf(scalar, "invalid annotation near %q, expected one of: %s%s", scalar.ScalarString(), strings.Join(d2ast.AnnotationPositionsArray, ", "), annotationNameHint)
@@ -128,8 +136,10 @@ func (c *compiler) compileAnnotation(attrs *d2graph.Attributes, f *d2ir.Field) {
 					*set = nil
 					continue
 				}
-				if !color.ValidColor(scalar.ScalarString()) {
-					c.errorf(scalar, `expected %q to be a valid named color ("orange"), a hex code ("#f0ff3a"), or a gradient ("linear-gradient(red, blue)")`, name)
+				// A pen is one color. Both renderers draw a mark point by point,
+				// where a gradient has no box to run across.
+				if !color.ValidColor(scalar.ScalarString()) || color.IsGradient(scalar.ScalarString()) {
+					c.errorf(scalar, `expected %q to be a valid named color ("orange") or a hex code ("#f0ff3a")`, name)
 					continue
 				}
 				*set = &d2graph.Scalar{Value: scalar.ScalarString(), MapKey: style.LastPrimaryKey()}
@@ -195,15 +205,32 @@ func (c *compiler) validateAnnotations(g *d2graph.Graph) {
 	caption.Text, caption.Cues = resolveCaptionCues(g, caption.Label.Value)
 }
 
+// lassoGroup names what gave a shape its lasso when that was a class or a
+// glob, so that every shape the same one reaches shares a loop. A lasso
+// declared on the shape, imported, or spread from a variable is its own.
+func (c *compiler) lassoGroup(annotation, shape *d2ir.Field) string {
+	if n := len(c.classNames); n > 0 {
+		return "class " + c.classNames[n-1]
+	}
+	for _, f := range []*d2ir.Field{shape, annotation} {
+		if ref := f.LastRef(); ref != nil && ref.DueToGlob() {
+			return "glob " + ref.AST().GetRange().String()
+		}
+	}
+	return ""
+}
+
 // A caption points at an object by linking to its key: [the replica](db.r2).
-// Destinations that are not an object on this board stay ordinary links.
-var captionLink = regexp.MustCompile(`\[([^\]\n]+)\]\(([^()\s<>]+)\)`)
+// A key with a space in it goes in angle brackets, as Markdown asks of any
+// destination: [the balancer](<load balancer>). Destinations that are not an
+// object on this board stay ordinary links.
+var captionLink = regexp.MustCompile(`\[([^\]\n]+)\]\((?:<([^<>\n]+)>|([^()\s<>]+))\)`)
 
 func resolveCaptionCues(g *d2graph.Graph, markdown string) (text string, cues []string) {
 	seen := make(map[string]struct{})
 	text = captionLink.ReplaceAllStringFunc(markdown, func(link string) string {
 		parts := captionLink.FindStringSubmatch(link)
-		key, err := d2parser.ParseKey(parts[2])
+		key, err := d2parser.ParseKey(parts[2] + parts[3])
 		if err != nil {
 			return link
 		}

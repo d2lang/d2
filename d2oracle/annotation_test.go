@@ -29,6 +29,13 @@ func TestEditAnnotation(t *testing.T) {
 	assert.String(t, "box", g.Objects[0].Annotation.Shape.Value)
 	assert.String(t, "slow", g.Edges[0].Annotation.Label.Value)
 
+	// Setting the note again rewrites it where it is.
+	g, err = d2oracle.Set(g, nil, "a.annotation", nil, go2.Pointer("very late"))
+	assert.Success(t, err)
+	assert.String(t, "a -> b: {annotation: slow}\na.annotation: very late\na.annotation.shape: box\n", d2format.Format(g.AST))
+	g, err = d2oracle.Set(g, nil, "a.annotation", nil, go2.Pointer("late"))
+	assert.Success(t, err)
+
 	// Deleting one part leaves the rest of the annotation.
 	g, err = d2oracle.Delete(g, nil, "a.annotation.shape")
 	assert.Success(t, err)

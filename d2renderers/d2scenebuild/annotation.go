@@ -55,7 +55,7 @@ func (b *builder) buildAnnotations() ([]*d2scene.Node, error) {
 			root.Children = append(root.Children, ink)
 		}
 		if mark.LabelBox != nil && mark.LabelOpacity > 0 {
-			note, err := b.buildAnnotationText(object+" note", root.ID+":note", mark.Label, mark.FontFamily, d2target.AnnotationFontSize, mark.LabelBox, mark.NotePaint)
+			note, err := b.buildAnnotationText(object+" note", root.ID+":note", mark.Label, "", d2target.AnnotationFontSize, mark.LabelBox, mark.NotePaint)
 			if err != nil {
 				return nil, err
 			}

@@ -21,6 +21,10 @@ func shapeLabelBox(s *Shape) (*geo.Box, bool) {
 	}
 	// Resolve the label the way the renderers do.
 	position := label.FromString(s.LabelPosition)
+	if position == label.Unset && (s.Language == "markdown" || s.Language == "latex") {
+		// The renderers center Markdown and LaTeX in a shape larger than the text.
+		position = label.InsideMiddleCenter
+	}
 	geometry := s.Geometry()
 	labelBox := geometry.GetInnerBox()
 	if position.IsOutside() || position.IsBorder() {
@@ -84,13 +88,13 @@ func highlightStrokes(band *geo.Box, lines int, seed float64) (strokes [][]geo.P
 	span := x2 - x1
 	steps := int(math.Max(4, span/14))
 	for i := 0; i < lines; i++ {
-		y := band.TopLeft.Y + lineHeight*(float64(i)+0.5)
+		y := band.TopLeft.Y + float64(lineHeight*(float64(i)+0.5))
 		// A highlighter is dragged, not ruled: each pass tilts and wavers a little.
-		tilt := float64(1.1 * math.Sin(seed+1.9*float64(i)))
+		tilt := float64(1.1 * math.Sin(seed+float64(1.9*float64(i))))
 		pts := make([]geo.Point, 0, steps+1)
 		for k := 0; k <= steps; k++ {
 			t := float64(k) / float64(steps)
-			waver := float64(0.7 * math.Sin(math.Pi*t) * math.Sin(2.3*t+seed+float64(i)))
+			waver := float64(0.7 * math.Sin(math.Pi*t) * math.Sin(float64(2.3*t)+seed+float64(i)))
 			pts = append(pts, geo.Point{X: x1 + float64(span*t), Y: y - tilt + float64(2*tilt*t) + waver})
 		}
 		strokes = append(strokes, simplify(pts))
@@ -105,11 +109,11 @@ func arrowStrokes(note, aim *geo.Box, seed float64) [][]geo.Point {
 	from := nearestOnBox(growBox(note, 4), center)
 	to := nearestOnBox(growBox(aim, 6), from)
 	dx, dy := to.X-from.X, to.Y-from.Y
-	length := math.Hypot(dx, dy)
+	length := dist(dx, dy)
 	if length < 8 {
 		return nil
 	}
-	bow := math.Min(12, length*0.18)
+	bow := math.Min(12, snapTenth(length*0.18))
 	if math.Sin(seed) < 0 {
 		bow = -bow
 	}
@@ -129,7 +133,7 @@ func arrowStrokes(note, aim *geo.Box, seed float64) [][]geo.Point {
 	// The head follows the direction the shaft arrives in.
 	tip := shaft[len(shaft)-1]
 	tx, ty := to.X-cx, to.Y-cy
-	tl := math.Hypot(tx, ty)
+	tl := dist(tx, ty)
 	tx, ty = tx/tl, ty/tl
 	const (
 		barb   = 11.
@@ -243,10 +247,12 @@ func lassoOutline(held, others []*geo.Box, pad float64) []geo.Point {
 				if !segmentCrossesBox(a, b, inner) {
 					continue
 				}
-				length := math.Hypot(b.X-a.X, b.Y-a.Y)
+				length := dist(b.X-a.X, b.Y-a.Y)
+				// Depths are compared, so they are snapped first: the last bit
+				// of a quotient must not pick the edge.
 				deepest := 0.
 				for _, c := range boxCorners(box) {
-					deepest = math.Max(deepest, inward(a, b, c)/length)
+					deepest = math.Max(deepest, snapTenth(inward(a, b, c)/length))
 				}
 				if deepest > 0 && deepest < depth {
 					edge, depth = i, deepest
@@ -269,23 +275,36 @@ func lassoOutline(held, others []*geo.Box, pad float64) []geo.Point {
 			// Leave the edge some way before it meets the box and rejoin it
 			// some way after, so the way round is a bend in the edge and not
 			// a wedge cut from one end of it to the other.
-			length := math.Hypot(b.X-a.X, b.Y-a.Y)
+			length := dist(b.X-a.X, b.Y-a.Y)
 			enter, exit, _ := clipSegment(a, b, box)
 			ramp := math.Max(48, 2*depth)
 			on := func(distance float64) geo.Point {
 				return geo.Point{X: snapTenth(a.X + float64((b.X-a.X)/length*distance)), Y: snapTenth(a.Y + float64((b.Y-a.Y)/length*distance))}
 			}
 			path := []geo.Point{a}
-			if leave := enter*length - ramp; leave > 1 {
+			if leave := snapTenth(float64(enter*length) - ramp); leave > 1 {
 				path = append(path, on(leave))
 			}
 			path = append(path, round...)
-			if rejoin := exit*length + ramp; rejoin < length-1 {
+			if rejoin := snapTenth(float64(exit*length) + ramp); rejoin < snapTenth(length)-1 {
 				path = append(path, on(rejoin))
 			}
 			path = append(path, b)
-			// Going round it must not cut into anything the lasso holds.
+			// The way round has to stay inside the loop and cross none of it.
+			// A box that reaches right across the loop cannot be left out.
 			ok := true
+			for _, c := range round {
+				ok = ok && insideOutline(outline, c)
+			}
+			for i := 0; i+1 < len(path) && ok; i++ {
+				for j, p := range outline {
+					if j != edge && segmentsCross(path[i], path[i+1], p, outline[(j+1)%len(outline)]) {
+						ok = false
+						break
+					}
+				}
+			}
+			// Going round it must not cut into anything the lasso holds.
 			for i := 0; i+1 < len(path) && ok; i++ {
 				for _, h := range padded {
 					if segmentCrossesBox(path[i], path[i+1], growBox(h, -1)) {
@@ -308,6 +327,29 @@ func lassoOutline(held, others []*geo.Box, pad float64) []geo.Point {
 		}
 	}
 	return outline
+}
+
+// insideOutline reports whether the point is inside the closed outline.
+func insideOutline(outline []geo.Point, p geo.Point) bool {
+	inside := false
+	for i, j := 0, len(outline)-1; i < len(outline); j, i = i, i+1 {
+		a, b := outline[i], outline[j]
+		if (a.Y > p.Y) != (b.Y > p.Y) && p.X < a.X+float64((b.X-a.X)*(p.Y-a.Y)/(b.Y-a.Y)) {
+			inside = !inside
+		}
+	}
+	return inside
+}
+
+// segmentsCross reports whether the two segments cross at a point inside
+// both. Sharing an end point is not crossing.
+func segmentsCross(a, b, c, d geo.Point) bool {
+	side := func(p, q, r geo.Point) float64 {
+		return float64((q.X-p.X)*(r.Y-p.Y)) - float64((q.Y-p.Y)*(r.X-p.X))
+	}
+	d1, d2 := side(c, d, a), side(c, d, b)
+	d3, d4 := side(a, b, c), side(a, b, d)
+	return (d1 > 0) != (d2 > 0) && d1 != 0 && d2 != 0 && (d3 > 0) != (d4 > 0) && d3 != 0 && d4 != 0
 }
 
 func boxCorners(b *geo.Box) [4]geo.Point {
@@ -345,7 +387,7 @@ func lassoStroke(held, others []*geo.Box, seed float64) []geo.Point {
 	for k := 0; k < n; k++ {
 		i := (first + k) % n
 		prev, v, next := hull[(i+n-1)%n], hull[i], hull[(i+1)%n]
-		in, out := math.Hypot(v.X-prev.X, v.Y-prev.Y), math.Hypot(next.X-v.X, next.Y-v.Y)
+		in, out := dist(v.X-prev.X, v.Y-prev.Y), dist(next.X-v.X, next.Y-v.Y)
 		if in == 0 || out == 0 {
 			// Two corners in the same place: there is no turn to round.
 			continue
@@ -369,7 +411,7 @@ func lassoStroke(held, others []*geo.Box, seed float64) []geo.Point {
 	total, cx, cy := 0., 0., 0.
 	for i, p := range ring {
 		q := ring[(i+1)%len(ring)]
-		lengths[i] = math.Hypot(q.X-p.X, q.Y-p.Y)
+		lengths[i] = dist(q.X-p.X, q.Y-p.Y)
 		total += lengths[i]
 		cx += p.X
 		cy += p.Y
@@ -393,20 +435,20 @@ func lassoStroke(held, others []*geo.Box, seed float64) []geo.Point {
 	}
 	// Begin partway round the first corner, at a place that differs a little
 	// from target to target.
-	start := float64(radius * (0.5 + 0.2*math.Sin(seed)))
+	start := float64(radius * (0.5 + float64(0.2*math.Sin(seed))))
 	steps := int(math.Max(24, total*(1+overlap)/spacing))
 	pts := make([]geo.Point, 0, steps+1)
 	for i := 0; i <= steps; i++ {
 		u := float64(i) / float64(steps)
 		p := at(start + float64(u*(1+overlap)*total))
 		dx, dy := p.X-cx, p.Y-cy
-		d := math.Hypot(dx, dy)
+		d := dist(dx, dy)
 		if d == 0 {
 			d = 1
 		}
 		// The loop drifts outward as it goes, so its end passes outside its
 		// start, and the hand wavers on the way.
-		off := (u-0.5)*6 + float64(1.2*math.Sin(u*19+seed))
+		off := float64((u-0.5)*6) + float64(1.2*math.Sin(float64(u*19)+seed))
 		pts = append(pts, geo.Point{X: p.X + float64(dx/d*off), Y: p.Y + float64(dy/d*off)})
 	}
 	return simplify(pts)

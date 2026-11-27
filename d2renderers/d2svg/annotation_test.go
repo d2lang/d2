@@ -174,6 +174,30 @@ func TestRenderCaptionCrossFade(t *testing.T) {
 	}
 }
 
+func TestRenderMarkOpacityOnce(t *testing.T) {
+	t.Parallel()
+
+	out, err := d2svg.Render(annotationDiagram(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg := string(out)
+	// A translucent mark carries its opacity on one group, so that strokes
+	// which overlap do not double up, and the raster output matches.
+	if !strings.Contains(svg, `<g style="opacity:0.38"><path`) {
+		t.Fatal("the trace's opacity is not on a group round its strokes")
+	}
+	if regexp.MustCompile(`stroke-linejoin:round;opacity`).MatchString(svg) {
+		t.Fatal("a stroke still carries its own opacity")
+	}
+
+	d := annotationDiagram()
+	d.Shapes[0].Annotation.Stroke = "url(https://example.com/paint.svg#p)"
+	if _, err := d2svg.Render(d, nil); err == nil {
+		t.Fatal("a paint server reached an annotation's stroke")
+	}
+}
+
 func TestRenderHighlightAndNoteColor(t *testing.T) {
 	t.Parallel()
 

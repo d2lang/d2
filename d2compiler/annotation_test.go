@@ -202,6 +202,19 @@ y -> z: {annotation: slow {shape: arrow}}
 	deepEqual(t, []string{"highlight", "arrow"}, []string{g.Edges[0].Annotation.Shape.Value, g.Edges[1].Annotation.Shape.Value})
 }
 
+func TestCaptionCueWithSpaces(t *testing.T) {
+	t.Parallel()
+
+	// Markdown wants a destination with a space in it wrapped in angle brackets.
+	g := compileAnnotated(t, `load balancer -> api
+annotation: |md Traffic enters at the [balancer](<load balancer>) and reaches the [API](api). |
+`)
+	deepEqual(t, []string{"load balancer", "api"}, g.Root.Annotation.Cues)
+	if !strings.Contains(g.Root.Annotation.Text, "**balancer**") {
+		t.Fatalf("the cue was not set in bold: %q", g.Root.Annotation.Text)
+	}
+}
+
 func TestAnnotationErrors(t *testing.T) {
 	t.Parallel()
 
@@ -219,6 +232,8 @@ func TestAnnotationErrors(t *testing.T) {
 		{"style other than stroke", `x.annotation: note {style.fill: red}`, `can only style its "stroke"`},
 		{"bad stroke", `x.annotation: note {style.stroke: notacolor}`, `expected "stroke" to be a valid named color`},
 		{"bad font color", `x.annotation: note {style.font-color: notacolor}`, `expected "font-color" to be a valid named color`},
+		{"gradient pen", `x.annotation: note {style.stroke: "linear-gradient(#f00, #00f)"}`, `expected "stroke" to be a valid named color ("orange") or a hex code`},
+		{"list", `x.annotation: [1; 2]`, `not a list`},
 		{"composite shape", `x.annotation.shape: {a: b}`, `annotation shape must be a single value`},
 		{"arrowhead", `x -> y: {target-arrowhead.annotation: tip}`, `an arrowhead cannot be annotated`},
 		{"edge in map", `x.annotation: {a -> b}`, `unexpected edges in map`},

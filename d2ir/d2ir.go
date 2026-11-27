@@ -1781,12 +1781,25 @@ func (m *Map) DeleteField(ida ...string) *Field {
 // deleteAnnotations removes the annotation of the board and of every object
 // and connection on it. Classes and variables keep theirs: those are
 // declarations, and they apply again wherever they are used.
+func givenByGlob(f *Field) bool {
+	for _, ref := range f.References {
+		if !ref.DueToGlob() {
+			return false
+		}
+	}
+	return len(f.References) > 0
+}
+
 func (m *Map) deleteAnnotations() {
 	for i := len(m.Fields) - 1; i >= 0; i-- {
 		f := m.Fields[i]
 		switch d2ast.Keyword(f.Name) {
 		case "annotation":
-			m.deleteFieldAt(i)
+			// An annotation that a glob gave the shape is a standing rule,
+			// like one a class carries: it holds on every board.
+			if !givenByGlob(f) {
+				m.deleteFieldAt(i)
+			}
 		case "":
 			if child := f.Map(); child != nil {
 				child.deleteAnnotations()

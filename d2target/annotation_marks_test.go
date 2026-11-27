@@ -273,3 +273,69 @@ func TestValidateNewMarks(t *testing.T) {
 		}
 	}
 }
+
+func TestLassoDoesNotCrossItself(t *testing.T) {
+	// The shape between the two members is taller than the loop, so it reaches
+	// across both of the loop's long edges and cannot be left out.
+	d := &Diagram{Shapes: []Shape{
+		annotatedShape("a", 0, 0, 100, 60, &Annotation{Shape: AnnotationLasso, Members: []string{"b"}}),
+		annotatedShape("b", 400, 0, 100, 60, nil),
+		annotatedShape("tall", 200, -100, 100, 300, nil),
+	}}
+	loop := markOf(t, d, "a").Strokes[0]
+	if !inLoop(loop, 250, 30) {
+		t.Fatal("the loop bent round a shape that reaches right across it")
+	}
+	for _, p := range loop {
+		if p.Y < -25 || p.Y > 85 {
+			t.Fatalf("the loop leaves its hull at %v", p)
+		}
+	}
+}
+
+func TestMarksFindCenteredMarkdown(t *testing.T) {
+	// Markdown sits in the middle of a shape that is larger than its text.
+	s := annotatedShape("m", 0, 0, 400, 120, &Annotation{Shape: AnnotationHighlight})
+	s.Type, s.Language = ShapeText, "markdown"
+	s.Label, s.LabelWidth, s.LabelHeight = "some markdown", 100, 24
+	d := &Diagram{Shapes: []Shape{s}}
+	pass := markOf(t, d, "m").Strokes[0]
+	if from, to := pass[0], pass[len(pass)-1]; from.X != 145 || to.X != 255 || math.Abs(from.Y-60) > 3 {
+		t.Fatalf("highlight runs from %v to %v, want it over the text in the middle", from, to)
+	}
+	d.Shapes[0].Annotation = &Annotation{Shape: AnnotationUnderline}
+	if _, y1, _, y2 := markOf(t, d, "m").Bounds(); y1 < 70 || y2 > 90 {
+		t.Fatalf("underline spans y %v to %v, want it under the text in the middle", y1, y2)
+	}
+}
+
+func TestReplacedNoteDoesNotCrowdItsSuccessor(t *testing.T) {
+	now := &Annotation{Shape: AnnotationCircle, Label: "second", LabelWidth: 50, LabelHeight: 20}
+	d := &Diagram{Shapes: []Shape{annotatedShape("a", 0, 0, 100, 60, now)}}
+	alone := *markOf(t, d, "a").LabelBox
+	// While the old note is erased, the new one is already where it will be.
+	d.Shapes[0].LeavingAnnotation = &Annotation{Shape: AnnotationCircle, Label: "first", LabelWidth: 40, LabelHeight: 20}
+	if got := *markOf(t, d, "a").LabelBox; got.TopLeft.X != alone.TopLeft.X || got.TopLeft.Y != alone.TopLeft.Y {
+		t.Fatalf("the new note is at %v while the old one leaves, and at %v after", got.TopLeft, alone.TopLeft)
+	}
+}
+
+func TestAnnotationPenIsOneColor(t *testing.T) {
+	for _, paint := range []string{"url(https://example.com/paint.svg#p)", "linear-gradient(#f00, #00f)", "notacolor"} {
+		for _, set := range []func(*Annotation){
+			func(a *Annotation) { a.Stroke = paint },
+			func(a *Annotation) { a.FontColor = paint },
+		} {
+			a := &Annotation{Shape: AnnotationCircle}
+			set(a)
+			d := &Diagram{Shapes: []Shape{annotatedShape("a", 0, 0, 100, 60, a)}}
+			if err := ValidateRenderTarget(d); err == nil {
+				t.Fatalf("%q passed as an annotation's paint", paint)
+			}
+		}
+	}
+	d := &Diagram{Shapes: []Shape{annotatedShape("a", 0, 0, 100, 60, &Annotation{Shape: AnnotationCircle, Stroke: "royalblue", FontColor: "#0A0F25"})}}
+	if err := ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+}

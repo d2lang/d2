@@ -459,3 +459,121 @@ s2.shape: cylinder
 		t.Fatalf("got %d loops, want 3", marks)
 	}
 }
+
+func TestLassoGroupsOnlyWhatARuleGathers(t *testing.T) {
+	// A later member can give the loop its note.
+	d := compileAnnotated(t, `a; b; c
+*.annotation.shape: lasso
+c.annotation: the whole team
+`)
+	if a := shapeOf(t, d, "a").Annotation; a == nil || a.Label != "the whole team" || !reflect.DeepEqual(a.Members, []string{"b", "c"}) {
+		t.Fatalf("the loop is %+v, want the note from c and all three shapes", a)
+	}
+
+	// Spreading one variable into two shapes copies it. Each keeps its own loop.
+	d = compileAnnotated(t, `vars: {
+  mark: {
+    annotation: mine {shape: lasso}
+  }
+}
+a: {...${mark}}
+b: {...${mark}}
+`)
+	for _, id := range []string{"a", "b"} {
+		if got := shapeOf(t, d, id).Annotation; got == nil || len(got.Members) != 0 {
+			t.Fatalf("%s carries %+v, want a loop of its own", id, got)
+		}
+	}
+
+	// A caption's link does not ring a shape that a lasso already holds,
+	// whichever of the shapes carries the loop.
+	d = compileAnnotated(t, `classes: {pair: {annotation.shape: lasso}}
+a.class: pair
+b.class: pair
+c
+annotation: |md Look at [b](b), [a](a) and [c](c). |
+`)
+	if a, b, c := shapeOf(t, d, "a").Annotation, shapeOf(t, d, "b").Annotation, shapeOf(t, d, "c").Annotation; a == nil || a.Shape != d2target.AnnotationLasso || b != nil || c == nil || c.Shape != d2target.AnnotationCircle {
+		t.Fatalf("a %+v, b %+v, c %+v: want the lasso on a, nothing on b, and a ring on c", a, b, c)
+	}
+}
+
+func TestGlobAnnotationHoldsOnEveryStep(t *testing.T) {
+	d := compileAnnotated(t, `a -> b
+*.annotation: from a rule
+b.annotation: declared here
+steps: {
+  1: {c}
+}
+`)
+	// A rule marks what it matches on every board. An annotation declared on
+	// a shape lasts for its own board.
+	step := d.Steps[0]
+	for id, want := range map[string]string{"a": "from a rule", "c": "from a rule"} {
+		if got := shapeOf(t, step, id).Annotation; got == nil || got.Label != want {
+			t.Fatalf("step 1: %s carries %+v, want %q", id, got, want)
+		}
+	}
+	if got := shapeOf(t, step, "b").Annotation; got != nil {
+		t.Fatalf("step 1: b still carries %+v", got)
+	}
+}
+
+func TestMarksKeepPaceWithShortTransitions(t *testing.T) {
+	// A cell that pops into a grid takes less than the step's duration. The
+	// marks finish with its frames, and are whole on the board that follows.
+	d := compileAnnotated(t, `vars: {d2-config: {animate-interval: 1500ms; animate-duration: 1000ms}}
+grid-rows: 1
+a; b
+steps: {
+  1: {
+    c
+    c.annotation: a new cell
+  }
+}
+`)
+	step := d.Steps[0]
+	if len(step.TweenFrames) == 0 {
+		t.Fatal("the step has no frames")
+	}
+	last := step.TweenFrames[len(step.TweenFrames)-1]
+	a := shapeOf(t, last, "c").Annotation
+	if a == nil || a.Drawn == nil || a.Drawn[1] < 0.7 {
+		t.Fatalf("the last frame has drawn %+v of the mark, want most of it", a)
+	}
+}
+
+func TestErasingNeedsSomethingToEraseOn(t *testing.T) {
+	d := compileAnnotated(t, `vars: {d2-config: {animate-interval: 1000ms; animate-duration: 400ms}}
+a -> b
+steps: {
+  1: {b.annotation: going away}
+  2: {b: null}
+}
+`)
+	// The mark's shape is gone from step 2, so there is nothing to erase it on.
+	if n := len(d.Steps[1].TweenFrames); n != 0 {
+		t.Fatalf("step 2 has %d frames that can show nothing", n)
+	}
+
+	// A layer is a page of its own. The root's marks are not erased on it.
+	d = compileAnnotated(t, `vars: {d2-config: {animate-interval: 1000ms; animate-duration: 400ms}}
+a -> b
+a.annotation: on the root
+layers: {
+  inside: {
+    a -> c
+    c.annotation: on the layer
+  }
+}
+`)
+	layer := d.Layers[0]
+	if len(layer.TweenFrames) == 0 {
+		t.Fatal("the layer's own mark is not drawn in")
+	}
+	for _, frame := range layer.TweenFrames {
+		if got := shapeOf(t, frame, "a").LeavingAnnotation; got != nil {
+			t.Fatalf("the root's mark is erased on the layer: %+v", got)
+		}
+	}
+}

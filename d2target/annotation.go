@@ -140,6 +140,12 @@ func clampUnit(v float64) float64 {
 	return math.Max(0, math.Min(1, v))
 }
 
+// dist is the length of (dx, dy). math.Hypot can differ in its last bit from
+// one architecture to the next, and these lengths feed comparisons.
+func dist(dx, dy float64) float64 {
+	return math.Sqrt(float64(dx*dx) + float64(dy*dy))
+}
+
 // AnnotationMark is one annotation resolved to ink for a board: polylines in
 // diagram coordinates and, when it has a note, where the note goes.
 type AnnotationMark struct {
@@ -154,10 +160,10 @@ type AnnotationMark struct {
 
 	Label string
 	// NotePaint is the paint of the note, which can differ from the mark's.
+	// The note is set in the board's font, which is the font it was measured in.
 	NotePaint    string
 	LabelBox     *geo.Box
 	LabelOpacity float64
-	FontFamily   string
 }
 
 // Bounds returns the extent of the ink, including half its stroke width. A
@@ -220,6 +226,8 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 		// they are drawn once the note has a place.
 		aim  *geo.Box
 		seed float64
+		// leaving marks the previous board's annotation while it is erased.
+		leaving bool
 	}
 	var marks []AnnotationMark
 	var notes []pending
@@ -233,7 +241,7 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 		}
 		m.NotePaint = a.notePaint()
 		marks = append(marks, m)
-		notes = append(notes, pending{a, anchor, target, sides, aim, seed})
+		notes = append(notes, pending{a, anchor, target, sides, aim, seed, leaving})
 	}
 	// An arrow reads best when it comes in at an angle.
 	arrowSides := []string{
@@ -259,7 +267,7 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 				continue
 			}
 			box := geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height))
-			m := AnnotationMark{ID: s.ID, Paint: a.GetStroke(), Width: AnnotationStrokeWidth, Opacity: 1, FontFamily: s.FontFamily}
+			m := AnnotationMark{ID: s.ID, Paint: a.GetStroke(), Width: AnnotationStrokeWidth, Opacity: 1}
 			var aim *geo.Box
 			switch a.Shape {
 			case AnnotationHighlight:
@@ -337,7 +345,7 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 			if a == nil || len(c.Route) < 2 {
 				continue
 			}
-			m := AnnotationMark{ID: c.ID, Paint: a.GetStroke(), Width: AnnotationStrokeWidth, Opacity: 1, FontFamily: c.FontFamily}
+			m := AnnotationMark{ID: c.ID, Paint: a.GetStroke(), Width: AnnotationStrokeWidth, Opacity: 1}
 			route := flattenRoute(c)
 			mid := pointAlong(route, 0.5)
 			// The note sits beside the middle of the route, not beside all of it.
@@ -371,9 +379,24 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 		}
 	}
 
-	var placed []*geo.Box
+	// What is being erased and what is being drawn are placed apart, each as
+	// it sits on its own board. Otherwise a note would reserve room beside the
+	// one it replaces, at a place it never appears.
+	var placed [2][]*geo.Box
+	inkBoxes := make([]*geo.Box, len(marks))
+	inkBox := func(j int) *geo.Box {
+		if inkBoxes[j] == nil {
+			x1, y1, x2, y2 := marks[j].Bounds()
+			inkBoxes[j] = geo.NewBox(geo.NewPoint(x1, y1), x2-x1, y2-y1)
+		}
+		return inkBoxes[j]
+	}
 	for i, note := range notes {
 		a := note.annotation
+		generation := 0
+		if note.leaving {
+			generation = 1
+		}
 		w, h := float64(a.LabelWidth), float64(a.LabelHeight)
 		labelled := a.Label != "" && w > 0 && h > 0
 		if !labelled {
@@ -386,22 +409,27 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 		best, bestScore := (*geo.Box)(nil), math.Inf(1)
 		for _, side := range note.sides {
 			box := noteBox(note.anchor, side, w, h)
-			score := diagram.noteCollisions(box, note.target, placed)
+			score := diagram.noteCollisions(box, note.target, placed[generation])
 			for j := range marks {
-				if j != i {
+				if j != i && notes[j].leaving == note.leaving && overlapArea(inkBox(j), box) > 0 {
 					score += inkInside(marks[j].Strokes, box)
 				}
 			}
 			if score < bestScore {
 				best, bestScore = box, score
 			}
+			if score == 0 {
+				// Nothing in the way: no later side can do better.
+				break
+			}
 		}
 		if labelled {
 			marks[i].Label, marks[i].LabelBox, marks[i].LabelOpacity = a.Label, best, a.noteOpacity()
-			placed = append(placed, best)
+			placed[generation] = append(placed[generation], best)
 		}
 		if note.aim != nil {
 			marks[i].Strokes = arrowStrokes(best, note.aim, note.seed)
+			inkBoxes[i] = nil
 		}
 	}
 	if cut {
@@ -470,7 +498,7 @@ func lineInside[P geo.Point | *geo.Point](pts []P, box *geo.Box, get func(P) geo
 	score := 0.
 	for j := 0; j+1 < len(pts); j++ {
 		a, b := get(pts[j]), get(pts[j+1])
-		steps := int(math.Max(1, math.Hypot(b.X-a.X, b.Y-a.Y)/spacing))
+		steps := int(math.Max(1, dist(b.X-a.X, b.Y-a.Y)/spacing))
 		for k := 0; k <= steps; k++ {
 			t := float64(k) / float64(steps)
 			x, y := a.X+(b.X-a.X)*t, a.Y+(b.Y-a.Y)*t
@@ -505,7 +533,9 @@ func (diagram *Diagram) noteCollisions(note, target *geo.Box, notes []*geo.Box) 
 	}
 	for i := range diagram.Connections {
 		c := &diagram.Connections[i]
-		score += lineInside(c.Route, note, func(p *geo.Point) geo.Point { return *p })
+		if routeNear(c.Route, note) {
+			score += lineInside(c.Route, note, func(p *geo.Point) geo.Point { return *p })
+		}
 		if c.Label != "" {
 			if tl := c.GetLabelTopLeft(); tl != nil {
 				score += 4 * overlapArea(note, geo.NewBox(tl, float64(c.LabelWidth), float64(c.LabelHeight)))
@@ -516,6 +546,20 @@ func (diagram *Diagram) noteCollisions(note, target *geo.Box, notes []*geo.Box) 
 		score += 8 * overlapArea(note, other)
 	}
 	return score
+}
+
+// routeNear reports whether the route's bounding box reaches the box, which
+// is a cheap way to skip routes that cannot pass through it.
+func routeNear(route []*geo.Point, box *geo.Box) bool {
+	if len(route) == 0 {
+		return false
+	}
+	x1, y1, x2, y2 := route[0].X, route[0].Y, route[0].X, route[0].Y
+	for _, p := range route[1:] {
+		x1, y1 = math.Min(x1, p.X), math.Min(y1, p.Y)
+		x2, y2 = math.Max(x2, p.X), math.Max(y2, p.Y)
+	}
+	return x1 <= box.TopLeft.X+box.Width && x2 >= box.TopLeft.X && y1 <= box.TopLeft.Y+box.Height && y2 >= box.TopLeft.Y
 }
 
 // markSeed gives every target its own slightly different hand.
@@ -582,7 +626,7 @@ func boxStroke(box *geo.Box, seed float64) []geo.Point {
 	x2, y2 := box.TopLeft.X+box.Width+pad, box.TopLeft.Y+box.Height+pad
 	var pts []geo.Point
 	side := func(ax, ay, bx, by, nx, ny float64) {
-		length := math.Hypot(bx-ax, by-ay)
+		length := dist(bx-ax, by-ay)
 		steps := int(math.Max(2, length/12))
 		for i := 0; i <= steps; i++ {
 			t := float64(i) / float64(steps)
@@ -719,7 +763,7 @@ func braceStroke(box *geo.Box, side string) []geo.Point {
 
 // strike is one pen stroke from a to b that bows to one side on the way.
 func strike(ax, ay, bx, by, bow float64) []geo.Point {
-	length := math.Hypot(bx-ax, by-ay)
+	length := dist(bx-ax, by-ay)
 	if length == 0 {
 		return nil
 	}
@@ -739,7 +783,7 @@ func strike(ax, ay, bx, by, bow float64) []geo.Point {
 func crossStrokes(box *geo.Box, seed float64) [][]geo.Point {
 	x1, y1 := box.TopLeft.X, box.TopLeft.Y
 	x2, y2 := x1+box.Width, y1+box.Height
-	diagonal := math.Hypot(box.Width, box.Height)
+	diagonal := dist(box.Width, box.Height)
 	if diagonal == 0 {
 		return nil
 	}
@@ -843,7 +887,7 @@ func flattenRoute(c *Connection) []geo.Point {
 func strokeLength(pts []geo.Point) float64 {
 	total := 0.
 	for i := 1; i < len(pts); i++ {
-		total += math.Hypot(pts[i].X-pts[i-1].X, pts[i].Y-pts[i-1].Y)
+		total += dist(pts[i].X-pts[i-1].X, pts[i].Y-pts[i-1].Y)
 	}
 	return total
 }
@@ -854,7 +898,7 @@ func pointAlong(pts []geo.Point, fraction float64) geo.Point {
 	}
 	target := strokeLength(pts) * clampUnit(fraction)
 	for i := 1; i < len(pts); i++ {
-		seg := math.Hypot(pts[i].X-pts[i-1].X, pts[i].Y-pts[i-1].Y)
+		seg := dist(pts[i].X-pts[i-1].X, pts[i].Y-pts[i-1].Y)
 		if target <= seg && seg > 0 {
 			t := target / seg
 			return geo.Point{X: pts[i-1].X + (pts[i].X-pts[i-1].X)*t, Y: pts[i-1].Y + (pts[i].Y-pts[i-1].Y)*t}
@@ -891,7 +935,7 @@ func cutStrokes(strokes [][]geo.Point, a *Annotation) [][]geo.Point {
 		var part []geo.Point
 		walked := 0.
 		for i := 1; i < len(s); i++ {
-			seg := math.Hypot(s[i].X-s[i-1].X, s[i].Y-s[i-1].Y)
+			seg := dist(s[i].X-s[i-1].X, s[i].Y-s[i-1].Y)
 			segStart, segEnd := walked, walked+seg
 			walked = segEnd
 			if segEnd < lo || segStart > hi || seg == 0 {

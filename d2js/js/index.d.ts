@@ -411,6 +411,9 @@ export interface Attributes {
     shape?: Scalar;
     position?: Scalar;
     stroke?: Scalar;
+    fontColor?: Scalar;
+    /** The class or glob that gave the shape a lasso. */
+    group?: string;
     cues?: string[];
     text?: string;
   };

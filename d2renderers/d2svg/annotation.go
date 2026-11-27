@@ -43,6 +43,12 @@ func drawAnnotations(writer *objectWriter, diagram *d2target.Diagram, inkTL, ink
 			continue
 		}
 		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("class", "annotation")))
+		// One opacity for the whole mark, so that strokes which overlap do not
+		// double up where they meet.
+		translucent := len(mark.Strokes) > 0 && mark.Opacity < 1
+		if translucent {
+			fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("style", strings.TrimPrefix(opacityStyle(mark.Opacity), ";"))))
+		}
 		for _, stroke := range mark.Strokes {
 			el := d2themes.NewThemableElement("path", inlineTheme)
 			el.D = polylineData(stroke)
@@ -52,11 +58,14 @@ func drawAnnotations(writer *objectWriter, diagram *d2target.Diagram, inkTL, ink
 			if mark.Flat {
 				linecap = "butt"
 			}
-			el.Style = "stroke-width:" + svg.FormatFloat(mark.Width) + ";stroke-linecap:" + linecap + ";stroke-linejoin:round" + opacityStyle(mark.Opacity)
+			el.Style = "stroke-width:" + svg.FormatFloat(mark.Width) + ";stroke-linecap:" + linecap + ";stroke-linejoin:round"
 			fmt.Fprint(writer, el.Render())
 		}
+		if translucent {
+			fmt.Fprint(writer, svg.CloseElement("g"))
+		}
 		if mark.LabelBox != nil && mark.LabelOpacity > 0 {
-			if err := drawAnnotationText(writer, markdown, mark.Label, mark.FontFamily, d2target.AnnotationFontSize, mark.LabelBox, mark.NotePaint, mark.LabelOpacity); err != nil {
+			if err := drawAnnotationText(writer, markdown, mark.Label, "", d2target.AnnotationFontSize, mark.LabelBox, mark.NotePaint, mark.LabelOpacity); err != nil {
 				return err
 			}
 		}
