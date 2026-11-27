@@ -22,40 +22,27 @@ func isGradientResourceElement(name string) bool {
 
 // Gradients are definitions even when placed directly in a graphics container.
 func (i *svgImporter) validateGradientTree(root *svgElement) error {
-	type entry struct {
-		element *svgElement
-		parent  *svgElement
-	}
-	stack := []entry{{element: root}}
-	for len(stack) != 0 {
-		if err := i.ctx.Err(); err != nil {
-			return err
-		}
-		current := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		switch current.element.name {
+	return i.walkElements(root, func(element, parent *svgElement) error {
+		switch element.name {
 		case "linearGradient", "radialGradient":
-			if current.parent == nil || (current.parent.name != "defs" && current.parent.name != "g" && current.parent.name != "svg") {
-				return i.errorf("element <%s> must be inside <svg>, <g> or <defs>", current.element.name)
+			if parent == nil || (parent.name != "defs" && parent.name != "g" && parent.name != "svg") {
+				return i.errorf("element <%s> must be inside <svg>, <g> or <defs>", element.name)
 			}
-			for _, child := range current.element.children {
+			for _, child := range element.children {
 				if child.name != "stop" {
-					return i.errorf("element <%s> has unsupported child <%s>", current.element.name, displayXMLName(child.name))
+					return i.errorf("element <%s> has unsupported child <%s>", element.name, displayXMLName(child.name))
 				}
 			}
 		case "stop":
-			if current.parent == nil || (current.parent.name != "linearGradient" && current.parent.name != "radialGradient") {
+			if parent == nil || (parent.name != "linearGradient" && parent.name != "radialGradient") {
 				return i.errorf("element <stop> is only supported inside a gradient")
 			}
-			if len(current.element.children) != 0 {
+			if len(element.children) != 0 {
 				return i.errorf("element <stop> cannot contain child elements")
 			}
 		}
-		for index := len(current.element.children) - 1; index >= 0; index-- {
-			stack = append(stack, entry{element: current.element.children[index], parent: current.element})
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (i *svgImporter) compileGradientElement(element *svgElement) error {
@@ -305,13 +292,7 @@ func (i *svgImporter) stopFromDeclarations(element *svgElement) (d2scene.Gradien
 }
 
 func (i *svgImporter) compileGradientResources(root *svgElement) error {
-	stack := []*svgElement{root}
-	for len(stack) != 0 {
-		if err := i.ctx.Err(); err != nil {
-			return err
-		}
-		element := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
+	return i.walkElements(root, func(element, _ *svgElement) error {
 		if element.gradient != nil {
 			stops := make([]d2scene.GradientStop, len(element.children))
 			previous := -1.0
@@ -329,11 +310,8 @@ func (i *svgImporter) compileGradientResources(root *svgElement) error {
 			}
 			element.gradient.stops = stops
 		}
-		for index := len(element.children) - 1; index >= 0; index-- {
-			stack = append(stack, element.children[index])
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (i *svgImporter) validateRegularDeclarations(element *svgElement) error {

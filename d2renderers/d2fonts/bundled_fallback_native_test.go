@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 
 	"github.com/d2lang/d2/d2renderers/internal/fontface"
 )

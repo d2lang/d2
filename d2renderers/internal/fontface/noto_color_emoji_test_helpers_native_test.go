@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 )
 
 const (

@@ -82,8 +82,8 @@ type ShapingWorkspace struct {
 	asciiInput         [1]shaping.Input
 	runs               []shapedFontRun
 	faceIndexes        map[*gotextfont.Face]int
-	coverage           map[faceRune]bool
-	outlines           map[glyphKey]glyphOutline
+	coverage           spillCache[faceRune, bool]
+	outlines           spillCache[glyphKey, glyphOutline]
 	glyphs             []ShapedGlyph
 	asciiFace          *ParsedFace
 	asciiValues        [utf8.RuneSelf]uint8
@@ -115,6 +115,8 @@ func (w *ShapingWorkspace) ShapeTextTransient(ctx context.Context, text string, 
 	clear(w.runs)
 	w.runs = w.runs[:0]
 	w.asciiInput[0] = shaping.Input{}
+	clear(w.coverage.kept)
+	w.coverage.spill, w.outlines.spill = nil, nil
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -179,9 +181,6 @@ func (w *ShapingWorkspace) ShapeTextTransient(ctx context.Context, text string, 
 	}
 	runes := w.runes
 
-	if w.coverage != nil {
-		clear(w.coverage)
-	}
 	w.coverageGeneration++
 	if w.coverageGeneration == 0 {
 		clear(w.asciiSeen[:])
@@ -194,7 +193,7 @@ func (w *ShapingWorkspace) ShapeTextTransient(ctx context.Context, text string, 
 	}
 	fontMap := clusterFaceResolver{
 		faces:              faces,
-		coverage:           w.coverage,
+		coverage:           &w.coverage,
 		asciiFace:          w.asciiFace,
 		asciiValues:        &w.asciiValues,
 		asciiSeen:          &w.asciiSeen,
@@ -239,7 +238,6 @@ func (w *ShapingWorkspace) ShapeTextTransient(ctx context.Context, text string, 
 			}
 		}
 	}
-	w.coverage = fontMap.coverage
 	result.CoverageChecks = fontMap.checks
 
 	input := shaping.Input{
@@ -305,10 +303,6 @@ func (w *ShapingWorkspace) ShapeTextTransient(ctx context.Context, text string, 
 		result.Glyphs = make([]ShapedGlyph, 0, totalGlyphs)
 	}
 	pen := 0.0
-	if w.outlines == nil {
-		w.outlines = make(map[glyphKey]glyphOutline, min(totalGlyphs, 256))
-	}
-	var outlineOverflow map[glyphKey]glyphOutline
 	for _, run := range runs {
 		parsed := faces[run.face].Face
 		runPen := pen
@@ -349,10 +343,7 @@ func (w *ShapingWorkspace) ShapeTextTransient(ctx context.Context, text string, 
 				return ShapedText{}, fmt.Errorf("d2fonts: shaped glyph ID %d at index %d is out of range for font %q", glyphID, glyphIndex, faces[run.face].ID)
 			}
 			key := glyphKey{face: parsed, id: sfnt.GlyphIndex(glyphID), size: size}
-			outline, ok := w.outlines[key]
-			if !ok && len(w.outlines) >= maxCachedGlyphOutlines {
-				outline, ok = outlineOverflow[key]
-			}
+			outline, ok := w.outlines.get(key)
 			if !ok {
 				bounds, hasInk, err := parsed.GlyphRenderBounds(uint32(key.id), size)
 				if err != nil {
@@ -360,14 +351,7 @@ func (w *ShapingWorkspace) ShapeTextTransient(ctx context.Context, text string, 
 				}
 				outline.bounds = bounds
 				outline.hasInk = hasInk
-				if len(w.outlines) < maxCachedGlyphOutlines {
-					w.outlines[key] = outline
-				} else {
-					if outlineOverflow == nil {
-						outlineOverflow = make(map[glyphKey]glyphOutline, min(totalGlyphs, 256))
-					}
-					outlineOverflow[key] = outline
-				}
+				w.outlines.put(key, outline, min(totalGlyphs, 256))
 			}
 			result.Glyphs = append(result.Glyphs, ShapedGlyph{
 				ID: glyphID, Face: run.face, PositionX: positionX, PositionY: positionY, Advance: advance,
@@ -431,8 +415,7 @@ type faceRune struct {
 
 type clusterFaceResolver struct {
 	faces              []ShapeFace
-	coverage           map[faceRune]bool
-	coverageOverflow   map[faceRune]bool
+	coverage           *spillCache[faceRune, bool]
 	asciiFace          *ParsedFace
 	asciiValues        *[utf8.RuneSelf]uint8
 	asciiSeen          *[utf8.RuneSelf]uint32
@@ -469,10 +452,7 @@ func (m *clusterFaceResolver) supports(face int, value rune) (bool, error) {
 		return supported == 2, nil
 	}
 	key := faceRune{face: face, value: value}
-	if supported, known := m.coverage[key]; known {
-		return supported, nil
-	}
-	if supported, known := m.coverageOverflow[key]; known {
+	if supported, known := m.coverage.get(key); known {
 		return supported, nil
 	}
 	if m.checks >= m.limits.CoverageChecks {
@@ -483,17 +463,7 @@ func (m *clusterFaceResolver) supports(face int, value rune) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if m.coverage == nil {
-		m.coverage = make(map[faceRune]bool, m.coverageCapacity)
-	}
-	if len(m.coverage) < maxCachedCoverageEntries {
-		m.coverage[key] = supported
-	} else {
-		if m.coverageOverflow == nil {
-			m.coverageOverflow = make(map[faceRune]bool, m.coverageCapacity)
-		}
-		m.coverageOverflow[key] = supported
-	}
+	m.coverage.put(key, supported, m.coverageCapacity)
 	return supported, nil
 }
 
@@ -601,9 +571,34 @@ type glyphOutline struct {
 	hasInk bool
 }
 
-const maxCachedGlyphOutlines = 4_096
+// spillCache memoises deterministic font answers. kept lives in the workspace
+// and stops growing at maxCachedEntries; later entries go to spill, which the
+// workspace drops at the start of each call, so one large text cannot grow the
+// retained cache.
+type spillCache[K comparable, V any] struct {
+	kept, spill map[K]V
+}
 
-const maxCachedCoverageEntries = 4_096
+const maxCachedEntries = 4_096
+
+func (c *spillCache[K, V]) get(key K) (V, bool) {
+	if value, ok := c.kept[key]; ok {
+		return value, true
+	}
+	value, ok := c.spill[key]
+	return value, ok
+}
+
+func (c *spillCache[K, V]) put(key K, value V, capacity int) {
+	m := &c.kept
+	if len(c.kept) >= maxCachedEntries {
+		m = &c.spill
+	}
+	if *m == nil {
+		*m = make(map[K]V, capacity)
+	}
+	(*m)[key] = value
+}
 
 // orderShapedRunsLTR mirrors go-text's UAX #9 run-order post-processing for
 // D2/SVG's default left-to-right paragraph direction. HarfBuzz already emits
@@ -645,19 +640,7 @@ func missingShapedGlyphError(runes []rune, cluster int, face string) error {
 }
 
 func unsupportedShapedGlyphError(face *gotextfont.Face, glyph gotextfont.GID, source rune, sourceAt int, id string, cause error) error {
-	kind := "non-outline"
-	switch face.GlyphData(glyph).(type) {
-	case gotextfont.GlyphOutline:
-		kind = "outline"
-	case gotextfont.GlyphColor:
-		kind = "color"
-	case gotextfont.GlyphBitmap:
-		kind = "bitmap"
-	case gotextfont.GlyphSVG:
-		kind = "SVG"
-	case nil:
-		kind = "missing"
-	}
+	kind := glyphDataKind(face.GlyphData(glyph))
 	if sourceAt >= 0 {
 		return fmt.Errorf("d2fonts: %s glyph U+%04X at rune %d in font %q cannot be rasterized: %w", kind, source, sourceAt, id, cause)
 	}

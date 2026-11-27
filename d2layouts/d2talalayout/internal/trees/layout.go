@@ -4,12 +4,12 @@ import (
 	"cmp"
 	"context"
 	"math"
-	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 func extractTreesInContainer(g *layoutgraph.Graph, container *layoutgraph.Node, guard *limits.WorkGuard) (map[*layoutgraph.Node][]*layoutgraph.Tree, error) {
@@ -992,7 +992,7 @@ func placeTrees(ctx context.Context, g *layoutgraph.Graph, container *layoutgrap
 		width *= 2
 	}
 	// Note: we sort placementTrees so larger trees are placed first and to have a deterministic order
-	slices.SortFunc(placementTrees, func(a, b *layoutgraph.Tree) int {
+	xsort.Func(placementTrees, func(a, b *layoutgraph.Tree) int {
 		if order := cmp.Compare(treeSizes[b], treeSizes[a]); order != 0 {
 			return order
 		}
@@ -1132,7 +1132,7 @@ func sortedTreeDirections(byDirection map[TreeEdgeDirection][]*layoutgraph.Tree)
 	for direction := range byDirection {
 		directions = append(directions, direction)
 	}
-	slices.SortFunc(directions, func(a, b TreeEdgeDirection) int {
+	xsort.Func(directions, func(a, b TreeEdgeDirection) int {
 		if c := cmp.Compare(rank(a), rank(b)); c != 0 {
 			return c
 		}

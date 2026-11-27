@@ -5,20 +5,13 @@ import (
 )
 
 // Text is basically a rectangle
-type shapeText struct {
-	shapeSquare
+var textKind = shapeKind{
+	typ:         TEXT_TYPE,
+	rectangular: true,
+	paddingX:    0,
+	paddingY:    0,
 }
 
 func NewText(box *geo.Box) Shape {
-	shape := shapeText{
-		shapeSquare: shapeSquare{
-			baseShape: newShapeBase(TEXT_TYPE, box),
-		},
-	}
-	*shape.FullShape = shape
-	return shape
-}
-
-func (s shapeText) GetDefaultPadding() (paddingX, paddingY float64) {
-	return 0, 0
+	return newShape(&textKind, box)
 }

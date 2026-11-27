@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 )
 
 func DecompressBrotli(compressed []byte) (string, error) {

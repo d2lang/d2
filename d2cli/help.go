@@ -20,6 +20,8 @@ Usage:
   %[1]s fmt [--check] [--diff] file.d2|file.md|- ...
   %[1]s play [--theme=0] [--sketch] file.d2
   %[1]s validate file.d2
+  %[1]s lsp
+  %[1]s mcp [--root dir]
 
 %[1]s compiles and renders file.d2 to file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt
 It defaults to file.svg if an output path is not provided.
@@ -40,6 +42,8 @@ Subcommands:
   %[1]s fmt file.d2|file.md|- ... - Format D2 files, D2 code fences in Markdown, or D2 from stdin
 	%[1]s play file.d2 - Opens the file in playground, an online web viewer (https://play.d2lang.com)
   %[1]s validate file.d2  - Validates file.d2
+  %[1]s lsp - Run a Language Server Protocol server on stdin and stdout for editors
+  %[1]s mcp - Run a Model Context Protocol server on stdin and stdout for AI clients
 
 See more docs and the source code at https://github.com/d2lang/d2.
 Hosted icons at https://icons.d2lang.com.

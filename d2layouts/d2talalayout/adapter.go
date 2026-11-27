@@ -19,6 +19,7 @@ import (
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type translation struct {
@@ -90,7 +91,7 @@ func allocateD2EntityIDs[T comparable](
 		}
 		ambiguous = append(ambiguous, identity)
 	}
-	slices.SortFunc(ambiguous, func(a, b hashedD2EntityIdentity[T]) int {
+	xsort.Func(ambiguous, func(a, b hashedD2EntityIdentity[T]) int {
 		if order := cmp.Compare(a.hash, b.hash); order != 0 {
 			return order
 		}

@@ -141,10 +141,9 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		}
 		if key != nil && len(key.Path) > 0 {
 			firstKey := key.Path[0].Unbox()
-			if !firstKey.IsUnquoted() {
-				continue
+			if firstKey.IsUnquoted() {
+				firstPart = firstKey.ScalarString()
 			}
-			firstPart = firstKey.ScalarString()
 
 			pathLen := len(key.Path)
 			if pathLen > 1 {
@@ -155,10 +154,8 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 					if !isHolderLast {
 						_, isHolderLast = d2ast.CompositeReservedKeywords[lastPart]
 					}
-					keyRange := n.MapKey.Range
-					lineText := lines[keyRange.End.Line]
-					dotColumn := columnByteOffset(lineText, column, utf16Pos)
-					if isHolderLast && isAfterDot(lineText, dotColumn) {
+					end := lastKey.GetRange().End
+					if isHolderLast && line == end.Line && column == end.Column+1 && isAfterDot(lines[line], lineColumn) {
 						return lastPart + "."
 					}
 				}

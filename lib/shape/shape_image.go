@@ -4,22 +4,13 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
-type shapeImage struct {
-	*baseShape
+var imageKind = shapeKind{
+	typ:         IMAGE_TYPE,
+	rectangular: true,
+	paddingX:    0,
+	paddingY:    0,
 }
 
 func NewImage(box *geo.Box) Shape {
-	shape := shapeImage{
-		baseShape: newShapeBase(IMAGE_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
-}
-
-func (s shapeImage) IsRectangular() bool {
-	return true
-}
-
-func (s shapeImage) GetDefaultPadding() (paddingX, paddingY float64) {
-	return 0, 0
+	return newShape(&imageKind, box)
 }

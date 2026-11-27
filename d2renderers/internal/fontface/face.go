@@ -193,41 +193,11 @@ func (s *BundledFaceSource) SupportsRenderableRune(value rune) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	shapingGlyph, ok := face.Shaping.Font.NominalGlyph(value)
-	if !ok || shapingGlyph == 0 {
-		return false, nil
+	glyph := face.agreedGlyph(value, face.Shaping.Font.NominalGlyph)
+	if glyph == 0 || !face.IsBundledNotoColorEmoji() {
+		return glyph != 0, nil
 	}
-	var buffer sfnt.Buffer
-	outlineGlyph, err := face.Outline.GlyphIndex(&buffer, value)
-	if err != nil || outlineGlyph == 0 || uint32(outlineGlyph) != uint32(shapingGlyph) {
-		return false, nil
-	}
-	if !face.hasParsedSource(bundledNotoColorEmojiCOLRv1SHA256) {
-		return true, nil
-	}
-	plan, found, err := face.CompileBundledNotoColorEmojiCOLRv1Plan(uint32(outlineGlyph))
-	if err != nil {
-		return false, err
-	}
-	if found {
-		return plan.Clip != nil && plan.Clip.XMin < plan.Clip.XMax && plan.Clip.YMin < plan.Clip.YMax, nil
-	}
-	layers, colorGlyph, err := face.COLR0GlyphLayers(uint32(outlineGlyph))
-	if err != nil {
-		return false, err
-	}
-	if colorGlyph {
-		for _, layer := range layers {
-			if _, err := face.Outline.LoadGlyph(&buffer, sfnt.GlyphIndex(layer.GlyphID), fixed.I(1_000), nil); err != nil {
-				return false, fmt.Errorf("load COLRv0 layer glyph %d: %w", layer.GlyphID, err)
-			}
-		}
-		return true, nil
-	}
-	if _, err := face.Outline.LoadGlyph(&buffer, outlineGlyph, fixed.I(1_000), nil); err != nil {
-		return false, nil
-	}
-	return true, nil
+	return face.paintable(glyph)
 }
 
 // ColorGlyphLayer is one foreground or palette-colored outline in a COLRv0
@@ -236,10 +206,6 @@ type ColorGlyphLayer struct {
 	GlyphID    uint32
 	Color      color.NRGBA
 	Foreground bool
-}
-
-func parseFaceCollection(data []byte) (*Collection, error) {
-	return ParseFaceCollectionWithLimit(data, maxParsedFontFaces)
 }
 
 // ParseFaceCollectionWithLimit inspects the cheap sfnt collection directory
@@ -380,7 +346,7 @@ func (f *ParsedFace) IsBundledNotoColorEmoji() bool {
 
 // ParseFace parses one face from a TrueType, OpenType, or collection resource.
 func ParseFace(data []byte, faceIndex uint16) (*ParsedFace, error) {
-	collection, err := parseFaceCollection(data)
+	collection, err := ParseFaceCollectionWithLimit(data, maxParsedFontFaces)
 	if err != nil {
 		return nil, err
 	}
@@ -406,31 +372,59 @@ func (f *ParsedFace) SupportsRenderableRune(value rune) (bool, error) {
 		return false, fmt.Errorf("nil parsed font face")
 	}
 	if f.hasParsedSourceComponents() && f.source.bundledOutline {
-		shapingGlyph, ok := f.Shaping.Font.NominalGlyph(value)
-		if !ok || shapingGlyph == 0 {
-			return false, nil
-		}
-		var buffer sfnt.Buffer
-		outlineGlyph, err := f.Outline.GlyphIndex(&buffer, value)
-		return err == nil && outlineGlyph != 0 && uint32(outlineGlyph) == uint32(shapingGlyph), nil
+		return f.agreedGlyph(value, f.Shaping.Font.NominalGlyph) != 0, nil
 	}
-	shapingGlyph, ok := f.Shaping.NominalGlyph(value)
-	if !ok || shapingGlyph == 0 {
+	glyph := f.agreedGlyph(value, f.Shaping.NominalGlyph)
+	if glyph == 0 {
 		return false, nil
+	}
+	return f.paintable(glyph)
+}
+
+// agreedGlyph returns the non-zero glyph that both parsers select for value,
+// or zero when either lacks it or they disagree. lookup is the shaping cmap:
+// the Face method fills that face's cache, the Font method leaves a shared
+// face untouched.
+func (f *ParsedFace) agreedGlyph(value rune, lookup func(rune) (gotextfont.GID, bool)) sfnt.GlyphIndex {
+	shapingGlyph, ok := lookup(value)
+	if !ok || shapingGlyph == 0 {
+		return 0
 	}
 	var buffer sfnt.Buffer
 	outlineGlyph, err := f.Outline.GlyphIndex(&buffer, value)
-	if err != nil || outlineGlyph == 0 || uint32(outlineGlyph) != uint32(shapingGlyph) {
-		return false, nil
+	if err != nil || uint32(outlineGlyph) != uint32(shapingGlyph) {
+		return 0
 	}
-	plan, trusted, err := f.trustedCOLRv1Plan(uint32(outlineGlyph))
+	return outlineGlyph
+}
+
+// paintable reports whether the raster pipeline can paint glyph: through an
+// authenticated COLRv1 plan with a non-empty clip box, through its COLRv0/CPAL
+// layers, or through its base outline. Faces without parser-issued provenance
+// never reach the COLRv1 path.
+func (f *ParsedFace) paintable(glyph sfnt.GlyphIndex) (bool, error) {
+	plan, trusted, err := f.trustedCOLRv1Plan(uint32(glyph))
 	if err != nil {
 		return false, err
 	}
 	if trusted {
 		return plan.Clip != nil && plan.Clip.XMin < plan.Clip.XMax && plan.Clip.YMin < plan.Clip.YMax, nil
 	}
-	return supportsRenderableRune(f.Outline, f.Shaping, value)
+	layers, colorGlyph, err := f.COLR0GlyphLayers(uint32(glyph))
+	if err != nil {
+		return false, err
+	}
+	var buffer sfnt.Buffer
+	if colorGlyph {
+		for _, layer := range layers {
+			if _, err := f.Outline.LoadGlyph(&buffer, sfnt.GlyphIndex(layer.GlyphID), fixed.I(1_000), nil); err != nil {
+				return false, fmt.Errorf("load COLRv0 layer glyph %d: %w", layer.GlyphID, err)
+			}
+		}
+		return true, nil
+	}
+	_, err = f.Outline.LoadGlyph(&buffer, glyph, fixed.I(1_000), nil)
+	return err == nil, nil
 }
 
 // trustedCOLRv1Plan authenticates the one bundled COLRv1 resource before
@@ -442,41 +436,6 @@ func (f *ParsedFace) trustedCOLRv1Plan(glyphID uint32) (*COLRv1Plan, bool, error
 		return nil, false, nil
 	}
 	return f.CompileBundledNotoColorEmojiCOLRv1Plan(glyphID)
-}
-
-// supportsRenderableRune applies the digest-neutral coverage predicate used
-// when no ParsedFace source provenance is available. It intentionally admits
-// only outlines and COLRv0/CPAL layers.
-func supportsRenderableRune(outline *sfnt.Font, shaping *gotextfont.Face, value rune) (bool, error) {
-	if outline == nil || shaping == nil {
-		return false, fmt.Errorf("nil outline or shaping face")
-	}
-	shapingGlyph, ok := shaping.NominalGlyph(value)
-	if !ok || shapingGlyph == 0 {
-		return false, nil
-	}
-	var buffer sfnt.Buffer
-	outlineGlyph, err := outline.GlyphIndex(&buffer, value)
-	if err != nil || outlineGlyph == 0 || uint32(outlineGlyph) != uint32(shapingGlyph) {
-		return false, nil
-	}
-	face := &ParsedFace{Outline: outline, Shaping: shaping}
-	layers, colorGlyph, err := face.COLR0GlyphLayers(uint32(outlineGlyph))
-	if err != nil {
-		return false, err
-	}
-	if colorGlyph {
-		for _, layer := range layers {
-			if _, err := outline.LoadGlyph(&buffer, sfnt.GlyphIndex(layer.GlyphID), fixed.I(1_000), nil); err != nil {
-				return false, fmt.Errorf("load COLRv0 layer glyph %d: %w", layer.GlyphID, err)
-			}
-		}
-		return true, nil
-	}
-	if _, err := outline.LoadGlyph(&buffer, outlineGlyph, fixed.I(1_000), nil); err != nil {
-		return false, nil
-	}
-	return true, nil
 }
 
 // COLR0GlyphLayers returns the default-palette layers for one supported

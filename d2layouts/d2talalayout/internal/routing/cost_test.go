@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
@@ -65,4 +66,33 @@ func TestEstimateRouteCostGuardedChargesEdgesWithoutSegments(t *testing.T) {
 	if _, err := estimateRouteCostGuarded(edges, &layoutgraph.Edge{}, guard); !errors.Is(err, errRouteStageWorkLimit) {
 		t.Fatalf("empty-route scan error = %v, want route-stage work limit", err)
 	}
+}
+
+// estimateRouteCost and countNonSharedCrossings are the unguarded reference
+// for estimateRouteCostGuarded.
+func estimateRouteCost(edges layoutgraph.Edges, edge *layoutgraph.Edge) float64 {
+	cost := edge.Length()
+	cost *= math.Pow(turnPenalty, float64(len(edge.Points)-2))
+
+	var crossingCount int64
+	for _, otherEdge := range edges {
+		if otherEdge == edge {
+			continue
+		}
+		crossingCount += countNonSharedCrossings(edge, otherEdge)
+	}
+	cost += layoutgraph.CrossingCostWeight * float64(crossingCount)
+	return cost
+}
+
+func countNonSharedCrossings(edge, otherEdge *layoutgraph.Edge) int64 {
+	var crossingCount int64
+	for edgeSegment := 0; edgeSegment < len(edge.Points)-1; edgeSegment++ {
+		for otherSegment := 0; otherSegment < len(otherEdge.Points)-1; otherSegment++ {
+			if isNonSharedCrossing(edge, otherEdge, edgeSegment, otherSegment) {
+				crossingCount++
+			}
+		}
+	}
+	return crossingCount
 }

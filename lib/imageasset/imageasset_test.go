@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 
 	"github.com/d2lang/d2/lib/localfile"
 	"github.com/d2lang/d2/lib/netpolicy"

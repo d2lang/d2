@@ -9,6 +9,7 @@ import (
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // EdgeLengthSession answers EdgeLength and GraphEdgeCrossings for one graph
@@ -490,7 +491,7 @@ func (r *sessionReads) add(nodes ...*layoutgraph.Node) {
 }
 
 func sortedNodesByID(nodes []*layoutgraph.Node) []*layoutgraph.Node {
-	slices.SortFunc(nodes, func(a, b *layoutgraph.Node) int {
+	xsort.Func(nodes, func(a, b *layoutgraph.Node) int {
 		if a == nil || b == nil {
 			switch {
 			case a == b:

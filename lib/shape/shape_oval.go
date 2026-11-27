@@ -8,29 +8,21 @@ import (
 
 const OVAL_AR_LIMIT = 3.
 
-type shapeOval struct {
-	*baseShape
+var ovalKind = shapeKind{
+	typ:             OVAL_TYPE,
+	paddingX:        defaultPadding,
+	paddingY:        defaultPadding,
+	innerBox:        ellipseInnerBox,
+	insidePlacement: ovalInsidePlacement,
+	dimensionsToFit: ovalDimensionsToFit,
+	perimeter:       ellipsePerimeter,
 }
 
 func NewOval(box *geo.Box) Shape {
-	shape := shapeOval{
-		baseShape: newShapeBase(OVAL_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&ovalKind, box)
 }
 
-func (s shapeOval) GetInnerBox() *geo.Box {
-	width := s.Box.Width
-	height := s.Box.Height
-	insideTL := s.GetInsidePlacement(width, height, 0, 0)
-	tl := s.Box.TopLeft.Copy()
-	width -= 2 * (insideTL.X - tl.X)
-	height -= 2 * (insideTL.Y - tl.Y)
-	return geo.NewBox(&insideTL, width, height)
-}
-
-func (s shapeOval) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func ovalDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	theta := float64(float32(math.Atan2(height, width)))
 	// add padding in direction of diagonal so there is padding distance between top left and border
 	paddedWidth := width + paddingX*math.Cos(theta)
@@ -43,7 +35,7 @@ func (s shapeOval) GetDimensionsToFit(width, height, paddingX, paddingY float64)
 	return totalWidth, totalHeight
 }
 
-func (s shapeOval) GetInsidePlacement(width, height, paddingX, paddingY float64) geo.Point {
+func ovalInsidePlacement(s *shape, width, height, paddingX, paddingY float64) geo.Point {
 	// showing the top left arc of the ellipse (drawn with '*')
 	// ┌──────────────────* ┬
 	// │         *        │ │ry
@@ -63,8 +55,4 @@ func (s shapeOval) GetInsidePlacement(width, height, paddingX, paddingY float64)
 	r := rx * ry / math.Sqrt(math.Pow(rx*sin, 2)+math.Pow(ry*cos, 2))
 	// we want to offset r-padding/2 away from the center
 	return *geo.NewPoint(s.Box.TopLeft.X+math.Ceil(rx-cos*(r-paddingX/2)), s.Box.TopLeft.Y+math.Ceil(ry-sin*(r-paddingY/2)))
-}
-
-func (s shapeOval) Perimeter() []geo.Intersectable {
-	return []geo.Intersectable{geo.NewEllipse(s.Box.Center(), s.Box.Width/2, s.Box.Height/2)}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // SequenceDefiningEdges checks each original step path against the runs that
@@ -324,7 +325,7 @@ func AddSequences(ctx context.Context, graph *layoutgraph.Graph, random *rand.Ra
 		if err != nil {
 			return err
 		}
-		slices.SortStableFunc(groups, func(a, b []*layoutgraph.Node) int {
+		xsort.StableFunc(groups, func(a, b []*layoutgraph.Node) int {
 			return cmp.Compare(containerIndex[a[0]], containerIndex[b[0]])
 		})
 

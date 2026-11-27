@@ -7,10 +7,6 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapePackage struct {
-	*baseShape
-}
-
 const (
 	packageTopMinHeight     = 34.
 	packageTopMaxHeight     = 55.
@@ -20,15 +16,21 @@ const (
 	packageVerticalScalar   = 0.2
 )
 
-func NewPackage(box *geo.Box) Shape {
-	shape := shapePackage{
-		baseShape: newShapeBase(PACKAGE_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+var packageKind = shapeKind{
+	typ:             PACKAGE_TYPE,
+	paddingX:        defaultPadding,
+	paddingY:        .8 * defaultPadding,
+	innerBox:        packageInnerBox,
+	dimensionsToFit: packageDimensionsToFit,
+	path:            packagePath,
+	trace:           packageTrace,
 }
 
-func (s shapePackage) GetInnerBox() *geo.Box {
+func NewPackage(box *geo.Box) Shape {
+	return newShape(&packageKind, box)
+}
+
+func packageInnerBox(s *shape) *geo.Box {
 	tl := s.Box.TopLeft.Copy()
 	height := s.Box.Height
 
@@ -66,25 +68,11 @@ func packageOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float6
 	return pc
 }
 
-func (s shapePackage) Perimeter() []geo.Intersectable {
-	return packagePath(s.Box).Path
+func packageTrace(box *geo.Box, t *borderTracer) {
+	packageOutline(box, t.newPath)
 }
 
-func (s shapePackage) traceBorder(t *borderTracer) {
-	packageOutline(s.Box, t.newPath)
-}
-
-func (s shapePackage) GetSVGPathData() []string {
-	return []string{
-		packagePath(s.Box).PathData(),
-	}
-}
-
-func (s shapePackage) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(packagePath(s.Box))
-}
-
-func (s shapePackage) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func packageDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	innerHeight := height + paddingY
 	// We want to compute what the topHeight will be to add to inner height;
 	// topHeight=(verticalScalar * totalHeight) and totalHeight=(topHeight + innerHeight)
@@ -93,8 +81,4 @@ func (s shapePackage) GetDimensionsToFit(width, height, paddingX, paddingY float
 	totalHeight := innerHeight + math.Min(topHeight, packageTopMaxHeight)
 
 	return math.Ceil(width + paddingX), math.Ceil(totalHeight)
-}
-
-func (s shapePackage) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding, .8 * defaultPadding
 }

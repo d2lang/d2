@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -802,7 +803,7 @@ func sortedPortOwners(ports map[*layoutgraph.Node][]*OVGNode) []*layoutgraph.Nod
 	for owner := range ports {
 		owners = append(owners, owner)
 	}
-	slices.SortFunc(owners, comparePortOwners)
+	xsort.Func(owners, comparePortOwners)
 	return owners
 }
 
@@ -847,7 +848,7 @@ func reservePortAxisSortWork(axis map[float64][]float64, guard *ovgBuildGuard) e
 	for _, values := range axis {
 		lengths = append(lengths, len(values))
 	}
-	slices.Sort(lengths)
+	xsort.Ordered(lengths)
 	for _, length := range lengths {
 		if err := guard.reserveSortWork(length); err != nil {
 			return err

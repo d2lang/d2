@@ -92,34 +92,15 @@ func sameGeometry(t *testing.T, what string, want, got *d2graph.Graph) {
 type legacyOrders struct {
 	visits    [][]*d2graph.Object // per shift: the objects its grow pass visited
 	inserted  [][]*d2graph.Object // per shift: the keys of seen, in insertion order
-	writes    [][]legacyWrite     // per shift: the writes into its maps before its grow pass
 	ancestors [][]*d2graph.Object // per rank: starting, then ending ancestors, as ranged over
 	positions [][]float64         // their target positions
 	levels    [][]float64         // per getRanks: the rank coordinates, as ranged over
-
-	passStarted bool // the current shift's grow pass has visited an object
-}
-
-// legacyWrite is a write of a legacy shift into one of its maps: the map's
-// name and the object or edge written.
-type legacyWrite struct {
-	m    string
-	obj  *d2graph.Object
-	edge *d2graph.Edge
 }
 
 func (r *legacyOrders) beginShift() {
 	if r != nil {
 		r.visits = append(r.visits, nil)
 		r.inserted = append(r.inserted, nil)
-		r.writes = append(r.writes, nil)
-		r.passStarted = false
-	}
-}
-
-func (r *legacyOrders) wrote(m string, obj *d2graph.Object, edge *d2graph.Edge) {
-	if r != nil && !r.passStarted {
-		r.writes[len(r.writes)-1] = append(r.writes[len(r.writes)-1], legacyWrite{m, obj, edge})
 	}
 }
 
@@ -132,7 +113,6 @@ func (r *legacyOrders) insert(o *d2graph.Object) {
 func (r *legacyOrders) visit(o *d2graph.Object) {
 	if r != nil {
 		r.visits[len(r.visits)-1] = append(r.visits[len(r.visits)-1], o)
-		r.passStarted = true
 	}
 }
 
@@ -158,27 +138,20 @@ func (r *legacyOrders) levelOrder(levels []float64) {
 // legacy's keys, inserted in the same order, with the same values, and that
 // the legacy visited only objects the rewrite had seen by then.
 type mapReplay struct {
-	t       *testing.T
-	what    string
-	rec     *legacyOrders
-	cur     map[*d2graph.Object]*d2graph.Object // legacy object -> rewrite's
-	curEdge map[*d2graph.Edge]int32             // legacy edge -> its index in g.Edges
-	// ix, when set, is the rewrite's object index, and growPass checks the
-	// writes the rewrite repeated into the original's maps (shadowMaps).
-	ix *objectIndex
+	t    *testing.T
+	what string
+	rec  *legacyOrders
+	cur  map[*d2graph.Object]*d2graph.Object // legacy object -> rewrite's
 
 	shifts, ranks, getRanks int
 	// What the replay covered.
-	growPasses, addedVisits, tiedRanks, nanRanks, writes int
+	growPasses, addedVisits, tiedRanks, nanRanks int
 }
 
 func newMapReplay(t *testing.T, what string, rec *legacyOrders, legacy, current *d2graph.Graph) *mapReplay {
-	m := &mapReplay{t: t, what: what, rec: rec, cur: map[*d2graph.Object]*d2graph.Object{legacy.Root: current.Root}, curEdge: map[*d2graph.Edge]int32{}}
+	m := &mapReplay{t: t, what: what, rec: rec, cur: map[*d2graph.Object]*d2graph.Object{legacy.Root: current.Root}}
 	for i, o := range legacy.Objects {
 		m.cur[o] = current.Objects[i]
-	}
-	for i, e := range legacy.Edges {
-		m.curEdge[e] = int32(i)
 	}
 	return m
 }
@@ -200,7 +173,7 @@ func (m *mapReplay) sameObjects(what string, got, legacy []*d2graph.Object) {
 	}
 }
 
-func (m *mapReplay) growPass(seen map[*d2graph.Object]struct{}, visit func(*d2graph.Object), inserted func() []*d2graph.Object, writes []int32) {
+func (m *mapReplay) growPass(seen map[*d2graph.Object]struct{}, visit func(*d2graph.Object), inserted func() []*d2graph.Object) {
 	m.t.Helper()
 	i := m.shifts
 	m.shifts++
@@ -211,9 +184,6 @@ func (m *mapReplay) growPass(seen map[*d2graph.Object]struct{}, visit func(*d2gr
 		return
 	}
 	m.growPasses++
-	if m.ix != nil && shadowMaps {
-		m.sameWrites(i, writes)
-	}
 	n0 := len(seen)
 	if n0 > len(m.rec.inserted[i]) {
 		m.fatalf("shift %d: %d objects seen, legacy %d", i, n0, len(m.rec.inserted[i]))
@@ -233,31 +203,6 @@ func (m *mapReplay) growPass(seen map[*d2graph.Object]struct{}, visit func(*d2gr
 		visit(m.cur[o])
 	}
 	m.sameObjects(fmt.Sprintf("shift %d: seen", i), inserted(), m.rec.inserted[i])
-}
-
-// sameWrites fails the test unless the writes the rewrite repeated into the
-// original's maps before shift i's grow pass are the legacy run's.
-func (m *mapReplay) sameWrites(i int, writes []int32) {
-	m.t.Helper()
-	names := [...]string{wroteShifted: "shifted", wroteSeen: "seen", wroteShiftedEdge: "shiftedEdges", wroteNeedsMove: "needsMove"}
-	legacy := m.rec.writes[i]
-	if len(writes) != len(legacy) {
-		m.fatalf("shift %d: %d writes before the grow pass, legacy %d", i, len(writes), len(legacy))
-	}
-	for j, w := range writes {
-		l, k := legacy[j], w>>2
-		if names[w&3] != l.m {
-			m.fatalf("shift %d: write %d into %s, legacy into %s", i, j, names[w&3], l.m)
-		}
-		if w&3 == wroteShiftedEdge {
-			if k != m.curEdge[l.edge] {
-				m.fatalf("shift %d: write %d of edge %d, legacy of edge %d", i, j, k, m.curEdge[l.edge])
-			}
-		} else if m.ix.objs[k] != m.cur[l.obj] {
-			m.fatalf("shift %d: write %d into %s of %s, legacy of %s", i, j, l.m, m.ix.objs[k].ID, l.obj.ID)
-		}
-	}
-	m.writes += len(writes)
 }
 
 func (m *mapReplay) ancestors(positions map[*d2graph.Object]float64) []*d2graph.Object {
@@ -412,7 +357,7 @@ func TestSpacingPassesMatchLegacyWithNaN(t *testing.T) {
 // are ranged over in key order.
 type seenOrderGrow struct{}
 
-func (seenOrderGrow) growPass(seen map[*d2graph.Object]struct{}, visit func(*d2graph.Object), inserted func() []*d2graph.Object, writes []int32) {
+func (seenOrderGrow) growPass(seen map[*d2graph.Object]struct{}, visit func(*d2graph.Object), inserted func() []*d2graph.Object) {
 	if seen == nil {
 		return
 	}
@@ -470,6 +415,29 @@ func TestCrossRankAxisOrderMatchesScan(t *testing.T) {
 						t.Fatalf("seed %d horizontal %v: edge %d point %d at %v, want %v", seed, isHorizontal, i, j, *got.Route[j], *want.Route[j])
 					}
 				}
+			}
+		}
+	}
+}
+
+// TestSpacingPassesAreDeterministic lays each graph out several times and
+// requires the same geometry every time. Three steps of the passes used to
+// take orders from ranging over Go maps (see map_order.go), and the layout of
+// some of these graphs changed from run to run.
+func TestSpacingPassesAreDeterministic(t *testing.T) {
+	t.Parallel()
+	for seed := int64(0); seed < 300; seed++ {
+		for _, isHorizontal := range []bool{false, true} {
+			var first *d2graph.Graph
+			for run := 0; run < 8; run++ {
+				g, ix := crossRankTestGraph(seed)
+				adjustRankSpacing(g, ix, MIN_RANK_SEP, isHorizontal)
+				adjustCrossRankSpacing(g, ix, MIN_RANK_SEP, !isHorizontal)
+				if first == nil {
+					first = g
+					continue
+				}
+				sameGeometry(t, fmt.Sprintf("seed %d horizontal %v run %d", seed, isHorizontal, run), first, g)
 			}
 		}
 	}

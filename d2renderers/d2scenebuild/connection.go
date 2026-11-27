@@ -414,6 +414,77 @@ func connectionPath(connection d2target.Connection, srcAdjustment, dstAdjustment
 	return path, segments, start, current, nil
 }
 
+// arrowPoint is an arrowhead outline vertex as a linear combination of the
+// arrowhead's width, height and stroke width: (xw*w + xs*s, yh*h + ys*s).
+type arrowPoint struct{ xw, xs, yh, ys float64 }
+
+// arrowOutlines holds the source and target outlines of the arrowheads whose
+// geometry is a polygon or polyline.
+var arrowOutlines = [...]struct {
+	arrowhead      d2target.Arrowhead
+	source, target []arrowPoint
+}{
+	{d2target.ArrowArrowhead,
+		[]arrowPoint{{0, 0, .5, 0}, {1, 0, 0, 0}, {.75, 0, .5, 0}, {1, 0, 1, 0}},
+		[]arrowPoint{{0, 0, 0, 0}, {1, 0, .5, 0}, {0, 0, 1, 0}, {.25, 0, .5, 0}},
+	},
+	{d2target.TriangleArrowhead,
+		[]arrowPoint{{1, 0, 0, 0}, {0, 0, .5, 0}, {1, 0, 1, 0}},
+		[]arrowPoint{{0, 0, 0, 0}, {1, 0, .5, 0}, {0, 0, 1, 0}},
+	},
+	// Outlined arrowheads keep their stroke inside the arrowhead box.
+	{d2target.UnfilledTriangleArrowhead,
+		[]arrowPoint{{1, -.5, 0, .5}, {0, .5, .5, 0}, {1, -.5, 1, -.5}},
+		[]arrowPoint{{0, .5, 0, .5}, {1, -.5, .5, 0}, {0, .5, 1, -.5}},
+	},
+	{d2target.LineArrowhead,
+		[]arrowPoint{{1, -.5, 0, .5}, {0, .5, .5, 0}, {1, -.5, 1, -.5}},
+		[]arrowPoint{{0, .5, 0, .5}, {1, -.5, .5, 0}, {0, .5, 1, -.5}},
+	},
+	// Filled diamonds use the full height; inset outline geometry belongs only
+	// to the unfilled diamond.
+	{d2target.FilledDiamondArrowhead,
+		[]arrowPoint{{0, 0, .5, 0}, {.5, 0, 0, 0}, {1, 0, .5, 0}, {.5, 0, 1, 0}},
+		[]arrowPoint{{0, 0, .5, 0}, {.5, 0, 0, 0}, {1, 0, .5, 0}, {.5, 0, 1, 0}},
+	},
+	{d2target.DiamondArrowhead,
+		[]arrowPoint{{.125, 0, .5, 0}, {.6, 0, .125, 0}, {1.1, 0, .5, 0}, {.6, 0, .875, 0}},
+		[]arrowPoint{{0, 0, .5, 0}, {.5, 0, .125, 0}, {1, 0, .5, 0}, {.5, 0, .9, 0}},
+	},
+	{d2target.FilledBoxArrowhead,
+		[]arrowPoint{{0, 0, 0, 0}, {0, 0, 1, 0}, {1, 0, 1, 0}, {1, 0, 0, 0}},
+		[]arrowPoint{{0, 0, 0, 0}, {0, 0, 1, 0}, {1, 0, 1, 0}, {1, 0, 0, 0}},
+	},
+	{d2target.BoxArrowhead,
+		[]arrowPoint{{0, .5, 0, .5}, {0, .5, 1, -.5}, {1, -.5, 1, -.5}, {1, -.5, 0, .5}},
+		[]arrowPoint{{0, .5, 0, .5}, {0, .5, 1, -.5}, {1, -.5, 1, -.5}, {1, -.5, 0, .5}},
+	},
+	// The cross is drawn unrotated around the arrowhead center and its
+	// stem runs from that center to the endpoint.
+	{d2target.CrossArrowhead,
+		[]arrowPoint{{.5, 0, .5, 0}, {0, 0, .5, 0}},
+		[]arrowPoint{{.5, 0, .5, 0}, {1, 0, .5, 0}},
+	},
+}
+
+func arrowOutline(arrowhead d2target.Arrowhead, target bool) []arrowPoint {
+	for _, o := range arrowOutlines {
+		if o.arrowhead == arrowhead {
+			if target {
+				return o.target
+			}
+			return o.source
+		}
+	}
+	return nil
+}
+
+var crossArrowOutline = []arrowPoint{
+	{0, 0, .5, .125}, {.5, -.125, .5, .125}, {.5, -.125, 1, 0}, {.5, .125, 1, 0},
+	{.5, .125, .5, .125}, {1, 0, .5, .125}, {1, 0, .5, -.125}, {.5, .125, .5, -.125},
+	{.5, .125, 0, 0}, {.5, -.125, 0, 0}, {.5, -.125, .5, -.125}, {0, 0, .5, -.125},
+}
+
 func (b *builder) arrowhead(connection d2target.Connection, arrowhead d2target.Arrowhead, target bool, endpoint d2scene.Point, tangent geo.Vector, strokePaint d2scene.Paint) (*d2scene.Node, error) {
 	if tangent.Length() == 0 {
 		return nil, fmt.Errorf("scene: connection %q has zero-length arrowhead tangent", connection.ID)
@@ -438,21 +509,25 @@ func (b *builder) arrowhead(connection d2target.Connection, arrowhead d2target.A
 	arrowID := fmt.Sprintf("%s:%s-arrowhead", connection.ID, endpointName)
 	var primitive d2scene.Primitive
 	var children []*d2scene.Node
-	polygon := func(points ...d2scene.Point) d2scene.Path {
+	// path joins points with lines; a closed path is filled with the stroke paint.
+	path := func(closed bool, points ...d2scene.Point) d2scene.Path {
 		commands := []d2scene.PathCommand{d2scene.MoveTo(points[0].X, points[0].Y)}
 		for _, point := range points[1:] {
 			commands = append(commands, d2scene.LineTo(point.X, point.Y))
 		}
-		commands = append(commands, d2scene.ClosePath())
-		return d2scene.Path{Commands: commands, Fill: strokePaint}
-	}
-	polyline := func(points ...d2scene.Point) d2scene.Path {
-		commands := []d2scene.PathCommand{d2scene.MoveTo(points[0].X, points[0].Y)}
-		for _, point := range points[1:] {
-			commands = append(commands, d2scene.LineTo(point.X, point.Y))
+		if !closed {
+			return d2scene.Path{Commands: commands}
 		}
-		return d2scene.Path{Commands: commands}
+		return d2scene.Path{Commands: append(commands, d2scene.ClosePath()), Fill: strokePaint}
 	}
+	outline := func(table []arrowPoint) []d2scene.Point {
+		points := make([]d2scene.Point, len(table))
+		for i, p := range table {
+			points[i] = d2scene.Point{X: p.xw*width + p.xs*strokeWidth, Y: p.yh*height + p.ys*strokeWidth}
+		}
+		return points
+	}
+	points := outline(arrowOutline(arrowhead, target))
 	outlineStroke := func() *d2scene.Stroke {
 		return &d2scene.Stroke{Paint: strokePaint, Width: strokeWidth, Cap: d2scene.CapButt, Join: d2scene.JoinMiter, MiterLimit: 4}
 	}
@@ -463,71 +538,29 @@ func (b *builder) arrowhead(connection d2target.Connection, arrowhead d2target.A
 		return node
 	}
 	switch arrowhead {
-	case d2target.ArrowArrowhead:
-		if target {
-			primitive = polygon(d2scene.Point{}, d2scene.Point{X: width, Y: height / 2}, d2scene.Point{Y: height}, d2scene.Point{X: width / 4, Y: height / 2})
-		} else {
-			primitive = polygon(d2scene.Point{Y: height / 2}, d2scene.Point{X: width}, d2scene.Point{X: width * .75, Y: height / 2}, d2scene.Point{X: width, Y: height})
-		}
-	case d2target.TriangleArrowhead:
-		if target {
-			primitive = polygon(d2scene.Point{}, d2scene.Point{X: width, Y: height / 2}, d2scene.Point{Y: height})
-		} else {
-			primitive = polygon(d2scene.Point{X: width}, d2scene.Point{Y: height / 2}, d2scene.Point{X: width, Y: height})
-		}
-	case d2target.UnfilledTriangleArrowhead:
-		inset := strokeWidth / 2
-		path := polygon(d2scene.Point{X: inset, Y: inset}, d2scene.Point{X: width - inset, Y: height / 2}, d2scene.Point{X: inset, Y: height - inset})
-		if !target {
-			path = polygon(d2scene.Point{X: width - inset, Y: inset}, d2scene.Point{X: inset, Y: height / 2}, d2scene.Point{X: width - inset, Y: height - inset})
-		}
-		path.Fill = background
-		path.Stroke = &d2scene.Stroke{Paint: strokePaint, Width: strokeWidth, Join: d2scene.JoinRound}
-		primitive = path
-	case d2target.LineArrowhead:
-		inset := strokeWidth / 2
-		points := []d2scene.Point{
-			{X: inset, Y: inset},
-			{X: width - inset, Y: height / 2},
-			{X: inset, Y: height - inset},
-		}
-		if !target {
-			points = []d2scene.Point{
-				{X: width - inset, Y: inset},
-				{X: inset, Y: height / 2},
-				{X: width - inset, Y: height - inset},
+	case d2target.ArrowArrowhead, d2target.TriangleArrowhead, d2target.FilledDiamondArrowhead, d2target.FilledBoxArrowhead:
+		primitive = path(true, points...)
+	case d2target.UnfilledTriangleArrowhead, d2target.DiamondArrowhead:
+		p := path(true, points...)
+		p.Fill = background
+		p.Stroke = &d2scene.Stroke{Paint: strokePaint, Width: strokeWidth, Join: d2scene.JoinRound}
+		if arrowhead == d2target.DiamondArrowhead {
+			if target {
+				refX = width - .6*strokeWidth
+			} else {
+				refX = width/8 + .6*strokeWidth
 			}
 		}
-		path := polyline(points...)
-		path.Stroke = outlineStroke()
-		primitive = path
-	case d2target.FilledDiamondArrowhead:
-		// Filled diamonds use the full height; inset outline geometry belongs only
-		// to the unfilled diamond below.
-		primitive = polygon(
-			d2scene.Point{Y: height / 2},
-			d2scene.Point{X: width / 2},
-			d2scene.Point{X: width, Y: height / 2},
-			d2scene.Point{X: width / 2, Y: height},
-		)
-	case d2target.DiamondArrowhead:
-		path := polygon(d2scene.Point{Y: height / 2}, d2scene.Point{X: width / 2, Y: height / 8}, d2scene.Point{X: width, Y: height / 2}, d2scene.Point{X: width / 2, Y: height * .9})
-		if !target {
-			path = polygon(
-				d2scene.Point{X: width / 8, Y: height / 2},
-				d2scene.Point{X: width * .6, Y: height / 8},
-				d2scene.Point{X: width * 1.1, Y: height / 2},
-				d2scene.Point{X: width * .6, Y: height * 7 / 8},
-			)
-		}
-		path.Fill = background
-		path.Stroke = &d2scene.Stroke{Paint: strokePaint, Width: strokeWidth, Join: d2scene.JoinRound}
-		if target {
-			refX = width - .6*strokeWidth
-		} else {
-			refX = width/8 + .6*strokeWidth
-		}
-		primitive = path
+		primitive = p
+	case d2target.LineArrowhead:
+		p := path(false, points...)
+		p.Stroke = outlineStroke()
+		primitive = p
+	case d2target.BoxArrowhead:
+		p := path(true, points...)
+		p.Fill = background
+		p.Stroke = outlineStroke()
+		primitive = p
 	case d2target.FilledCircleArrowhead, d2target.CircleArrowhead:
 		radius := width / 2
 		centerX := radius - strokeWidth/2
@@ -543,47 +576,16 @@ func (b *builder) arrowhead(connection d2target.Connection, arrowhead d2target.A
 		}
 		primitive = ellipse
 	case d2target.CrossArrowhead:
-		inset := strokeWidth / 8
-		cross := polygon(
-			d2scene.Point{Y: height/2 + inset},
-			d2scene.Point{X: width/2 - inset, Y: height/2 + inset},
-			d2scene.Point{X: width/2 - inset, Y: height},
-			d2scene.Point{X: width/2 + inset, Y: height},
-			d2scene.Point{X: width/2 + inset, Y: height/2 + inset},
-			d2scene.Point{X: width, Y: height/2 + inset},
-			d2scene.Point{X: width, Y: height/2 - inset},
-			d2scene.Point{X: width/2 + inset, Y: height/2 - inset},
-			d2scene.Point{X: width/2 + inset},
-			d2scene.Point{X: width/2 - inset},
-			d2scene.Point{X: width/2 - inset, Y: height/2 - inset},
-			d2scene.Point{Y: height/2 - inset},
-		)
+		cross := path(true, outline(crossArrowOutline)...)
 		cross.Fill = background
 		cross.Stroke = outlineStroke()
 		origin := d2scene.Point{X: width / 2, Y: height / 2}
 		rotatedOrigin := d2scene.Rotate(math.Pi / 4).Point(origin)
 		crossTransform := d2scene.Translate(-rotatedOrigin.X+width/2, -rotatedOrigin.Y+height/2).Mul(d2scene.Rotate(math.Pi / 4))
-		children = append(children, child("cross", cross, crossTransform))
-
-		stemEndX := width
-		if !target {
-			stemEndX = 0
-		}
-		stem := polyline(d2scene.Point{X: width / 2, Y: height / 2}, d2scene.Point{X: stemEndX, Y: height / 2})
+		stem := path(false, points...)
 		stem.Fill = background
 		stem.Stroke = outlineStroke()
-		children = append(children, child("stem", stem, d2scene.Identity()))
-	case d2target.FilledBoxArrowhead, d2target.BoxArrowhead:
-		inset := 0.0
-		if arrowhead == d2target.BoxArrowhead {
-			inset = strokeWidth / 2
-		}
-		path := polygon(d2scene.Point{X: inset, Y: inset}, d2scene.Point{X: inset, Y: height - inset}, d2scene.Point{X: width - inset, Y: height - inset}, d2scene.Point{X: width - inset, Y: inset})
-		if arrowhead == d2target.BoxArrowhead {
-			path.Fill = background
-			path.Stroke = &d2scene.Stroke{Paint: strokePaint, Width: strokeWidth, Join: d2scene.JoinMiter, MiterLimit: 4}
-		}
-		primitive = path
+		children = append(children, child("cross", cross, crossTransform), child("stem", stem, d2scene.Identity()))
 	case d2target.CfOne, d2target.CfMany, d2target.CfOneRequired, d2target.CfManyRequired:
 		offset := 3 + strokeWidth*1.8
 		internalTransform := d2scene.Identity()
@@ -592,7 +594,7 @@ func (b *builder) arrowhead(connection d2target.Connection, arrowhead d2target.A
 		}
 
 		if arrowhead == d2target.CfOneRequired || arrowhead == d2target.CfManyRequired {
-			modifier := polyline(d2scene.Point{X: offset}, d2scene.Point{X: offset, Y: height})
+			modifier := path(false, d2scene.Point{X: offset}, d2scene.Point{X: offset, Y: height})
 			modifier.Fill = background
 			modifier.Stroke = outlineStroke()
 			children = append(children, child("modifier", modifier, internalTransform))

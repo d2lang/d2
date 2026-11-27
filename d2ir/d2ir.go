@@ -850,6 +850,12 @@ func (eid *EdgeID) resolve(m *Map) (_ *EdgeID, _ *Map, common []d2ast.String, _ 
 	eid = eid.Copy()
 	maxUnderscores := go2.Max(countUnderscores(eid.SrcPath), countUnderscores(eid.DstPath))
 	for i := 0; i < maxUnderscores; i++ {
+		if len(eid.SrcPath) == 0 || len(eid.DstPath) == 0 {
+			// An endpoint of only underscores names no field, so
+			// countUnderscores counts none in it, but the other endpoint's
+			// underscores have used it up.
+			return nil, nil, nil, errors.New("field key must contain more than underscores")
+		}
 		if eid.SrcPath[0].ScalarString() == "_" && eid.SrcPath[0].IsUnquoted() {
 			eid.SrcPath = eid.SrcPath[1:]
 		} else {
@@ -1373,27 +1379,33 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 	}
 	filter := func(f *Field, passthrough bool) bool {
 		if gctx != nil {
-			var ks string
-			if refctx.Key.HasTripleGlob() {
-				ks = d2format.FormatKeyPath(IDA(f))
-			} else {
-				ks = d2format.FormatKeyPath(BoardIDA(f))
-			}
+			ks := gctx.appliedKey(f)
+			applied := gctx.fields(ks)
 			if !kp.HasGlob() {
 				if !passthrough {
-					gctx.appliedFields[ks] = struct{}{}
+					applied[ks] = struct{}{}
 				}
 				return true
 			}
 			// For globs with edges, we only ignore duplicate fields if the glob is not at the terminal of the keypath, the glob is on the common key or the glob is on the edge key. And only for globs with edge indexes.
 			lastEl := kp.Path[len(kp.Path)-1]
 			if len(refctx.Key.Edges) == 0 || lastEl.UnquotedString == nil || len(lastEl.UnquotedString.Pattern) == 0 || kp == refctx.Key.Key || kp == refctx.Key.EdgeKey {
-				if _, ok := gctx.appliedFields[ks]; ok {
+				if _, ok := applied[ks]; ok {
+					return false
+				}
+				if !passthrough && gctx.inheritsApplication(f) {
+					// The board will start as a copy of a board the glob
+					// has already applied to.
+					applied[ks] = struct{}{}
+					if refctx.Key.Value.Map != nil || refctx.Key.Value.Import != nil {
+						// The glob makes it a board, with a map.
+						c.inheritingBoards = append(c.inheritingBoards, f)
+					}
 					return false
 				}
 			}
 			if !passthrough {
-				gctx.appliedFields[ks] = struct{}{}
+				applied[ks] = struct{}{}
 			}
 		}
 		return true
@@ -1456,13 +1468,25 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			}
 			if d2ast.Keyword(f.Name) == "" && matchPattern(f.Name.ScalarString(), us.Pattern) {
 				if i == len(kp.Path)-1 {
-					faAppend(f)
+					valueMap := gctx != nil && (refctx.Key.Value.Map != nil || refctx.Key.Value.Import != nil)
+					if valueMap && c.awaitsBase(f) {
+						continue
+					}
+					if filter(f, false) {
+						*fa = append(*fa, f)
+						if valueMap {
+							c.enterStep(f)
+						}
+					}
 				} else {
 					if !filter(f, true) {
 						continue
 					}
-					if f.Map() == nil {
-						c.openFieldMap(f)
+					if !c.ensurePathMap(f, gctx) {
+						if c.stopped() {
+							return nil
+						}
+						continue
 					}
 					err := f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
 					if err != nil {
@@ -1530,8 +1554,8 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		if _, ok := f.Composite.(*Array); ok {
 			return d2parser.Errorf(kp.Path[i].Unbox(), "cannot index into array")
 		}
-		if f.Map() == nil {
-			c.openFieldMap(f)
+		if !c.ensurePathMap(f, gctx) {
+			return nil
 		}
 		return f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
 	}
@@ -1561,14 +1585,20 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			return
 		}
 		for _, grefctx := range c.globRefContextStack {
-			var ks string
-			if grefctx.Key.HasTripleGlob() {
-				ks = d2format.FormatKeyPath(IDA(f))
-			} else {
-				ks = d2format.FormatKeyPath(BoardIDA(f))
-			}
 			gctx2 := c.getGlobContext(grefctx)
-			gctx2.appliedFields[ks] = struct{}{}
+			if gctx2 == nil {
+				// The glob is a parent board's, such as * in layers: {*: {a}},
+				// whose value is compiled in a board of its own (here each
+				// layer), which has its own glob contexts.
+				continue
+			}
+			if gctx2.refctx.ScopeMap != nil && treeRoot(f) != treeRoot(gctx2.refctx.ScopeMap) {
+				// f is in an import compiled for the glob's value, as in
+				// *: @x, which is a tree of its own.
+				continue
+			}
+			ks := gctx2.appliedKey(f)
+			gctx2.fields(ks)[ks] = struct{}{}
 		}
 	}()
 	// Don't add references for fake common KeyPath from trimCommon in CreateEdge.
@@ -1604,6 +1634,81 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		c.openFieldMap(f)
 	}
 	return f.Map().ensureField(i+1, kp, refctx, create, gctx, c, indexed, fa, created)
+}
+
+// ensurePathMap gives existing field f, which a key path continues into, a
+// map. A scenario or step that a glob's path enters this way starts as a copy
+// of the board it builds on, as it does when its own map value is compiled
+// first. It reports false if the path stops at f: f is a step that awaitsBase,
+// or the compilation stopped.
+func (c *compiler) ensurePathMap(f *Field, gctx *globContext) bool {
+	if f.Map() == nil {
+		if gctx != nil && c.awaitsBase(f) {
+			return false
+		}
+		c.openFieldMap(f)
+		if c != nil && c.stopped() {
+			return false
+		}
+	}
+	if gctx != nil {
+		c.enterStep(f)
+	}
+	return true
+}
+
+// enterStep records that the glob being applied applies in f, if f is a step.
+func (c *compiler) enterStep(f *Field) {
+	if NodeBoardKind(f) != BoardStep {
+		return
+	}
+	if c.globSteps == nil {
+		c.globSteps = make(map[*Field]struct{})
+	}
+	c.globSteps[f] = struct{}{}
+}
+
+// awaitsBase reports whether f is a step with no map that would start as a
+// copy of a step the glob being applied has entered (see enterStep). The glob
+// has not finished applying there: its values and connections come after all
+// its matches. Rather than copy that step now and apply the glob again, f is
+// copied from it once the glob has applied (see compileKey), as it would
+// be if the steps were compiled in order. It counts as entered itself.
+func (c *compiler) awaitsBase(f *Field) bool {
+	if c == nil || len(c.globSteps) == 0 || f.Map() != nil || NodeBoardKind(f) != BoardStep {
+		return false
+	}
+	steps := ParentMap(f)
+	for j := slices.Index(steps.Fields, f) - 1; j >= 0; j-- {
+		p := steps.Fields[j]
+		if _, ok := c.globSteps[p]; ok {
+			c.globSteps[f] = struct{}{}
+			c.pendingStepCopies = append(c.pendingStepCopies, f)
+			return true
+		}
+		if p.Map() != nil {
+			return false
+		}
+	}
+	return false
+}
+
+// copyBases gives each scenario or step in boards, from start on, that still
+// has no map its map, as a copy of the board it builds on, and removes them.
+func (c *compiler) copyBases(boards *[]*Field, start int) {
+	pending := slices.Clone((*boards)[start:])
+	*boards = (*boards)[:start]
+	for _, f := range pending {
+		if c.stopped() {
+			return
+		}
+		if f.Map() == nil {
+			f.Composite = &Map{
+				parent: f,
+			}
+			c.overlayBase(f)
+		}
+	}
 }
 
 func (m *Map) DeleteEdge(eid *EdgeID) *Edge {
@@ -1830,10 +1935,10 @@ func (m *Map) getEdgesBetween(eid *EdgeID, refctx *RefContext, gctx *globContext
 			for _, e := range ea2 {
 				if gctx != nil {
 					ks := gctx.edgeKey(e)
-					if _, ok := gctx.appliedEdges[ks]; ok {
+					if _, ok := gctx.edges(ks)[ks]; ok {
 						continue
 					}
-					gctx.appliedEdges[ks] = struct{}{}
+					gctx.edges(ks)[ks] = struct{}{}
 				}
 				*ea = append(*ea, e)
 			}
@@ -1912,6 +2017,10 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 				c.openFieldMap(f)
 			}
 			err = f.Map().createEdge(eid, refctx, gctx, c, indexed, ea)
+			if c != nil && len(f.References) == 0 {
+				// The edge failed, or its globs matched nothing.
+				c.unreferencedFields = true
+			}
 			if err != nil {
 				return err
 			}
@@ -1919,14 +2028,11 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 		return nil
 	}
 
-	ij := findProhibitedEdgeKeyword(eid.SrcPath...)
-	if ij != -1 {
-		return d2parser.Errorf(refctx.Edge.Src.Path[ij].Unbox(), "reserved keywords are prohibited in edges")
+	if err := checkEdgeKeyword(refctx.Edge.Src, eid.SrcPath); err != nil {
+		return err
 	}
-
-	ij = findProhibitedEdgeKeyword(eid.DstPath...)
-	if ij != -1 {
-		return d2parser.Errorf(refctx.Edge.Dst.Path[ij].Unbox(), "reserved keywords are prohibited in edges")
+	if err := checkEdgeKeyword(refctx.Edge.Dst, eid.DstPath); err != nil {
+		return err
 	}
 
 	srcFA, err := refctx.ScopeMap.ensureFieldMode(refctx.Edge.Src, refctx, true, c, indexed)
@@ -1946,8 +2052,10 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 			if c != nil && (refctx.Edge.Src.HasGlob() || refctx.Edge.Dst.HasGlob()) && !c.reserveEdgeExpansion(refctx.Edge, gctx, src, dst, false) {
 				return nil
 			}
-			if src == dst && (refctx.Edge.Src.HasGlob() || refctx.Edge.Dst.HasGlob()) {
-				// Globs do not make self edges.
+			if (refctx.Edge.Src.HasGlob() || refctx.Edge.Dst.HasGlob()) && (src == dst || ParentBoard(src) != ParentBoard(dst)) {
+				// Globs make neither self edges nor edges between boards: one
+				// over boards, as in scenarios.*.x -> scenarios.*.y, connects
+				// the objects it matches within each board.
 				continue
 			}
 
@@ -1959,7 +2067,7 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 				if c.stopped() {
 					return nil
 				}
-				if NodeBoardKind(src) != "" || ParentBoard(src) != ParentBoard(dst) {
+				if NodeBoardKind(src) != "" {
 					continue
 				}
 			}
@@ -1971,7 +2079,7 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 				if c.stopped() {
 					return nil
 				}
-				if NodeBoardKind(dst) != "" || ParentBoard(src) != ParentBoard(dst) {
+				if NodeBoardKind(dst) != "" {
 					continue
 				}
 			}
@@ -2063,20 +2171,15 @@ func (m *Map) createEdge2(eid *EdgeID, refctx *RefContext, gctx *globContext, c 
 	}
 
 	if gctx != nil {
-		var ks string
 		// We only ever want to create one of the edge per glob so we filter without the edge index.
 		e2 := e.Copy(e.Parent()).(*Edge)
 		e2.ID = e2.ID.Copy()
 		e2.ID.Index = nil
-		if refctx.Key.HasTripleGlob() {
-			ks = d2format.FormatKeyPath(IDA(e2))
-		} else {
-			ks = d2format.FormatKeyPath(BoardIDA(e2))
-		}
-		if _, ok := gctx.appliedEdges[ks]; ok {
+		ks := gctx.appliedKey(e2)
+		if _, ok := gctx.edges(ks)[ks]; ok {
 			return nil, nil
 		}
-		gctx.appliedEdges[ks] = struct{}{}
+		gctx.edges(ks)[ks] = struct{}{}
 	}
 
 	m.appendEdge(e)
@@ -2348,6 +2451,23 @@ func countUnderscores(p []d2ast.String) int {
 	return 0
 }
 
+// checkEdgeKeyword reports a reserved keyword in path, the path that resolve
+// made of an edge endpoint's key kp.
+func checkEdgeKeyword(kp *d2ast.KeyPath, path []d2ast.String) error {
+	ij := findProhibitedEdgeKeyword(path...)
+	if ij == -1 {
+		return nil
+	}
+	// resolve only changes the front of a path (it drops underscores and a
+	// common prefix and adds the names of enclosing fields), so path ends as
+	// kp does.
+	var n d2ast.Node = kp
+	if k := len(kp.Path) - len(path) + ij; k >= 0 {
+		n = kp.Path[k].Unbox()
+	}
+	return d2parser.Errorf(n, "reserved keywords are prohibited in edges")
+}
+
 func findProhibitedEdgeKeyword(ida ...d2ast.String) int {
 	for i := range ida {
 		keyword := d2ast.Keyword(ida[i])
@@ -2399,12 +2519,19 @@ func parentPrimaryKey(n Node) *d2ast.Key {
 
 // BoardIDA returns the absolute path to n from the nearest board root.
 func BoardIDA(n Node) (ida []d2ast.String) {
+	ida, _ = boardIDA(n)
+	return ida
+}
+
+// boardIDA returns BoardIDA(n) and the field of the board it is relative to,
+// which is n itself if n is a board.
+func boardIDA(n Node) (ida []d2ast.String, board *Field) {
 	for {
 		switch n := n.(type) {
 		case *Field:
 			if n.Root() || NodeBoardKind(n) != "" {
 				reverseIDA(ida)
-				return ida
+				return ida, n
 			}
 			ida = append(ida, n.Name)
 		case *Edge:
@@ -2413,9 +2540,154 @@ func BoardIDA(n Node) (ida []d2ast.String) {
 		n = n.Parent()
 		if n == nil {
 			reverseIDA(ida)
-			return ida
+			return ida, nil
 		}
 	}
+}
+
+// appliedKey is the key under which g records that it has applied to n, a
+// *Field or *Edge or the *Map of one. A triple glob uses IDA. Any other glob
+// uses BoardIDA inside the board of its scope map: the scenario or step for a
+// copy of a glob, and for a glob written in the map of a board's layers,
+// scenarios or steps, and its copies, the board that holds that map. A copy in
+// a scenario or step so recognizes the inherited copies of what it applied
+// to. A board itself, and anything in another board, gets an absolute key (see
+// fields): BoardIDA is empty for every board and repeats across boards.
+func (g *globContext) appliedKey(n Node) string {
+	if g.refctx.Key.HasTripleGlob() {
+		return d2format.FormatKeyPath(IDA(n))
+	}
+	if m, ok := n.(*Map); ok {
+		n = m.Parent()
+	}
+	scope := g.refctx.ScopeMap
+	if g.boardGroup {
+		// The copy of such a glob in a board shares what has been applied
+		// with the glob, which is declared outside the boards.
+		scope = g.root.refctx.ScopeMap
+	}
+	ida, board := boardIDA(n)
+	if board == n {
+		return absoluteAppliedKey(n)
+	}
+	if scope != nil {
+		if _, scopeBoard := boardIDA(scope); board != scopeBoard {
+			return absoluteAppliedKey(n)
+		}
+	}
+	return d2format.FormatKeyPath(ida)
+}
+
+// absoluteAppliedKey is IDA(n) behind a dot, which FormatKeyPath never writes
+// first, so it never equals a BoardIDA or IDA key.
+func absoluteAppliedKey(n Node) string {
+	return "." + d2format.FormatKeyPath(IDA(n))
+}
+
+// isAbsoluteAppliedKey reports whether k was made by absoluteAppliedKey.
+func isAbsoluteAppliedKey(k string) bool {
+	return strings.HasPrefix(k, ".")
+}
+
+// treeRoot returns the root of the tree n is in. An import compiled for a
+// glob's value, as in *: @x, is a tree of its own until it is attached.
+func treeRoot(n Node) Node {
+	for {
+		p := n.Parent()
+		if m, ok := p.(*Map); p == nil || (ok && m == nil) {
+			return n
+		}
+		n = p
+	}
+}
+
+// isBoardGroup reports whether m is the map of a board's layers, scenarios or
+// steps.
+func isBoardGroup(m *Map) bool {
+	if m == nil {
+		return false
+	}
+	f, ok := m.parent.(*Field)
+	if !ok {
+		return false
+	}
+	_, group := d2ast.BoardKeywords[d2ast.Keyword(f.Name)]
+	return group && NodeBoardKind(ParentMap(f)) != ""
+}
+
+// inheritApplications runs as scenario or step f is made a copy of board
+// base. Each glob has applied in f to the copies of what it applied to in
+// base, and to f itself if it applied to base. This copies the absolute keys
+// (see fields) under base to f, as for steps.*.x or * in steps: {*: {...}},
+// and a triple glob's keys, which are all absolute. Keys relative to a board
+// come with the board's own copies of the globs (see boardGlob and stepGlobs).
+func (c *compiler) inheritApplications(base *Map, f *Field) {
+	from, to := absoluteAppliedKey(base), absoluteAppliedKey(f)
+	tripleFrom, tripleTo := d2format.FormatKeyPath(IDA(base)), d2format.FormatKeyPath(IDA(f))
+	seen := make(map[*globContext]struct{})
+	for _, globs := range c.globContextStack {
+		for _, g := range globs {
+			if _, ok := seen[g.root]; ok {
+				continue
+			}
+			seen[g.root] = struct{}{}
+			applied, from, to := g.root, from, to
+			if g.refctx.Key.HasTripleGlob() {
+				// A triple glob keys everything by IDA, in the set its copies
+				// share (see boardGlob).
+				applied, from, to = g, tripleFrom, tripleTo
+			}
+			// Absolute keys are the root's (see fields).
+			for _, k := range inheritedKeys(applied.appliedFields, from, to) {
+				applied.appliedFields[k] = struct{}{}
+			}
+			for _, k := range inheritedKeys(applied.appliedEdges, from, to) {
+				applied.appliedEdges[k] = struct{}{}
+			}
+		}
+	}
+}
+
+// inheritedKeys returns key from and the keys under it in applied, moved to
+// key to.
+func inheritedKeys(applied map[string]struct{}, from, to string) []string {
+	var inherited []string
+	prefix := from + "."
+	for k := range applied {
+		if k == from {
+			inherited = append(inherited, to)
+		} else if strings.HasPrefix(k, prefix) && !startsInBoardGroup(k[len(prefix):]) {
+			inherited = append(inherited, to+k[len(from):])
+		}
+	}
+	return inherited
+}
+
+// startsInBoardGroup reports whether a path from a board root starts in the
+// board's layers, scenarios or steps, which a copy of the board leaves out.
+// FormatKeyPath writes keywords in lower case.
+func startsInBoardGroup(rel string) bool {
+	for keyword := range d2ast.BoardKeywords {
+		if rel == keyword || strings.HasPrefix(rel, keyword+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// inheritsApplication reports whether g has applied to the board that
+// scenario or step f, which has no map yet, is about to be made a copy of.
+func (g *globContext) inheritsApplication(f *Field) bool {
+	if f.Map() != nil {
+		return false
+	}
+	base := boardBase(f)
+	if base == nil {
+		return false
+	}
+	k := g.appliedKey(base)
+	_, ok := g.fields(k)[k]
+	return ok
 }
 
 // IDA returns the absolute path to n.

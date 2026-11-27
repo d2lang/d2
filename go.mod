@@ -6,12 +6,12 @@ require (
 	codeberg.org/go-pdf/fpdf v0.12.0
 	github.com/PuerkitoBio/goquery v1.14.0
 	github.com/alecthomas/chroma/v2 v2.27.0
-	github.com/andybalholm/brotli v1.3.0
 	github.com/aymanbagabas/go-udiff v0.4.2
 	github.com/coder/websocket v1.8.15
-	github.com/d2lang/dagro v0.3.1
-	github.com/d2lang/elk-go v0.3.2-0.20261123233526-e6e39338a948
-	github.com/d2lang/mathjax-go v0.1.1-0.20261002175158-94d80186bfd7
+	github.com/d2lang/brotli v0.1.0
+	github.com/d2lang/dagro v0.4.1
+	github.com/d2lang/elk-go v0.3.2
+	github.com/d2lang/mathjax-go v0.1.2
 	github.com/d2lang/rough-go v0.2.0
 	github.com/d2lang/util-go v0.2.0
 	github.com/ericpauley/go-quantize v0.0.0-20200331213906-ae555eb2afa4
@@ -19,6 +19,7 @@ require (
 	github.com/go-text/typesetting v0.3.4
 	github.com/lucasb-eyer/go-colorful v1.4.1
 	github.com/mazznoer/csscolorparser v0.2.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
@@ -34,10 +35,16 @@ require (
 require (
 	github.com/andybalholm/cascadia v1.3.5 // indirect
 	github.com/dlclark/regexp2/v2 v2.13.2 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
+	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 )

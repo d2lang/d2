@@ -42,22 +42,33 @@ jobs:
           path: ${{ runner.temp }}/release-archives
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: release-debs
+          path: ${{ runner.temp }}/release-debs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-rpms
+          path: ${{ runner.temp }}/release-rpms
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
           name: release-sbom
           path: ${{ runner.temp }}/release-sbom
 
-      - name: Attest archive build provenance
+      - name: Attest archive and Linux package build provenance
         id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ runner.temp }}/release-archives/*.tar.gz
+          subject-path: |
+            ${{ runner.temp }}/release-archives/*.tar.gz
+            ${{ runner.temp }}/release-debs/*.deb
+            ${{ runner.temp }}/release-rpms/*.rpm
 
-      - name: Stage the archive provenance bundle
+      - name: Stage the release provenance bundle
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
           VERSION: ${{ needs.archives.outputs.version }}
         run: cp "$BUNDLE" "$RUNNER_TEMP/d2-$VERSION-provenance.sigstore.json"
 
-      - name: Upload archive provenance bundle
+      - name: Upload release provenance bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-provenance
@@ -94,6 +105,14 @@ jobs:
           path: ${{ runner.temp }}/release-archives
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: release-debs
+          path: ${{ runner.temp }}/release-debs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-rpms
+          path: ${{ runner.temp }}/release-rpms
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
           name: windows-msi
           path: ${{ runner.temp }}/windows-msi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -104,7 +123,7 @@ jobs:
         with:
           name: release-provenance
           path: ${{ runner.temp }}/release-provenance
-      - name: Verify the bundle and archives before publishing
+      - name: Verify archive and Linux package provenance before publishing
         env:
           VERSION: ${{ needs.archives.outputs.version }}
           COMMIT: ${{ needs.archives.outputs.commit }}
@@ -114,8 +133,8 @@ jobs:
           . ./ci/release/verifier.sh
           verifier=$(installer_gh "$(mktemp -d)")
           bundle="$RUNNER_TEMP/release-provenance/d2-$VERSION-provenance.sigstore.json"
-          for archive in "$RUNNER_TEMP"/release-archives/*.tar.gz; do
-            "$verifier" attestation verify "$archive" --bundle "$bundle" --repo "$GITHUB_REPOSITORY" \
+          for artifact in "$RUNNER_TEMP"/release-archives/*.tar.gz "$RUNNER_TEMP"/release-debs/*.deb "$RUNNER_TEMP"/release-rpms/*.rpm; do
+            "$verifier" attestation verify "$artifact" --bundle "$bundle" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-archives.yml" \
               --source-ref "refs/tags/$VERSION" --source-digest "$COMMIT"
           done
@@ -128,6 +147,8 @@ jobs:
           python3 ci/release/upload-draft.py \
             --repository "$GITHUB_REPOSITORY" --version "$VERSION" --commit "$RELEASE_COMMIT" \
             --archives "$RUNNER_TEMP/release-archives" \
+            --debs "$RUNNER_TEMP/release-debs" \
+            --rpms "$RUNNER_TEMP/release-rpms" \
             --msi "$RUNNER_TEMP/windows-msi/d2-$VERSION-windows-amd64.msi" \
             --sbom "$RUNNER_TEMP/release-sbom/d2.spdx.json" \
             --provenance "$RUNNER_TEMP/release-provenance/d2-$VERSION-provenance.sigstore.json"

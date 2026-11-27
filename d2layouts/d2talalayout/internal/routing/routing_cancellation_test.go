@@ -196,7 +196,7 @@ func TestGuardedStraightEdgeFallbackMatchesOrdinarySuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tryStraightEdgeFallbackGuarded(guardedGraph, guardedEdge, guard); err != nil {
+	if _, err := tryStraightEdgeFallbackGuarded(guardedGraph, guardedEdge, guard); err != nil {
 		t.Fatal(err)
 	}
 	if guard.used == 0 {
@@ -343,4 +343,14 @@ func TestQuickRoutePreservesOrdinaryFallback(t *testing.T) {
 	if err != nil || path != nil || distance != 0 {
 		t.Fatalf("blocked quick route = (%v, %v, %v), want ordinary fallback (nil, 0, nil)", path, distance, err)
 	}
+}
+
+// tryStraightEdgeFallback runs the straight-edge fallback of one edge the way
+// StraightEdgesFallback does, under a guard that only polls ctx.
+func tryStraightEdgeFallback(ctx context.Context, g *layoutgraph.Graph, edge *layoutgraph.Edge) (bool, error) {
+	guard, err := unboundedRouteWork(ctx, "EdgeRouting")
+	if err != nil {
+		return false, err
+	}
+	return tryStraightEdgeFallbackGuarded(g, edge, guard)
 }

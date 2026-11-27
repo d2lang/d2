@@ -47,3 +47,15 @@ func TestFilterEdgeAncestorsOwnsRoutingObstaclePolicy(t *testing.T) {
 		t.Fatalf("limited ancestor filter error = %v, want route-stage work limit", err)
 	}
 }
+
+// filterEdgeAncestors is the unguarded reference for filterEdgeAncestorsGuarded.
+func filterEdgeAncestors(edge *layoutgraph.Edge, nodes layoutgraph.Nodes) (nonAncestors layoutgraph.Nodes) {
+	for _, node := range nodes {
+		if node != edge.From && node != edge.To &&
+			(edge.From.IsDescendantOf(node) || edge.To.IsDescendantOf(node)) {
+			continue
+		}
+		nonAncestors = append(nonAncestors, node)
+	}
+	return nonAncestors
+}

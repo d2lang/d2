@@ -7,19 +7,21 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeStep struct {
-	*baseShape
+const STEP_WEDGE_WIDTH = 35.0
+
+var stepKind = shapeKind{
+	typ:             STEP_TYPE,
+	paddingX:        defaultPadding / 4,
+	paddingY:        defaultPadding + STEP_WEDGE_WIDTH,
+	innerBox:        stepInnerBox,
+	dimensionsToFit: stepDimensionsToFit,
+	path:            stepPath,
+	trace:           stepTrace,
 }
 
 func NewStep(box *geo.Box) Shape {
-	shape := shapeStep{
-		baseShape: newShapeBase(STEP_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&stepKind, box)
 }
-
-const STEP_WEDGE_WIDTH = 35.0
 
 // StepWedgeWidth returns the depth of the two chevrons for a step of this width.
 func StepWedgeWidth(width float64) float64 {
@@ -29,7 +31,7 @@ func StepWedgeWidth(width float64) float64 {
 	return STEP_WEDGE_WIDTH
 }
 
-func (s shapeStep) GetInnerBox() *geo.Box {
+func stepInnerBox(s *shape) *geo.Box {
 	width := s.Box.Width
 	tl := s.Box.TopLeft.Copy()
 	width -= 2 * STEP_WEDGE_WIDTH
@@ -55,29 +57,11 @@ func stepOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float64, 
 	return pc
 }
 
-func (s shapeStep) Perimeter() []geo.Intersectable {
-	return stepPath(s.Box).Path
+func stepTrace(box *geo.Box, t *borderTracer) {
+	stepOutline(box, t.newPath)
 }
 
-func (s shapeStep) traceBorder(t *borderTracer) {
-	stepOutline(s.Box, t.newPath)
-}
-
-func (s shapeStep) GetSVGPathData() []string {
-	return []string{
-		stepPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeStep) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(stepPath(s.Box))
-}
-
-func (s shapeStep) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func stepDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	totalWidth := width + paddingX + 2*STEP_WEDGE_WIDTH
 	return math.Ceil(totalWidth), math.Ceil(height + paddingY)
-}
-
-func (s shapeStep) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding / 4, defaultPadding + STEP_WEDGE_WIDTH
 }

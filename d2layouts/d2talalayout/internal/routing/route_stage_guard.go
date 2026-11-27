@@ -41,6 +41,9 @@ type routeWorkGuard struct {
 	location string
 	used     uint64
 	limit    uint64
+	// pollAlways polls the context at every step instead of every
+	// routeStageContextCheckStride units (see unboundedRouteWork).
+	pollAlways bool
 }
 
 func newRouteWorkGuard(ctx context.Context, location string, limit uint64) (*routeWorkGuard, error) {
@@ -71,7 +74,7 @@ func (guard *routeWorkGuard) add(units uint64) error {
 		}
 		previous := guard.used
 		guard.used += units
-		if units == 0 || previous/routeStageContextCheckStride != guard.used/routeStageContextCheckStride {
+		if units == 0 || guard.pollAlways || previous/routeStageContextCheckStride != guard.used/routeStageContextCheckStride {
 			return guard.check()
 		}
 		return nil

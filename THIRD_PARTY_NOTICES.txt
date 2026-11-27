@@ -937,7 +937,12 @@ software is freely granted, provided that this notice
 is preserved.
 
 TinyGo (WebAssembly build)
-https://github.com/tinygo-org/tinygo/tree/v0.44.0
+https://github.com/d2lang/tinygo/tree/v0.44.0-d2.3
+
+The TinyGo runtime in the WebAssembly module and wasm_exec.js come from
+d2lang/tinygo v0.44.0-d2.3: TinyGo 0.44.0
+(https://github.com/tinygo-org/tinygo/tree/v0.44.0) with changes to its
+compiler, its runtime and wasm_exec.js.
 
 Copyright (c) 2018-2026 The TinyGo Authors. All rights reserved.
 
@@ -1048,6 +1053,98 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
 A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
 OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+---
+
+Model Context Protocol Go SDK v1.8.0
+https://github.com/modelcontextprotocol/go-sdk
+
+Copyright (c) 2024-2025 Model Context Protocol a Series of LF Projects, LLC.
+Copyright 2018, 2019, 2025, 2026 The Go MCP SDK Authors. All rights reserved.
+
+The SDK licenses new code and contributions with relicensing consent under
+Apache License 2.0. Earlier contributions without relicensing consent remain
+under the MIT License. The full Apache License 2.0 appears under GWT Runtime
+Adaptations above, and the full MIT License appears under Dagro above.
+
+The following SDK dependencies also use the MIT License reproduced under Dagro:
+
+  JSON Schema Go v0.4.3
+  https://github.com/google/jsonschema-go
+  Copyright (c) 2025 JSON Schema Go Project Authors
+
+  Segment asm v1.1.3
+  https://github.com/segmentio/asm
+  Copyright (c) 2021 Segment
+
+  Segment encoding v0.5.4
+  https://github.com/segmentio/encoding
+  Copyright (c) 2019 Segment.io, Inc.
+
+JSON Schema Go's equality helper and Segment encoding's duration formatter
+include code from the Go standard library under its BSD 3-Clause license.
+Copyright 2009 The Go Authors. All rights reserved. The full license terms
+appear under Go image above.
+
+Go OAuth2 v0.35.0 and Go time v0.15.0
+https://pkg.go.dev/golang.org/x/oauth2@v0.35.0
+https://pkg.go.dev/golang.org/x/time@v0.15.0
+
+Copyright 2009 The Go Authors.
+Both modules use the BSD 3-Clause license reproduced under Go image above.
+Go time also includes the following grant:
+
+Additional IP Rights Grant (Patents)
+
+"This implementation" means the copyrightable works distributed by
+Google as part of the Go project.
+
+Google hereby grants to You a perpetual, worldwide, non-exclusive,
+no-charge, royalty-free, irrevocable (except as stated in this section)
+patent license to make, have made, use, offer to sell, sell, import,
+transfer and otherwise run, modify and propagate the contents of this
+implementation of Go, where such license applies only to those patent
+claims, both currently owned or controlled by Google and acquired in
+the future, licensable by Google that are necessarily infringed by this
+implementation of Go.  This grant does not include claims that would be
+infringed only as a consequence of further modification of this
+implementation.  If you or your agent or exclusive licensee institute or
+order or agree to the institution of patent litigation against any
+entity (including a cross-claim or counterclaim in a lawsuit) alleging
+that this implementation of Go or any code incorporated within this
+implementation of Go constitutes direct or contributory patent
+infringement, or inducement of patent infringement, then any patent
+rights granted to you under this License for this implementation of Go
+shall terminate as of the date such litigation is filed.
+
+URI Template v3.0.2
+https://github.com/yosida95/uritemplate
+
+Copyright (C) 2016, Kohei YOSHIDA <https://yosida95.com/>. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the copyright holder nor the names of its
+      contributors may be used to endorse or promote products derived from
+      this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
 SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
 LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
 DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY

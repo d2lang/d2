@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"html"
 	"io"
 	"io/fs"
 	"net/url"
@@ -22,6 +21,7 @@ import (
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	"github.com/d2lang/d2/internal/htmlentity"
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/textmeasure"
@@ -468,6 +468,16 @@ func (c *compiler) stopped() bool {
 	return false
 }
 
+// fieldErrorNode returns where to report an error about f: the last key that
+// set f, or, if none did (f was only part of longer keys, as constraint is in
+// constraint.x), the last reference to it.
+func fieldErrorNode(f *d2ir.Field) d2ast.Node {
+	if k := f.LastPrimaryKey(); k != nil {
+		return k
+	}
+	return f.LastRef().AST()
+}
+
 func (c *compiler) errorf(n d2ast.Node, f string, v ...interface{}) {
 	err := d2parser.Errorf(n, f, v...).(d2ast.Error)
 	if c.err.ErrorsLookup == nil {
@@ -909,7 +919,7 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 			}
 		}
 		if len(f.Map().Edges) > 0 {
-			c.errorf(f.LastPrimaryKey(), "unexpected edges in map")
+			c.errorf(fieldErrorNode(f), "unexpected edges in map")
 		}
 	}
 }
@@ -953,7 +963,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			case "label", "icon", "tooltip":
 				c.compilePosition(attrs, f)
 			default:
-				c.errorf(f.LastPrimaryKey(), "reserved field %v does not accept composite", f.Name.ScalarString())
+				c.errorf(fieldErrorNode(f), "reserved field %v does not accept composite", f.Name.ScalarString())
 			}
 		} else {
 			c.errorf(f.LastRef().AST(), `reserved field "%v" must have a value`, f.Name.ScalarString())
@@ -1614,7 +1624,7 @@ func (c *compiler) validateKey(obj *d2graph.Object, f *d2ir.Field) {
 			}
 		case "constraint":
 			if !strings.EqualFold(obj.Shape.Value, d2target.ShapeSQLTable) {
-				c.errorf(f.LastPrimaryKey(), `"constraint" keyword can only be used in "sql_table" shapes`)
+				c.errorf(fieldErrorNode(f), `"constraint" keyword can only be used in "sql_table" shapes`)
 			}
 		}
 		return
@@ -1815,7 +1825,7 @@ func boardLinkSyntax(value string) error {
 	}
 	// A URI such as layers.html#intro or layers.example:open can also
 	// start with a board namespace.
-	u, urlErr := url.Parse(html.UnescapeString(value))
+	u, urlErr := url.Parse(htmlentity.Unescape(value))
 	if urlErr == nil && (u.Scheme != "" || strings.ContainsAny(value, "/?#")) {
 		return nil
 	}
@@ -1836,7 +1846,7 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 			continue
 		}
 
-		u, err := url.Parse(html.UnescapeString(obj.Link.Value))
+		u, err := url.Parse(htmlentity.Unescape(obj.Link.Value))
 		isRemote := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
 		if isRemote {
 			continue

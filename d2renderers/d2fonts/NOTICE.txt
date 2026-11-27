@@ -18,10 +18,12 @@ directory. The OFL expressly excludes documents created with the font from its
 font-licensing requirements.
 
 The embedded stream was generated deterministically with
-github.com/andybalholm/brotli v1.2.2 at quality 11 and LGWin 22. The decoded
-and compressed size and SHA-256 checks above authenticate both
-representations. From the repository root, the following program and commands
-fetch the pinned source and reproduce the embedded stream byte for byte:
+github.com/andybalholm/brotli v1.2.2 at quality 11 and LGWin 22;
+github.com/d2lang/brotli, the trimmed fork of it that D2 now depends on,
+produces the same bytes. The decoded and compressed size and SHA-256 checks
+above authenticate both representations. From the repository root, the
+following program and commands fetch the pinned source and reproduce the
+embedded stream byte for byte:
 
     tmpdir="$(mktemp -d)"
     curl -fsSL https://raw.githubusercontent.com/googlefonts/noto-emoji/8998f5dd683424a73e2314a8c1f1e359c19e8742/fonts/Noto-COLRv1.ttf -o "$tmpdir/Noto-COLRv1.ttf"
@@ -33,7 +35,7 @@ fetch the pinned source and reproduce the embedded stream byte for byte:
         "bytes"
         "os"
 
-        "github.com/andybalholm/brotli"
+        "github.com/d2lang/brotli"
     )
 
     func main() {

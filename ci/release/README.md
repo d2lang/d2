@@ -80,6 +80,15 @@ gh workflow run pypi-publish.yml --repo d2lang/d2 --ref master -f version=v0.9.0
 After the upload, verify the public package with `uvx d2lang@0.9.0 --version`, substituting
 the published version.
 
+For stable releases starting with `v0.10.0`, the same workflow publishes
+`io.github.d2lang/d2` to the [official MCP Registry](https://registry.modelcontextprotocol.io/).
+The wheel builder sets both versions in [server.json](../../server.json) from the release tag
+and includes the server name in each wheel's PyPI description. The smoke tests start
+`uvx d2lang mcp` on all six platforms. Once the PyPI upload succeeds, the Registry job
+authenticates with the repository's GitHub OIDC token and publishes the matching listing.
+If this job fails, rerun failed jobs in the original workflow run. A matching, already
+published listing passes the check.
+
 ## _install.sh
 
 The template for the install script in the root of the d2 repository.
@@ -125,13 +134,17 @@ Pushing the tag starts one `Release archives` dependency graph:
    all six archives twice using the pinned Go toolchain, compares SHA-256 digests, verifies
    stripped binaries and normalized archives, enforces size budgets, and generates an SBOM.
 2. Each archive runs natively on its supported platform, checking its version, SVG, and PNG.
+   The Linux archives also supply the binary, man page, and licenses for the Debian
+   packages and RPMs. CI builds each package twice and tests installation, rendering,
+   and removal with APT or DNF on its native architecture.
 3. The reusable `Windows MSI` workflow consumes that run's Windows amd64 archive, verifies
    its checksum, and builds and verifies both installers on `windows-2022`. It always packages
    notices from the new archive, so an old published release is no longer a PR test fixture.
-4. After tests, native smoke, and MSI verification succeed, the workflow attests the archive
-   provenance, SBOM, and checksum manifest. A separate write-scoped job creates or resumes a
-   draft and uploads the same archives, their signed `d2-<version>-provenance.sigstore.json`
-   bundle, `SHA256SUMS`, both MSIs, and `d2.spdx.json`.
+4. After the tests pass, the workflow attests provenance for the archives and Linux
+   packages, and attests the archive SBOM and checksum manifest. A separate write-scoped
+   job creates or resumes a draft and uploads the six archives, both Debian packages, both RPMs,
+   their signed `d2-<version>-provenance.sigstore.json` bundle, `SHA256SUMS`, both MSIs,
+   and `d2.spdx.json`.
 
 The uploader rechecks the tag commit and draft identity/state before uploads and verifies
 all final asset digests. Existing assets are accepted only when their bytes match; nothing
@@ -197,6 +210,9 @@ gh attestation verify "d2-$VERSION-linux-amd64.tar.gz" --repo d2lang/d2 \
   --signer-workflow d2lang/d2/.github/workflows/release-archives.yml --source-ref "refs/tags/$VERSION"
 sha256sum --check --ignore-missing SHA256SUMS
 ```
+
+To verify a Linux package, pass its `.deb` or `.rpm` path to the same `gh attestation verify`
+command. `SHA256SUMS` lists the six standalone archives.
 
 The MSI remains unsigned. Authenticode signing is tracked separately in
 [issue #1078](https://github.com/d2lang/d2/issues/1078).

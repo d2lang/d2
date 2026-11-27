@@ -252,6 +252,10 @@ func buildSceneWithAssets(ctx context.Context, diagram *d2target.Diagram, opts d
 	if err != nil {
 		return nil, err
 	}
+	return buildSceneWithAssetsAndFonts(ctx, diagram, opts, assetOptions, fontOptions)
+}
+
+func buildSceneWithAssetsAndFonts(ctx context.Context, diagram *d2target.Diagram, opts d2svg.RenderOpts, assetOptions *d2scenebuild.AssetOptions, fontOptions *d2scenebuild.FontFallbackOptions) (*d2scene.Document, error) {
 	return buildSceneWithResourcesAndLinks(ctx, diagram, opts, assetOptions, fontOptions, d2scenebuild.LinkBudget{
 		MaxRegions: rasterMaxLinkRegions, MaxStringBytes: rasterMaxLinkStringBytes,
 	}, sceneFrameOptions{
@@ -276,7 +280,11 @@ func newFontFallbackOptions(totalBoards int) (*d2scenebuild.FontFallbackOptions,
 	if err != nil {
 		return nil, fmt.Errorf("raster export: initialize font fallback resolver: %w", err)
 	}
-	fontResolver, err := d2fonts.NewBundledFallbackResolver(systemFontResolver, d2fonts.BundledFallbackLimits{
+	return bundledFontFallbackOptions(totalBoards, systemFontResolver)
+}
+
+func bundledFontFallbackOptions(totalBoards int, next d2fonts.FallbackResolver) (*d2scenebuild.FontFallbackOptions, error) {
+	fontResolver, err := d2fonts.NewBundledFallbackResolver(next, d2fonts.BundledFallbackLimits{
 		MaxRequestedRunes: fontSearchRequestedRunes,
 		MaxBundledBytes:   fontBundledCopyBytes,
 		MaxResolvedBytes:  fontBundledResolvedBytes,
@@ -955,6 +963,16 @@ type rasterPreviewResource struct {
 // bundleRasterPreview embeds the scene's resolved images and any placeholders
 // recorded for the previewed board.
 func bundleRasterPreview(ctx context.Context, assets *d2scenebuild.AssetOptions, sourceSVG []byte) ([]byte, error) {
+	return bundleRasterPreviewWithLimit(ctx, assets, sourceSVG, rasterPreviewMaxOutputBytes)
+}
+
+type rasterPreviewSizeError struct{ limit int64 }
+
+func (err *rasterPreviewSizeError) Error() string {
+	return fmt.Sprintf("expanded output bytes exceed limit %d", err.limit)
+}
+
+func bundleRasterPreviewWithLimit(ctx context.Context, assets *d2scenebuild.AssetOptions, sourceSVG []byte, maxOutput int64) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1021,13 +1039,13 @@ func bundleRasterPreview(ctx context.Context, assets *d2scenebuild.AssetOptions,
 			resources[reference.source] = previewResource
 		}
 		delta := int64(previewResource.uriBytes) - int64(reference.end-reference.start)
-		if delta > rasterPreviewMaxOutputBytes-outputBytes {
-			return nil, fmt.Errorf("expanded output bytes exceed limit %d", rasterPreviewMaxOutputBytes)
+		if delta > maxOutput-outputBytes {
+			return nil, &rasterPreviewSizeError{maxOutput}
 		}
 		outputBytes += delta
 	}
-	if outputBytes < 0 || outputBytes > rasterPreviewMaxOutputBytes {
-		return nil, fmt.Errorf("expanded output bytes %d exceed limit %d", outputBytes, rasterPreviewMaxOutputBytes)
+	if outputBytes < 0 || outputBytes > maxOutput {
+		return nil, &rasterPreviewSizeError{maxOutput}
 	}
 
 	for source, previewResource := range resources {

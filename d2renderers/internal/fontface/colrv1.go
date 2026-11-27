@@ -278,32 +278,13 @@ func (b *colrv1Builder) paint(paint tables.PaintTable, depth int) (COLRv1Paint, 
 			return nil, err
 		}
 		return COLRv1Glyph{GlyphID: uint32(p.GlyphID), Paint: child}, nil
-	case tables.PaintTransform:
-		child, err := b.paint(p.Paint, depth+1)
+	case tables.PaintTransform, tables.PaintTranslate, tables.PaintScale, tables.PaintScaleAroundCenter:
+		matrix, childPaint := colrv1Transform(p)
+		child, err := b.paint(childPaint, depth+1)
 		if err != nil {
 			return nil, err
 		}
-		m := p.Transform
-		return COLRv1Transform{Matrix: COLRv1Affine{float64(m.Xx), float64(m.Yx), float64(m.Xy), float64(m.Yy), float64(m.Dx), float64(m.Dy)}, Paint: child}, nil
-	case tables.PaintTranslate:
-		child, err := b.paint(p.Paint, depth+1)
-		if err != nil {
-			return nil, err
-		}
-		return COLRv1Transform{Matrix: COLRv1Affine{Xx: 1, Yy: 1, Dx: float64(p.Dx), Dy: float64(p.Dy)}, Paint: child}, nil
-	case tables.PaintScale:
-		child, err := b.paint(p.Paint, depth+1)
-		if err != nil {
-			return nil, err
-		}
-		return COLRv1Transform{Matrix: COLRv1Affine{Xx: fixed214(p.ScaleX), Yy: fixed214(p.ScaleY)}, Paint: child}, nil
-	case tables.PaintScaleAroundCenter:
-		child, err := b.paint(p.Paint, depth+1)
-		if err != nil {
-			return nil, err
-		}
-		sx, sy := fixed214(p.ScaleX), fixed214(p.ScaleY)
-		return COLRv1Transform{Matrix: COLRv1Affine{Xx: sx, Yy: sy, Dx: float64(p.CenterX) * (1 - sx), Dy: float64(p.CenterY) * (1 - sy)}, Paint: child}, nil
+		return COLRv1Transform{Matrix: matrix, Paint: child}, nil
 	case tables.PaintComposite:
 		mode, err := colrv1CompositeMode(p.CompositeMode)
 		if err != nil {
@@ -320,6 +301,24 @@ func (b *colrv1Builder) paint(paint tables.PaintTable, depth int) (COLRv1Paint, 
 		return COLRv1Composite{Source: source, Backdrop: backdrop, Mode: mode}, nil
 	default:
 		return nil, &COLRv1UnsupportedPaintError{Type: fmt.Sprintf("%T", paint)}
+	}
+}
+
+// colrv1Transform returns the affine matrix and child of the transform paints
+// the bundled font uses.
+func colrv1Transform(paint tables.PaintTable) (COLRv1Affine, tables.PaintTable) {
+	switch p := paint.(type) {
+	case tables.PaintTransform:
+		m := p.Transform
+		return COLRv1Affine{float64(m.Xx), float64(m.Yx), float64(m.Xy), float64(m.Yy), float64(m.Dx), float64(m.Dy)}, p.Paint
+	case tables.PaintTranslate:
+		return COLRv1Affine{Xx: 1, Yy: 1, Dx: float64(p.Dx), Dy: float64(p.Dy)}, p.Paint
+	case tables.PaintScale:
+		return COLRv1Affine{Xx: fixed214(p.ScaleX), Yy: fixed214(p.ScaleY)}, p.Paint
+	default: // tables.PaintScaleAroundCenter
+		s := p.(tables.PaintScaleAroundCenter)
+		sx, sy := fixed214(s.ScaleX), fixed214(s.ScaleY)
+		return COLRv1Affine{Xx: sx, Yy: sy, Dx: float64(s.CenterX) * (1 - sx), Dy: float64(s.CenterY) * (1 - sy)}, s.Paint
 	}
 }
 

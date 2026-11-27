@@ -5,20 +5,13 @@ import (
 )
 
 // Table is basically a rectangle
-type shapeTable struct {
-	shapeSquare
+var tableKind = shapeKind{
+	typ:         TABLE_TYPE,
+	rectangular: true,
+	paddingX:    0,
+	paddingY:    0,
 }
 
 func NewTable(box *geo.Box) Shape {
-	shape := shapeTable{
-		shapeSquare{
-			baseShape: newShapeBase(TABLE_TYPE, box),
-		},
-	}
-	*shape.FullShape = shape
-	return shape
-}
-
-func (s shapeTable) GetDefaultPadding() (paddingX, paddingY float64) {
-	return 0, 0
+	return newShape(&tableKind, box)
 }

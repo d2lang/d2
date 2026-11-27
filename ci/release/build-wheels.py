@@ -4,6 +4,7 @@
 import argparse
 import base64
 from hashlib import sha256
+import json
 from pathlib import Path
 import re
 import struct
@@ -55,7 +56,16 @@ def read_member(archive, path):
         return stream.read()
 
 
-def build_wheel(tag, system, arch, archives, output):
+def mcp_manifest(version):
+    if tuple(map(int, version.split("."))) < (0, 10, 0):
+        return None
+    manifest = json.loads((Path(__file__).resolve().parents[2] / "server.json").read_text())
+    manifest["version"] = version
+    manifest["packages"][0]["version"] = version
+    return manifest
+
+
+def build_wheel(tag, system, arch, archives, output, manifest):
     version = tag[1:]
     base = f"{PACKAGE_NAME}-{version}"
     info = f"{base}.dist-info"
@@ -81,6 +91,8 @@ def build_wheel(tag, system, arch, archives, output):
         "D2 turns text into diagrams. Render a file with `uvx d2lang input.d2 output.svg`.",
         "Install the native `d2` command with `uv tool install d2lang` or `pip install d2lang`.\n",
     ])
+    if manifest:
+        metadata += f"\nRun the D2 MCP server with `uvx d2lang mcp`.\n\n<!-- mcp-name: {manifest['name']} -->\n"
     wheel_metadata = "\n".join([
         "Wheel-Version: 1.0",
         "Generator: D2 release",
@@ -120,13 +132,16 @@ def main():
     if not re.fullmatch(r"v(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}", args.version):
         parser.error("--version must be a stable vX.Y.Z release tag")
     args.output.mkdir(parents=True, exist_ok=True)
+    manifest = mcp_manifest(args.version[1:])
     with tempfile.TemporaryDirectory(dir=args.output) as temporary:
         staging = Path(temporary)
         for system in ("linux", "macos", "windows"):
             for arch in ARCHITECTURES:
-                build_wheel(args.version, system, arch, args.archives, staging)
-        for wheel in sorted(staging.iterdir()):
-            print(wheel.replace(args.output / wheel.name))
+                build_wheel(args.version, system, arch, args.archives, staging, manifest)
+        if manifest:
+            (staging / "server.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        for artifact in sorted(staging.iterdir()):
+            print(artifact.replace(args.output / artifact.name))
 
 
 if __name__ == "__main__":

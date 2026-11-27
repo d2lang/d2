@@ -455,7 +455,7 @@ func AddClusters(ctx context.Context, graph *layoutgraph.Graph, randomSeed int64
 				if err := guard.Step(); err != nil {
 					return err
 				}
-				if clusterNode.AspectRatio1() {
+				if clusterNode.Shape.AspectRatio1() {
 					cluster.FixedSize = true
 					break
 				}

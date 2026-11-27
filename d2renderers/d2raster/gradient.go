@@ -60,6 +60,10 @@ type preparedGradient struct {
 type patternPaintPreparer func(d2scene.PatternPaint, d2scene.Box, d2scene.Matrix) (*preparedPaint, error)
 
 func prepareAnimatedPaintWithPattern(paint d2scene.Paint, animatedColor *color.NRGBA, objectBounds d2scene.Box, objectToDevice d2scene.Matrix, preparePattern patternPaintPreparer) (*preparedPaint, error) {
+	paint, err := paintValue(paint)
+	if err != nil {
+		return nil, err
+	}
 	switch paint := paint.(type) {
 	case nil:
 		if animatedColor != nil {
@@ -72,34 +76,16 @@ func prepareAnimatedPaintWithPattern(paint d2scene.Paint, animatedColor *color.N
 			value = *animatedColor
 		}
 		return &preparedPaint{kind: preparedSolidPaint, solid: value}, nil
-	case *d2scene.SolidPaint:
-		if paint == nil {
-			if animatedColor != nil {
-				return nil, fmt.Errorf("color animation targets missing paint")
-			}
-			return nil, nil
-		}
-		return prepareAnimatedPaintWithPattern(*paint, animatedColor, objectBounds, objectToDevice, preparePattern)
 	case d2scene.LinearGradient:
 		if animatedColor != nil {
 			return nil, fmt.Errorf("color animation targets non-solid paint")
 		}
 		return prepareLinearGradient(paint, objectBounds, objectToDevice)
-	case *d2scene.LinearGradient:
-		if paint == nil {
-			return nil, fmt.Errorf("nil linear gradient")
-		}
-		return prepareAnimatedPaintWithPattern(*paint, animatedColor, objectBounds, objectToDevice, preparePattern)
 	case d2scene.RadialGradient:
 		if animatedColor != nil {
 			return nil, fmt.Errorf("color animation targets non-solid paint")
 		}
 		return prepareRadialGradient(paint, objectBounds, objectToDevice)
-	case *d2scene.RadialGradient:
-		if paint == nil {
-			return nil, fmt.Errorf("nil radial gradient")
-		}
-		return prepareAnimatedPaintWithPattern(*paint, animatedColor, objectBounds, objectToDevice, preparePattern)
 	case d2scene.PatternPaint:
 		if animatedColor != nil {
 			return nil, fmt.Errorf("color animation targets pattern paint")
@@ -108,14 +94,38 @@ func prepareAnimatedPaintWithPattern(paint d2scene.Paint, animatedColor *color.N
 			return nil, fmt.Errorf("unsupported pattern paint without render preflight")
 		}
 		return preparePattern(paint, objectBounds, objectToDevice)
+	default:
+		return nil, fmt.Errorf("unsupported paint %T", paint)
+	}
+}
+
+// paintValue returns the value form of a pointer paint, so that the walks
+// over scene paints switch over values only. A nil *SolidPaint is no paint;
+// the other nil pointers are errors.
+func paintValue(paint d2scene.Paint) (d2scene.Paint, error) {
+	switch paint := paint.(type) {
+	case *d2scene.SolidPaint:
+		if paint == nil {
+			return nil, nil
+		}
+		return *paint, nil
+	case *d2scene.LinearGradient:
+		if paint == nil {
+			return nil, fmt.Errorf("nil linear gradient")
+		}
+		return *paint, nil
+	case *d2scene.RadialGradient:
+		if paint == nil {
+			return nil, fmt.Errorf("nil radial gradient")
+		}
+		return *paint, nil
 	case *d2scene.PatternPaint:
 		if paint == nil {
 			return nil, fmt.Errorf("nil pattern paint")
 		}
-		return prepareAnimatedPaintWithPattern(*paint, animatedColor, objectBounds, objectToDevice, preparePattern)
-	default:
-		return nil, fmt.Errorf("unsupported paint %T", paint)
+		return *paint, nil
 	}
+	return paint, nil
 }
 
 func prepareLinearGradient(gradient d2scene.LinearGradient, objectBounds d2scene.Box, objectToDevice d2scene.Matrix) (*preparedPaint, error) {

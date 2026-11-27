@@ -4,12 +4,12 @@ import (
 	"cmp"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 const optimizerSpatialIndexMinNodes = 96
@@ -223,7 +223,7 @@ func (index *optimizerSpatialIndex) rebuild(g *layoutgraph.Graph, guard *limits.
 	if err := guard.AddSort(len(index.entries)); err != nil {
 		return err
 	}
-	slices.SortStableFunc(index.entries, func(a, b optimizerSpatialEntry) int {
+	xsort.StableFunc(index.entries, func(a, b optimizerSpatialEntry) int {
 		if a.left != b.left {
 			switch {
 			case a.left < b.left:

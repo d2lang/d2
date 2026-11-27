@@ -63,39 +63,44 @@ func edgeHasDuplicateInGuarded(edge *layoutgraph.Edge, edges []*layoutgraph.Edge
 	return false, nil
 }
 
-func tryStraightEdgeFallbackGuarded(g *layoutgraph.Graph, edge *layoutgraph.Edge, guard *routeWorkGuard) error {
+// tryStraightEdgeFallbackGuarded replaces edge's route by a straight line when
+// that line costs less, and reports whether it did.
+func tryStraightEdgeFallbackGuarded(g *layoutgraph.Graph, edge *layoutgraph.Edge, guard *routeWorkGuard) (bool, error) {
 	if err := guard.step(); err != nil {
-		return err
+		return false, err
 	}
 	originalCost, err := estimateRouteCostGuarded(layoutgraph.Edges(g.Edges), edge, guard)
 	if err != nil {
-		return err
+		return false, err
 	}
 	fromPort, toPort, lineCost, err := routeLineGuarded(g, edge, g.Edges, nil, guard)
 	if err != nil {
 		if layoutgraph.IsCandidateRejection(err) {
 			// A straight replacement is optional. Preserve the current route
 			// when no valid line exists.
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 
+	// If dejitter fails but the segment is really short, we would prefer a straight line (all else equivalent)
 	if len(edge.Points) == 4 && geo.EuclideanDistance(
 		edge.Points[1].X,
 		edge.Points[1].Y,
 		edge.Points[2].X,
 		edge.Points[2].Y,
 	) <= lowerJitterThreshold {
+		// remove the straight line penalty from this line
 		lineCost /= nonOrthogonalFactor
 	}
 	if err := guard.step(); err != nil {
-		return err
+		return false, err
 	}
 	if lineCost < originalCost {
 		edge.Points = []*geo.Point{fromPort, toPort}
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 func filterEdgeAncestorsGuarded(edge *layoutgraph.Edge, nodes layoutgraph.Nodes, guard workBudget) (layoutgraph.Nodes, error) {
