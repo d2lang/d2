@@ -11,8 +11,10 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2dagrelayout"
 	"github.com/d2lang/d2/d2lib"
+	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/d2svg/appendix"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
@@ -43,8 +45,27 @@ api -> db`
 	}
 	regular := []byte(`.text{font-family:font-regular}`)
 	bold := []byte(`.text-bold{font-family:font-bold}`)
-	if !bytes.Contains(rendered, regular) || bytes.Contains(rendered, bold) {
+	full := []byte(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR).GetEncodedFull())
+	if !bytes.Contains(rendered, regular) || bytes.Contains(rendered, bold) || !bytes.Contains(rendered, full) {
 		t.Fatal("expected only the full regular font for the tooltip")
+	}
+
+	// A tab is serialized as an XML character reference in generated text.
+	// Keep the complete face for whitespace with browser-dependent aliases.
+	withTab := *diagram
+	withTab.Shapes = append([]d2target.Shape(nil), diagram.Shapes...)
+	for i := range withTab.Shapes {
+		if withTab.Shapes[i].Tooltip != "" {
+			withTab.Shapes[i].Tooltip = "Two\twords"
+		}
+	}
+	tabBoard, err := d2svg.Render(&withTab, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabSVG, err := appendix.AppendRendered(&withTab, opts, ruler, tabBoard)
+	if err != nil || !bytes.Contains(tabSVG, full) {
+		t.Fatalf("tabbed footnote lost the complete regular font: %v", err)
 	}
 
 	if bytes.LastIndex(rendered, []byte("</text>")) > bytes.LastIndex(rendered, []byte("<style>")) {
@@ -89,7 +110,8 @@ api -> db`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(preserved, []byte(`font-family: "font-regular"`)) || !bytes.Contains(preserved, []byte(`font-family: "font-bold"`)) {
+	fullBold := []byte(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_BOLD).GetEncodedFull())
+	if !bytes.Contains(preserved, full) || !bytes.Contains(preserved, fullBold) {
 		t.Fatal("custom SVG lost a full font")
 	}
 }

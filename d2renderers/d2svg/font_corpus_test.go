@@ -2,6 +2,7 @@ package d2svg
 
 import (
 	"bytes"
+	"encoding/xml"
 	"reflect"
 	"regexp"
 	"strings"
@@ -296,6 +297,19 @@ func TestEmbedFontsUsesRenderedCorpora(t *testing.T) {
 	}
 }
 
+func TestCodeTokenCharacterData(t *testing.T) {
+	// Indentation, quotes and entity-looking code must survive XML parsing.
+	// A greater-than sign can close a forbidden CDATA delimiter after "]]".
+	source := svgEscaper.Replace(" \t\"&lt;<]]>")
+	if source != "\u00a0\u00a0\u00a0\u00a0\u00a0\"&amp;lt;&lt;]]&gt;" {
+		t.Fatalf("unexpected code token %q", source)
+	}
+	var decoded string
+	if err := xml.Unmarshal([]byte("<text>"+source+"</text>"), &decoded); err != nil || decoded != "\u00a0\u00a0\u00a0\u00a0\u00a0\"&lt;<]]>" {
+		t.Fatalf("invalid token text %q: %v", decoded, err)
+	}
+}
+
 func TestFontCorporaUnicodeUsesLegacyFaces(t *testing.T) {
 	for _, family := range []d2fonts.FontFamily{d2fonts.SourceSansPro, d2fonts.HandDrawn} {
 		for _, text := range []string{"e\u0301", "abc אבג (1)", "가 가"} {
@@ -330,7 +344,7 @@ func TestRestrictFontCorporaConservativeAlphabet(t *testing.T) {
 }
 
 func TestRenderAppendixFontCorporaLegacyParity(t *testing.T) {
-	fonts := regexp.MustCompile(`data:application/font-woff;base64,[A-Za-z0-9+/=]+`)
+	fonts := regexp.MustCompile(`data:(?:application/font-woff|font/woff2);base64,[A-Za-z0-9+/=]+`)
 	for _, appendixText := range [][2]string{{"**footer XYZ & <raw>**", "Pretty URL"}, {"**éЖ Ω & <raw>**", "Pretty Δ"}} {
 		for _, family := range []d2fonts.FontFamily{d2fonts.SourceSansPro, d2fonts.HandDrawn} {
 			for _, labels := range [][2]string{{"1", "ABC"}, {"", "ABC"}, {"1", ""}, {"", ""}} {
@@ -357,10 +371,18 @@ func TestRenderAppendixFontCorporaLegacyParity(t *testing.T) {
 					t.Fatal(err)
 				}
 				var want bytes.Buffer
-				legacyEmbedFonts(&want, hash, string(out), &family, &mono, diagram.GetCorpus())
+				corpus := diagram.GetCorpus()
+				legacyEmbedFonts(&want, hash, string(out), &family, &mono, corpus)
+				expected := want.Bytes()
+				for _, usedFamily := range []d2fonts.FontFamily{family, mono} {
+					for _, style := range d2fonts.FontStyles {
+						f := usedFamily.Font(0, style)
+						expected = bytes.ReplaceAll(expected, []byte(f.GetEncodedSubset(corpus)), []byte(f.GetSVGEncodedSubset(corpus)))
+					}
+				}
 				// Match the ordered legacy face payloads independently of the
 				// whitespace, quoting and container used to serialize their CSS.
-				if !reflect.DeepEqual(fonts.FindAll(out, -1), fonts.FindAll(want.Bytes(), -1)) {
+				if !reflect.DeepEqual(fonts.FindAll(out, -1), fonts.FindAll(expected, -1)) {
 					t.Fatalf("%s, labels %q: fonts differ from legacy before appendix adds new characters", family, labels)
 				}
 			}

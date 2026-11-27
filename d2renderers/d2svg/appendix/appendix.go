@@ -204,8 +204,9 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64, fontSc
 			continue
 		}
 		family := "font-" + f.face
-		uri := d2fonts.SourceSansPro.Font(0, f.style).GetEncodedFull()
+		var uri string
 		if fontScope == "" {
+			uri = d2fonts.SourceSansPro.Font(0, f.style).GetEncodedFull()
 			// Custom SVG may depend on the position of these stylesheets.
 			appendix += `<style type="text/css"><![CDATA[` + fmt.Sprintf(`
 .%s {
@@ -217,6 +218,14 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64, fontSc
 }
 `, f.class, family, family, strings.ReplaceAll(uri, "]]>", "]]]]><![CDATA[>")) + `]]></style>`
 		} else {
+			// The generated appendix is the only user of this fallback face.
+			// Numbered markers contain digits. Non-ASCII footnotes retain the
+			// full regular face, including shaping for other scripts.
+			if f.style == d2fonts.FONT_STYLE_BOLD || asciiFootnotes(appendix) {
+				uri = d2fonts.AppendixEncoding(f.style)
+			} else {
+				uri = d2fonts.SourceSansPro.Font(0, f.style).GetEncodedFull()
+			}
 			fontCSS.WriteString(svgstyle.FontFace("", f.class, family, uri))
 		}
 	}
@@ -228,6 +237,13 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64, fontSc
 
 	closingIndex := strings.LastIndex(svg, "</svg></svg>")
 	return svg[:closingIndex] + appendix + svg[closingIndex:], nil
+}
+
+// RenderText emits multiline footnotes as tspans. encoding/xml encodes other
+// whitespace controls as hexadecimal character references. Leave their
+// browser-specific whitespace and fallback behavior to the complete face.
+func asciiFootnotes(markup string) bool {
+	return !strings.Contains(markup, "&#x") && strings.IndexFunc(markup, func(r rune) bool { return r > '~' }) == -1
 }
 
 func needsAppendixFont(svg, scope, class, face string) bool {

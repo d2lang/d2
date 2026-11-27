@@ -75,6 +75,7 @@ func TestCompactStylesheet(t *testing.T) {
 		edge := d2target.BaseConnection()
 		edge.ID, edge.Src, edge.Dst = "(one -> two)[0]", "one", "two"
 		edge.Classes = []string{"blend"}
+		edge.DstArrow = d2target.TriangleArrowhead
 		edge.Route = []*geo.Point{geo.NewPoint(100, 40), geo.NewPoint(150, 40)}
 		diagram := d2target.NewDiagram()
 		second := first
@@ -88,6 +89,20 @@ func TestCompactStylesheet(t *testing.T) {
 		if styles := readStyles(t, out); len(styles) != 1 || !strings.Contains(styles[0], ".blend{") {
 			t.Fatal("connection class lost its blend rule")
 		}
+		if !bytes.Contains(out, []byte(`<marker id="mk-`)) || bytes.Contains(out, []byte(`<marker id="mk-d2-`)) {
+			t.Fatal("standalone output must use a compact marker ID")
+		}
+		frame, err := Render(diagram, &RenderOpts{MasterID: "d2-master"})
+		if err != nil || !bytes.Contains(frame, []byte(`<marker id="mk-d2-`)) {
+			t.Fatalf("frame lost its original marker ID: %v", err)
+		}
+		old := BaseStylesheet
+		t.Cleanup(func() { BaseStylesheet = old })
+		BaseStylesheet += "/* custom stylesheet */"
+		withCSS, err := Render(diagram, nil)
+		if err != nil || !bytes.Contains(withCSS, []byte(`<marker id="mk-d2-`)) {
+			t.Fatalf("custom stylesheet lost its original marker ID: %v", err)
+		}
 	})
 
 	diagram := d2target.NewDiagram()
@@ -100,6 +115,20 @@ func TestCompactStylesheet(t *testing.T) {
 		if len(styles) != 1 || !strings.Contains(styles[0], ".blend{") || !strings.Contains(styles[0], "@keyframes clock{}") {
 			t.Fatal("animation lost a possible blend or its clock")
 		}
+	}
+}
+
+func TestFillPatternAfterDarkTheme(t *testing.T) {
+	diagram := d2target.NewDiagram()
+	diagram.Root.FillPattern = "dots"
+	dark := int64(200)
+	out, err := Render(diagram, &RenderOpts{DarkThemeID: &dark})
+	if err != nil {
+		t.Fatal(err)
+	}
+	styles := readStyles(t, out)
+	if len(styles) != 1 || !strings.Contains(styles[0], "}} .dots-overlay{") {
+		t.Fatal("ImageIO requires whitespace between the dark media query and the fill pattern")
 	}
 }
 

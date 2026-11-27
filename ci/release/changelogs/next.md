@@ -4,9 +4,8 @@
 
 #### Improvements 🧹
 
-- SVG exports embed smaller subsets of D2's bundled fonts. The 157 documentation examples use about 17% fewer bytes in total, or 27% fewer with gzip.
-- SVG exports use fewer bytes for element tags and Markdown coordinates and omit unused XLink declarations.
-- SVG exports combine and compact the generated CSS for fonts, themes, and animations.
+- SVG exports use 28.3% fewer bytes across the 157 documentation diagrams, or 34.9% fewer with gzip. D2 embeds smaller bundled fonts and writes more compact stylesheets, code blocks, arrowhead references, textures, sketch paths, and LaTeX glyphs.
+- SVG appendices use smaller fonts for ASCII footnotes and numbered markers while retaining their kerning, ligatures, and hinting.
 - **GIF.** The ceiling on an animation's total frame area rose from 160 to 256 Mi-pixels, enough for a narrated explainer of about twenty seconds at 700 by 600.
 
 #### Bugfixes ⛑️

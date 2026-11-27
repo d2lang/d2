@@ -35,6 +35,12 @@ func compactCSS(css string) string {
 			}
 		}
 		out.WriteByte(c)
+		// Apple ImageIO skips the rule immediately following a nested at-rule
+		// unless whitespace separates them. The next rule can be appended by
+		// another writer, as with fill patterns after a dark theme.
+		if c == '}' && prev == '}' {
+			out.WriteByte(' ')
+		}
 		prev = c
 	}
 	return out.String()

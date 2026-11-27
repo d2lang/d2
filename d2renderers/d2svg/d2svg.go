@@ -431,7 +431,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 		{X: startX + width, Y: midY},
 	}
 
-	legendHash := fmt.Sprintf("legend-%s", hash(fmt.Sprintf("%s-%d-%d", c.ID, x, y)))
+	legendHash := fmt.Sprintf("legend-%s", hash(fmt.Sprintf("%s-%d-%d", c.ID, x, y), 10))
 
 	defined := make(map[string]struct{})
 	idToShape := make(map[string]d2target.Shape)
@@ -439,7 +439,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, "", legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, connectionMasks{}, legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -451,7 +451,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	return finalBuf.String(), nil
 }
 
-func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Connection) string {
+func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Connection, placement string, compact bool) string {
 	var arrowhead d2target.Arrowhead
 	if isTarget {
 		arrowhead = connection.DstArrow
@@ -459,9 +459,18 @@ func arrowheadMarkerID(diagramHash string, isTarget bool, connection d2target.Co
 		arrowhead = connection.SrcArrow
 	}
 
-	return fmt.Sprintf("mk-%s-%s", diagramHash, hash(fmt.Sprintf("%s,%t,%s,%s",
-		arrowhead, isTarget, strconv.FormatFloat(connection.RenderedStrokeWidth(), 'f', -1, 64), connection.Stroke,
-	)))
+	// Keep every bit of both hashes and the board namespace. A trailing delimiter keeps whole-ID string replacement (e.g. Obsidian)
+	// from matching a shorter paint hash inside another marker's ID.
+	scope, base, end := diagramHash, 10, ""
+	if compact {
+		scope, base, end = strings.TrimPrefix(diagramHash, "d2-"), 36, "_"
+	}
+	paint := fmt.Sprintf("%s,%t,%s,%s", arrowhead, isTarget, strconv.FormatFloat(connection.RenderedStrokeWidth(), 'f', -1, 64), connection.Stroke)
+	id := "mk-" + scope + "-" + hash(paint, base)
+	if placement != "" {
+		id += "-" + hash(placement, base)
+	}
+	return id + end
 }
 
 // markerPoints formats coordinate pairs as an SVG points list ("x,y x,y ...").
@@ -789,7 +798,12 @@ func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
 		svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", c.X, c.Y, c.Width, c.Height)), svg.Attr("overflow", "hidden")))
 }
 
-func drawConnection(writer *objectWriter, diagramHash string, crossingMask string, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+type connectionMasks struct {
+	labelID    string
+	crossingID string
+}
+
+func drawConnection(writer *objectWriter, markerScope string, masks connectionMasks, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
 	if c := connection.MotionClip; c != nil {
 		openMotionViewport(writer, c)
 		defer writer.buf.WriteString("</svg>")
@@ -819,10 +833,11 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		if arrow == d2target.NoArrowhead || (sketch && gradient != nil) {
 			return nil
 		}
-		id := arrowheadMarkerID(diagramHash, target, connection)
+		position := ""
 		if gradient != nil {
-			id += "-" + hash(fmt.Sprint(placement))
+			position = fmt.Sprint(placement)
 		}
+		id := arrowheadMarkerID(markerScope, target, connection, position, writer.compactMarkerIDs)
 		if _, exists := defined[id]; !exists {
 			markup := arrowheadMarker(target, id, connection, inlineTheme, gradient, placement)
 			if markup == "" {
@@ -892,13 +907,16 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		labelMask = ""
 	}
 	path := pathData(connection, srcAdj, dstAdj)
-	mask := svg.Attr("mask", svg.LocalIRI(svg.LiteralID(diagramHash)))
-	if crossingMask != "" {
-		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(crossingMask)))))
+	var pathAttrs []svg.Attribute
+	if masks.labelID != "" {
+		pathAttrs = []svg.Attribute{svg.Attr("mask", svg.LocalIRI(svg.LiteralID(masks.labelID)))}
+	}
+	if masks.crossingID != "" {
+		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(masks.crossingID)))))
 	}
 
 	if sketch {
-		out, err := d2sketch.ConnectionWithAttributes(connection, path, []svg.Attribute{mask})
+		out, err := d2sketch.ConnectionWithAttributes(connection, path, pathAttrs)
 		if err != nil {
 			return "", err
 		}
@@ -930,7 +948,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 			pathEl.Stroke = connection.Stroke
 			pathEl.ClassName = className
 			pathEl.Style = connection.CSSStyle() + extraStyle
-			pathEl.AddAttributes(append(attrs, mask)...)
+			pathEl.AddAttributes(append(attrs, pathAttrs...)...)
 			writer.element(pathEl)
 		}
 		// If connection is animated and bidirectional
@@ -947,7 +965,7 @@ func drawConnection(writer *objectWriter, diagramHash string, crossingMask strin
 		}
 	}
 
-	if crossingMask != "" {
+	if masks.crossingID != "" {
 		fmt.Fprint(writer, svg.CloseElement("g"))
 	}
 
@@ -1066,6 +1084,9 @@ func latexLabel(src string, tl *geo.Point, fontColor string, inlineTheme *d2them
 	}
 	render = strings.ReplaceAll(render, `<?xml version="1.0" encoding="UTF-8"?>`, "")
 	render = strings.ReplaceAll(render, `<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">`, "")
+	if UsesDefaultStylesheet() {
+		render = compactMathJaxGlyphs(render)
+	}
 	gEl := d2themes.NewThemableElement("g", inlineTheme)
 	gEl.SetTranslate(tl.X, tl.Y)
 	gEl.Color = fontColor
@@ -2035,10 +2056,10 @@ func writeFontCSS(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2f
 	corpora = restrictFontCorpora(corpora, corpus)
 	appendFace := func(class, face string, font *d2fonts.FontFamily, style d2fonts.FontStyle, triggers ...string) {
 		appendFontOnTrigger(buf, source, triggers, corpora, class, corpus, func(corpus string) string {
-			uri := font.Font(0, style).GetEncodedSubset(corpus)
+			subsetFont := font.Font(0, style)
 			family := diagramHash + "-font-" + face
 			if compact {
-				return svgstyle.FontFace(diagramHash, class, family, uri)
+				return svgstyle.FontFace(diagramHash, class, family, subsetFont.GetSVGEncodedSubset(corpus))
 			}
 			return fmt.Sprintf(`
 .%s .%s {
@@ -2047,7 +2068,7 @@ func writeFontCSS(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2f
 @font-face {
 	font-family: %s;
 	src: url("%s");
-}`, diagramHash, class, family, family, uri)
+}`, diagramHash, class, family, family, subsetFont.GetEncodedSubset(corpus))
 		})
 	}
 	appendRule := func(trigger, css string) {
@@ -2228,7 +2249,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	}
 
 	buf := &bytes.Buffer{}
-	writer := &objectWriter{buf: buf}
+	writer := &objectWriter{buf: buf, compactMarkerIDs: opts.MasterID == "" && UsesDefaultStylesheet()}
 	if opts.MasterID == "" && !sketch && UsesDefaultStylesheet() {
 		writer.usage = &svgUsage{classes: make(map[string]bool)}
 	}
@@ -2311,11 +2332,11 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 			return nil, err
 		}
 		if c, is := obj.(indexedConnection); is {
-			maskID := ""
+			masks := connectionMasks{labelID: isolatedDiagramHash}
 			if len(crossings[c.index]) != 0 {
-				maskID = crossingMaskID(isolatedDiagramHash, c.index)
+				masks.crossingID = crossingMaskID(isolatedDiagramHash, c.index)
 			}
-			labelMask, err := drawConnection(writer, isolatedDiagramHash, maskID, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
+			labelMask, err := drawConnection(writer, isolatedDiagramHash, masks, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
 			}
@@ -2937,11 +2958,12 @@ func fontToFamily(fontFamily string) *d2fonts.FontFamily {
 	return &ff
 }
 
-func hash(s string) string {
+func hash(s string, base int) string {
 	const secret = "lalalas"
 	h := fnv.New32a()
-	h.Write([]byte(fmt.Sprintf("%s%s", s, secret)))
-	return fmt.Sprint(h.Sum32())
+	h.Write([]byte(s))
+	h.Write([]byte(secret))
+	return strconv.FormatUint(uint64(h.Sum32()), base)
 }
 
 func RenderMultiboard(diagram *d2target.Diagram, opts *RenderOpts) ([][]byte, error) {

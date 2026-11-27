@@ -27,8 +27,11 @@ type glyphRun struct {
 }
 
 type objectWriter struct {
-	buf   *bytes.Buffer
-	usage *svgUsage
+	// Only standalone default exports use compact marker IDs. Frames and
+	// legends keep the IDs used by animation compaction and custom CSS.
+	compactMarkerIDs bool
+	buf              *bytes.Buffer
+	usage            *svgUsage
 
 	// An object may mix known elements with arbitrary nested SVG. In that
 	// case discard its pending runs and read the complete object, so that
