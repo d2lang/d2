@@ -33,6 +33,9 @@ jobs:
         run: ./d2js/js/make.sh build
         env:
           GIT_BASE: HEAD
+      - name: Test the installed npm package
+        if: inputs.packed
+        run: ./d2js/js/ci/test-integration.sh
       - uses: ./.github/actions/browser-smoke
         with:
           packed: ${{ inputs.packed && 'true' || 'false' }}
