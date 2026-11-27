@@ -981,76 +981,12 @@ func (p *preflight) node(node *d2scene.Node, parent d2scene.Matrix, depth, impor
 	if node == nil {
 		return nil, nil
 	}
-	if depth > p.options.MaxDepth {
-		return nil, fmt.Errorf("d2raster: node depth %d exceeds limit %d", depth, p.options.MaxDepth)
-	}
-	if p.active[node] {
-		return nil, fmt.Errorf("d2raster: node cycle at %q", node.ID)
-	}
-	if err := p.addPreparedNodes(1); err != nil {
-		return nil, err
-	}
-	if !node.Transform.IsFinite() || !finite(node.Opacity) || node.Opacity < 0 || node.Opacity > 1 {
-		return nil, fmt.Errorf("d2raster: node %q has invalid transform or opacity", node.ID)
-	}
-	if !supportedBlendMode(node.Blend) {
-		return nil, fmt.Errorf("d2raster: node %q uses invalid or unsupported blend mode %d", node.ID, node.Blend)
-	}
-	if err := p.chargeFilterWork(node.ID, node.Filters); err != nil {
-		return nil, err
-	}
-	if err := p.chargeAnimationWork(node.ID, node.Animations); err != nil {
+	nodeTransform, opacity, overrides, err := p.enterNode(node, depth, p.active)
+	if err != nil {
 		return nil, err
 	}
 	p.active[node] = true
 	defer delete(p.active, node)
-
-	nodeTransform := node.Transform
-	opacity := node.Opacity
-	var overrides animationOverrides
-	seenTracks := make(map[[2]int]bool, len(node.Animations))
-	for trackIndex, track := range node.Animations {
-		if err := p.ctx.Err(); err != nil {
-			return nil, err
-		}
-		key := [2]int{int(track.Property), track.TargetIndex}
-		if seenTracks[key] {
-			return nil, fmt.Errorf("d2raster: node %q has duplicate animation target property %d index %d", node.ID, track.Property, track.TargetIndex)
-		}
-		seenTracks[key] = true
-		value, err := p.animationValueAt(track)
-		if err != nil {
-			return nil, fmt.Errorf("d2raster: node %q animation %d: %w", node.ID, trackIndex, err)
-		}
-		if track.Property != d2scene.AnimateDropShadow && track.TargetIndex != 0 {
-			return nil, fmt.Errorf("d2raster: node %q animation %d uses non-zero target index for scalar property %d", node.ID, trackIndex, track.Property)
-		}
-		switch track.Property {
-		case d2scene.AnimateOpacity:
-			if value.Number < 0 || value.Number > 1 {
-				return nil, fmt.Errorf("d2raster: node %q animation %d resolves opacity outside [0,1]", node.ID, trackIndex)
-			}
-			opacity = value.Number
-		case d2scene.AnimateTransform:
-			nodeTransform = value.Transform
-		case d2scene.AnimateStrokeDashOffset:
-			offset := value.Number
-			overrides.dashOffset = &offset
-		case d2scene.AnimateFillColor:
-			animatedColor := value.Color
-			overrides.fillColor = &animatedColor
-		case d2scene.AnimateStrokeColor:
-			animatedColor := value.Color
-			overrides.strokeColor = &animatedColor
-		case d2scene.AnimateDropShadow:
-			if overrides.dropShadows == nil {
-				overrides.dropShadows = make(map[int]d2scene.DropShadow)
-			}
-			overrides.dropShadows[track.TargetIndex] = value.Shadow
-		default:
-			return nil, fmt.Errorf("d2raster: node %q animation %d uses unknown property %d", node.ID, trackIndex, track.Property)
-		}
-	}
 
 	transform := parent.Mul(nodeTransform)
 	if !transform.IsFinite() {
@@ -1128,6 +1064,85 @@ func (p *preflight) node(node *d2scene.Node, parent d2scene.Matrix, depth, impor
 	return prepared, nil
 }
 
+// enterNode runs the checks that every walk over scene nodes (preflight and
+// retained vector validation) applies before it looks at a node's content:
+// depth, cycle and work limits, the node's own attributes, and its animation
+// tracks, resolved at the frame time into the node's transform, opacity and
+// primitive overrides. active holds the nodes on the current walk's path.
+func (p *preflight) enterNode(node *d2scene.Node, depth int, active map[*d2scene.Node]bool) (d2scene.Matrix, float64, animationOverrides, error) {
+	var overrides animationOverrides
+	fail := func(err error) (d2scene.Matrix, float64, animationOverrides, error) {
+		return d2scene.Matrix{}, 0, animationOverrides{}, err
+	}
+	if depth > p.options.MaxDepth {
+		return fail(fmt.Errorf("d2raster: node depth %d exceeds limit %d", depth, p.options.MaxDepth))
+	}
+	if active[node] {
+		return fail(fmt.Errorf("d2raster: node cycle at %q", node.ID))
+	}
+	if err := p.addPreparedNodes(1); err != nil {
+		return fail(err)
+	}
+	if !node.Transform.IsFinite() || !finite(node.Opacity) || node.Opacity < 0 || node.Opacity > 1 {
+		return fail(fmt.Errorf("d2raster: node %q has invalid transform or opacity", node.ID))
+	}
+	if !supportedBlendMode(node.Blend) {
+		return fail(fmt.Errorf("d2raster: node %q uses invalid or unsupported blend mode %d", node.ID, node.Blend))
+	}
+	if err := p.chargeFilterWork(node.ID, node.Filters); err != nil {
+		return fail(err)
+	}
+	if err := p.chargeAnimationWork(node.ID, node.Animations); err != nil {
+		return fail(err)
+	}
+	nodeTransform := node.Transform
+	opacity := node.Opacity
+	seenTracks := make(map[[2]int]bool, len(node.Animations))
+	for trackIndex, track := range node.Animations {
+		if err := p.ctx.Err(); err != nil {
+			return fail(err)
+		}
+		key := [2]int{int(track.Property), track.TargetIndex}
+		if seenTracks[key] {
+			return fail(fmt.Errorf("d2raster: node %q has duplicate animation target property %d index %d", node.ID, track.Property, track.TargetIndex))
+		}
+		seenTracks[key] = true
+		value, err := p.animationValueAt(track)
+		if err != nil {
+			return fail(fmt.Errorf("d2raster: node %q animation %d: %w", node.ID, trackIndex, err))
+		}
+		if track.Property != d2scene.AnimateDropShadow && track.TargetIndex != 0 {
+			return fail(fmt.Errorf("d2raster: node %q animation %d uses non-zero target index for scalar property %d", node.ID, trackIndex, track.Property))
+		}
+		switch track.Property {
+		case d2scene.AnimateOpacity:
+			if value.Number < 0 || value.Number > 1 {
+				return fail(fmt.Errorf("d2raster: node %q animation %d resolves opacity outside [0,1]", node.ID, trackIndex))
+			}
+			opacity = value.Number
+		case d2scene.AnimateTransform:
+			nodeTransform = value.Transform
+		case d2scene.AnimateStrokeDashOffset:
+			offset := value.Number
+			overrides.dashOffset = &offset
+		case d2scene.AnimateFillColor:
+			animatedColor := value.Color
+			overrides.fillColor = &animatedColor
+		case d2scene.AnimateStrokeColor:
+			animatedColor := value.Color
+			overrides.strokeColor = &animatedColor
+		case d2scene.AnimateDropShadow:
+			if overrides.dropShadows == nil {
+				overrides.dropShadows = make(map[int]d2scene.DropShadow)
+			}
+			overrides.dropShadows[track.TargetIndex] = value.Shadow
+		default:
+			return fail(fmt.Errorf("d2raster: node %q animation %d uses unknown property %d", node.ID, trackIndex, track.Property))
+		}
+	}
+	return nodeTransform, opacity, overrides, nil
+}
+
 func (p *preflight) addPreparedNodes(count int) error {
 	if count <= 0 {
 		return fmt.Errorf("d2raster: internal prepared node charge must be positive")
@@ -1184,62 +1199,86 @@ func (p *preflight) clip(nodeID string, clip *d2scene.Clip, transform d2scene.Ma
 }
 
 func (p *preflight) primitive(nodeID string, primitive d2scene.Primitive, transform d2scene.Matrix, animation animationOverrides, depth, importDepth int) (*preparedPrimitive, error) {
-	if primitive == nil {
+	switch primitive := primitiveValue(primitive).(type) {
+	case nil:
 		return nil, nil
-	}
-	switch primitive := primitive.(type) {
 	case d2scene.Rect:
 		return p.rect(nodeID, primitive, transform, animation, importDepth)
-	case *d2scene.Rect:
-		if primitive == nil {
-			return nil, nil
-		}
-		return p.rect(nodeID, *primitive, transform, animation, importDepth)
 	case d2scene.Ellipse:
 		return p.ellipse(nodeID, primitive, transform, animation, importDepth)
-	case *d2scene.Ellipse:
-		if primitive == nil {
-			return nil, nil
-		}
-		return p.ellipse(nodeID, *primitive, transform, animation, importDepth)
 	case d2scene.Path:
 		return p.path(nodeID, primitive, transform, animation, importDepth)
-	case *d2scene.Path:
-		if primitive == nil {
-			return nil, nil
-		}
-		return p.path(nodeID, *primitive, transform, animation, importDepth)
 	case d2scene.TextRun:
 		return p.text(nodeID, primitive, transform, animation, importDepth)
-	case *d2scene.TextRun:
-		if primitive == nil {
-			return nil, nil
-		}
-		return p.text(nodeID, *primitive, transform, animation, importDepth)
 	case d2scene.Image:
 		return p.image(nodeID, primitive, transform, animation, depth, importDepth)
-	case *d2scene.Image:
-		if primitive == nil {
-			return nil, nil
-		}
-		return p.image(nodeID, *primitive, transform, animation, depth, importDepth)
 	default:
 		return nil, fmt.Errorf("d2raster: node %q uses unsupported primitive %T", nodeID, primitive)
 	}
 }
 
-func (p *preflight) rect(nodeID string, rect d2scene.Rect, transform d2scene.Matrix, animation animationOverrides, importDepth int) (*preparedPrimitive, error) {
+// primitiveValue returns the value form of a pointer primitive, so that the
+// walks over scene primitives switch over values only. A nil pointer is no
+// primitive at all.
+func primitiveValue(primitive d2scene.Primitive) d2scene.Primitive {
+	switch primitive := primitive.(type) {
+	case *d2scene.Rect:
+		if primitive != nil {
+			return *primitive
+		}
+	case *d2scene.Ellipse:
+		if primitive != nil {
+			return *primitive
+		}
+	case *d2scene.Path:
+		if primitive != nil {
+			return *primitive
+		}
+	case *d2scene.TextRun:
+		if primitive != nil {
+			return *primitive
+		}
+	case *d2scene.Image:
+		if primitive != nil {
+			return *primitive
+		}
+	default:
+		return primitive
+	}
+	return nil
+}
+
+// rectObjectBounds validates a rectangle's geometry and returns its box.
+func rectObjectBounds(nodeID string, rect d2scene.Rect) (d2scene.Box, error) {
 	if err := validateBox(rect.Box); err != nil {
-		return nil, fmt.Errorf("d2raster: node %q rectangle: %w", nodeID, err)
+		return d2scene.Box{}, fmt.Errorf("d2raster: node %q rectangle: %w", nodeID, err)
 	}
 	if !finite(rect.RadiusX) || !finite(rect.RadiusY) || rect.RadiusX < 0 || rect.RadiusY < 0 {
-		return nil, fmt.Errorf("d2raster: node %q rectangle has invalid corner radius", nodeID)
+		return d2scene.Box{}, fmt.Errorf("d2raster: node %q rectangle has invalid corner radius", nodeID)
+	}
+	return rect.Box, nil
+}
+
+// ellipseObjectBounds validates an ellipse's geometry and returns its box.
+func ellipseObjectBounds(nodeID string, ellipse d2scene.Ellipse) (d2scene.Box, error) {
+	if !finitePoint(ellipse.Center) || !finite(ellipse.RadiusX) || !finite(ellipse.RadiusY) || ellipse.RadiusX < 0 || ellipse.RadiusY < 0 {
+		return d2scene.Box{}, fmt.Errorf("d2raster: node %q ellipse has invalid geometry", nodeID)
+	}
+	return d2scene.Box{
+		X: ellipse.Center.X - ellipse.RadiusX, Y: ellipse.Center.Y - ellipse.RadiusY,
+		Width: 2 * ellipse.RadiusX, Height: 2 * ellipse.RadiusY,
+	}, nil
+}
+
+func (p *preflight) rect(nodeID string, rect d2scene.Rect, transform d2scene.Matrix, animation animationOverrides, importDepth int) (*preparedPrimitive, error) {
+	objectBounds, err := rectObjectBounds(nodeID, rect)
+	if err != nil {
+		return nil, err
 	}
 	subpaths, err := roundedRectSubpaths(p.ctx, rect, flattenTolerance(transform), p.addPathSegment)
 	if err != nil {
 		return nil, fmt.Errorf("d2raster: node %q rectangle: %w", nodeID, err)
 	}
-	objectBounds := rect.Box
 	fill, err := p.prepareAnimatedPaint(rect.Fill, animation.fillColor, objectBounds, transform, importDepth)
 	if err != nil {
 		return nil, fmt.Errorf("d2raster: node %q rectangle fill: %w", nodeID, err)
@@ -1252,16 +1291,13 @@ func (p *preflight) rect(nodeID string, rect d2scene.Rect, transform d2scene.Mat
 }
 
 func (p *preflight) ellipse(nodeID string, ellipse d2scene.Ellipse, transform d2scene.Matrix, animation animationOverrides, importDepth int) (*preparedPrimitive, error) {
-	if !finitePoint(ellipse.Center) || !finite(ellipse.RadiusX) || !finite(ellipse.RadiusY) || ellipse.RadiusX < 0 || ellipse.RadiusY < 0 {
-		return nil, fmt.Errorf("d2raster: node %q ellipse has invalid geometry", nodeID)
+	objectBounds, err := ellipseObjectBounds(nodeID, ellipse)
+	if err != nil {
+		return nil, err
 	}
 	subpaths, err := ellipseSubpaths(p.ctx, ellipse.Center, ellipse.RadiusX, ellipse.RadiusY, flattenTolerance(transform), p.addPathSegment)
 	if err != nil {
 		return nil, fmt.Errorf("d2raster: node %q ellipse: %w", nodeID, err)
-	}
-	objectBounds := d2scene.Box{
-		X: ellipse.Center.X - ellipse.RadiusX, Y: ellipse.Center.Y - ellipse.RadiusY,
-		Width: 2 * ellipse.RadiusX, Height: 2 * ellipse.RadiusY,
 	}
 	fill, err := p.prepareAnimatedPaint(ellipse.Fill, animation.fillColor, objectBounds, transform, importDepth)
 	if err != nil {
@@ -1499,24 +1535,12 @@ func prepareAnimatedStrokeWithPaint(stroke *d2scene.Stroke, animatedColor *color
 	if stroke.Width == 0 || paint == nil {
 		return nil, nil
 	}
-	switch stroke.Cap {
-	case d2scene.CapButt, d2scene.CapRound, d2scene.CapSquare:
-	default:
-		return nil, fmt.Errorf("unsupported line cap %d", stroke.Cap)
-	}
-	switch stroke.Join {
-	case d2scene.JoinMiter, d2scene.JoinRound, d2scene.JoinBevel:
-	default:
-		return nil, fmt.Errorf("unsupported line join %d", stroke.Join)
+	if err := strokeStyleError(stroke); err != nil {
+		return nil, err
 	}
 	miterLimit := stroke.MiterLimit
-	if stroke.Join == d2scene.JoinMiter {
-		if miterLimit == 0 {
-			miterLimit = 4
-		}
-		if miterLimit < 1 {
-			return nil, fmt.Errorf("invalid miter limit %g", stroke.MiterLimit)
-		}
+	if stroke.Join == d2scene.JoinMiter && miterLimit == 0 {
+		miterLimit = 4
 	}
 	dashOffset := stroke.DashOffset
 	if animatedDashOffset != nil {
@@ -1531,6 +1555,25 @@ func prepareAnimatedStrokeWithPaint(stroke *d2scene.Stroke, animatedColor *color
 		dashes:     stroke.Dashes,
 		dashOffset: dashOffset,
 	}, nil
+}
+
+// strokeStyleError checks a painted stroke's cap, join and miter limit; a
+// zero miter limit stands for the default of 4.
+func strokeStyleError(stroke *d2scene.Stroke) error {
+	switch stroke.Cap {
+	case d2scene.CapButt, d2scene.CapRound, d2scene.CapSquare:
+	default:
+		return fmt.Errorf("unsupported line cap %d", stroke.Cap)
+	}
+	switch stroke.Join {
+	case d2scene.JoinMiter, d2scene.JoinRound, d2scene.JoinBevel:
+	default:
+		return fmt.Errorf("unsupported line join %d", stroke.Join)
+	}
+	if stroke.Join == d2scene.JoinMiter && stroke.MiterLimit != 0 && stroke.MiterLimit < 1 {
+		return fmt.Errorf("invalid miter limit %g", stroke.MiterLimit)
+	}
+	return nil
 }
 
 func renderNode(ctx context.Context, dst *image.RGBA, node *preparedNode, scratch *rasterScratch) error {

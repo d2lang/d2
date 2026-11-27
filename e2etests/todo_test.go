@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func testTodo(t *testing.T) {
-	tcs := []testCase{
+func todoCases(t *testing.T) []testCase {
+	return []testCase{
 		{
 			// issue https://github.com/terrastruct/d2/issues/71
 			name: "container_child_edge",
@@ -275,6 +275,4 @@ company Warehouse: |md
 `,
 		},
 	}
-
-	runa(t, tcs)
 }

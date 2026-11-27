@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 const maxCompactionCandidateCount = limits.MaxGraphSize + 3
@@ -145,8 +145,10 @@ const smallNodeSetScan = 32
 // defeating quicksort (both are generated from one template) and consults
 // its comparison only as cmp(a, b) < 0, so every comparison, swap and the
 // resulting order are the same; it just avoids sort.Slice's reflection.
+// xsort.Func is slices.SortFunc in native builds and that sort.Slice call in
+// WebAssembly builds, where one shared sorter is worth more than its speed.
 func sortSliceExact[T any](s []T, less func(a, b T) bool) {
-	slices.SortFunc(s, func(a, b T) int {
+	xsort.Func(s, func(a, b T) int {
 		if less(a, b) {
 			return -1
 		}

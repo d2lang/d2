@@ -27,7 +27,7 @@ or source commit independently of the npm version.
 The canonical package was bootstrapped once from the existing `@terrastruct/d2@0.1.33`
 built artifacts because npm does not allow a brand-new package to use staged publishing.
 
-Direct publishing is retained only for local bootstrap or recovery. It requires a
+The local direct-publish script is retained for bootstrap or recovery. It requires a
 short-lived `NPM_TOKEN` that can publish every selected package and is not stored in GitHub.
 The script pre-packs and preflights every selected package before publishing; a retry skips
 an existing version only when its registry tarball integrity exactly matches the local
@@ -40,6 +40,54 @@ Use `npm stage approve <stage-id>` for each identity. If the release is abandone
 every pending half with
 `npm stage reject <stage-id>` before starting another run. A pending stage reserves its
 package/version, so list pending stages before retrying any failed job.
+
+### Automatic D2.js nightlies
+
+[`npm-nightly.yml`](../../.github/workflows/npm-nightly.yml) checks protected `master`
+daily at 09:19 UTC. It compares the commit in the published `@nightly` version with
+the current source, builds and tests the package when inputs changed, and publishes
+the tarball to `@d2lang/d2` under the `nightly` tag. The first run creates the tag.
+
+To enable publishing, merge the workflow, then add a GitHub Actions trusted publisher
+in the npm package settings for `@d2lang/d2`. Enter organization `d2lang`, repository
+`d2`, workflow filename `npm-nightly.yml`, and environment `npm-release`. Select
+**Allow npm publish**. This permission applies to the package, so the workflow checks
+the package name and prerelease version and passes `--tag nightly` explicitly.
+The existing publisher for `npm-stage.yml` handles stable releases.
+
+Run `gh workflow run npm-nightly.yml --repo d2lang/d2 --ref master` once to validate
+the new connection within npm's two-day window. Check the result with
+`npm view @d2lang/d2 dist-tags`. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+
+## PyPI publishing
+
+Publishing a stable GitHub release triggers [the PyPI workflow](../../.github/workflows/pypi-publish.yml).
+It checks the six archives against the promoted checksums on `master`, packages the release
+executables as `d2lang` wheels, and runs the installed commands on each supported platform
+before uploading the tested wheels to PyPI. The wheel version follows the D2 tag (`v0.9.0` → `0.9.0`).
+
+For the first upload, register a [pending PyPI publisher](https://pypi.org/manage/account/publishing/)
+with project `d2lang`, GitHub owner `d2lang`, repository `d2`, workflow `pypi-publish.yml`,
+and environment `pypi`. Configure that GitHub environment to allow the `master` branch and
+`v*` release tags. The workflow authenticates with GitHub's OpenID Connect token.
+
+To package an already published stable release, dispatch the workflow from `master`:
+
+```sh
+gh workflow run pypi-publish.yml --repo d2lang/d2 --ref master -f version=v0.9.0
+```
+
+After the upload, verify the public package with `uvx d2lang@0.9.0 --version`, substituting
+the published version.
+
+For stable releases starting with `v0.10.0`, the same workflow publishes
+`io.github.d2lang/d2` to the [official MCP Registry](https://registry.modelcontextprotocol.io/).
+The wheel builder sets both versions in [server.json](../../server.json) from the release tag
+and includes the server name in each wheel's PyPI description. The smoke tests start
+`uvx d2lang mcp` on all six platforms. Once the PyPI upload succeeds, the Registry job
+authenticates with the repository's GitHub OIDC token and publishes the matching listing.
+If this job fails, rerun failed jobs in the original workflow run. A matching, already
+published listing passes the check.
 
 ## _install.sh
 
@@ -86,13 +134,17 @@ Pushing the tag starts one `Release archives` dependency graph:
    all six archives twice using the pinned Go toolchain, compares SHA-256 digests, verifies
    stripped binaries and normalized archives, enforces size budgets, and generates an SBOM.
 2. Each archive runs natively on its supported platform, checking its version, SVG, and PNG.
+   The Linux archives also supply the binary, man page, and licenses for the Debian
+   packages and RPMs. CI builds each package twice and tests installation, rendering,
+   and removal with APT or DNF on its native architecture.
 3. The reusable `Windows MSI` workflow consumes that run's Windows amd64 archive, verifies
    its checksum, and builds and verifies both installers on `windows-2022`. It always packages
    notices from the new archive, so an old published release is no longer a PR test fixture.
-4. After tests, native smoke, and MSI verification succeed, the workflow attests the archive
-   provenance, SBOM, and checksum manifest. A separate write-scoped job creates or resumes a
-   draft and uploads the same archives, their signed `d2-<version>-provenance.sigstore.json`
-   bundle, `SHA256SUMS`, both MSIs, and `d2.spdx.json`.
+4. After the tests pass, the workflow attests provenance for the archives and Linux
+   packages, and attests the archive SBOM and checksum manifest. A separate write-scoped
+   job creates or resumes a draft and uploads the six archives, both Debian packages, both RPMs,
+   their signed `d2-<version>-provenance.sigstore.json` bundle, `SHA256SUMS`, both MSIs,
+   and `d2.spdx.json`.
 
 The uploader rechecks the tag commit and draft identity/state before uploads and verifies
 all final asset digests. Existing assets are accepted only when their bytes match; nothing
@@ -132,9 +184,12 @@ the uploader deletes only that zero-byte placeholder and retries its upload. Cha
 completed assets are never deleted. Artifacts are retained for 30 days; recover failures
 within that window. Run recovery without another uploader modifying the same draft.
 
-Release-related PRs exercise the same archive and native smoke jobs and, when the WiX gate
-below is enabled, the MSI build. PRs never attest or write release assets. CI is called
-directly by the tag workflow, so it does not depend on another token-generated event.
+For layout and dependency changes, CI cross-builds the six archives once on Linux and checks
+their binary and compressed sizes. Packaging, installer, platform-specific source and Go
+toolchain changes also exercise reproducibility and the six native smoke tests. When the WiX
+gate below is enabled, these PRs build both Windows installers and test upgrading and
+uninstalling them. Release tags run the full archive workflow and CI on the tagged source.
+Only the tag workflow attests and attaches release assets.
 
 After publishing a release, update `manifests/t/Terrastruct/D2/<version>/Terrastruct.D2.installer.yaml`
 in `microsoft/winget-pkgs`. Add both x64 installers, each with its own URL, SHA-256,
@@ -156,6 +211,9 @@ gh attestation verify "d2-$VERSION-linux-amd64.tar.gz" --repo d2lang/d2 \
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
+To verify a Linux package, pass its `.deb` or `.rpm` path to the same `gh attestation verify`
+command. `SHA256SUMS` lists the six standalone archives.
+
 The MSI remains unsigned. Authenticode signing is tracked separately in
 [issue #1078](https://github.com/d2lang/d2/issues/1078).
 
@@ -163,16 +221,14 @@ The installer uses WiX 7. Before the workflow can install or run WiX 7, a reposi
 must review the [WiX Open Source Maintenance Fee and EULA terms](https://docs.firegiant.com/wix/osmf/),
 confirm that any required sponsorship is in place, and set the `WIX7_EULA_ACCEPTED`
 repository variable to exactly `true`. That explicit owner-controlled gate enables the
-workflow to pass `-acceptEula wix7`. Pull requests still build and smoke-test their release
-archives when the variable is absent, but skip MSI packaging. Tag-triggered builds fail
-closed when the variable is absent; no draft is uploaded.
+workflow to pass `-acceptEula wix7`. Full archive checks on pull requests build and smoke-test
+their release archives even when the variable is absent. Tag-triggered builds require WiX
+acceptance before the draft can be uploaded.
 
 ## build.sh
 
 Release verification limits each binary to 45,000,000 bytes and each archive to
-20,000,000 bytes. The archive limit accommodates native isometric rendering on
-macOS as well as Linux and Windows. All six release targets retain size limits
-and metadata/checksum verification.
+19,000,000 bytes across all six release targets.
 
 - ./build.sh builds the release archives for each platform into ./build/<VERSION>/*.tar.gz
   Run with --help for usage.

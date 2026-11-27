@@ -3,7 +3,7 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,0:0:0-10:0:60",
+      "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,0:0:0-11:0:61",
       "nodes": [
         {
           "map_key": {
@@ -30,7 +30,7 @@
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,2:0:3-9:1:59",
+            "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,2:0:3-10:1:60",
             "key": {
               "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,2:0:3-2:6:9",
               "path": [
@@ -50,11 +50,11 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,2:8:11-9:1:59",
+                "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,2:8:11-10:1:60",
                 "nodes": [
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,3:2:15-8:3:57",
+                      "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,3:2:15-9:3:58",
                       "key": {
                         "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,3:2:15-3:3:16",
                         "path": [
@@ -74,7 +74,7 @@
                       "primary": {},
                       "value": {
                         "map": {
-                          "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,3:5:18-8:3:57",
+                          "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,3:5:18-9:3:58",
                           "nodes": [
                             {
                               "map_key": {
@@ -101,13 +101,13 @@
                             },
                             {
                               "map_key": {
-                                "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,5:4:30-7:5:53",
+                                "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:4:31-8:5:54",
                                 "key": {
-                                  "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,5:4:30-5:10:36",
+                                  "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:4:31-6:10:37",
                                   "path": [
                                     {
                                       "unquoted_string": {
-                                        "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,5:4:30-5:10:36",
+                                        "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:4:31-6:10:37",
                                         "value": [
                                           {
                                             "string": "layers",
@@ -121,17 +121,17 @@
                                 "primary": {},
                                 "value": {
                                   "map": {
-                                    "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,5:12:38-7:5:53",
+                                    "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:12:39-8:5:54",
                                     "nodes": [
                                       {
                                         "map_key": {
-                                          "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:6:46-6:7:47",
+                                          "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,7:6:47-7:7:48",
                                           "key": {
-                                            "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:6:46-6:7:47",
+                                            "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,7:6:47-7:7:48",
                                             "path": [
                                               {
                                                 "unquoted_string": {
-                                                  "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:6:46-6:7:47",
+                                                  "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,7:6:47-7:7:48",
                                                   "value": [
                                                     {
                                                       "string": "c",
@@ -279,7 +279,7 @@
                   "path": [
                     {
                       "unquoted_string": {
-                        "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,5:4:30-5:10:36",
+                        "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:4:31-6:10:37",
                         "value": [
                           {
                             "string": "layers",
@@ -303,7 +303,7 @@
                             "path": [
                               {
                                 "unquoted_string": {
-                                  "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,6:6:46-6:7:47",
+                                  "range": "d2/testdata/d2oracle/TestCreate/add_layer/3.d2,7:6:47-7:7:48",
                                   "value": [
                                     {
                                       "string": "c",

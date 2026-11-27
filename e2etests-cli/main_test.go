@@ -26,6 +26,8 @@ import (
 	"github.com/d2lang/util-go/xos"
 
 	"github.com/d2lang/d2/d2cli"
+	"github.com/d2lang/d2/d2parser"
+	"github.com/d2lang/d2/internal/grammartest"
 	"github.com/d2lang/d2/internal/testutil"
 	"github.com/d2lang/d2/lib/compression"
 	"github.com/d2lang/d2/lib/pptx"
@@ -436,6 +438,19 @@ scenarios: {
 				writeFile(t, dir, "target-invalid.d2", `x -> y`)
 				err := runTestMain(t, ctx, dir, env, "--target", "b", "target-invalid.d2", "target-invalid.svg")
 				assert.ErrorString(t, err, `failed to wait xmain test: e2etests-cli/d2: failed to compile target-invalid.d2: render target "b" not found`)
+			},
+		},
+		{
+			name: "target-trailing-input",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				writeFile(t, dir, "in.d2", "layers: {overview: {api -> db}}")
+				err := runTestMain(t, ctx, dir, env, "--target", "layers.overview; wrong", "in.d2", "out.svg")
+				if err == nil || !strings.Contains(err.Error(), "invalid target: layers.overview; wrong") {
+					t.Fatalf("expected an invalid target error, got %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(dir, "out.svg")); !os.IsNotExist(err) {
+					t.Fatalf("expected no output for an invalid target, got %v", err)
+				}
 			},
 		},
 		{
@@ -1006,6 +1021,7 @@ bank.Equities.app14522 -> bank.Fixed Income.app14500: security reference
 			name: "stdin",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
 				stdin := bytes.NewBufferString(`x -> y`)
+				grammartest.Check(t, grammartest.Load(t), stdin.String())
 				stdout := &bytes.Buffer{}
 				tms := testMain(dir, env, "-")
 				tms.Stdin = stdin
@@ -1141,11 +1157,11 @@ bank.Equities.app14522 -> bank.Fixed Income.app14500: security reference
 				writeFile(t, dir, "tideglass.d2", "unrelated")
 				writeFile(t, dir, "reference.d2", source)
 
-				err := runTestMainPersist(t, ctx, dir, env, "--isometric", "--scale=.2", "reference.d2", "reference.gif")
+				err := runTestMainPersist(t, ctx, dir, env, "--scale=.2", "reference.d2", "reference.gif")
 				assert.Success(t, err)
 				want := readFile(t, dir, "reference.gif")
 				for _, input := range []string{entry, filepath.Join(dir, entry)} {
-					err := runTestMainPersist(t, ctx, dir, env, "--isometric", "--scale=.2", input, "radio.gif")
+					err := runTestMainPersist(t, ctx, dir, env, "--scale=.2", input, "radio.gif")
 					assert.Success(t, err)
 					if !bytes.Equal(readFile(t, dir, "radio.gif"), want) {
 						t.Fatalf("input %q rendered a different GIF from its sibling diagram", input)
@@ -1411,6 +1427,30 @@ layers: {
 				assert.Success(t, err)
 				got := readFile(t, dir, "hello-world.d2")
 				assert.Equal(t, "x -> y\n", string(got))
+			},
+		},
+		{
+			name: "fmt-invalid-syntax",
+			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
+				for _, tc := range []struct{ name, source, diagnostic string }{
+					{"empty-filter", "api; db\n*: {&; label: selected}\n", "filter requires"},
+					{"empty-negated-filter", "*: {!&; style.fill: red}", "filter requires"},
+					{"trailing-path-dot", "a.: title", "key segment after ."},
+					{"missing-scope-dot", `"svc"(a -> b)[0]`, "expected . before scoped connection"},
+					{"single-hyphen", "\"build\" - server\n", "use --"},
+					{"unclosed-group", "(a -> b", "terminated with )"},
+					{"wrong-block-fence", "x: |!#md\n  hello\n##|\n", "terminated with !#|"},
+					{"incomplete-variable", "x: amount${cost\n", "substitutions must be terminated"},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						assert.WriteFile(t, filepath.Join(dir, "invalid.d2"), []byte(tc.source), 0644)
+						err := runTestMainPersist(t, ctx, dir, env, "fmt", "invalid.d2")
+						if err == nil || !strings.Contains(err.Error(), tc.diagnostic) {
+							t.Fatalf("expected %q, got %v", tc.diagnostic, err)
+						}
+						assert.Equal(t, tc.source, string(readFile(t, dir, "invalid.d2")))
+					})
+				}
 			},
 		},
 		{
@@ -1729,7 +1769,14 @@ c
 		{
 			name: "validate-against-incorrect-d2",
 			run: func(t *testing.T, ctx context.Context, dir string, env *xos.Env) {
-				writeFile(t, dir, "incorrect.d2", `x > y`)
+				const source = `"x" - y`
+				if grammartest.Recognizes(t, grammartest.Load(t), source) {
+					t.Fatal("EBNF accepted malformed connection")
+				}
+				if _, err := d2parser.Parse("incorrect.d2", strings.NewReader(source), nil); err == nil {
+					t.Fatal("Go parser accepted malformed connection")
+				}
+				assert.WriteFile(t, filepath.Join(dir, "incorrect.d2"), []byte(source), 0644)
 				err := runTestMainPersist(t, ctx, dir, env, "validate", "incorrect.d2")
 				assert.Error(t, err)
 			},
@@ -1830,6 +1877,9 @@ func runTestMainPersist(tb testing.TB, ctx context.Context, dir string, env *xos
 
 func writeFile(tb testing.TB, dir, fp, data string) {
 	tb.Helper()
+	if filepath.Ext(fp) == ".d2" {
+		grammartest.Check(tb, grammartest.Load(tb), data)
+	}
 	err := os.MkdirAll(filepath.Dir(filepath.Join(dir, fp)), 0755)
 	assert.Success(tb, err)
 	assert.WriteFile(tb, filepath.Join(dir, fp), []byte(data), 0644)

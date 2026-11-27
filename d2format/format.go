@@ -4,6 +4,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/d2lang/d2/d2ast"
 )
@@ -15,10 +16,44 @@ func Format(n d2ast.Node) string {
 	return p.sb.String()
 }
 
+// Some map keys name user data even when they happen to spell a D2 keyword.
+type keyScope int
+
+const (
+	boardKeys keyScope = iota // keys at the root of a diagram or board
+	shapeKeys
+	boardNames
+	classNames
+	variableKeys // arbitrary variable names and data, including plugin configuration
+)
+
+func (scope keyScope) child(keyword string) keyScope {
+	switch scope {
+	case variableKeys:
+		return variableKeys
+	case boardNames:
+		return boardKeys
+	case classNames:
+		return shapeKeys
+	}
+	switch keyword {
+	case "vars":
+		return variableKeys
+	case "classes":
+		return classNames
+	case "layers", "scenarios", "steps":
+		if scope == boardKeys {
+			return boardNames
+		}
+	}
+	return shapeKeys
+}
+
 type printer struct {
 	sb        strings.Builder
 	indentStr string
 	inKey     bool
+	keyScope  keyScope
 }
 
 func (p *printer) indent() {
@@ -35,6 +70,18 @@ func (p *printer) newline() {
 }
 
 func (p *printer) node(n d2ast.Node) {
+	p.nodeAt(n, standalone)
+}
+
+type tokenPosition int
+
+const (
+	standalone tokenPosition = iota
+	arrayItem
+	beforeMap
+)
+
+func (p *printer) nodeAt(n d2ast.Node, pos tokenPosition) {
 	switch n := n.(type) {
 	case *d2ast.Comment:
 		p.comment(n)
@@ -53,10 +100,10 @@ func (p *printer) node(n d2ast.Node) {
 	case *d2ast.Number:
 		p.sb.WriteString(n.Raw)
 	case *d2ast.UnquotedString:
-		p.interpolationBoxes(n.Value, false)
+		p.interpolationBoxes(n.Value, false, pos)
 	case *d2ast.DoubleQuotedString:
 		p.sb.WriteByte('"')
-		p.interpolationBoxes(n.Value, true)
+		p.interpolationBoxes(n.Value, true, pos)
 		p.sb.WriteByte('"')
 	case *d2ast.SingleQuotedString:
 		p.sb.WriteByte('\'')
@@ -70,7 +117,7 @@ func (p *printer) node(n d2ast.Node) {
 	case *d2ast.Substitution:
 		p.substitution(n)
 	case *d2ast.Import:
-		p._import(n)
+		p._import(n, pos)
 	case *d2ast.Array:
 		p.array(n)
 	case *d2ast.Map:
@@ -80,7 +127,7 @@ func (p *printer) node(n d2ast.Node) {
 	case *d2ast.KeyPath:
 		p.key(n)
 	case *d2ast.Edge:
-		p.edge(n)
+		p.mapKey(&d2ast.Key{Edges: []*d2ast.Edge{n}})
 	case *d2ast.EdgeIndex:
 		p.edgeIndex(n)
 	}
@@ -106,17 +153,7 @@ func (p *printer) blockComment(bc *d2ast.BlockComment) {
 		p.sb.WriteByte(' ')
 	}
 
-	lines := strings.Split(bc.Value, "\n")
-	for _, l := range lines {
-		if !bc.Range.OneLine() {
-			if l == "" {
-				p.sb.WriteByte('\n')
-			} else {
-				p.newline()
-			}
-		}
-		p.sb.WriteString(l)
-	}
+	p.blockLines(bc.Value, bc.Range.OneLine())
 
 	if !bc.Range.OneLine() {
 		p.newline()
@@ -126,47 +163,62 @@ func (p *printer) blockComment(bc *d2ast.BlockComment) {
 	p.sb.WriteString(`"""`)
 }
 
-func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString bool) {
+func (p *printer) blockLines(value string, oneLine bool) {
+	// With no nonblank line, the parser keeps all indentation as literal text.
+	indent := strings.TrimSpace(value) != ""
+	for _, line := range strings.Split(value, "\n") {
+		if !oneLine {
+			if line != "" && indent {
+				p.newline()
+			} else {
+				p.sb.WriteByte('\n')
+			}
+		}
+		p.sb.WriteString(line)
+	}
+}
+
+func (p *printer) interpolationBoxes(boxes []d2ast.InterpolationBox, isDoubleString bool, pos tokenPosition) {
+	wholeToken := len(boxes) == 1
 	for i, b := range boxes {
 		if b.Substitution != nil {
 			p.substitution(b.Substitution)
 			continue
 		}
-		if b.StringRaw == nil {
-			var s string
-			if isDoubleString {
-				s = escapeDoubledQuotedValue(*b.String, p.inKey)
-			} else {
-				s = escapeUnquotedValue(*b.String, p.inKey)
+
+		var text string
+		switch {
+		case isDoubleString && (!wholeToken || b.StringRaw == nil):
+			// In parsed double-quoted strings, the raw suffix can include text
+			// from before a substitution. Each decoded fragment is independent.
+			text = escapeDoubledQuotedValue(*b.String, p.inKey)
+		case b.StringRaw != nil && (wholeToken || matchesUnquotedFragment(*b.StringRaw, *b.String, i == len(boxes)-1)):
+			text = *b.StringRaw
+			if !isDoubleString {
+				text = escapeRawInContext(text, pos, i == 0 && !p.inKey, i == len(boxes)-1)
 			}
-			b.StringRaw = &s
-		} else if i > 0 && boxes[i-1].Substitution != nil {
-			// If this string follows a substitution, we need to make sure to use
-			// the actual string content, not the raw value which might be incorrect
-			s := *b.String
-			b.StringRaw = &s
+		default:
+			text = escapeUnquotedValue(*b.String, p.inKey, wholeToken)
 		}
-		if !isDoubleString {
-			if _, ok := d2ast.ReservedKeywords[strings.ToLower(*b.StringRaw)]; ok {
-				s := strings.ToLower(*b.StringRaw)
-				b.StringRaw = &s
+		if p.inKey && (p.keyScope == boardKeys || p.keyScope == shapeKeys) && wholeToken && !isDoubleString {
+			lower := strings.ToLower(text)
+			_, board := d2ast.BoardKeywords[lower]
+			if _, ok := d2ast.ReservedKeywords[lower]; ok && (!board || p.keyScope == boardKeys) {
+				text = lower
 			}
 		}
-		p.sb.WriteString(*b.StringRaw)
+		p.sb.WriteString(text)
 	}
 }
 
 func (p *printer) blockString(bs *d2ast.BlockString) {
 	quote := bs.Quote
-	for strings.Contains(bs.Value, "|"+quote) {
-		if quote == "" {
-			quote += "|"
-		} else {
-			quote += string(quote[len(quote)-1])
-		}
+	extend := '|'
+	if quote != "" {
+		extend, _ = utf8.DecodeLastRuneInString(quote)
 	}
-	for strings.Contains(bs.Value, quote+"|") {
-		quote += string(quote[len(quote)-1])
+	for strings.Contains(bs.Value, "|"+quote) || strings.Contains(bs.Value, quote+"|") {
+		quote += string(extend)
 	}
 
 	if bs.Range == (d2ast.Range{}) {
@@ -184,17 +236,7 @@ func (p *printer) blockString(bs *d2ast.BlockString) {
 		p.sb.WriteByte(' ')
 	}
 
-	lines := strings.Split(bs.Value, "\n")
-	for _, l := range lines {
-		if !bs.Range.OneLine() {
-			if l == "" {
-				p.sb.WriteByte('\n')
-			} else {
-				p.newline()
-			}
-		}
-		p.sb.WriteString(l)
-	}
+	p.blockLines(bs.Value, bs.Range.OneLine())
 
 	if !bs.Range.OneLine() {
 		p.deindent()
@@ -205,9 +247,9 @@ func (p *printer) blockString(bs *d2ast.BlockString) {
 	p.sb.WriteString(quote + "|")
 }
 
-func (p *printer) path(els []*d2ast.StringBox) {
+func (p *printer) path(els []*d2ast.StringBox, pos tokenPosition) {
 	for i, s := range els {
-		p.node(s.Unbox())
+		p.nodeAt(s.Unbox(), pos)
 		if i < len(els)-1 {
 			p.sb.WriteByte('.')
 		}
@@ -219,11 +261,11 @@ func (p *printer) substitution(s *d2ast.Substitution) {
 		p.sb.WriteString("...")
 	}
 	p.sb.WriteString("${")
-	p.path(s.Path)
+	p.path(s.Path, standalone)
 	p.sb.WriteByte('}')
 }
 
-func (p *printer) _import(i *d2ast.Import) {
+func (p *printer) _import(i *d2ast.Import, pos tokenPosition) {
 	if i.Spread {
 		p.sb.WriteString("...")
 	}
@@ -233,13 +275,20 @@ func (p *printer) _import(i *d2ast.Import) {
 		p.sb.WriteString(pre)
 		p.sb.WriteRune('/')
 	}
-	if len(i.Path) > 0 {
-		i2 := *i
-		i2.Path = append([]*d2ast.StringBox{}, i.Path...)
-		i2.Path[0] = d2ast.RawStringBox(path.Clean(i.Path[0].Unbox().ScalarString()), true)
-		i = &i2
+	if len(i.Path) == 0 {
+		return
 	}
-	p.path(i.Path)
+	filename := path.Clean(i.Path[0].ScalarString())
+	if len(i.Path) > 1 && i.Path[1].UnquotedString != nil && i.Path[1].ScalarString() == "d2" {
+		// After a quoted filename, the parser reads .d2 as a field name.
+		p.node(d2ast.FlatDoubleQuotedString(filename))
+	} else {
+		p.node(d2ast.RawString(filename, true))
+	}
+	if len(i.Path) > 1 {
+		p.sb.WriteByte('.')
+		p.path(i.Path[1:], pos)
+	}
 }
 
 func (p *printer) array(a *d2ast.Array) {
@@ -253,8 +302,8 @@ func (p *printer) array(a *d2ast.Array) {
 		nb := a.Nodes[i]
 		n := nb.Unbox()
 
-		// Handle inline comments.
-		if i > 0 && (nb.Comment != nil || nb.BlockComment != nil) {
+		// Only a line comment can follow an item without a separator.
+		if i > 0 && nb.Comment != nil {
 			if n.GetRange().Start.Line == prev.GetRange().End.Line && n.GetRange().OneLine() {
 				p.sb.WriteByte(' ')
 				p.node(n)
@@ -273,7 +322,7 @@ func (p *printer) array(a *d2ast.Array) {
 			p.sb.WriteString("; ")
 		}
 
-		p.node(n)
+		p.nodeAt(n, arrayItem)
 		prev = n
 	}
 
@@ -285,32 +334,20 @@ func (p *printer) array(a *d2ast.Array) {
 }
 
 func (p *printer) _map(m *d2ast.Map) {
+	oneLine := !m.IsFileMap() && (len(m.Nodes) == 0 || m.Range.OneLine())
 	if !m.IsFileMap() {
 		p.sb.WriteByte('{')
-		if !m.Range.OneLine() {
+		if !oneLine {
 			p.indent()
 		}
 	}
-
-	boardNodes := []d2ast.MapNodeBox{}
 
 	prev := d2ast.Node(m)
 	for i := 0; i < len(m.Nodes); i++ {
 		nb := m.Nodes[i]
 		n := nb.Unbox()
-		// extract out layer, scenario, and step nodes and skip
-		if nb.IsBoardNode() {
-			boardType := nb.MapKey.Key.Path[0].Unbox().ScalarString()
-			if (boardType == "layers" || boardType == "scenarios" || boardType == "steps") &&
-				nb.MapKey.Value.Map != nil && len(nb.MapKey.Value.Map.Nodes) > 0 {
-				boardNodes = append(boardNodes, nb)
-			}
-			prev = n
-			continue
-		}
-
-		// Handle inline comments.
-		if i > 0 && (nb.Comment != nil || nb.BlockComment != nil) {
+		// A line comment can follow an entry without a separator.
+		if i > 0 && nb.Comment != nil {
 			if n.GetRange().Start.Line == prev.GetRange().End.Line && n.GetRange().OneLine() {
 				p.sb.WriteByte(' ')
 				p.node(n)
@@ -318,9 +355,11 @@ func (p *printer) _map(m *d2ast.Map) {
 			}
 		}
 
-		if !m.Range.OneLine() {
+		if !oneLine {
 			if prev != m {
-				if n.GetRange().Start.Line-prev.GetRange().End.Line > 1 {
+				// Scenarios and steps inherit the state at their declaration.
+				// Separate board sections visually without changing their order.
+				if n.GetRange().Start.Line-prev.GetRange().End.Line > 1 || (p.keyScope == boardKeys && nb.IsBoardNode()) {
 					p.sb.WriteByte('\n')
 				}
 			}
@@ -335,25 +374,8 @@ func (p *printer) _map(m *d2ast.Map) {
 		prev = n
 	}
 
-	// draw board nodes
-	for i := 0; i < len(boardNodes); i++ {
-		n := boardNodes[i].Unbox()
-		// if this board is the very first line of the file, don't add an extra newline
-		if n.GetRange().Start.Line != 0 {
-			p.sb.WriteByte('\n')
-		}
-		// if scope only has boards, don't newline the first board
-		if i != 0 || len(m.Nodes) > len(boardNodes) {
-			p.sb.WriteByte('\n')
-		}
-
-		p.sb.WriteString(p.indentStr)
-		p.node(n)
-		prev = n
-	}
-
 	if !m.IsFileMap() {
-		if !m.Range.OneLine() {
+		if !oneLine {
 			p.deindent()
 			p.newline()
 		}
@@ -371,8 +393,9 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 		p.sb.WriteByte('!')
 		p.sb.WriteByte('&')
 	}
+	valueScope := p.keyScope
 	if mk.Key != nil {
-		p.key(mk.Key)
+		valueScope = p.fieldPath(mk.Key)
 	}
 
 	if len(mk.Edges) > 0 {
@@ -380,9 +403,14 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 			p.sb.WriteByte('.')
 		}
 
-		if mk.Key != nil || mk.EdgeIndex != nil || mk.EdgeKey != nil {
+		// A leading * arrow is only recognized inside an edge group.
+		grouped := mk.Key != nil || mk.EdgeIndex != nil || mk.EdgeKey != nil || mk.Edges[0].SrcArrow == "*"
+		if grouped {
 			p.sb.WriteByte('(')
 		}
+		// Edge endpoints always name shapes.
+		parent := p.keyScope
+		p.keyScope = shapeKeys
 		if mk.Edges[0].Src != nil {
 			p.key(mk.Edges[0].Src)
 			p.sb.WriteByte(' ')
@@ -393,7 +421,8 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 				p.sb.WriteByte(' ')
 			}
 		}
-		if mk.Key != nil || mk.EdgeIndex != nil || mk.EdgeKey != nil {
+		p.keyScope = parent
+		if grouped {
 			p.sb.WriteByte(')')
 		}
 
@@ -408,10 +437,7 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 
 	if mk.Primary.Unbox() != nil {
 		p.sb.WriteString(": ")
-		p.node(mk.Primary.Unbox())
-	}
-	if mk.Value.Map != nil && len(mk.Value.Map.Nodes) == 0 {
-		return
+		p.nodeAt(mk.Primary.Unbox(), beforeMap)
 	}
 	if mk.Value.Unbox() != nil {
 		if mk.Primary.Unbox() == nil {
@@ -419,24 +445,37 @@ func (p *printer) mapKey(mk *d2ast.Key) {
 		} else {
 			p.sb.WriteByte(' ')
 		}
+		parent := p.keyScope
+		p.keyScope = valueScope
 		p.node(mk.Value.Unbox())
+		p.keyScope = parent
 	}
+}
+
+// fieldPath follows scopes through dotted assignments just as through nested maps.
+func (p *printer) fieldPath(k *d2ast.KeyPath) keyScope {
+	parent := p.keyScope
+	p.inKey = true
+	for i, part := range k.Path {
+		if i > 0 {
+			p.sb.WriteByte('.')
+		}
+		s := part.Unbox()
+		p.node(s)
+		p.keyScope = p.keyScope.child(d2ast.Keyword(s))
+	}
+	p.inKey = false
+	child := p.keyScope
+	p.keyScope = parent
+	return child
 }
 
 func (p *printer) key(k *d2ast.KeyPath) {
 	p.inKey = true
 	if k != nil {
-		p.path(k.Path)
+		p.path(k.Path, standalone)
 	}
 	p.inKey = false
-}
-
-func (p *printer) edge(e *d2ast.Edge) {
-	if e.Src != nil {
-		p.key(e.Src)
-		p.sb.WriteByte(' ')
-	}
-	p.edgeArrowAndDst(e)
 }
 
 func (p *printer) edgeArrowAndDst(e *d2ast.Edge) {

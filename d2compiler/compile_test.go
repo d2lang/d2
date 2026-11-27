@@ -285,6 +285,19 @@ b: ${x}`), nil)
 	assert.String(t, "b.child", g.Objects[3].AbsID())
 }
 
+func TestNumericLabelWithSubstitution(t *testing.T) {
+	t.Parallel()
+
+	const label = "x.label: 10${unit}"
+	g, _, err := d2compiler.Compile("label.d2", strings.NewReader("vars: {unit: px}\n"+label), nil)
+	assert.Success(t, err)
+	assert.Equal(t, 1, len(g.Objects))
+	assert.Equal(t, "10px", g.Objects[0].Label.Value)
+
+	_, _, err = d2compiler.Compile("label.d2", strings.NewReader(label), nil)
+	tassert.ErrorContains(t, err, `could not resolve variable "unit"`)
+}
+
 func TestCompositeVariableSpreadsRemainValid(t *testing.T) {
 	t.Parallel()
 
@@ -683,7 +696,9 @@ containers: {
   }
 }
 `,
-			expErr: `d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2:3:10: missing value after colon`,
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				assert.String(t, "#ffffff", g.Objects[0].Style.Fill.Value)
+			},
 		},
 		{
 			name: "edge_unquoted_hex",
@@ -694,7 +709,9 @@ containers: {
   }
 }
 `,
-			expErr: `d2/testdata/d2compiler/TestCompile/edge_unquoted_hex.d2:3:10: missing value after colon`,
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				assert.String(t, "#ffffff", g.Edges[0].Style.Fill.Value)
+			},
 		},
 		{
 			name: "blank_underscore",
@@ -726,7 +743,7 @@ containers: {
   Steps
 }
 `,
-			expErr: `d2/testdata/d2compiler/TestCompile/image_children_Steps.d2:4:3: steps must be declared at a board root scope`,
+			expErr: `d2/testdata/d2compiler/TestCompile/image_children_Steps.d2:4:3: image shapes cannot have children.`,
 		},
 		{
 			name: "name-with-dot-underscore",
@@ -2331,7 +2348,12 @@ c: {
 }
 `,
 			},
-			expErr: `d2/testdata/d2compiler/TestCompile/import-classes-boards.d2:10:7: layers must be declared at a board root scope`,
+			assertions: func(t *testing.T, g *d2graph.Graph) {
+				assert.Equal(t, 2, len(g.Layers))
+				assert.Equal(t, 0, len(g.Layers[0].Layers))
+				obj, ok := g.Layers[0].Root.HasChild([]string{"qwer", "layers", "ok", "bok"})
+				assert.True(t, ok && obj.ID == "bok")
+			},
 		},
 		{
 			name: "import_url_link",
@@ -5880,6 +5902,14 @@ vars: {
 }
 hi: 1 ${x}
 `, `d2/testdata/d2compiler/TestCompile2/vars/errors/multi-part-map.d2:7:1: cannot substitute composite variable "x" as part of a string`)
+				},
+			},
+			{
+				name: "quoted-empty",
+				run: func(t *testing.T) {
+					assertCompile(t, `vars: {steps}
+hi: "count: ${steps}"
+`, `d2/testdata/d2compiler/TestCompile2/vars/errors/quoted-empty.d2:2:1: cannot substitute variable without value: "steps"`)
 				},
 			},
 			{

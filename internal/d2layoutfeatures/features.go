@@ -45,7 +45,7 @@ func Check(name string, g *d2graph.Graph) error {
 		}
 
 		if obj.NearKey != nil {
-			_, isKey := g.Root.HasChild(d2graph.Key(obj.NearKey))
+			_, isKey := obj.NearTarget()
 			if isKey {
 				if supported&nearObject == 0 {
 					return fmt.Errorf(`Object "%s" has "near" set to another object, but layout engine "%s" only supports constant values for "near". See https://d2lang.com/tour/layouts/#layout-specific-functionality for more.`, obj.AbsID(), name)

@@ -3,11 +3,11 @@ package d2ir
 import (
 	"context"
 	"errors"
-	"html"
 	"io/fs"
 	"math"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,9 +18,8 @@ import (
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2target"
-	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
-	"github.com/d2lang/d2/lib/textmeasure"
+	"github.com/d2lang/d2/internal/htmlentity"
 )
 
 type globContext struct {
@@ -69,6 +68,8 @@ type compiler struct {
 	// Composite maps may be revisited through valid variable aliases. Report a
 	// rejected cycle once at its source substitution rather than once per alias.
 	reportedCompositeCycles map[*d2ast.Substitution]struct{}
+	scalarResolutions       map[*Scalar]scalarResolution
+	substitutionVisits      map[Node]struct{}
 	utf16Pos                bool
 
 	// Stack of globs that must be recomputed at each new object in and below the current scope.
@@ -77,6 +78,12 @@ type compiler struct {
 	globRefContextStack []*RefContext
 	// Used to check whether ampersands are allowed in the current map.
 	mapRefContextStack   []*RefContext
+	filterScopes         map[*Map]*Map
+	filterWrites         map[*Map]map[*Field]*Scalar
+	collectFilterVars    bool
+	filterImports        []filterImport
+	filterReads          uint64
+	filterOperands       map[filterOperand]filterResult
 	lazyGlobBeingApplied bool
 	replayingSpreadGlobs bool
 
@@ -93,6 +100,9 @@ type compiler struct {
 }
 
 type CompileOptions struct {
+	// Partial returns the IR built so far together with compile errors. It is
+	// for language tooling. A partial IR may be incomplete and must not be rendered.
+	Partial bool
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
 	// AnimateTweens controls sampling of step transitions. Nil follows
@@ -127,6 +137,16 @@ func (c *compiler) errorf(n d2ast.Node, f string, v ...interface{}) {
 	c.err.Errors = append(c.err.Errors, d2parser.Errorf(n, f, v...).(d2ast.Error))
 }
 
+func (c *compiler) initCompilation() {
+	c.err = &d2parser.ParseError{}
+	c.seenImports = make(map[string]struct{})
+	if c.parsedImports == nil {
+		c.parsedImports = make(map[string]*d2ast.Map)
+	}
+	c.importTemplates = make(map[string]*importTemplate)
+	c.reportedCompositeCycles = make(map[*d2ast.Substitution]struct{})
+}
+
 func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 	if opts == nil {
 		opts = &CompileOptions{}
@@ -158,7 +178,6 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	c := &compiler{
-		err:                 &d2parser.ParseError{},
 		ctx:                 ctx,
 		retainTweenBindings: (opts.AnimateTweens == nil || *opts.AnimateTweens) && (opts.AnimateDuration == nil || *opts.AnimateDuration > 0),
 		fs:                  opts.FS,
@@ -166,13 +185,9 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		globExpansion:       globExpansion,
 		edgeExpansion:       edgeExpansion,
 		edgeExpansionWork:   edgeExpansionWork,
-
-		seenImports:             make(map[string]struct{}),
-		parsedImports:           make(map[string]*d2ast.Map),
-		importTemplates:         make(map[string]*importTemplate),
-		reportedCompositeCycles: make(map[*d2ast.Substitution]struct{}),
-		utf16Pos:                opts.UTF16Pos,
+		utf16Pos:            opts.UTF16Pos,
 	}
+	c.initCompilation()
 	m := &Map{}
 	m.initRoot()
 	m.variableExpansion = variableExpansion
@@ -228,6 +243,9 @@ func Compile(ast *d2ast.Map, opts *CompileOptions) (*Map, []string, error) {
 		return nil, nil, err
 	}
 	if !c.err.Empty() {
+		if opts.Partial {
+			return m, c.imports, c.err
+		}
 		return nil, nil, c.err
 	}
 	return m, c.imports, nil
@@ -301,7 +319,11 @@ func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
 	outerNulls := c.spreadNulls
 	outerChecks, outerFields := c.arrayAccess, c.fieldArrayAccess
 	c.spreadNulls, c.arrayAccess, c.fieldArrayAccess = nil, nil, nil
-	c.compileSubstitutionsWalk(m, varsStack, make(map[Node]struct{}), nil)
+	outerResolutions, outerVisits := c.scalarResolutions, c.substitutionVisits
+	c.scalarResolutions = make(map[*Scalar]scalarResolution)
+	c.substitutionVisits = make(map[Node]struct{})
+	c.compileSubstitutionsWalk(m, varsStack, nil)
+	c.scalarResolutions, c.substitutionVisits = outerResolutions, outerVisits
 	c.finishSpreadNulls()
 	for _, check := range c.arrayAccess {
 		if !check.reopened {
@@ -311,7 +333,8 @@ func (c *compiler) compileSubstitutions(m *Map, varsStack []*Map) {
 	c.spreadNulls, c.arrayAccess, c.fieldArrayAccess = outerNulls, outerChecks, outerFields
 }
 
-func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[Node]struct{}, source d2ast.Node) {
+func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, source d2ast.Node) {
+	seen := c.substitutionVisits
 	if c.stopped() {
 		return
 	}
@@ -325,7 +348,7 @@ func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[N
 		if f.Name == nil {
 			continue
 		}
-		if f.Name.ScalarString() == "vars" && f.Name.IsUnquoted() && f.Map() != nil {
+		if d2ast.Keyword(f.Name) == "vars" && f.Map() != nil {
 			varsStack = append([]*Map{f.Map()}, varsStack...)
 		}
 	}
@@ -346,6 +369,14 @@ func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[N
 				i--
 			}
 		}
+		// Whole-value aliases share their original composite, including its
+		// lexical bindings, even if its declaration appears later.
+		scopes := varsStack
+		if f.Composite != nil {
+			if owner, ok := f.Composite.Parent().(*Field); ok && owner != f {
+				scopes = declarationScopes(owner, varsStack)
+			}
+		}
 		if arr, ok := f.Composite.(*Array); ok {
 			if !c.visitSubstitutionNode(arr, f.LastRef().AST(), seen) {
 				return
@@ -355,18 +386,13 @@ func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[N
 					return
 				}
 				if scalar, ok := val.(*Scalar); ok {
-					removed := c.resolveSubstitutions(varsStack, scalar)
-					if removed {
-						i--
-					}
+					c.resolveSubstitutions(scopes, scalar)
 				}
 			}
 		} else if f.Map() != nil {
-			if f.Name != nil && f.Name.ScalarString() == "vars" && f.Name.IsUnquoted() {
-				c.compileSubstitutionsWalk(f.Map(), varsStack, seen, f.LastRef().AST())
+			c.compileSubstitutionsWalk(f.Map(), scopes, f.LastRef().AST())
+			if f.Name != nil && d2ast.Keyword(f.Name) == "vars" {
 				c.validateConfigs(f.Map().getFieldIndexed(d2ast.FlatUnquotedString("d2-config")))
-			} else {
-				c.compileSubstitutionsWalk(f.Map(), varsStack, seen, f.LastRef().AST())
 			}
 		}
 	}
@@ -384,7 +410,7 @@ func (c *compiler) compileSubstitutionsWalk(m *Map, varsStack []*Map, seen map[N
 			c.resolveSubstitutions(varsStack, e)
 		}
 		if e.Map() != nil {
-			c.compileSubstitutionsWalk(e.Map(), varsStack, seen, e.LastRef().AST())
+			c.compileSubstitutionsWalk(e.Map(), varsStack, e.LastRef().AST())
 		}
 	}
 }
@@ -461,7 +487,7 @@ func (c *compiler) validateConfigs(configs *Field) {
 			if err != nil || math.IsNaN(scale) || math.IsInf(scale, 0) || (scale <= 0 && scale != -1) || f.Composite != nil {
 				c.errorf(f.LastRef().AST(), `expected a finite positive scale or -1 for automatic sizing, got %q`, val)
 			}
-		case "sketch", "isometric", "center", "force-appendix":
+		case "sketch", "center", "force-appendix":
 			_, err := strconv.ParseBool(val)
 			if err != nil || (f.Name.ScalarString() == "force-appendix" && f.Composite != nil) {
 				c.errorf(f.LastRef().AST(), `expected a boolean for "%s", got "%s"`, f.Name.ScalarString(), val)
@@ -473,14 +499,8 @@ func (c *compiler) validateConfigs(configs *Field) {
 				continue
 			}
 		case "theme-id", "dark-theme-id":
-			valInt, err := strconv.Atoi(val)
-			if err != nil {
-				c.errorf(f.LastRef().AST(), `expected an integer for "%s", got "%s"`, f.Name.ScalarString(), val)
-				continue
-			}
-			if d2themescatalog.Find(int64(valInt)) == (d2themes.Theme{}) {
-				c.errorf(f.LastRef().AST(), `%d is not a valid theme ID`, valInt)
-				continue
+			if _, err := d2themescatalog.Resolve(val); err != nil {
+				c.errorf(f.LastRef().AST(), "%s: %v", f.Name.ScalarString(), err)
 			}
 		case "pad":
 			_, err := strconv.Atoi(val)
@@ -528,16 +548,51 @@ func (c *compiler) applyCompositeSubstitution(f *Field, value Composite, order f
 	}
 }
 
+type scalarResolution uint8
+
+const (
+	resolvingScalar scalarResolution = iota + 1
+	resolvedScalar
+	failedScalar
+)
+
+func hasSubstitution(s d2ast.Scalar) bool {
+	var boxes []d2ast.InterpolationBox
+	switch s := s.(type) {
+	case *d2ast.UnquotedString:
+		boxes = s.Value
+	case *d2ast.DoubleQuotedString:
+		boxes = s.Value
+	case *d2ast.BlockString:
+		return strings.Contains(s.Value, "${")
+	}
+	for _, box := range boxes {
+		if box.Substitution != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedField bool) {
-	if c.stopped() {
+	primary := node.Primary()
+	if c.stopped() || !hasSubstitution(primary.Value) || c.scalarResolutions[primary] != 0 {
 		return false
 	}
+	c.scalarResolutions[primary] = resolvingScalar
+	errorsBefore := len(c.err.Errors)
+	defer func() {
+		if len(c.err.Errors) > errorsBefore || c.scalarResolutions[primary] == failedScalar {
+			c.scalarResolutions[primary] = failedScalar
+		} else {
+			c.scalarResolutions[primary] = resolvedScalar
+		}
+	}()
 	markdownOuterStart := -1
 	if c.retainTweenBindings {
 		markdownOuterStart = c.saveTweenBinding(node, varsStack)
 	}
 	var subbed bool
-	var resolvedField *Field
 
 	switch s := node.Primary().Value.(type) {
 	case *d2ast.UnquotedString:
@@ -546,18 +601,13 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				return
 			}
 			if box.Substitution != nil {
-				for i, vars := range varsStack {
-					if c.stopped() {
-						return
-					}
-					resolvedField = c.resolveSubstitution(vars, node, box.Substitution, i == 0)
-					if resolvedField != nil {
-						if resolvedField.Primary() != nil {
-							if _, ok := resolvedField.Primary().Value.(*d2ast.Null); ok {
-								resolvedField = nil
-							}
-						}
-						break
+				resolvedField, _, ok := c.readVariable(varsStack, node, box.Substitution)
+				if !ok {
+					return
+				}
+				if resolvedField != nil && resolvedField.Primary() != nil {
+					if _, ok := resolvedField.Primary().Value.(*d2ast.Null); ok {
+						resolvedField = nil
 					}
 				}
 				if resolvedField == nil {
@@ -569,6 +619,20 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 						(box.Substitution.Spread && c.spreadCompositeReferencesNode(resolvedField.Composite, node, varsStack)) {
 						c.reportCompositeCycle(box.Substitution)
 						return
+					}
+				}
+				// A spread, edge or overlay copies child expressions. Bind a
+				// forward-declared map before those copies leave its scope.
+				if m := resolvedField.Map(); m != nil && copiesSubstitutionMap(node, box.Substitution.Spread) {
+					if _, visited := c.substitutionVisits[m]; !visited && !(box.Substitution.Spread && hasUnresolvedMapSpread(m)) {
+						c.compileSubstitutionsWalk(m, compositeDeclarationScopes(resolvedField, varsStack), box.Substitution)
+						if c.stopped() {
+							return
+						}
+						if compositeContainsNode(m, node) {
+							c.reportCompositeCycle(box.Substitution)
+							return
+						}
 					}
 				}
 				if box.Substitution.Spread {
@@ -660,8 +724,16 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 						if !c.reserveVariableExpansion(box.Substitution, int64(len(resolvedField.Primary().Value.ScalarString()))) {
 							return
 						}
-						node.Primary().Value = resolvedField.Primary().Value
-						node.Primary().TweenOffset = resolvedField.Primary().TweenOffset
+						value := resolvedField.Primary()
+						node.Primary().Value = value.Value
+						if block, ok := value.Value.(*d2ast.BlockString); ok {
+							// The two labels can resolve again in different import scopes.
+							copy := *block
+							node.Primary().Value = &copy
+						}
+						node.Primary().markdown = value.markdown
+						node.Primary().globPattern = value.globPattern
+						node.Primary().TweenOffset = value.TweenOffset
 					} else {
 						s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
 						subbed = true
@@ -694,10 +766,19 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 			}
 		}
 		if subbed {
-			if !c.reserveVariableExpansion(node.LastRef().AST(), interpolationBytes(s.Value)) {
+			units := interpolationBytes(s.Value)
+			if s.Pattern != nil {
+				// At most one literal span per parsed token plus the tail.
+				addVariableExpansionUnits(&units, len(s.Pattern)+1)
+			}
+			if !c.reserveVariableExpansion(node.LastRef().AST(), units) {
 				return
 			}
+			boxes := s.Value
 			s.Coalesce()
+			if s.Pattern != nil {
+				node.Primary().globPattern = makeInterpolatedGlobPattern(s.ScalarString(), boxes)
+			}
 		}
 	case *d2ast.DoubleQuotedString:
 		for i, box := range s.Value {
@@ -705,26 +786,27 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				return
 			}
 			if box.Substitution != nil {
-				for i, vars := range varsStack {
-					if c.stopped() {
-						return
-					}
-					resolvedField = c.resolveSubstitution(vars, node, box.Substitution, i == 0)
-					if resolvedField != nil {
-						break
-					}
+				resolvedField, _, ok := c.readVariable(varsStack, node, box.Substitution)
+				if !ok {
+					return
 				}
 				if resolvedField == nil {
 					c.errorf(node.LastRef().AST(), `could not resolve variable "%s"`, strings.Join(box.Substitution.IDA(), "."))
 					return
 				}
-				if resolvedField.Primary() == nil && resolvedField.Composite != nil {
-					c.errorf(node.LastRef().AST(), `cannot substitute map variable "%s" in quotes`, strings.Join(box.Substitution.IDA(), "."))
+				primary := resolvedField.Primary()
+				if primary == nil {
+					name := strings.Join(box.Substitution.IDA(), ".")
+					if resolvedField.Composite == nil {
+						c.errorf(node.LastRef().AST(), `cannot substitute variable without value: "%s"`, name)
+					} else {
+						c.errorf(node.LastRef().AST(), `cannot substitute map variable "%s" in quotes`, name)
+					}
 					return
 				}
-				s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
+				s.Value[i].String = go2.Pointer(primary.Value.ScalarString())
 				if len(s.Value) == 1 {
-					node.Primary().TweenOffset = resolvedField.Primary().TweenOffset
+					node.Primary().TweenOffset = primary.TweenOffset
 				}
 				subbed = true
 			}
@@ -736,54 +818,11 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 			s.Coalesce()
 		}
 	case *d2ast.BlockString:
-		if !strings.Contains(s.Value, "${") {
-			return
+		if strings.Contains(s.Value, "${") {
+			s.Value = c.resolveMarkdown(node, s.Value, varsStack, markdownOuterStart)
 		}
-		variables := make(map[string]string)
-		seen := make(map[Node]struct{})
-		var outer map[string]string
-		for i, vars := range varsStack {
-			dest := variables
-			if markdownOuterStart >= 0 && i >= markdownOuterStart {
-				if outer == nil {
-					outer = make(map[string]string)
-				}
-				dest = outer
-			}
-			c.collectVariables(vars, dest, seen, node.LastRef().AST())
-		}
-		if outer != nil {
-			// A sampled fragment may leave its module. Remember the lexical
-			// values during the ordinary import pass, collecting each scope once.
-			node.Primary().binding.markdownOuter = outer
-			for name, value := range outer {
-				variables[name] = value
-			}
-		}
-		if c.stopped() {
-			return
-		}
-		s.Value = c.replaceMarkdownVariables(node, s.Value, variables)
 	}
 	return removedField
-}
-
-func (c *compiler) replaceMarkdownVariables(node Node, value string, variables map[string]string) string {
-	preprocessedValue, expandedBytes, err := textmeasure.ReplaceSubstitutionsMarkdownBounded(c.ctx, value, variables, c.variableExpansion.remaining())
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			c.contextErr = err
-			c.halted = true
-			return value
-		}
-		c.errorf(node.LastRef().AST(), "variable substitution expansion exceeds limit of %d work units", c.variableExpansion.limit)
-		c.halted = true
-		return value
-	}
-	if expandedBytes > 0 && !c.reserveVariableExpansion(node.LastRef().AST(), expandedBytes) {
-		return value
-	}
-	return preprocessedValue
 }
 
 func interpolationBytes(values []d2ast.InterpolationBox) int64 {
@@ -811,6 +850,17 @@ func (c *compiler) reportCompositeCycle(substitution *d2ast.Substitution) {
 	}
 	c.reportedCompositeCycles[substitution] = struct{}{}
 	c.errorf(substitution, `cyclic composite variable reference "%s"`, strings.Join(substitution.IDA(), "."))
+}
+
+func copiesSubstitutionMap(node Node, spread bool) bool {
+	switch n := node.(type) {
+	case *Edge:
+		return true
+	case *Field:
+		return spread || n.Map() != nil
+	default:
+		return false
+	}
 }
 
 func substitutionUsesComposite(node Node, spread bool) bool {
@@ -857,15 +907,9 @@ func (c *compiler) spreadCompositeReferencesNode(composite Composite, target Nod
 				if box.Substitution == nil || !box.Substitution.Spread {
 					continue
 				}
-				for i, vars := range varsStack {
-					resolved := c.resolveSubstitution(vars, candidate, box.Substitution, i == 0)
-					if resolved == nil {
-						continue
-					}
-					if resolved.Composite != nil {
-						stack = append(stack, resolved.Composite)
-					}
-					break
+				resolved, _ := c.resolveVariable(varsStack, candidate, box.Substitution)
+				if resolved != nil && resolved.Composite != nil {
+					stack = append(stack, resolved.Composite)
 				}
 			}
 		}
@@ -958,103 +1002,120 @@ func walkComposite(composite Composite, visit func(Node) bool) bool {
 	return false
 }
 
-func (c *compiler) collectVariables(vars *Map, variables map[string]string, seen map[Node]struct{}, source d2ast.Node) {
-	if vars == nil || c.stopped() {
-		return
+// Bind a dependency in its own scope before taking a scalar value or
+// descending through a forward map alias.
+func (c *compiler) resolveVariableField(scopes []*Map, node Node, f *Field, source d2ast.Node) bool {
+	primary := f.Primary()
+	if primary == nil {
+		return true
 	}
-	if !c.visitSubstitutionNode(vars, source, seen) {
-		return
+	switch c.scalarResolutions[primary] {
+	case resolvingScalar:
+		c.errorf(source, `cyclic variable reference "%s"`, f.Name.ScalarString())
+	case 0:
+		if hasSubstitution(primary.Value) {
+			if !c.reserveVariableExpansion(source, 1) {
+				return false
+			}
+			c.resolveSubstitutions(declarationScopes(f, scopes), f)
+		}
 	}
-	for _, f := range vars.Fields {
-		if c.stopped() {
-			return
+	if state := c.scalarResolutions[primary]; state == resolvingScalar || state == failedScalar {
+		c.scalarResolutions[node.Primary()] = failedScalar
+		return false
+	}
+	return true
+}
+
+func compositeDeclarationScopes(f *Field, scopes []*Map) []*Map {
+	if owner, ok := f.Composite.Parent().(*Field); ok {
+		f = owner
+	}
+	return declarationScopes(f, scopes)
+}
+
+// Rebuild the local part of a declaration's environment. The shared
+// suffix can include outer scopes of a detached board or animation frame.
+func declarationScopes(f *Field, scopes []*Map) []*Map {
+	var local []*Map
+	for m := ParentMap(f); m != nil; m = ParentMap(m) {
+		if i := slices.Index(scopes, m); i >= 0 {
+			return append(local, scopes[i:]...)
 		}
-		if !c.visitSubstitutionNode(f, source, seen) {
-			return
+		if vars := m.getFieldIndexed(d2ast.FlatUnquotedString("vars")); vars != nil && d2ast.Keyword(vars.Name) == "vars" && vars.Map() != nil {
+			local = append(local, vars.Map())
 		}
-		if f.Primary() != nil {
-			name := f.Name.ScalarString()
-			if !c.reserveVariableExpansion(source, markdownVariablePatternBytes(int64(len(name)))) {
-				return
-			}
-			variables[name] = f.Primary().Value.ScalarString()
-		} else if f.Map() != nil {
-			nestedVars := make(map[string]string)
-			c.collectVariables(f.Map(), nestedVars, seen, source)
-			if c.stopped() {
-				return
-			}
-			name := f.Name.ScalarString()
-			for k, v := range nestedVars {
-				if !c.reserveVariableExpansion(source, markdownVariablePatternBytes(joinedVariableNameBytes(name, k))) {
-					return
+	}
+	return local
+}
+
+// Reserved keys historically allowed distinct quoted and unquoted bindings.
+// Search every lexical scope for the original spelling before accepting the
+// other spelling. This preserves both shadowing and existing templates.
+func (c *compiler) resolveVariable(scopes []*Map, node Node, sub *d2ast.Substitution) (*Field, int) {
+	f, index, _ := c.findVariable(scopes, node, sub, false)
+	return f, index
+}
+
+func (c *compiler) readVariable(scopes []*Map, node Node, sub *d2ast.Substitution) (*Field, int, bool) {
+	return c.findVariable(scopes, node, sub, true)
+}
+
+func (c *compiler) findVariable(scopes []*Map, node Node, sub *d2ast.Substitution, read bool) (*Field, int, bool) {
+	for _, fallback := range []bool{false, true} {
+		for i, scope := range scopes {
+			for j, p := range sub.Path {
+				if c.stopped() {
+					return nil, -1, false
 				}
-				variables[name+"."+k] = v
-			}
-			c.collectVariables(f.Map(), variables, seen, source)
-			if c.stopped() {
-				return
+				if scope == nil {
+					break
+				}
+				f := lookupVariableField(scope, p.Unbox(), fallback)
+				if f == nil {
+					break
+				}
+				last := j == len(sub.Path)-1
+				// A declaration can extend its outer binding (x: ${x}-suffix)
+				// or read one of its own children (db: ${db.host}).
+				if last && i == 0 && f == node {
+					break
+				}
+				// A map can receive children from its primary alias. Its
+				// existing children remain readable while evaluating that alias.
+				if read && f != node {
+					openMap := !last && f.Map() != nil && c.scalarResolutions[f.Primary()] == resolvingScalar
+					if !openMap && !c.resolveVariableField(scopes[i:], node, f, sub) {
+						return nil, i, false
+					}
+				}
+				if last {
+					return f, i, true
+				}
+				scope = f.Map()
+				if read && scope != nil && len(scope.pendingSpreads) != 0 {
+					if _, visited := c.substitutionVisits[scope]; !visited {
+						c.compileSubstitutionsWalk(scope, compositeDeclarationScopes(f, scopes[i:]), sub)
+					}
+				}
 			}
 		}
 	}
+	return nil, -1, true
 }
 
-func markdownVariablePatternBytes(nameBytes int64) int64 {
-	const maxInt64 = int64(^uint64(0) >> 1)
-	if nameBytes >= maxInt64-3 {
-		return maxInt64
+func lookupVariableField(scope *Map, name d2ast.String, fallback bool) *Field {
+	f := scope.getFieldIndexed(name)
+	if f != nil || !fallback {
+		return f
 	}
-	return nameBytes + 3 // "${" + name + "}"
-}
-
-func joinedVariableNameBytes(prefix, suffix string) int64 {
-	const maxInt64 = int64(^uint64(0) >> 1)
-	total := int64(len(prefix))
-	if total == maxInt64 || int64(len(suffix)) >= maxInt64-total {
-		return maxInt64
-	}
-	return total + 1 + int64(len(suffix))
-}
-
-func (c *compiler) resolveSubstitution(vars *Map, node Node, substitution *d2ast.Substitution, isCurrentScopeVars bool) *Field {
-	if vars == nil {
+	if _, reserved := d2ast.ReservedKeywords[strings.ToLower(name.ScalarString())]; !reserved {
 		return nil
 	}
-
-	fieldNode, fok := node.(*Field)
-	parent := ParentField(node)
-
-	for i, p := range substitution.Path {
-		f := vars.getFieldIndexed(p.Unbox())
-		if f == nil {
-			return nil
-		}
-		// Consider this case:
-		//
-		// ```
-		// vars: {
-		//   x: a
-		// }
-		// hi: {
-		//   vars: {
-		//     x: ${x}-b
-		//   }
-		//   yo: ${x}
-		// }
-		// ```
-		//
-		// When resolving hi.vars.x, the vars stack includes itself.
-		// So this next if clause says, "ignore if we're using the current scope's vars to try to resolve a substitution that requires a var from further in the stack"
-		if fok && fieldNode.Name != nil && fieldNode.Name.ScalarString() == p.Unbox().ScalarString() && isCurrentScopeVars && parent.Name.ScalarString() == "vars" && parent.Name.IsUnquoted() {
-			return nil
-		}
-
-		if i == len(substitution.Path)-1 {
-			return f
-		}
-		vars = f.Map()
-	}
-	return nil
+	key := makeFieldIndexKey(scope.fieldName(name, false))
+	key.unquotedReserved = !key.unquotedReserved
+	scope.ensureFieldIndex()
+	return scope.fieldIndex[key]
 }
 
 func (c *compiler) overlay(base *Map, f *Field) {
@@ -1098,13 +1159,14 @@ func (c *compiler) ampersandFilterMap(dst *Map, ast, scopeAST *d2ast.Map) bool {
 	for _, n := range ast.Nodes {
 		switch {
 		case n.MapKey != nil:
-			ok := c.ampersandFilter(&RefContext{
+			filter := globFilter{compiler: c}
+			ok := filter.ampersandFilter(&RefContext{
 				Key:      n.MapKey,
 				Scope:    ast,
 				ScopeMap: dst,
 				ScopeAST: scopeAST,
 			})
-			if n.MapKey.NotAmpersand {
+			if n.MapKey.NotAmpersand && !filter.pending {
 				ok = !ok
 			}
 			if !ok {
@@ -1258,7 +1320,9 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 				c.ensureGlobContext(gctx2.refctx)
 			}
 
-			scenariosField := impn.Map().getFieldIndexed(d2ast.FlatUnquotedString("scenarios"))
+			// Only actual board groups inherit the destination. An imported
+			// shape can have ordinary children named scenarios and steps.
+			scenariosField := impn.Map().lookupField(d2ast.FlatUnquotedString("scenarios"))
 			if scenariosField != nil && scenariosField.Map() != nil {
 				for _, sf := range scenariosField.Map().Fields {
 					if c.stopped() {
@@ -1268,7 +1332,7 @@ func (c *compiler) compileMap(dst *Map, ast, scopeAST *d2ast.Map) {
 				}
 			}
 
-			stepsField := impn.Map().getFieldIndexed(d2ast.FlatUnquotedString("steps"))
+			stepsField := impn.Map().lookupField(d2ast.FlatUnquotedString("steps"))
 			if stepsField != nil && stepsField.Map() != nil {
 				for _, sf := range stepsField.Map().Fields {
 					if c.stopped() {
@@ -1537,11 +1601,27 @@ func (c *compiler) compileField(dst *Map, kp *d2ast.KeyPath, refctx *RefContext)
 		if c.stopped() {
 			return
 		}
+		before := f.Primary()
 		c._compileField(f, refctx)
+		if c.filterReads != 0 && f.Primary() != before && len(c.globRefContextStack) > 0 && IsVar(f) {
+			c.updateFilterVariable(f)
+		}
 	}
 }
 
-func (c *compiler) ampersandFilter(refctx *RefContext) bool {
+// Filter-only names such as src and leaf retain their own spelling rules.
+func globFilterKey(s d2ast.String) string {
+	if !s.IsUnquoted() {
+		return ""
+	}
+	if keyword := d2ast.Keyword(s); keyword != "" {
+		return keyword
+	}
+	return s.ScalarString()
+}
+
+func (evaluation *globFilter) ampersandFilter(refctx *RefContext) bool {
+	c := evaluation.compiler
 	if !refctx.Key.Ampersand && !refctx.Key.NotAmpersand {
 		return true
 	}
@@ -1558,7 +1638,25 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		return false
 	}
 
-	firstPart := keyPath.Path[0].Unbox().ScalarString()
+	filter := refctx.Key.Value.ScalarBox().Unbox()
+	if filter == nil {
+		c.errorf(refctx.Key, "glob filters cannot be composites")
+		return false
+	}
+
+	if hasSubstitution(filter) {
+		rule := c.mapRefContextStack[len(c.mapRefContextStack)-1]
+		operand := &Field{
+			parent:     rule.ScopeMap,
+			References: []*FieldReference{{Context_: refctx, String: keyPath.Last().Unbox()}},
+		}
+		filter = evaluation.operand(&Scalar{parent: operand, Value: filter}, rule.ScopeMap)
+		if filter == nil {
+			return false
+		}
+	}
+
+	firstPart := globFilterKey(keyPath.Path[0].Unbox())
 	if (firstPart == "src" || firstPart == "dst") && len(keyPath.Path) > 1 {
 		if len(c.mapRefContextStack) == 0 {
 			return false
@@ -1578,17 +1676,19 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 
 		rootMap := RootMap(refctx.ScopeMap)
 		node := rootMap.getFieldIndexed(nodePath...)
-		if node == nil || node.Map() == nil {
+		if node == nil {
 			return false
 		}
 
-		secondPart := keyPath.Path[1].Unbox().ScalarString()
-		value := refctx.Key.Value.ScalarBox().Unbox().ScalarString()
+		secondPart := globFilterKey(keyPath.Path[1].Unbox())
 
-		if len(keyPath.Path) == 2 && c._ampersandPropertyFilter(secondPart, value, node, refctx.Key) {
+		if len(keyPath.Path) == 2 && evaluation.propertyFilter(secondPart, filter, node, refctx.Key) {
 			return true
 		}
 
+		if node.Map() == nil {
+			return false
+		}
 		propKeyPath := &d2ast.KeyPath{
 			Path: keyPath.Path[1:],
 		}
@@ -1610,7 +1710,7 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		}
 
 		for _, f := range fa {
-			if c._ampersandFilter(f, propRefCtx) {
+			if evaluation.matches(f, filter) {
 				return true
 			}
 		}
@@ -1623,7 +1723,7 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		return false
 	}
 	if len(fa) == 0 {
-		if refctx.Key.Value.ScalarBox().Unbox() != nil && refctx.Key.Value.ScalarBox().Unbox().ScalarString() == "*" {
+		if filter.ScalarString() == "*" {
 			return false
 		}
 		// The field/edge has no value for this filter
@@ -1631,68 +1731,23 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 		// So we make a fake field for the default
 		// NOTE: this does not apply to things that themes control, like stroke and fill
 		// Nor does it apply to layout things like width and height
-		switch refctx.Key.Key.Last().ScalarString() {
+		last := globFilterKey(refctx.Key.Key.Last().Unbox())
+		switch last {
 		case "shape":
-			f := &Field{
-				Primary_: &Scalar{
-					Value: d2ast.FlatUnquotedString("rectangle"),
-				},
-			}
-			return c._ampersandFilter(f, refctx)
+			return matchesFilterValue(d2ast.FlatUnquotedString("rectangle"), filter)
 		case "border-radius", "stroke-dash":
-			f := &Field{
-				Primary_: &Scalar{
-					Value: d2ast.FlatUnquotedString("0"),
-				},
-			}
-			return c._ampersandFilter(f, refctx)
+			return matchesFilterValue(d2ast.FlatUnquotedString("0"), filter)
 		case "opacity":
-			f := &Field{
-				Primary_: &Scalar{
-					Value: d2ast.FlatUnquotedString("1"),
-				},
-			}
-			return c._ampersandFilter(f, refctx)
+			return matchesFilterValue(d2ast.FlatUnquotedString("1"), filter)
 		case "stroke-width":
-			f := &Field{
-				Primary_: &Scalar{
-					Value: d2ast.FlatUnquotedString("2"),
-				},
-			}
-			return c._ampersandFilter(f, refctx)
+			return matchesFilterValue(d2ast.FlatUnquotedString("2"), filter)
 		case "icon", "tooltip", "link":
-			f := &Field{
-				Primary_: &Scalar{
-					Value: d2ast.FlatUnquotedString(""),
-				},
-			}
-			return c._ampersandFilter(f, refctx)
+			return matchesFilterValue(d2ast.FlatUnquotedString(""), filter)
 		case "shadow", "multiple", "3d", "animated", "filled":
-			f := &Field{
-				Primary_: &Scalar{
-					Value: d2ast.FlatUnquotedString("false"),
-				},
-			}
-			return c._ampersandFilter(f, refctx)
+			return matchesFilterValue(d2ast.FlatUnquotedString("false"), filter)
 
 		case "label":
-			f := &Field{}
-			n := refctx.ScopeMap.Parent()
-			if n.Primary() == nil {
-				switch n := n.(type) {
-				case *Field:
-					// The label value for fields is their key value
-					f.Primary_ = &Scalar{
-						Value: n.Name,
-					}
-				case *Edge:
-					// But for edges, it's nothing
-					return false
-				}
-			} else {
-				f.Primary_ = n.Primary()
-			}
-			return c._ampersandFilter(f, refctx)
+			return evaluation.labelMatches(refctx.ScopeMap.Parent(), filter)
 		case "src":
 			if len(c.mapRefContextStack) == 0 {
 				return false
@@ -1702,8 +1757,6 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 			if edge == nil {
 				return false
 			}
-
-			filterValue := refctx.Key.Value.ScalarBox().Unbox().ScalarString()
 
 			var srcParts []string
 			for _, part := range edge.ID.SrcPath {
@@ -1727,7 +1780,7 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 
 			srcPath := strings.Join(srcParts, ".")
 
-			return srcPath == filterValue
+			return srcPath == filter.ScalarString()
 
 		case "dst":
 			if len(c.mapRefContextStack) == 0 {
@@ -1738,8 +1791,6 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 			if edge == nil {
 				return false
 			}
-
-			filterValue := refctx.Key.Value.ScalarBox().Unbox().ScalarString()
 
 			var dstParts []string
 			for _, part := range edge.ID.DstPath {
@@ -1764,19 +1815,17 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 			}
 			dstPath := strings.Join(dstParts, ".")
 
-			return dstPath == filterValue
+			return dstPath == filter.ScalarString()
 		default:
 			parent := refctx.ScopeMap.Parent()
 			if field, ok := parent.(*Field); ok {
-				propName := refctx.Key.Key.Last().ScalarString()
-				value := refctx.Key.Value.ScalarBox().Unbox().ScalarString()
-				return c._ampersandPropertyFilter(propName, value, field, refctx.Key)
+				return evaluation.propertyFilter(last, filter, field, refctx.Key)
 			}
 			return false
 		}
 	}
 	for _, f := range fa {
-		ok := c._ampersandFilter(f, refctx)
+		ok := evaluation.matches(f, filter)
 		if !ok {
 			return false
 		}
@@ -1785,7 +1834,9 @@ func (c *compiler) ampersandFilter(refctx *RefContext) bool {
 }
 
 // handles filters that are not based on fields
-func (c *compiler) _ampersandPropertyFilter(propName string, value string, node *Field, key *d2ast.Key) bool {
+func (evaluation *globFilter) propertyFilter(propName string, filter d2ast.Scalar, node *Field, key *d2ast.Key) bool {
+	c := evaluation.compiler
+	value := filter.ScalarString()
 	switch propName {
 	case "level":
 		levelVal, err := strconv.Atoi(value)
@@ -1828,57 +1879,52 @@ func (c *compiler) _ampersandPropertyFilter(propName string, value string, node 
 		}
 		return isConnected == boolVal
 	case "label":
-		f := &Field{}
-		if node.Primary() == nil {
-			f.Primary_ = &Scalar{
-				Value: node.Name,
-			}
-		} else {
-			f.Primary_ = node.Primary()
-		}
-		propKey := &d2ast.Key{
-			Key:   key.Key,
-			Value: key.Value,
-		}
-		propRefCtx := &RefContext{
-			Key: propKey,
-		}
-		return c._ampersandFilter(f, propRefCtx)
+		return evaluation.labelMatches(node, filter)
 	}
 	return false
 }
 
-func (c *compiler) _ampersandFilter(f *Field, refctx *RefContext) bool {
-	if refctx.Key.Value.ScalarBox().Unbox() == nil {
-		c.errorf(refctx.Key, "glob filters cannot be composites")
-		return false
+func (evaluation *globFilter) labelMatches(node Node, filter d2ast.Scalar) bool {
+	if primary := node.Primary(); primary != nil {
+		value := evaluation.scalar(primary, false)
+		if value != nil || evaluation.pending {
+			return matchesFilterValue(value, filter)
+		}
 	}
+	// A label-less shape uses its ID, including a map-only variable.
+	if field, ok := node.(*Field); ok {
+		return matchesFilterValue(field.Name, filter)
+	}
+	return false
+}
 
+func (evaluation *globFilter) matches(f *Field, filter d2ast.Scalar) bool {
 	if a, ok := f.Composite.(*Array); ok {
 		for _, v := range a.Values {
 			if s, ok := v.(*Scalar); ok {
-				if refctx.Key.Value.ScalarBox().Unbox().ScalarString() == s.Value.ScalarString() {
+				if value := evaluation.scalar(s, false); value != nil && filter.ScalarString() == value.ScalarString() {
 					return true
 				}
 			}
 		}
 	}
-
 	if f.Primary_ == nil {
 		return false
 	}
+	return matchesFilterValue(evaluation.scalar(f.Primary_, false), filter)
+}
 
-	us, ok := refctx.Key.Value.ScalarBox().Unbox().(*d2ast.UnquotedString)
-
-	if ok && us.Pattern != nil {
-		return matchPattern(f.Primary_.Value.ScalarString(), us.Pattern)
-	} else {
-		if refctx.Key.Value.ScalarBox().Unbox().ScalarString() != f.Primary_.Value.ScalarString() {
-			return false
-		}
+func matchesFilterValue(value, filter d2ast.Scalar) bool {
+	if value == nil {
+		return false
 	}
-
-	return true
+	if operand, ok := filter.(interpolatedGlobOperand); ok {
+		return operand.matches(value.ScalarString())
+	}
+	if us, ok := filter.(*d2ast.UnquotedString); ok && us.Pattern != nil {
+		return matchPattern(value.ScalarString(), us.Pattern)
+	}
+	return filter.ScalarString() == value.ScalarString()
 }
 
 func (c *compiler) _compileField(f *Field, refctx *RefContext) {
@@ -2098,7 +2144,7 @@ func (c *compiler) _compileField(f *Field, refctx *RefContext) {
 		}
 		c.setFieldPrimary(f, refctx.Key.Value.ScalarBox().Unbox())
 		// If the link is a board, we need to transform it into an absolute path.
-		if f.Name.ScalarString() == "link" && f.Name.IsUnquoted() {
+		if d2ast.Keyword(f.Name) == "link" {
 			c.compileLink(f, refctx)
 		}
 	}
@@ -2130,14 +2176,14 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 		if f.Name == nil {
 			continue
 		}
-		if f.Name.ScalarString() == "link" && f.Name.IsUnquoted() {
+		if d2ast.Keyword(f.Name) == "link" {
 			if nodeBoardKind != "" {
 				c.errorf(f.LastRef().AST(), "a board itself cannot be linked; only objects within a board can be linked")
 				continue
 			}
 			val := f.Primary().Value.ScalarString()
 
-			u, err := url.Parse(html.UnescapeString(val))
+			u, err := url.Parse(htmlentity.Unescape(val))
 			isRemote := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
 			if isRemote {
 				continue
@@ -2165,17 +2211,16 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 			}
 
 			extendedIDA := append(importIDA, linkIDA[1:]...)
-			kp := d2ast.MakeKeyPathString(extendedIDA)
-			s := d2format.Format(kp)
+			s := formatBoardPath(extendedIDA)
 			f.Primary_.Value = d2ast.MakeValueBox(d2ast.FlatUnquotedString(s)).ScalarBox().Unbox()
 		}
-		if f.Name.ScalarString() == "icon" && f.Name.IsUnquoted() && f.Primary() != nil {
+		if d2ast.Keyword(f.Name) == "icon" && f.Primary() != nil {
 			val := f.Primary().Value.ScalarString()
 			// It's likely a substitution
 			if val == "" {
 				continue
 			}
-			u, err := url.Parse(html.UnescapeString(val))
+			u, err := url.Parse(htmlentity.Unescape(val))
 			isRemoteImg := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
 			if isRemoteImg {
 				continue
@@ -2245,8 +2290,22 @@ func (c *compiler) compileLink(f *Field, refctx *RefContext) {
 
 	// Create the absolute path by appending scope path with value specified
 	scopeIDA = append(scopeIDA, linkIDA...)
-	kp := d2ast.MakeKeyPathString(scopeIDA)
-	f.Primary_.Value = d2ast.FlatUnquotedString(d2format.Format(kp))
+	f.Primary_.Value = d2ast.FlatUnquotedString(formatBoardPath(scopeIDA))
+}
+
+// Format a board path like a dotted declaration so a board named WIDTH keeps
+// its spelling in a link such as root.layers.WIDTH.
+func formatBoardPath(path []d2ast.String) string {
+	// "root" and unresolved parent references locate the board scope. Only
+	// the remaining path is a declaration relative to that board's root.
+	var prefix strings.Builder
+	for len(path) > 1 && path[0].IsUnquoted() &&
+		(path[0].ScalarString() == "_" || (prefix.Len() == 0 && path[0].ScalarString() == "root")) {
+		prefix.WriteString(path[0].ScalarString())
+		prefix.WriteByte('.')
+		path = path[1:]
+	}
+	return prefix.String() + d2format.Format(&d2ast.Key{Key: d2ast.MakeKeyPathString(path)})
 }
 
 func (c *compiler) compileEdges(refctx *RefContext) {
@@ -2598,8 +2657,7 @@ func (m *Map) removeSuspendedFields() {
 		if m.Fields[i].Name == nil {
 			continue
 		}
-		_, isReserved := d2ast.ReservedKeywords[m.Fields[i].Name.ScalarString()]
-		if isReserved {
+		if d2ast.Keyword(m.Fields[i].Name) != "" {
 			continue
 		}
 		if m.Fields[i].suspended {

@@ -7,21 +7,23 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeCallout struct {
-	*baseShape
-}
-
 const (
 	defaultTipWidth  = 30.
 	defaultTipHeight = 45.
 )
 
+var calloutKind = shapeKind{
+	typ:             CALLOUT_TYPE,
+	paddingX:        defaultPadding,
+	paddingY:        defaultPadding / 2,
+	innerBox:        calloutInnerBox,
+	dimensionsToFit: calloutDimensionsToFit,
+	path:            calloutPath,
+	trace:           calloutTrace,
+}
+
 func NewCallout(box *geo.Box) Shape {
-	shape := shapeCallout{
-		baseShape: newShapeBase(CALLOUT_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&calloutKind, box)
 }
 
 func getTipWidth(box *geo.Box) float64 {
@@ -40,7 +42,7 @@ func getTipHeight(box *geo.Box) float64 {
 	return tipHeight
 }
 
-func (s shapeCallout) GetInnerBox() *geo.Box {
+func calloutInnerBox(s *shape) *geo.Box {
 	tipHeight := getTipHeight(s.Box)
 	height := s.Box.Height - tipHeight
 	return geo.NewBox(s.Box.TopLeft.Copy(), s.Box.Width, height)
@@ -67,25 +69,11 @@ func calloutOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float6
 	return pc
 }
 
-func (s shapeCallout) Perimeter() []geo.Intersectable {
-	return calloutPath(s.Box).Path
+func calloutTrace(box *geo.Box, t *borderTracer) {
+	calloutOutline(box, t.newPath)
 }
 
-func (s shapeCallout) traceBorder(t *borderTracer) {
-	calloutOutline(s.Box, t.newPath)
-}
-
-func (s shapeCallout) GetSVGPathData() []string {
-	return []string{
-		calloutPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeCallout) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(calloutPath(s.Box))
-}
-
-func (s shapeCallout) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func calloutDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	// return the minimum shape dimensions needed to fit content (width x height)
 	// in the shape's innerBox with padding
 	baseHeight := height + paddingY
@@ -95,8 +83,4 @@ func (s shapeCallout) GetDimensionsToFit(width, height, paddingX, paddingY float
 		baseHeight += defaultTipHeight
 	}
 	return math.Ceil(width + paddingX), math.Ceil(baseHeight)
-}
-
-func (s shapeCallout) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding, defaultPadding / 2
 }

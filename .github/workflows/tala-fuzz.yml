@@ -1,12 +1,7 @@
 name: TALA fuzz
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/tala-fuzz.yml
-      - d2layouts/d2talalayout/**
-      - go.mod
-      - go.sum
+  workflow_call:
   schedule:
     - cron: "23 10 * * 1"
   workflow_dispatch:

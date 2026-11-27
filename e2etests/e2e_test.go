@@ -37,38 +37,53 @@ import (
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
+type fixtureRun func(*testing.T, testCase)
+
+// Both suites consume the same sources, including diagrams built from Go
+// expressions, embedded Markdown, files and archives.
+var fixtureGroups = []struct {
+	name   string
+	cases  func(*testing.T) []testCase
+	render fixtureRun
+}{
+	{"sanity", sanityCases, run},
+	{"stable", stableCases, run},
+	{"real_world", realWorldCases, run},
+	{"regression", regressionCases, run},
+	{"patterns", patternCases, run},
+	{"todo", todoCases, run},
+	{"measured", measuredCases, run},
+	{"unicode", unicodeCases, run},
+	{"root", rootCases, run},
+	{"themes", themeCases, run},
+	{"txtar", archiveCases("txtar.txt"), run},
+	{"asciitxtar", archiveCases("asciitxtar.txt"), runASCIITxtarTest},
+}
+
+func runFixtureCases(t *testing.T, cases []testCase, runCase fixtureRun) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { runCase(t, tc) })
+	}
+}
+
 func TestE2E(t *testing.T) {
 	t.Parallel()
-
-	// Every case is an independent parallel subtest. Start the groups together
-	// so the suite is bounded by its total work rather than by the slowest case
-	// of each group in turn.
-	for _, group := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"sanity", testSanity},
-		{"stable", testStable},
-		{"real_world", testRealWorld},
-		{"regression", testRegression},
-		{"patterns", testPatterns},
-		{"todo", testTodo},
-		{"measured", testMeasured},
-		{"unicode", testUnicode},
-		{"root", testRoot},
-		{"themes", testThemes},
-		{"txtar", testTxtar},
-		{"asciitxtar", testASCIITxtar},
-	} {
+	for _, group := range fixtureGroups {
 		t.Run(group.name, func(t *testing.T) {
 			t.Parallel()
-			group.run(t)
+			runFixtureCases(t, group.cases(t), func(t *testing.T, tc testCase) {
+				if tc.skip {
+					t.Skip()
+				}
+				t.Parallel()
+				group.render(t, tc)
+			})
 		})
 	}
 }
 
-func testSanity(t *testing.T) {
-	tcs := []testCase{
+func sanityCases(t *testing.T) []testCase {
+	return []testCase{
 		{
 			name:   "empty",
 			script: ``,
@@ -95,40 +110,18 @@ a -> c
 `,
 		},
 	}
-	runa(t, tcs)
 }
 
-func testTxtar(t *testing.T) {
-	var tcs []testCase
-	archive, err := txtar.ParseFile("./txtar.txt")
-	assert.Success(t, err)
-	for _, f := range archive.Files {
-		tcs = append(tcs, testCase{
-			name:   f.Name,
-			script: string(f.Data),
-		})
-	}
-	runa(t, tcs)
-}
-
-func testASCIITxtar(t *testing.T) {
-	archive, err := txtar.ParseFile("./asciitxtar.txt")
-	assert.Success(t, err)
-
-	for _, f := range archive.Files {
-		tc := testCase{
-			name:   f.Name,
-			script: string(f.Data),
+func archiveCases(path string) func(*testing.T) []testCase {
+	return func(t *testing.T) []testCase {
+		t.Helper()
+		archive, err := txtar.ParseFile(path)
+		assert.Success(t, err)
+		var cases []testCase
+		for _, f := range archive.Files {
+			cases = append(cases, testCase{name: f.Name, script: string(f.Data)})
 		}
-
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.skip {
-				t.Skip()
-			}
-			t.Parallel()
-
-			runASCIITxtarTest(t, tc)
-		})
+		return cases
 	}
 }
 
@@ -157,6 +150,7 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 		ThemeID: tc.themeID,
 	}
 
+	formatCompileOpts, formatRenderOpts := *compileOpts, *renderOpts
 	diagram, g, err := d2lib.Compile(ctx, tc.script, compileOpts, renderOpts)
 	if tc.expErr != "" {
 		assert.Error(t, err)
@@ -165,6 +159,7 @@ func runASCIITxtarTest(t *testing.T, tc testCase) {
 	}
 	assert.Success(t, err)
 
+	checkFormattedDiagram(t, ctx, tc.script, diagram, formatCompileOpts, formatRenderOpts)
 	err = d2layoutfeatures.Check("elk", g)
 	if tc.elkFeatureError != "" {
 		assert.Error(t, err)
@@ -282,20 +277,6 @@ type testCase struct {
 	themeID           *int64
 }
 
-func runa(t *testing.T, tcs []testCase) {
-	for _, tc := range tcs {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.skip {
-				t.Skip()
-			}
-			t.Parallel()
-
-			run(t, tc)
-		})
-	}
-}
-
 // serde exercises serializing and deserializing the graph
 // We want to run all the steps leading up to serialization in the course of regular layout
 func serde(t *testing.T, tc testCase, ruler *textmeasure.Ruler) {
@@ -332,7 +313,8 @@ func run(t *testing.T, tc testCase) {
 	}
 
 	layoutsTested := []string{"dagre"}
-	if !tc.justDagre {
+	// Explicit text measurements only need the default layout.
+	if !tc.justDagre && tc.mtexts == nil {
 		layoutsTested = append(layoutsTested, "elk", "tala")
 	}
 	talaOpts := d2talalayout.DefaultOptions()
@@ -380,13 +362,8 @@ func run(t *testing.T, tc testCase) {
 		return nil, nil
 	}
 
-	for _, layoutName := range layoutsTested {
-		// If measured texts exist, we are specifically exercising text
-		// measurements, so the default layout is sufficient.
-		if tc.mtexts != nil && layoutName != "dagre" {
-			continue
-		}
-
+	fixtureName := strings.TrimPrefix(t.Name(), "TestE2E/")
+	runLayout := func(t *testing.T, layoutName string) {
 		compileOpts := &d2lib.CompileOptions{
 			Ruler:          ruler,
 			MeasuredTexts:  tc.mtexts,
@@ -402,6 +379,7 @@ func run(t *testing.T, tc testCase) {
 			// Scale: go2.Pointer(1.),
 		}
 
+		formatCompileOpts, formatRenderOpts := *compileOpts, *renderOpts
 		diagram, g, err := d2lib.Compile(ctx, tc.script, compileOpts, renderOpts)
 		if layoutName == "tala" && tc.talaLayoutError != "" {
 			assert.Error(t, err)
@@ -416,6 +394,9 @@ func run(t *testing.T, tc testCase) {
 			assert.Success(t, err)
 		}
 
+		if layoutName == "dagre" {
+			checkFormattedDiagram(t, ctx, tc.script, diagram, formatCompileOpts, formatRenderOpts)
+		}
 		err = d2layoutfeatures.Check(layoutName, g)
 		switch layoutName {
 		case "dagre":
@@ -439,7 +420,7 @@ func run(t *testing.T, tc testCase) {
 			})
 		}
 
-		dataPath := filepath.Join("testdata", strings.TrimPrefix(t.Name(), "TestE2E/"), layoutName)
+		dataPath := filepath.Join("testdata", fixtureName, layoutName)
 		pathGotSVG := filepath.Join(dataPath, "sketch.got.svg")
 
 		if len(diagram.Layers) > 0 || len(diagram.Scenarios) > 0 || len(diagram.Steps) > 0 {
@@ -474,10 +455,15 @@ func run(t *testing.T, tc testCase) {
 		if os.Getenv("SKIP_SVG_CHECK") == "" {
 			err2 = testdata(filepath.Join(dataPath, "sketch"), ".svg", svgBytes)
 		}
-		renderIsometric(t, ctx, diagram, dataPath, renderOpts)
 
 		assert.Success(t, err)
 		assert.Success(t, err2)
+	}
+
+	for _, layoutName := range layoutsTested {
+		t.Run(layoutName, func(t *testing.T) {
+			runLayout(t, layoutName)
+		})
 	}
 }
 

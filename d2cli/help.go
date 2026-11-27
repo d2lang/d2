@@ -17,25 +17,14 @@ func help(ms *xmain.State) {
 Usage:
   %[1]s [--watch=false] [--theme=0] file.d2 [file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt]
   %[1]s layout [name]
-  %[1]s fmt file.d2 ...
+  %[1]s fmt [--check] [--diff] file.d2|file.md|- ...
   %[1]s play [--theme=0] [--sketch] file.d2
   %[1]s validate file.d2
+  %[1]s lsp
+  %[1]s mcp [--root dir]
 
 %[1]s compiles and renders file.d2 to file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt
 It defaults to file.svg if an output path is not provided.
-Use --isometric for SVG, PNG, GIF, PDF or PPTX output with the native isometric renderer:
-  %[1]s --isometric file.d2 file.svg
-  %[1]s --isometric file.d2 file.png
-  %[1]s --isometric file.d2 file.gif
-  %[1]s --isometric file.d2 file.pdf
-  %[1]s --isometric file.d2 file.pptx
-You can also set D2_ISOMETRIC=true or vars: {d2-config: {isometric: true}} in D2 source.
-Flags override environment variables, which override source configuration; --isometric=false disables it.
-Isometric images preserve the compiled layout and render entirely in Go; no browser or GPU is required.
-Images fit the diagram within 1600x1000 pixels (1000x625 for GIF); --scale changes those maximum dimensions.
-Multiple boards export to SVG or PNG directories, PDF pages, PPTX slides or one GIF slideshow.
-PDF and PPTX retain board navigation and clickable links. --animate-interval sets the GIF slide delay.
-Use --target to select a board, or --target='' for the root without its subboards.
 
 Use - to have d2 read from stdin or write to stdout.
 
@@ -50,9 +39,11 @@ Subcommands:
   %[1]s layout - Lists available layout engine options with short help
   %[1]s layout [name] - Display long help for a particular layout engine, including its configuration options
   %[1]s themes - Lists available themes
-  %[1]s fmt file.d2 ... - Format passed files
+  %[1]s fmt file.d2|file.md|- ... - Format D2 files, D2 code fences in Markdown, or D2 from stdin
 	%[1]s play file.d2 - Opens the file in playground, an online web viewer (https://play.d2lang.com)
   %[1]s validate file.d2  - Validates file.d2
+  %[1]s lsp - Run a Language Server Protocol server on stdin and stdout for editors
+  %[1]s mcp - Run a Model Context Protocol server on stdin and stdout for AI clients
 
 See more docs and the source code at https://github.com/d2lang/d2.
 Hosted icons at https://icons.d2lang.com.

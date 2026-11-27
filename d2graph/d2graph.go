@@ -752,8 +752,20 @@ func (obj *Object) Text() *d2target.MText {
 	}
 }
 
-func (obj *Object) newObject(ids d2ast.String) *Object {
-	id := d2format.FormatKeyPath([]d2ast.String{ids})
+func objectID(name d2ast.String) string {
+	id := d2format.FormatKeyPath([]d2ast.String{name})
+	// Formatting an unquoted key folds reserved words. A quoted object keeps
+	// its spelling, while IDs containing syntax still need their usual escapes.
+	value := name.ScalarString()
+	if !name.IsUnquoted() && id != value {
+		if _, reserved := d2ast.ReservedKeywords[id]; reserved && id == strings.ToLower(value) {
+			return value
+		}
+	}
+	return id
+}
+
+func (obj *Object) newObject(id string) *Object {
 	idval := id
 	k, _ := d2parser.ParseKey(id)
 	if k != nil && len(k.Path) > 0 {
@@ -785,12 +797,17 @@ func (obj *Object) newObject(ids d2ast.String) *Object {
 }
 
 func (obj *Object) HasChild(ids []string) (*Object, bool) {
+	return obj.hasChild(ids, false)
+}
+
+func (obj *Object) hasChild(ids []string, near bool) (*Object, bool) {
 	if len(ids) == 0 {
 		return obj, true
 	}
 	if len(ids) == 1 && ids[0] != "style" {
-		_, ok := d2ast.ReservedKeywords[ids[0]]
-		if ok {
+		_, reserved := d2ast.ReservedKeywords[ids[0]]
+		_, board := d2ast.BoardKeywords[ids[0]]
+		if reserved && (!board || obj.Parent == nil || (near && obj.Children[ids[0]] == nil)) {
 			return obj, true
 		}
 	}
@@ -799,12 +816,21 @@ func (obj *Object) HasChild(ids []string) (*Object, bool) {
 	ids = ids[1:]
 
 	child, ok := obj.Children[strings.ToLower(id)]
+	if !ok && len(id) > 1 && id[0] == '"' {
+		// Key preserves quotes when a literal would otherwise name a property.
+		if value, err := strconv.Unquote(id); err == nil {
+			key := strings.ToLower(value)
+			if _, reserved := d2ast.ReservedKeywords[key]; reserved {
+				child, ok = obj.Children[key]
+			}
+		}
+	}
 	if !ok {
 		return nil, false
 	}
 
 	if len(ids) >= 1 {
-		return child.HasChild(ids)
+		return child.hasChild(ids, near)
 	}
 	return child, true
 }
@@ -873,11 +899,11 @@ func (obj *Object) FindEdges(mk *d2ast.Key) ([]*Edge, bool) {
 	}
 	ae := mk.Edges[0]
 
-	srcObj, srcID, err := ResolveUnderscoreKey(Key(ae.Src), obj)
+	srcObj, srcID, err := ResolveUnderscoreKey(graphKey(ae.Src, false), obj)
 	if err != nil {
 		return nil, false
 	}
-	dstObj, dstID, err := ResolveUnderscoreKey(Key(ae.Dst), obj)
+	dstObj, dstID, err := ResolveUnderscoreKey(graphKey(ae.Dst, false), obj)
 	if err != nil {
 		return nil, false
 	}
@@ -927,6 +953,9 @@ func (obj *Object) ensureChildEdge(ida []d2ast.String) *Object {
 // EnsureChild grabs the child by ids or creates it if it does not exist including all
 // intermediate nodes.
 func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
+	if len(ida) == 0 {
+		return obj
+	}
 	seq := obj.OuterSequenceDiagram()
 	if seq != nil {
 		for _, c := range seq.ChildrenArray {
@@ -943,31 +972,29 @@ func (obj *Object) EnsureChild(ida []d2ast.String) *Object {
 		}
 	}
 
-	if len(ida) == 0 {
-		return obj
-	}
-
-	_, is := d2ast.ReservedKeywordHolders[ida[0].ScalarString()]
-	is = is && ida[0].IsUnquoted()
-	if len(ida) == 1 && !is {
-		_, ok := d2ast.ReservedKeywords[ida[0].ScalarString()]
-		ok = ok && ida[0].IsUnquoted()
-		if ok {
+	id := ida[0]
+	keyword := d2ast.Keyword(id)
+	_, board := d2ast.BoardKeywords[keyword]
+	literalBoardName := board && obj.Parent != nil
+	if len(ida) == 1 && keyword != "" && !literalBoardName {
+		if _, holder := d2ast.ReservedKeywordHolders[keyword]; !holder {
 			return obj
 		}
 	}
 
-	id := ida[0]
 	ida = ida[1:]
 
 	if id.ScalarString() == "_" && id.IsUnquoted() {
 		return obj.Parent.EnsureChild(ida)
 	}
 
-	head := d2format.FormatKeyPath([]d2ast.String{id})
+	head := objectID(id)
+	if literalBoardName {
+		head = id.ScalarString()
+	}
 	child, ok := obj.Children[strings.ToLower(head)]
 	if !ok {
-		child = obj.newObject(id)
+		child = obj.newObject(head)
 	}
 
 	if len(ida) >= 1 {
@@ -1250,18 +1277,25 @@ func (obj *Object) OuterNearContainer() *Object {
 	return nil
 }
 
+// NearTarget resolves an object-relative near placement. Historically an absent
+// unquoted board name at the end of a near key resolved to its container.
+func (obj *Object) NearTarget() (*Object, bool) {
+	if obj.NearKey == nil {
+		return nil, false
+	}
+	return obj.Graph.Root.hasChild(Key(obj.NearKey), true)
+}
+
 func (obj *Object) IsConstantNear() bool {
 	if obj.NearKey == nil {
 		return false
 	}
-	keyPath := Key(obj.NearKey)
-
 	// interesting if there is a shape with id=top-left, then top-left isn't treated a constant near
-	_, isKey := obj.Graph.Root.HasChild(keyPath)
+	_, isKey := obj.NearTarget()
 	if isKey {
 		return false
 	}
-	_, isConst := d2ast.NearConstants[keyPath[0]]
+	_, isConst := d2ast.NearConstants[Key(obj.NearKey)[0]]
 	return isConst
 }
 
@@ -1430,9 +1464,19 @@ func appendAbsIDArray(ids []string, obj *Object) []string {
 
 func (obj *Object) Connect(srcID, dstID []d2ast.String, srcArrow, dstArrow bool, label string) (*Edge, error) {
 	for _, id := range [][]d2ast.String{srcID, dstID} {
-		for _, p := range id {
-			if _, ok := d2ast.ReservedKeywords[p.ScalarString()]; ok && p.IsUnquoted() {
-				return nil, errors.New("cannot connect to reserved keyword")
+		scope := obj
+		for len(id) > 0 && id[0].IsUnquoted() && id[0].ScalarString() == "_" {
+			scope = scope.Parent
+			if scope == nil {
+				return nil, errors.New("invalid underscore: no parent")
+			}
+			id = id[1:]
+		}
+		for i, p := range id {
+			if keyword := d2ast.Keyword(p); keyword != "" {
+				if _, board := d2ast.BoardKeywords[keyword]; !board || (scope.Parent == nil && i == 0) {
+					return nil, errors.New("cannot connect to reserved keyword")
+				}
 			}
 		}
 	}
@@ -1889,7 +1933,22 @@ func (g *Graph) Texts() []*d2target.MText {
 }
 
 func Key(k *d2ast.KeyPath) []string {
-	return d2format.KeyPath(k)
+	return graphKey(k, true)
+}
+
+func graphKey(k *d2ast.KeyPath, quoteKeywords bool) []string {
+	var ids []string
+	for _, box := range k.Path {
+		name := box.Unbox()
+		id := objectID(name)
+		if quoteKeywords && !name.IsUnquoted() && id == name.ScalarString() {
+			if _, reserved := d2ast.ReservedKeywords[strings.ToLower(id)]; reserved {
+				id = strconv.Quote(id)
+			}
+		}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (g *Graph) GetBoard(name string) *Graph {

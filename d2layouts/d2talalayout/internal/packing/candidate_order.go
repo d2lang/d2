@@ -1,9 +1,8 @@
 package packing
 
 import (
-	"slices"
-
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -111,7 +110,7 @@ func (o *candidateOrdering) prepare(
 	for k := range o.trials {
 		o.order = append(o.order, int32(k))
 	}
-	slices.SortStableFunc(o.order, func(a, b int32) int {
+	xsort.StableFunc(o.order, func(a, b int32) int {
 		return o.trials[a].score.compare(o.trials[b].score)
 	})
 	return true, nil

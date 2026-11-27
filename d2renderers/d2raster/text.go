@@ -180,30 +180,44 @@ func newPreparedFont(parsed *fontface.ParsedFace) *preparedFont {
 	return &preparedFont{face: parsed, outline: parsed.Outline, shaping: parsed.Shaping}
 }
 
-func (p *preflight) text(nodeID string, text d2scene.TextRun, transform d2scene.Matrix, animation animationOverrides, importDepth int) (*preparedPrimitive, error) {
+// textGlyphs validates a text run and positions its glyphs; both scene walks
+// share it. It returns the run's primary font, its size in 26.6 pixels, and
+// the positioned glyphs with their total advance.
+func (p *preflight) textGlyphs(nodeID string, text d2scene.TextRun) (*preparedFont, fixed.Int26_6, []positionedGlyph, float64, error) {
+	fail := func(err error) (*preparedFont, fixed.Int26_6, []positionedGlyph, float64, error) {
+		return nil, 0, nil, 0, err
+	}
 	if !finitePoint(text.Origin) || !finite(text.Font.Size) || text.Font.Size <= 0 || text.Font.Size > float64(math.MaxInt32)/64 {
-		return nil, fmt.Errorf("d2raster: node %q text has invalid origin or font size", nodeID)
+		return fail(fmt.Errorf("d2raster: node %q text has invalid origin or font size", nodeID))
 	}
 	if text.Anchor > d2scene.AnchorEnd {
-		return nil, fmt.Errorf("d2raster: node %q text has invalid anchor %d", nodeID, text.Anchor)
+		return fail(fmt.Errorf("d2raster: node %q text has invalid anchor %d", nodeID, text.Anchor))
 	}
 	if !text.Ink.IsFinite() {
-		return nil, fmt.Errorf("d2raster: node %q text has invalid ink bounds", nodeID)
+		return fail(fmt.Errorf("d2raster: node %q text has invalid ink bounds", nodeID))
 	}
 	if text.Font.Asset == "" {
-		return nil, fmt.Errorf("d2raster: node %q text has empty font asset ID", nodeID)
+		return fail(fmt.Errorf("d2raster: node %q text has empty font asset ID", nodeID))
 	}
 	primary, ok := p.fonts[text.Font.Asset]
 	if !ok {
 		if _, exists := p.document.Assets[text.Font.Asset]; exists {
-			return nil, fmt.Errorf("d2raster: node %q text asset %q is not a usable font", nodeID, text.Font.Asset)
+			return fail(fmt.Errorf("d2raster: node %q text asset %q is not a usable font", nodeID, text.Font.Asset))
 		}
-		return nil, fmt.Errorf("d2raster: node %q text references missing font asset %q", nodeID, text.Font.Asset)
+		return fail(fmt.Errorf("d2raster: node %q text references missing font asset %q", nodeID, text.Font.Asset))
 	}
 	ppem := fixed.Int26_6(math.Round(text.Font.Size * 64))
 	glyphs, advance, err := p.positionGlyphs(text, ppem)
 	if err != nil {
-		return nil, fmt.Errorf("d2raster: node %q text: %w", nodeID, err)
+		return fail(fmt.Errorf("d2raster: node %q text: %w", nodeID, err))
+	}
+	return primary, ppem, glyphs, advance, nil
+}
+
+func (p *preflight) text(nodeID string, text d2scene.TextRun, transform d2scene.Matrix, animation animationOverrides, importDepth int) (*preparedPrimitive, error) {
+	primary, ppem, glyphs, advance, err := p.textGlyphs(nodeID, text)
+	if err != nil {
+		return nil, err
 	}
 	anchorOffset := 0.0
 	switch text.Anchor {

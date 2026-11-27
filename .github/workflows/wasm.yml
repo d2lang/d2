@@ -34,3 +34,4 @@ jobs:
         env:
           # The ordinary CI job checks formatting for changed files.
           GIT_BASE: HEAD
+      - uses: ./.github/actions/browser-smoke

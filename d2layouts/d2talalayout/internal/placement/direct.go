@@ -3,12 +3,12 @@ package placement
 import (
 	"cmp"
 	"context"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/placementcost"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type directionCounts struct {
@@ -83,7 +83,7 @@ func (counts directionCounts) transformsTo(direction geo.Orientation) directionT
 		{geo.Left, counts.left},
 		{geo.Top, counts.top},
 	}
-	slices.SortStableFunc(values, func(a, b directionCount) int {
+	xsort.StableFunc(values, func(a, b directionCount) int {
 		return compareDirectionCounts(a, b, direction)
 	})
 	primary, secondary := values[0], values[1]

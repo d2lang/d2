@@ -7,16 +7,19 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeQueue struct {
-	*baseShape
+var queueKind = shapeKind{
+	typ:             QUEUE_TYPE,
+	paddingX:        defaultPadding / 2,
+	paddingY:        defaultPadding,
+	innerBox:        queueInnerBox,
+	dimensionsToFit: queueDimensionsToFit,
+	path:            queueOuterPath,
+	extraPath:       queueInnerPath,
+	trace:           queueTrace,
 }
 
 func NewQueue(box *geo.Box) Shape {
-	shape := shapeQueue{
-		baseShape: newShapeBase(QUEUE_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&queueKind, box)
 }
 
 func getArcWidth(box *geo.Box) float64 {
@@ -29,7 +32,7 @@ func getArcWidth(box *geo.Box) float64 {
 	return arcWidth
 }
 
-func (s shapeQueue) GetInnerBox() *geo.Box {
+func queueInnerBox(s *shape) *geo.Box {
 	width := s.Box.Width
 	tl := s.Box.TopLeft.Copy()
 	arcWidth := getArcWidth(s.Box)
@@ -68,31 +71,12 @@ func queueInnerPath(box *geo.Box) *svg.SvgPathContext {
 	return pc
 }
 
-func (s shapeQueue) Perimeter() []geo.Intersectable {
-	return queueOuterPath(s.Box).Path
+func queueTrace(box *geo.Box, t *borderTracer) {
+	queueOuterOutline(box, t.newPath)
 }
 
-func (s shapeQueue) traceBorder(t *borderTracer) {
-	queueOuterOutline(s.Box, t.newPath)
-}
-
-func (s shapeQueue) GetSVGPathData() []string {
-	return []string{
-		queueOuterPath(s.Box).PathData(),
-		queueInnerPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeQueue) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(queueOuterPath(s.Box), queueInnerPath(s.Box))
-}
-
-func (s shapeQueue) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func queueDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	// 1 arc left, width+ padding, 2 arcs right
 	totalWidth := 3*defaultArcDepth + width + paddingX
 	return math.Ceil(totalWidth), math.Ceil(height + paddingY)
-}
-
-func (s shapeQueue) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding / 2, defaultPadding
 }

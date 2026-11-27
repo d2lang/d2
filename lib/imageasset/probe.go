@@ -20,9 +20,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/andybalholm/brotli"
 	_ "golang.org/x/image/webp"
 	"golang.org/x/text/encoding/charmap"
+
+	"github.com/d2lang/brotli"
 
 	"github.com/d2lang/d2/internal/rasterimage"
 	libsvg "github.com/d2lang/d2/lib/svg"

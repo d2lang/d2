@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andybalholm/brotli"
+	"github.com/d2lang/brotli"
 )
 
 type sourceKind uint8

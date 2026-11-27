@@ -25,10 +25,10 @@ type layoutScratch struct {
 	resolvedSrc []*d2graph.Object
 	resolvedDst []*d2graph.Object
 	counts      []int
-	cycleState  []uint8
 
-	in  dagro.LayoutInput
-	out dagro.LayoutOutput
+	cycleState []uint8
+	in         dagro.LayoutInput
+	out        dagro.LayoutOutput
 
 	// getRanks and adjustRankSpacing
 	rankItems     []rankItem

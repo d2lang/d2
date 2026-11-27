@@ -16,6 +16,23 @@ import (
 	"github.com/d2lang/d2/d2parser"
 )
 
+func TestCompilePartial(t *testing.T) {
+	// L45: keep successfully compiled fields for language tooling.
+	ast, err := d2parser.Parse("main.d2", strings.NewReader("a -> b\nx: @missing"), nil)
+	assert.Success(t, err)
+	full, _, fullErr := d2ir.Compile(ast, nil)
+	if fullErr == nil || full != nil {
+		t.Fatalf("Compile with an unresolved import returned (%v, %v)", full, fullErr)
+	}
+	partial, _, partialErr := d2ir.Compile(ast, &d2ir.CompileOptions{Partial: true})
+	if partialErr == nil || partialErr.Error() != fullErr.Error() {
+		t.Fatalf("partial error = %v, want %v", partialErr, fullErr)
+	}
+	if partial == nil || partial.GetField(d2ast.FlatUnquotedString("a")) == nil {
+		t.Fatal("partial IR lost the shape before the unresolved import")
+	}
+}
+
 func TestCompile(t *testing.T) {
 	t.Parallel()
 

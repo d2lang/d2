@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // A default 2px-stroke D2 triangle is 10 by 12px. Reserve a 16px square
@@ -225,7 +226,7 @@ func (env fanObstacles) refineFace(n *layoutgraph.Node, face geo.Orientation) er
 	if len(lanes) < 2 {
 		return nil
 	}
-	slices.Sort(slots)
+	xsort.Ordered(slots)
 	repeated := false
 	for i := 1; i < len(slots); i++ {
 		repeated = repeated || slots[i] == slots[i-1]
@@ -496,7 +497,7 @@ func (env fanObstacles) slideStraightFanLane(e *layoutgraph.Edge) error {
 	if !shared {
 		return nil
 	}
-	slices.Sort(slots)
+	xsort.Ordered(slots)
 	for i := 1; i < len(slots); i++ {
 		if slots[i]-slots[i-1] < fanMarkerPitch*2 {
 			continue

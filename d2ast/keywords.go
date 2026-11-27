@@ -1,9 +1,25 @@
 package d2ast
 
-import "github.com/d2lang/d2/lib/label"
+import (
+	"strings"
+
+	"github.com/d2lang/d2/lib/label"
+)
 
 // All reserved keywords. See init below.
 var ReservedKeywords map[string]struct{}
+
+// Keyword returns the canonical name of an unquoted reserved key, or the empty
+// string for an ordinary name. ScalarString retains the original spelling.
+func Keyword(s String) string {
+	if s != nil && s.IsUnquoted() {
+		key := strings.ToLower(s.ScalarString())
+		if _, ok := ReservedKeywords[key]; ok {
+			return key
+		}
+	}
+	return ""
+}
 
 // Non Style/Holder keywords.
 var SimpleReservedKeywords = map[string]struct{}{
@@ -211,7 +227,8 @@ var FillPatterns = []string{
 
 var TextTransforms = []string{"none", "uppercase", "lowercase", "capitalize"}
 
-// BoardKeywords contains the keywords that create new boards.
+// BoardKeywords contains the keywords that declare boards at a board root.
+// These names identify ordinary shapes inside a container.
 var BoardKeywords = map[string]struct{}{
 	"layers":    {},
 	"scenarios": {},

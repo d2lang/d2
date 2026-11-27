@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 const (
@@ -366,7 +366,7 @@ func breakLongConnections(nodes []*placementNode, byLevel map[int][]*placementNo
 				belows = append(belows, below)
 			}
 		}
-		slices.SortStableFunc(belows, func(a, b *placementNode) int {
+		xsort.StableFunc(belows, func(a, b *placementNode) int {
 			if order := cmp.Compare(a.rank, b.rank); order != 0 {
 				return order
 			}

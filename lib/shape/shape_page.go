@@ -7,25 +7,28 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapePage struct {
-	*baseShape
-}
-
 const (
 	// TODO: cleanup
 	pageCornerWidth  = 20.8164
 	pageCornerHeight = 20.348
 )
 
-func NewPage(box *geo.Box) Shape {
-	shape := shapePage{
-		baseShape: newShapeBase(PAGE_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+var pageKind = shapeKind{
+	typ:             PAGE_TYPE,
+	paddingX:        defaultPadding,
+	paddingY:        pageCornerHeight + defaultPadding,
+	innerBox:        pageInnerBox,
+	dimensionsToFit: pageDimensionsToFit,
+	path:            pageOuterPath,
+	extraPath:       pageInnerPath,
+	trace:           pageTrace,
 }
 
-func (s shapePage) GetInnerBox() *geo.Box {
+func NewPage(box *geo.Box) Shape {
+	return newShape(&pageKind, box)
+}
+
+func pageInnerBox(s *shape) *geo.Box {
 	// Note: for simplicity this assumes shape padding is greater than pageCornerSize
 	width := s.Box.Width
 	// consider right hand side occupied by corner for short pages
@@ -79,26 +82,11 @@ func pageInnerPath(box *geo.Box) *svg.SvgPathContext {
 	return pc
 }
 
-func (s shapePage) Perimeter() []geo.Intersectable {
-	return pageOuterPath(s.Box).Path
+func pageTrace(box *geo.Box, t *borderTracer) {
+	pageOuterOutline(box, t.newPath)
 }
 
-func (s shapePage) traceBorder(t *borderTracer) {
-	pageOuterOutline(s.Box, t.newPath)
-}
-
-func (s shapePage) GetSVGPathData() []string {
-	return []string{
-		pageOuterPath(s.Box).PathData(),
-		pageInnerPath(s.Box).PathData(),
-	}
-}
-
-func (s shapePage) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(pageOuterPath(s.Box), pageInnerPath(s.Box))
-}
-
-func (s shapePage) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func pageDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	totalWidth := width + paddingX
 	totalHeight := height + paddingY
 	// add space for corner with short pages
@@ -108,8 +96,4 @@ func (s shapePage) GetDimensionsToFit(width, height, paddingX, paddingY float64)
 	totalWidth = math.Max(totalWidth, 2*pageCornerWidth)
 	totalHeight = math.Max(totalHeight, pageCornerHeight)
 	return math.Ceil(totalWidth), math.Ceil(totalHeight)
-}
-
-func (s shapePage) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding, pageCornerHeight + defaultPadding
 }

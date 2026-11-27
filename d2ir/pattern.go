@@ -77,8 +77,7 @@ func _doubleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool
 	if visit != nil && !visit(f) {
 		return false
 	}
-	name := f.Name.ScalarString()
-	if _, reserved := d2ast.ReservedKeywords[name]; reserved && f.Name.IsUnquoted() {
+	if name := d2ast.Keyword(f.Name); name != "" {
 		if skipRecursiveGlobSubtree(name, false) {
 			return true
 		}
@@ -112,8 +111,7 @@ func _tripleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool
 	if visit != nil && !visit(f) {
 		return false
 	}
-	name := f.Name.ScalarString()
-	if _, reserved := d2ast.ReservedKeywords[name]; reserved && f.Name.IsUnquoted() {
+	if name := d2ast.Keyword(f.Name); name != "" {
 		if skipRecursiveGlobSubtree(name, true) {
 			return true
 		}
@@ -139,8 +137,7 @@ func (m *Map) _doubleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 		if f.Name == nil {
 			continue
 		}
-		name := f.Name.ScalarString()
-		if _, ok := d2ast.ReservedKeywords[name]; ok && f.Name.IsUnquoted() {
+		if name := d2ast.Keyword(f.Name); name != "" {
 			if skipRecursiveGlobSubtree(name, false) {
 				continue
 			}
@@ -171,8 +168,8 @@ func (m *Map) _tripleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 		if f == nil || f.Name == nil {
 			continue
 		}
-		if _, ok := d2ast.ReservedKeywords[f.Name.ScalarString()]; ok && f.Name.IsUnquoted() {
-			if skipRecursiveGlobSubtree(f.Name.ScalarString(), true) {
+		if name := d2ast.Keyword(f.Name); name != "" {
+			if skipRecursiveGlobSubtree(name, true) {
 				continue
 			}
 			// We don't ever want to append layers, scenarios or steps directly.
@@ -195,14 +192,79 @@ func (m *Map) _tripleGlob(fa *[]*Field, visit func(*Field) bool) bool {
 	return true
 }
 
+// ScalarString remains available for typed filters such as &level. Label
+// filters also use the original wildcard boundaries of an interpolated operand.
+type interpolatedGlobOperand struct {
+	d2ast.Scalar
+	*interpolatedGlobPattern
+}
+
+type interpolatedGlobPattern struct {
+	literals []string
+}
+
+func filterScalarValue(s *Scalar, operand bool) d2ast.Scalar {
+	if operand && s.globPattern != nil {
+		return interpolatedGlobOperand{s.Value, s.globPattern}
+	}
+	return s.Value
+}
+
+func (p *interpolatedGlobPattern) matches(value string) bool {
+	value = strings.ToLower(value)
+	prefix := strings.ToLower(p.literals[0])
+	rest, ok := strings.CutPrefix(value, prefix)
+	if !ok {
+		return false
+	}
+	for _, literal := range p.literals[1 : len(p.literals)-1] {
+		_, rest, ok = strings.Cut(rest, strings.ToLower(literal))
+		if !ok {
+			return false
+		}
+	}
+	return strings.HasSuffix(rest, strings.ToLower(p.literals[len(p.literals)-1]))
+}
+
+// Keep slices of the coalesced text between authored wildcards. An inserted or
+// escaped star is part of a literal, even if that literal is exactly "*".
+func makeInterpolatedGlobPattern(text string, boxes []d2ast.InterpolationBox) *interpolatedGlobPattern {
+	var literals []string
+	start, offset := 0, 0
+	for _, box := range boxes {
+		if box.String == nil {
+			break
+		}
+		end := offset + len(*box.String)
+		if box.Substitution == nil {
+			raw := *box.String
+			if box.StringRaw != nil {
+				raw = *box.StringRaw
+			}
+			// An escape consumes one extra backslash in raw. Its operand
+			// occupies the same number of UTF-8 bytes in the decoded string.
+			for i, pos := 0, offset; i < len(raw) && pos < end; i, pos = i+1, pos+1 {
+				if raw[i] == '\\' && i+1 < len(raw) {
+					i++
+				} else if raw[i] == '*' {
+					literals = append(literals, text[start:pos])
+					start = pos + 1
+				}
+			}
+		}
+		offset = end
+	}
+	if literals == nil {
+		return nil
+	}
+	return &interpolatedGlobPattern{literals: append(literals, text[start:])}
+}
+
 func matchPattern(s string, pattern []string) bool {
 	if len(pattern) == 0 {
 		return true
 	}
-	if _, ok := d2ast.ReservedKeywords[s]; ok {
-		return false
-	}
-
+	s = strings.ToLower(s)
 	for i := 0; i < len(pattern); i++ {
 		if pattern[i] == "*" {
 			if i == len(pattern)-1 {
@@ -210,24 +272,24 @@ func matchPattern(s string, pattern []string) bool {
 			}
 
 			next := strings.ToLower(pattern[i+1])
-			lowerS := strings.ToLower(s)
 			if i+1 == len(pattern)-1 {
-				return strings.HasSuffix(lowerS, next)
+				return strings.HasSuffix(s, next)
 			}
 
 			// Match the earliest occurrence so the remaining wildcards have the
 			// largest possible suffix to search.
-			j := strings.Index(lowerS, next)
+			j := strings.Index(s, next)
 			if j == -1 {
 				return false
 			}
-			s = s[j+len(pattern[i+1]):]
+			s = s[j+len(next):]
 			i++
 		} else {
-			if !strings.HasPrefix(strings.ToLower(s), strings.ToLower(pattern[i])) {
+			part := strings.ToLower(pattern[i])
+			if !strings.HasPrefix(s, part) {
 				return false
 			}
-			s = s[len(pattern[i]):]
+			s = s[len(part):]
 		}
 	}
 	return s == ""

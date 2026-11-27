@@ -33,8 +33,7 @@ https://user-images.githubusercontent.com/3120367/206125010-bd1fea8e-248a-43e7-8
 vars: {
   d2-config: {
     layout-engine: elk
-    # Terminal theme code
-    theme-id: 300
+    theme-id: Terminal
   }
 }
 network: {
@@ -121,6 +120,8 @@ Save `x -> y -> z` in a file named `hello.d2`, then run the following command to
 d2 hello.d2
 ```
 
+With [uv](https://docs.astral.sh/uv/), run the native CLI directly with `uvx d2lang hello.d2`.
+
 For a live preview in your browser, run `d2 --watch hello.d2` and edit the file.
 
 ## D2 as a library
@@ -186,6 +187,8 @@ For a comparison against other popular text-to-diagram tools, see
 ## Contributing
 
 Contributions are welcome! See [./docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md).
+Parser and editor authors can use the [structural grammar](./docs/grammar/structure.ebnf),
+[lexical grammar](./docs/grammar/lexical.ebnf), and [conformance cases](./docs/grammar/testdata/).
 
 D2 is an independent open-source project fiscally sponsored by Hack Club.
 [Sponsor D2](https://d2lang.com/sponsor/)
@@ -204,7 +207,7 @@ let us know and we'll be happy to include it here!
 
 ### Official plugins
 
-- **VSCode extension**: [https://github.com/d2lang/d2-vscode](https://github.com/d2lang/d2-vscode)
+- **VS Code** — Install [d2lang, the official D2 extension](https://marketplace.visualstudio.com/items?itemName=d2lang.d2lang). [Source code](https://github.com/d2lang/d2-vscode)
 - **Vim extension**: [https://github.com/d2lang/d2-vim](https://github.com/d2lang/d2-vim)
 - **Obsidian plugin**: [https://github.com/d2lang/d2-obsidian](https://github.com/d2lang/d2-obsidian)
 

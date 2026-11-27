@@ -31,17 +31,16 @@ pnpm add @d2lang/d2
 bun add @d2lang/d2
 ```
 
-`@terrastruct/d2` remains available as a compatibility package and receives the same
-releases during the namespace transition. New installations should use `@d2lang/d2`.
+`@terrastruct/d2` remains available as a compatibility package for stable releases
+during the namespace transition. New installations should use `@d2lang/d2`.
 
 ### Nightly
 
-Use the `@nightly` tag to get the version that is built by daily CI on the master branch.
-
-For example,
+CI checks `master` daily and publishes a new `@d2lang/d2@nightly` when D2.js or its
+WebAssembly build inputs have changed since the last published nightly.
 
 ```bash
-yarn add @d2lang/d2@nightly
+npm install @d2lang/d2@nightly
 ```
 
 ## Usage
@@ -195,7 +194,6 @@ All [RenderOptions](#renderoptions) properties in addition to:
 ### `RenderOptions`
 
 - `sketch`: Enable sketch mode (default `false`). In an animated diagram, changed solid fills shade in with pencil strokes. You can enable sketch when compiling or when rendering an already compiled diagram.
-- `isometric`: Enable native isometric SVG rendering [default: false]. The compiled layout is preserved. Icons and images must be embedded as data URLs; the JavaScript renderer does not fetch external image URLs. Set this in compile options or `vars.d2-config.isometric`, then pass the returned `renderOptions` to `render`, just like sketch. This mode currently cannot be combined with sketch, ASCII, `darkThemeID`, `forceAppendix`, or `animateInterval`.
 - `themeID`: Theme ID to use [default: 0]
 - `darkThemeID`: Theme ID to use when client is in dark mode
 - `center`: Center the SVG in the containing viewbox [default: false]
@@ -223,10 +221,12 @@ All [RenderOptions](#renderoptions) properties in addition to:
 ## Development
 
 D2.js builds its browser and Node.js WebAssembly module with TinyGo. Install the
-Go version in the root `go.mod`, TinyGo 0.44.0, Binaryen (CI uses version 133),
-the Bun version in `package.json`, and Node.js 24 with npm. Put `tinygo` and
-`wasm-opt` on PATH. The build bundles the JavaScript runtime from the same TinyGo
-installation as the compiler.
+Go version in the root `go.mod`, TinyGo 0.44.0-d2.3 from
+[d2lang/tinygo](https://github.com/d2lang/tinygo/releases) (`ci/wasm-flags.sh`
+says why the build needs it), Binaryen (CI uses version 133), the Bun version in
+`package.json`, and Node.js 24 with npm. Put `tinygo` and `wasm-opt` on PATH. The
+build bundles the JavaScript runtime from the same TinyGo installation as the
+compiler.
 
 ### Building from source
 
@@ -259,13 +259,8 @@ Visit `http://localhost:3000` to see the example page.
 
 ### Publishing
 
-TODO stable release publishing.
-
-Nightly builds are automated by CI by running:
-
-```bash
-PUBLISH=1 ./make.sh build
-```
+See the [npm release instructions](https://github.com/d2lang/d2/blob/master/ci/release/README.md#npm-publishing) for stable
+releases and nightly publisher setup.
 
 ## Contributing
 

@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,0:0:0-4:0:13",
+      "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,0:0:0-4:0:17",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,0:0:0-2:1:10",
+            "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,0:0:0-2:1:14",
             "key": {
               "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,0:0:0-0:1:1",
               "path": [
@@ -27,11 +27,11 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,0:3:3-2:1:10",
+                "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,0:3:3-2:1:14",
                 "nodes": [
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,1:2:7-1:3:8",
+                      "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,1:2:7-1:7:12",
                       "key": {
                         "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,1:2:7-1:3:8",
                         "path": [
@@ -49,7 +49,12 @@
                         ]
                       },
                       "primary": {},
-                      "value": {}
+                      "value": {
+                        "map": {
+                          "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,1:5:10-1:7:12",
+                          "nodes": null
+                        }
+                      }
                     }
                   }
                 ]
@@ -59,13 +64,13 @@
         },
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:11-3:1:12",
+            "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:15-3:1:16",
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:11-3:1:12",
+              "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:15-3:1:16",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:11-3:1:12",
+                    "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:15-3:1:16",
                     "value": [
                       {
                         "string": "c",
@@ -206,11 +211,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:11-3:1:12",
+              "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:15-3:1:16",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:11-3:1:12",
+                    "range": "d2/testdata/d2oracle/TestMove/full_slice.d2,3:0:15-3:1:16",
                     "value": [
                       {
                         "string": "c",

@@ -7,9 +7,9 @@ import (
 	"github.com/d2lang/d2/d2target"
 )
 
-// testMeasured exercises the code paths that provide pre-measured texts
-func testMeasured(t *testing.T) {
-	tcs := []testCase{
+// measuredCases supplies pre-measured text to the renderer.
+func measuredCases(t *testing.T) []testCase {
+	return []testCase{
 		{
 			name:   "empty-shape",
 			mtexts: []*d2target.MText{},
@@ -29,6 +29,4 @@ func testMeasured(t *testing.T) {
 `,
 		},
 	}
-
-	runa(t, tcs)
 }

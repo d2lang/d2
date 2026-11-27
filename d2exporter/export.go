@@ -44,14 +44,7 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 
 	diagram.Shapes = make([]d2target.Shape, len(g.Objects))
 	for i, obj := range g.Objects {
-		s := toShape(obj, g)
-		diagram.Shapes[i] = s
-		if obj.Style.StrokeWidth != nil && s.StrokeWidth == d2target.DEFAULT_SHAPE_STROKE_WIDTH {
-			if diagram.ExplicitDefaultStrokeWidths == nil {
-				diagram.ExplicitDefaultStrokeWidths = make(map[string]bool)
-			}
-			diagram.ExplicitDefaultStrokeWidths[s.ID] = true
-		}
+		diagram.Shapes[i] = toShape(obj, g)
 	}
 
 	diagram.Connections = make([]d2target.Connection, len(g.Edges))

@@ -25,8 +25,6 @@ import (
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
-// SVG comparison tests live outside the scene builder package because the SVG
-// renderer now composes the native isometric renderer, which uses this builder.
 var svgDimensionPattern = regexp.MustCompile(`(?:width|height)="([.0-9]+)"`)
 
 func TestAppendixMatchesSVGViewBoxAndScale(t *testing.T) {

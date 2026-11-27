@@ -189,6 +189,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 			if isPackageOrDescendant(packageImport, placementCostImport) {
 				standardLibrary := !strings.Contains(strings.Split(importPath, "/")[0], ".")
 				allowedLeaf := importPath == "github.com/d2lang/d2/lib/geo" ||
+					importPath == "github.com/d2lang/d2/lib/xsort" ||
 					importPath == talaInternalImport+"invariant" ||
 					importPath == talaInternalImport+"layoutgraph" ||
 					importPath == talaInternalImport+"typedpool"

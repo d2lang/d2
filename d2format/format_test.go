@@ -151,7 +151,6 @@ meow
     representation: {type: jsonb}
     diagram: int {constraint: foreign_key}
   }
-  meow <- diagrams.id
 
   steps: {
     shape: sql_table
@@ -159,6 +158,7 @@ meow
     representation: {type: jsonb}
     diagram: int {constraint: foreign_key}
   }
+  meow <- diagrams.id
 }
 
 D2 AST Parser: {
@@ -196,7 +196,7 @@ meow: {
   x: |` + "`" + `md
     meow
     meow
-  ` + "`" + `|
+  ` + "`" + `| {}
 }
 
 "meow\t": ok
@@ -506,7 +506,8 @@ z: 343
 		{
 			name: "substitution",
 			in:   `x: ${ok}; y: [...${yes}]`,
-			exp: `x: ${ok}; y: [...${yes}]
+			exp: `x: ${ok}
+y: [...${yes}]
 `,
 		},
 
@@ -590,7 +591,7 @@ hi # Fraud is the homage that force pays to reason.
 			name: "empty_map",
 			in: `x: {}
 `,
-			exp: `x
+			exp: `x: {}
 `,
 		},
 		{
@@ -659,7 +660,7 @@ x: @"x/../file"
 `,
 		},
 		{
-			name: "layers_scenarios_steps_bottom_simple",
+			name: "layers_scenarios_steps_order_simple",
 			in: `layers: {
   b: {
 		e
@@ -684,7 +685,6 @@ x: @"x/../file"
       }
     }
   }
-
   steps: {
     a
   }
@@ -692,7 +692,7 @@ x: @"x/../file"
 `,
 		},
 		{
-			name: "layers_scenarios_steps_bottom_complex",
+			name: "layers_scenarios_steps_order_complex",
 			in: `a
 
 scenarios: {
@@ -752,51 +752,35 @@ only-layers: {
 }
 `,
 			exp: `a
-b
-
-c
-d
-
-only-layers: {
-  layers: {
-    X
-    Y
-  }
-
-  layers: {
-    Z
-  }
-}
 
 scenarios: {
   scenario-1: {
-    non-step
-
     steps: {
       step-1: {
         Test
       }
       step-2
     }
+    non-step
   }
 }
 
 layers: {
   Test super nested: {
     base-layer
-    last-layer
 
     layers: {
-      layer-board
-
       layers: {
         grand-child-layer: {
           grand-child-board
         }
       }
+      layer-board
     }
+    last-layer
   }
 }
+b
 
 steps: {
   1: {
@@ -807,6 +791,19 @@ steps: {
 scenarios: {
   scenario-2: {
     scenario-2-content
+  }
+}
+
+c
+d
+
+only-layers: {
+  layers: {
+    X
+    Y
+  }
+  layers: {
+    Z
   }
 }
 `,
@@ -927,7 +924,7 @@ coop: {
 `,
 		},
 		{
-			name: "remove-empty-boards",
+			name: "preserve-board-values",
 			in: `k
 
 layers
@@ -935,6 +932,12 @@ scenarios: {}
 steps: asdf
 `,
 			exp: `k
+
+layers
+
+scenarios: {}
+
+steps: asdf
 `,
 		},
 		{
@@ -979,4 +982,26 @@ func TestEdge(t *testing.T) {
 
 	assert.String(t, `x -> y`, d2format.Format(mk.Edges[0]))
 	assert.String(t, `[0]`, d2format.Format(mk.EdgeIndex))
+}
+
+func TestRootMapLayoutRoundTrip(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, source, want string }{
+		{"one-line", "a; b", "a\nb\n"},
+		{"group", "(a -> b); next", "a -> b\nnext\n"},
+		{"nested-map", "a: {b; c}; next # note", "a: {b; c}\nnext # note\n"},
+		{"block-comment", `a; """ note """; b`, "a\n\"\"\" note \"\"\"\nb\n"},
+		{"nested-block-comment", `a: {b; """ note """; c}`, "a: {b; \"\"\" note \"\"\"; c}\n"},
+		{"multiline", "a; b\nc", "a\nb\nc\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := tc.source
+			for range 2 {
+				ast, err := d2parser.Parse("test.d2", strings.NewReader(source), nil)
+				assert.Success(t, err)
+				source = d2format.Format(ast)
+				assert.String(t, tc.want, source)
+			}
+		})
+	}
 }

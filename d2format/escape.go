@@ -2,8 +2,11 @@ package d2format
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/internal/d2string"
 )
 
 func escapeSingleQuotedValue(s string) string {
@@ -42,12 +45,12 @@ func escapeDoubledQuotedValue(s string, inKey bool) string {
 	return b.String()
 }
 
-func escapeUnquotedValue(s string, inKey bool) string {
-	if len(s) == 0 {
+func escapeUnquotedValue(s string, inKey, wholeToken bool) string {
+	if wholeToken && s == "" {
 		return `""`
 	}
 
-	if strings.EqualFold(s, "null") {
+	if wholeToken && strings.EqualFold(s, "null") {
 		return `'null'`
 	}
 
@@ -85,4 +88,65 @@ func escapeUnquotedValue(s string, inKey bool) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// A parsed bare string can be moved into a position with different delimiters.
+// Preserve its source spelling, escaping only characters that gain meaning.
+func escapeRawInContext(raw string, pos tokenPosition, valueStart, last bool) string {
+	// A folded line continuation can also leave a hash alone at value start.
+	if strings.HasPrefix(raw, "#") && (pos == arrayItem || !valueStart || (last && raw == "#")) {
+		raw = `\` + raw
+	}
+	brackets := pos == arrayItem && strings.Contains(raw, "]")
+	dollar := pos == beforeMap && last && strings.HasSuffix(raw, "$")
+	if !brackets && !dollar {
+		return raw
+	}
+	var b strings.Builder
+	start := 0
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\\' {
+			i++
+			continue
+		}
+		if (brackets && raw[i] == ']') || (dollar && i == len(raw)-1) {
+			b.WriteString(raw[start:i])
+			b.WriteByte('\\')
+			start = i
+		}
+	}
+	if b.Len() == 0 {
+		return raw
+	}
+	b.WriteString(raw[start:])
+	return b.String()
+}
+
+// A caller can edit a parsed fragment's text without updating its raw spelling.
+// Compare before reusing the raw escapes, including the distinction between
+// a literal \* and a wildcard. The parser folds line continuations before
+// storing the raw fragment and trims trailing whitespace from the final value.
+func matchesUnquotedFragment(raw, text string, last bool) bool {
+	if !strings.Contains(raw, `\`) {
+		return raw == text
+	}
+	escaped := false
+	for _, r := range raw {
+		if escaped {
+			r = d2string.DecodeEscape(r)
+			escaped = false
+		} else if r == '\\' {
+			escaped = true
+			continue
+		}
+		if text == "" && last && unicode.IsSpace(r) {
+			continue
+		}
+		want, size := utf8.DecodeRuneInString(text)
+		if size == 0 || r != want {
+			return false
+		}
+		text = text[size:]
+	}
+	return !escaped && text == ""
 }

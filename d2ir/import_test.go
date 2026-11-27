@@ -317,14 +317,14 @@ label: meow`,
 				run: func(t testing.TB) {
 					_, err := compileFS(t, "index.d2", map[string]string{
 						"index.d2": "...@x.d2",
-						"x.d2":     "x<><><<>q",
+						"x.d2":     "x<><><><>q",
 					})
 					assert.ErrorString(t, err, `x.d2:1:1: connection missing destination
 x.d2:1:4: connection missing source
 x.d2:1:4: connection missing destination
 x.d2:1:6: connection missing source
 x.d2:1:6: connection missing destination
-x.d2:1:7: connection missing source`)
+x.d2:1:8: connection missing source`)
 				},
 			},
 			{

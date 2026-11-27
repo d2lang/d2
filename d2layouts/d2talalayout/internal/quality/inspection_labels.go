@@ -100,7 +100,7 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 			if err := guard.Step(); err != nil {
 				return err
 			}
-			rectangular := node.IsRectangular()
+			rectangular := node.Shape.IsRectangular()
 			if node.IsInvisible || (!rectangular && issues == nil) {
 				continue
 			}

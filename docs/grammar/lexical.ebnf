@@ -1,0 +1,75 @@
+// Productions match decoded Unicode scalar values. Whitespace is explicit.
+sourceChar = "\u0000" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
+nonLF = "\u0000" … "\t" | "\v" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
+newline = "\n" .
+horizontalSpace = "\t" | "\v" … "\r" | " " | "\u0085" | "\u00A0" | "\u1680"
+                | "\u2000" … "\u200A" | "\u2028" | "\u2029" | "\u202F"
+                | "\u205F" | "\u3000" .
+decimalDigit = "0" … "9" .
+
+// After a colon, a hash attached to text starts a bare scalar (including hex
+// colours). A hash at the start of a map or array entry or after a value starts
+// a comment.
+hashValue = "#" ( valueStart | "[" | "'" | "\"" | "@" | "|" ) { valueUnit } .
+// Consume line comments through the last character before LF or EOF.
+lineComment = "#" { nonLF } .
+// At entry start, three quotes begin a block comment. The next triple closes it.
+blockComment = "\"\"\"" { [ "\"" [ "\"" ] ] nonQuote } "\"\"\"" .
+nonQuote = "\u0000" … "!" | "#" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
+
+keyString = singleQuotedString | doubleQuotedKey | blockString | unquotedKey .
+valueString = singleQuotedString | doubleQuotedValue | blockString | unquotedValue .
+
+// Scan the longest bare string, trimming trailing whitespace from its final text
+// segment. It must yield text or a substitution. An unescaped "--", "->" or "-*"
+// ends a bare key before the hyphen. A decoded bare key cannot start with "@".
+// A leading "&" or "!&" at map-entry start introduces a filter. In an edge
+// endpoint, "<" after a source introduces a reverse arrow if it can take a
+// destination. At the start of a key, "<" can be text, e.g. "<stdin>".
+unquotedKey = keyStart { keyUnit } .
+keyStart = commonBareStart | bareKeyPunctuation | escape | continuedLine .
+keyUnit = commonBareChar | bareKeyPunctuation | escape | continuedLine .
+bareKeyPunctuation = "$" | "*" | "-" | "&" | "<" | ">" | "[" | "]" .
+// The raw prefix "...@" is reserved for a spread and cannot start a bare value.
+// At value start "[" opens an array. A "]" terminates a direct array element.
+// In values "$" begins a substitution only before its opening brace (possibly
+// separated by horizontal whitespace). A malformed substitution is an error.
+unquotedValue = valueStart { valueUnit } .
+valueStart = commonBareStart | "$" | "]" | "(" | "&" | "*" | "-" | "." | ":" | "<" | ">"
+           | substitution | escape | continuedLine .
+valueUnit = commonBareChar | "$" | "[" | "]" | "&" | "*" | "-" | "." | ":" | "<" | ">"
+          | substitution | escape | continuedLine .
+
+// Space, quotes, "(", "@", and "|" may occur within a bare string. At the
+// beginning they either introduce another construct or depend on key/value mode.
+commonBareChar = commonBareStart | horizontalSpace | "\"" | "'" | "(" | "@" | "|" .
+commonBareStart = "\u0000" … "\b" | "\u000E" … "\u001F" | "!" | "%" | ")"
+                | "+" … "," | "/" … "9" | "=" | "?" | "A" … "Z" | "^" … "z"
+                | "~" … "\u007F" | nonASCIINonSpace .
+// U+0080 and higher, excluding Unicode whitespace and surrogate code points.
+nonASCIINonSpace = "\u0080" … "\u0084" | "\u0086" … "\u009F" | "\u00A1" … "\u167F"
+                 | "\u1681" … "\u1FFF" | "\u200B" … "\u2027" | "\u202A" … "\u202E"
+                 | "\u2030" … "\u205E" | "\u2060" … "\u2FFF" | "\u3001" … "\uD7FF"
+                 | "\uE000" … "\U0010FFFF" .
+escape = "\\" nonLF .
+continuedLine = "\\" newline { horizontalSpace } .
+
+singleQuotedString = "'" { singleChar | "''" | "\\" newline } "'" .
+singleChar = "\u0000" … "\t" | "\v" … "&" | "(" … "\uD7FF"
+           | "\uE000" … "\U0010FFFF" .
+doubleQuotedKey = "\"" { doubleChar | "$" | escape | "\\" newline } "\"" .
+doubleQuotedValue = "\"" { doubleChar | "$" | substitution | escape | "\\" newline } "\"" .
+doubleChar = "\u0000" … "\t" | "\v" … "!" | "#" | "%" … "["
+           | "]" … "\uD7FF" | "\uE000" … "\U0010FFFF" .
+
+// Capture the longest opening fence. The first copy of that fence followed
+// immediately by "|" closes the block, even mid-line.
+blockString = "|" { fenceChar } [ blockTag ] ( horizontalSpace | newline )
+              { sourceChar } { fenceChar } "|" .
+fenceChar = "\u0000" … "\b" | "\u000E" … "\u001F" | "!" … "/" | ":" … "@"
+          | "[" … "^" | "\u0060" | "{" … "\u007F" | nonASCIIFenceChar .
+nonASCIIFenceChar = nonASCIINonSpace . // Excludes Unicode letters and decimal digits.
+blockTag = tagStart { tagChar } .
+tagStart = "A" … "Z" | "a" … "z" | decimalDigit | "_" | nonASCIITagStart .
+nonASCIITagStart = nonASCIINonSpace . // A Unicode letter or decimal digit.
+tagChar = "\u0000" … "\b" | "\u000E" … "\u001F" | "!" … "\u007F" | nonASCIINonSpace .

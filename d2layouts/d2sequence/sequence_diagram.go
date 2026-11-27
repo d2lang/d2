@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 type sequenceDiagram struct {
@@ -79,10 +79,10 @@ func newSequenceDiagram(objects []*d2graph.Object, messages []*d2graph.Edge) (*s
 	var actors []*d2graph.Object
 	var groups []*d2graph.Object
 
-	slices.SortFunc(objects, func(a, b *d2graph.Object) int {
+	xsort.Func(objects, func(a, b *d2graph.Object) int {
 		return cmp.Compare(getObjEarliestLineNum(a), getObjEarliestLineNum(b))
 	})
-	slices.SortFunc(messages, func(a, b *d2graph.Edge) int {
+	xsort.Func(messages, func(a, b *d2graph.Edge) int {
 		return cmp.Compare(getEdgeEarliestLineNum(a), getEdgeEarliestLineNum(b))
 	})
 

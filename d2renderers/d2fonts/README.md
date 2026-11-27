@@ -13,4 +13,9 @@ You must also include an encoded version of these of mimetype `application/font-
 - `./ttf/Helvetica-Italic.txt`
 - `./ttf/Helvetica-Regular.txt`
 
+The WebAssembly build reads the Truetype files from `./ttf_stream.br`, which holds all of
+`./ttf/*.ttf` as one brotli stream. After adding, removing or changing a file in `./ttf`,
+run `go generate` in this directory and commit `ttf_stream.br` and `ttf_stream_table.go`;
+`TestBundledTTFStream` fails until you do.
+
 If you include a font to contribute, it must have an open license.

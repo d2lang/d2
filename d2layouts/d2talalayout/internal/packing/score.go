@@ -98,7 +98,7 @@ func newPackingFrame(root *layoutgraph.Node, children layoutgraph.Nodes, edgeles
 			frame.desired = *root.DesiredHeight
 		}
 	}
-	if root.Graph == nil || !root.IsRectangular() || len(children) < 2 {
+	if root.Graph == nil || !root.Shape.IsRectangular() || len(children) < 2 {
 		return frame, nil
 	}
 	needed := float64(len(children)-1) * layoutgraph.NodeGap
@@ -156,7 +156,7 @@ func plainTile(n *layoutgraph.Node) bool {
 func captionTile(n *layoutgraph.Node) bool {
 	return !n.IsContainer() && len(n.Edges) == 0 &&
 		n.Hierarchy == nil && n.Cluster == nil && n.Sequence == nil && !n.IsInvisible &&
-		!n.Is3D && !n.IsMultiple && n.IsRectangular()
+		!n.Is3D && !n.IsMultiple && n.Shape.IsRectangular()
 }
 
 func (frame packingFrame) score(nodes layoutgraph.Nodes, guard *limits.WorkGuard) (packingScore, error) {

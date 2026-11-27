@@ -26,10 +26,6 @@
         overflow-wrap: anywhere;
         font-size: 20px;
       }
-      .variant {
-        color: #61758a;
-        font-size: 13px;
-      }
       .case-images {
         display: flex;
         align-items: flex-start;
@@ -82,7 +78,6 @@
       {{range .Tests}}
       <section class="case" id="{{.ID}}">
         <h2><a href="{{.GotImage}}">{{.Name}}</a></h2>
-        <p class="variant">{{.Variant}}</p>
         {{if .MissingExpected}}
         <p class="missing">
           Missing expected snapshot. Review the new output before accepting its golden.

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D2 diagram</title>
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; padding: 0; font: 13px/1.4 system-ui, sans-serif; background: transparent; }
+  #bar { display: flex; gap: 6px; align-items: center; padding: 6px 8px; }
+  #bar button { font: inherit; padding: 2px 8px; }
+  #msg { margin-left: auto; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #stage { position: relative; overflow: hidden; touch-action: none; cursor: grab; min-height: 80px; }
+  #stage.dragging { cursor: grabbing; }
+  #img { display: block; transform-origin: 0 0; max-width: none; user-select: none; -webkit-user-drag: none; }
+  #text { margin: 0; padding: 8px; overflow: auto; white-space: pre; font: 12px/1.3 ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="fit" type="button">Fit</button>
+  <button id="zin" type="button" aria-label="Zoom in">+</button>
+  <button id="zout" type="button" aria-label="Zoom out">&minus;</button>
+  <button id="open" type="button" hidden>Open in playground</button>
+  <span id="msg">Waiting for the diagram</span>
+</div>
+<div id="stage"><img id="img" alt="D2 diagram"></div>
+<pre id="text" hidden></pre>
+<script>
+(function () {
+  "use strict";
+  var SVG_KEY = "com.d2lang/svg";
+  var stage = document.getElementById("stage");
+  var img = document.getElementById("img");
+  var text = document.getElementById("text");
+  var msg = document.getElementById("msg");
+  var openBtn = document.getElementById("open");
+  var nextId = 1, pending = {};
+  var natural = { w: 0, h: 0 }, view = { x: 0, y: 0, k: 1 };
+  var maxHeight = 600, playgroundURL = "", drag = null;
+
+  function post(m) { window.parent.postMessage(m, "*"); }
+  function request(method, params) {
+    var id = nextId++;
+    return new Promise(function (resolve, reject) {
+      pending[id] = { resolve: resolve, reject: reject };
+      post({ jsonrpc: "2.0", id: id, method: method, params: params });
+    });
+  }
+  function notify(method, params) { post({ jsonrpc: "2.0", method: method, params: params || {} }); }
+  function setMsg(t) { msg.textContent = t; }
+  function reportSize() {
+    notify("ui/notifications/size-changed", { height: Math.ceil(document.documentElement.getBoundingClientRect().height) });
+  }
+  function apply() {
+    img.style.transform = "translate(" + view.x + "px," + view.y + "px) scale(" + view.k + ")";
+  }
+  function fitScale() {
+    return Math.min(1, (stage.clientWidth || natural.w) / natural.w, maxHeight / natural.h);
+  }
+  function fit() {
+    if (!natural.w) { return; }
+    var w = stage.clientWidth || natural.w;
+    view.k = fitScale();
+    view.x = Math.max(0, (w - natural.w * view.k) / 2);
+    view.y = 0;
+    stage.style.height = Math.max(80, Math.min(maxHeight, Math.ceil(natural.h * view.k))) + "px";
+    apply();
+    reportSize();
+  }
+  function zoom(factor, cx, cy) {
+    if (!natural.w) { return; }
+    var k = Math.min(8, Math.max(Math.min(0.05, fitScale()), view.k * factor));
+    view.x = cx - (cx - view.x) * (k / view.k);
+    view.y = cy - (cy - view.y) * (k / view.k);
+    view.k = k;
+    apply();
+  }
+  function firstBlock(result, type) {
+    var blocks = (result && result.content) || [];
+    for (var i = 0; i < blocks.length; i++) {
+      if (blocks[i] && blocks[i].type === type) { return blocks[i]; }
+    }
+    return null;
+  }
+  function showText(t) {
+    stage.hidden = true;
+    text.hidden = false;
+    text.textContent = t;
+    reportSize();
+  }
+  function pngSource(result) {
+    var b = firstBlock(result, "image");
+    return b && b.data ? "data:" + (b.mimeType || "image/png") + ";base64," + b.data : "";
+  }
+  function showResult(result) {
+    if (!result) { return; }
+    var info = result.structuredContent || {};
+    var meta = result._meta || {};
+    var svg = typeof meta[SVG_KEY] === "string" ? meta[SVG_KEY] : "";
+    var png = pngSource(result);
+    playgroundURL = typeof info.playground_url === "string" ? info.playground_url : "";
+    openBtn.hidden = !playgroundURL;
+    if (result.isError || (!svg && !png)) {
+      var t = firstBlock(result, "text");
+      setMsg(result.isError ? "D2 failed to compile" : (info.board || ""));
+      showText(t ? t.text : "No diagram in the result");
+      return;
+    }
+    stage.hidden = false;
+    text.hidden = true;
+    var usedSVG = !!svg;
+    img.onload = function () {
+      var box = usedSVG ? /viewBox="\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)\s*"/.exec(svg) : null;
+      natural.w = box ? parseFloat(box[1]) : (img.naturalWidth || 800);
+      natural.h = box ? parseFloat(box[2]) : (img.naturalHeight || 600);
+      img.style.width = natural.w + "px";
+      img.style.height = natural.h + "px";
+      setMsg((info.board || "root") + (info.layout ? " · " + info.layout : ""));
+      fit();
+    };
+    img.onerror = function () {
+      if (usedSVG && png) { usedSVG = false; img.src = png; return; }
+      setMsg("Could not display the diagram");
+    };
+    img.src = svg ? "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg) : png;
+  }
+  function applyContext(ctx) {
+    if (!ctx) { return; }
+    var d = ctx.containerDimensions;
+    var bar = document.getElementById("bar").offsetHeight || 32;
+    if (d && typeof d.height === "number") { maxHeight = Math.max(80, d.height - bar); }
+    else if (d && typeof d.maxHeight === "number") { maxHeight = Math.max(80, d.maxHeight - bar); }
+    if (ctx.theme === "light" || ctx.theme === "dark") { document.documentElement.style.colorScheme = ctx.theme; }
+    fit();
+  }
+
+  window.addEventListener("message", function (ev) {
+    if (ev.source !== window.parent) { return; }
+    var m = ev.data;
+    if (!m || m.jsonrpc !== "2.0") { return; }
+    if (m.method === undefined) {
+      var p = pending[m.id];
+      if (!p) { return; }
+      delete pending[m.id];
+      if (m.error) { p.reject(new Error(m.error.message || "request failed")); } else { p.resolve(m.result); }
+      return;
+    }
+    switch (m.method) {
+      case "ui/notifications/tool-result": showResult(m.params); break;
+      case "ui/notifications/tool-cancelled": setMsg("Cancelled"); break;
+      case "ui/notifications/host-context-changed": applyContext(m.params); break;
+      case "ui/resource-teardown":
+      case "ping":
+        if (m.id !== undefined) { post({ jsonrpc: "2.0", id: m.id, result: {} }); }
+        break;
+      default:
+        if (m.id !== undefined) { post({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "Method not found" } }); }
+    }
+  });
+
+  stage.addEventListener("pointerdown", function (e) {
+    drag = { x: e.clientX - view.x, y: e.clientY - view.y };
+    stage.setPointerCapture(e.pointerId);
+    stage.classList.add("dragging");
+  });
+  stage.addEventListener("pointermove", function (e) {
+    if (!drag) { return; }
+    view.x = e.clientX - drag.x;
+    view.y = e.clientY - drag.y;
+    apply();
+  });
+  function endDrag() { drag = null; stage.classList.remove("dragging"); }
+  stage.addEventListener("pointerup", endDrag);
+  stage.addEventListener("pointercancel", endDrag);
+  stage.addEventListener("wheel", function (e) {
+    if (!e.ctrlKey && !e.metaKey) { return; }
+    e.preventDefault();
+    var r = stage.getBoundingClientRect();
+    zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+  document.getElementById("fit").addEventListener("click", fit);
+  document.getElementById("zin").addEventListener("click", function () { zoom(1.25, stage.clientWidth / 2, stage.clientHeight / 2); });
+  document.getElementById("zout").addEventListener("click", function () { zoom(0.8, stage.clientWidth / 2, stage.clientHeight / 2); });
+  openBtn.addEventListener("click", function () {
+    if (playgroundURL) { request("ui/open-link", { url: playgroundURL }).catch(function () {}); }
+  });
+  window.addEventListener("resize", fit);
+
+  request("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appInfo: { name: "d2-viewer", version: "1.0.0" },
+    appCapabilities: {}
+  }).then(function (result) {
+    applyContext(result && result.hostContext);
+    notify("ui/notifications/initialized", {});
+  }).catch(function () {
+    setMsg("This host did not complete the MCP Apps handshake");
+  });
+})();
+</script>
+</body>
+</html>

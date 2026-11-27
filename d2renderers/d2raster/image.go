@@ -216,29 +216,46 @@ func rasterDecodedBytes(config image.Config) (int64, error) {
 	return pixels * bytesPerPixel, nil
 }
 
-func (p *preflight) image(nodeID string, primitive d2scene.Image, transform d2scene.Matrix, animation animationOverrides, depth, importDepth int) (*preparedPrimitive, error) {
+// imageAsset validates an image primitive and resolves its asset, which is
+// either a prepared raster (non-nil) or else a vector asset (non-nil Root);
+// both scene walks share it.
+func (p *preflight) imageAsset(nodeID string, primitive d2scene.Image, animation animationOverrides) (*preparedRasterAsset, d2scene.VectorAsset, error) {
+	fail := func(err error) (*preparedRasterAsset, d2scene.VectorAsset, error) {
+		return nil, d2scene.VectorAsset{}, err
+	}
 	if animation.fillColor != nil || animation.strokeColor != nil || animation.dashOffset != nil {
-		return nil, fmt.Errorf("d2raster: node %q image cannot be targeted by paint or stroke animation", nodeID)
+		return fail(fmt.Errorf("d2raster: node %q image cannot be targeted by paint or stroke animation", nodeID))
 	}
 	if primitive.Asset == "" {
-		return nil, fmt.Errorf("d2raster: node %q image has an empty asset ID", nodeID)
+		return fail(fmt.Errorf("d2raster: node %q image has an empty asset ID", nodeID))
 	}
 	if err := validateBox(primitive.Box); err != nil {
-		return nil, fmt.Errorf("d2raster: node %q image: %w", nodeID, err)
+		return fail(fmt.Errorf("d2raster: node %q image: %w", nodeID, err))
 	}
 	if primitive.Aspect.Align > d2scene.AlignXMaxYMax || primitive.Aspect.Fit > d2scene.AspectSlice {
-		return nil, fmt.Errorf("d2raster: node %q image has invalid aspect-ratio policy align=%d fit=%d", nodeID, primitive.Aspect.Align, primitive.Aspect.Fit)
+		return fail(fmt.Errorf("d2raster: node %q image has invalid aspect-ratio policy align=%d fit=%d", nodeID, primitive.Aspect.Align, primitive.Aspect.Fit))
 	}
 	if asset, ok := p.rasters[primitive.Asset]; ok {
-		return p.rasterImage(nodeID, primitive, transform, asset)
+		return asset, d2scene.VectorAsset{}, nil
 	}
 	if asset, ok := p.vectors[primitive.Asset]; ok {
-		return p.vectorImage(nodeID, primitive, transform, asset, depth, importDepth)
+		return nil, asset, nil
 	}
 	if raw, exists := p.document.Assets[primitive.Asset]; exists {
-		return nil, fmt.Errorf("d2raster: node %q image asset %q is not a raster or vector asset (got %T)", nodeID, primitive.Asset, raw)
+		return fail(fmt.Errorf("d2raster: node %q image asset %q is not a raster or vector asset (got %T)", nodeID, primitive.Asset, raw))
 	}
-	return nil, fmt.Errorf("d2raster: node %q image references missing asset %q", nodeID, primitive.Asset)
+	return fail(fmt.Errorf("d2raster: node %q image references missing asset %q", nodeID, primitive.Asset))
+}
+
+func (p *preflight) image(nodeID string, primitive d2scene.Image, transform d2scene.Matrix, animation animationOverrides, depth, importDepth int) (*preparedPrimitive, error) {
+	raster, vector, err := p.imageAsset(nodeID, primitive, animation)
+	if err != nil {
+		return nil, err
+	}
+	if raster != nil {
+		return p.rasterImage(nodeID, primitive, transform, raster)
+	}
+	return p.vectorImage(nodeID, primitive, transform, vector, depth, importDepth)
 }
 
 func (p *preflight) rasterImage(nodeID string, primitive d2scene.Image, transform d2scene.Matrix, asset *preparedRasterAsset) (*preparedPrimitive, error) {

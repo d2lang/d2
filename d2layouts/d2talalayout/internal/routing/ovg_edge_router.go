@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/invariant"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
@@ -15,6 +14,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/typedpool"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // Map pools for reducing allocations in hot paths
@@ -213,7 +213,7 @@ func newSharingOVGEdgeRouter(
 func sortEdges(flavor RouteGenerationFlavor, edges []*layoutgraph.Edge, clusterNodes map[*layoutgraph.Node]struct{}) {
 	switch flavor {
 	case ShortestToLongest:
-		slices.SortStableFunc(edges, func(a, b *layoutgraph.Edge) int {
+		xsort.StableFunc(edges, func(a, b *layoutgraph.Edge) int {
 			aDistance := a.EuclideanDistance()
 			bDistance := b.EuclideanDistance()
 			switch {
@@ -226,7 +226,7 @@ func sortEdges(flavor RouteGenerationFlavor, edges []*layoutgraph.Edge, clusterN
 			}
 		})
 	case LongestToShortest:
-		slices.SortStableFunc(edges, func(a, b *layoutgraph.Edge) int {
+		xsort.StableFunc(edges, func(a, b *layoutgraph.Edge) int {
 			aDistance := a.EuclideanDistance()
 			bDistance := b.EuclideanDistance()
 			switch {
@@ -239,7 +239,7 @@ func sortEdges(flavor RouteGenerationFlavor, edges []*layoutgraph.Edge, clusterN
 			}
 		})
 	case TopDownLeftRight:
-		slices.SortStableFunc(edges, func(a, b *layoutgraph.Edge) int {
+		xsort.StableFunc(edges, func(a, b *layoutgraph.Edge) int {
 			// Ensure that edge.From is above edge.To for both edges.
 			aFrom := a.From
 			aTo := a.To
@@ -297,7 +297,7 @@ func sortEdges(flavor RouteGenerationFlavor, edges []*layoutgraph.Edge, clusterN
 	}
 
 	// Clusters go first, looks best
-	slices.SortStableFunc(edges, func(a, b *layoutgraph.Edge) int {
+	xsort.StableFunc(edges, func(a, b *layoutgraph.Edge) int {
 		connectedA := false
 		connectedB := false
 
@@ -327,13 +327,7 @@ func (router *ovgEdgeRouter) routeLine(ctx context.Context, edge *layoutgraph.Ed
 	if err := router.bindWork(ctx); err != nil {
 		return nil, 0, err
 	}
-	fromPort, toPort, cost, err := routeLineChecked(
-		router.graph,
-		edge,
-		router.routedEdges,
-		router.routes,
-		router.work.step,
-		router.work)
+	fromPort, toPort, cost, err := routeLineGuarded(router.graph, edge, router.routedEdges, router.routes, router.work)
 
 	if err != nil {
 		if errors.Is(err, layoutgraph.ErrInvalidCandidate) {
@@ -736,69 +730,40 @@ func (router *ovgEdgeRouter) search(ctx context.Context, gEdge *layoutgraph.Edge
 		if err != nil {
 			return nil, 0, err
 		}
-		if gEdge.IsBetweenTableColumns() {
+		// A column end may only use its column's ports, and may share them
+		// with the routes of the other end's neighbours.
+		switch {
+		case gEdge.IsBetweenTableColumns():
 			sharedRouteCost = basicallyInfinity / 10
 			allowSrcPortSharing = true
 			allowDstPortSharing = true
-			for _, port := range router.ovg.Ports[gSource] {
-				if err := router.work.step(); err != nil {
-					return nil, 0, err
-				}
-				if _, exists := sourcePorts[port]; !exists {
-					blockedSourcePorts[*port.Point] = true
-				}
+			if err := router.blockPortsOutside(gSource, sourcePorts, blockedSourcePorts); err != nil {
+				return nil, 0, err
 			}
-			for _, port := range router.ovg.Ports[gTarget] {
-				if err := router.work.step(); err != nil {
-					return nil, 0, err
-				}
-				if _, exists := targetPorts[port]; !exists {
-					blockedTargetPorts[*port.Point] = true
-				}
+			if err := router.blockPortsOutside(gTarget, targetPorts, blockedTargetPorts); err != nil {
+				return nil, 0, err
 			}
-			for _, e := range gSource.Edges {
-				if err := router.work.step(); err != nil {
-					return nil, 0, err
-				}
-				targetClusterNodes[gSource.Adjacent(e)] = true
+			if err := router.markAdjacentNodes(gSource, targetClusterNodes); err != nil {
+				return nil, 0, err
 			}
-			for _, e := range gTarget.Edges {
-				if err := router.work.step(); err != nil {
-					return nil, 0, err
-				}
-				sourceClusterNodes[gTarget.Adjacent(e)] = true
+			if err := router.markAdjacentNodes(gTarget, sourceClusterNodes); err != nil {
+				return nil, 0, err
 			}
-		} else if gEdge.FromTableColumnIndex != nil {
+		case gEdge.FromTableColumnIndex != nil:
 			allowSrcPortSharing = true
-			for _, port := range router.ovg.Ports[gSource] {
-				if err := router.work.step(); err != nil {
-					return nil, 0, err
-				}
-				if _, exists := sourcePorts[port]; !exists {
-					blockedSourcePorts[*port.Point] = true
-				}
+			if err := router.blockPortsOutside(gSource, sourcePorts, blockedSourcePorts); err != nil {
+				return nil, 0, err
 			}
-			for _, e := range gTarget.Edges {
-				if err := router.work.step(); err != nil {
-					return nil, 0, err
-				}
-				sourceClusterNodes[gTarget.Adjacent(e)] = true
+			if err := router.markAdjacentNodes(gTarget, sourceClusterNodes); err != nil {
+				return nil, 0, err
 			}
-		} else if gEdge.ToTableColumnIndex != nil {
+		case gEdge.ToTableColumnIndex != nil:
 			allowDstPortSharing = true
-			for _, port := range router.ovg.Ports[gTarget] {
-				if err := router.work.step(); err != nil {
-					return nil, 0, err
-				}
-				if _, exists := targetPorts[port]; !exists {
-					blockedTargetPorts[*port.Point] = true
-				}
+			if err := router.blockPortsOutside(gTarget, targetPorts, blockedTargetPorts); err != nil {
+				return nil, 0, err
 			}
-			for _, e := range gSource.Edges {
-				if err := router.work.step(); err != nil {
-					return nil, 0, err
-				}
-				targetClusterNodes[gSource.Adjacent(e)] = true
+			if err := router.markAdjacentNodes(gSource, targetClusterNodes); err != nil {
+				return nil, 0, err
 			}
 		}
 	}
@@ -1448,13 +1413,7 @@ func (router *ovgEdgeRouter) quickRoute(ctx context.Context, gEdge *layoutgraph.
 		if err := checkEdgeRoutingCanceled(ctx); err != nil {
 			return nil, 0, err
 		}
-		sourcePort, targetPort, lineCost, err := routeLineChecked(
-			originalGraph,
-			gEdge,
-			edges,
-			nil,
-			router.work.step,
-			router.work)
+		sourcePort, targetPort, lineCost, err := routeLineGuarded(originalGraph, gEdge, edges, nil, router.work)
 
 		if err == nil {
 			return []*OVGNode{
@@ -1807,7 +1766,7 @@ func (router *ovgEdgeRouter) tablePorts(edge *layoutgraph.Edge, source, target *
 			}
 			portIndex, isTableSide := nodeshape.TablePortIndex(node.Shape, o, columnIndex)
 			if !isTableSide {
-				portIndex = node.PortIndices(o)[columnIndex]
+				portIndex = node.Shape.PortIndices(o)[columnIndex]
 			}
 			ports[router.ovg.Ports[node][portIndex]] = struct{}{}
 		}
@@ -1842,4 +1801,28 @@ func (router *ovgEdgeRouter) tablePorts(edge *layoutgraph.Edge, source, target *
 		}
 	}
 	return sourcePorts, targetPorts, nil
+}
+
+// blockPortsOutside blocks every port of node that allowed does not hold.
+func (router *ovgEdgeRouter) blockPortsOutside(node *layoutgraph.Node, allowed map[*OVGNode]struct{}, blocked map[geo.Point]bool) error {
+	for _, port := range router.ovg.Ports[node] {
+		if err := router.work.step(); err != nil {
+			return err
+		}
+		if _, exists := allowed[port]; !exists {
+			blocked[*port.Point] = true
+		}
+	}
+	return nil
+}
+
+// markAdjacentNodes adds every node adjacent to node to into.
+func (router *ovgEdgeRouter) markAdjacentNodes(node *layoutgraph.Node, into map[*layoutgraph.Node]bool) error {
+	for _, e := range node.Edges {
+		if err := router.work.step(); err != nil {
+			return err
+		}
+		into[node.Adjacent(e)] = true
+	}
+	return nil
 }

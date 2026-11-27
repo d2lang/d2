@@ -148,9 +148,12 @@ func (r *EdgeReference) DueToLazyGlob() bool   { return r.DueToLazyGlob_ }
 type Scalar struct {
 	order fieldOrder // Occurrence that supplied this primary value.
 	// binding retains a step expression for interpolation after its endpoint resolves.
-	binding *tweenBinding
-	parent  Node
-	Value   d2ast.Scalar `json:"value"`
+	binding  *tweenBinding
+	markdown *markdownBinding
+	// globPattern is shared read-only when an interpolated scalar is used as a filter.
+	globPattern *interpolatedGlobPattern
+	parent      Node
+	Value       d2ast.Scalar `json:"value"`
 	// TweenOffset retains precision lost when formatting a numeric sample for
 	// text. Continuous paint properties can use it for the unrounded value.
 	TweenOffset float64 `json:"-"`
@@ -594,6 +597,25 @@ func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrde
 	}
 }
 
+// Outside their declaration contexts, board keywords can name shapes or
+// variables. A variable can also be named classes. Keep the literal name
+// in the IR and the original spelling in its source references.
+func (m *Map) fieldName(name d2ast.String, variableNames bool) d2ast.String {
+	keyword := d2ast.Keyword(name)
+	_, board := d2ast.BoardKeywords[keyword]
+	if m == nil || (!board && !(variableNames && keyword == "classes")) || NodeBoardKind(m) != "" {
+		return name
+	}
+	parent, ok := m.parent.(*Field)
+	inShape := board && ok && d2ast.Keyword(parent.Name) == ""
+	if !inShape && !(variableNames && m.inVariableData()) {
+		return name
+	}
+	literal := d2ast.FlatDoubleQuotedString(name.ScalarString())
+	literal.Range = name.GetRange()
+	return literal
+}
+
 // Root reports whether the Map is the root of the D2 tree.
 func (m *Map) Root() bool {
 	// m.parent exists even on the root map as we store the root AST in
@@ -645,7 +667,7 @@ func NodeBoardKind(n Node) BoardKind {
 	if f == nil {
 		return ""
 	}
-	switch f.Name.ScalarString() {
+	switch d2ast.Keyword(f.Name) {
 	case "layers":
 		return BoardLayer
 	case "scenarios":
@@ -1139,8 +1161,7 @@ func (c *compiler) IsContainer(m *Map) bool {
 						impn, ok := c.peekImport(n.Import)
 						if ok {
 							for _, f := range impn.Fields {
-								_, isReserved := d2ast.ReservedKeywords[f.Name.ScalarString()]
-								if !(isReserved && f.Name.IsUnquoted()) {
+								if d2ast.Keyword(f.Name) == "" {
 									return true
 								}
 							}
@@ -1152,8 +1173,7 @@ func (c *compiler) IsContainer(m *Map) bool {
 					return true
 				}
 				if n.MapKey.Key != nil {
-					_, isReserved := d2ast.ReservedKeywords[n.MapKey.Key.Path[0].Unbox().ScalarString()]
-					if !(isReserved && f.Name.IsUnquoted()) {
+					if d2ast.Keyword(m.fieldName(n.MapKey.Key.Path[0].Unbox(), true)) == "" {
 						return true
 					}
 				}
@@ -1161,8 +1181,7 @@ func (c *compiler) IsContainer(m *Map) bool {
 		}
 	}
 	for _, f := range m.Fields {
-		_, isReserved := d2ast.ReservedKeywords[f.Name.ScalarString()]
-		if !(isReserved && f.Name.IsUnquoted()) {
+		if d2ast.Keyword(f.Name) == "" {
 			return true
 		}
 	}
@@ -1206,44 +1225,66 @@ func (m *Map) GetField(ida ...d2ast.String) *Field {
 			return nil
 		}
 	}
-	return m.getFieldLinear(ida)
+	return m.getFieldLinear(true, ida...)
 }
 
 // getFieldLinear keeps the exported lookup safe for maps assembled or mutated
 // directly through the public Fields slice. Compiler-owned lookups use the
 // derived index below while the IR is being built single-threadedly.
-func (m *Map) getFieldLinear(ida []d2ast.String) *Field {
+func (m *Map) getFieldLinear(variableNames bool, ida ...d2ast.String) *Field {
 	if len(ida) == 0 {
 		return nil
 	}
 
-	s := ida[0]
+	s := m.fieldName(ida[0], false)
 	rest := ida[1:]
 
 	if s.ScalarString() == "_" && s.IsUnquoted() {
 		return nil
 	}
 
-	for _, f := range m.Fields {
-		if f == nil || f.Name == nil || !strings.EqualFold(f.Name.ScalarString(), s.ScalarString()) {
-			continue
+	for s != nil {
+		for _, f := range m.Fields {
+			if f == nil || f.Name == nil || !strings.EqualFold(f.Name.ScalarString(), s.ScalarString()) {
+				continue
+			}
+			if _, reserved := d2ast.ReservedKeywords[strings.ToLower(s.ScalarString())]; reserved &&
+				f.Name.IsUnquoted() != s.IsUnquoted() {
+				continue
+			}
+			if len(rest) == 0 {
+				return f
+			}
+			if f.Map() != nil {
+				return f.Map().getFieldLinear(variableNames, rest...)
+			}
 		}
-		if _, reserved := d2ast.ReservedKeywords[strings.ToLower(s.ScalarString())]; reserved &&
-			f.Name.IsUnquoted() != s.IsUnquoted() {
-			continue
+		if !variableNames {
+			break
 		}
-		if len(rest) == 0 {
-			return f
-		}
-		if f.Map() != nil {
-			return f.Map().getFieldLinear(rest)
-		}
-		continue
+		s = m.variableAlias(s)
 	}
 	return nil
 }
 
+// Preserve the identity of imported fields during overlays and exact variable
+// lookup. Their original board root may contain both classes and "classes".
 func (m *Map) getFieldIndexed(ida ...d2ast.String) *Field {
+	return m.getFieldIndexedMode(ida, false)
+}
+
+// Read a variable name written without quotes after looking for an exact
+// match. An imported map can still contain both spellings of a keyword.
+func (m *Map) variableAlias(name d2ast.String) d2ast.String {
+	if name.IsUnquoted() {
+		if literal := m.fieldName(name, true); !literal.IsUnquoted() {
+			return literal
+		}
+	}
+	return nil
+}
+
+func (m *Map) getFieldIndexedMode(ida []d2ast.String, variableNames bool) *Field {
 	for len(ida) > 0 && ida[0].ScalarString() == "_" && ida[0].IsUnquoted() {
 		m = ParentMap(m)
 		if m == nil {
@@ -1253,14 +1294,20 @@ func (m *Map) getFieldIndexed(ida ...d2ast.String) *Field {
 	if len(ida) == 0 {
 		return nil
 	}
-	f := m.lookupField(ida[0])
+	name := m.fieldName(ida[0], false)
+	f := m.lookupField(name)
+	if f == nil && variableNames {
+		if alias := m.variableAlias(name); alias != nil {
+			f = m.lookupField(alias)
+		}
+	}
 	if f == nil || len(ida) == 1 {
 		return f
 	}
 	if f.Map() == nil {
 		return nil
 	}
-	return f.Map().getFieldIndexed(ida[1:]...)
+	return f.Map().getFieldIndexedMode(ida[1:], variableNames)
 }
 
 // EnsureField is a bit of a misnomer. It's more of a Query/Ensure combination function at this point.
@@ -1401,7 +1448,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 			if f.Name == nil {
 				continue
 			}
-			if matchPattern(f.Name.ScalarString(), us.Pattern) {
+			if d2ast.Keyword(f.Name) == "" && matchPattern(f.Name.ScalarString(), us.Pattern) {
 				if i == len(kp.Path)-1 {
 					faAppend(f)
 				} else {
@@ -1423,33 +1470,37 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 		return nil
 	}
 
-	head := kp.Path[i].Unbox()
-	headString := head.ScalarString()
+	head := m.fieldName(kp.Path[i].Unbox(), true)
+	keyword := d2ast.Keyword(head)
 
-	if _, ok := d2ast.ReservedKeywords[strings.ToLower(head.ScalarString())]; ok && head.IsUnquoted() {
-		headString = strings.ToLower(head.ScalarString())
-		if _, ok := d2ast.CompositeReservedKeywords[headString]; !ok && i < len(kp.Path)-1 {
-			return d2parser.Errorf(kp.Path[i].Unbox(), fmt.Sprintf(`"%s" must be the last part of the key`, headString))
+	if keyword != "" && keyword != "vars" && i < len(kp.Path)-1 {
+		if _, ok := d2ast.CompositeReservedKeywords[keyword]; !ok && !m.inVariableData() {
+			return d2parser.Errorf(kp.Path[i].Unbox(), fmt.Sprintf(`"%s" must be the last part of the key`, keyword))
 		}
 	}
 
-	if headString == "_" && head.IsUnquoted() {
+	if head.ScalarString() == "_" && head.IsUnquoted() {
 		return d2parser.Errorf(kp.Path[i].Unbox(), `parent "_" can only be used in the beginning of paths, e.g. "_.x"`)
 	}
 
-	if headString == "classes" && head.IsUnquoted() && NodeBoardKind(m) == "" {
-		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", headString)
+	if keyword == "classes" && NodeBoardKind(m) == "" {
+		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", keyword)
 	}
 
-	if findBoardKeyword(head) != -1 && head.IsUnquoted() && NodeBoardKind(m) == "" {
-		return d2parser.Errorf(kp.Path[i].Unbox(), "%s must be declared at a board root scope", headString)
+	if _, board := d2ast.BoardKeywords[keyword]; board {
+		if NodeBoardKind(m) == "" {
+			return d2parser.Errorf(head, "%s must be declared at a board root scope", keyword)
+		}
+		if i == len(kp.Path)-1 && refctx != nil && refctx.Edge != nil && (kp == refctx.Edge.Src || kp == refctx.Edge.Dst) {
+			return d2parser.Errorf(head, "edge with board keyword alone doesn't make sense")
+		}
 	}
 
 	var existing *Field
 	if indexed {
 		existing = m.lookupField(head)
 	} else {
-		existing = m.getFieldLinear([]d2ast.String{head})
+		existing = m.getFieldLinear(false, head)
 	}
 	if f := existing; f != nil {
 		// Don't add references for fake common KeyPath from trimCommon in CreateEdge.
@@ -1486,7 +1537,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 	if !create {
 		return nil
 	}
-	if _, ok := d2ast.ReservedKeywords[strings.ToLower(head.ScalarString())]; !(ok && head.IsUnquoted()) && c != nil && len(c.globRefContextStack) > 0 {
+	if keyword == "" && c != nil && len(c.globRefContextStack) > 0 {
 		shape := ParentShape(m)
 		if shape == d2target.ShapeClass || shape == d2target.ShapeSQLTable {
 			return nil
@@ -1501,7 +1552,7 @@ func (m *Map) ensureField(i int, kp *d2ast.KeyPath, refctx *RefContext, create b
 	}
 	f := &Field{
 		parent: m,
-		Name:   kp.Path[i].Unbox(),
+		Name:   head,
 	}
 	defer func() {
 		if c == nil || i < kp.FirstGlob() {
@@ -1622,7 +1673,7 @@ func (m *Map) deleteFieldAt(i int) {
 	if parent == nil || parent.Name == nil || !parent.Name.IsUnquoted() || len(m.Fields) != 0 {
 		return
 	}
-	if _, ok := d2ast.ReservedKeywordHolders[parent.Name.ScalarString()]; ok {
+	if _, ok := d2ast.ReservedKeywordHolders[d2ast.Keyword(parent.Name)]; ok {
 		holder := ParentMap(parent)
 		if holder != nil {
 			if i := slices.Index(holder.Fields, parent); i >= 0 {
@@ -1876,18 +1927,10 @@ func (m *Map) createEdge(eid *EdgeID, refctx *RefContext, gctx *globContext, c *
 	if ij != -1 {
 		return d2parser.Errorf(refctx.Edge.Src.Path[ij].Unbox(), "reserved keywords are prohibited in edges")
 	}
-	ij = findBoardKeyword(eid.SrcPath...)
-	if ij == len(eid.SrcPath)-1 {
-		return d2parser.Errorf(refctx.Edge.Src.Path[ij].Unbox(), "edge with board keyword alone doesn't make sense")
-	}
 
 	ij = findProhibitedEdgeKeyword(eid.DstPath...)
 	if ij != -1 {
 		return d2parser.Errorf(refctx.Edge.Dst.Path[ij].Unbox(), "reserved keywords are prohibited in edges")
-	}
-	ij = findBoardKeyword(eid.DstPath...)
-	if ij == len(eid.DstPath)-1 {
-		return d2parser.Errorf(refctx.Edge.Dst.Path[ij].Unbox(), "edge with board keyword alone doesn't make sense")
 	}
 
 	srcFA, err := refctx.ScopeMap.ensureFieldMode(refctx.Edge.Src, refctx, true, c, indexed)
@@ -2210,7 +2253,7 @@ func IsVar(n Node) bool {
 		if NodeBoardKind(n) != "" {
 			return false
 		}
-		if f, ok := n.(*Field); ok && f.Name.ScalarString() == "vars" && f.Name.IsUnquoted() {
+		if f, ok := n.(*Field); ok && d2ast.Keyword(f.Name) == "vars" {
 			return true
 		}
 		if n == (*Map)(nil) {
@@ -2218,6 +2261,27 @@ func IsVar(n Node) bool {
 		}
 		n = n.Parent()
 	}
+}
+
+// The immediate entries in vars are variable names. Their composite values
+// can be read as data or used as diagram templates. The configuration and
+// legend are interpreted by their own compilers.
+func (m *Map) inVariableData() bool {
+	var child *Field
+	for f := ParentField(m); f != nil; f = ParentField(f) {
+		if d2ast.Keyword(f.Name) == "vars" {
+			if child != nil && child.Name != nil {
+				name := child.Name.ScalarString()
+				return !strings.EqualFold(name, "d2-config") && !strings.EqualFold(name, "d2-legend")
+			}
+			return true
+		}
+		if NodeBoardKind(f) != "" {
+			break
+		}
+		child = f
+	}
+	return false
 }
 
 func ParentBoard(n Node) Node {
@@ -2271,21 +2335,13 @@ func countUnderscores(p []d2ast.String) int {
 	return 0
 }
 
-func findBoardKeyword(ida ...d2ast.String) int {
-	for i := range ida {
-		if _, ok := d2ast.BoardKeywords[strings.ToLower(ida[i].ScalarString())]; ok && ida[i].IsUnquoted() {
-			return i
-		}
-	}
-	return -1
-}
-
 func findProhibitedEdgeKeyword(ida ...d2ast.String) int {
 	for i := range ida {
-		if _, ok := d2ast.SimpleReservedKeywords[ida[i].ScalarString()]; ok && ida[i].IsUnquoted() {
+		keyword := d2ast.Keyword(ida[i])
+		if _, ok := d2ast.SimpleReservedKeywords[keyword]; ok {
 			return i
 		}
-		if _, ok := d2ast.ReservedKeywordHolders[ida[i].ScalarString()]; ok && ida[i].IsUnquoted() {
+		if _, ok := d2ast.ReservedKeywordHolders[keyword]; ok {
 			return i
 		}
 	}

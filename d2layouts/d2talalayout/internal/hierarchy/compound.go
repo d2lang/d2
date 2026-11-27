@@ -4,12 +4,12 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"slices"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/nodeshape"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // A compound candidate reuses already laid-out interiors as rigid blocks. The
@@ -250,7 +250,7 @@ func orderCompoundInterfaces(blocks []*compoundBlock, interfaces []compoundInter
 	}
 	for level := 0; level < blocks[0].proxy.Hierarchy.LevelCount; level++ {
 		row := levels[level]
-		slices.SortFunc(row, func(a, b *compoundBlock) int {
+		xsort.Func(row, func(a, b *compoundBlock) int {
 			ax, _ := coordinates(a)
 			bx, _ := coordinates(b)
 			if *ax < *bx {

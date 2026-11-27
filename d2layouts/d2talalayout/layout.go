@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
-	"sync"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/engine"
@@ -181,33 +180,14 @@ func coordinateLocalSeeds(ctx context.Context, seeds []int64, concurrency int, r
 	if concurrency > len(seeds) {
 		concurrency = len(seeds)
 	}
-	jobs := make(chan int, len(seeds))
-	for i := range seeds {
-		jobs <- i
-	}
-	close(jobs)
-
-	results := make(chan localSeedAttempt)
-	var workers sync.WaitGroup
-	for range concurrency {
-		workers.Go(func() {
-			for i := range jobs {
-				results <- run(i, seeds[i])
-			}
-		})
-	}
-	go func() {
-		workers.Wait()
-		close(results)
-	}()
 
 	bestIndex := -1
 	var best seedResult
 	attemptErrors := make([]error, len(seeds))
-	for attempt := range results {
+	attemptSeeds(seeds, concurrency, run, func(attempt localSeedAttempt) {
 		if attempt.err != nil {
 			attemptErrors[attempt.index] = fmt.Errorf("seed %d: %w", attempt.seed, attempt.err)
-			continue
+			return
 		}
 		comparison := 0
 		if bestIndex >= 0 {
@@ -218,7 +198,7 @@ func coordinateLocalSeeds(ctx context.Context, seeds []int64, concurrency int, r
 			best = attempt.result
 			best.seed = attempt.seed
 		}
-	}
+	})
 
 	if err := ctx.Err(); err != nil {
 		return seedResult{}, fmt.Errorf("tala layout stopped before all seeds completed: %w", err)

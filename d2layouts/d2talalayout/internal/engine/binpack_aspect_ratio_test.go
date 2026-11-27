@@ -35,7 +35,7 @@ func TestBinPackPreservesSquareContainerAspectRatioWithRoutedEdges(t *testing.T)
 		if node == nil {
 			t.Fatalf("stage %d %s lost node 4", stageIndex, stage.name)
 		}
-		if node.AspectRatio1() && node.Width != node.Height {
+		if node.Shape.AspectRatio1() && node.Width != node.Height {
 			t.Fatalf("square-shape violation before final binPack after stage %d %s: %.1fx%.1f", stageIndex, stage.name, node.Width, node.Height)
 		}
 	}

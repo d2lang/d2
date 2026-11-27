@@ -76,7 +76,7 @@ func checkNodes(start, result *layoutgraph.Graph, sequenceDefiningEdges map[layo
 		if err := checkEdges(s.Edges, r.Edges, sequenceDefiningEdges); err != nil {
 			return err
 		}
-		if r.AspectRatio1() && r.Width != r.Height {
+		if r.Shape.AspectRatio1() && r.Width != r.Height {
 			return fmt.Errorf(
 				"Node %d has shape %s that should stay square but width %.1f != height %.1f",
 				r.ID,
@@ -228,7 +228,7 @@ func checkContainersSizes(result *layoutgraph.Graph) error {
 		var badContainerSize bool
 		if container.ShapeType() == shape.CLOUD_TYPE {
 			badContainerSize = len(overflowSides) > 1
-		} else if container.AspectRatio1() {
+		} else if container.Shape.AspectRatio1() {
 			badContainerSize = len(overflowSides) > 2
 		} else {
 			badContainerSize = len(overflowSides) > 0

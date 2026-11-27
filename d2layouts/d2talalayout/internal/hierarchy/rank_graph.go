@@ -8,6 +8,7 @@ import (
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 func newRankProblem(g *layoutgraph.Graph, guard *limits.OptimizationWorkGuard) (*rankProblem, error) {
@@ -25,7 +26,7 @@ func newRankProblem(g *layoutgraph.Graph, guard *limits.OptimizationWorkGuard) (
 	if err := guard.AddSort(len(nodes)); err != nil {
 		return nil, err
 	}
-	slices.SortFunc(nodes, func(a, b *layoutgraph.Node) int {
+	xsort.Func(nodes, func(a, b *layoutgraph.Node) int {
 		if a == nil {
 			if b == nil {
 				return 0
@@ -105,7 +106,7 @@ func newRankProblem(g *layoutgraph.Graph, guard *limits.OptimizationWorkGuard) (
 	if err := guard.AddSort(len(edges)); err != nil {
 		return nil, err
 	}
-	slices.SortFunc(edges, func(a, b indexedEdge) int {
+	xsort.Func(edges, func(a, b indexedEdge) int {
 		if order := cmp.Compare(a.from, b.from); order != 0 {
 			return order
 		}
@@ -199,7 +200,7 @@ func newRankProblem(g *layoutgraph.Graph, guard *limits.OptimizationWorkGuard) (
 	if err := guard.AddSort(len(pivotOrder)); err != nil {
 		return nil, err
 	}
-	slices.SortFunc(pivotOrder, func(a, b int) int {
+	xsort.Func(pivotOrder, func(a, b int) int {
 		return cmp.Compare(problemEdges[a].id, problemEdges[b].id)
 	})
 	return &rankProblem{nodes: nodes, edges: problemEdges, outgoingStart: outgoingStart, pivotOrder: pivotOrder}, nil

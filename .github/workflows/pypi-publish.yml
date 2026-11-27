@@ -1,0 +1,222 @@
+name: Package D2 for PyPI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/pypi-publish.yml
+      - ci/release/build-wheels.py
+      - ci/release/build_wheels_test.py
+      - ci/release/pypi/**
+      - server.json
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published stable D2 release tag to package
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-${{ github.event.pull_request.number || inputs.version || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.repository == 'd2lang/d2' &&
+        ((github.event_name == 'release' && github.ref_type == 'tag' && !github.event.release.prerelease) ||
+         (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.ref_protected)))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.archives.outputs.version }}
+      mcp-manifest: ${{ steps.manifest.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test wheel and MCP listing metadata
+        run: python3 ci/release/build_wheels_test.py
+
+      - name: Verify published archives against the promoted installer checksums
+        id: archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          # Exercise the candidate packaging code against the current stable release on PRs.
+          if [[ -z "$VERSION" ]]; then VERSION=$(gh api repos/d2lang/d2/releases/latest --jq .tag_name); fi
+          [[ $VERSION =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          gh api "repos/d2lang/d2/releases/tags/$VERSION" | jq -e --arg version "$VERSION" \
+            '.tag_name == $version and .draft == false and .prerelease == false and .published_at != null'
+
+          mkdir archives
+          cd archives
+          gh release download "$VERSION" --repo d2lang/d2 --pattern 'd2-*.tar.gz' --pattern SHA256SUMS
+          # Promotion to master happens after tagging, before the release is published.
+          gh api "repos/d2lang/d2/contents/ci/release/checksums/$VERSION.txt?ref=master" \
+            -H 'Accept: application/vnd.github.raw+json' > promoted.txt
+          cmp promoted.txt SHA256SUMS
+          sha256sum --check --strict promoted.txt
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build native wheels
+        env:
+          VERSION: ${{ steps.archives.outputs.version }}
+        run: python3 ci/release/build-wheels.py --version "$VERSION" --archives archives --output dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: d2lang-wheels
+          path: dist/*.whl
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Save the matching Registry manifest for releases with MCP
+        id: manifest
+        if: hashFiles('dist/server.json') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: d2-mcp-manifest
+          path: dist/server.json
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15, windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: d2lang-wheels
+          path: dist
+      - &setup-python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - &install-uv
+        name: Install verified uv for this platform
+        shell: bash
+        run: |
+          cat > uv-requirements.txt <<'REQUIREMENTS'
+          uv==0.13.9 \
+            --hash=sha256:c16ed11e013557536b3e60065f1b912f6407bd6518e041b961e23ef9e6b4fbf5 \
+            --hash=sha256:66c512266d633bef48384a1f53003f41f2a8e7b36fe6e7fbfd3e0fd52d96fa63 \
+            --hash=sha256:d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19 \
+            --hash=sha256:5435c5ce14a56431208ca0996416d310f1598e8c2c8ba707688985a16bb82dbe \
+            --hash=sha256:ecb6028d79dc96fbeafffe5c8af62a7099487ebc05a701e76714eebcffd06375 \
+            --hash=sha256:6a44b2ed8111d2f60d2b92627c5dccda3f7ed7570b18ce115e569cd68c28246b \
+            --hash=sha256:eeb92051c2123b9730c46b04cc843cfa4bc7d7b0aec56df431a2215ef4cb0273
+          REQUIREMENTS
+          python -m pip install --require-hashes --force-reinstall --no-deps --only-binary=:all: -r uv-requirements.txt
+
+      - name: Install with pip and render with uvx
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m venv pip-smoke
+          python=pip-smoke/bin/python
+          if [[ "$RUNNER_OS" == Windows ]]; then python=pip-smoke/Scripts/python.exe; fi
+          "$python" -m pip install --no-index --find-links dist d2lang
+          "$python" -c 'from importlib.metadata import version; import os; assert version("d2lang") == os.environ["VERSION"][1:]'
+          test "$(uvx --no-index --find-links dist d2lang --version)" = "$VERSION"
+          test "$(uvx --no-index --find-links dist --from d2lang d2 --version)" = "$VERSION"
+          printf 'x -> y\n' > smoke.d2
+          uvx --no-index --find-links dist d2lang smoke.d2 smoke.svg
+          grep -q '<svg' smoke.svg
+
+      - name: Start the MCP server from the wheel
+        if: needs.build.outputs.mcp-manifest != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"wheel-smoke","version":"1"}}}' |
+            uvx --no-index --find-links dist d2lang mcp |
+            jq -es 'length == 1 and .[0].id == 1 and .[0].result.serverInfo.name == "d2"'
+
+      - name: Install and render on musl
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          docker run --rm -e VERSION -v "$PWD/dist:/wheels:ro" -w /tmp \
+            python:3.13-alpine@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e \
+            sh -ec 'python -m pip install --no-index --find-links /wheels d2lang
+              test "$(d2lang --version)" = "$VERSION"
+              echo "x -> y" > smoke.d2
+              d2 smoke.d2 smoke.svg
+              grep -q "<svg" smoke.svg'
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/d2lang/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: d2lang-wheels
+          path: dist
+      - *setup-python
+      - *install-uv
+      - name: Publish the tested wheels with PyPI Trusted Publishing
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple dist/*.whl
+
+  publish-mcp:
+    needs: [build, publish]
+    if: needs.build.outputs.mcp-manifest != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: d2-mcp-manifest
+
+      - name: Check for a previously published listing
+        id: listing
+        run: |
+          set -euo pipefail
+          name=$(jq -r '.name | @uri' server.json)
+          version=$(jq -r .version server.json)
+          url="https://registry.modelcontextprotocol.io/v0.1/servers/$name/versions/$version"
+          status=$(curl --silent --show-error --retry 3 --output listing.json --write-out '%{http_code}' "$url")
+          case "$status" in
+            200) jq -e --slurpfile expected server.json '.server == $expected[0]' listing.json ;;
+            404) echo 'publish=true' >> "$GITHUB_OUTPUT" ;;
+            *) echo "MCP Registry returned HTTP $status" >&2; exit 1 ;;
+          esac
+
+      - name: Publish to the MCP Registry with GitHub OIDC
+        if: steps.listing.outputs.publish == 'true'
+        env:
+          PUBLISHER_VERSION: v1.8.16
+          PUBLISHER_SHA256: 6e2f799550cf843c6fd3350498d56cc49be3dc0af1e6237eb0e6435c7a9d5c05
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          curl --fail --location --silent --show-error --retry 3 --output "$archive" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/$PUBLISHER_VERSION/$archive"
+          echo "$PUBLISHER_SHA256  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.json

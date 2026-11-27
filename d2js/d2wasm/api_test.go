@@ -506,3 +506,12 @@ func assertSingleWASMWarning(t *testing.T, warnings []string, want string) {
 		t.Fatalf("warning = %q, want %q", warnings[0], want)
 	}
 }
+
+func wasmJSONArgument(t *testing.T, value any) []js.Value {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []js.Value{js.ValueOf(string(encoded))}
+}

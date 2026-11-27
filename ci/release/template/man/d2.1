@@ -7,18 +7,29 @@
 .Sh SYNOPSIS
 .Nm d2
 .Op Fl -watch Ar false
-.Op Fl -theme Em 0
+.Op Fl -theme Ar theme
 .Op Fl -salt Ar string
 .Ar file.d2
 .Op Ar file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt
 .Nm d2
 .Ar layout Op Ar name
 .Nm d2
-.Ar fmt Ar file.d2 ...
+.Cm fmt
+.Op Fl -check
+.Op Fl -diff
+.Ar file.d2 | file.md | - ...
 .Nm d2
 .Ar play Ar file.d2
 .Nm d2
 .Ar validate Ar file.d2
+.Nm d2
+.Ar lsp
+.Op Fl -stdio
+.Nm d2
+.Cm mcp
+.Op Fl -root Ar dir
+.Op Fl -no-ui
+.Op Fl -timeout Ar seconds
 .Sh DESCRIPTION
 .Nm
 compiles and renders
@@ -78,11 +89,15 @@ Host listening address when used with
 Port listening address when used with
 .Ar watch
 .Ns .
-.It Fl t , -theme Ar 0
-Set the diagram theme ID
-.Ns .
-.It Fl -dark-theme Ar -1
-The theme to use when the viewer's browser is in dark mode. When left unset
+.It Fl t , -theme Ar theme
+Set the diagram theme by ID or name. For example, 300 and Terminal select the same theme.
+The default is 0 (Neutral Default).
+Run
+.Cm d2 themes
+to list the available names and IDs.
+.It Fl -dark-theme Ar theme
+The theme ID or name to use when the viewer's browser is in dark mode.
+The default of -1 leaves this option unset. When left unset
 .Fl -theme
 is used for both light and dark mode. Be aware that explicit styles set in D2 code will
 still be applied and this may produce unexpected results. We plan on resolving this by
@@ -91,29 +106,6 @@ making style maps in D2 light/dark mode specific. See
 .Ns .
 .It Fl s , -sketch Ar false
 Renders the diagram to look like it was sketched by hand
-.Ns .
-.It Fl -isometric Ar false
-Render SVG, PNG, GIF, PDF or PPTX with the native Go isometric renderer.
-Preserve compiled positions and dimensions, and render nested source containers as platforms.
-Like sketch, this can also be enabled using D2_ISOMETRIC=true or
-vars: {d2-config: {isometric: true}} in D2 source.
-An explicit flag takes precedence over the environment, which takes precedence over source config.
-Use --isometric=false to disable a source or environment setting.
-Without an output filename, --isometric defaults to SVG.
-No browser or GPU is required.
-Images fit the diagram within 1600 by 1000 pixels, or 1000 by 625 pixels for
-GIF, with a fixed camera. Use --scale to change those maximum dimensions.
-A single-board GIF uses an 8.33-second traffic cycle, or an 8-second
-cycle when it includes animated shapes or source panels, so both loop cleanly.
-Authored style.animated enables motion.
-Multiple boards export to SVG or PNG directories, PDF pages, PPTX slides or one GIF slideshow, in root,
-layers, scenarios, steps order. Folder-only boards are skipped.
-PDF and PPTX preserve board navigation and clickable source links.
-Their pages embed the same native image as PNG export, with projected link regions.
-GIF slides default to 1000ms per board; --animate-interval changes that delay.
-Use --target to select a board or --target='' for the root without subboards.
-Cannot be combined with sketch or force-appendix. Isometric SVG currently rejects dark-theme
-and animated multi-board SVG; use separate themed SVGs or a GIF slideshow.
 .Ns .
 .It Fl -center Ar flag
 Center the SVG in the containing viewbox, such as your browser screen
@@ -262,8 +254,10 @@ In watch mode, images used in icons are cached for subsequent compilations. This
 The maximum number of seconds that D2 runs for before timing out and exiting. When rendering a large diagram, it is recommended to increase this value
 .Ns .
 .It Fl -check Ar false
-Check that the specified files are formatted correctly
-.Ns .
+With fmt, exit with status 1 if an input needs formatting.
+.It Fl -diff Ar false
+With fmt, print a unified diff instead of writing formatted input.
+Combine with --check to fail if changes are needed.
 .It Fl -salt Ar string
 Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate id's do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output.
 .Ns .
@@ -297,83 +291,107 @@ Display long help for a particular layout engine, including its configuration op
 .It Ar themes
 Lists available themes
 .Ns .
-.It Ar fmt Ar file.d2 ...
-Format all passed files
+.It Ar fmt Ar file.d2 | file.md | - ...
+Format D2 source files in place.
+For .md and .markdown files, format only fenced code blocks marked d2.
+Pass - to read D2 from stdin and always print the formatted source on success.
 .It Ar play Ar file.d2
 Opens the file in playground, an online web viewer (https://play.d2lang.com)
 .It Ar validate Ar file.d2
 Validates file.d2
+.It Ar lsp Op Fl -stdio
+Runs the D2 language server on standard input and output for editors.
+.It Cm mcp
+Run a Model Context Protocol server on standard input and standard output.
+AI clients can read the D2 language guide, check diagrams for errors, and render PNG, SVG or text.
+The server denies local file access by default.
+Use
+.Fl -root Ar dir
+or
+.Ev D2_MCP_ROOT
+to allow .d2 source files and local images beneath that directory.
+Diagram paths and their symbolic link targets must end in .d2.
+Use
+.Fl -no-ui
+or
+.Ev D2_MCP_NO_UI
+to disable the inline diagram viewer.
+Set the per-call time limit with
+.Fl -timeout Ar seconds
+or
+.Ev D2_MCP_TIMEOUT .
+The default is 60 seconds and the accepted range is 1 through 600.
+When a call reaches its deadline, the server asks the renderer to stop.
+If the renderer finishes successfully, the server returns the completed diagram.
 .El
 .Sh ENVIRONMENT VARIABLES
 Many flags can also be set with environment variables.
 .Bl -tag -width Ds
-.It Ev Sy D2_WATCH
+.It Ev D2_WATCH
 See -w[atch] flag.
-.It Ev Sy D2_LAYOUT
+.It Ev D2_LAYOUT
 See -l[ayout] flag.
-.It Ev Sy D2_THEME
+.It Ev D2_THEME
 See -t[heme] flag.
-.It Ev Sy D2_DARK_THEME
+.It Ev D2_DARK_THEME
 See --dark-theme flag.
-.It Ev Sy D2_PAD
+.It Ev D2_PAD
 See --pad flag.
-.It Ev Sy D2_CENTER
+.It Ev D2_CENTER
 See --center flag.
-.It Ev Sy D2_SKETCH
+.It Ev D2_SKETCH
 See -s[ketch] flag.
-.It Ev Sy D2_ISOMETRIC
-See --isometric flag.
-.It Ev Sy D2_BUNDLE
+.It Ev D2_BUNDLE
 See -b[undle] flag.
-.It Ev Sy D2_ALLOW_PRIVATE_NETWORK
+.It Ev D2_ALLOW_PRIVATE_NETWORK
 See --allow-private-network flag.
-.It Ev Sy D2_ALLOW_LOCAL_FILES
+.It Ev D2_ALLOW_LOCAL_FILES
 See --allow-local-files flag.
-.It Ev Sy D2_FORCE_APPENDIX
+.It Ev D2_FORCE_APPENDIX
 See --force-appendix flag.
-.It Ev Sy D2_FONT_REGULAR
+.It Ev D2_FONT_REGULAR
 See --font-regular flag.
-.It Ev Sy D2_FONT_ITALIC
+.It Ev D2_FONT_ITALIC
 See --font-italic flag.
-.It Ev Sy D2_FONT_BOLD
+.It Ev D2_FONT_BOLD
 See --font-bold flag.
-.It Ev Sy D2_FONT_SEMIBOLD
+.It Ev D2_FONT_SEMIBOLD
 See --font-semibold flag.
-.It Ev Sy D2_FONT_MONO
+.It Ev D2_FONT_MONO
 See --font-mono flag.
-.It Ev Sy D2_FONT_MONO_BOLD
+.It Ev D2_FONT_MONO_BOLD
 See --font-mono-bold flag.
-.It Ev Sy D2_FONT_MONO_ITALIC
+.It Ev D2_FONT_MONO_ITALIC
 See --font-mono-italic flag.
-.It Ev Sy D2_FONT_MONO_SEMIBOLD
+.It Ev D2_FONT_MONO_SEMIBOLD
 See --font-mono-semibold flag.
-.It Ev Sy D2_ANIMATE_INTERVAL
+.It Ev D2_ANIMATE_INTERVAL
 See --animate-interval flag.
-.It Ev Sy D2_ANIMATE_DURATION
+.It Ev D2_ANIMATE_DURATION
 See --animate-duration flag.
-.It Ev Sy D2_TIMEOUT
+.It Ev D2_TIMEOUT
 See --timeout flag.
-.It Ev Sy D2_CHECK
+.It Ev D2_CHECK
 See --check flag.
-.It Ev Sy D2_ASCII_MODE
+.It Ev D2_ASCII_MODE
 See --ascii-mode flag.
 .El
 .Bl -tag -width Ds
-.It Ev Sy DEBUG
+.It Ev DEBUG
 See -d[ebug] flag.
-.It Ev Sy IMG_CACHE
+.It Ev IMG_CACHE
 See --img-cache flag.
-.It Ev Sy HOST
+.It Ev HOST
 See -h[ost] flag.
-.It Ev Sy PORT
+.It Ev PORT
 See -p[ort] flag.
-.It Ev Sy BROWSER
+.It Ev BROWSER
 See --browser flag.
-.It Ev Sy D2_STDOUT_FORMAT
+.It Ev D2_STDOUT_FORMAT
 See --stdout-format flag.
-.It Ev Sy D2_NO_XML_TAG
+.It Ev D2_NO_XML_TAG
 See --no-xml-tag flag.
-.It Ev Sy OMIT_VERSION
+.It Ev OMIT_VERSION
 See --omit-version
 .El
 .Sh AUTHORS

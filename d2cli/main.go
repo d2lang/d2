@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +34,6 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/d2svg/appendix"
 	"github.com/d2lang/d2/d2target"
-	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/internal/d2layoutfeatures"
 	"github.com/d2lang/d2/lib/background"
@@ -49,6 +49,27 @@ import (
 	"github.com/d2lang/d2/lib/version"
 )
 
+func resolveThemeFlag(ms *xmain.State, flag, value string) (*int64, error) {
+	// The CLI's integer flags accept base prefixes, while environment variables use decimal.
+	base := 10
+	if ms.Opts.Flags.Changed(flag) {
+		base = 0
+	}
+	lookup := value
+	if id, err := strconv.ParseInt(value, base, 64); err == nil {
+		if flag == "dark-theme" && id == -1 {
+			return nil, nil
+		}
+		lookup = strconv.FormatInt(id, 10)
+	}
+	theme, err := d2themescatalog.Resolve(lookup)
+	if err != nil {
+		return nil, xmain.UsageErrorf("--%s could not be found. The available options are:\n%s\nYou provided: %s", flag, d2themescatalog.CLIString(), value)
+	}
+	ms.Log.Debug.Printf("using %s %s (ID: %d)", flag, theme.Name, theme.ID)
+	return go2.Pointer(theme.ID), nil
+}
+
 func privateNetworkEnvDefault(ms *xmain.State) (bool, error) {
 	const key = "D2_ALLOW_PRIVATE_NETWORK"
 	switch value := ms.Env.Getenv(key); value {
@@ -63,6 +84,16 @@ func privateNetworkEnvDefault(ms *xmain.State) (bool, error) {
 
 func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx = log.WithDefault(ctx)
+	// Protocol servers own stdin and stdout and parse their own flags.
+	if len(ms.Opts.Args) > 0 {
+		switch ms.Opts.Args[0] {
+		case "mcp":
+			return mcpCmd(ctx, ms, ms.Opts.Args[1:])
+		case "lsp":
+			return lspCmd(ctx, ms, ms.Opts.Args[1:])
+		}
+	}
+
 	// These should be kept up-to-date with the d2 man page
 	watchFlag, err := ms.Opts.Bool("D2_WATCH", "watch", "w", false, "watch for changes to input and live reload. Use $HOST and $PORT to specify the listening address.\n(default localhost:0, which will open on a randomly available local port).")
 	if err != nil {
@@ -100,14 +131,8 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return err
 	}
 	layoutFlag := ms.Opts.String("D2_LAYOUT", "layout", "l", "dagre", `the layout engine used`)
-	themeFlag, err := ms.Opts.Int64("D2_THEME", "theme", "t", 0, "the diagram theme ID")
-	if err != nil {
-		return err
-	}
-	darkThemeFlag, err := ms.Opts.Int64("D2_DARK_THEME", "dark-theme", "", -1, "the theme to use when the viewer's browser is in dark mode. When left unset -theme is used for both light and dark mode. Be aware that explicit styles set in D2 code will still be applied and this may produce unexpected results. We plan on resolving this by making style maps in D2 light/dark mode specific. See https://github.com/d2lang/d2/issues/831.")
-	if err != nil {
-		return err
-	}
+	themeArg := ms.Opts.String("D2_THEME", "theme", "t", "0", "the diagram theme ID or name (see d2 themes)")
+	darkThemeArg := ms.Opts.String("D2_DARK_THEME", "dark-theme", "", "-1", "the theme ID or name to use when the viewer's browser is in dark mode. When left unset -theme is used for both light and dark mode. Be aware that explicit styles set in D2 code will still be applied and this may produce unexpected results. We plan on resolving this by making style maps in D2 light/dark mode specific. See https://github.com/d2lang/d2/issues/831.")
 	padFlag, err := ms.Opts.Int64("D2_PAD", "pad", "", d2svg.DEFAULT_PADDING, "pixels padded around the rendered diagram")
 	if err != nil {
 		return err
@@ -130,10 +155,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return err
 	}
 	sketchFlag, err := ms.Opts.Bool("D2_SKETCH", "sketch", "s", false, "render the diagram to look like it was sketched by hand")
-	if err != nil {
-		return err
-	}
-	isometricFlag, err := ms.Opts.Bool("D2_ISOMETRIC", "isometric", "", false, "render SVG, PNG, GIF, PDF or PPTX in isometric perspective, preserving the compiled layout; also configurable through vars.d2-config.isometric")
 	if err != nil {
 		return err
 	}
@@ -162,7 +183,11 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	fontMonoItalicFlag := ms.Opts.String("D2_FONT_MONO_ITALIC", "font-mono-italic", "", "", "path to .ttf file to use for the monospace italic font. If none provided, Source Code Pro Italic is used.")
 	fontMonoSemiboldFlag := ms.Opts.String("D2_FONT_MONO_SEMIBOLD", "font-mono-semibold", "", "", "path to .ttf file to use for the monospace semibold font. If none provided, Source Code Pro Semibold is used.")
 
-	checkFlag, err := ms.Opts.Bool("D2_CHECK", "check", "", false, "check that the specified files are formatted correctly.")
+	checkFlag, err := ms.Opts.Bool("D2_CHECK", "check", "", false, "with fmt, exit with status 1 if an input needs formatting")
+	if err != nil {
+		return err
+	}
+	fmtDiffFlag, err := ms.Opts.Bool("", "diff", "", false, "with fmt, print a unified diff instead of writing formatted input")
 	if err != nil {
 		return err
 	}
@@ -204,10 +229,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		localFiles = localfile.Policy{}
 	}
 	ctx = withLocalFiles(ctx, localFiles)
-	isometricFlag, err = resolveIsometricFlag(ms)
-	if err != nil {
-		return xmain.UsageErrorf("%v", err)
-	}
 
 	fontFamily, monoFontFamily, err := loadFonts(ms, *fontRegularFlag, *fontItalicFlag, *fontBoldFlag, *fontSemiboldFlag, *fontMonoFlag, *fontMonoBoldFlag, *fontMonoItalicFlag, *fontMonoSemiboldFlag)
 	if err != nil {
@@ -222,12 +243,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			themesCmd(ctx, ms)
 			return nil
 		case "fmt":
-			return fmtCmd(ctx, ms, *checkFlag)
+			return fmtCmd(ctx, ms, *checkFlag, *fmtDiffFlag)
 		case "play":
-			if isometricFlag != nil && *isometricFlag {
-				return xmain.UsageErrorf("isometric images are local exports; use an output filename instead of play")
-			}
-			return playCmd(ctx, ms)
+			return playCmd(ctx, ms, *themeArg)
 		case "validate":
 			return validateCmd(ctx, ms)
 		case "version":
@@ -294,31 +312,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return xmain.UsageErrorf("%v", err)
 	}
-	if isometricFlag != nil && *isometricFlag {
-		if outputPath != "-" && *stdoutFormatFlag == "" && outputFormat == SVG && filepath.Ext(outputPath) != ".svg" {
-			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
-		}
-		if *forceAppendixFlag {
-			return xmain.UsageErrorf("--isometric cannot be combined with --force-appendix")
-		}
-		if _, err := isometricImageQualityOptions(outputFormat, *scaleFlag); err != nil {
-			return xmain.UsageErrorf("%v", err)
-		}
-		switch outputFormat {
-		case SVG:
-			outputFormat = isometricSVG
-		case PNG:
-			outputFormat = isometricPNG
-		case GIF:
-			outputFormat = isometricGIF
-		case PDF:
-			outputFormat = isometricPDF
-		case PPTX:
-			outputFormat = isometricPPTX
-		default:
-			return xmain.UsageErrorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
-		}
-	}
 	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
 		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
 	}
@@ -329,11 +322,10 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		outputPath = ms.AbsPath(outputPath)
 	}
 
-	match := d2themescatalog.Find(*themeFlag)
-	if match == (d2themes.Theme{}) {
-		return xmain.UsageErrorf("-t[heme] could not be found. The available options are:\n%s\nYou provided: %d", d2themescatalog.CLIString(), *themeFlag)
+	themeFlag, err := resolveThemeFlag(ms, "theme", *themeArg)
+	if err != nil {
+		return err
 	}
-	ms.Log.Debug.Printf("using theme %s (ID: %d)", match.Name, *themeFlag)
 
 	// If flag is not explicitly set by user, set to nil.
 	// Later, configs from D2 code will only overwrite if they weren't explicitly set by user
@@ -379,15 +371,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		}
 	}
 
-	if *darkThemeFlag == -1 {
-		darkThemeFlag = nil // TODO this is a temporary solution: https://github.com/d2lang/util-go/issues/7
-	}
-	if darkThemeFlag != nil {
-		match = d2themescatalog.Find(*darkThemeFlag)
-		if match == (d2themes.Theme{}) {
-			return xmain.UsageErrorf("--dark-theme could not be found. The available options are:\n%s\nYou provided: %d", d2themescatalog.CLIString(), *darkThemeFlag)
-		}
-		ms.Log.Debug.Printf("using dark theme %s (ID: %d)", match.Name, *darkThemeFlag)
+	darkThemeFlag, err := resolveThemeFlag(ms, "dark-theme", *darkThemeArg)
+	if err != nil {
+		return err
 	}
 
 	if !outputFormat.supportsDarkTheme() {
@@ -399,7 +385,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	renderOpts := d2svg.RenderOpts{
 		Pad:         padFlag,
 		Sketch:      sketchFlag,
-		Isometric:   isometricFlag,
 		Center:      centerFlag,
 		ThemeID:     themeFlag,
 		DarkThemeID: darkThemeFlag,
@@ -478,9 +463,6 @@ func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
 	if int64(int(animateInterval)) != animateInterval {
 		return xmain.UsageErrorf("animate-interval exceeds the supported range on this platform")
 	}
-	if ext.isIsometric() && (animateInterval > 600000 || animateInterval > 0 && ext != isometricGIF) {
-		return xmain.UsageErrorf("--isometric --animate-interval requires GIF and an interval from 1 to 600000 milliseconds")
-	}
 	if animateInterval > 0 && !ext.supportsAnimation() {
 		return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG or GIF.\nYou provided: %s", ext)
 	}
@@ -532,7 +514,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	switch {
 	case noChildren || !ext.supportsAnimation():
 		opts.AnimateTweens = go2.Pointer(false)
-	case ext == GIF || ext == isometricGIF:
+	case ext == GIF:
 		opts.AnimateTweens = go2.Pointer(true)
 	case animateIntervalFlag != nil:
 		opts.AnimateTweens = go2.Pointer(*animateIntervalFlag > 0)
@@ -566,16 +548,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	if err != nil {
 		return nil, false, err
 	}
-	if renderOptions.Isometric != nil && *renderOptions.Isometric && !ext.isIsometric() {
-		stdoutFormat, _ := ms.Opts.Flags.GetString("stdout-format")
-		if outputPath != "-" && stdoutFormat == "" && ext == SVG && filepath.Ext(outputPath) != ".svg" {
-			return nil, false, fmt.Errorf("--isometric exports SVG, PNG, GIF, PDF or PPTX; use a matching filename or --stdout-format")
-		}
-		ext, err = isometricExportExtension(ext)
-		if err != nil {
-			return nil, false, err
-		}
-	}
 	var animateInterval int64
 	if interval := rootDiagram.Config.ResolveAnimateInterval(animateIntervalFlag); interval != nil {
 		animateInterval = *interval
@@ -589,21 +561,10 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}
 	appendixOption := rootDiagram.Config.ResolveForceAppendix(forceAppendixFlag)
 	forceAppendix := appendixOption != nil && *appendixOption
-	if ext.isIsometric() && forceAppendix {
-		return nil, false, fmt.Errorf("--isometric cannot be combined with --force-appendix")
-	}
-	if ext.isIsometric() && renderOptions.Scale != nil {
-		if _, err := isometricImageQualityOptions(ext, *renderOptions.Scale); err != nil {
-			return nil, false, err
-		}
-	}
 	// The CLI's automatic scale sentinel must survive source option resolution.
 	// Ordinary exports historically treat nonpositive values and NaN as auto.
 	if renderOptions.Scale != nil && !(*renderOptions.Scale > 0) {
 		renderOptions.Scale = nil
-	}
-	if ext.isIsometric() && renderOptions.Sketch != nil && *renderOptions.Sketch {
-		return nil, false, fmt.Errorf("sketch cannot be combined with isometric output")
 	}
 	renderOpts := *renderOptions
 	cancel()
@@ -638,31 +599,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}
 
 	switch ext {
-	case isometricSVG, isometricPNG, isometricGIF, isometricPDF, isometricPPTX:
-		sourceRootID := strings.Join(append([]string{"root"}, boardPath...), ".")
-		// Prepare the watch preview before publishing files, so a failed
-		// preview cannot leave the last successful output half-updated.
-		var preview []byte
-		if wantPreview {
-			preview, err = renderIsometricPreview(ctx, ms, diagram, renderOpts, inputPath, sourceRootID, rootDiagram)
-			if err != nil {
-				return nil, false, err
-			}
-		}
-		var out []byte
-		var written bool
-		if ext == isometricPDF || ext == isometricPPTX {
-			out, written, err = renderIsometricPaged(ctx, ms, diagram, renderOpts, inputPath, outputPath, ext, sourceRootID)
-		} else {
-			out, written, err = renderIsometricImages(ctx, ms, diagram, renderOpts, inputPath, outputPath, ext, animateInterval, sourceRootID)
-		}
-		if err == nil {
-			if wantPreview {
-				out = preview
-			}
-			ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(outputPath), time.Since(start))
-		}
-		return out, written, err
 	case GIF:
 		cacheImages := ms.Env.Getenv("IMG_CACHE") == "1"
 		out, previewSVG, err := renderGIF(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), wantPreview)
@@ -1080,7 +1016,6 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.Rend
 	renderOpts := &d2svg.RenderOpts{
 		Pad:                opts.Pad,
 		Sketch:             opts.Sketch,
-		Isometric:          opts.Isometric,
 		Center:             opts.Center,
 		MasterID:           opts.MasterID,
 		ThemeID:            opts.ThemeID,

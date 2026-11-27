@@ -1,11 +1,180 @@
 {
-  "graph": null,
-  "err": {
-    "errs": [
+  "graph": {
+    "name": "",
+    "isFolderOnly": false,
+    "ast": {
+      "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,0:0:0-5:0:39",
+      "nodes": [
+        {
+          "map_key": {
+            "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,0:0:0-4:1:38",
+            "key": {
+              "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,0:0:0-0:1:1",
+              "path": [
+                {
+                  "unquoted_string": {
+                    "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,0:0:0-0:1:1",
+                    "value": [
+                      {
+                        "string": "x",
+                        "raw_string": "x"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "primary": {},
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,0:3:3-4:1:38",
+                "nodes": [
+                  {
+                    "map_key": {
+                      "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,1:1:6-3:3:36",
+                      "key": {
+                        "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,1:1:6-1:6:11",
+                        "path": [
+                          {
+                            "unquoted_string": {
+                              "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,1:1:6-1:6:11",
+                              "value": [
+                                {
+                                  "string": "style",
+                                  "raw_string": "style"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "primary": {},
+                      "value": {
+                        "map": {
+                          "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,1:8:13-3:3:36",
+                          "nodes": [
+                            {
+                              "map_key": {
+                                "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,2:4:19-2:17:32",
+                                "key": {
+                                  "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,2:4:19-2:8:23",
+                                  "path": [
+                                    {
+                                      "unquoted_string": {
+                                        "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,2:4:19-2:8:23",
+                                        "value": [
+                                          {
+                                            "string": "fill",
+                                            "raw_string": "fill"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "primary": {},
+                                "value": {
+                                  "unquoted_string": {
+                                    "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,2:10:25-2:17:32",
+                                    "value": [
+                                      {
+                                        "string": "#ffffff",
+                                        "raw_string": "#ffffff"
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "root": {
+      "id": "",
+      "id_val": "",
+      "attributes": {
+        "label": {
+          "value": ""
+        },
+        "labelDimensions": {
+          "width": 0,
+          "height": 0
+        },
+        "style": {},
+        "iconStyle": {},
+        "near_key": null,
+        "shape": {
+          "value": ""
+        },
+        "direction": {
+          "value": ""
+        },
+        "constraint": null
+      },
+      "zIndex": 0
+    },
+    "edges": null,
+    "objects": [
       {
-        "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,2:9:24-2:10:25",
-        "errmsg": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2:3:10: missing value after colon"
+        "id": "x",
+        "id_val": "x",
+        "references": [
+          {
+            "key": {
+              "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,0:0:0-0:1:1",
+              "path": [
+                {
+                  "unquoted_string": {
+                    "range": "d2/testdata/d2compiler/TestCompile/shape_unquoted_hex.d2,0:0:0-0:1:1",
+                    "value": [
+                      {
+                        "string": "x",
+                        "raw_string": "x"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "key_path_index": 0,
+            "map_key_edge_index": -1
+          }
+        ],
+        "attributes": {
+          "label": {
+            "value": "x"
+          },
+          "labelDimensions": {
+            "width": 0,
+            "height": 0
+          },
+          "style": {
+            "fill": {
+              "value": "#ffffff"
+            }
+          },
+          "iconStyle": {},
+          "near_key": null,
+          "shape": {
+            "value": "rectangle"
+          },
+          "direction": {
+            "value": ""
+          },
+          "constraint": null
+        },
+        "zIndex": 0
       }
     ]
-  }
+  },
+  "err": null
 }

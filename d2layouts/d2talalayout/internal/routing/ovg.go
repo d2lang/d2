@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 	"sync"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // Orthogonal Visibility Graph
@@ -346,7 +346,7 @@ func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 		}
 		// most shapes have 12 ports (3 on each side)
 		ovg.Ports[node] = make([]*OVGNode, 0, 12)
-		for i, relativePoints := range node.SnapPointPercentages() {
+		for i, relativePoints := range node.Shape.SnapPointPercentages() {
 			if err := guard.step(); err != nil {
 				return err
 			}
@@ -374,7 +374,7 @@ func (ovg *OVG) addPorts(g *layoutgraph.Graph, guard *ovgBuildGuard) error {
 		}
 
 		ports := ovg.Ports[node]
-		for _, index := range node.CenterPortIndices() {
+		for _, index := range node.Shape.CenterPortIndices() {
 			if err := guard.step(); err != nil {
 				return err
 			}
@@ -430,7 +430,7 @@ func (ovg *OVG) addIntersections(g *layoutgraph.Graph, xs, ys map[float64]struct
 	if err := guard.reserveSortWork(len(xOrder)); err != nil {
 		return err
 	}
-	slices.Sort(xOrder)
+	xsort.Ordered(xOrder)
 
 	yOrder := make([]float64, 0, len(ys))
 	for y := range ys {
@@ -442,7 +442,7 @@ func (ovg *OVG) addIntersections(g *layoutgraph.Graph, xs, ys map[float64]struct
 	if err := guard.reserveSortWork(len(yOrder)); err != nil {
 		return err
 	}
-	slices.Sort(yOrder)
+	xsort.Ordered(yOrder)
 
 	graphNodes := layoutgraph.Nodes(g.Nodes)
 	fixedOverlaps, err := ovg.fixedOverlapsForBuild(g, graphNodes, guard)

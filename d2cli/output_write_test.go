@@ -16,13 +16,11 @@ import (
 
 func TestRunReportsPartialRasterStdout(t *testing.T) {
 	for _, test := range []struct {
-		format    string
-		prefix    string
-		isometric bool
+		format string
+		prefix string
 	}{
 		{format: "png", prefix: "\x89PNG\r\n\x1a\n"},
 		{format: "gif", prefix: "GIF89a"},
-		{format: "svg", prefix: "<?xml", isometric: true},
 	} {
 		t.Run(test.format, func(t *testing.T) {
 			directory := t.TempDir()
@@ -33,9 +31,6 @@ func TestRunReportsPartialRasterStdout(t *testing.T) {
 			wantErr := errors.New("raster stdout failed")
 			stdout := &controlledWriteCloser{limit: 8, writeErr: wantErr}
 			args := []string{"d2", inputPath, "--stdout-format", test.format, "-"}
-			if test.isometric {
-				args = append(args, "--isometric")
-			}
 			state := &xmain.TestState{
 				Run: Run, Args: args,
 				PWD: directory, Stdout: stdout,

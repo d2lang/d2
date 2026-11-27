@@ -14,13 +14,7 @@ type stylesheetRule struct {
 }
 
 func (i *svgImporter) compileStylesheets(root *svgElement) error {
-	stack := []*svgElement{root}
-	for len(stack) != 0 {
-		if err := i.ctx.Err(); err != nil {
-			return err
-		}
-		element := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
+	return i.walkElements(root, func(element, _ *svgElement) error {
 		if element.name == "style" {
 			if err := i.validateStyleElement(element); err != nil {
 				return err
@@ -31,12 +25,8 @@ func (i *svgImporter) compileStylesheets(root *svgElement) error {
 			}
 			i.stylesheetRules = append(i.stylesheetRules, rules...)
 		}
-		for index := len(element.children) - 1; index >= 0; index-- {
-			stack = append(stack, element.children[index])
-		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func (i *svgImporter) validateStyleElement(element *svgElement) error {

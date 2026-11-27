@@ -38,7 +38,7 @@ func tightenPinnedNear(source *d2graph.Graph, result seedResult) {
 	}
 	var pin, tile *layoutgraph.Node
 	for _, n := range g.Nodes {
-		if n.GetType() != shape.SQUARE_TYPE || n.Is3D || n.IsMultiple || n.IsInvisible || n.Label != nil && (n.Label.Position != label.InsideMiddleCenter || n.Label.Width > n.Width || n.Label.Height > n.Height) {
+		if n.Shape.GetType() != shape.SQUARE_TYPE || n.Is3D || n.IsMultiple || n.IsInvisible || n.Label != nil && (n.Label.Position != label.InsideMiddleCenter || n.Label.Width > n.Width || n.Label.Height > n.Height) {
 			return
 		}
 		if n.TopLeft.X != math.Trunc(n.TopLeft.X) || n.TopLeft.Y != math.Trunc(n.TopLeft.Y) ||

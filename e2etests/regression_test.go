@@ -4,9 +4,9 @@ import (
 	"testing"
 )
 
-func testRegression(t *testing.T) {
+func regressionCases(t *testing.T) []testCase {
 	terminalThemeID := int64(300)
-	tcs := []testCase{
+	return []testCase{
 		{
 			// https://github.com/terrastruct/d2/issues/919
 			name: "hex-fill",
@@ -1158,6 +1158,4 @@ cf many required: {
 		loadFromFileWithOptions(t, "nested_layout_bug", testCase{testSerialization: true}),
 		loadFromFile(t, "disconnect_direction_right"),
 	}
-
-	runa(t, tcs)
 }

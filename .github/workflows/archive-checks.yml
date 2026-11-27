@@ -1,0 +1,324 @@
+name: Archive checks
+
+on:
+  workflow_call:
+    inputs:
+      full:
+        description: Check reproducibility and test native archives, Linux packages, and Windows installers
+        required: true
+        type: boolean
+    outputs:
+      version:
+        description: Version embedded in the archives
+        value: ${{ jobs.build.outputs.version }}
+      commit:
+        description: Source commit used to build the archives
+        value: ${{ jobs.build.outputs.commit }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_BUILD_SERIAL: "1"
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.version.outputs.commit }}
+      windows_sha256: ${{ steps.archives.outputs.windows_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: ./go.mod
+          cache: true
+
+      - name: Select release version
+        id: version
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version=$GITHUB_REF_NAME
+            if ! printf '%s\n' "$version" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'; then
+              echo "release tag must be a v-prefixed semantic version" >&2
+              exit 1
+            fi
+          elif [[ -n "$PR_NUMBER" ]]; then
+            version="v0.0.0-pr.$PR_NUMBER"
+          else
+            version="v0.0.0-ci.$GITHUB_RUN_ID"
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Verify modules
+        env:
+          GOEXPERIMENT: ""
+          GOFLAGS: ""
+          GOTOOLCHAIN: local
+          GOWORK: "off"
+        run: go mod verify
+
+      - name: Build and verify all release archives
+        env:
+          RELEASE: "1"
+          RELEASE_BUILD_IN_CI: "1"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./ci/release/build.sh --rebuild --version="$VERSION"
+
+      - name: Prove archive reproducibility
+        if: inputs.full
+        env:
+          RELEASE: "1"
+          RELEASE_BUILD_IN_CI: "1"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp "ci/release/build/$VERSION/SHA256SUMS" "$RUNNER_TEMP/first-SHA256SUMS"
+          ./ci/release/build.sh --rebuild --version="$VERSION"
+          diff -u "$RUNNER_TEMP/first-SHA256SUMS" "ci/release/build/$VERSION/SHA256SUMS"
+          git diff --exit-code
+
+      - name: Record Windows archive checksum
+        if: inputs.full
+        id: archives
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          digest=$(sha256sum "ci/release/build/$VERSION/d2-$VERSION-windows-amd64.tar.gz" | cut -d ' ' -f 1)
+          echo "windows_sha256=$digest" >>"$GITHUB_OUTPUT"
+
+      - name: Build reproducible Debian packages from the verified archives
+        if: inputs.full
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 -B ci/release/debian/build_test.py
+          for arch in amd64 arm64; do
+            for out in release-debs rebuilt-debs; do
+              python3 ci/release/debian/build.py "$VERSION" "$arch" "ci/release/build/$VERSION" "$RUNNER_TEMP/$out"
+            done
+          done
+          diff --brief --recursive "$RUNNER_TEMP/release-debs" "$RUNNER_TEMP/rebuilt-debs"
+
+      - name: Upload Debian packages
+        if: inputs.full
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-debs
+          path: ${{ runner.temp }}/release-debs/*.deb
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Build reproducible RPMs from the verified archives
+        if: inputs.full
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends rpm rpm2cpio cpio
+          python3 -B ci/release/rpm/build_test.py
+          for arch in amd64 arm64; do
+            for out in release-rpms rebuilt-rpms; do
+              python3 ci/release/rpm/build.py "$VERSION" "$arch" "ci/release/build/$VERSION" "$RUNNER_TEMP/$out"
+            done
+          done
+          diff --brief --recursive "$RUNNER_TEMP/release-rpms" "$RUNNER_TEMP/rebuilt-rpms"
+
+      - name: Upload RPMs
+        if: inputs.full
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-rpms
+          path: ${{ runner.temp }}/release-rpms/*.rpm
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Generate release SBOM
+        if: inputs.full
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          GOTOOLCHAIN=local GOWORK=off GOFLAGS= GOEXPERIMENT= \
+            go run -mod=readonly ./ci/release/releasetool sbom \
+              --binary "ci/release/build/$VERSION/linux-amd64/d2-$VERSION/bin/d2" \
+              --output "$RUNNER_TEMP/d2.spdx.json" \
+              --name "d2-$VERSION" \
+              --version "$VERSION" \
+              --epoch "$(git show -s --format=%ct HEAD)"
+
+      - name: Upload immutable release archives
+        if: inputs.full
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-archives
+          path: |
+            ci/release/build/${{ steps.version.outputs.version }}/*.tar.gz
+            ci/release/build/${{ steps.version.outputs.version }}/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload release SBOM
+        if: inputs.full
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-sbom
+          path: ${{ runner.temp }}/d2.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  smoke:
+    if: inputs.full
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: amd64
+            extension: ""
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            extension: ""
+          - runner: macos-15-intel
+            os: macos
+            arch: amd64
+            extension: ""
+          - runner: macos-15
+            os: macos
+            arch: arm64
+            extension: ""
+          - runner: windows-2025
+            os: windows
+            arch: amd64
+            extension: .exe
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
+            extension: .exe
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-archives
+          path: ${{ runner.temp }}/release-archives
+
+      - name: Run native archive smoke test
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+          BINARY_EXTENSION: ${{ matrix.extension }}
+          OS: ${{ matrix.os }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "release-archives/d2-$env:VERSION-$env:OS-$env:ARCH.tar.gz"
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw "missing $archive"
+          }
+          $destination = Join-Path $env:RUNNER_TEMP "d2-release-smoke"
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          tar -C $destination -xzf $archive
+          if ($LASTEXITCODE -ne 0) {
+            throw "unable to extract $archive"
+          }
+          $binary = Join-Path $destination "d2-$env:VERSION/bin/d2$env:BINARY_EXTENSION"
+          $actualVersion = (& $binary --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualVersion -cne $env:VERSION) {
+            throw "d2 --version returned '$actualVersion', expected '$env:VERSION'"
+          }
+          $inputFile = Join-Path $destination "smoke.d2"
+          $outputFile = Join-Path $destination "smoke.svg"
+          "x -> y" | Set-Content -LiteralPath $inputFile
+          & $binary $inputFile $outputFile
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $outputFile -PathType Leaf)) {
+            throw "d2 SVG smoke render failed"
+          }
+          if (-not (Select-String -LiteralPath $outputFile -Pattern '<svg' -Quiet)) {
+            throw "d2 SVG smoke render did not produce SVG"
+          }
+          $talaOutputFile = Join-Path $destination "smoke-tala.svg"
+          & $binary --layout=tala $inputFile $talaOutputFile
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $talaOutputFile -PathType Leaf)) {
+            throw "d2 TALA SVG smoke render failed"
+          }
+          if (-not (Select-String -LiteralPath $talaOutputFile -Pattern '<svg' -Quiet)) {
+            throw "d2 TALA SVG smoke render did not produce SVG"
+          }
+          $pngFile = Join-Path $destination "smoke.png"
+          & $binary $inputFile $pngFile
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pngFile -PathType Leaf)) {
+            throw "d2 PNG smoke render failed"
+          }
+          $pngBytes = [System.IO.File]::ReadAllBytes($pngFile)
+          if ($pngBytes.Length -lt 8 -or [System.BitConverter]::ToString($pngBytes, 0, 8) -cne '89-50-4E-47-0D-0A-1A-0A') {
+            throw "d2 PNG smoke render did not produce PNG"
+          }
+
+      - if: matrix.os == 'linux'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: |
+            ci/release/debian
+            ci/release/rpm
+      - if: matrix.os == 'linux'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-debs
+          path: ${{ runner.temp }}/release-debs
+      - name: Install, render, and remove on native Debian
+        if: matrix.os == 'linux'
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          docker run --rm -i --network none -v "$RUNNER_TEMP/release-debs:/packages:ro" \
+            debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 \
+            sh -s -- "$VERSION" "$ARCH" < ci/release/debian/smoke.sh
+
+      - if: matrix.os == 'linux'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-rpms
+          path: ${{ runner.temp }}/release-rpms
+      - name: Install, render, and remove on native Fedora and AlmaLinux
+        if: matrix.os == 'linux'
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/release-archives/d2-$VERSION-linux-$ARCH.tar.gz"
+          digest=$(tar -xOzf "$archive" "d2-$VERSION/bin/d2" | sha256sum | cut -d ' ' -f 1)
+          for image in \
+            registry.fedoraproject.org/fedora:45@sha256:806e6bc4b2f302baca3b0f53382416888f6ad46476063a2b47e72fc29968ae25 \
+            almalinux:9@sha256:02df05719ef287ebd0df0a1eedb9172a00bd70703aed7b25660e426b8e0d6047; do
+            docker run --rm -i --network none -v "$RUNNER_TEMP/release-rpms:/packages:ro" \
+              "$image" sh -s -- "$VERSION" "$digest" < ci/release/rpm/smoke.sh
+          done
+
+  msi:
+    needs: [build, smoke]
+    if: inputs.full && (github.ref_type == 'tag' || vars.WIX7_EULA_ACCEPTED == 'true')
+    uses: ./.github/workflows/windows-msi.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+      commit: ${{ needs.build.outputs.commit }}
+      archive_sha256: ${{ needs.build.outputs.windows_sha256 }}

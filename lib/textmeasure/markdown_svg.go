@@ -2,19 +2,18 @@ package textmeasure
 
 import (
 	"fmt"
-	stdhtml "html"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 
-	"github.com/PuerkitoBio/goquery"
 	"github.com/rivo/uniseg"
 	goldmarkHTML "github.com/yuin/goldmark/v2/renderer/html"
 	"golang.org/x/net/html"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/internal/htmlentity"
 	"github.com/d2lang/d2/lib/svg"
 )
 
@@ -134,6 +133,30 @@ type MarkdownSVGOptions struct {
 	UnderlineProgress *float64
 }
 
+// parseMarkdownBody parses rendered Markdown as an HTML document and returns
+// its body element, or nil if the document has none.
+func parseMarkdownBody(render string) (*html.Node, error) {
+	root, err := html.Parse(strings.NewReader(render))
+	if err != nil {
+		return nil, err
+	}
+	return firstElement(root, "body"), nil
+}
+
+// firstElement returns the first descendant of n with the given tag, in
+// document order.
+func firstElement(n *html.Node, tag string) *html.Node {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == tag {
+			return c
+		}
+		if found := firstElement(c, tag); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 // LayoutMarkdown parses Markdown once, measures it with D2's existing box
 // model, and paints that same box model into native SVG primitives.
 func LayoutMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, fontSize int) (*MarkdownLayout, error) {
@@ -141,30 +164,25 @@ func LayoutMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily,
 	if err != nil {
 		return nil, err
 	}
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(render))
+	body, err := parseMarkdownBody(render)
 	if err != nil {
 		return nil, err
 	}
-	body := doc.Find("body").First()
-	if len(body.Nodes) == 0 {
+	if body == nil {
 		return &MarkdownLayout{}, nil
 	}
 	// Keep an untouched parse tree for D2's established graph-layout
 	// measurement. Native painting normalizes whitespace to CSS semantics, but
 	// measuring that normalized tree would subtly resize old diagrams (notably
 	// a newline immediately after <br> in mixed-Unicode content).
-	legacyDoc, err := goquery.NewDocumentFromReader(strings.NewReader(render))
+	legacyBody, err := parseMarkdownBody(render)
 	if err != nil {
 		return nil, err
 	}
-	legacyBody := legacyDoc.Find("body").First()
-	if len(legacyBody.Nodes) == 0 {
-		return &MarkdownLayout{}, nil
-	}
-	if err := validateMarkdownSVGNodes(body.Nodes[0]); err != nil {
+	if err := validateMarkdownSVGNodes(body); err != nil {
 		return nil, err
 	}
-	normalizeMarkdownWhitespaceTree(body.Nodes[0])
+	normalizeMarkdownWhitespaceTree(body)
 
 	originalLineHeight := ruler.LineHeightFactor
 	originalBoundsWithDot := ruler.boundsWithDot
@@ -198,12 +216,12 @@ func LayoutMarkdown(mdText string, ruler *Ruler, fontFamily *d2fonts.FontFamily,
 	// D2's historical Markdown measurements are graph-layout API: changing them
 	// moves shapes and routes. Paint with browser-style CSS line boxes below,
 	// but retain those established outer dimensions.
-	rootAttrs := ruler.measureNode(0, legacyBody.Nodes[0], fontFamily, monoFontFamily, fontSize, d2fonts.FONT_STYLE_REGULAR, false, false)
+	rootAttrs := ruler.measureNode(0, legacyBody, fontFamily, monoFontFamily, fontSize, d2fonts.FONT_STYLE_REGULAR, false, false)
 	contentWidth := int(math.Ceil(rootAttrs.width))
 	contentHeight := int(math.Ceil(rootAttrs.height))
 	p.layout.Width = contentWidth
 	p.layout.Height = contentHeight
-	p.paintBlock(body.Nodes[0], 0, 0, ctx, float64(contentWidth))
+	p.paintBlock(body, 0, 0, ctx, float64(contentWidth))
 	var corpus strings.Builder
 	for _, primitive := range p.layout.Primitives {
 		if primitive.Kind == MarkdownTextPrimitive {
@@ -375,7 +393,7 @@ const maxLinkNormalizationPasses = 8
 func normalizeLinkForSafety(link string) (string, bool) {
 	normalized := strings.TrimSpace(link)
 	for range maxLinkNormalizationPasses {
-		next := stdhtml.UnescapeString(normalized)
+		next := htmlentity.Unescape(normalized)
 		next = decodeLinkPercentEscapes(next)
 		// URI consumers ignore controls and whitespace in or around schemes.
 		// Normalize them for classification only; safe links retain their
@@ -927,7 +945,7 @@ func (p *markdownPainter) markdownInlineLineHeight(line []markdownInlineToken, c
 			font := fontFamily.Font(token.ctx.fontSize, token.ctx.effectiveFontStyle())
 			measurementText := strings.ReplaceAll(token.text, "\u00ad", "")
 			if _, ok := p.ruler.measureFontAdvance(font, measurementText); !ok {
-				graphemes := uniseg.NewGraphemes(measurementText)
+				graphemes := newGraphemes(measurementText)
 				for graphemes.Next() {
 					grapheme := graphemes.Str()
 					if _, supported := p.ruler.measureFontAdvance(font, grapheme); supported {
@@ -1170,7 +1188,7 @@ func inlineUnbrokenWidth(atoms []markdownInlineToken, atomIndex int) float64 {
 }
 
 func (p *markdownPainter) splitInlineTokenAtWidth(token markdownInlineToken, maxWidth float64, forceSplit bool) (head, tail markdownInlineToken, ok bool) {
-	graphemes := uniseg.NewGraphemes(token.text)
+	graphemes := newGraphemes(token.text)
 	var boundaries []int
 	for graphemes.Next() {
 		_, end := graphemes.Positions()
@@ -1244,7 +1262,7 @@ func (p *markdownPainter) atomizeInlineTokens(tokens []markdownInlineToken) []ma
 		// inside an extended grapheme cluster (notably emoji ZWJ sequences),
 		// because SVG text would otherwise paint the pieces as separate glyphs.
 		graphemeBoundaries := map[int]bool{0: true}
-		graphemes := uniseg.NewGraphemes(combinedText)
+		graphemes := newGraphemes(combinedText)
 		graphemeOffset := 0
 		for graphemes.Next() {
 			graphemeOffset += len(graphemes.Str())
@@ -1469,7 +1487,7 @@ func expandMarkdownTabs(line string) string {
 	}
 	var out strings.Builder
 	column := 0
-	graphemes := uniseg.NewGraphemes(line)
+	graphemes := newGraphemes(line)
 	for graphemes.Next() {
 		grapheme := graphemes.Str()
 		if grapheme == "\t" {

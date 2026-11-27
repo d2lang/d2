@@ -7,19 +7,21 @@ import (
 	"github.com/d2lang/d2/lib/svg"
 )
 
-type shapeDiamond struct {
-	*baseShape
+var diamondKind = shapeKind{
+	typ:             DIAMOND_TYPE,
+	paddingX:        defaultPadding / 4,
+	paddingY:        defaultPadding / 2,
+	innerBox:        diamondInnerBox,
+	dimensionsToFit: diamondDimensionsToFit,
+	path:            diamondPath,
+	trace:           diamondTrace,
 }
 
 func NewDiamond(box *geo.Box) Shape {
-	shape := shapeDiamond{
-		baseShape: newShapeBase(DIAMOND_TYPE, box),
-	}
-	*shape.FullShape = shape
-	return shape
+	return newShape(&diamondKind, box)
 }
 
-func (s shapeDiamond) GetInnerBox() *geo.Box {
+func diamondInnerBox(s *shape) *geo.Box {
 	width := s.Box.Width
 	height := s.Box.Height
 	tl := s.Box.TopLeft.Copy()
@@ -51,30 +53,12 @@ func diamondOutline[P pathBuilder](box *geo.Box, newPath func(*geo.Point, float6
 	return pc
 }
 
-func (s shapeDiamond) Perimeter() []geo.Intersectable {
-	return diamondPath(s.Box).Path
+func diamondTrace(box *geo.Box, t *borderTracer) {
+	diamondOutline(box, t.newPath)
 }
 
-func (s shapeDiamond) traceBorder(t *borderTracer) {
-	diamondOutline(s.Box, t.newPath)
-}
-
-func (s shapeDiamond) GetSVGPathData() []string {
-	return []string{
-		diamondPath(s.Box).PathData(),
-	}
-}
-
-func (s shapeDiamond) GetPathCommands() [][]svg.PathCommand {
-	return pathCommands(diamondPath(s.Box))
-}
-
-func (s shapeDiamond) GetDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
+func diamondDimensionsToFit(width, height, paddingX, paddingY float64) (float64, float64) {
 	totalWidth := 2 * (width + paddingX)
 	totalHeight := 2 * (height + paddingY)
 	return math.Ceil(totalWidth), math.Ceil(totalHeight)
-}
-
-func (s shapeDiamond) GetDefaultPadding() (paddingX, paddingY float64) {
-	return defaultPadding / 4, defaultPadding / 2
 }

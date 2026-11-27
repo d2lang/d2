@@ -1,0 +1,17 @@
+vars: {d2-config: {animate-interval: 1s; pad: 8}}
+shape: sequence_diagram
+
+client: Client {
+  link: https://example.org/before
+  style.fill: "#fca311"
+}
+api: API {style.fill: "#02c39a"}
+client -> api: Request {style.stroke: "#8000ff"}
+
+steps: {
+  next: {
+    client.link: https://example.org/after
+    client.style.fill: "#0088ff"
+    (client -> api)[0]: Confirm
+  }
+}

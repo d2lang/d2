@@ -3,11 +3,11 @@
     "name": "",
     "isFolderOnly": false,
     "ast": {
-      "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,0:0:0-4:0:27",
+      "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,0:0:0-4:0:31",
       "nodes": [
         {
           "map_key": {
-            "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,0:0:0-3:1:26",
+            "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,0:0:0-3:1:30",
             "key": {
               "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,0:0:0-0:6:6",
               "path": [
@@ -27,11 +27,11 @@
             "primary": {},
             "value": {
               "map": {
-                "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,0:8:8-3:1:26",
+                "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,0:8:8-3:1:30",
                 "nodes": [
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,1:2:12-1:7:17",
+                      "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,1:2:12-1:11:21",
                       "key": {
                         "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,1:2:12-1:7:17",
                         "path": [
@@ -49,18 +49,23 @@
                         ]
                       },
                       "primary": {},
-                      "value": {}
+                      "value": {
+                        "map": {
+                          "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,1:9:19-1:11:21",
+                          "nodes": null
+                        }
+                      }
                     }
                   },
                   {
                     "map_key": {
-                      "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:20-2:6:24",
+                      "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:24-2:6:28",
                       "key": {
-                        "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:20-2:6:24",
+                        "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:24-2:6:28",
                         "path": [
                           {
                             "unquoted_string": {
-                              "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:20-2:6:24",
+                              "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:24-2:6:28",
                               "value": [
                                 {
                                   "string": "pipe",
@@ -206,11 +211,11 @@
         "references": [
           {
             "key": {
-              "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:20-2:6:24",
+              "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:24-2:6:28",
               "path": [
                 {
                   "unquoted_string": {
-                    "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:20-2:6:24",
+                    "range": "d2/testdata/d2oracle/TestMove/nested-underscore-move-out.d2,2:2:24-2:6:28",
                     "value": [
                       {
                         "string": "pipe",

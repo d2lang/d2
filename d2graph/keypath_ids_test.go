@@ -14,8 +14,12 @@ import (
 func TestEnsureChildCanonicalIDs(t *testing.T) {
 	for _, value := range []string{"", "a", "A0", "a_b", "shape", "SHAPE", "NULL", "a.b", "a b", " a ", "a--b", "a\\b", "a\nb", `a"b`, "${a}", "**", "世界", "x\x00y", string([]byte{0xff})} {
 		t.Run(value, func(t *testing.T) {
-			// Use the old one-element AST formatting expression as the oracle.
+			// Start with the canonical escaping used for a one-element key path.
 			wantID := d2format.Format(&d2ast.KeyPath{Path: []*d2ast.StringBox{d2ast.MakeValueBox(d2ast.RawString(value, true)).StringBox()}})
+			if value == "SHAPE" {
+				// A quoted keyword names an object and keeps its case.
+				wantID = "SHAPE"
+			}
 			wantValue := wantID
 			if key, _ := d2parser.ParseKey(wantID); key != nil && len(key.Path) > 0 {
 				wantValue = key.Path[0].Unbox().ScalarString()
@@ -67,5 +71,34 @@ func TestEnsureChildReservedAndSequenceIDs(t *testing.T) {
 	peer := group.EnsureChild([]d2ast.String{d2ast.FlatUnquotedString("_"), d2ast.FlatUnquotedString("bob")})
 	if peer.Parent != seq || peer.ID != "bob" {
 		t.Fatal("parent reference did not retain its scope")
+	}
+}
+
+func TestGraphNestedBoardNames(t *testing.T) {
+	g := d2graph.NewGraph()
+	parent := g.Root.EnsureChild([]d2ast.String{d2ast.FlatUnquotedString("box")})
+	for _, name := range []string{"Layers", "StEpS", "Scenarios"} {
+		id := d2ast.FlatUnquotedString(name)
+		if g.Root.EnsureChild([]d2ast.String{id}) != g.Root {
+			t.Fatalf("%q at the board root created a shape", name)
+		}
+		path := []d2ast.String{d2ast.FlatUnquotedString("box"), id}
+		child := g.Root.EnsureChild(path)
+		if child.Parent != parent || child.ID != name || child.IDVal != name || child.Label.Value != name {
+			t.Fatalf("nested %q did not keep its name and parent", name)
+		}
+		if got := parent.EnsureChild([]d2ast.String{d2ast.FlatDoubleQuotedString(strings.ToLower(name))}); got != child {
+			t.Fatalf("quoted %q created another shape", name)
+		}
+		if got, found := g.Root.HasChild([]string{"box", strings.ToLower(name)}); !found || got != child {
+			t.Fatalf("failed to find %q", name)
+		}
+		edge, err := g.Root.Connect(path, []d2ast.String{d2ast.FlatUnquotedString("outside")}, false, true, "")
+		if err != nil || edge.Src != child {
+			t.Fatalf("connecting to box.%s: %v", name, err)
+		}
+		if _, err := parent.Connect([]d2ast.String{d2ast.FlatUnquotedString("_"), id}, path, false, true, ""); err == nil {
+			t.Fatalf("connected to root board keyword %q via parent reference", name)
+		}
 	}
 }

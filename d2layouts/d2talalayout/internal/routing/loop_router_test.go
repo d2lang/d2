@@ -42,8 +42,8 @@ func TestRouteLoop(t *testing.T) {
 	assert.Equal(t, g.Edges[0], route.GEdge)
 	assert.Equal(t, 7, len(route.OVGNodes))
 
-	leftPortIndex := n1.PortIndices(geo.Left)[0]
-	topPortIndex := n1.PortIndices(geo.Top)[0]
+	leftPortIndex := n1.Shape.PortIndices(geo.Left)[0]
+	topPortIndex := n1.Shape.PortIndices(geo.Top)[0]
 	assert.Equal(t, *ovg.Ports[n1][leftPortIndex].Point, route.FromPort)
 	assert.Equal(t, *ovg.Ports[n1][topPortIndex].Point, route.ToPort)
 }
@@ -71,20 +71,20 @@ func TestRouteLoopsWithDifferentArrowheads(t *testing.T) {
 	edges := loops.Route(n1)
 
 	route := makeLoopRoute(edges[0], edges[0].Points, ovg)
-	leftPortIndex := n1.PortIndices(geo.Left)[0]
-	topPortIndex := n1.PortIndices(geo.Top)[0]
+	leftPortIndex := n1.Shape.PortIndices(geo.Left)[0]
+	topPortIndex := n1.Shape.PortIndices(geo.Top)[0]
 	assert.Equal(t, *ovg.Ports[n1][leftPortIndex].Point, route.FromPort)
 	assert.Equal(t, *ovg.Ports[n1][topPortIndex].Point, route.ToPort)
 
 	route = makeLoopRoute(edges[1], edges[1].Points, ovg)
-	topPortIndex = n1.PortIndices(geo.Top)[2]
-	rightPortIndex := n1.PortIndices(geo.Right)[0]
+	topPortIndex = n1.Shape.PortIndices(geo.Top)[2]
+	rightPortIndex := n1.Shape.PortIndices(geo.Right)[0]
 	assert.Equal(t, *ovg.Ports[n1][topPortIndex].Point, route.FromPort)
 	assert.Equal(t, *ovg.Ports[n1][rightPortIndex].Point, route.ToPort)
 
 	route = makeLoopRoute(edges[2], edges[2].Points, ovg)
-	bottomPortIndex := n1.PortIndices(geo.Bottom)[0]
-	leftPortIndex = n1.PortIndices(geo.Left)[2]
+	bottomPortIndex := n1.Shape.PortIndices(geo.Bottom)[0]
+	leftPortIndex = n1.Shape.PortIndices(geo.Left)[2]
 	assert.Equal(t, *ovg.Ports[n1][bottomPortIndex].Point, route.FromPort)
 	assert.Equal(t, *ovg.Ports[n1][leftPortIndex].Point, route.ToPort)
 }

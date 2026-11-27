@@ -1,0 +1,38 @@
+name: Browser smoke test
+description: Check step playback in Chromium and WebKit using packed D2.js or native SVGs.
+inputs:
+  packed:
+    description: Test the npm tarball from an already-built d2js/js/dist.
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Install pinned browser test dependencies
+      shell: bash
+      working-directory: d2js/js/test/browser
+      run: |
+        npm ci --ignore-scripts --no-audit --no-fund
+        ./node_modules/.bin/playwright-core install --with-deps --only-shell chromium webkit
+    - name: Test the MCP diagram viewer
+      shell: bash
+      run: node --test d2js/js/test/browser/mcp-viewer.mjs
+    - name: Test a packed browser worker and its SVG output
+      if: inputs.packed == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        consumer=$(mktemp -d)
+        npm pack ./d2js/js --pack-destination "$consumer" --silent
+        npm install --prefix "$consumer" --ignore-scripts --no-audit --no-fund --no-package-lock "$consumer"/*.tgz
+        node d2js/js/test/browser/smoke.mjs packed "$consumer/node_modules/@d2lang/d2"
+    - name: Test native SVG playback
+      if: inputs.packed == 'false'
+      shell: bash
+      run: |
+        set -euo pipefail
+        output=$(mktemp -d)
+        go build -o "$output/d2" .
+        for fixture in playback departure; do
+          "$output/d2" "d2js/js/test/browser/$fixture.d2" "$output/$fixture.svg"
+        done
+        node d2js/js/test/browser/smoke.mjs native "$output"

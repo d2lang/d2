@@ -2,10 +2,10 @@ package d2ir
 
 import (
 	"cmp"
-	"slices"
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2format"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 func sameRecursiveEndpoints(edge *d2ast.Edge) bool {
@@ -20,19 +20,15 @@ func skipRecursiveGlobField(name d2ast.String, triple bool) bool {
 	if name == nil {
 		return true
 	}
-	if !name.IsUnquoted() {
-		return false
-	}
-	key := name.ScalarString()
-	_, reserved := d2ast.ReservedKeywords[key]
-	return reserved && skipRecursiveGlobSubtree(key, triple)
+	key := d2ast.Keyword(name)
+	return key != "" && skipRecursiveGlobSubtree(key, triple)
 }
 
 func (m *Map) recursiveGlobContains(f *Field, triple bool) bool {
 	if f == nil || f.Name == nil || NodeBoardKind(f) != "" {
 		return false
 	}
-	if _, reserved := d2ast.ReservedKeywords[f.Name.ScalarString()]; reserved && f.Name.IsUnquoted() {
+	if d2ast.Keyword(f.Name) != "" {
 		return false
 	}
 	path := m.pathToField(f)
@@ -170,7 +166,7 @@ func (m *Map) selectRecursiveEdges(id *EdgeID, ref *RefContext, glob *globContex
 				}
 			}
 		}
-		slices.SortStableFunc(candidates, func(a, b match) int {
+		xsort.StableFunc(candidates, func(a, b match) int {
 			return cmp.Or(cmp.Compare(order[a.src], order[b.src]), cmp.Compare(order[a.dst], order[b.dst]))
 		})
 	}
