@@ -13,6 +13,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/internal/svgframe"
+	"github.com/d2lang/d2/d2renderers/internal/svgstyle"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/lib/color"
@@ -191,27 +192,38 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64, fontSc
 	}
 	svg = outer + inner
 
-	if needsAppendixFont(svg, fontScope, "text", "regular") {
-		appendix += fmt.Sprintf(`<style type="text/css"><![CDATA[
-.text {
-	font-family: "font-regular";
+	var fontCSS strings.Builder
+	for _, f := range []struct {
+		class, face string
+		style       d2fonts.FontStyle
+	}{
+		{"text", "regular", d2fonts.FONT_STYLE_REGULAR},
+		{"text-bold", "bold", d2fonts.FONT_STYLE_BOLD},
+	} {
+		if !needsAppendixFont(svg, fontScope, f.class, f.face) {
+			continue
+		}
+		family := "font-" + f.face
+		uri := d2fonts.SourceSansPro.Font(0, f.style).GetEncodedFull()
+		if fontScope == "" {
+			// Custom SVG may depend on the position of these stylesheets.
+			appendix += `<style type="text/css"><![CDATA[` + fmt.Sprintf(`
+.%s {
+	font-family: "%s";
 }
 @font-face {
-	font-family: font-regular;
+	font-family: %s;
 	src: url("%s");
 }
-]]></style>`, d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR).GetEncodedFull())
+`, f.class, family, family, strings.ReplaceAll(uri, "]]>", "]]]]><![CDATA[>")) + `]]></style>`
+		} else {
+			fontCSS.WriteString(svgstyle.FontFace("", f.class, family, uri))
+		}
 	}
-	if needsAppendixFont(svg, fontScope, "text-bold", "bold") {
-		appendix += fmt.Sprintf(`<style type="text/css"><![CDATA[
-.text-bold {
-	font-family: "font-bold";
-}
-@font-face {
-	font-family: font-bold;
-	src: url("%s");
-}
-]]></style>`, d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_BOLD).GetEncodedFull())
+	if fontCSS.Len() != 0 {
+		// ImageIO resolves these fallback faces differently if they precede
+		// the footnote text, even in a separate stylesheet.
+		appendix += "<style>" + svgstyle.StyleText(fontCSS.String()) + "</style>"
 	}
 
 	closingIndex := strings.LastIndex(svg, "</svg></svg>")
@@ -219,13 +231,18 @@ func appendToStandaloneSVG(svg, appendix string, w, h int, scale float64, fontSc
 }
 
 func needsAppendixFont(svg, scope, class, face string) bool {
-	if strings.Contains(svg, `font-family: "font-`+face+`"`) {
+	if strings.Contains(svg, `font-family: "font-`+face+`"`) || strings.Contains(svg, svgstyle.FontClassRule("", class, "font-"+face)) {
 		return false
 	}
 	// Use the renderer's exact class selector. A face declaration alone can
 	// select a different class, and unscoped styles on arbitrary input can
 	// still refer to the legacy family.
-	return scope == "" || !strings.Contains(svg, "."+scope+" ."+class+" {\n\tfont-family: \""+scope+"-font-"+face+"\";")
+	if scope == "" {
+		return true
+	}
+	family := scope + "-font-" + face
+	return !strings.Contains(svg, svgstyle.FontClassRule(scope, class, family)) &&
+		!strings.Contains(svg, "."+scope+" ."+class+" {\n\tfont-family: \""+family+"\";")
 }
 
 func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {
@@ -277,7 +294,7 @@ func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {
 
 // D2 emits the frame group followed by its background rectangles (including
 // double borders and pattern overlays). Resize only those opening elements.
-var frameBackground = regexp.MustCompile(`^<g [^>]*>(?:<rect [^>]* />)*`)
+var frameBackground = regexp.MustCompile(`^<g [^>]*>(?:<rect [^>]*/>)*`)
 var frameDimension = regexp.MustCompile(` (x|width|height)="(-?[0-9]+)"`)
 
 func appendToFrame(svg, appendix string, box image.Rectangle, tl, br d2target.Point, w, h int) (string, bool) {

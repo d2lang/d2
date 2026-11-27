@@ -110,6 +110,7 @@ func (r *markdownRenderer) render(
 		textmeasure.MarkdownColorNeutralMuted:     r.fillPaint(color.N6),
 	}
 	out.WriteString(layout.SVG(textmeasure.MarkdownSVGOptions{
+		CompactNumbers:    UsesDefaultStylesheet(),
 		Class:             "md md-native",
 		RolePaint:         rolePaint,
 		DisableLinks:      disableLinks,

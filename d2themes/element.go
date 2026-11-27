@@ -288,17 +288,16 @@ func (el *ThemableElement) RenderWithClasses(visit func(string)) string {
 		attributes = append(attributes, svg.Attr("clip-path", svg.LocalIRI(svg.LiteralID(clipPath))))
 	}
 
-	out := svg.OpenElement(el.tag, attributes...)
 	inner := el.inner
 	if inner == nil && el.Content != "" {
 		compatibilityContent := svg.TrustedFragment(el.Content)
 		inner = &compatibilityContent
 	}
 	if inner != nil && len(inner.String()) > 0 {
-		return strings.TrimSuffix(out, ">") + ">" + inner.String() + svg.CloseElement(el.tag)
+		return svg.OpenElement(el.tag, attributes...) + inner.String() + svg.CloseElement(el.tag)
 	}
 
-	out = strings.TrimSuffix(out, ">") + " />"
+	out := svg.EmptyElement(el.tag, attributes...)
 	fillPattern := strings.ToLower(el.FillPattern)
 	if fillPattern != "" && fillPattern != "none" {
 		patternEl := el.Copy()

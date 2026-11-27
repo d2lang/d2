@@ -1,17 +1,1 @@
-<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 290 130"><svg class="d2-590849029 d2-svg" width="290" height="130" viewBox="-1 -1 290 130"><rect x="-1" y="-1" width="290" height="130" rx="0" fill="#FFFFFF" class=" fill-N7" stroke-width="0" /><style type="text/css"><![CDATA[.shape {
-  shape-rendering: geometricPrecision;
-  stroke-linejoin: round;
-}
-.connection {
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.blend {
-  mix-blend-mode: multiply;
-  opacity: 0.5;
-}
-
-		.d2-590849029 .fill-N7{fill:#FFFFFF;}
-		.d2-590849029 .fill-B6{fill:#F7F8FE;}
-		.d2-590849029 .stroke-B1{stroke:#0D32B2;}
-		.d2-590849029 .stroke-B2{stroke:#0D32B2;}.appendix text.text{fill:#0A0F25}]]></style><g class="aW1n"><g class="shape" ><image href="https://icons.terrastruct.com/infra/019-network.svg" x="0" y="0" width="128" height="128" stroke="#0D32B2" fill="#FFFFFF" class=" stroke-B1 fill-N7" style="stroke-width:2;" /></g></g><g class="aWNv"><g class="shape" ><rect x="188" y="14" width="100" height="100" stroke="#0D32B2" fill="#F7F8FE" class=" stroke-B1 fill-B6" style="stroke-width:2;" /></g><image href="https://icons.terrastruct.com/infra/019-network.svg" x="213" y="39" width="50" height="50" /></g></svg></svg>
+<?xml version="1.0" encoding="utf-8"?><svg xmlns="http://www.w3.org/2000/svg" data-d2-version="v0.8.1-HEAD" preserveAspectRatio="xMinYMin meet" viewBox="0 0 290 130"><svg class="d2-590849029 d2-svg" width="290" height="130" viewBox="-1 -1 290 130"><rect x="-1" y="-1" width="290" height="130" fill="#FFFFFF" class=" fill-N7" stroke-width="0"/><style>.shape{shape-rendering:geometricPrecision;stroke-linejoin:round}.connection{stroke-linecap:round;stroke-linejoin:round}.d2-590849029 .fill-N7{fill:#FFFFFF}.d2-590849029 .fill-B6{fill:#F7F8FE}.d2-590849029 .stroke-B1{stroke:#0D32B2}.d2-590849029 .stroke-B2{stroke:#0D32B2}.appendix text.text{fill:#0A0F25}</style><g class="aW1n"><g class="shape"><image href="https://icons.terrastruct.com/infra/019-network.svg" x="0" y="0" width="128" height="128" stroke="#0D32B2" fill="#FFFFFF" class=" stroke-B1 fill-N7" style="stroke-width:2;"/></g></g><g class="aWNv"><g class="shape"><rect x="188" y="14" width="100" height="100" stroke="#0D32B2" fill="#F7F8FE" class=" stroke-B1 fill-B6" style="stroke-width:2;"/></g><image href="https://icons.terrastruct.com/infra/019-network.svg" x="213" y="39" width="50" height="50"/></g></svg></svg>
