@@ -34,6 +34,7 @@ const symbol2x2 = 1 << 7
 
 type utf8FontFile struct {
 	compact              bool
+	bundled              bool
 	fileReader           *fileReader
 	tableDescriptions    map[string]*tableDescription
 	outTablesData        map[string][]byte
@@ -55,13 +56,6 @@ func (fr *fileReader) Read(s int) []byte {
 	b := fr.array[fr.readerPosition : fr.readerPosition+int64(s)]
 	fr.readerPosition += int64(s)
 	return b
-}
-
-func newUTF8Font(reader *fileReader) *utf8FontFile {
-	utf := utf8FontFile{
-		fileReader: reader,
-	}
-	return &utf
 }
 
 func (utf *utf8FontFile) generateTableDescriptions() {
@@ -386,7 +380,11 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 	metricsCount = len(symbolCollection)
 	numSymbols = metricsCount
 
-	utf.setOutTable("name", utf.getTableData("name"))
+	name := utf.getTableData("name")
+	if utf.bundled {
+		name = subsetBundledNameTable(name)
+	}
+	utf.setOutTable("name", name)
 	utf.setOutTable("cvt ", utf.getTableData("cvt "))
 	utf.setOutTable("fpgm", utf.getTableData("fpgm"))
 	utf.setOutTable("prep", utf.getTableData("prep"))
@@ -412,12 +410,18 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 		alignment = 2
 	}
 	hmtxData := make([]byte, 0)
+	omitNotdef := utf.bundled && utf.canOmitNotdef(usedRunes)
 
 	for _, originalSymbolIdx := range symbolCollectionKeys {
 		hm := utf.getMetrics(oldMetrics, originalSymbolIdx)
 		hmtxData = append(hmtxData, hm...)
 
 		offsets = append(offsets, pos)
+		if omitNotdef && originalSymbolIdx == 0 {
+			// None of the bundled faces uses .notdef as a component.
+			// Keep its advance and loca entry, with a zero-length outline.
+			continue
+		}
 		symbolPos := utf.symbolOffsets.at(originalSymbolIdx)
 		symbolLen := utf.symbolOffsets.at(originalSymbolIdx+1) - symbolPos
 		data := symbolData[symbolPos : symbolPos+symbolLen]
@@ -498,6 +502,57 @@ func (utf *utf8FontFile) GenerateCutFont(usedRunes map[int]int) []byte {
 	utf.setOutTable("OS/2", os2Data)
 
 	return utf.assembleTables()
+}
+
+// CSS supplies the family name, but Chrome's font fallback can differ between
+// diagrams when its sanitizer gives distinct faces the same PostScript name.
+// The bundled faces each have a single Windows Unicode PostScript name.
+func subsetBundledNameTable(table []byte) []byte {
+	const headerSize, recordSize = 6, 12
+	if len(table) < headerSize || binary.BigEndian.Uint16(table) != 0 {
+		return table
+	}
+	count := unpackUint16(table[2:])
+	storage := unpackUint16(table[4:])
+	if storage < headerSize+count*recordSize || storage > len(table) {
+		return table
+	}
+	for i := range count {
+		offset := headerSize + i*recordSize
+		record := table[offset : offset+recordSize]
+		if unpackUint16(record) != 3 || unpackUint16(record[6:]) != 6 {
+			continue
+		}
+		size := unpackUint16(record[8:])
+		start := storage + unpackUint16(record[10:])
+		if size == 0 || start+size > len(table) {
+			return table
+		}
+		// Format 0 with one record, followed immediately by its string.
+		out := make([]byte, headerSize+recordSize+size)
+		binary.BigEndian.PutUint16(out[2:], 1)
+		binary.BigEndian.PutUint16(out[4:], headerSize+recordSize)
+		copy(out[headerSize:], record[:10]) // leave the new string offset at zero
+		copy(out[headerSize+recordSize:], table[start:start+size])
+		return out
+	}
+	return table
+}
+
+// Browsers can draw .notdef for a character lacking a system fallback, and
+// their font sanitizers require a nonempty glyf table even for blank labels.
+func (utf *utf8FontFile) canOmitNotdef(usedRunes map[int]int) bool {
+	hasOutline := false
+	for _, r := range usedRunes {
+		glyph := utf.charSymbolDictionary[r]
+		if glyph == 0 {
+			return false
+		}
+		if !hasOutline && utf.symbolOffsets.at(glyph) != utf.symbolOffsets.at(glyph+1) {
+			hasOutline = true
+		}
+	}
+	return hasOutline
 }
 
 // Trailing glyphs with the same advance width as the final long metric
@@ -796,12 +851,11 @@ func keySortArrayRangeMap(s map[int][]int) []int {
 // only of the runes included in cutset. The rune glyphs are copied from This
 // function is demonstrated in ExampleUTF8CutFont().
 func UTF8CutFont(inBuf []byte, cutset string) (outBuf []byte) {
-	return cutFont(inBuf, cutset, false)
+	f := utf8FontFile{fileReader: &fileReader{array: inBuf}}
+	return f.cutFont(cutset)
 }
 
-func cutFont(inBuf []byte, cutset string, compact bool) []byte {
-	f := newUTF8Font(&fileReader{array: inBuf})
-	f.compact = compact
+func (f *utf8FontFile) cutFont(cutset string) []byte {
 	runes := map[int]int{}
 	for i, r := range cutset {
 		runes[i] = int(r)
