@@ -309,3 +309,62 @@ func TestValidateRenderAnnotation(t *testing.T) {
 		})
 	}
 }
+
+// CI renders on amd64 and laptops on arm64. Their sines, powers and fused
+// multiply-adds differ in the last bit, which once made the simplifier keep
+// different points of the same stroke on each. Noise far larger than that
+// difference must not change a mark.
+func TestAnnotationStrokesIgnoreFloatNoise(t *testing.T) {
+	shape := annotatedShape("client", 0, 0, 87, 66, nil)
+	box := geo.NewBox(geo.NewPoint(0, 0), 87, 66)
+	dense := map[string][]geo.Point{}
+	// The same curves the marks are built from, before they are simplified.
+	// A bowed stroke is symmetric about its middle, so its two halves tie.
+	for i := 0; i <= 12; i++ {
+		u := float64(i) / 12
+		dense["bow"] = append(dense["bow"], geo.Point{X: 6.6 + 73.8*u + 1.5*math.Sin(math.Pi*u), Y: 6.6 + 52.8*u - 2.1*math.Sin(math.Pi*u)})
+	}
+	for i := 0; i <= 220; i++ {
+		a := 2 * math.Pi * float64(i) / 220
+		dense["ring"] = append(dense["ring"], geo.Point{X: 43.5 + 60*math.Cos(a), Y: 33 + 45*math.Sin(a)})
+	}
+	for i := 0; i <= 40; i++ {
+		u := float64(i) / 40
+		dense["halves"] = append(dense["halves"], geo.Point{X: 10 * u, Y: 0.25 + 2.5*u})
+	}
+	noise := []float64{3e-13, -7e-13, 1e-12, -2e-13, 5e-13, -9e-13, 0}
+	for name, pts := range dense {
+		want := simplify(append([]geo.Point(nil), pts...))
+		if len(want) < 2 || len(want) >= len(pts) && name != "halves" {
+			t.Fatalf("%s: simplified %d points to %d", name, len(pts), len(want))
+		}
+		for shift := range noise {
+			noisy := make([]geo.Point, len(pts))
+			for i, p := range pts {
+				noisy[i] = geo.Point{X: p.X + noise[(i+shift)%len(noise)], Y: p.Y - noise[(2*i+shift)%len(noise)]}
+			}
+			got := simplify(noisy)
+			if len(got) != len(want) {
+				t.Fatalf("%s: noise changed %d points to %d", name, len(want), len(got))
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("%s: noise moved point %d from %v to %v", name, i, want[i], got[i])
+				}
+			}
+		}
+	}
+
+	// Every coordinate a mark emits is a whole number of tenths.
+	d := &Diagram{Shapes: []Shape{shape}}
+	for _, mark := range []string{AnnotationCircle, AnnotationBox, AnnotationUnderline, AnnotationBrace, AnnotationCross} {
+		d.Shapes[0].Annotation = &Annotation{Shape: mark}
+		for _, stroke := range shapeMarkStrokes(&d.Shapes[0], d.Shapes[0].Annotation, box) {
+			for _, p := range stroke {
+				if x, y := p.X*10, p.Y*10; math.Abs(x-math.Round(x)) > 1e-9 || math.Abs(y-math.Round(y)) > 1e-9 {
+					t.Fatalf("%s: point %v is not on the tenth-of-a-pixel grid", mark, p)
+				}
+			}
+		}
+	}
+}

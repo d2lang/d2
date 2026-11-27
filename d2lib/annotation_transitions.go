@@ -2,6 +2,7 @@ package d2lib
 
 import (
 	"context"
+	"math"
 	"slices"
 
 	"github.com/d2lang/d2/d2target"
@@ -183,9 +184,17 @@ func (m *boardMarks) drawn(i int, progress float64) float64 {
 	return boardStroke(unitRamp(progress, begin, begin+slot))
 }
 
+// sampledAnnotation shows part of a mark on one frame. The fractions go into
+// the diagram's hash, and with it into every ID in the SVG. Easing curves
+// differ in their last bit between architectures, so the fractions are kept
+// to four places, which is finer than a mark's ink can show.
 func sampledAnnotation(a *d2target.Annotation, from, to float64) *d2target.Annotation {
+	const places = 1e4
 	sample := *a
-	sample.Drawn = &[2]float64{from, to}
+	sample.Drawn = &[2]float64{
+		math.Floor(from*places+0.5+1e-7) / places,
+		math.Floor(to*places+0.5+1e-7) / places,
+	}
 	return &sample
 }
 

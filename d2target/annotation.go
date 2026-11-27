@@ -659,9 +659,11 @@ func cutStrokes(strokes [][]geo.Point, a *Annotation) [][]geo.Point {
 			if segEnd < lo || segStart > hi || seg == 0 {
 				continue
 			}
+			// The pen stops on the same tenth-of-a-pixel grid as the rest of
+			// the mark, which also keeps a frame's path data short.
 			at := func(d float64) geo.Point {
 				t := (d - segStart) / seg
-				return geo.Point{X: s[i-1].X + (s[i].X-s[i-1].X)*t, Y: s[i-1].Y + (s[i].Y-s[i-1].Y)*t}
+				return geo.Point{X: snapTenth(s[i-1].X + (s[i].X-s[i-1].X)*t), Y: snapTenth(s[i-1].Y + (s[i].Y-s[i-1].Y)*t)}
 			}
 			if len(part) == 0 {
 				part = append(part, at(math.Max(lo, segStart)))
@@ -675,56 +677,85 @@ func cutStrokes(strokes [][]geo.Point, a *Annotation) [][]geo.Point {
 	return out
 }
 
-// simplify drops points that sit within a fifth of a pixel of the line
-// between their neighbors, then rounds to tenths. The result is a polyline
-// that reads as a curve at the stroke widths annotations use.
+// tenths rounds a coordinate to a whole number of tenths of a pixel. A value
+// exactly halfway between two tenths would round up on one machine and down
+// on another once its last bit differs. The nudge decides those the same way
+// everywhere and is far too small to see.
+func tenths(v float64) int64 {
+	return int64(math.Floor(v*10 + 0.5 + 1e-7))
+}
+
+func snapTenth(v float64) float64 {
+	return float64(tenths(v)) / 10
+}
+
+// simplify snaps a stroke to tenths of a pixel and drops the points that sit
+// within a fifth of a pixel of the line between the points kept on either
+// side. The result is a polyline that reads as a curve at the stroke widths
+// annotations use.
+//
+// The same diagram must give the same bytes on every architecture. Sines,
+// powers and fused multiply-adds differ in their last bit between them, so
+// the points are quantized first and every choice after that is made on
+// whole numbers, where a tie is a tie everywhere.
 func simplify(pts []geo.Point) []geo.Point {
-	if len(pts) < 3 {
-		return roundPoints(pts)
+	type point struct{ x, y int64 }
+	q := make([]point, 0, len(pts))
+	for _, p := range pts {
+		next := point{tenths(p.X), tenths(p.Y)}
+		if len(q) == 0 || q[len(q)-1] != next {
+			q = append(q, next)
+		}
 	}
-	const tolerance = 0.2
-	keep := make([]bool, len(pts))
-	keep[0], keep[len(pts)-1] = true, true
+	keep := make([]bool, len(q))
+	if len(q) > 0 {
+		keep[0], keep[len(q)-1] = true, true
+	}
 	type span struct{ a, b int }
-	stack := []span{{0, len(pts) - 1}}
+	stack := make([]span, 0, 16)
+	if len(q) > 2 {
+		stack = append(stack, span{0, len(q) - 1})
+	}
 	for len(stack) > 0 {
 		s := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		ax, ay, bx, by := pts[s.a].X, pts[s.a].Y, pts[s.b].X, pts[s.b].Y
-		dx, dy := bx-ax, by-ay
-		length := math.Hypot(dx, dy)
+		// Whole numbers held in float64 multiply exactly at any size a
+		// diagram reaches. The conversions around each product keep the
+		// compiler from fusing it into the subtraction that follows.
+		dx, dy := float64(q[s.b].x-q[s.a].x), float64(q[s.b].y-q[s.a].y)
+		chord := float64(dx*dx) + float64(dy*dy)
+		// Compare points by twice the area they span with the chord, which
+		// orders them by distance from it. A closed span has no chord, so
+		// compare distances from its one end instead.
 		worst, index := 0., -1
 		for i := s.a + 1; i < s.b; i++ {
-			var d float64
-			if length == 0 {
-				d = math.Hypot(pts[i].X-ax, pts[i].Y-ay)
-			} else {
-				d = math.Abs(dy*(pts[i].X-ax)-dx*(pts[i].Y-ay)) / length
+			ex, ey := float64(q[i].x-q[s.a].x), float64(q[i].y-q[s.a].y)
+			d := math.Abs(float64(dy*ex) - float64(dx*ey))
+			if chord == 0 {
+				d = float64(ex*ex) + float64(ey*ey)
 			}
 			if d > worst {
 				worst, index = d, i
 			}
 		}
-		if index >= 0 && worst > tolerance {
+		// The tolerance is two tenths: distance² > 4, where distance is the
+		// area over the chord's length.
+		far := worst > 4
+		if chord != 0 {
+			far = float64(worst*worst) > float64(4*chord)
+		}
+		if index >= 0 && far {
 			keep[index] = true
 			stack = append(stack, span{s.a, index}, span{index, s.b})
 		}
 	}
-	out := make([]geo.Point, 0, len(pts)/2)
-	for i, p := range pts {
+	out := make([]geo.Point, 0, len(q)/2+2)
+	for i, p := range q {
 		if keep[i] {
-			out = append(out, p)
+			out = append(out, geo.Point{X: float64(p.x) / 10, Y: float64(p.y) / 10})
 		}
 	}
-	return roundPoints(out)
-}
-
-func roundPoints(pts []geo.Point) []geo.Point {
-	for i := range pts {
-		pts[i].X = math.Round(pts[i].X*10) / 10
-		pts[i].Y = math.Round(pts[i].Y*10) / 10
-	}
-	return pts
+	return out
 }
 
 // ReadingMS estimates how long the board's caption and notes take to read.
