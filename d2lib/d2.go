@@ -123,17 +123,28 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 	}
 
 	d, err := compile(ctx, g, compileOpts, renderOpts)
-	if err == nil && config != nil && config.AnimateDuration != nil && *config.AnimateDuration > 0 {
-		animated := config.AnimateInterval != nil && *config.AnimateInterval > 0
-		if compileOpts.AnimateTweens != nil {
-			animated = *compileOpts.AnimateTweens
+	animated := config != nil && config.AnimateInterval != nil && *config.AnimateInterval > 0
+	if compileOpts.AnimateTweens != nil {
+		animated = *compileOpts.AnimateTweens
+	}
+	if err == nil && animated && d != nil {
+		duration := 0
+		if config != nil && config.AnimateDuration != nil {
+			duration = int(*config.AnimateDuration)
 		}
-		if animated {
+		// Annotations change on every step without changing the diagram under
+		// them. Plan the diagram's own transitions without them, then draw them.
+		annotations := liftAnnotations(d)
+		if duration > 0 {
 			structural := compileOpts.Layout != nil && strings.EqualFold(*compileOpts.Layout, "tala")
-			if err := sampleBoardTransitions(ctx, d, g, int(*config.AnimateDuration), d2target.MaxRenderTargetBoards, *renderOpts.Sketch, structural); err != nil {
+			if err := sampleBoardTransitions(ctx, d, g, duration, d2target.MaxRenderTargetBoards, *renderOpts.Sketch, structural); err != nil {
 				return nil, nil, err
 			}
 		}
+		if err := sampleAnnotations(ctx, d, annotations, duration, d2target.MaxRenderTargetBoards); err != nil {
+			return nil, nil, err
+		}
+		alignCaptions(d)
 	}
 	if d != nil {
 		if config == nil {
