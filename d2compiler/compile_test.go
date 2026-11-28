@@ -434,9 +434,11 @@ func TestStepInheritanceBudget(t *testing.T) {
 	for n := 0; n < 9; n++ {
 		fmt.Fprintf(&src, "n%d -> n%d\n", n, n+1)
 	}
+	src.WriteString("steps: {\n")
 	for step := 0; step < 27; step++ {
-		fmt.Fprintf(&src, "steps.s%d.n%d.style.fill: red\n", step, step%10)
+		fmt.Fprintf(&src, "  s%d: {n%d.style.fill: \"#ffe8cc\"}\n", step, step%10)
 	}
+	src.WriteString("}\n")
 	g, _, err := d2compiler.Compile("steps.d2", strings.NewReader(src.String()), nil)
 	if err != nil {
 		t.Fatal(err)
