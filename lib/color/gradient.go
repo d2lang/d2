@@ -28,11 +28,18 @@ type ColorStop struct {
 // Offset returns the rendered stop position, clamped to [previous, 1] so
 // authored stops cannot move backwards along the gradient.
 func (stop ColorStop) Offset(index, total int, previous float64) (float64, error) {
+	offset, err := stop.AuthoredOffset(index, total)
+	return max(previous, min(1, offset)), err
+}
+
+// AuthoredOffset resolves an omitted position but retains out-of-range or
+// out-of-order values until a renderer samples the gradient.
+func (stop ColorStop) AuthoredOffset(index, total int) (float64, error) {
 	if stop.Position == "" {
 		if total == 1 {
 			return 0, nil
 		}
-		return max(previous, float64(index)/float64(total-1)), nil
+		return float64(index) / float64(total-1), nil
 	}
 	position := strings.TrimSpace(stop.Position)
 	divisor := 1.0
@@ -44,7 +51,7 @@ func (stop ColorStop) Offset(index, total int, previous float64) (float64, error
 	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, fmt.Errorf("must be a finite number or percentage")
 	}
-	return max(previous, min(1, value/divisor)), nil
+	return value / divisor, nil
 }
 
 func ParseGradient(cssGradient string) (Gradient, error) {
@@ -269,6 +276,15 @@ func RadialGradientToSVG(gradient Gradient) string {
 
 func gradientStopOffset(position string, index, totalStops int) string {
 	if position != "" {
+		offset, err := (ColorStop{Position: position}).AuthoredOffset(index, totalStops)
+		if err == nil {
+			if offset < 0 {
+				return "0%"
+			}
+			if offset > 1 {
+				return "100%"
+			}
+		}
 		return position
 	}
 	if totalStops == 1 {
