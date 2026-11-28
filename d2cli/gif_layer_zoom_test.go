@@ -8,6 +8,9 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/d2lang/d2/d2renderers/d2animate"
+	"github.com/d2lang/d2/d2target"
 )
 
 func TestGIFLinkedLayerZoom(t *testing.T) {
@@ -180,5 +183,29 @@ layers: {
 		if at != 450 || len(wantPaint) != 0 {
 			t.Fatalf("complete=%t: duration %dcs, missing sample times %v", complete, at, wantPaint)
 		}
+	}
+}
+
+func TestGIFZoomSceneBuildCount(t *testing.T) {
+	root, a, b := new(d2target.Diagram), new(d2target.Diagram), new(d2target.Diagram)
+	segment := func(boards ...*d2target.Diagram) gifSegment {
+		var s gifSegment
+		for i := 1; i < len(boards); i++ {
+			s.route = append(s.route, d2animate.LayerLeg{From: boards[i-1], To: boards[i]})
+			// Several consecutive samples in each leg need just its two scenes.
+			for range 3 {
+				s.zoom = append(s.zoom, gifZoomSample{leg: i - 1})
+			}
+		}
+		return s
+	}
+	indices := map[*d2target.Diagram]int{root: 0, a: 1, b: 2}
+	two := []gifSegment{segment(root, a), segment(a, root)}
+	if n := gifZoomSceneBuildCount(two, indices); n != 2 {
+		t.Fatalf("two neighboring boards require two builds, got %d", n)
+	}
+	three := []gifSegment{segment(root, a), segment(a, root, b), segment(b, root)}
+	if n := gifZoomSceneBuildCount(three, indices); n != 6 {
+		t.Fatalf("three boards require three measurements and three rebuilds, got %d", n)
 	}
 }

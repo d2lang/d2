@@ -7,10 +7,12 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
+	"time"
 
 	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
+	"github.com/d2lang/d2/d2target"
 )
 
 type gifLayerOptions struct {
@@ -20,11 +22,66 @@ type gifLayerOptions struct {
 
 type gifSegment struct {
 	d2animate.Frame
-	count      int
-	viewport   *gifViewport
-	bounds     image.Rectangle
-	route      []d2animate.LayerLeg
-	zoomFrames int // Trailing samples rendered on the full canvas.
+	count    int
+	viewport *gifViewport
+	bounds   image.Rectangle
+	route    []d2animate.LayerLeg
+	zoom     []gifZoomSample // Trailing samples rendered on the full canvas.
+}
+
+type gifZoomSample struct {
+	leg      int
+	progress float64
+}
+
+// Zooms can revisit exact boards on either side of a branch. Keep two
+// neighboring scenes; moving to the next leg usually reuses its source.
+type gifSceneCache struct {
+	keys [2]int // One-based timeline indices; zero means empty.
+	docs [2]*d2scene.Document
+}
+
+func (c *gifSceneCache) touch(index int) bool {
+	key := index + 1
+	if c.keys[0] == key {
+		return true
+	}
+	hit := c.keys[1] == key
+	c.keys[0], c.keys[1] = key, c.keys[0]
+	c.docs[0], c.docs[1] = c.docs[1], c.docs[0]
+	if !hit {
+		c.docs[0] = nil
+	}
+	return hit
+}
+
+// Measure scene construction separately from frame painting. The bounds
+// prepass and the later visits to intermediate boards share the same cache.
+func gifZoomSceneBuildCount(timeline []gifSegment, indices map[*d2target.Diagram]int) int {
+	var cache gifSceneCache
+	count := 0
+	visit := func(index int) {
+		if !cache.touch(index) {
+			count++
+		}
+	}
+	for i := range timeline {
+		visit(i)
+	}
+	for i, segment := range timeline {
+		visit(i)
+		previous := -1
+		for _, sample := range segment.zoom {
+			if sample.leg == previous {
+				continue
+			}
+			leg := segment.route[sample.leg]
+			visit(indices[leg.From])
+			visit(indices[leg.To])
+			previous = sample.leg
+		}
+	}
+	return count
 }
 
 // Related boards share a world origin. Center their entire group as a unit.
@@ -76,7 +133,7 @@ func newGIFLayerCamera(canvas image.Rectangle, zoom d2animate.LayerZoom, from *d
 	return &gifLayerCamera{canvas, zoom, parent, child}
 }
 
-func (c *gifLayerCamera) render(ctx context.Context, session *d2raster.RenderSession, options d2raster.FrameOptions, progress float64) (*image.RGBA, error) {
+func (c *gifLayerCamera) render(ctx context.Context, session *d2raster.RenderSession, options d2raster.FrameOptions, progress float64, arrivalTime time.Duration) (*image.RGBA, error) {
 	output := image.NewRGBA(c.canvas)
 	draw.Draw(output, c.canvas, image.White, image.Point{}, draw.Src)
 	parent, child := c.zoom.Poses(c.canvas, progress)
@@ -104,7 +161,7 @@ func (c *gifLayerCamera) render(ctx context.Context, session *d2raster.RenderSes
 		frameOptions := options
 		frameOptions.Background = nil
 		if item.arriving {
-			frameOptions.Time = 0 // The arriving board's clock starts on its slot.
+			frameOptions.Time = arrivalTime
 		}
 		frame, err := session.Render(ctx, &document, frameOptions)
 		if err != nil {

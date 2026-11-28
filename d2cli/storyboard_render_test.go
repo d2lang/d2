@@ -285,3 +285,58 @@ func TestStoryboardUsesAbsoluteEffectClock(t *testing.T) {
 		t.Fatal("a one-second pulse must peak at both 500ms and 1500ms, with a distinct phase at 1250ms")
 	}
 }
+
+func TestStoryboardLinkedLayerCamera(t *testing.T) {
+	// A narrow red portal opens a layer pinned far from its overview. The
+	// automatic return exits through that same portal.
+	root, detail := simpleRasterDiagramWithSize(20, 30), simpleRasterDiagramWithSize(60, 40)
+	root.Config = &d2target.Config{AnimateDuration: new(int64(400))}
+	root.Shapes[0].Link = "root.layers.detail"
+	anchor := root.Shapes[0]
+	anchor.ID, anchor.Link, anchor.Fill, anchor.Pos.X = "anchor", "", "#00ff00", -100
+	root.Shapes = append(root.Shapes, anchor)
+	detail.Name = "detail"
+	detail.Shapes[0].Pos = d2target.Point{X: 10000, Y: 12000}
+	detail.Shapes[0].Fill = "#0000ff"
+	root.Layers = []*d2target.Diagram{detail}
+
+	plan, err := planStoryboard(t.Context(), root, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []storyboardFrameInfo{{"root", 0}, {"root", 200}, {"layers.detail", 400}, {"root", 600}}
+	if !reflect.DeepEqual(info, want) {
+		t.Fatalf("linked camera timeline = %+v, want %+v", info, want)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounds := func(index int, blue bool) image.Rectangle {
+		origin := image.Pt(storyboardGap+(index%2)*(storyboardWidth+storyboardGap), storyboardGap+(index/2)*(storyboardHeight+storyboardCaption+storyboardGap))
+		var rect image.Rectangle
+		for y := range storyboardHeight {
+			for x := range storyboardWidth {
+				r, g, b, _ := img.At(origin.X+x, origin.Y+y).RGBA()
+				if blue {
+					r, b = b, r
+				}
+				if r > 0xd000 && max(g, b) < 0x3000 {
+					rect = rect.Union(image.Rect(x, y, x+1, y+1))
+				}
+			}
+		}
+		return rect
+	}
+	portal, entering, child, leaving := bounds(0, false), bounds(1, false), bounds(2, true), bounds(3, false)
+	if portal.Dx() < 30 || child.Dx() < 100 || entering.Empty() || leaving.Empty() {
+		t.Fatalf("distant, independently framed boards lost their artwork: %+v %+v %+v %+v", portal, entering, child, leaving)
+	}
+	if portal.Min.X-entering.Min.X < 75 || entering != leaving {
+		t.Fatalf("zoom should pan to the red portal and return through it: start %v, inward %v, outward %v", portal, entering, leaving)
+	}
+}
