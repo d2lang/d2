@@ -10,12 +10,6 @@ import (
 	d2color "github.com/d2lang/d2/lib/color"
 )
 
-// Raster formats draw in delivery pixels, after camera and canvas placement.
-func animationProgressStrip(bounds image.Rectangle) image.Rectangle {
-	bounds.Min.Y = bounds.Max.Y - d2animate.ProgressLineHeight(bounds.Dx(), bounds.Dy())
-	return bounds
-}
-
 func animationProgressInk(opts d2svg.RenderOpts) (*image.Uniform, error) {
 	if opts.AnimateProgress == nil || !*opts.AnimateProgress {
 		return nil, nil

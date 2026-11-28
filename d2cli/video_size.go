@@ -54,9 +54,9 @@ func (s videoSize) validate() error {
 func (s videoSize) rect() image.Rectangle { return image.Rect(0, 0, s.width, s.height) }
 
 type videoFraming struct {
-	camera, output image.Rectangle
-	margin         image.Point
-	lineHeight     int
+	camera, output        image.Rectangle
+	margin                image.Point
+	artHeight, lineHeight int
 }
 
 // Measure the complete tour in D2 coordinates before choosing pixel sizes.
@@ -147,5 +147,5 @@ func (p *videoTimeline) frameSizes(boxes []d2scene.Box, scale float64, requested
 			s.bounds = s.bounds.Add(image.Pt(x, y))
 		}
 	}
-	return videoFraming{camera: content, output: output, margin: margin, lineHeight: lineHeight}, nil
+	return videoFraming{camera: content, output: output, margin: margin, artHeight: artHeight, lineHeight: lineHeight}, nil
 }

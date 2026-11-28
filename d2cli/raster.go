@@ -591,7 +591,7 @@ type gifRenderSummary struct {
 	offsets             []image.Point
 	maxWidth, maxHeight int // Board canvas before adding the progress footer.
 	footerHeight        int
-	mattes              []color.RGBA
+	mattes              []rasterMattes
 }
 
 // Browsers commonly display a 0cs or 1cs GIF frame for 100ms. Motion can
@@ -905,14 +905,14 @@ func renderGIFWithSession(
 		theme := d2themescatalog.Find(themeID(opts))
 		theme.ApplyOverrides(opts.ThemeOverrides)
 		for _, segment := range timeline {
-			matte := videoBoardMatte(theme, segment.Diagram.Root.Fill)
+			matte := boardRasterMattes(theme, segment.Diagram.Root.Fill)
 			for range segment.count - len(segment.zoom) {
 				summary.mattes = append(summary.mattes, matte)
 			}
 			for _, sample := range segment.zoom {
 				leg := segment.route[sample.leg]
-				from, to := videoBoardMatte(theme, leg.From.Root.Fill), videoBoardMatte(theme, leg.To.Root.Fill)
-				summary.mattes = append(summary.mattes, blendVideoMatte(from, to, sample.progress))
+				from, to := boardRasterMattes(theme, leg.From.Root.Fill), boardRasterMattes(theme, leg.To.Root.Fill)
+				summary.mattes = append(summary.mattes, from.blend(to, sample.progress))
 			}
 		}
 	}
@@ -1114,7 +1114,7 @@ func renderGIFWithSession(
 						frameOptions.Time = 0
 					}
 					if showProgress {
-						frameOptions.Background = summary.mattes[renderedFrameCount]
+						frameOptions.Background = summary.mattes[renderedFrameCount].board
 					}
 					frame, err := camera.render(renderCtx, session, frameOptions, sample.progress, 0)
 					if err != nil {

@@ -421,7 +421,8 @@ func TestGIFProgressReservesAccentOnFullGrayscalePalette(t *testing.T) {
 		im.Pix[i] = uint8(i)
 	}
 	p := gifProgressOverlay{ink: image.NewUniform(testProgressInk)}
-	p.start(gifRenderSummary{maxWidth: 256, maxHeight: 7, footerHeight: 10, delays: []int{3}, mattes: []color.RGBA{{255, 255, 255, 255}}}, nil)
+	white := color.RGBA{255, 255, 255, 255}
+	p.start(gifRenderSummary{maxWidth: 256, maxHeight: 7, footerHeight: 10, delays: []int{3}, mattes: []rasterMattes{{board: white, footer: white}}}, nil)
 	im = p.extendSingleBoard(im)
 	if err := p.paint(t.Context(), im); err != nil {
 		t.Fatal(err)

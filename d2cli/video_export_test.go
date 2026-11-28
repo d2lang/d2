@@ -3,6 +3,9 @@ package d2cli
 import (
 	"bytes"
 	"encoding/json"
+	"image/color"
+	"image/gif"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -153,6 +156,81 @@ steps: {next: {swatch.style.fill: blue}}`
 			t.Fatalf("%s: final RGB is %v, want lime when enabled and the white letterbox when disabled", tc.name, last)
 		}
 	}
+}
+
+func TestGradientProgressFooterMatchesSVG(t *testing.T) {
+	const source = `vars.d2-config: {animate-interval: 150ms; theme-id: 200; theme-overrides: {N7: "#163050"}; pad: 4}
+style.fill: "linear-gradient(to bottom, transparent, #204060)"
+blank: "" {width: 112; height: 20; style: {fill: transparent; stroke-width: 0}}`
+	dir := t.TempDir()
+	env := []string{"PATH=" + os.Getenv("PATH")}
+	export := func(t *testing.T, format string, flags ...string) []byte {
+		t.Helper()
+		args := append([]string{"--stdout-format=" + format}, flags...)
+		out, err := imageCLIWithEnv(t, dir, source, env, append(args, "-")...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	_, rest, ok := bytes.Cut(export(t, "svg"), []byte(" d2-footer-"))
+	footer, _, _ := bytes.Cut(rest, []byte("</g>"))
+	if !ok || !bytes.Contains(footer, []byte(`fill="#163050"`)) {
+		t.Fatalf("missing the N7 override on the SVG gradient footer")
+	}
+	decodeGIF := func(flags ...string) *gif.GIF {
+		clip, err := gif.DecodeAll(bytes.NewReader(export(t, "gif", flags...)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return clip
+	}
+	original, padded := decodeGIF("--animate-progress=false"), decodeGIF()
+	if got := color.RGBAModel.Convert(padded.Image[0].At(2, padded.Config.Height-6)); got != (color.RGBA{0x16, 0x30, 0x50, 255}) {
+		t.Fatalf("GIF gradient footer is %v", got)
+	}
+	for y := 0; y < original.Config.Height; y++ {
+		for x := 0; x < original.Config.Width; x++ {
+			if color.RGBAModel.Convert(original.Image[0].At(x, y)) != color.RGBAModel.Convert(padded.Image[0].At(x, y)) {
+				t.Fatalf("GIF gradient compositing changed at (%d,%d)", x, y)
+			}
+		}
+	}
+
+	t.Run("MP4", func(t *testing.T) {
+		ffmpeg, err := exec.LookPath("ffmpeg")
+		requireVideoTool(t, err == nil, "ffmpeg unavailable")
+		encoders, err := exec.CommandContext(t.Context(), ffmpeg, "-encoders").Output()
+		requireVideoTool(t, err == nil && bytes.Contains(encoders, []byte(" libx264 ")), "FFmpeg with libx264 unavailable")
+		const w, h = 160, 120
+		decode := func(flag string) []byte {
+			cmd := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", "pipe:0", "-frames:v", "1", "-threads", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+			cmd.Stdin = bytes.NewReader(export(t, "mp4", "--video-size=160x120", flag))
+			pixels, err := cmd.Output()
+			if err != nil || len(pixels) != w*h*3 {
+				t.Fatalf("decode MP4: %v (%d bytes)", err, len(pixels))
+			}
+			return pixels
+		}
+		before, after := decode("--animate-progress=false"), decode("--animate-progress=true")
+		check := func(pixels []byte, x, y int, want []byte) {
+			t.Helper()
+			got := pixels[3*(y*w+x):][:3]
+			for i := range got {
+				if math.Abs(float64(got[i])-float64(want[i])) > 6 {
+					t.Fatalf("MP4 at (%d,%d) is %v, want %v", x, y, got, want)
+				}
+			}
+		}
+		white := []byte{255, 255, 255}
+		check(before, 80, 114, white)
+		check(after, 80, 114, []byte{0x16, 0x30, 0x50})
+		check(after, 80, 10, white)
+		check(after, 80, 100, white)
+		// This wide diagram fits above the footer without moving. Its partially
+		// transparent gradient must retain the same backing in both clips.
+		check(after, 80, 51, before[3*(51*w+80):][:3])
+	})
 }
 
 func TestVideoOutputOptions(t *testing.T) {

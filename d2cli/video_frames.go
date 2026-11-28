@@ -32,7 +32,7 @@ type videoSegment struct {
 	start, end  time.Duration
 	route       []d2animate.LayerLeg
 	movingUntil time.Duration // local board clock
-	matte       color.RGBA
+	matte       rasterMattes
 }
 
 type videoTimeline struct {
@@ -340,7 +340,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 			return err
 		}
 		boxes[i] = doc.ViewBox
-		p.segments[i].matte = videoBoardMatte(theme, p.segments[i].Diagram.Root.Fill)
+		p.segments[i].matte = boardRasterMattes(theme, p.segments[i].Diagram.Root.Fill)
 	}
 	framing, err := p.frameSizes(boxes, authoredScale, size, ink != nil)
 	if err != nil {
@@ -365,7 +365,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	// Rasterize each pose at delivery resolution. Only integer translation
 	// remains when placing it on the shared canvas or inside the letterbox.
 	var letterboxed *image.RGBA
-	present := func(frame draw.Image, origin image.Point, matte color.Color, start, repeat int) error {
+	present := func(frame draw.Image, origin image.Point, matte rasterMattes, start, repeat int) error {
 		origin = origin.Add(framing.margin)
 		if origin == (image.Point{}) && frame.Bounds() == output {
 			return overlay.emit(ctx, frame, start, repeat, p.frames, emit)
@@ -373,7 +373,12 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 		if letterboxed == nil {
 			letterboxed = image.NewRGBA(output)
 		}
-		placeVideoFrame(letterboxed, frame, origin, matte)
+		placeVideoFrame(letterboxed, frame, origin, matte.board)
+		if ink != nil && matte.footer != matte.board {
+			footer := output
+			footer.Min.Y = framing.artHeight
+			draw.Draw(letterboxed, footer, image.NewUniform(matte.footer), image.Point{}, draw.Src)
+		}
 		return overlay.emit(ctx, letterboxed, start, repeat, p.frames, emit)
 	}
 	var padded *image.RGBA
@@ -381,7 +386,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	defer workspace.Reset()
 	var active *d2animate.LayerLeg
 	var camera *gifLayerCamera
-	var fromMatte, toMatte color.RGBA
+	var fromMatte, toMatte rasterMattes
 	for i := 0; i < p.frames; {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -408,14 +413,15 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 				active = leg
 			}
 			cameraOptions := options
-			cameraOptions.Background = blendVideoMatte(fromMatte, toMatte, progress)
+			matte := fromMatte.blend(toMatte, progress)
+			cameraOptions.Background = matte.board
 			if padded == nil {
 				padded = image.NewRGBA(canvas)
 			}
 			if err := camera.renderInto(ctx, session, &workspace, cameraOptions, progress, 0, padded); err != nil {
 				return err
 			}
-			if err := present(padded, image.Point{}, cameraOptions.Background, i, repeat); err != nil {
+			if err := present(padded, image.Point{}, matte, i, repeat); err != nil {
 				return err
 			}
 		} else {
