@@ -50,7 +50,7 @@ steps: {next: {b}}`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !config.ResolveAnimateProgress(nil) {
+	if !config.ResolveAnimateProgress(nil, false) {
 		t.Fatal("progress should be enabled by the source")
 	}
 
@@ -78,7 +78,7 @@ steps: {next: {b}}`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.ResolveAnimateProgress(nil) || config.ResolveAnimateProgressColor("") != "#c60" || config.ResolveAnimateProgressColor("Red") != "Red" {
+	if config.ResolveAnimateProgress(nil, false) || config.ResolveAnimateProgressColor("") != "#c60" || config.ResolveAnimateProgressColor("Red") != "Red" {
 		t.Fatalf("unexpected progress settings: %+v", config)
 	}
 

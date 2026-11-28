@@ -74,7 +74,7 @@ export interface RenderOptions {
   target?: string;
   /** Minimum milliseconds per board in a multiboard SVG. A positive interval loops through all exported boards, including linked layers. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
   animateInterval?: number;
-  /** Show a thin elapsed-time line at the bottom of an animated SVG. Defaults to the diagram's animate-progress setting, or false. */
+  /** Show a thin elapsed-time line at the bottom of an animated SVG. Defaults to the diagram's animate-progress setting, or true when a positive animation interval is configured. */
   animateProgress?: boolean;
   /** Color of an enabled progress line. Accepts an opaque named color, #RGB, or #RRGGBB. Overrides the diagram's animate-progress-color setting. */
   animateProgressColor?: string;

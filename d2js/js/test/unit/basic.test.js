@@ -193,7 +193,6 @@ container.child -> outside
   test("animated multi-board works", async () => {
     const d2 = new D2();
     const source = `
-  vars.d2-config.animate-progress: true
   vars.d2-config.animate-progress-color: "#b86afe"
   x -> y
   layers: {
@@ -207,7 +206,6 @@ container.child -> outside
     const svg = await d2.render(result.diagram, result.renderOptions);
     expect(svg).toContain("<svg");
     expect(svg).toContain("</svg>");
-    expect(result.renderOptions.animateProgress).toBe(true);
     expect(result.renderOptions.animateProgressColor).toBe("#b86afe");
     expect(svg).toContain("#b86afe");
     const recolored = await d2.render(result.diagram, {
@@ -229,6 +227,20 @@ container.child -> outside
       animateProgress: false,
     });
     expect(disabled).not.toContain("d2-progress-");
+    const staticSVG = await d2.render(result.diagram, {
+      ...result.renderOptions,
+      target: "",
+      animateInterval: 0,
+    });
+    expect(staticSVG).not.toContain("d2-progress-");
+    const subtree = { target: "layers.numbers" };
+    const timedSource = `vars.d2-config.animate-interval: 400ms\n${source}`;
+    expect(await d2.renderSVG(timedSource, subtree)).toContain('class="d2-progress-');
+    const optOut = `vars.d2-config.animate-progress: false\n${timedSource}`;
+    expect(await d2.renderSVG(optOut, subtree)).not.toContain("d2-progress-");
+    expect(await d2.renderSVG(optOut, { ...subtree, animateProgress: true })).toContain(
+      'class="d2-progress-'
+    );
     await d2.dispose();
   }, 20000);
 

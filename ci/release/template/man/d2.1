@@ -191,7 +191,13 @@ Static exports show the authored values.
 Show elapsed playback time as a thin line at the bottom of an animated SVG, GIF, or MP4.
 The line uses the theme's B1 color and stays fixed during camera moves.
 Its height is six output pixels in GIF and MP4, and six diagram units in SVG.
-It is disabled by default.
+The line appears by default when the effective
+.Fl -animate-interval
+or source interval is positive.
+Set
+.Li --animate-progress=false
+to hide it.
+GIF and MP4 exports using their built-in interval show the line only when explicitly enabled.
 Set the default with
 .Ev D2_ANIMATE_PROGRESS
 or
@@ -201,9 +207,6 @@ The flag takes precedence over the environment, which takes precedence over the 
 Override the progress line's color in animated SVG, GIF, and MP4 exports.
 Use an opaque named color or a three- or six-digit hex color.
 The explicit color applies to both light and dark themes.
-Enable the line with
-.Fl -animate-progress
-or the corresponding source setting.
 Set the color with
 .Ev D2_ANIMATE_PROGRESS_COLOR
 or

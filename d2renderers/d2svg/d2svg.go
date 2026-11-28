@@ -97,7 +97,8 @@ type RenderOpts struct {
 	DarkThemeID        *int64
 	ThemeOverrides     *d2target.ThemeOverrides
 	DarkThemeOverrides *d2target.ThemeOverrides
-	// AnimateProgress draws an elapsed-time line on animated exports.
+	// AnimateProgress overrides the elapsed-time line on animated exports.
+	// By default the line is shown when a positive playback interval is configured.
 	AnimateProgress *bool
 	// AnimateProgressColor overrides the color of an enabled progress line.
 	AnimateProgressColor string

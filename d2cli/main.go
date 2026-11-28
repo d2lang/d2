@@ -150,6 +150,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
+	if ms.Env.Getenv("D2_ANIMATE_PROGRESS") == "" {
+		ms.Opts.Flags.Lookup("animate-progress").DefValue = "on with a positive animate-interval"
+	}
 	animateProgressColor := ms.Opts.String("D2_ANIMATE_PROGRESS_COLOR", "animate-progress-color", "", "", "color of the playback progress line (an opaque named color, #RGB, or #RRGGBB). Defaults to the theme's B1 color. Also configurable through vars.d2-config.animate-progress-color.")
 	videoDuration := ms.Opts.Flags.Duration("video-duration", 0, "total MP4 playback duration (e.g. 10s or 250ms). By default a video plays the board sequence once. A shorter duration cuts it, and a longer duration repeats it.")
 	videoSizeFlag := ms.Opts.Flags.String("video-size", "", "MP4 canvas in pixels, e.g. 1920x1080. Fits and centers the diagram at this resolution.")
@@ -664,6 +667,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 			return nil, false, err
 		}
 	}
+	progress := rootDiagram.Config.ResolveAnimateProgress(renderOptions.AnimateProgress, animateInterval > 0)
 	if (ext == GIF || ext == MP4) && animateInterval == 0 {
 		animateInterval = 1000
 		ms.Log.Debug.Printf("%s export: defaulting animate-interval to 1000ms", ext)
@@ -679,6 +683,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		renderOptions.Scale = nil
 	}
 	renderOpts := *renderOptions
+	renderOpts.AnimateProgress = &progress
 	cancel()
 
 	engine := cliLayoutEngine(*opts.Layout, ext)

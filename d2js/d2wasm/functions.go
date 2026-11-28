@@ -582,7 +582,7 @@ func render(input RenderRequest) ([]byte, error) {
 	}
 
 	renderOpts := &d2svg.RenderOpts{
-		AnimateProgress:      go2.Pointer(input.Diagram.Config.ResolveAnimateProgress(input.Opts.AnimateProgress)),
+		AnimateProgress:      go2.Pointer(input.Diagram.Config.ResolveAnimateProgress(input.Opts.AnimateProgress, animateInterval > 0)),
 		AnimateProgressColor: input.Diagram.Config.ResolveAnimateProgressColor(input.Opts.AnimateProgressColor),
 		Scale:                scale,
 		Salt:                 input.Opts.Salt,

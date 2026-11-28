@@ -218,19 +218,13 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if zoomMS > 0 && len(links) > 0 {
 		writeClickZooms(&transitions, links, diagramHash, viewport, offsets)
 	}
-	progress := rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress) && totalMS > 0 && width > 0 && height > 0
-	var progressFill string
-	if progress {
-		explicit := rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
-		if explicit != "" {
-			ink, err := ResolveProgressColor(renderOpts.ThemeID, renderOpts.ThemeOverrides, explicit)
-			if err != nil {
-				return nil, err
-			}
-			// Two inline renders of the same diagram may request different colors.
-			progressFill = "fill:" + ink + ";"
+	var progress string
+	if totalMS > 0 && !viewport.Empty() && rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress, true) {
+		renderOpts.AnimateProgressColor = rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
+		progress, err = svgProgress(&transitions, diagramHash, viewport, totalMS, renderOpts, len(links) > 0)
+		if err != nil {
+			return nil, err
 		}
-		writeProgressStyles(&transitions, diagramHash, renderOpts, len(links) > 0, explicit == "")
 	}
 	if err := d2svg.WriteAnimationStylesWithTransitions(buf, diagramHash, svgsStr, rootDiagram, renderOpts, transitions.Bytes()); err != nil {
 		return nil, err
@@ -280,12 +274,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 			buf.Write(after)
 		}
 	}
-	if progress {
-		// The line is in the common viewport, outside the moving camera.
-		h := min(ProgressHeight, height)
-		fmt.Fprintf(buf, `<rect class="d2-progress-%s" x="%d" y="%d" width="0" height="%d" pointer-events="none" aria-hidden="true" style="%sanimation:d2Progress-%s %dms linear infinite"/>`,
-			diagramHash, left, viewport.Max.Y-h, h, progressFill, diagramHash, totalMS)
-	}
+	buf.WriteString(progress)
 	buf.WriteString("</svg></svg>")
 
 	return buf.Bytes(), nil

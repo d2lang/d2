@@ -9,6 +9,35 @@ import (
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 )
 
+func TestSVGProgressFollowsPlayback(t *testing.T) {
+	root := d2target.NewDiagram()
+	off := false
+	svgs := [][]byte{[]byte(`<g viewBox="0 0 20 20"></g>`)}
+	for _, wrap := range []func() ([]byte, error){
+		func() ([]byte, error) { return Wrap(root, svgs, d2svg.RenderOpts{}, 160) },
+		func() ([]byte, error) { return WrapTimed(root, svgs, d2svg.RenderOpts{}, []int{160}) },
+		func() ([]byte, error) {
+			return WrapTimeline(root, nil, []Frame{{Diagram: root, DurationMS: 160}}, svgs, d2svg.RenderOpts{}, 0)
+		},
+	} {
+		for _, enabled := range []bool{true, false} {
+			root.Config = nil
+			if !enabled {
+				root.Config = &d2target.Config{AnimateProgress: &off}
+			}
+			out, err := wrap()
+			if err != nil || strings.Contains(string(out), `class="d2-progress-`) != enabled {
+				t.Fatalf("timed SVG expected progress %t, error %v", enabled, err)
+			}
+		}
+	}
+	root.Config = nil
+	out, err := WrapTimed(root, nil, d2svg.RenderOpts{}, nil)
+	if err != nil || strings.Contains(string(out), "d2-progress-") {
+		t.Fatalf("empty playback unexpectedly drew a progress line, error %v", err)
+	}
+}
+
 func TestSVGProgressClock(t *testing.T) {
 	root := d2target.NewDiagram()
 	on, off := true, false
@@ -31,10 +60,11 @@ func TestSVGProgressClock(t *testing.T) {
 	line := ".d2-progress-" + hash
 	active := wrap()
 	for _, want := range []string{
-		"@keyframes d2Progress-" + hash + "{from{width:0}to{width:100%}}",
-		line + "{fill:#123456}", "@media screen and (prefers-color-scheme:dark){" + line + "{fill:#abcdef}}",
+		"@keyframes d2Progress-" + hash + "{from{transform:scaleX(0)}to{transform:scaleX(1)}}",
+		line + "{fill:var(--d2-progress-light)}", "@media screen and (prefers-color-scheme:dark){" + line + "{fill:var(--d2-progress-dark)}}",
+		`style="--d2-progress-light:#123456;--d2-progress-dark:#abcdef;`,
 		"@media(prefers-reduced-motion:reduce){" + line + "{visibility:hidden}}",
-		`x="-14" y="12" width="0" height="6" pointer-events="none" aria-hidden="true"`,
+		`x="-14" y="12" width="60" height="6" transform="scale(0 1)" pointer-events="none" aria-hidden="true"`,
 		"1000ms linear infinite",
 	} {
 		if !strings.Contains(active, want) {
@@ -43,6 +73,12 @@ func TestSVGProgressClock(t *testing.T) {
 	}
 	if strings.Count(active, `<rect class="d2-progress-`) != 1 {
 		t.Fatal("the tour should have one shared progress line")
+	}
+	// A second inline rendering of this diagram has the same selector. Its
+	// single-theme paint must survive the first rendering's dark media rule.
+	opts.DarkThemeID = nil
+	if !strings.Contains(wrap(), `style="fill:#123456;animation:d2Progress-`) {
+		t.Fatal("single-theme line is missing its own fill")
 	}
 	opts.AnimateProgress = &off
 	if strings.Contains(wrap(), "d2Progress-") {
@@ -58,7 +94,7 @@ func TestSVGProgressFitsShortCanvas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), `x="0" y="0" width="0" height="3" pointer-events="none"`) {
+	if !strings.Contains(string(out), `x="0" y="0" width="12" height="3"`) {
 		t.Fatal("progress line should fit the three-unit viewport")
 	}
 }

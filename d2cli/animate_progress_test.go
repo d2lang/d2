@@ -7,22 +7,31 @@ import (
 )
 
 func TestAnimateProgressCLI(t *testing.T) {
+	const interval = "animate-interval: 80ms"
 	for _, tc := range []struct {
 		name, config string
 		env, flags   []string
 		want         bool
 	}{
-		{name: "default"},
-		{name: "source", config: "animate-progress: true", want: true},
-		{name: "positive flag", flags: []string{"--animate-progress"}, want: true},
-		{name: "false flag over source", config: "animate-progress: true", flags: []string{"--animate-progress=false"}},
-		{name: "environment over source", config: "animate-progress: false", env: []string{"D2_ANIMATE_PROGRESS=true"}, want: true},
-		{name: "false environment over source", config: "animate-progress: true", env: []string{"D2_ANIMATE_PROGRESS=false"}},
-		{name: "flag over environment", env: []string{"D2_ANIMATE_PROGRESS=true"}, flags: []string{"--animate-progress=false"}},
-		{name: "subtree tour uses root config", config: "animate-progress: true", flags: []string{"--target=layers.sub.*"}, want: true},
+		{name: "no interval", flags: []string{"--target="}},
+		{name: "source interval", config: interval, want: true},
+		{name: "flag interval", flags: []string{"--animate-interval=80"}, want: true},
+		{name: "environment interval", env: []string{"D2_ANIMATE_INTERVAL=80"}, want: true},
+		{name: "zero flag over source interval", config: interval, flags: []string{"--animate-interval=0", "--target="}},
+		{name: "source opt out", config: interval + "; animate-progress: false"},
+		{name: "flag enables source opt out", config: interval + "; animate-progress: false", flags: []string{"--animate-progress"}, want: true},
+		{name: "false flag over source", config: interval + "; animate-progress: true", flags: []string{"--animate-progress=false"}},
+		{name: "environment over source", config: interval + "; animate-progress: false", env: []string{"D2_ANIMATE_PROGRESS=true"}, want: true},
+		{name: "false environment over source", config: interval + "; animate-progress: true", env: []string{"D2_ANIMATE_PROGRESS=false"}},
+		{name: "flag over environment", config: interval, env: []string{"D2_ANIMATE_PROGRESS=true"}, flags: []string{"--animate-progress=false"}},
+		{name: "subtree inherits root interval", config: interval, flags: []string{"--target=layers.sub.*"}, want: true},
+		{name: "subtree inherits root opt out", config: interval + "; animate-progress: false", flags: []string{"--target=layers.sub.*"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			source := "vars: {d2-config: {animate-interval: 80ms; " + tc.config + "}}\na\nlayers: {sub: {b; steps: {next: {c}}}}"
+			source := "a\nlayers: {sub: {b; steps: {next: {c}}}}"
+			if tc.config != "" {
+				source = "vars.d2-config: {" + tc.config + "}\n" + source
+			}
 			out, err := imageCLIWithEnv(t, t.TempDir(), source, tc.env, append(tc.flags, "--stdout-format=svg", "-")...)
 			if err != nil {
 				t.Fatal(err)
@@ -61,7 +70,7 @@ layers: {sub: {a; steps: {next: {b}}}}`
 		{name: "subtree", flags: []string{"--target=layers.sub.*"}, color: "#735acf"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := imageCLIWithEnv(t, t.TempDir(), source, tc.env, append(tc.flags, "--animate-progress", "--stdout-format=svg", "-")...)
+			out, err := imageCLIWithEnv(t, t.TempDir(), source, tc.env, append(tc.flags, "--stdout-format=svg", "-")...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,9 +79,9 @@ layers: {sub: {a; steps: {next: {b}}}}`
 			}
 		})
 	}
-	out, err := imageCLI(t, t.TempDir(), source, "--stdout-format=svg", "-")
+	out, err := imageCLI(t, t.TempDir(), source, "--animate-progress=false", "--stdout-format=svg", "-")
 	if err != nil || bytes.Contains(out, []byte("d2-progress-")) {
-		t.Fatalf("color unexpectedly enabled progress: %v", err)
+		t.Fatalf("color unexpectedly overrode disabled progress: %v", err)
 	}
 	for _, arg := range []string{"--animate-progress-color=transparent", "--animate-progress-color=unknown"} {
 		out, err := imageCLI(t, t.TempDir(), "a", arg, "--stdout-format=svg", "-")

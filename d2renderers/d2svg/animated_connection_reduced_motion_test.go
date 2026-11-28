@@ -171,14 +171,11 @@ steps: {
 		"@media (prefers-reduced-motion:reduce){.%s .animated-connection{animation:none !important}}",
 		masterID,
 	)
-	if !strings.Contains(svg, reducedMotionRule) {
-		t.Fatalf("multiboard animated connection missing scoped reduced-motion override %q", reducedMotionRule)
+	if got := strings.Count(svg, reducedMotionRule); got != 1 {
+		t.Fatalf("multiboard SVG emitted the scoped animated-connection reduced-motion override %d times, want 1", got)
 	}
 	const unscopedReducedMotionSelector = "{.animated-connection{"
 	if strings.Contains(svg, unscopedReducedMotionSelector) {
 		t.Fatalf("multiboard animated connection unexpectedly emitted unscoped selector %q", unscopedReducedMotionSelector)
-	}
-	if got := strings.Count(svg, "prefers-reduced-motion"); got != 1 {
-		t.Fatalf("prefers-reduced-motion count = %d, want 1", got)
 	}
 }

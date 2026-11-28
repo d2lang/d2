@@ -74,12 +74,16 @@ func (c *Config) ResolveAnimateInterval(override *int64) *int64 {
 	return c.AnimateInterval
 }
 
-// ResolveAnimateProgress gives an explicit render setting precedence over the source.
-func (c *Config) ResolveAnimateProgress(override *bool) bool {
+// ResolveAnimateProgress defaults to showing progress when a positive playback
+// interval was configured. A format's automatic interval does not count.
+func (c *Config) ResolveAnimateProgress(override *bool, hasInterval bool) bool {
 	if override != nil {
 		return *override
 	}
-	return c != nil && c.AnimateProgress != nil && *c.AnimateProgress
+	if c != nil && c.AnimateProgress != nil {
+		return *c.AnimateProgress
+	}
+	return hasInterval
 }
 
 // ResolveAnimateProgressColor gives a nonempty render setting precedence over the source.
