@@ -103,10 +103,12 @@ type RenderOpts struct {
 
 	// MasterID is passed when the diagram should use something other than its own hash for unique targeting
 	// Currently, that's when multi-boards are collapsed
-	MasterID    string
-	NoXMLTag    *bool
-	Salt        *string
-	OmitVersion *bool
+	MasterID string
+	// StaticSequence renders the complete exchange for a still-image preview.
+	StaticSequence bool
+	NoXMLTag       *bool
+	Salt           *string
+	OmitVersion    *bool
 }
 
 func invalidPaddingError(pad int64) error {
@@ -781,8 +783,9 @@ func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
 }
 
 type connectionEffects struct {
-	labelID  string
-	crossing crossingEffect
+	sequenceStep int
+	labelID      string
+	crossing     crossingEffect
 }
 
 func drawConnection(writer *objectWriter, markerScope string, effects connectionEffects, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
@@ -836,6 +839,12 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 	}
 	markerStart := marker(connection.SrcArrow, false, srcMarker)
 	markerEnd := marker(connection.DstArrow, true, dstMarker)
+
+	// Shared marker definitions above must stay available even while their
+	// first message is hidden. Fade the paint inside its authored opacity.
+	if effects.sequenceStep > 0 {
+		writer.buf.WriteString(sequenceGroup(effects.sequenceStep))
+	}
 
 	if connection.Icon != nil {
 		iconPos := connection.GetIconPosition()
@@ -1039,6 +1048,12 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 	}
 	if connection.DstLabel != nil && connection.DstLabel.Label != "" {
 		fmt.Fprint(writer, renderArrowheadLabel(connection, connection.DstLabel.Label, true, inlineTheme))
+	}
+	if effects.sequenceStep > 0 {
+		writer.buf.WriteString(svg.CloseElement("g"))
+		if labelMask != "" {
+			labelMask = sequenceGroup(effects.sequenceStep) + labelMask + svg.CloseElement("g")
+		}
 	}
 	writer.buf.WriteString(`</g>`)
 	return
@@ -2322,7 +2337,12 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	}
 
 	viewport := crossingViewport{left, top, w, h}
-	effects := viewport.planCrossings(isolatedDiagramHash, crossings, diagram, opts.MasterID != "")
+	sequenceDuration := 0
+	// An explicit board animation supplies its own clock.
+	if opts.MasterID == "" && !opts.StaticSequence {
+		sequenceDuration = diagram.SequencePlaybackDurationMS()
+	}
+	effects := viewport.planCrossings(isolatedDiagramHash, crossings, diagram, opts.MasterID != "", sequenceDuration > 0)
 
 	sortObjects(allObjects)
 
@@ -2336,6 +2356,9 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		}
 		if c, is := obj.(indexedConnection); is {
 			paint := connectionEffects{labelID: isolatedDiagramHash, crossing: effects[c.index]}
+			if sequenceDuration > 0 {
+				paint.sequenceStep = c.SequenceStep
+			}
 			labelMask, err := drawConnection(writer, isolatedDiagramHash, paint, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
@@ -2359,7 +2382,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	fmt.Fprint(writer, appendixItemBuf)
 
 	inkTL, inkBR := diagram.InkBoundingBox()
-	if err := drawAnnotations(writer, diagram, inkTL, inkBR, inlineTheme, markdown); err != nil {
+	if err := drawAnnotations(writer, diagram, inkTL, inkBR, inlineTheme, markdown, sequenceDuration > 0); err != nil {
 		return nil, err
 	}
 	writer.finish()
@@ -2492,6 +2515,15 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		styleStart = writeDiagramCSS(upperBuf, diagramHash, bufStr, diagram.FontFamily, diagram.MonoFontFamily,
 			diagram.GetCorpus()+markdown.generatedCorpus(), corpora, classes, themeStylesheet, compact)
 
+		if sequenceDuration > 0 {
+			if !compact {
+				upperBuf.WriteString(legacyStyleOpen)
+			}
+			writeSequencePlaybackCSS(upperBuf, diagramHash, sequenceDuration)
+			if !compact {
+				upperBuf.WriteString(legacyStyleClose)
+			}
+		}
 		if sketch && !compact {
 			writeSketchPatterns(upperBuf, diagramHash)
 		}

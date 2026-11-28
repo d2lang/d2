@@ -11,7 +11,7 @@ assert.ok(
   "usage: node smoke.mjs packed|native INPUT_DIR"
 );
 const origin = "http://localhost:4173";
-const fixtureNames = ["playback", "departure"];
+const fixtureNames = ["playback", "departure", "sequence"];
 
 // Set the actual CSS animation clocks. Waiting for paint after a seek avoids
 // depending on when the worker, fonts or CI runner finished loading.
@@ -126,8 +126,54 @@ async function checkDeparture(page) {
   }
 }
 
+async function checkSequence(page) {
+  async function checkPaint(expected) {
+    const paint = await page.evaluate(() => {
+      const texts = [...document.querySelectorAll("text")];
+      const label = (name) => texts.find((el) => el.textContent === name);
+      const line = (stroke) => document.querySelector(`path.connection[stroke="${stroke}"]`);
+      // SVG group opacity multiplies the opacity of its children.
+      const state = (el) => {
+        if (!el) throw new Error("Missing sequence label or connection");
+        if (getComputedStyle(el).visibility === "hidden") return "hidden";
+        let opacity = 1;
+        for (; el; el = el.parentElement) opacity *= Number(getComputedStyle(el).opacity);
+        return opacity === 0 ? "hidden" : opacity === 1 ? "shown" : "fading";
+      };
+      return {
+        actors: [label("Client"), label("API")].map(state),
+        lifeline: state(line("#007777")),
+        connections: ["#8000ff", "#d04600", "#147ac0"].map((color) => state(line(color))),
+        labels: ["Request", "Validate", "Response"].map((name) => state(label(name))),
+      };
+    });
+    assert.deepEqual(paint.actors, ["shown", "shown"]);
+    assert.equal(paint.lifeline, "shown");
+    assert.deepEqual(paint.connections, expected, "sequence connections");
+    assert.deepEqual(paint.labels, expected, "sequence labels");
+  }
+
+  for (const [ms, expected] of [
+    [0, ["hidden", "hidden", "hidden"]],
+    [125, ["fading", "hidden", "hidden"]],
+    [500, ["shown", "hidden", "hidden"]],
+    [1125, ["shown", "fading", "hidden"]],
+    [1500, ["shown", "shown", "hidden"]],
+    [2500, ["shown", "shown", "shown"]],
+    [3900, ["shown", "shown", "shown"]],
+    [4000, ["hidden", "hidden", "hidden"]],
+    [4500, ["shown", "hidden", "hidden"]],
+  ]) {
+    await seek(page, ms);
+    await checkPaint(expected);
+  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await checkPaint(["shown", "shown", "shown"]);
+  assert.equal(await page.evaluate(() => document.getAnimations().length), 0);
+}
+
 for (const engine of [chromium, webkit]) {
-  test(engine.name() + " " + mode + " step playback", { timeout: 120_000 }, async (t) => {
+  test(engine.name() + " " + mode + " diagram playback", { timeout: 120_000 }, async (t) => {
     const browser = await engine.launch();
     t.after(() => browser.close());
     const page = await browser.newPage({
@@ -187,5 +233,7 @@ for (const engine of [chromium, webkit]) {
     await checkBoundary(page);
     await page.goto(origin + "/departure.svg");
     await checkDeparture(page);
+    await page.goto(origin + "/sequence.svg");
+    await checkSequence(page);
   });
 }

@@ -24,6 +24,7 @@ func (b *builder) buildAnnotations() ([]*d2scene.Node, error) {
 		object := fmt.Sprintf("annotation of %q", mark.ID)
 		root := d2scene.NewNode(nil)
 		root.ID = mark.ID + ":annotation"
+		b.applySequenceReveal(root, mark.SequenceStep)
 		lineCap := d2scene.CapRound
 		if mark.Flat {
 			lineCap = d2scene.CapButt

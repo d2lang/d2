@@ -608,7 +608,7 @@ func render(input RenderRequest) ([]byte, error) {
 		return out, nil
 	}
 
-	if animateInterval == 0 {
+	if animateInterval == 0 || diagram.HasStandaloneSequencePlayback() {
 		return renderSingleBoard(renderOpts, forceAppendix, ruler, diagram)
 	}
 	// An animated subtree includes its first board's incoming transition.

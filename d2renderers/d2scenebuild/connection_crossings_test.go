@@ -4,6 +4,7 @@ import (
 	"context"
 	"image/color"
 	"testing"
+	"time"
 
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/lib/geo"
@@ -41,6 +42,33 @@ func TestRasterConnectionCrossingRevealsBackground(t *testing.T) {
 		got := img.NRGBAAt(point.x-int(doc.ViewBox.X), point.y-int(doc.ViewBox.Y))
 		if got != point.want {
 			t.Errorf("pixel at diagram coordinates (%d,%d) = %+v, want %+v", point.x, point.y, got, point.want)
+		}
+	}
+}
+
+func TestSequenceCrossingAppearsWithItsMessage(t *testing.T) {
+	diagram := validDiagram()
+	front := diagram.Connections[0]
+	front.ID, front.Stroke, front.SequenceStep = "reply", "#ff0000", 2
+	front.Route = []*geo.Point{{X: 50, Y: -20}, {X: 50, Y: 40}}
+	diagram.Connections = append(diagram.Connections, front)
+	pad := int64(5)
+	doc, err := Build(t.Context(), diagram, Options{Pad: &pad, SequencePlayback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ms := range []int{0, 1100, 1250} {
+		options := shapeEffectFrameOptions()
+		options.Time = time.Duration(ms) * time.Millisecond
+		frame, err := d2raster.Render(t.Context(), doc, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Just beside the foreground stroke, the back wire fades from fully
+		// black to the white page as the crossing opens.
+		red := frame.NRGBAAt(48-int(doc.ViewBox.X), 10-int(doc.ViewBox.Y)).R
+		if ms == 0 && red != 0 || ms == 1100 && (red == 0 || red == 255) || ms == 1250 && red != 255 {
+			t.Fatalf("crossing background at %dms has red channel %d", ms, red)
 		}
 	}
 }

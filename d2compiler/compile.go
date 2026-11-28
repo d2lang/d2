@@ -456,8 +456,10 @@ type compiler struct {
 	// classNames are the classes being applied to the object now, outermost first.
 	classNames     []string
 	explicitLabels map[*d2graph.Attributes]struct{}
-	ctx            context.Context
-	fatalErr       error
+	// A class can supply bare animated before the receiving object's shape is known.
+	sequenceAnimationKeys map[*d2graph.Object]*d2ir.Field
+	ctx                   context.Context
+	fatalErr              error
 }
 
 func (c *compiler) stopped() bool {
@@ -579,6 +581,12 @@ func (c *compiler) compileMap(obj *d2graph.Object, m *d2ir.Map) {
 	}
 
 	if !m.IsClass() {
+		if animated := c.sequenceAnimationKeys[obj]; animated != nil {
+			if !obj.IsSequenceDiagram() {
+				c.errorf(animated.LastRef().AST(), "%v must be style.%v", animated.Name.ScalarString(), animated.Name.ScalarString())
+			}
+			delete(c.sequenceAnimationKeys, obj)
+		}
 		switch obj.Shape.Value {
 		case d2target.ShapeClass:
 			c.compileClass(obj)
@@ -700,6 +708,24 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 		return
 	}
 	keyword := d2ast.Keyword(f.Name)
+	if keyword == "animated" {
+		if c.sequenceAnimationKeys == nil {
+			c.sequenceAnimationKeys = make(map[*d2graph.Object]*d2ir.Field)
+		}
+		c.sequenceAnimationKeys[obj] = f
+		// Both spellings set the same flag. The IR groups assignments by
+		// field, so their order in the map can differ from assignment order.
+		styled := d2ir.ParentMap(f).GetField(d2ast.FlatUnquotedString("style"), f.Name)
+		if styled != nil && styled.Primary() != nil && f.Primary() != nil && f.Primary().AssignedBefore(styled.Primary()) {
+			f = styled
+		}
+		if f.Primary() == nil || f.Composite != nil {
+			c.errorf(fieldErrorNode(f), `expected "animated" to be true or false`)
+			return
+		}
+		c.compileStyleField(&obj.Style, f)
+		return
+	}
 	_, isStyleReserved := d2ast.StyleKeywords[keyword]
 	if isStyleReserved {
 		c.errorf(f.LastRef().AST(), "%v must be style.%v", f.Name.ScalarString(), f.Name.ScalarString())
@@ -763,7 +789,12 @@ func (c *compiler) compileField(obj *d2graph.Object, f *d2ir.Field) {
 			c.errorf(f.LastRef().AST(), `"style" expected to be set to a map of key-values, or contain an additional keyword like "style.opacity: 0.4"`)
 			return
 		}
-		c.compileStyle(&obj.Attributes.Style, f.Map())
+		var skip *d2ir.Field
+		if animated := f.Map().GetField(d2ast.FlatUnquotedString("animated")); animated != nil && d2ir.ParentMap(f).GetField(animated.Name) != nil {
+			// The sequence shorthand compiles the winning assignment.
+			skip = animated
+		}
+		c.compileStyle(&obj.Attributes.Style, f.Map(), skip)
 		return
 	}
 
@@ -1017,7 +1048,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 						c.errorf(f.LastRef().AST(), `"style" expected to be set to a map of key-values, or contain an additional keyword like "style.opacity: 0.4"`)
 						return
 					}
-					c.compileStyle(&attrs.IconStyle, ff.Map())
+					c.compileStyle(&attrs.IconStyle, ff.Map(), nil)
 				}
 			}
 		}
@@ -1223,12 +1254,14 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 	}
 }
 
-func (c *compiler) compileStyle(styles *d2graph.Style, m *d2ir.Map) {
+func (c *compiler) compileStyle(styles *d2graph.Style, m *d2ir.Map, skip *d2ir.Field) {
 	for _, f := range m.Fields {
 		if c.stopped() {
 			return
 		}
-		c.compileStyleField(styles, f)
+		if f != skip {
+			c.compileStyleField(styles, f)
+		}
 	}
 }
 
@@ -1412,7 +1445,7 @@ func (c *compiler) compileEdgeField(edge *d2graph.Edge, f *d2ir.Field) {
 		if f.Map() == nil {
 			return
 		}
-		c.compileStyle(&edge.Attributes.Style, f.Map())
+		c.compileStyle(&edge.Attributes.Style, f.Map(), nil)
 		return
 	}
 
@@ -1459,7 +1492,7 @@ func (c *compiler) compileArrowheads(edge *d2graph.Edge, f *d2ir.Field) {
 				if f2.Map() == nil {
 					continue
 				}
-				c.compileStyle(&attrs.Style, f2.Map())
+				c.compileStyle(&attrs.Style, f2.Map(), nil)
 				continue
 			} else {
 				c.errorf(f2.LastRef().AST(), `source-arrowhead/target-arrowhead map keys must be reserved keywords`)

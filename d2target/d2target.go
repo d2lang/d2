@@ -107,6 +107,11 @@ const (
 	MaxTweenFrames     = 120
 )
 
+const (
+	SequenceMessageIntervalMS = 1000
+	SequenceMessageRevealMS   = 250
+)
+
 // TweenFrameCount samples at 25 fps up to the per-transition frame limit.
 func TweenFrameCount(durationMS int) int {
 	return min(MaxTweenFrames, (durationMS+39)/40)
@@ -156,6 +161,26 @@ type Legend struct {
 	Label       string       `json:"label,omitempty"`
 	Shapes      []Shape      `json:"shapes,omitempty"`
 	Connections []Connection `json:"connections,omitempty"`
+}
+
+// SequencePlaybackDurationMS includes the final hold. Sequences on the same
+// board play in parallel, so the longest one sets the duration.
+func (d *Diagram) SequencePlaybackDurationMS() int {
+	last := 0
+	for i := range d.Connections {
+		last = max(last, d.Connections[i].SequenceStep)
+	}
+	if last == 0 {
+		return 0
+	}
+	return (last + 1) * SequenceMessageIntervalMS
+}
+
+// HasStandaloneSequencePlayback reports whether sequence messages provide
+// this diagram's only timeline.
+func (d *Diagram) HasStandaloneSequencePlayback() bool {
+	return !d.IsFolderOnly && len(d.Layers) == 0 && len(d.Scenarios) == 0 &&
+		len(d.Steps) == 0 && len(d.TweenFrames) == 0 && d.SequencePlaybackDurationMS() > 0
 }
 
 // renderChildren includes sampled frames for hashing, font subsetting and
@@ -1101,6 +1126,10 @@ const (
 
 type Connection struct {
 	ID string `json:"id"`
+
+	// SequenceStep is the one-based reveal order within an animated sequence.
+	// Zero leaves the connection visible throughout playback.
+	SequenceStep int `json:"sequenceStep,omitempty"`
 
 	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
 	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`

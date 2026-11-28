@@ -18,6 +18,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts"
 	"github.com/d2lang/d2/d2layouts/d2dagrelayout"
+	"github.com/d2lang/d2/d2layouts/d2sequence"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/internal/testlog"
@@ -351,4 +352,78 @@ func compile(ctx context.Context, d2 string) (*d2target.Diagram, error) {
 	}
 	d, _, e := d2lib.Compile(ctx, d2, opts, nil)
 	return d, e
+}
+
+func TestSequencePlayback(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		source   string
+		ranks    map[string]int
+		duration int
+	}{
+		{
+			name: "root",
+			source: `shape: sequence_diagram
+style.animated: true
+a; b
+a -> b: request
+group: {
+  b -> a: hidden {style.opacity: 0}
+  a."checking the request"
+  a <- b: answer
+}
+b -> a
+a -> a: finish`,
+			ranks: map[string]int{"request": 1, "hidden": 0, "answer": 2, "": 3, "finish": 4}, duration: 5000,
+		},
+		{
+			name: "nested",
+			source: `outer.buy: {
+  shape: sequence_diagram
+  style.animated: true
+  a -> b: first
+  b -> a: second
+}
+outer.ship: {
+  shape: sequence_diagram
+  style.animated: true
+  c -> d: parallel
+}
+still: {
+  shape: sequence_diagram
+  style.animated: false
+  a -> b: static
+}
+external.style.animated: true
+outer.buy.a -> external: outside`,
+			ranks: map[string]int{"first": 1, "second": 2, "parallel": 1, "static": 0, "outside": 0}, duration: 3000,
+		},
+		{
+			name:     "no visible messages",
+			source:   "shape: sequence_diagram\nstyle.animated: true\na -> b: hidden {style.opacity: 0}",
+			ranks:    map[string]int{"hidden": 0},
+			duration: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, err := compile(log.With(t.Context(), testlog.New(t)), tc.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ranks := make(map[string]int)
+			for _, c := range d.Connections {
+				if c.ZIndex == d2sequence.LIFELINE_Z_INDEX {
+					tassert.Zero(t, c.SequenceStep, c.ID)
+					continue
+				}
+				ranks[c.Label] = c.SequenceStep
+			}
+			tassert.Equal(t, tc.ranks, ranks)
+			tassert.Equal(t, tc.duration, d.SequencePlaybackDurationMS())
+			for _, s := range d.Shapes {
+				tassert.Equal(t, s.ID == "external", s.Animated, s.ID)
+			}
+			tassert.NoError(t, d2target.ValidateRenderTarget(d))
+		})
+	}
 }

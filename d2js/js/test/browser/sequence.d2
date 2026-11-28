@@ -1,0 +1,9 @@
+shape: sequence_diagram
+animated: true
+vars: {d2-config: {pad: 8}}
+
+client: Client {style.stroke: "#007777"}
+api: API
+client -> api: Request {style.stroke: "#8000ff"}
+api -> api: Validate {style.stroke: "#d04600"}
+api -> client: Response {style.stroke: "#147ac0"}

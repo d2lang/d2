@@ -11,8 +11,10 @@ import (
 
 // ConnectionGap is a transparent opening in an individual connection stroke.
 type ConnectionGap struct {
-	Center geo.Point
-	Radius float64
+	// SequenceStep reveals the gap when its foreground message appears.
+	SequenceStep int
+	Center       geo.Point
+	Radius       float64
 }
 
 type crossingRoute struct {
@@ -173,7 +175,7 @@ func ConnectionCrossings(connections []Connection, shapes map[string]Shape, sket
 				continue
 			}
 			locations[lower] = append(locations[lower], locatedGap{index: len(gaps[lower]), distance: underSegment.distanceTo(*p, routes), maxRadius: radius, minRadius: minRadius})
-			gaps[lower] = append(gaps[lower], ConnectionGap{Center: *p, Radius: radius})
+			gaps[lower] = append(gaps[lower], ConnectionGap{Center: *p, Radius: radius, SequenceStep: connections[upper].SequenceStep})
 			count++
 		}
 	}

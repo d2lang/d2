@@ -184,7 +184,7 @@ regions: "Regions" {
 
 ## Sequence diagrams
 
-The order of the lines is the order of the messages. Declare the actors first to fix their order from left to right.
+The order of the lines is the order of the messages. Declare the actors first to fix their order from left to right. Set `animated: true` alongside `shape: sequence_diagram` to play the messages in order. This also works inside a named sequence diagram.
 
 ```d2
 shape: sequence_diagram

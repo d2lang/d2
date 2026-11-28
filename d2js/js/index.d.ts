@@ -266,6 +266,8 @@ export interface Text {
 }
 
 export interface Connection extends Text {
+  /** One-based reveal order within an animated sequence. Omitted for static connections. */
+  sequenceStep?: number;
   motionClip?: MotionClip;
   motionLabel?: Point & { opacity: number };
   motionDashOffset?: number;

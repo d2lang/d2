@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/d2lang/d2/lib/geo"
 )
 
 func TestAnimatedStrokeBounds(t *testing.T) {
@@ -48,6 +50,23 @@ func TestValidateTraceEndpoint(t *testing.T) {
 		if (err == nil) != test.valid {
 			t.Fatalf("endpoint %q, curve %t: %v", test.tip, test.curve, err)
 		}
+	}
+}
+
+func TestValidateSequenceStep(t *testing.T) {
+	d := NewDiagram()
+	c := BaseConnection()
+	c.Route = []*geo.Point{geo.NewPoint(0, 0), geo.NewPoint(10, 0)}
+	d.Connections = []Connection{*c}
+	for _, step := range []int{-1, 2, math.MaxInt} {
+		d.Connections[0].SequenceStep = step
+		if err := ValidateRenderTarget(d); err == nil || !strings.Contains(err.Error(), "sequenceStep") {
+			t.Errorf("rank %d: %v", step, err)
+		}
+	}
+	d.Connections[0].SequenceStep = 1
+	if err := ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
 	}
 }
 

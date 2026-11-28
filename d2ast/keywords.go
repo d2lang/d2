@@ -63,7 +63,7 @@ var CompositeReservedKeywords = map[string]struct{}{
 	"annotation":       {},
 }
 
-// StyleKeywords are reserved keywords which cannot exist outside of the "style" keyword
+// StyleKeywords are reserved in a style map. Sequence diagrams also accept animated directly.
 var StyleKeywords = map[string]struct{}{
 	"opacity":       {},
 	"stroke":        {},
@@ -72,6 +72,7 @@ var StyleKeywords = map[string]struct{}{
 	"stroke-width":  {},
 	"stroke-dash":   {},
 	"border-radius": {},
+	"animated":      {},
 
 	// Only for text
 	"font":           {},
@@ -91,8 +92,7 @@ var StyleKeywords = map[string]struct{}{
 	"3d": {},
 
 	// Only for edges
-	"animated": {},
-	"filled":   {},
+	"filled": {},
 }
 
 // TODO maybe autofmt should allow other values, and transform them to conform

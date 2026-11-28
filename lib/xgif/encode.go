@@ -505,6 +505,16 @@ func NewOpaquePalettedAnimationEncoder(ctx context.Context, width, height, total
 // retained when this method returns, except for the palette values copied into
 // the GIF stream.
 func (e *OpaquePalettedAnimationEncoder) WriteFrame(frame *image.Paletted) error {
+	return e.writeFrame(frame, nil)
+}
+
+// WriteFrameWithDelay encodes the next frame with its explicit hold, measured
+// in GIF centiseconds. All frames still share the encoder's fixed canvas.
+func (e *OpaquePalettedAnimationEncoder) WriteFrameWithDelay(frame *image.Paletted, centiseconds int) error {
+	return e.writeFrame(frame, &centiseconds)
+}
+
+func (e *OpaquePalettedAnimationEncoder) writeFrame(frame *image.Paletted, explicitDelay *int) error {
 	if e == nil {
 		return fmt.Errorf("GIF encoder is nil")
 	}
@@ -530,7 +540,15 @@ func (e *OpaquePalettedAnimationEncoder) WriteFrame(frame *image.Paletted) error
 		e.err = fmt.Errorf("GIF frame %d dimensions %dx%d differ from %dx%d canvas", e.next, frame.Bounds().Dx(), frame.Bounds().Dy(), e.width, e.height)
 		return e.err
 	}
-	e.encoder.appendFrame(frame, e.delays.next())
+	delay := e.delays.next()
+	if explicitDelay != nil {
+		delay = *explicitDelay
+		if delay < 0 || delay > 65535 {
+			e.err = fmt.Errorf("GIF frame %d delay exceeds GIF centisecond range", e.next)
+			return e.err
+		}
+	}
+	e.encoder.appendFrame(frame, delay)
 	if e.encoder.err != nil {
 		e.err = e.encoder.err
 		return e.err
