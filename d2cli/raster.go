@@ -469,6 +469,9 @@ func renderGIFBoardFrames(
 }
 
 func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMs int, wantPreview bool, layers gifLayerOptions) (encoded, previewSVG []byte, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ink, err := animationProgressInk(opts)
 	if err != nil {
 		return nil, nil, err
@@ -487,11 +490,7 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	summary, err := renderGIFWithSession(
 		ctx, inputPath, cacheImages, diagram, opts, intervalMs, layers, session, &workspace, wantPreview,
 		func(delays []int, boardMS int, bounds image.Rectangle) error {
-			if progress.ink == nil {
-				boardMS = intervalMs
-			} else {
-				progress.start(delays)
-			}
+			progress.start(delays)
 			encoder, encoderErr := xgif.NewOpaquePalettedAnimationEncoder(
 				ctx, bounds.Dx(), bounds.Dy(), len(delays), boardMS, gifMaxEncodedBytes,
 			)
@@ -502,7 +501,7 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 			incrementalBounds = bounds
 			return nil
 		},
-		func(frameIndex int, frame image.Image) error {
+		func(frameIndex int, frame image.Image, repeats int) error {
 			if incrementalEncoder != nil {
 				var consumeErr error
 				quantizeErr := quantizationWorkspace.Quantize(ctx, frame, func(paletted *image.Paletted) error {
@@ -511,12 +510,14 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 						consumeErr = fmt.Errorf("GIF frame %d normalization: %w", frameIndex, normalizeErr)
 						return consumeErr
 					}
-					if err := progress.paint(ctx, normalized); err != nil {
-						return err
-					}
-					if encodeErr := incrementalEncoder.WriteFrame(normalized); encodeErr != nil {
-						consumeErr = fmt.Errorf("GIF frame %d encoding: %w", frameIndex, encodeErr)
-						return consumeErr
+					for j := range repeats {
+						if err := progress.paint(ctx, normalized); err != nil {
+							return err
+						}
+						if encodeErr := incrementalEncoder.WriteFrame(normalized); encodeErr != nil {
+							consumeErr = fmt.Errorf("GIF frame %d encoding: %w", frameIndex+j, encodeErr)
+							return consumeErr
+						}
 					}
 					return nil
 				})
@@ -532,7 +533,9 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 			if quantizeErr != nil {
 				return fmt.Errorf("GIF frame %d quantization: %w", frameIndex, quantizeErr)
 			}
-			palettedFrames = append(palettedFrames, paletted)
+			for range repeats {
+				palettedFrames = append(palettedFrames, paletted)
+			}
 			return nil
 		},
 	)
@@ -551,6 +554,10 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	}
 	var paint func(context.Context, *image.Paletted) error
 	if progress.ink != nil {
+		palettedFrames, err = summary.splitProgressHolds(ctx, palettedFrames)
+		if err != nil {
+			return nil, nil, err
+		}
 		progress.start(summary.delays)
 		paint = progress.paint
 	}
@@ -709,7 +716,7 @@ func renderGIFWithSession(
 	workspace *d2raster.RenderWorkspace,
 	wantPreview bool,
 	plan gifBoardPlanConsumer,
-	consume gifFrameConsumer,
+	consume func(frameIndex int, frame image.Image, repeats int) error,
 ) (gifRenderSummary, error) {
 	var summary gifRenderSummary
 	if ctx == nil {
@@ -768,11 +775,6 @@ func renderGIFWithSession(
 				continue
 			}
 			count := 1
-			if segment.TweenSample && opts.AnimateProgress != nil && *opts.AnimateProgress {
-				// Sparse tween samples can hold for seconds. Follow elapsed time
-				// within that pose without introducing sub-20ms GIF frames.
-				count = max(1, delay/3)
-			}
 			if !segment.TweenSample {
 				count, err = xgif.AnimationFrameCount(segment.DurationMS)
 				if err != nil {
@@ -943,8 +945,14 @@ func renderGIFWithSession(
 		var camera *gifLayerCamera
 		activeLeg := -1
 		expectedBounds := plannedBounds
+		// A static hold changes only the progress line. Rasterize and quantize
+		// it once, then keep its individual GIF delays.
+		repeats := 1
+		if segment.count > 1 && len(segment.zoom) == 0 && d2scenebuild.ShortestAnimationPeriod(board) == 0 {
+			repeats = segment.count
+		}
 		err = renderGIFBoardFrames(
-			ctx, 0, segment.count, totalFrames,
+			ctx, 0, segment.count/repeats, totalFrames,
 			func(renderCtx context.Context, frameIndex int, _ time.Duration, frameOptions d2raster.FrameOptions, emit func(image.Image) error) error {
 				if extraPaints > 0 {
 					frameOptions = gifFrameOptions(frameOptions.Time, totalFrames+extraPaints)
@@ -990,10 +998,10 @@ func renderGIFWithSession(
 				if err := validateRenderSession("GIF", session); err != nil {
 					return err
 				}
-				if err := consume(frameIndex, frame); err != nil {
+				if err := consume(frameIndex, frame, repeats); err != nil {
 					return err
 				}
-				renderedFrameCount++
+				renderedFrameCount += repeats
 				return nil
 			},
 		)

@@ -90,7 +90,7 @@ func encodeVideo(ctx context.Context, ffmpeg, path string, quality videoQuality,
 	var input io.WriteCloser
 	var diagnostics videoEncoderDiagnostics
 	var size image.Point
-	var tick int
+	var tick, lastHold int
 	renderErr := render(func(frame image.Image, repeats int) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -134,22 +134,12 @@ func encodeVideo(ctx context.Context, ffmpeg, path string, quality videoQuality,
 		} else if dimensions != size {
 			return fmt.Errorf("MP4 frame dimensions changed from %v to %v", size, dimensions)
 		}
-		writePose := func(hold int) error {
-			if _, err := input.Write(videoBlockHeader(tick, hold, size.X*size.Y*4)); err != nil {
-				return err
-			}
-			tick += hold
-			return writeVideoFrame(input, frame)
+		if _, err := input.Write(videoBlockHeader(tick, repeats, size.X*size.Y*4)); err != nil {
+			return err
 		}
-		if repeats > 1 {
-			// Some FFmpeg versions discard the last packet's input duration.
-			// Stamp both endpoints of a hold while we still own its pixels:
-			// even those encoders can infer its entire length from timestamps.
-			if err := writePose(repeats - 1); err != nil {
-				return err
-			}
-		}
-		return writePose(1)
+		tick += repeats
+		lastHold = repeats
+		return writeVideoFrame(input, frame)
 	})
 
 	if cmd == nil || cmd.Process == nil {
@@ -159,6 +149,9 @@ func encodeVideo(ctx context.Context, ffmpeg, path string, quality videoQuality,
 		return errors.New("MP4 renderer produced no frames")
 	}
 
+	if renderErr == nil && lastHold != 1 {
+		renderErr = errors.New("MP4 renderer must emit its final tick separately")
+	}
 	closeErr := input.Close()
 	if renderErr != nil {
 		cancel()

@@ -35,15 +35,15 @@ func animationProgressWidth(width, elapsed, total int, last bool) int {
 	return int(int64(width) * int64(elapsed) / int64(total))
 }
 
-// Successive ticks may land on the same delivery pixel. Preserve those holds
-// so that a long static clip does not send an identical canvas at every tick.
-func videoProgressRun(tick, total, width int) (extent, repeats int) {
-	extent = animationProgressWidth(width, tick, total, tick == total-1)
+// Static poses need a new picture only when the line reaches another
+// output pixel (or a coarser step if the clip is near its pixel budget).
+func videoProgressRun(tick, total, steps int) int {
 	if tick == total-1 {
-		return extent, 1
+		return 1
 	}
-	next := int((int64(extent+1)*int64(total) + int64(width) - 1) / int64(width))
-	return extent, min(next, total-1) - tick
+	step := int64(steps) * int64(tick) / int64(total)
+	next := int(((step+1)*int64(total) + int64(steps) - 1) / int64(steps))
+	return min(next, total-1) - tick
 }
 
 // The renderer lends this surface until emit returns. Only the bottom strip
@@ -51,11 +51,12 @@ func videoProgressRun(tick, total, width int) (extent, repeats int) {
 type videoProgressOverlay struct {
 	ink   *image.Uniform
 	strip *image.RGBA
+	steps int
 }
 
 func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start, repeats, total int, emit func(image.Image, int) error) error {
 	if p.ink == nil {
-		return emit(frame, repeats)
+		return emitVideoHold(frame, repeats, start+repeats == total, emit)
 	}
 	bounds := frame.Bounds()
 	strip := animationProgressStrip(bounds)
@@ -69,7 +70,8 @@ func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		extent, run := videoProgressRun(tick, total, bounds.Dx())
+		extent := animationProgressWidth(bounds.Dx(), tick, total, tick == total-1)
+		run := videoProgressRun(tick, total, p.steps)
 		right := bounds.Min.X + extent
 		draw.Draw(frame, image.Rect(left, strip.Min.Y, right, strip.Max.Y), p.ink, image.Point{}, draw.Src)
 		left = right

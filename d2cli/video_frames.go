@@ -173,6 +173,14 @@ func (w videoWork) checkPixels(output image.Rectangle) error {
 	return nil
 }
 
+// Every native sample still receives the exact elapsed width. During static
+// holds, each extra step can cost one full coded picture. Preserve the native
+// work budget by gradually reducing only these optional bar updates.
+func (w videoWork) progressSteps(output image.Rectangle) int {
+	maxSamples := videoMaxTotalPixels / (int64(output.Dx()) * int64(output.Dy()))
+	return int(min(int64(output.Dx()), maxSamples-int64(w.samples)+1))
+}
+
 // Count actual scene builds (including misses in the two-scene cache),
 // paints, and coded samples before assigning operation-wide budgets.
 func (p *videoTimeline) work(ctx context.Context) (videoWork, error) {
@@ -194,9 +202,10 @@ func (p *videoTimeline) work(ctx context.Context) (videoWork, error) {
 			return videoWork{}, err
 		}
 		index, _, repeat, leg, _ := p.sample(i)
-		// The encoder stamps both endpoints of a static hold and one sample
-		// for a single-frame pose. The hold's interior is represented by time.
-		w.samples += min(repeat, 2)
+		w.samples++
+		if i+repeat == p.frames && repeat > 1 {
+			w.samples++ // The final hold has an explicit last tick.
+		}
 		if leg == nil {
 			visit(index)
 			w.paints++
@@ -218,6 +227,19 @@ func (p *videoTimeline) work(ctx context.Context) (videoWork, error) {
 // Pixel throughput and the number of output samples have independent bounds.
 func videoWorkDivisor(count int) int {
 	return max(1, (count+63)/64)
+}
+
+// Some FFmpeg versions discard the final packet duration. Separate the last
+// tick of the final hold while the renderer still has its pixels. Every other
+// hold gets its exact duration from the next pose's presentation timestamp.
+func emitVideoHold(frame image.Image, repeats int, final bool, emit func(image.Image, int) error) error {
+	if final && repeats > 1 {
+		if err := emit(frame, repeats-1); err != nil {
+			return err
+		}
+		repeats = 1
+	}
+	return emit(frame, repeats)
 }
 
 // emit consumes opaque, fixed-size images synchronously. The backing pixels
@@ -305,26 +327,10 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	if err != nil {
 		return err
 	}
-	if overlay.ink != nil {
-		// A static scene still gets only one paint. Its moving overlay may
-		// require additional coded samples, which share the output budget.
-		work.samples = 0
-		for tick := 0; tick < p.frames; {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			_, _, repeat, _, _ := p.sample(tick)
-			for stop := tick + repeat; tick < stop; {
-				_, run := videoProgressRun(tick, p.frames, output.Dx())
-				run = min(run, stop-tick)
-				work.samples += min(run, 2)
-				tick += run
-			}
-		}
-	}
 	if err := work.checkPixels(output); err != nil {
 		return err
 	}
+	overlay.steps = work.progressSteps(output)
 	loadForPlayback := func(index int) (*d2scene.Document, error) {
 		doc, err := load(index)
 		if err != nil {

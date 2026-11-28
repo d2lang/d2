@@ -1067,10 +1067,10 @@ func quantizeImageThroughGIF(ctx context.Context, img image.Image) (*image.Palet
 // buffer. Otherwise the returned frame owns its pixel buffer and palette.
 // Callers must impose appropriate canvas and aggregate pixel limits.
 func NormalizePalettedImage(ctx context.Context, img *image.Paletted, width, height int) (*image.Paletted, error) {
-	return normalizePalettedImage(ctx, img, width, height, nil)
+	return normalizePalettedImage(ctx, img, width, height, nil, false)
 }
 
-func normalizePalettedImage(ctx context.Context, img *image.Paletted, width, height int, offset *image.Point) (*image.Paletted, error) {
+func normalizePalettedImage(ctx context.Context, img *image.Paletted, width, height int, offset *image.Point, owned bool) (*image.Paletted, error) {
 	ctx = nonNilContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1099,7 +1099,7 @@ func normalizePalettedImage(ctx context.Context, img *image.Paletted, width, hei
 			return nil, fmt.Errorf("GIF image at offset %v falls outside the %dx%d canvas", *offset, width, height)
 		}
 	}
-	if bounds.Min == (image.Point{}) && bounds.Dx() == width && bounds.Dy() == height {
+	if !owned && bounds.Min == (image.Point{}) && bounds.Dx() == width && bounds.Dy() == height {
 		img.Palette, _ = paletteWithBackground(img.Palette)
 		return img, nil
 	}

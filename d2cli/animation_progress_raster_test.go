@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
+	"slices"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func TestVideoProgressCancellationRestoresBorrowedCanvas(t *testing.T) {
 	defer cancel()
 	frame := image.NewRGBA(image.Rect(3, 7, 51, 11))
 	original := bytes.Clone(frame.Pix)
-	p := &videoProgressOverlay{ink: image.NewUniform(testProgressInk)}
+	p := &videoProgressOverlay{ink: image.NewUniform(testProgressInk), steps: frame.Rect.Dx()}
 	calls := 0
 	err := p.emit(ctx, frame, 5, 50, 60, func(im image.Image, _ int) error {
 		checkProgressStrip(t, im, 4)
@@ -80,6 +81,28 @@ func TestVideoProgressCancellationRestoresBorrowedCanvas(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) || calls != 1 || !bytes.Equal(original, frame.Pix) {
 		t.Fatalf("cancelled overlay: calls %d, err %v, restored %t", calls, err, bytes.Equal(original, frame.Pix))
+	}
+}
+
+func TestVideoProgressWithinCodedPixelBudget(t *testing.T) {
+	const width, height, ticks = 3840, 2160, 1800
+	maxSamples := int(videoMaxTotalPixels / (width * height))
+	canvas := image.Rect(0, 0, width, height)
+	for _, spare := range []int{0, 1, 20, width} {
+		work := videoWork{samples: maxSamples - spare}
+		steps := work.progressSteps(canvas)
+		coded := 0
+		for i := 0; i < ticks; {
+			run := videoProgressRun(i, ticks, steps)
+			if i != ticks-1 && i+run >= ticks || run < 1 {
+				t.Fatalf("invalid run of %d from tick %d", run, i)
+			}
+			i += run
+			coded++
+		}
+		if coded < 2 || coded > 2+spare {
+			t.Fatalf("a final static hold with %d spare samples used %d samples", spare, coded)
+		}
 	}
 }
 
@@ -133,6 +156,53 @@ func TestGIFProgressUsesEncodedDelaysOnMixedCanvases(t *testing.T) {
 	}
 }
 
+func TestGIFProgressSpendsOnlySpareFrameAndPixelBudget(t *testing.T) {
+	a := image.NewPaletted(image.Rect(0, 0, 1, 1), color.Palette{color.Black})
+	b := image.NewPaletted(a.Rect, color.Palette{color.White})
+	for _, tc := range []struct {
+		name               string
+		side, limit, spare int
+	}{
+		{"frame limit", 8, gifMaxFrames, 2},
+		{"normalized pixel limit", 512, int(gifMaxNormalizedPixels / (512 * 512)), 2},
+		{"no spare slots", 8, gifMaxFrames, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := tc.limit - tc.spare
+			poses := make([]*image.Paletted, n)
+			s := gifRenderSummary{maxWidth: tc.side, maxHeight: tc.side, totalFrames: n, delays: make([]int, n), offsets: make([]image.Point, n)}
+			for i := range poses {
+				poses[i] = a
+				s.delays[i] = 3
+			}
+			poses[n-1], s.delays[n-1], s.offsets[n-1] = b, 300, image.Pt(2, 3)
+			frames, err := s.splitProgressHolds(t.Context(), poses)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(frames) != tc.limit || len(s.delays) != tc.limit || len(s.offsets) != tc.limit || s.totalFrames != tc.limit {
+				t.Fatalf("expanded schedule has %d pictures, %d delays and %d offsets; want %d", len(frames), len(s.delays), len(s.offsets), tc.limit)
+			}
+			total := 0
+			for i, frame := range frames {
+				if i < n-1 {
+					if frame != a || s.delays[i] != 3 || s.offsets[i] != (image.Point{}) {
+						t.Fatal("changed an authored picture before the hold")
+					}
+				} else {
+					if frame != b || s.offsets[i] != image.Pt(2, 3) {
+						t.Fatal("lost the held picture or its placement")
+					}
+					total += s.delays[i]
+				}
+			}
+			if total != 300 {
+				t.Fatalf("hold duration %dcs, want 300cs", total)
+			}
+		})
+	}
+}
+
 func TestGIFProgressColorIndependentOfBoardPalette(t *testing.T) {
 	board := simpleRasterDiagramWithSize(48, 48)
 	board.Shapes[0].Fill = "B1"
@@ -162,37 +232,71 @@ func TestGIFProgressColorIndependentOfBoardPalette(t *testing.T) {
 	}
 }
 
-func TestGIFProgressOffPreservesCaptionedPlayback(t *testing.T) {
+func TestGIFProgressPreservesCaptionReadingTime(t *testing.T) {
 	board := simpleRasterDiagram()
 	board.Root.Annotation = &d2target.Annotation{Label: "Pause for this caption."}
 	opts := progressRenderOpts()
-	opts.AnimateProgress = nil
-	const intervalMS = 101
-	without, _, err := renderGIF(t.Context(), "-", false, board, opts, intervalMS, false, gifLayerOptions{})
-	if err != nil {
-		t.Fatal(err)
+	var delays []int
+	for _, enabled := range []bool{false, true} {
+		opts.AnimateProgress = &enabled
+		data, _, err := renderGIF(t.Context(), "-", false, board, opts, 101, false, gifLayerOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		animation, err := gif.DecodeAll(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		total := 0
+		for _, delay := range animation.Delay {
+			total += delay
+		}
+		if want := (board.ReadingMS() + 9) / 10; total != want {
+			t.Fatalf("progress %t: caption plays for %dcs, want %dcs", enabled, total, want)
+		}
+		if delays != nil && !slices.Equal(delays, animation.Delay) {
+			t.Fatalf("toggling the progress line changed caption frame delays")
+		}
+		delays = animation.Delay
 	}
-	opts.AnimateProgress = go2.Pointer(false)
-	explicit, _, err := renderGIF(t.Context(), "-", false, board, opts, intervalMS, false, gifLayerOptions{})
-	if err != nil || !bytes.Equal(without, explicit) {
-		t.Fatalf("disabled progress changed the encoded GIF: %v", err)
-	}
-	animation, err := gif.DecodeAll(bytes.NewReader(without))
-	if err != nil {
-		t.Fatal(err)
-	}
-	total := 0
-	for _, delay := range animation.Delay {
-		total += delay
-	}
-	// The legacy single-board encoder repeats the 101ms schedule on an
-	// integral number of four-frame boards, otherwise it uses one interval.
-	want := 11
-	if len(animation.Delay)%4 == 0 {
-		want *= len(animation.Delay) / 4
-	}
-	if total != want {
-		t.Fatalf("disabled progress changed the prior duration from %dcs to %dcs", want, total)
+}
+
+func TestGIFProgressIntervalDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name, config string
+		args, env    []string
+		want         bool
+	}{
+		{name: "implicit interval"},
+		{name: "authored interval", config: "animate-interval: 100ms", want: true},
+		{name: "environment interval", env: []string{"D2_ANIMATE_INTERVAL=100"}, want: true},
+		{name: "CLI interval", args: []string{"--animate-interval=100"}, want: true},
+		{name: "zero override", config: "animate-interval: 100ms", args: []string{"--animate-interval=0"}},
+		{name: "disabled over source interval", config: "animate-interval: 100ms; animate-progress: false"},
+		{name: "enabled without an interval", args: []string{"--animate-progress"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const swatch = `
+swatch: "" {width: 48; height: 48; style: {fill: white; stroke-width: 0}}`
+			source := "vars.d2-config: {pad: 0; animate-progress-color: lime; " + tc.config + "}" + swatch
+			data, err := imageCLIWithEnv(t, t.TempDir(), source, tc.env, append(tc.args, "--stdout-format=gif", "-")...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			animation, err := gif.DecodeAll(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			final := animation.Image[len(animation.Image)-1]
+			got := color.RGBAModel.Convert(final.At(final.Rect.Dx()/2, final.Rect.Max.Y-2))
+			want := color.RGBAModel.Convert(color.White)
+			if tc.want {
+				want = color.RGBA{G: 255, A: 255}
+			}
+			if got != want {
+				t.Errorf("final bar pixel = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
