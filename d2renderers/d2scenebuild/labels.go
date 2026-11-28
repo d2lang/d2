@@ -88,6 +88,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		if p := connection.MotionLabel; p != nil {
 			hole.Opacity *= p.Opacity
 		}
+		b.applySequenceReveal(hole, connection.SequenceStep)
 		holes = append(holes, hole)
 	}
 
@@ -105,7 +106,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 
 // A crossing only cuts the back connection's stroke. Labels, markers and the
 // foreground connection keep their own paint and opacity.
-func crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap) *d2scene.Mask {
+func (b *builder) crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap) *d2scene.Mask {
 	if len(gaps) == 0 {
 		return nil
 	}
@@ -114,11 +115,13 @@ func crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGap) *d2scene.M
 		Box: viewBox, Fill: d2scene.SolidPaint{Color: color.NRGBA{R: 255, G: 255, B: 255, A: 255}},
 	}))
 	for _, gap := range gaps {
-		root.Children = append(root.Children, d2scene.NewNode(d2scene.Ellipse{
+		hole := d2scene.NewNode(d2scene.Ellipse{
 			Center:  d2scene.Point{X: gap.Center.X, Y: gap.Center.Y},
 			RadiusX: gap.Radius, RadiusY: gap.Radius,
 			Fill: d2scene.SolidPaint{Color: color.NRGBA{A: 255}},
-		}))
+		})
+		b.applySequenceReveal(hole, gap.SequenceStep)
+		root.Children = append(root.Children, hole)
 	}
 	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}
 }

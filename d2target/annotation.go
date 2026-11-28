@@ -149,6 +149,8 @@ func dist(dx, dy float64) float64 {
 // AnnotationMark is one annotation resolved to ink for a board: polylines in
 // diagram coordinates and, when it has a note, where the note goes.
 type AnnotationMark struct {
+	// SequenceStep synchronizes a message annotation with the message itself.
+	SequenceStep int
 	// ID names the mark after its target, for element IDs.
 	ID      string
 	Strokes [][]geo.Point
@@ -345,7 +347,7 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 			if a == nil || len(c.Route) < 2 {
 				continue
 			}
-			m := AnnotationMark{ID: c.ID, Paint: a.GetStroke(), Width: AnnotationStrokeWidth, Opacity: 1}
+			m := AnnotationMark{ID: c.ID, SequenceStep: c.SequenceStep, Paint: a.GetStroke(), Width: AnnotationStrokeWidth, Opacity: 1}
 			route := flattenRoute(c)
 			mid := pointAlong(route, 0.5)
 			// The note sits beside the middle of the route, not beside all of it.

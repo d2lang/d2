@@ -1,6 +1,7 @@
 package d2exporter
 
 import (
+	"cmp"
 	"context"
 	"net/url"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2layouts/d2sequence"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2target"
@@ -17,6 +19,7 @@ import (
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // defaultAnnotationMark is the mark a person would reach for when the author
@@ -161,8 +164,30 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 	}
 
 	diagram.Connections = make([]d2target.Connection, len(g.Edges))
-	for i := range g.Edges {
-		diagram.Connections[i] = ToConnection(g.Edges[i], g.Theme)
+	sequences := make(map[*d2graph.Object][]*d2target.Connection)
+	for i, edge := range g.Edges {
+		diagram.Connections[i] = ToConnection(edge, g.Theme)
+		c := &diagram.Connections[i]
+		if c.Opacity <= 0 || edge.ZIndex != d2sequence.MESSAGE_Z_INDEX || len(c.Route) == 0 {
+			continue
+		}
+		owner := edge.Src.OuterSequenceDiagram()
+		if owner == nil || owner.Style.Animated == nil || owner != edge.Dst.OuterSequenceDiagram() {
+			continue
+		}
+		if animated, _ := strconv.ParseBool(owner.Style.Animated.Value); animated {
+			sequences[owner] = append(sequences[owner], c)
+		}
+	}
+	for _, messages := range sequences {
+		// Nested layout restores graph insertion order. The first routed Y is
+		// the order in which the sequence layout placed the authored messages.
+		xsort.StableFunc(messages, func(a, b *d2target.Connection) int {
+			return cmp.Compare(a.Route[0].Y, b.Route[0].Y)
+		})
+		for i, message := range messages {
+			message.SequenceStep = i + 1
+		}
 	}
 
 	if g.Legend != nil {
@@ -391,7 +416,7 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 		shape.TooltipPosition = obj.TooltipPosition.Value
 	}
 	shape.Annotation = toAnnotation(obj.Annotation, defaultAnnotationMark(obj))
-	if obj.Style.Animated != nil {
+	if obj.Style.Animated != nil && !obj.IsSequenceDiagram() {
 		shape.Animated, _ = strconv.ParseBool(obj.Style.Animated.Value)
 	}
 	if obj.Link != nil {

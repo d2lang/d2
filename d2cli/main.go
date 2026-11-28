@@ -602,6 +602,11 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		diagram.Steps = nil
 	}
 
+	// A board interval controls transitions between boards. A standalone
+	// sequence plays its messages on their own timeline.
+	if ext == SVG && animateInterval > 0 && diagram.HasStandaloneSequencePlayback() {
+		animateInterval = 0
+	}
 	if animateInterval > 0 {
 		masterID, err := diagram.HashID(renderOpts.Salt)
 		if err != nil {
@@ -1072,6 +1077,7 @@ func _renderWithPNGEncoder(ctx context.Context, ms *xmain.State, opts d2svg.Rend
 		OmitVersion:        opts.OmitVersion,
 	}
 	if toPNG {
+		renderOpts.StaticSequence = true
 		returnSVG := wantPreview || opts.MasterID != ""
 		svg, err := renderRasterSVG(diagram, *renderOpts, returnSVG)
 		if err != nil {

@@ -36,6 +36,12 @@ func (o fieldOrder) before(other fieldOrder) bool {
 	return slices.Compare(o.path(a[:0]), other.path(b[:0])) < 0
 }
 
+// AssignedBefore compares the assignments supplying two values, including
+// their use-site order when an import or spread supplied either value.
+func (s *Scalar) AssignedBefore(other *Scalar) bool {
+	return s.order.before(other.order)
+}
+
 func (o fieldOrder) path(buf []uint64) []uint64 {
 	for curr := &o; curr != nil; curr = curr.outer {
 		buf = append(buf, curr.sequence)

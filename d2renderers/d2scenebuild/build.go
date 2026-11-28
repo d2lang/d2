@@ -115,8 +115,11 @@ type Options struct {
 	MaxNodes        int
 	MaxPathCommands int
 	Sketch          bool
-	SketchBudget    SketchBudget
-	LinkBudget      LinkBudget
+	// SequencePlayback enables the standalone message reveal on the scene clock.
+	// Static and multi-board exports retain the authored endpoint.
+	SequencePlayback bool
+	SketchBudget     SketchBudget
+	LinkBudget       LinkBudget
 	// Appendix paints the numbered tooltip/link badges and static appendix
 	// rows used by PNG, GIF, PDF, and PPTX exports. Interactive SVG callers
 	// leave it false and retain typed metadata without static footnotes. Its
@@ -686,7 +689,7 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		} else {
 			clip = object.connection.MotionClip
 			gaps := crossings[object.order-len(b.diagram.Shapes)]
-			node, err = b.buildConnection(*object.connection, crossingMask(viewBox, gaps))
+			node, err = b.buildConnection(*object.connection, b.crossingMask(viewBox, gaps))
 		}
 		if err != nil {
 			return nil, err

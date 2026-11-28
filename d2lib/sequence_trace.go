@@ -12,6 +12,45 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
+// Suspend the standalone message clock while sampling an explicit board
+// timeline. A rank can change without any change to a message's paint or
+// position. Partial frames may also omit messages that have yet to arrive.
+func suspendSequencePlayback(root *d2target.Diagram) (restore func()) {
+	type rank struct{ index, step int }
+	saved := make(map[*d2target.Diagram][]rank)
+	var visit func(*d2target.Diagram, bool)
+	visit = func(board *d2target.Diagram, authored bool) {
+		for i := range board.Connections {
+			c := &board.Connections[i]
+			if c.SequenceStep == 0 {
+				continue
+			}
+			if authored {
+				saved[board] = append(saved[board], rank{i, c.SequenceStep})
+			}
+			c.SequenceStep = 0
+		}
+		for _, frame := range board.TweenFrames {
+			visit(frame, false)
+		}
+		for _, children := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
+			for _, child := range children {
+				visit(child, authored)
+			}
+		}
+	}
+	visit(root, true)
+	return func() {
+		for board, ranks := range saved {
+			// Some sample frames share their authored board's slice.
+			board.Connections = slices.Clone(board.Connections)
+			for _, r := range ranks {
+				board.Connections[r.index].SequenceStep = r.step
+			}
+		}
+	}
+}
+
 // The sequence layout already knows where the actors, activation bars and
 // messages belong. Trace newly sent messages if the prior exchange still fits
 // at its authored positions. Appending a message can extend a lifeline or bar.

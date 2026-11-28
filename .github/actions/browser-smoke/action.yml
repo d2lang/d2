@@ -1,5 +1,5 @@
 name: Browser smoke test
-description: Check step playback in Chromium and WebKit using packed D2.js or native SVGs.
+description: Check diagram playback in Chromium and WebKit using packed D2.js or native SVGs.
 inputs:
   packed:
     description: Test the npm tarball from an already-built d2js/js/dist.
@@ -32,7 +32,7 @@ runs:
         set -euo pipefail
         output=$(mktemp -d)
         go build -o "$output/d2" .
-        for fixture in playback departure; do
+        for fixture in playback departure sequence; do
           "$output/d2" "d2js/js/test/browser/$fixture.d2" "$output/$fixture.svg"
         done
         node d2js/js/test/browser/smoke.mjs native "$output"

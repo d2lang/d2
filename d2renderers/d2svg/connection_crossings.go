@@ -17,6 +17,7 @@ type crossingEffect struct {
 	id                string
 	mask              bool
 	replacesEmptyMask bool
+	sequencePlayback  bool
 }
 
 func (c crossingEffect) attribute() svg.Attribute {
@@ -36,7 +37,7 @@ type crossingViewport struct {
 // or immediately if a masked shaft or its board will animate.
 const staticCrossingMaskElements = 48
 
-func (v crossingViewport) planCrossings(boardID string, crossings [][]d2target.ConnectionGap, diagram *d2target.Diagram, frame bool) map[int]crossingEffect {
+func (v crossingViewport) planCrossings(boardID string, crossings [][]d2target.ConnectionGap, diagram *d2target.Diagram, frame, sequencePlayback bool) map[int]crossingEffect {
 	elements := 0
 	animated := frame
 	for i, gaps := range crossings {
@@ -65,7 +66,8 @@ func (v crossingViewport) planCrossings(boardID string, crossings [][]d2target.C
 			// Custom stylesheets may select the original groups and IDs.
 			id = "crossings-" + boardID + "-" + strconv.Itoa(i)
 		}
-		effects[i] = crossingEffect{id: id, mask: !useClips || !v.canClip(gaps), replacesEmptyMask: emptyMask}
+		timed := sequencePlayback && slices.ContainsFunc(gaps, func(gap d2target.ConnectionGap) bool { return gap.SequenceStep > 0 })
+		effects[i] = crossingEffect{id: id, mask: timed || !useClips || !v.canClip(gaps), replacesEmptyMask: emptyMask, sequencePlayback: timed}
 	}
 	return effects
 }
@@ -91,7 +93,11 @@ func (v crossingViewport) writeCrossings(buf *bytes.Buffer, effects map[int]cros
 			buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
 			buf.WriteString(backdrop)
 			for _, g := range gaps {
-				buf.WriteString(svg.EmptyElement("circle", svg.FloatAttr("cx", g.Center.X), svg.FloatAttr("cy", g.Center.Y), svg.FloatAttr("r", g.Radius), svg.Attr("fill", "black")))
+				attrs := []svg.Attribute{svg.FloatAttr("cx", g.Center.X), svg.FloatAttr("cy", g.Center.Y), svg.FloatAttr("r", g.Radius), svg.Attr("fill", "black")}
+				if effect.sequencePlayback && g.SequenceStep > 0 {
+					attrs = append(attrs, svg.IntAttr("data-d2-sequence-step", g.SequenceStep))
+				}
+				buf.WriteString(svg.EmptyElement("circle", attrs...))
 			}
 			buf.WriteString(svg.CloseElement("mask"))
 			continue

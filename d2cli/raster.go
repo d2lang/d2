@@ -307,9 +307,10 @@ func bundledFontFallbackOptions(totalBoards int, next d2fonts.FallbackResolver) 
 }
 
 type sceneFrameOptions struct {
-	minimumBounds   *image.Rectangle
-	maxNodes        int
-	maxPathCommands int
+	sequencePlayback bool
+	minimumBounds    *image.Rectangle
+	maxNodes         int
+	maxPathCommands  int
 }
 
 func sceneOptionsForFrame(options d2raster.FrameOptions) sceneFrameOptions {
@@ -329,15 +330,16 @@ func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diag
 	board.Steps = nil
 	sketch := opts.Sketch != nil && *opts.Sketch
 	document, err := d2scenebuild.Build(ctx, &board, d2scenebuild.Options{
-		Pad:             opts.Pad,
-		MinimumBounds:   frameOpts.minimumBounds,
-		Scale:           opts.Scale,
-		Center:          opts.Center,
-		ThemeID:         opts.ThemeID,
-		ThemeOverrides:  opts.ThemeOverrides,
-		MaxNodes:        frameOpts.maxNodes,
-		MaxPathCommands: frameOpts.maxPathCommands,
-		Sketch:          sketch,
+		Pad:              opts.Pad,
+		MinimumBounds:    frameOpts.minimumBounds,
+		SequencePlayback: frameOpts.sequencePlayback,
+		Scale:            opts.Scale,
+		Center:           opts.Center,
+		ThemeID:          opts.ThemeID,
+		ThemeOverrides:   opts.ThemeOverrides,
+		MaxNodes:         frameOpts.maxNodes,
+		MaxPathCommands:  frameOpts.maxPathCommands,
+		Sketch:           sketch,
 		SketchBudget: d2scenebuild.SketchBudget{
 			MaxOperationSets: rasterMaxNodes,
 			MaxOperations:    rasterMaxPathCommands,
@@ -408,7 +410,7 @@ type gifFrameRenderer func(context.Context, int, time.Duration, d2raster.FrameOp
 
 type gifFrameConsumer func(frameIndex int, frame image.Image) error
 
-type gifBoardPlanConsumer func(totalFrames int, bounds image.Rectangle) error
+type gifBoardPlanConsumer func(delays []int, bounds image.Rectangle) error
 
 // renderGIFBoardFrames paints and consumes one frame at a time. The consumer
 // can quantize and release each full-color image before the next render begins.
@@ -478,16 +480,18 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	palettedFrames := make([]*image.Paletted, 0)
 	var incrementalEncoder *xgif.OpaquePalettedAnimationEncoder
 	var incrementalBounds image.Rectangle
+	var incrementalDelays []int
 	summary, err := renderGIFWithSession(
 		ctx, inputPath, cacheImages, diagram, opts, intervalMs, session, &workspace, wantPreview,
-		func(totalFrames int, bounds image.Rectangle) error {
+		func(delays []int, bounds image.Rectangle) error {
 			encoder, encoderErr := xgif.NewOpaquePalettedAnimationEncoder(
-				ctx, bounds.Dx(), bounds.Dy(), totalFrames, intervalMs, gifMaxEncodedBytes,
+				ctx, bounds.Dx(), bounds.Dy(), len(delays), intervalMs, gifMaxEncodedBytes,
 			)
 			if encoderErr != nil {
 				return encoderErr
 			}
 			incrementalEncoder = encoder
+			incrementalDelays = delays
 			incrementalBounds = bounds
 			return nil
 		},
@@ -500,7 +504,7 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 						consumeErr = fmt.Errorf("GIF frame %d normalization: %w", frameIndex, normalizeErr)
 						return consumeErr
 					}
-					if encodeErr := incrementalEncoder.WriteFrame(normalized); encodeErr != nil {
+					if encodeErr := incrementalEncoder.WriteFrameWithDelay(normalized, incrementalDelays[frameIndex]); encodeErr != nil {
 						consumeErr = fmt.Errorf("GIF frame %d encoding: %w", frameIndex, encodeErr)
 						return consumeErr
 					}
@@ -718,6 +722,16 @@ func renderGIFWithSession(
 	if err := d2target.ValidateRenderTarget(diagram); err != nil {
 		return summary, err
 	}
+	sequencePlayback := diagram.HasStandaloneSequencePlayback()
+	var sequenceTimes []int
+	if sequencePlayback {
+		duration := diagram.SequencePlaybackDurationMS()
+		intervalMs = max(intervalMs, duration)
+		sequenceTimes, err = sequenceGIFSampleTimes(diagram, duration)
+		if err != nil {
+			return summary, err
+		}
+	}
 	type gifSegment struct {
 		d2animate.Frame
 		count    int
@@ -740,7 +754,9 @@ func renderGIFWithSession(
 				continue
 			}
 			count := 1
-			if !segment.TweenSample {
+			if len(sequenceTimes) != 0 {
+				count = len(sequenceTimes)
+			} else if !segment.TweenSample {
 				count, err = xgif.AnimationFrameCount(segment.DurationMS)
 				if err != nil {
 					return summary, err
@@ -753,7 +769,17 @@ func renderGIFWithSession(
 			if count > gifMaxFrames-totalFrames {
 				return summary, fmt.Errorf("GIF animation exceeds the %d-frame limit", gifMaxFrames)
 			}
-			summary.delays = xgif.AppendFrameDelays(summary.delays, delay, count)
+			if len(sequenceTimes) == 0 {
+				summary.delays = xgif.AppendFrameDelays(summary.delays, delay, count)
+			} else {
+				for j, ms := range sequenceTimes {
+					end := delay
+					if j+1 < count {
+						end = sequenceTimes[j+1] / 10
+					}
+					summary.delays = append(summary.delays, end-ms/10)
+				}
+			}
 			viewport := viewports[segment.Diagram]
 			if viewport != nil {
 				tl, br := segment.Diagram.BoundingBox()
@@ -791,6 +817,7 @@ func renderGIFWithSession(
 			return summary, err
 		}
 		boardOpts := rasterRenderOptions(opts)
+		boardOpts.StaticSequence = !sequencePlayback
 		needsPreview := wantPreview && board == diagram && !diagram.IsFolderOnly
 		sourceSVG, err := renderRasterSVG(board, boardOpts, needsPreview)
 		if err != nil {
@@ -801,6 +828,7 @@ func renderGIFWithSession(
 		}
 		frameOptions := gifFrameOptions(0, totalFrames)
 		sceneOpts := sceneOptionsForFrame(frameOptions)
+		sceneOpts.sequencePlayback = sequencePlayback
 		if segment.viewport != nil {
 			sceneOpts.minimumBounds = &segment.viewport.bounds
 		}
@@ -830,13 +858,16 @@ func renderGIFWithSession(
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
 		if plan != nil && len(boards) == 1 && len(boards[0].TweenFrames) == 0 {
-			if err := plan(totalFrames, plannedBounds); err != nil {
+			if err := plan(summary.delays, plannedBounds); err != nil {
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}
 		}
 		err = renderGIFBoardFrames(
 			ctx, 0, segment.count, totalFrames,
-			func(renderCtx context.Context, _ int, _ time.Duration, frameOptions d2raster.FrameOptions, emit func(image.Image) error) error {
+			func(renderCtx context.Context, index int, _ time.Duration, frameOptions d2raster.FrameOptions, emit func(image.Image) error) error {
+				if len(sequenceTimes) != 0 {
+					frameOptions.Time = time.Duration(sequenceTimes[index]) * time.Millisecond
+				}
 				frameOptions.Time += time.Duration(segment.ElapsedMS) * time.Millisecond
 				if workspace == nil {
 					frame, renderErr := session.Render(renderCtx, document, frameOptions)
@@ -891,6 +922,29 @@ func renderGIFWithSession(
 		}
 	}
 	return summary, nil
+}
+
+// Sample the fade, then hold its endpoint until the next message. A separate
+// animated shape or dashed wire keeps the regular continuous GIF clock.
+func sequenceGIFSampleTimes(diagram *d2target.Diagram, duration int) ([]int, error) {
+	animatedShape := func(s d2target.Shape) bool { return s.Animated }
+	animatedWire := func(c d2target.Connection) bool { return c.Animated }
+	if slices.ContainsFunc(diagram.Shapes, animatedShape) || slices.ContainsFunc(diagram.Connections, animatedWire) ||
+		diagram.Legend != nil && (slices.ContainsFunc(diagram.Legend.Shapes, animatedShape) || slices.ContainsFunc(diagram.Legend.Connections, animatedWire)) {
+		return nil, nil
+	}
+	const sampleMS = 50
+	var times []int
+	for start := 0; start < duration-d2target.SequenceMessageIntervalMS; start += d2target.SequenceMessageIntervalMS {
+		for elapsed := 0; elapsed < d2target.SequenceMessageRevealMS; elapsed += sampleMS {
+			times = append(times, start+elapsed)
+		}
+		times = append(times, start+d2target.SequenceMessageRevealMS)
+		if len(times) > gifMaxFrames {
+			return nil, fmt.Errorf("GIF animation exceeds the %d-frame limit", gifMaxFrames)
+		}
+	}
+	return times, nil
 }
 
 func gifDocumentFrameBounds(document *d2scene.Document) (image.Rectangle, error) {
@@ -1087,6 +1141,7 @@ func rasterRenderOptions(opts d2svg.RenderOpts) d2svg.RenderOpts {
 		scale = &one
 	}
 	return d2svg.RenderOpts{
+		StaticSequence:     true,
 		Pad:                opts.Pad,
 		Sketch:             opts.Sketch,
 		Center:             opts.Center,

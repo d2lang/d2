@@ -37,12 +37,16 @@ func opacityStyle(opacity float64) string {
 // every object. They are written last so that nothing in the diagram covers
 // them, and outside the shape groups so that an animation can still share
 // the unchanged shapes between frames.
-func drawAnnotations(writer *objectWriter, diagram *d2target.Diagram, inkTL, inkBR d2target.Point, inlineTheme *d2themes.Theme, markdown *markdownRenderer) error {
+func drawAnnotations(writer *objectWriter, diagram *d2target.Diagram, inkTL, inkBR d2target.Point, inlineTheme *d2themes.Theme, markdown *markdownRenderer, sequencePlayback bool) error {
 	for _, mark := range diagram.AnnotationMarks() {
 		if len(mark.Strokes) == 0 && (mark.LabelBox == nil || mark.LabelOpacity <= 0) {
 			continue
 		}
-		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("class", "annotation")))
+		attrs := []svg.Attribute{svg.Attr("class", "annotation")}
+		if sequencePlayback && mark.SequenceStep > 0 {
+			attrs = append(attrs, svg.IntAttr("data-d2-sequence-step", mark.SequenceStep))
+		}
+		fmt.Fprint(writer, svg.OpenElement("g", attrs...))
 		// One opacity for the whole mark, so that strokes which overlap do not
 		// double up where they meet.
 		translucent := len(mark.Strokes) > 0 && mark.Opacity < 1

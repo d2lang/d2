@@ -131,6 +131,9 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 
 	for i, connection := range diagram.Connections {
 		connectionPath := fmt.Sprintf("%s.connections[%d]", path, i)
+		if connection.SequenceStep < 0 || connection.SequenceStep > min(len(diagram.Connections), math.MaxInt/SequenceMessageIntervalMS-1) {
+			return invalidRenderField(connectionPath, "sequenceStep", connection.SequenceStep, "must be a valid message index on this board")
+		}
 		if err := validateRenderConnection(connection, connectionPath); err != nil {
 			return err
 		}

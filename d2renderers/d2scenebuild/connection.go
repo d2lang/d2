@@ -71,6 +71,7 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 	group.ID = connection.ID
 	group.Classes = append([]string(nil), connection.Classes...)
 	group.Opacity = connection.Opacity
+	b.applySequenceReveal(group, connection.SequenceStep)
 	icon, err := b.buildConnectionIcon(connection)
 	if err != nil {
 		return nil, err
@@ -150,6 +151,23 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 	}
 	group.Children = append(group.Children, labels...)
 	return group, nil
+}
+
+// A message, its label cutout, and any crossing it opens share one reveal.
+// Keep the node's authored opacity as its endpoint, including translucent ink.
+func (b *builder) applySequenceReveal(node *d2scene.Node, step int) {
+	if !b.options.SequencePlayback || step <= 0 {
+		return
+	}
+	node.Animations = append(node.Animations, d2scene.Track{
+		Property: d2scene.AnimateOpacity,
+		Delay:    time.Duration(step-1) * d2target.SequenceMessageIntervalMS * time.Millisecond,
+		Duration: d2target.SequenceMessageRevealMS * time.Millisecond,
+		Keyframes: []d2scene.Keyframe{
+			{Offset: 0, Value: d2scene.NumberValue(0)},
+			{Offset: 1, Value: d2scene.NumberValue(node.Opacity)},
+		},
+	})
 }
 
 // The shaft and markers all sample the same gradient in connection space.

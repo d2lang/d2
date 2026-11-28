@@ -132,6 +132,10 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 		if config != nil && config.AnimateDuration != nil {
 			duration = int(*config.AnimateDuration)
 		}
+		if duration > 0 {
+			restorePlayback := suspendSequencePlayback(d)
+			defer restorePlayback()
+		}
 		// Annotations change on every step without changing the diagram under
 		// them. Plan the diagram's own transitions without them, then draw them.
 		annotations := liftAnnotations(d)

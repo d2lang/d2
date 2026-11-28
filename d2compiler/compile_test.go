@@ -30,6 +30,79 @@ func TestNilFSDeniesImports(t *testing.T) {
 	}
 }
 
+func TestSequenceAnimation(t *testing.T) {
+	t.Parallel()
+
+	graph, _, err := d2compiler.Compile("sequence.d2", strings.NewReader(`
+animated: true
+shape: sequence_diagram
+a -> b
+`), nil)
+	assert.Success(t, err)
+	assert.String(t, "true", graph.Root.Style.Animated.Value)
+	tassert.Nil(t, graph.Edges[0].Style.Animated)
+
+	graph, _, err = d2compiler.Compile("sequence.d2", strings.NewReader(`
+classes.playback: { animated: true }
+enabled: {
+  class: playback
+  shape: sequence_diagram
+  a -> b
+}
+disabled: {
+  animated: false
+  shape: sequence_diagram
+  a -> b: {style.animated: true}
+}
+styled: {
+  shape: sequence_diagram
+  style.animated: true
+  a -> b
+}
+`), nil)
+	assert.Success(t, err)
+	tassert.Nil(t, graph.Root.Style.Animated)
+	assert.String(t, "true", graph.Root.Children["enabled"].Style.Animated.Value)
+	assert.String(t, "false", graph.Root.Children["disabled"].Style.Animated.Value)
+	assert.String(t, "true", graph.Root.Children["styled"].Style.Animated.Value)
+	assert.String(t, "true", graph.Edges[1].Style.Animated.Value)
+}
+
+func TestSequenceAnimationPrecedence(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, source, want string }{
+		{"style_last", "style.animated: true; animated: false; style.animated: true", "true"},
+		{"shorthand_last", "animated: true; style.animated: false; animated: true", "true"},
+		{"style_block_last", "style.stroke: red; animated: true; style: {animated: false}", "false"},
+		{"earlier_invalid", "style.animated: invalid; animated: false", "false"},
+		{"variable_value", "vars.on: true; animated: false; style.animated: ${on}", "true"},
+		{"spread", "vars.off: {style.animated: false}; animated: true; ...${off}", "false"},
+		{"class_default", "style.animated: false; class: play; classes.play: {animated: true}", "false"},
+		{"later_class", "class: [play; static]; classes.static.style.animated: false; classes.play.animated: true", "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, _, err := d2compiler.Compile("sequence.d2", strings.NewReader("shape: sequence_diagram\n"+tc.source), nil)
+			assert.Success(t, err)
+			assert.String(t, tc.want, g.Root.Style.Animated.Value)
+		})
+	}
+}
+
+func TestSequenceAnimationValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ input, want string }{
+		{"shape: sequence_diagram\nanimated: soon", `expected "animated" to be true or false`},
+		{"shape: sequence_diagram\nanimated: {a: b}", `expected "animated" to be true or false`},
+		{"x.animated: true", "animated must be style.animated"},
+		{"a -> b: {animated: true}", "animated must be style.animated"},
+	} {
+		_, _, err := d2compiler.Compile("sequence.d2", strings.NewReader(tc.input), nil)
+		tassert.ErrorContains(t, err, tc.want)
+	}
+}
+
 func TestOpacityValidation(t *testing.T) {
 	t.Parallel()
 

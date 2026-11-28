@@ -55,6 +55,22 @@ func TestRenderAnimationDefaultsMissingPadding(t *testing.T) {
 	}
 }
 
+func TestStandaloneSequencePlaybackTargets(t *testing.T) {
+	const source = "shape: sequence_diagram\nanimated: true\nClient -> API: request"
+	for _, target := range []*string{nil, go2.Pointer("*")} {
+		out, err := RenderSVG(wasmJSONArgument(t, CompileRequest{
+			FS:   map[string]string{"index": source},
+			Opts: &CompileOptions{RenderOptions: RenderOptions{Target: target}},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.(string), `data-d2-sequence-step="1"`) {
+			t.Fatal("standalone sequence did not render its message animation")
+		}
+	}
+}
+
 func TestSourceAnimateInterval(t *testing.T) {
 	const source = "vars: {d2-config: {animate-interval: 800ms}}\nroot\nsteps: {next: {second}}"
 	for _, tc := range []struct {
