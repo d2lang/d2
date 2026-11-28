@@ -1145,6 +1145,9 @@ type ConnectionIconAnimation struct {
 type Connection struct {
 	ID string `json:"id"`
 
+	// The static paint copy accounts for borders drawn inside their layout boxes.
+	paintBorderInsets [2]float64
+
 	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
 	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`
 	// MotionTip marks the free end of a partially drawn connection.

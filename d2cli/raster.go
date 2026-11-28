@@ -255,14 +255,14 @@ func buildSceneWithAssets(ctx context.Context, diagram *d2target.Diagram, opts d
 	if err != nil {
 		return nil, err
 	}
-	return buildSceneWithAssetsAndFonts(ctx, diagram, opts, assetOptions, fontOptions)
+	return buildSceneWithAssetsAndFonts(ctx, diagram, opts, assetOptions, fontOptions, d2scenebuild.PNGDeviceScale{MaxScale: pngFrameOptions().Scale})
 }
 
-func buildSceneWithAssetsAndFonts(ctx context.Context, diagram *d2target.Diagram, opts d2svg.RenderOpts, assetOptions *d2scenebuild.AssetOptions, fontOptions *d2scenebuild.FontFallbackOptions) (*d2scene.Document, error) {
+func buildSceneWithAssetsAndFonts(ctx context.Context, diagram *d2target.Diagram, opts d2svg.RenderOpts, assetOptions *d2scenebuild.AssetOptions, fontOptions *d2scenebuild.FontFallbackOptions, pngDeviceScale d2scenebuild.PNGDeviceScale) (*d2scene.Document, error) {
 	return buildSceneWithResourcesAndLinks(ctx, diagram, opts, assetOptions, fontOptions, d2scenebuild.LinkBudget{
 		MaxRegions: rasterMaxLinkRegions, MaxStringBytes: rasterMaxLinkStringBytes,
 	}, sceneFrameOptions{
-		maxNodes: rasterMaxNodes, maxPathCommands: rasterMaxPathCommands,
+		maxNodes: rasterMaxNodes, maxPathCommands: rasterMaxPathCommands, pngDeviceScale: pngDeviceScale,
 	})
 }
 
@@ -307,6 +307,7 @@ func bundledFontFallbackOptions(totalBoards int, next d2fonts.FallbackResolver) 
 }
 
 type sceneFrameOptions struct {
+	pngDeviceScale  d2scenebuild.PNGDeviceScale
 	omitAppendix    bool // Video and storyboard follow SVG; other native exports include appendix entries by default.
 	minimumBounds   *image.Rectangle
 	maxNodes        int
@@ -332,6 +333,7 @@ func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diag
 	document, err := d2scenebuild.Build(ctx, &board, d2scenebuild.Options{
 		Pad:             opts.Pad,
 		MinimumBounds:   frameOpts.minimumBounds,
+		PNGDeviceScale:  frameOpts.pngDeviceScale,
 		Scale:           opts.Scale,
 		Center:          opts.Center,
 		ThemeID:         opts.ThemeID,

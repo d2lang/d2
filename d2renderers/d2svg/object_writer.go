@@ -30,6 +30,7 @@ type objectWriter struct {
 	// Only standalone default exports use compact marker IDs. Frames and
 	// legends keep the IDs used by animation compaction and custom CSS.
 	compactMarkerIDs bool
+	alignHairlines   bool
 	buf              *bytes.Buffer
 	usage            *svgUsage
 
