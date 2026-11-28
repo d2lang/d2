@@ -23,8 +23,20 @@ type iconBoard struct {
 
 type iconStream struct {
 	path          d2target.IconMotionPath
-	period, first float64   // seconds between launches, and first launch in this board
-	carried       []float64 // distance from source at the start of this board
+	animation     *d2target.ConnectionIconAnimation
+	period, first float64 // seconds between launches, and first launch in this board
+	carried       []iconFlight
+}
+
+// A live copy keeps its progress and the timing that was active at departure.
+// Untimed copies retain their diagram speed when a step changes the route.
+type iconFlight struct {
+	progress float64
+	launched *d2target.ConnectionIconAnimation
+}
+
+func (f iconFlight) remaining(path d2target.IconMotionPath) float64 {
+	return (1 - f.progress) * path.TransitDuration(f.launched)
 }
 
 func NewIconTimeline(root *d2target.Diagram, intervalMS int) (*IconTimeline, error) {
@@ -93,7 +105,7 @@ func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, con
 		if b == nil {
 			b = &iconBoard{streams: make(map[string]*iconStream), duration: float64(max(intervalMS, board.ReadingMS(), board.TweenDurationMS)) / 1000}
 		}
-		s := &iconStream{path: path, period: path.LaunchPeriod(e.IconAnimation)}
+		s := &iconStream{path: path, animation: e.IconAnimation, period: path.LaunchPeriod(e.IconAnimation)}
 		prevID := e.ID
 		if e.IconAnimation.PreviousID != nil {
 			prevID = *e.IconAnimation.PreviousID
@@ -101,23 +113,20 @@ func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, con
 		if prev != nil && prevID != "" && prev.streams[prevID] != nil {
 			old := prev.streams[prevID]
 			// At a boundary the next board owns the departure at that exact instant.
-			s.carried = old.distances(prev.duration, false)
-			if oldLength := old.path.Length(); oldLength > 0 {
-				for i := range s.carried {
-					s.carried[i] *= path.Length() / oldLength
-				}
-			}
+			s.carried = old.flights(prev.duration, false)
 			if !math.IsInf(s.period, 1) && !math.IsInf(old.period, 1) {
 				s.first = old.nextLaunch(prev.duration) / old.period * s.period
 			}
+			s.finishTimedFlights()
 		} else if !continuing {
 			// The opening board shows the stream already running.
+			transit := path.TransitDuration(s.animation)
 			for n := 1; n < d2target.MaxMovingIconsPerConnection; n++ {
 				age := float64(n) * s.period
-				if age >= path.Length()/d2target.IconMotionSpeed {
+				if age >= transit {
 					break
 				}
-				s.carried = append(s.carried, age*d2target.IconMotionSpeed)
+				s.carried = append(s.carried, iconFlight{progress: age / transit, launched: s.animation})
 			}
 		}
 		b.streams[e.ID] = s
@@ -126,36 +135,72 @@ func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, con
 	return b
 }
 
-// distances returns the live copies without iterating departures outside the
+// Preserve explicitly timed flights while a step takes over its predecessor's
+// stream. Only the initial launches can crowd the wire: thereafter new copies
+// replace their own arrivals and the number of carried copies only decreases.
+func (s *iconStream) finishTimedFlights() {
+	if len(s.carried) == 0 || math.IsInf(s.period, 1) {
+		return
+	}
+	free := d2target.MaxMovingIconsPerConnection - len(s.carried)
+	slots := min(d2target.MaxMovingIconsPerConnection, int(math.Ceil(s.path.TransitDuration(s.animation)/s.period)))
+	if s.animation.Rate != nil && slots <= free {
+		return
+	}
+	if s.animation.DurationMS == 0 && !slices.ContainsFunc(s.carried, func(f iconFlight) bool { return f.launched.DurationMS > 0 }) {
+		return
+	}
+	arrivals := make([]float64, len(s.carried))
+	for i, f := range s.carried {
+		arrivals[i] = f.remaining(s.path)
+	}
+	if s.animation.Rate == nil {
+		// A single timed loop restarts when the last outstanding icon arrives.
+		s.first = slices.Max(arrivals)
+		return
+	}
+	slices.Sort(arrivals)
+	for slot := free; slot < slots; slot++ {
+		// This departure needs a slot vacated by an incoming flight.
+		s.first = max(s.first, arrivals[slot-free]-float64(slot)*s.period)
+	}
+}
+
+// flights returns the live copies without iterating departures outside the
 // visible travel window. A closed right boundary includes a launch at t itself.
-func (s *iconStream) distances(t float64, includeBoundary bool) []float64 {
-	length := s.path.Length()
-	var out []float64
-	for _, start := range s.carried {
-		d := start + t*d2target.IconMotionSpeed
-		if d < length {
-			out = append(out, d)
+func (s *iconStream) flights(t float64, includeBoundary bool) []iconFlight {
+	if s.path.Length() <= 0 {
+		return nil
+	}
+	var out []iconFlight
+	// Millisecond board boundaries can accumulate a fraction of a nanosecond
+	// of rounding as a trip crosses several steps.
+	const epsilon = 1e-10
+	for _, f := range s.carried {
+		if t+epsilon < f.remaining(s.path) {
+			f.progress += t / s.path.TransitDuration(f.launched)
+			out = append(out, f)
 		}
 	}
-	if math.IsInf(s.period, 1) || t < s.first {
+	if math.IsInf(s.period, 1) || t+epsilon < s.first {
 		return out
 	}
-	since := t - s.first
+	since := max(0, t-s.first)
 	lastAge := math.Mod(since, s.period)
 	// Round grid-aligned departures consistently at decimal millisecond boundaries.
-	if s.period-lastAge < 1e-10 {
+	if s.period-lastAge < epsilon {
 		lastAge = 0
 	}
-	if !includeBoundary && lastAge < 1e-10 {
+	if !includeBoundary && lastAge < epsilon {
 		lastAge = s.period
 	}
+	transit := s.path.TransitDuration(s.animation)
 	for n := 0; n < d2target.MaxMovingIconsPerConnection; n++ {
 		age := lastAge + float64(n)*s.period
-		d := age * d2target.IconMotionSpeed
-		if age > since+1e-10 || d >= length {
+		if age > since+epsilon || age >= transit {
 			break
 		}
-		out = append(out, d)
+		out = append(out, iconFlight{progress: age / transit, launched: s.animation})
 	}
 	if len(out) > d2target.MaxMovingIconsPerConnection {
 		// Rapid stop/start edits can temporarily overlap two bounded streams.
@@ -184,27 +229,26 @@ func (tl *IconTimeline) MissingIconSample(board *d2target.Diagram, startMS, endM
 		}
 		s := tl.boards[board].streams[c.ID]
 		for _, at := range samples {
-			if len(s.distances(float64(at)/1000, true)) > 0 {
+			if len(s.flights(float64(at)/1000, true)) > 0 {
 				return 0, false
 			}
 		}
 		// A carried copy may already be traveling when the hold begins.
 		// Otherwise the next launch starts the first visible interval.
-		travel := s.path.Length() / d2target.IconMotionSpeed
 		begin, remaining := start, 0.
-		for _, distance := range s.distances(start, true) {
-			remaining = max(remaining, travel-distance/d2target.IconMotionSpeed)
+		for _, f := range s.flights(start, true) {
+			remaining = max(remaining, f.remaining(s.path))
 		}
 		if remaining == 0 {
 			begin += s.nextLaunch(start)
-			remaining = travel
+			remaining = s.path.TransitDuration(s.animation)
 		}
 		finish := min(begin+remaining, end)
 		if begin >= finish {
 			continue
 		}
 		at := min(endMS-1, int(math.Round((begin+finish)*500)))
-		if at < best && len(s.distances(float64(at)/1000, true)) > 0 {
+		if at < best && len(s.flights(float64(at)/1000, true)) > 0 {
 			best = at
 		}
 	}
@@ -238,9 +282,8 @@ func (tl *IconTimeline) Sample(board, picture *d2target.Diagram, elapsedMS int) 
 			}
 			path = e.IconMotionPath(widths[e.Src], widths[e.Dst])
 		}
-		for _, dist := range s.distances(float64(elapsedMS)/1000, true) {
-			progress := dist / s.path.Length()
-			e.IconPositions = append(e.IconPositions, path.PointAt(progress*path.Length()))
+		for _, f := range s.flights(float64(elapsedMS)/1000, true) {
+			e.IconPositions = append(e.IconPositions, path.PointAt(f.progress*path.Length()))
 		}
 	}
 	return &frame
@@ -280,15 +323,17 @@ func (tl *IconTimeline) scheduledPicture(board *d2target.Diagram, frame Frame, s
 			e.IconPositions = []geo.Point{}
 			continue
 		}
-		d := s.distances(at, false)
-		for i := range d {
-			d[i] /= s.path.Length()
-		}
-		first := s.nextLaunch(at)
-		e.IconSchedule = &d2target.ConnectionIconSchedule{
+		schedule := &d2target.ConnectionIconSchedule{
 			FixedLayer: fixedLayer, StartMS: startMS, DurationMS: frame.DurationMS, FilmMS: totalMS,
-			Transit: s.path.Length() / d2target.IconMotionSpeed, First: first, Period: s.period, Carried: d,
+			Transit: s.path.TransitDuration(s.animation), First: s.nextLaunch(at), Period: s.period,
 		}
+		for _, f := range s.flights(at, false) {
+			schedule.Carried = append(schedule.Carried, d2target.ConnectionIconTrip{
+				Progress: f.progress,
+				Transit:  s.path.TransitDuration(f.launched),
+			})
+		}
+		e.IconSchedule = schedule
 	}
 	return &picture
 }

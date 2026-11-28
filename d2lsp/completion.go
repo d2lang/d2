@@ -107,7 +107,11 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 			{Label: "border-radius", Kind: StyleCompletion, Detail: "round image corners", InsertText: "border-radius: "},
 		}, nil
 	case "connection.icon.style.animated:":
-		return append(getBooleanCompletions(), CompletionItem{Label: "2/s", Kind: KeywordCompletion, Detail: "launch two icons per second", InsertText: "2/s"}), nil
+		return append(getBooleanCompletions(),
+			CompletionItem{Label: "2/s", Kind: KeywordCompletion, Detail: "launch two icons per second", InsertText: "2/s"},
+			CompletionItem{Label: "200ms", Kind: KeywordCompletion, Detail: "loop one icon every 200 milliseconds", InsertText: "200ms"},
+			CompletionItem{Label: "2/s in 200ms", Kind: KeywordCompletion, Detail: "launch two icons per second with a 200 millisecond trip", InsertText: "2/s in 200ms"},
+		), nil
 	case "icon.":
 		return getLabelCompletions(), nil
 	case "near", "near:":

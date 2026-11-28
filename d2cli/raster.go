@@ -744,7 +744,7 @@ func renderGIFWithSession(
 		} else {
 			for _, board := range boards {
 				for edge, period := range board.ConnectionIconPeriods() {
-					if edge.IconAnimation.Rate != nil {
+					if edge.IconAnimation.HasExplicitPeriod() {
 						minimumFilmSeconds = max(minimumFilmSeconds, period)
 					}
 				}

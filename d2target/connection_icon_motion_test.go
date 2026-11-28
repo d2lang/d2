@@ -35,3 +35,30 @@ func TestConnectionIconDepartureRateCeiling(t *testing.T) {
 		})
 	}
 }
+
+func TestTimedIconDepartures(t *testing.T) {
+	for _, length := range []float64{90, 900} {
+		path := IconMotionPath{Distances: []float64{0, length}}
+		for _, tc := range []struct {
+			animation ConnectionIconAnimation
+			period    float64
+		}{
+			{ConnectionIconAnimation{DurationMS: 200}, .2},
+			{ConnectionIconAnimation{Rate: new(2.), DurationMS: 200}, .5},
+			{ConnectionIconAnimation{Rate: new(2.), DurationMS: 1500}, .5},
+			{ConnectionIconAnimation{Rate: new(1000.), DurationMS: 1500}, 1.5 / MaxMovingIconsPerConnection},
+			{ConnectionIconAnimation{Rate: new(0.), DurationMS: 200}, math.Inf(1)},
+		} {
+			if got := path.LaunchPeriod(&tc.animation); got != tc.period {
+				t.Errorf("length %g, %+v: period %g, want %g", length, tc.animation, got, tc.period)
+			}
+			if got := path.TransitDuration(&tc.animation); got != float64(tc.animation.DurationMS)/1000 {
+				t.Errorf("length %g, %+v: transit %gs", length, tc.animation, got)
+			}
+		}
+	}
+	var empty IconMotionPath
+	if p := empty.LaunchPeriod(&ConnectionIconAnimation{DurationMS: 200}); !math.IsInf(p, 1) {
+		t.Fatalf("empty route has finite launch period %g", p)
+	}
+}

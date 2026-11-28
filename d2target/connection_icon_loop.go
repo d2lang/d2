@@ -62,13 +62,20 @@ func (d *Diagram) ConnectionIconPeriods() iter.Seq2[*Connection, float64] {
 	}
 }
 
-// ValidateIconLoopDuration checks numeric departure rates against the entire
+// ValidateIconLoopDuration checks authored departure periods against the entire
 // repeating film. Individual board holds can be shorter than a departure period.
 func ValidateIconLoopDuration(board *Diagram, loopMS int) error {
 	loop := float64(loopMS) / 1000
 	for c, period := range board.ConnectionIconPeriods() {
-		if c.IconAnimation.Rate != nil && period > math.Nextafter(loop, math.Inf(1)) {
-			return fmt.Errorf("connection %q with icon.style.animated %g/s needs an animation loop of at least %gs (got %gs)", c.ID, *c.IconAnimation.Rate, period, loop)
+		if c.IconAnimation.HasExplicitPeriod() && period > math.Nextafter(loop, math.Inf(1)) {
+			value := fmt.Sprintf("%dms", c.IconAnimation.DurationMS)
+			if c.IconAnimation.Rate != nil {
+				value = fmt.Sprintf("%g/s", *c.IconAnimation.Rate)
+				if c.IconAnimation.DurationMS > 0 {
+					value += fmt.Sprintf(" in %dms", c.IconAnimation.DurationMS)
+				}
+			}
+			return fmt.Errorf("connection %q with icon.style.animated %s needs an animation loop of at least %gs (got %gs)", c.ID, value, period, loop)
 		}
 	}
 	return nil

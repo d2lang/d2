@@ -77,6 +77,36 @@ func TestScheduledIconPathUsesWireCoordinates(t *testing.T) {
 	}
 }
 
+func TestSVGIconTripDuration(t *testing.T) {
+	c := *d2target.BaseConnection()
+	c.ID, c.Stroke = "stream", "#f00"
+	c.Route = []*geo.Point{{X: 0, Y: 0}, {X: 600, Y: 0}}
+	d := d2target.NewDiagram()
+	for _, tc := range []struct {
+		animation       d2target.ConnectionIconAnimation
+		count           int
+		cycle, keyTimes string
+	}{
+		{d2target.ConnectionIconAnimation{DurationMS: 200}, 1, "0.2s", ""},
+		{d2target.ConnectionIconAnimation{Rate: new(2.), DurationMS: 200}, 1, "0.5s", "0;0.4;1"},
+		{d2target.ConnectionIconAnimation{Rate: new(2.), DurationMS: 1500}, 3, "1.5s", ""},
+	} {
+		c.IconAnimation = &tc.animation
+		d.Connections = []d2target.Connection{c}
+		data, err := d2svg.Render(d, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := string(data)
+		if n := strings.Count(output, `<animateMotion dur="`+tc.cycle+`"`); n != tc.count {
+			t.Errorf("got %d icons looping every %s, want %d", n, tc.cycle, tc.count)
+		}
+		if tc.keyTimes != "" && !strings.Contains(output, `keyTimes="`+tc.keyTimes+`"`) {
+			t.Errorf("expected travel and idle phases %s", tc.keyTimes)
+		}
+	}
+}
+
 func TestConnectionIconStreamUsesNeighborLabelMask(t *testing.T) {
 	c := *d2target.BaseConnection()
 	c.ID, c.Stroke, c.IconShape = "stream", "#f00", d2target.ShapeCircle

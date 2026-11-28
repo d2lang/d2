@@ -150,8 +150,8 @@ func videoMovingUntil(board *d2target.Diagram) time.Duration {
 		if !math.IsInf(s.Period, 1) && s.First < float64(s.DurationMS)/1000 {
 			return math.MaxInt64
 		}
-		for _, traveled := range s.Carried {
-			endMS = max(endMS, float64(s.StartMS)+(1-traveled)*s.Transit*1000)
+		for _, trip := range s.Carried {
+			endMS = max(endMS, float64(s.StartMS)+(1-trip.Progress)*trip.Transit*1000)
 		}
 	}
 	// Round up so the frame held through the remainder already shows the

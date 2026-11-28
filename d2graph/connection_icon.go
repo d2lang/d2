@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2target"
@@ -22,12 +23,38 @@ func ParseConnectionIconAnimation(value string) (*d2target.ConnectionIconAnimati
 		}
 		return &d2target.ConnectionIconAnimation{}, nil
 	}
-	if number, ok := strings.CutSuffix(value, "/s"); ok && iconRateNumber.MatchString(number) {
-		if rate, err := strconv.ParseFloat(number, 64); err == nil {
-			return &d2target.ConnectionIconAnimation{Rate: &rate}, nil
+	fields := strings.Fields(value)
+	var rateValue, tripValue string
+	switch {
+	case len(fields) == 1:
+		if strings.HasSuffix(fields[0], "/s") {
+			rateValue = fields[0]
+		} else {
+			tripValue = fields[0]
 		}
+	case len(fields) == 3 && fields[1] == "in":
+		rateValue, tripValue = fields[0], fields[2]
+	default:
+		return nil, errors.New("connection icon.style.animated expects true, false, a rate (2/s), a trip duration (200ms), or both (2/s in 200ms)")
 	}
-	return nil, errors.New(`connection icon.style.animated must be true, false, or a non-negative decimal rate such as 2/s`)
+
+	animation := &d2target.ConnectionIconAnimation{}
+	if rateValue != "" {
+		number, ok := strings.CutSuffix(rateValue, "/s")
+		rate, err := strconv.ParseFloat(number, 64)
+		if !ok || !iconRateNumber.MatchString(number) || err != nil {
+			return nil, errors.New("connection icon.style.animated requires a non-negative decimal departure rate such as 2/s")
+		}
+		animation.Rate = &rate
+	}
+	if tripValue != "" {
+		duration, err := time.ParseDuration(tripValue)
+		if err != nil || duration <= 0 || duration%time.Millisecond != 0 {
+			return nil, errors.New("connection icon.style.animated requires a positive trip duration in whole milliseconds, such as 200ms or 1.5s")
+		}
+		animation.DurationMS = duration.Milliseconds()
+	}
+	return animation, nil
 }
 
 // HasIcon includes native artwork and the default dot of an animated stream.

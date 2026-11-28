@@ -22,11 +22,11 @@ func maxGIFLoopMS() int {
 // same clock so choosing an icon period doesn't introduce a seam elsewhere.
 func automaticGIFLoopMS(board *d2target.Diagram) (int, error) {
 	periods := make(map[float64]bool)
-	var longestRate float64
+	var longestAuthoredPeriod float64
 	for edge, seconds := range board.ConnectionIconPeriods() {
 		periods[seconds] = true
-		if edge.IconAnimation.Rate != nil {
-			longestRate = max(longestRate, seconds)
+		if edge.IconAnimation.HasExplicitPeriod() {
+			longestAuthoredPeriod = max(longestAuthoredPeriod, seconds)
 		}
 	}
 	for period := range d2scenebuild.PaintAnimationPeriods(board) {
@@ -46,19 +46,19 @@ func automaticGIFLoopMS(board *d2target.Diagram) (int, error) {
 	if longest > float64(limit)/1000 {
 		return 0, fmt.Errorf("GIF animation needs %g seconds per cycle, exceeding the %d-frame limit (%ds); use SVG for continuous playback", longest, gifMaxFrames, limit/1000)
 	}
-	// Round geometric periods to the nearest GIF tick, but a numeric rate
-	// must have time for one complete departure interval. Keep at least two
+	// Round geometric periods to the nearest GIF tick. An authored period
+	// needs time for one complete departure interval. Keep at least two
 	// 30fps samples even when the authored effect is very fast.
-	rateFloorCS := int(math.Ceil(math.Nextafter(longestRate, 0) * 100))
-	minCS := max(4, rateFloorCS, int(math.Round(longest*100)), (board.ReadingMS()+9)/10)
+	authoredFloorCS := int(math.Ceil(math.Nextafter(longestAuthoredPeriod, 0) * 100))
+	minCS := max(4, authoredFloorCS, int(math.Round(longest*100)), (board.ReadingMS()+9)/10)
 	firstMatch := 0
 	aliasedGaps := make(map[int]bool)
 	for cs := minCS; cs <= limit/10; cs++ {
 		seconds := float64(cs) / 100
 		if slices.ContainsFunc(sorted, func(period float64) bool {
-			// When the numeric minimum falls between ticks, its first
+			// When the authored minimum falls between ticks, its first
 			// valid duration can round up by nearly a whole tick.
-			if cs == rateFloorCS && period == longestRate {
+			if cs == authoredFloorCS && period == longestAuthoredPeriod {
 				return false
 			}
 			return math.Abs(math.Remainder(seconds, period)) > .005+1e-12

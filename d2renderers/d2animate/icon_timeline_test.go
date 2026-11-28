@@ -267,3 +267,106 @@ func TestIconLoopChecksOnlyVisibleNumericRates(t *testing.T) {
 		t.Fatal("a crowded long route must use its effective departure period")
 	}
 }
+
+func TestIconDurationChangesApplyAtDeparture(t *testing.T) {
+	root, faster, stop := iconTestBoard(2), iconTestBoard(2), iconTestBoard(0)
+	root.Connections[0].IconAnimation.DurationMS = 1200
+	faster.Connections[0].IconAnimation.DurationMS = 200
+	faster.Connections[0].Route[1].X = 750
+	root.Steps = []*d2target.Diagram{faster, stop}
+	timeline, err := NewIconTimeline(root, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(b *d2target.Diagram, elapsed int, want ...float64) {
+		t.Helper()
+		wire := b.Connections[0].IconMotionPath(2, 2)
+		points := timeline.Sample(b, b, elapsed).Connections[0].IconPositions
+		var got []float64
+		for _, p := range points {
+			got = append(got, (p.X-wire.Points[0].X)/wire.Length())
+		}
+		slices.Sort(got)
+		if len(got) != len(want) {
+			t.Fatalf("at %dms got %v, want %v", elapsed, got, want)
+		}
+		for i := range want {
+			if math.Abs(got[i]-want[i]) > 1e-8 {
+				t.Fatalf("at %dms got %v, want %v", elapsed, got, want)
+			}
+		}
+	}
+	// The two old copies keep their progress across a bend/reroute. A new
+	// copy leaves 100ms later, taking only 200ms for its whole trip.
+	at(root, 400, 1./3, .75)
+	at(faster, 0, 1./3, .75)
+	at(faster, 150, .25, .55/1.2, 1.05/1.2)
+	at(stop, 0, 2./3)
+	at(stop, 100, .75)
+	at(stop, 401)
+	// SVG and native scene clocks receive each carried copy's original
+	// duration, including when the sampling point is inside the faster step.
+	frame := Frame{Diagram: faster, DurationMS: 250, ElapsedMS: 150}
+	schedule := timeline.ScenePicture(faster, frame).Connections[0].IconSchedule
+	if schedule.Transit != .2 || len(schedule.Carried) != 3 ||
+		schedule.Carried[0].Transit != 1.2 || schedule.Carried[1].Transit != 1.2 || schedule.Carried[2].Transit != .2 {
+		t.Fatalf("mixed fast and slow departures lost their timing: %+v", schedule)
+	}
+}
+
+func TestTimedSingleIconCompletesBeforeRestarting(t *testing.T) {
+	root, faster, stillFast := iconTestBoard(1), iconTestBoard(1), iconTestBoard(1)
+	for _, b := range []*d2target.Diagram{root, faster, stillFast} {
+		b.Connections[0].IconAnimation.Rate = nil
+		b.Connections[0].IconAnimation.DurationMS = 200
+	}
+	root.Connections[0].IconAnimation.DurationMS = 800
+	root.Steps = []*d2target.Diagram{faster, stillFast}
+	timeline, err := NewIconTimeline(root, 350)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The 800ms trip spans both 350ms boundaries. It reaches its destination
+	// 100ms into the third board, where the 200ms loop begins.
+	wire := stillFast.Connections[0].IconMotionPath(2, 2)
+	for elapsed, want := range map[int]float64{0: .875, 99: .799 / .8, 100: 0, 150: .25, 299: .995, 300: 0} {
+		points := timeline.Sample(stillFast, stillFast, elapsed).Connections[0].IconPositions
+		if len(points) != 1 || math.Abs(points[0].X-wire.PointAt(want*wire.Length()).X) > 1e-7 {
+			t.Errorf("at %dms got %v, want one icon at %.3f", elapsed, points, want)
+		}
+	}
+}
+
+func TestTimedStreamHandoffKeepsCarriedIconsAtCapacity(t *testing.T) {
+	root, burst := iconTestBoard(64), iconTestBoard(1000)
+	root.Connections[0].IconAnimation.DurationMS = 1000
+	burst.Connections[0].IconAnimation.DurationMS = 64
+	root.Steps = []*d2target.Diagram{burst}
+	timeline, err := NewIconTimeline(root, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := timeline.ScenePicture(burst, Frame{Diagram: burst, DurationMS: 1000}).Connections[0].IconSchedule
+	if len(s.Carried) != 63 || math.Abs(s.First-.921375) > 1e-10 || s.Period != .001 {
+		t.Fatalf("new departures weren't admitted at the earliest safe time: %+v", s)
+	}
+	for ms := range 1001 {
+		at := float64(ms) / 1000
+		// These are the tracks the fixed SVG and native renderers receive.
+		visible := 0
+		for _, trip := range s.Carried {
+			if at < (1-trip.Progress)*trip.Transit {
+				visible++
+			}
+		}
+		for launch := 0; launch < 64; launch++ {
+			if at >= s.First+float64(launch)*s.Period {
+				visible++
+			}
+		}
+		sampled := len(timeline.Sample(burst, burst, ms).Connections[0].IconPositions)
+		if visible != sampled || visible > d2target.MaxMovingIconsPerConnection {
+			t.Fatalf("at %dms scheduled %d copies, sample has %d", ms, visible, sampled)
+		}
+	}
+}

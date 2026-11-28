@@ -3,6 +3,7 @@ package d2target
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/lib/color"
@@ -528,8 +529,13 @@ func (connection *Connection) ValidateIconMotion(path string) error {
 	if connection.HasStaticIcon() && connection.Label == "" && !label.FromString(connection.IconPosition).IsEdgePosition() {
 		return invalidRenderField(path, "iconPosition", connection.IconPosition, "must identify a connection icon position")
 	}
-	if a := connection.IconAnimation; a != nil && a.Rate != nil && (!finiteRenderNumber(*a.Rate) || *a.Rate < 0) {
-		return invalidRenderField(path, "iconAnimation.rate", *a.Rate, "must be finite and non-negative")
+	if a := connection.IconAnimation; a != nil {
+		if a.Rate != nil && (!finiteRenderNumber(*a.Rate) || *a.Rate < 0) {
+			return invalidRenderField(path, "iconAnimation.rate", *a.Rate, "must be finite and non-negative")
+		}
+		if a.DurationMS < 0 || a.DurationMS > math.MaxInt64/int64(time.Millisecond) {
+			return invalidRenderField(path, "iconAnimation.durationMs", a.DurationMS, "must be a non-negative representable duration in milliseconds")
+		}
 	}
 	if s := connection.IconSchedule; s != nil && (!s.valid() || connection.IconAnimation == nil || connection.IconPositions != nil) {
 		return invalidRenderField(path, "iconSchedule", "invalid", "requires a bounded schedule on a moving connection icon")

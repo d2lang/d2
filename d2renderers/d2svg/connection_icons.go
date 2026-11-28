@@ -96,15 +96,14 @@ func drawMovingConnectionIcons(w *objectWriter, scope string, c d2target.Connect
 			use(pt)
 		}
 	} else {
-		drawLoopingIcons(w, path, period, href, routeID.String())
+		drawLoopingIcons(w, path.TransitDuration(c.IconAnimation), period, href, routeID.String())
 	}
 	fmt.Fprint(w, "</g>", svg.OpenElement("g", svg.Attr("class", "d2-still-icon"), svg.Attr("pointer-events", "none")))
 	use(path.PointAt(path.Length() / 2))
 	fmt.Fprint(w, "</g>")
 }
 
-func drawLoopingIcons(w *objectWriter, path d2target.IconMotionPath, period float64, href svg.Attribute, routeID string) {
-	travel := path.Length() / d2target.IconMotionSpeed
+func drawLoopingIcons(w *objectWriter, travel, period float64, href svg.Attribute, routeID string) {
 	slots := min(d2target.MaxMovingIconsPerConnection, max(1, int(math.Ceil(travel/period))))
 	loop := period * float64(slots)
 	active := min(1., travel/loop)

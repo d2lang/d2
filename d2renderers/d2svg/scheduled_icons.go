@@ -17,19 +17,22 @@ func drawScheduledIcons(w *objectWriter, s *d2target.ConnectionIconSchedule, hre
 	// zoom. Use view-box coordinates, with a literal path for older browsers.
 	global := fmt.Sprintf("--d2-icon-film-ms:%dms;--d2-icon-start:%s;--d2-icon-film:%s;--d2-icon-hold:%s;--d2-icon-route:path('%s');--d2-icon-shape:shape(%s) view-box;--d2-icon-transit:%s", s.FilmMS, num(float64(s.StartMS)/1000), num(float64(s.FilmMS)/1000), num(float64(s.DurationMS)/1000), pathData, shapeData, num(s.Transit))
 	fmt.Fprint(w, svg.OpenElement("g", svg.Attr("class", "d2-icon-tour-clock"), svg.Attr("style", global)), `<g class="d2-icon-layer-clock"><g class="d2-icon-trips">`)
-	track := func(delay, initial, cycle float64) {
+	track := func(delay, initial, cycle, transit float64) {
 		if !s.FixedLayer && delay >= float64(s.DurationMS)/1000 {
 			return
 		}
 		// One-time trips retain their previous progress. Periodic trips first
 		// appear at delay, then reuse this instance every cycle seconds.
-		style := "--d2-icon-origin:" + num(delay-initial*s.Transit)
+		style := "--d2-icon-origin:" + num(delay-initial*transit)
+		if transit != s.Transit {
+			style += ";--d2-icon-transit:" + num(transit)
+		}
 		if s.FixedLayer {
 			// A pinned board runs beyond its normal hold. Each icon gets its own
 			// repeating or one-shot clock starting when the destination opens.
 			if math.IsInf(cycle, 1) {
-				style += ";--d2-icon-offset:" + num(initial*s.Transit) + ";--d2-icon-end:" + num(s.Transit) +
-					";--d2-icon-free-duration:" + num((1-initial)*s.Transit) + "s;--d2-icon-fill:both" +
+				style += ";--d2-icon-offset:" + num(initial*transit) + ";--d2-icon-end:" + num(transit) +
+					";--d2-icon-free-duration:" + num((1-initial)*transit) + "s;--d2-icon-fill:both" +
 					";--d2-icon-alive:max(0,sign(1 - var(--d2-icon-free-phase)))"
 			} else {
 				style += ";--d2-icon-end:" + num(cycle) + ";--d2-icon-free-duration:" + num(cycle) +
@@ -41,13 +44,13 @@ func drawScheduledIcons(w *objectWriter, s *d2target.ConnectionIconSchedule, hre
 		}
 		fmt.Fprint(w, svg.OpenElement("g", svg.Attr("style", style)), svg.EmptyElement("use", href), "</g>")
 	}
-	for _, p := range s.Carried {
-		track(0, p, math.Inf(1))
+	for _, trip := range s.Carried {
+		track(0, trip.Progress, math.Inf(1), trip.Transit)
 	}
 	if !math.IsInf(s.Period, 1) {
 		slots := min(d2target.MaxMovingIconsPerConnection, max(1, int(math.Ceil(s.Transit/s.Period))))
 		for i := 0; i < slots; i++ {
-			track(s.First+float64(i)*s.Period, 0, float64(slots)*s.Period)
+			track(s.First+float64(i)*s.Period, 0, float64(slots)*s.Period, s.Transit)
 		}
 	}
 	fmt.Fprint(w, "</g></g></g>")

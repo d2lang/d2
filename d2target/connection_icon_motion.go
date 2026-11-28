@@ -116,10 +116,29 @@ func (p IconMotionPath) PointAt(distance float64) geo.Point {
 	return *p.Points[i-1].Interpolate(&p.Points[i], frac)
 }
 
+// TransitDuration returns the time in seconds for one complete trip.
+func (p IconMotionPath) TransitDuration(animation *ConnectionIconAnimation) float64 {
+	if p.Length() > 0 && animation != nil && animation.DurationMS > 0 {
+		return float64(animation.DurationMS) / 1000
+	}
+	return p.Length() / IconMotionSpeed
+}
+
+// HasExplicitPeriod reports whether the author specified a repeating departure interval.
+func (a *ConnectionIconAnimation) HasExplicitPeriod() bool {
+	if a == nil {
+		return false
+	}
+	if a.Rate != nil {
+		return *a.Rate > 0
+	}
+	return a.DurationMS > 0
+}
+
 // LaunchPeriod gives the time in seconds between visible departures. The
 // one-icon loop launches its next copy when the previous copy lands.
 func (p IconMotionPath) LaunchPeriod(animation *ConnectionIconAnimation) float64 {
-	transit := p.Length() / IconMotionSpeed
+	transit := p.TransitDuration(animation)
 	if transit <= 0 || animation == nil {
 		return math.Inf(1)
 	}
@@ -141,8 +160,14 @@ type ConnectionIconSchedule struct {
 	// FixedLayer also allows a clicked board to keep running indefinitely.
 	FixedLayer                  bool
 	StartMS, DurationMS, FilmMS int
-	Transit, First, Period      float64   // seconds
-	Carried                     []float64 // fractions already traveled at the beginning of this picture
+	Transit, First, Period      float64 // seconds
+	Carried                     []ConnectionIconTrip
+}
+
+// ConnectionIconTrip describes an icon already in flight at the start of a picture.
+type ConnectionIconTrip struct {
+	Progress float64 // fraction of the route already traveled
+	Transit  float64 // seconds for the full trip, including the part already traveled
 }
 
 func (s ConnectionIconSchedule) valid() bool {
@@ -151,8 +176,8 @@ func (s ConnectionIconSchedule) valid() bool {
 		len(s.Carried) > MaxMovingIconsPerConnection {
 		return false
 	}
-	for _, progress := range s.Carried {
-		if !(progress >= 0 && progress < 1) {
+	for _, trip := range s.Carried {
+		if !(trip.Progress >= 0 && trip.Progress < 1) || !finiteRenderNumber(trip.Transit) || trip.Transit <= 0 {
 			return false
 		}
 	}

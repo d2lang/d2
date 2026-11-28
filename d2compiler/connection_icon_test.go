@@ -63,6 +63,37 @@ steps: {
 	}
 }
 
+func TestConnectionIconTripDuration(t *testing.T) {
+	const source = `vars.delay: 1.5s
+classes.emit: {icon.style.animated: 2/s in ${delay}}
+a -> b: {class: emit}
+a -> c: {icon.style.animated: 200ms}
+steps.stop: {(a -> b)[0].icon.style.animated: 0/s in 1.5s}
+steps.restore: {(a -> b)[0].icon.style.animated: true}
+`
+	g, _, err := d2compiler.Compile("trip.d2", strings.NewReader(source), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		board    *d2graph.Graph
+		edge     int
+		duration int64
+		rate     *float64
+	}{
+		{g, 0, 1500, new(2.)},
+		{g, 1, 200, nil},
+		{g.Steps[0], 0, 1500, new(0.)},
+		{g.Steps[1], 0, 0, nil},
+	}
+	for _, tc := range tests {
+		animation := d2exporter.ToConnection(tc.board.Edges[tc.edge], nil).IconAnimation
+		if animation == nil || animation.DurationMS != tc.duration || (animation.Rate == nil) != (tc.rate == nil) || tc.rate != nil && *animation.Rate != *tc.rate {
+			t.Errorf("expected %dms and rate %v on %s edge %d, got %+v", tc.duration, tc.rate, tc.board.Name, tc.edge, animation)
+		}
+	}
+}
+
 func TestInheritedImageStyleWithConnectionIconMotion(t *testing.T) {
 	const input = `classes.art: {icon: ./image.svg {style.border-radius: 3}}
 a: {class: art; icon.style.border-radius: 15}
@@ -85,6 +116,12 @@ func TestInvalidConnectionIconCadence(t *testing.T) {
 		src := "a -> b: {icon.style.animated: " + value + "}"
 		if _, _, err := d2compiler.Compile("source.d2", strings.NewReader(src), nil); err == nil {
 			t.Errorf("compiled invalid icon cadence %q", value)
+		}
+	}
+	for _, value := range []string{"0ms", "-1ms", "0.5ms", "0.00000000001s", "200", "2/s in 0s", "2/s in 10", "2/s in .5ms", "2/s in 1e30s", "2/s in", "2/s 200ms", "2/s in 200ms extra", "true in 200ms", "-1/s in 200ms", "2/s in 99999999999h"} {
+		src := "a -> b: {icon.style.animated: " + value + "}"
+		if _, _, err := d2compiler.Compile("trip.d2", strings.NewReader(src), nil); err == nil || !strings.Contains(err.Error(), "trip.d2:1:") || !strings.Contains(err.Error(), "connection icon.style.animated") {
+			t.Errorf("expected a source-located icon style error for %q, got %v", value, err)
 		}
 	}
 	for _, src := range []string{

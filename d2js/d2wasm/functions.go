@@ -241,7 +241,7 @@ func (result *CompileResponse) validateRequestedIconLoop() error {
 		(*opts.Target != "*" && !strings.HasSuffix(*opts.Target, ".*")) || (opts.ASCII != nil && *opts.ASCII) {
 		return nil
 	}
-	if !containsNumericIconRate(&result.Diagram) {
+	if !hasExplicitIconPeriod(&result.Diagram) {
 		return nil
 	}
 	if err := validateAnimateInterval(opts.AnimateInterval); err != nil {
@@ -265,16 +265,16 @@ func (result *CompileResponse) validateRequestedIconLoop() error {
 	return nil
 }
 
-func containsNumericIconRate(board *d2target.Diagram) bool {
+func hasExplicitIconPeriod(board *d2target.Diagram) bool {
 	for i := range board.Connections {
 		c := &board.Connections[i]
-		if c.Opacity != 0 && c.IconAnimation != nil && c.IconAnimation.Rate != nil && *c.IconAnimation.Rate > 0 {
+		if c.Opacity != 0 && c.IconAnimation.HasExplicitPeriod() {
 			return true
 		}
 	}
 	for _, group := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
 		for _, child := range group {
-			if containsNumericIconRate(child) {
+			if hasExplicitIconPeriod(child) {
 				return true
 			}
 		}

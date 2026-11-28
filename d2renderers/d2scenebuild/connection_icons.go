@@ -43,16 +43,21 @@ func (b *builder) addMovingConnectionIcons(group *d2scene.Node, c d2target.Conne
 	if path.Length() <= 0 {
 		return nil
 	}
-	travel := path.Length() / d2target.IconMotionSpeed
+	travel := path.TransitDuration(c.IconAnimation)
 	period := path.LaunchPeriod(c.IconAnimation)
 	first, window, start := 0., math.Inf(1), time.Duration(0)
 	carried := 0
 	if s := c.IconSchedule; s != nil {
 		travel, period, first, window = s.Transit, s.Period, s.First, float64(s.DurationMS)/1000
 		start = time.Duration(s.StartMS) * time.Millisecond
-		finish := iconTracks(path, travel, travel, false)
-		for i, fraction := range s.Carried {
-			phase := min(finish[0].Duration-1, time.Duration(math.Round(fraction*float64(finish[0].Duration))))
+		var finish []d2scene.Track
+		var transit float64
+		for i, trip := range s.Carried {
+			if trip.Transit != transit {
+				transit = trip.Transit
+				finish = iconTracks(path, transit, transit, false)
+			}
+			phase := min(finish[0].Duration-1, time.Duration(math.Round(trip.Progress*float64(finish[0].Duration))))
 			if err := add(i, geo.Point{}, startIconTracks(finish, start, phase), 0); err != nil {
 				return err
 			}

@@ -48,9 +48,10 @@ configured.then((response) => {
   if (edge) {
     edge.iconShape satisfies "circle" | undefined;
     edge.iconAnimation?.rate satisfies number | undefined;
+    edge.iconAnimation?.durationMs satisfies number | undefined;
     edge.iconAnimation?.previousID satisfies string | undefined;
     edge.icon?.Path satisfies string | undefined;
-    const circle = { ...edge, icon: null, iconShape: "circle" as const, iconAnimation: { rate: 2 } };
+    const circle = { ...edge, icon: null, iconShape: "circle" as const, iconAnimation: { rate: 2, durationMs: 200 } };
     const image = { ...edge, icon: { Path: "letter.svg" }, iconShape: undefined, iconAnimation: {} };
     d2.render({ ...response.diagram, connections: [circle] });
     d2.render({ ...response.diagram, connections: [image] });

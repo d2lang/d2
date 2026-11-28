@@ -192,6 +192,19 @@ func TestSparseIconStoryboardUsesTravelWindow(t *testing.T) {
 }
 
 func TestConnectionScheduledSceneMatchesSampledFrames(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		durations [3]int64
+	}{
+		{"default speed", [3]int64{}},
+		{"changed trip duration and drain", [3]int64{550, 125, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkConnectionScheduledFrames(t, tc.durations) })
+	}
+}
+
+func checkConnectionScheduledFrames(t *testing.T, durations [3]int64) {
+	t.Helper()
 	root := validDiagram()
 	step := validDiagram()
 	stop := validDiagram()
@@ -199,7 +212,7 @@ func TestConnectionScheduledSceneMatchesSampledFrames(t *testing.T) {
 	for i, board := range []*d2target.Diagram{root, step, stop} {
 		c := &board.Connections[0]
 		c.IconShape, c.Stroke = d2target.ShapeCircle, "#bc3415"
-		c.IconAnimation = &d2target.ConnectionIconAnimation{Rate: floatPointer([]float64{5, 11, 0}[i])}
+		c.IconAnimation = &d2target.ConnectionIconAnimation{Rate: floatPointer([]float64{5, 11, 0}[i]), DurationMS: durations[i]}
 	}
 	tl, err := d2animate.NewIconTimeline(root, 310)
 	if err != nil {

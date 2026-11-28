@@ -20,6 +20,13 @@ func TestValidateConnectionIconAnimation(t *testing.T) {
 		}
 	}
 	c.IconAnimation.Rate = nil
+	for _, ms := range []int64{-1, math.MaxInt64} {
+		c.IconAnimation.DurationMS = ms
+		if err := validateRenderConnectionNumbers(c, "edge"); err == nil || !strings.Contains(err.Error(), "iconAnimation.durationMs") {
+			t.Errorf("duration %dms: %v", ms, err)
+		}
+	}
+	c.IconAnimation.DurationMS = 200
 	if c.IconSize() != 10 {
 		t.Fatal("moving icons without artwork must use the native dot")
 	}

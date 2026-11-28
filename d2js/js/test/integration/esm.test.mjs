@@ -88,3 +88,20 @@ test("connection icon rates use the duration of the selected animation", async (
   const standalone = "a -> b: {icon.style.animated: 0.25/s}";
   assert.match(await d2.renderSVG(standalone, short), /animateMotion/);
 });
+
+test("connection icon trip durations survive compilation and select the loop period", async (t) => {
+  const d2 = new D2();
+  t.after(() => d2.dispose());
+  const loop = "a -> b: {icon.style.animated: 1.5s}";
+  const combined = "a -> b: {icon.style.animated: 2/s in 1.5s}";
+  const short = { target: "*", animateInterval: 500 };
+  const compiled = await d2.compile(loop);
+  assert.deepEqual(compiled.diagram.connections[0].iconAnimation, { durationMs: 1500 });
+  assert.match(await d2.render(compiled.diagram), /dur="1\.5s"/);
+  const steps = "\nsteps.next: {(a -> b)[0].label: next}";
+  await assert.rejects(d2.compile(loop + steps, short), /animation loop/);
+  await assert.rejects(d2.renderSVG(loop + steps, short), /animation loop/);
+  const stream = await d2.compile(combined + steps, short);
+  assert.deepEqual(stream.diagram.connections[0].iconAnimation, { durationMs: 1500, rate: 2 });
+  assert.match(await d2.render(stream.diagram, short), /d2-moving-icons/);
+});

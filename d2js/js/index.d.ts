@@ -314,6 +314,8 @@ export interface Connection extends Text {
   iconAnimation?: {
     /** Departures per second. Omitted for one looping icon, zero to stop departures. */
     rate?: number;
+    /** Time in milliseconds to cross the connection. Omitted to use the default travel speed. */
+    durationMs?: number;
     /** Predecessor in the previous step when parallel connections are renumbered. */
     previousID?: string;
   };

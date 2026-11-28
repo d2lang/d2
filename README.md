@@ -175,6 +175,20 @@ Set the rate to `0/s` in a later step to let the last dots arrive, or use
 your own artwork. Labels beside a connection leave room for the icon as it
 passes. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
 
+Set a trip duration to control when each icon arrives, even if a different
+layout engine draws a longer wire. `icon.style.animated: 200ms` loops one icon
+every 200 milliseconds. A rate and duration can also be combined on the same connection.
+
+```d2
+gateway -> cache: {icon.style.animated: 2/s in 200ms}
+gateway -> database: {icon.style.animated: 2/s in 1.5s}
+```
+
+Both wires launch every half second. The cache wire clears between departures,
+while three requests overlap on the database wire. A duration change in a step
+applies to new departures. Icons already in flight finish their timed trips.
+[Cache latency](./docs/examples/connection-icons/cache-latency.d2) · [Encoder loop](./docs/examples/connection-icons/encoder-loop.d2) · [Worker drain](./docs/examples/connection-icons/worker-drain.d2)
+
 A single-board GIF with `icon.style.animated: 0.25/s` automatically loops
 every four seconds. An explicit loop must last at least the time between
 departures on each active stream. For a diagram with steps, this requirement
