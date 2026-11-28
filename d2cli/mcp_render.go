@@ -275,18 +275,13 @@ func mcpPNG(ctx context.Context, assets *d2scenebuild.AssetOptions, board *d2tar
 	if err != nil {
 		return nil, err
 	}
+	pngScale := d2scenebuild.PNGDeviceScale{MaxScale: 2, MaxDimension: maxDim}
 	opts.Scale = new(1.0)
-	document, err := buildSceneWithAssetsAndFonts(ctx, board, opts, assets, fonts)
+	document, err := buildSceneWithAssetsAndFonts(ctx, board, opts, assets, fonts, pngScale)
 	if err != nil {
 		return nil, err
 	}
-	longest := math.Max(document.LogicalWidth, document.LogicalHeight)
-	scale := math.Min(2, float64(maxDim)/longest)
-	// d2raster rounds pixel dimensions up. Roundoff in division followed by
-	// multiplication can otherwise add a pixel at the requested boundary.
-	if scale*longest > float64(maxDim) {
-		scale = math.Nextafter(scale, 0)
-	}
+	scale := pngScale.ForSize(document.LogicalWidth, document.LogicalHeight)
 	frameOpts := rasterFrameOptions(scale, 0)
 	frameOpts.MaxWidth, frameOpts.MaxHeight = maxDim, maxDim
 	frame, err := d2raster.Render(ctx, document, frameOpts)

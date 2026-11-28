@@ -28,7 +28,7 @@ func (c Connection) ArrowheadAdjustmentsForWidths(srcWidth, dstWidth float64) (s
 // EndpointInsets gives the two distances that trim the painted centerline.
 func (c *Connection) EndpointInsets(srcWidth, dstWidth float64) [2]float64 {
 	width := c.RenderedStrokeWidth()
-	src, dst := (width+srcWidth)/2, (width+dstWidth)/2
+	src, dst := (width+srcWidth)/2-c.paintBorderInsets[0], (width+dstWidth)/2-c.paintBorderInsets[1]
 	if c.SrcArrow != NoArrowhead {
 		src += width
 	}

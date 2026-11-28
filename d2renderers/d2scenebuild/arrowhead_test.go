@@ -406,3 +406,42 @@ func pathCommands(points ...d2scene.Point) []d2scene.PathCommand {
 func closedPathCommands(points ...d2scene.Point) []d2scene.PathCommand {
 	return append(pathCommands(points...), d2scene.ClosePath())
 }
+
+func TestInsideHairlineBorderContacts(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		width       int
+		arrow       d2target.Arrowhead
+		targetWidth int
+	}{
+		{"thin arrowheads", 1, d2target.TriangleArrowhead, 1},
+		{"wider shaft", 2, d2target.NoArrowhead, 1},
+		{"one inside border", 2, d2target.TriangleArrowhead, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diagram := validDiagram()
+			diagram.Shapes[0].StrokeWidth, diagram.Shapes[1].StrokeWidth = 1, tc.targetWidth
+			edge := &diagram.Connections[0]
+			edge.StrokeWidth, edge.SrcArrow, edge.DstArrow = tc.width, tc.arrow, tc.arrow
+			doc, err := Build(context.Background(), diagram, Options{PNGDeviceScale: PNGDeviceScale{MaxScale: 1}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			left := findSceneNode(t, doc.Root, "a").Children[0].Primitive.(d2scene.Rect)
+			right := findSceneNode(t, doc.Root, "b").Children[0].Primitive.(d2scene.Rect)
+			wantLeft, wantRight := left.Box.X+left.Box.Width+left.Stroke.Width/2, right.Box.X-right.Stroke.Width/2
+			shaft := findSceneNode(t, doc.Root, "a-b:path").Primitive.(d2scene.Path)
+			x1, x2 := shaft.Commands[0].P1.X-shaft.Stroke.Width/2, shaft.Commands[len(shaft.Commands)-1].P1.X+shaft.Stroke.Width/2
+			if tc.arrow != d2target.NoArrowhead {
+				src := findSceneNode(t, doc.Root, "a-b:src-arrowhead")
+				dst := findSceneNode(t, doc.Root, "a-b:dst-arrowhead")
+				width, height := tc.arrow.Dimensions(shaft.Stroke.Width)
+				x1 = src.Transform.Point(d2scene.Point{Y: height / 2}).X
+				x2 = dst.Transform.Point(d2scene.Point{X: width, Y: height / 2}).X
+			}
+			if x1 != wantLeft || x2 != wantRight {
+				t.Fatalf("painted connection ends at %g and %g; rectangle borders are at %g and %g", x1, x2, wantLeft, wantRight)
+			}
+		})
+	}
+}

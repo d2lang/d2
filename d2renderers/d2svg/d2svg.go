@@ -1575,6 +1575,16 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			break
 		}
 		el := rect(0, 0, 0, fill, targetShape.FillPattern)
+		if writer.alignHairlines && !borderLabelMask {
+			inset := targetShape.HairlineBorderInset()
+			el.X += inset
+			el.Y += inset
+			el.Width -= 2 * inset
+			el.Height -= 2 * inset
+			if targetShape.BorderRadius > 0 {
+				el.Rx -= inset
+			}
+		}
 		if !double && borderLabelMask {
 			el.SetMaskID(svg.LiteralID(resourceHash))
 		}
@@ -2259,6 +2269,9 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	writer := &objectWriter{buf: buf, compactMarkerIDs: opts.MasterID == "" && UsesDefaultStylesheet()}
 	if opts.MasterID == "" && !sketch && UsesDefaultStylesheet() {
 		writer.usage = &svgUsage{classes: make(map[string]bool)}
+		// Standalone SVGs use their intrinsic grid. Keep packed frames and
+		// explicitly scaled exports in the original coordinate system.
+		writer.alignHairlines = (scale == nil || *scale == 1) && !diagram.GridMotion && len(diagram.TweenFrames) == 0
 	}
 
 	// only define shadow filter if a shape uses it
@@ -2299,6 +2312,10 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	isolatedDiagramHash := diagramHash
 	if opts != nil && opts.MasterID != "" {
 		diagramHash = opts.MasterID
+	}
+	if writer.alignHairlines {
+		// Markers and crossing gaps must use the same centerline as the shaft.
+		diagram = diagram.WithAlignedHairlineRoutes()
 	}
 
 	// SVG has no notion of z-index. The z-index is effectively the order it's drawn.

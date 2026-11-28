@@ -73,6 +73,29 @@ func TestMCPRenderPNG(t *testing.T) {
 	}
 }
 
+func TestMCPPNGThinStrokeAtIntrinsicSize(t *testing.T) {
+	server := newTestMCP(t, mcpConfig{})
+	args := map[string]any{"source": `box: "" {width: 320; height: 48; style: {stroke: black; stroke-width: 1; fill: white}}`}
+	result := callMCP(t, server, "render", args)
+	require.False(t, result.IsError, "%v", result.Content)
+	config, err := png.DecodeConfig(bytes.NewReader(result.Content[0].(*mcp.ImageContent).Data))
+	require.NoError(t, err)
+	args["max_dimension"] = config.Width / 2
+	result = callMCP(t, server, "render", args)
+	require.False(t, result.IsError, "%v", result.Content)
+	img, err := png.Decode(bytes.NewReader(result.Content[0].(*mcp.ImageContent).Data))
+	require.NoError(t, err)
+	require.Equal(t, config.Width/2, img.Bounds().Dx())
+	var rows []uint32
+	for y := 0; y < img.Bounds().Dy()/2; y++ {
+		r, _, _, _ := img.At(img.Bounds().Dx()/2, y).RGBA()
+		if r != 0xffff {
+			rows = append(rows, r)
+		}
+	}
+	require.Equal(t, []uint32{0}, rows)
+}
+
 func TestMCPRenderFormatsAndLayouts(t *testing.T) {
 	s := newTestMCP(t, mcpConfig{})
 	for _, tc := range []struct{ format, layout, sourceLayout, want string }{

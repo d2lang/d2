@@ -371,6 +371,12 @@ func (b *builder) buildOrdinaryShapeOutline(targetShape d2target.Shape, fill d2s
 			break
 		}
 		radius := clampBorderRadius(float64(targetShape.BorderRadius), box.Width, box.Height)
+		if b.alignHairlines {
+			inset := targetShape.HairlineBorderInset()
+			box.X, box.Y = box.X+inset, box.Y+inset
+			box.Width, box.Height = box.Width-2*inset, box.Height-2*inset
+			radius = max(0, radius-inset)
+		}
 		nodes = append(nodes, d2scene.NewNode(d2scene.Rect{
 			Box:     box,
 			RadiusX: radius,

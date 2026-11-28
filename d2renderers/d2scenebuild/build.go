@@ -98,10 +98,32 @@ type SketchBudget struct {
 	MaxPathCommands  int
 }
 
+// PNGDeviceScale describes a static raster target. MaxDimension optionally
+// bounds its longest side in device pixels. The zero value disables hinting.
+type PNGDeviceScale struct {
+	MaxScale     float64
+	MaxDimension int
+}
+
+// ForSize returns the physical pixels per logical pixel for the supplied viewport.
+func (p PNGDeviceScale) ForSize(width, height float64) float64 {
+	if p.MaxDimension <= 0 {
+		return p.MaxScale
+	}
+	longest := max(width, height)
+	scale := min(p.MaxScale, float64(p.MaxDimension)/longest)
+	// d2raster rounds the output up. Avoid a one-pixel overshoot from roundoff.
+	if scale*longest > float64(p.MaxDimension) {
+		return math.Nextafter(scale, 0)
+	}
+	return scale
+}
+
 // Options configures scene construction. Scale changes the logical output
 // dimensions, while the raster device scale is supplied to d2raster
 // separately.
 type Options struct {
+	PNGDeviceScale PNGDeviceScale `json:",omitzero"`
 	// MinimumBounds is the unpadded world-space viewport shared by animation frames.
 	MinimumBounds  *image.Rectangle
 	Pad            *int64
@@ -132,6 +154,7 @@ type Options struct {
 }
 
 type builder struct {
+	alignHairlines          bool
 	ctx                     context.Context
 	diagram                 *d2target.Diagram
 	options                 Options
@@ -645,6 +668,10 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		appendixBackground = background
 	}
 
+	b.alignHairlines = b.canAlignPNGHairlines(width, height)
+	if b.alignHairlines {
+		b.diagram = b.diagram.WithAlignedHairlineRoutes()
+	}
 	viewBox := d2scene.Box{X: float64(left), Y: float64(top), Width: float64(width), Height: float64(height)}
 	connectionMask, err := b.buildConnectionMask(viewBox)
 	if err != nil {
@@ -704,6 +731,8 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			}
 		}
 	}
+
+	b.alignHairlines = false // Legend examples have their own placement transforms.
 
 	appendixLayout, err := b.measureAppendix(diagramTL, diagramBR)
 	if err != nil {
@@ -808,6 +837,41 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	document.LogicalWidth = math.Ceil(scaledWidth)
 	document.LogicalHeight = math.Ceil(scaledHeight)
 	return document, nil
+}
+
+// The native scene and the rasterizer each round their output dimensions up.
+// Only hint if the final viewport preserves the diagram's unit pixel grid.
+func (b *builder) canAlignPNGHairlines(width, height int) bool {
+	if b.options.PNGDeviceScale.MaxScale <= 0 || b.options.Sketch || b.diagram.GridMotion || len(b.diagram.TweenFrames) != 0 {
+		return false
+	}
+	logical := 1.0
+	if b.options.Scale != nil {
+		logical = *b.options.Scale
+	}
+	w, h := float64(width), float64(height)
+	lw, lh := math.Ceil(w*logical), math.Ceil(h*logical)
+	scale := b.options.PNGDeviceScale.ForSize(lw, lh)
+	extraX := math.Ceil(lw*scale) - w
+	extraY := math.Ceil(lh*scale) - h
+	// A meet viewport maps at exactly 1x if one physical dimension matches
+	// its viewbox and the other has room. Centering must preserve pixel phase.
+	if min(extraX, extraY) != 0 || b.options.Center != nil && *b.options.Center &&
+		(math.Mod(extraX, 2) != 0 || math.Mod(extraY, 2) != 0) {
+		return false
+	}
+	if len(b.links) > 0 || len(b.appendixItems) > 0 {
+		return false
+	}
+	if b.options.Appendix {
+		// Markdown can discover additional appendix entries while building objects.
+		for _, shape := range b.diagram.Shapes {
+			if shape.Language == "markdown" {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // addRootRect appends a root border rectangle with the root's corner radius,

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,6 +21,51 @@ import (
 	"github.com/d2lang/d2/d2target"
 	d2png "github.com/d2lang/d2/lib/png"
 )
+
+func TestPNGThinStrokesAtDeviceScale(t *testing.T) {
+	diagram := animatedConnectionRasterDiagram()
+	for i := range diagram.Shapes {
+		diagram.Shapes[i].Stroke = "#000000"
+		diagram.Shapes[i].StrokeWidth = 1
+		diagram.Shapes[i].BorderRadius = 4
+	}
+	diagram.Connections[0].Animated = false
+	diagram.Connections[0].StrokeWidth = 1
+	diagram.Connections[0].DstArrow = d2target.TriangleArrowhead
+
+	for _, tc := range []struct {
+		scale float64
+		rows  []uint32
+	}{{.5, []uint32{0}}, {1, []uint32{0, 0}}} {
+		data, err := renderPNGWithEncoder(context.Background(), "-", false, diagram,
+			d2svg.RenderOpts{Pad: new(int64(10)), Scale: &tc.scale}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		width, height := img.Bounds().Dx(), img.Bounds().Dy()
+		for _, sample := range []struct {
+			name      string
+			x, height int
+		}{
+			{"card top", width / 6, height / 2}, {"connector", width / 2, height},
+		} {
+			var rows []uint32
+			for y := 0; y < sample.height; y++ {
+				r, _, _, _ := img.At(sample.x, y).RGBA()
+				if r != 0xffff {
+					rows = append(rows, r)
+				}
+			}
+			if !slices.Equal(rows, tc.rows) {
+				t.Errorf("--scale %v %s: nonwhite row intensities = %v, want %v", tc.scale, sample.name, rows, tc.rows)
+			}
+		}
+	}
+}
 
 func TestPNGStreamMatchesCompleteFrame(t *testing.T) {
 	var encoder rasterPNGEncoder

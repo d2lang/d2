@@ -14,6 +14,8 @@
 
 #### Bugfixes ⛑️
 
+- Static SVGs at their intrinsic size and PNGs at 1× draw solid one-pixel rectangle borders and axis-aligned connections more sharply. Connections that share a line retain the same stroke weight through the junction.
+
 - Labels that mention a fill pattern class such as `paper-overlay` no longer embed an unused texture in ordinary SVG exports.
 - **GIF.** The ceiling on an animation's total frame area rose from 160 to 256 Mi-pixels, enough for a narrated explainer of about twenty seconds at 700 by 600.
 - Animated SVG connections with crossing gaps render more smoothly on large diagrams. [#3091](https://github.com/d2lang/d2/issues/3091)
