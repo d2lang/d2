@@ -24,6 +24,7 @@ Usage:
   %[1]s lint --motion file.d2
   %[1]s lsp
   %[1]s mcp [--root dir]
+  %[1]s serve [--host=localhost] [--port=0]
 
 %[1]s compiles and renders file.d2 to file.svg | file.png | file.pdf | file.pptx | file.gif | file.mp4 | file.txt
 It defaults to file.svg if an output path is not provided.
@@ -49,6 +50,7 @@ Subcommands:
   %[1]s lint --motion - Report motion and readability findings with source locations
   %[1]s lsp - Run a Language Server Protocol server on stdin and stdout for editors
   %[1]s mcp - Run a Model Context Protocol server on stdin and stdout for AI clients
+  %[1]s serve - Runs an HTTP server responding to /render/* requests
 
 See more docs and the source code at https://github.com/d2lang/d2.
 Hosted icons at https://icons.d2lang.com.
