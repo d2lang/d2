@@ -55,6 +55,25 @@ func TestRenderAnimationDefaultsMissingPadding(t *testing.T) {
 	}
 }
 
+func TestCodeFontColorRoundTrip(t *testing.T) {
+	const source = "example: |go\n  var x = 1\n| {style.font-color: red}"
+	result, err := Compile(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": source}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagram := result.(CompileResponse).Diagram
+	if !diagram.Shapes[0].CodeFontColor {
+		t.Fatal("compiled code label lost its explicit font color")
+	}
+	rendered, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &diagram}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered.([]byte)), `class="text-mono" x="0" y="1em" fill="red"`) {
+		t.Fatal("round-tripped code label lost the red paint")
+	}
+}
+
 func TestSourceAnimateInterval(t *testing.T) {
 	const source = "vars: {d2-config: {animate-interval: 800ms}}\nroot\nsteps: {next: {second}}"
 	for _, tc := range []struct {

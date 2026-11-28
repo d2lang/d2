@@ -129,6 +129,14 @@ func (b *builder) buildCodeTextRuns(object, idPrefix string, targetText d2target
 		return nil, fmt.Errorf("scene: %s tokenize %s code: %w", object, targetText.Language, err)
 	}
 	lines := chroma.SplitTokensIntoLines(tokens)
+	var foreground d2scene.Paint
+	if targetText.CodeFontColor {
+		foreground, err = b.paint(targetText.Color, object+" code text")
+		if err != nil {
+			return nil, err
+		}
+		foreground = labelGradient(foreground, origin.X, origin.Y, targetText.LabelWidth, targetText.LabelHeight)
+	}
 	metrics := make(map[d2scene.AssetID]*codeFontMetrics, 3)
 	lineAdvance := float64(targetText.FontSize) * textmeasure.CODE_LINE_HEIGHT
 	var nodes []*d2scene.Node
@@ -178,6 +186,9 @@ func (b *builder) buildCodeTextRuns(object, idPrefix string, targetText d2target
 					// background and border token styles are intentionally ignored.
 					Underline: entry.Underline == chroma.Yes,
 					Ink:       d2scene.NewBounds(cursor, lineTop, cursor+advance, lineTop+lineAdvance),
+				}
+				if targetText.CodeFontColor {
+					run.Fill = foreground
 				}
 				node := d2scene.NewNode(run)
 				node.ID = fmt.Sprintf("%s-line:%d:token:%d", idPrefix, lineIndex, tokenIndex)

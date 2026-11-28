@@ -49,6 +49,54 @@ func TestBuildCarriesTypedGradientsForRootShapesAndConnections(t *testing.T) {
 	}
 }
 
+func TestGradientAcrossLabelRuns(t *testing.T) {
+	for _, tc := range []struct{ name, language, label string }{
+		{"plain", "", "one\ntwo"},
+		{"markdown", "markdown", "**one** and two"},
+		{"code", "go", "var x = 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diagram := d2target.NewDiagram()
+			kind := d2target.ShapeRectangle
+			if tc.name == "code" {
+				kind = d2target.ShapeCode
+			}
+			diagram.Shapes = []d2target.Shape{{
+				ID: "label", Type: kind, Width: 160, Height: 80, Fill: "white", Stroke: "none", Opacity: 1,
+				Text: d2target.Text{Label: tc.label, Language: tc.language, FontFamily: "default", FontSize: 16,
+					LabelWidth: 120, LabelHeight: 48, Color: "linear-gradient(to bottom, red, blue)", CodeFontColor: tc.name == "code"},
+			}}
+			doc, err := Build(context.Background(), diagram, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var count int
+			var first d2scene.Matrix
+			var visit func(*d2scene.Node)
+			visit = func(node *d2scene.Node) {
+				if run, ok := node.Primitive.(d2scene.TextRun); ok {
+					g, ok := run.Fill.(d2scene.LinearGradient)
+					if !ok || g.Units != d2scene.UserSpaceOnUse || g.Transform.A != 120 || g.Transform.D != 48 {
+						t.Fatalf("run %q paint = %+v, want gradient over 120 × 48 label", run.Text, run.Fill)
+					}
+					if count > 0 && g.Transform != first {
+						t.Fatalf("run %q gradient transform = %+v, want %+v", run.Text, g.Transform, first)
+					}
+					count++
+					first = g.Transform
+				}
+				for _, child := range node.Children {
+					visit(child)
+				}
+			}
+			visit(doc.Root)
+			if count < 2 {
+				t.Fatalf("got %d text runs, want multiple", count)
+			}
+		})
+	}
+}
+
 func TestGradientPaintGeometry(t *testing.T) {
 	t.Parallel()
 

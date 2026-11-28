@@ -166,17 +166,7 @@ func applyConnectionGradient(node *d2scene.Node, transform d2scene.Matrix) error
 		return err
 	}
 	transform = inverse.Mul(transform)
-	paint := func(p d2scene.Paint) d2scene.Paint {
-		switch gradient := p.(type) {
-		case d2scene.LinearGradient:
-			gradient.Units, gradient.Transform = d2scene.UserSpaceOnUse, transform
-			return gradient
-		case d2scene.RadialGradient:
-			gradient.Units, gradient.Transform = d2scene.UserSpaceOnUse, transform
-			return gradient
-		}
-		return p
-	}
+	paint := func(p d2scene.Paint) d2scene.Paint { return gradientInSpace(p, transform) }
 	var stroke *d2scene.Stroke
 	switch p := node.Primitive.(type) {
 	case d2scene.Path:

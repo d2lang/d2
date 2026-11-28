@@ -325,8 +325,32 @@ func appendPlainStrikes(nodes []*d2scene.Node, label d2target.Text, topLeft *geo
 	return nodes
 }
 
+// gradientInSpace gives all the primitives in a label or connection one paint box.
+func gradientInSpace(paint d2scene.Paint, transform d2scene.Matrix) d2scene.Paint {
+	switch g := paint.(type) {
+	case d2scene.LinearGradient:
+		g.Units, g.Transform = d2scene.UserSpaceOnUse, transform
+		return g
+	case d2scene.RadialGradient:
+		g.Units, g.Transform = d2scene.UserSpaceOnUse, transform
+		return g
+	default:
+		return paint
+	}
+}
+
+func labelGradient(paint d2scene.Paint, x, y float64, width, height int) d2scene.Paint {
+	if width <= 0 || height <= 0 {
+		return paint
+	}
+	return gradientInSpace(paint, d2scene.Translate(x, y).Mul(d2scene.Scale(float64(width), float64(height))))
+}
+
 func centeredTextRuns(idPrefix, text string, topLeft *geo.Point, width, height, fontSize int, font d2scene.Font, fill d2scene.Paint, underline bool, progress *float64) []*d2scene.Node {
 	lines := strings.Split(text, "\n")
+	if len(lines) > 1 {
+		fill = labelGradient(fill, topLeft.X, topLeft.Y, width, height)
+	}
 	lineAdvance := float64(height) / float64(len(lines))
 	nodes := make([]*d2scene.Node, 0, len(lines))
 	for index, line := range lines {

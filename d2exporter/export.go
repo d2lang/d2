@@ -317,6 +317,10 @@ func applyStyles(shape *d2target.Shape, obj *d2graph.Object) {
 	}
 }
 
+func usesSyntaxHighlighting(language string) bool {
+	return language != "" && language != "latex" && language != "markdown"
+}
+
 func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 	shape := d2target.BaseShape()
 	shape.SetType(obj.Shape.Value)
@@ -328,6 +332,7 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 	shape.Width = int(obj.Width)
 	shape.Height = int(obj.Height)
 	shape.Language = obj.Language
+	shape.CodeFontColor = obj.Style.FontColor != nil && usesSyntaxHighlighting(obj.Language)
 
 	text := obj.Text()
 	shape.Bold = text.IsBold
@@ -546,6 +551,7 @@ func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 	connection.LabelWidth = text.Dimensions.Width
 	connection.LabelHeight = text.Dimensions.Height
 	connection.Language = edge.Language
+	connection.CodeFontColor = edge.Style.FontColor != nil && usesSyntaxHighlighting(edge.Language)
 
 	if edge.LabelPosition != nil {
 		connection.LabelPosition = *edge.LabelPosition
