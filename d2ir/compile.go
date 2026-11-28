@@ -1237,7 +1237,8 @@ func (c *compiler) overlay(base *Map, f *Field) {
 	if len(f.References) > 0 {
 		source = f.LastRef().AST()
 	}
-	if !c.reserveVariableCopy(source, base) {
+	baseView, _ := base.baseCopyView()
+	if !c.reserveBoardCopy(source, &baseView) {
 		return
 	}
 	from := base
@@ -1249,7 +1250,7 @@ func (c *compiler) overlay(base *Map, f *Field) {
 	// An annotation points at something for the length of its own board. The
 	// next step starts without the marks and caption of the one before it.
 	base.deleteAnnotations()
-	if !c.reserveVariableCopy(source, f.Map()) {
+	if !c.reserveBoardCopy(source, f.Map()) {
 		return
 	}
 	overlayMapIndexed(base, f.Map())
