@@ -13,11 +13,17 @@ canary: "Canary · v2.15" {class: service; style.fill: "#f8e3cb"}
 inventory: "Inventory service" {class: service}
 
 edge -> stable: 95% {
-  icon.style.animated: 9.5/s
+  icon: {
+    shape: circle
+    style.animated: 9.5/s
+  }
   style.stroke: "#267050"
 }
 edge -> canary: 5% {
-  icon.style.animated: 0.5/s
+  icon: {
+    shape: circle
+    style.animated: 0.5/s
+  }
   style.stroke: "#a45120"
 }
 stable -> inventory: reserve stock {style.stroke: "#69796d"}
