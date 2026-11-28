@@ -156,7 +156,9 @@ extend the activation bar and draw the arrow from sender to recipient.
 
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
 see each board and its timestamp in playback order, including intermediate frames
-from animated transitions. Run `d2 lint --motion film.d2` to find crowded
+from animated transitions. Panels share the animated SVG’s coordinate system, so
+a shape that moves between boards changes position in the sheet.
+Run `d2 lint --motion film.d2` to find crowded
 transitions, short-lived labels, hidden caption targets, and possible shape ID
 replacements. The D2 MCP server exposes the same operations as `storyboard`
 and `lint_motion`, so a model can inspect the image, edit the source, and check

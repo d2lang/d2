@@ -40,9 +40,8 @@ type storyboardFrameInfo struct {
 
 type storyboardSample struct {
 	storyboardFrameInfo
-	diagram  *d2target.Diagram
-	localMS  int
-	viewport *gifViewport
+	diagram    *d2target.Diagram
+	filmBounds image.Rectangle // all authored boards and tween frames in world coordinates
 }
 
 // planStoryboard seeks D2's native animation schedule. Every authored board
@@ -96,7 +95,10 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 	if len(boards) == 0 {
 		return nil, fmt.Errorf("storyboard requires at least one renderable board")
 	}
-	viewports := gifViewports(root, boards)
+	// The animated SVG places every board on the same world-space canvas,
+	// including geometry in transitions that this sheet does not sample.
+	tl, br := root.NestedBoundingBox()
+	filmBounds := image.Rect(tl.X, tl.Y, br.X, br.Y)
 	var startMS int64
 	var samples []storyboardSample
 	extra := storyboardMaxFrames - len(boards)
@@ -111,19 +113,10 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 		if int64(duration) > math.MaxInt64/int64(time.Millisecond)-startMS {
 			return nil, fmt.Errorf("storyboard duration exceeds the supported time range")
 		}
-		v := viewports[b]
-		if v != nil {
-			// Include extents of motion between selected timestamps. Otherwise
-			// an off-center object could jump when another cell grows or departs.
-			for _, frame := range frames {
-				tl, br := frame.Diagram.BoundingBox()
-				v.bounds = v.bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
-			}
-		}
 		add := func(diagram *d2target.Diagram, at int) {
 			samples = append(samples, storyboardSample{
 				storyboardFrameInfo: storyboardFrameInfo{Board: names[i], TimeMS: startMS + int64(at)},
-				diagram:             diagram, localMS: at, viewport: v,
+				diagram:             diagram, filmBounds: filmBounds,
 			})
 		}
 		hold := endpoint.ElapsedMS + endpoint.DurationMS/2
@@ -138,10 +131,9 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 			}
 		} else if extra > 0 && hold > 0 {
 			if period := d2scenebuild.ShortestAnimationPeriod(b); period > 0 {
-				// Seek at most halfway through the shortest effect's cycle.
-				// Sampling at a board midpoint can land exactly back at phase 0.
-				hold = int(min(int64(hold), max(int64(1), period.Milliseconds()/2)))
-				add(b, 0)
+				first, second := storyboardEffectSamples(startMS, hold, period)
+				add(b, first)
+				hold = second
 				extra--
 			}
 		}
@@ -149,6 +141,29 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 		startMS += int64(duration)
 	}
 	return samples, nil
+}
+
+// A visible dash pattern or pulsing shape repeats within one period. Keep
+// both samples on a single half-cycle: symmetric points on either side of
+// a pulse extremum can look identical even with two different timestamps.
+func storyboardEffectSamples(startMS int64, holdMS int, period time.Duration) (int, int) {
+	phase := time.Duration(startMS) * time.Millisecond % period
+	turn := period - phase
+	if phase < period/2 {
+		turn = period/2 - phase
+	}
+	var start time.Duration
+	end := min(time.Duration(holdMS)*time.Millisecond, period/2)
+	if turn < end {
+		// Use the longer visible portion before or after the turning point.
+		if turn >= end-turn {
+			end = turn
+		} else {
+			start = turn
+		}
+	}
+	last := max(1, int(end.Round(time.Millisecond).Milliseconds()))
+	return min(last-1, int(start.Round(time.Millisecond).Milliseconds())), last
 }
 
 type storyboardTile struct {
@@ -170,17 +185,17 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 	}
 	opts.Scale = new(1.0) // Rasterize directly at thumbnail resolution.
 	tiles := make([]storyboardTile, len(plan))
-	canvases := make(map[*gifViewport]image.Rectangle)
-	var maxW, maxH int
+	pad := d2svg.DEFAULT_PADDING
+	if opts.Pad != nil {
+		pad = int(*opts.Pad)
+	}
+	canvas := plan[0].filmBounds.Inset(-pad)
 	for i, sample := range plan {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		renderOpts := gifFrameOptions(time.Duration(sample.localMS)*time.Millisecond, len(plan))
+		renderOpts := gifFrameOptions(time.Duration(sample.TimeMS)*time.Millisecond, len(plan))
 		sceneOpts := sceneOptionsForFrame(renderOpts)
-		if sample.viewport != nil {
-			sceneOpts.minimumBounds = &sample.viewport.bounds
-		}
 		doc, err := buildSceneWithResourcesAndLinks(ctx, sample.diagram, opts, assets, fonts, links, sceneOpts)
 		if err != nil {
 			return nil, nil, fmt.Errorf("storyboard %s at %dms: %w", sample.Board, sample.TimeMS, err)
@@ -194,17 +209,12 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 		if err := validateRenderSession("storyboard", session); err != nil {
 			return nil, nil, err
 		}
-		// Keep only bounded thumbnails. As in GIF export, independently laid
-		// out boards are centered, while related frames share a world origin.
+		// Keep only bounded thumbnails. Include scene decorations extending
+		// beyond diagram bounds (for example, legends) in the shared camera.
 		x, y := int(doc.ViewBox.X), int(doc.ViewBox.Y)
 		bounds := image.Rect(x, y, x+int(doc.LogicalWidth), y+int(doc.LogicalHeight))
 		tiles[i] = storyboardTile{pixels, bounds}
-		canvas := bounds
-		if sample.viewport != nil {
-			canvas = canvases[sample.viewport].Union(bounds)
-			canvases[sample.viewport] = canvas
-		}
-		maxW, maxH = max(maxW, canvas.Dx()), max(maxH, canvas.Dy())
+		canvas = canvas.Union(bounds)
 	}
 	faceData := d2fonts.FontFaces.Get(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR))
 	captionFont, err := opentype.Parse(faceData)
@@ -222,7 +232,7 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 	sheet := image.NewNRGBA(image.Rect(0, 0, storyboardGap+cols*(storyboardWidth+storyboardGap), storyboardGap+rows*(storyboardHeight+storyboardCaption+storyboardGap)))
 	background := image.NewUniform(color.NRGBA{R: 235, G: 237, B: 240, A: 255})
 	draw.Draw(sheet, sheet.Bounds(), background, image.Point{}, draw.Src)
-	scale := storyboardScale(float64(maxW), float64(maxH))
+	scale := storyboardScale(float64(canvas.Dx()), float64(canvas.Dy()))
 	info := make([]storyboardFrameInfo, len(plan))
 	for i, sample := range plan {
 		if err := ctx.Err(); err != nil {
@@ -231,12 +241,8 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 		tile := tiles[i]
 		origin := image.Pt(storyboardGap+(i%cols)*(storyboardWidth+storyboardGap), storyboardGap+(i/cols)*(storyboardHeight+storyboardCaption+storyboardGap))
 		draw.Draw(sheet, image.Rect(0, 0, storyboardWidth, storyboardHeight+storyboardCaption).Add(origin), image.White, image.Point{}, draw.Src)
-		canvas := tile.bounds
-		if sample.viewport != nil {
-			canvas = canvases[sample.viewport]
-		}
-		// Use a single scale for the entire sheet. A stationary object keeps
-		// its size even when other boards have a larger canvas.
+		// Preserve world positions as well as size. A pin in one layer must
+		// appear at the same pixel coordinate as that pin in another layer.
 		left := (storyboardWidth-scale*float64(canvas.Dx()))/2 + scale*float64(tile.bounds.Min.X-canvas.Min.X)
 		top := (storyboardHeight-scale*float64(canvas.Dy()))/2 + scale*float64(tile.bounds.Min.Y-canvas.Min.Y)
 		x, y := int(math.Round(left)), int(math.Round(top))

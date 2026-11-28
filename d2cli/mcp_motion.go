@@ -57,9 +57,6 @@ func (s *mcpServer) compileMotion(ctx context.Context, in *motionInput) (*mcpMot
 	if err != nil {
 		return nil, err
 	}
-	if layout == "tala" {
-		markPinnedGIFBoards(diagram, graph)
-	}
 	return &mcpMotion{diagram: diagram, graph: graph, path: path, opts: opts, interval: interval}, nil
 }
 

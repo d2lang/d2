@@ -309,7 +309,8 @@ Validates file.d2
 .It Cm storyboard Ar file.d2 Op Ar board.png
 Render one PNG contact sheet with board names and playback timestamps.
 The sheet includes every drawable board and uses remaining panels for intermediate motion.
-It holds up to 64 panels and fits frames to a fixed panel size regardless of the source export scale.
+All panels use a shared viewport, as in animated SVG playback.
+The sheet holds up to 64 panels and fits frames to a fixed panel size regardless of the source export scale.
 It uses the diagram's animation timing and accepts the same layout and timing overrides as GIF export.
 The default interval is 1000 milliseconds.
 The default output for film.d2 is film.storyboard.png.

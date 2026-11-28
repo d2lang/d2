@@ -93,9 +93,6 @@ func runMotionReview(ctx context.Context, ms *xmain.State, command, inputPath, o
 		return nil
 	}
 
-	if strings.EqualFold(*opts.Layout, "tala") {
-		markPinnedGIFBoards(diagram, graph)
-	}
 	plan, err := planStoryboard(ctx, diagram, interval)
 	if err != nil {
 		return err

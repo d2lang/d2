@@ -162,11 +162,13 @@ func TestStoryboardLimitsKeepOnePanelPerBoard(t *testing.T) {
 }
 
 func TestStoryboardPreservesPinnedMotion(t *testing.T) {
-	root, next := simpleRasterDiagramWithSize(20, 20), simpleRasterDiagramWithSize(20, 20)
-	next.Name = "右"
-	next.LayoutContinuity = true
-	next.Shapes[0].Pos.X = 150
-	root.Steps = []*d2target.Diagram{next}
+	// Independent TALA layers can use different pins. Animated SVG displays
+	// them in one viewport, even when the layouts have no continuity flag.
+	first, next := simpleRasterDiagramWithSize(20, 20), simpleRasterDiagramWithSize(20, 20)
+	first.Name, next.Name = "left", "右"
+	first.Shapes[0].Pos.X = 10
+	next.Shapes[0].Pos.X = 160
+	root := &d2target.Diagram{IsFolderOnly: true, Layers: []*d2target.Diagram{first, next}}
 	plan, err := planStoryboard(t.Context(), root, 100)
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +177,7 @@ func TestStoryboardPreservesPinnedMotion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(info) != 2 || info[1].Board != "steps.右" {
+	if len(info) != 2 || info[1].Board != "layers.右" {
 		t.Fatalf("lost Unicode board path: %+v", info)
 	}
 	img, err := png.Decode(bytes.NewReader(data))
@@ -196,5 +198,90 @@ func TestStoryboardPreservesPinnedMotion(t *testing.T) {
 	}
 	if len(left) != 2 || left[1]-left[0] != 300 {
 		t.Fatalf("red object offsets = %v; want 150 diagram units of travel at 2x", left)
+	}
+}
+
+func TestStoryboardBoundsIncludeUnsampledTween(t *testing.T) {
+	board := func(x int) *d2target.Diagram {
+		b := simpleRasterDiagramWithSize(20, 20)
+		b.Shapes[0].Pos.X = x
+		return b
+	}
+	root, next := board(0), board(100)
+	next.Name = "return"
+	next.TweenDurationMS = 400
+	next.TweenFrames = []*d2target.Diagram{board(500), board(50)}
+	root.Steps = []*d2target.Diagram{next}
+	plan, err := planStoryboard(t.Context(), root, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan) != 3 || plan[1].diagram != next.TweenFrames[1] {
+		t.Fatalf("unexpected transition sample: %+v", plan)
+	}
+	data, _, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A 100-unit move is about 80 pixels in the full 520-unit timeline.
+	// Omitting the unsampled excursion to x=500 would stretch it to 200.
+	redLeft := func(origin image.Point) int {
+		for x := 0; x < storyboardWidth; x++ {
+			c := color.NRGBAModel.Convert(img.At(origin.X+x, origin.Y+storyboardHeight/2)).(color.NRGBA)
+			if c.R > 245 && c.G < 10 && c.B < 10 {
+				return x
+			}
+		}
+		t.Fatal("red shape missing from panel")
+		return 0
+	}
+	a := redLeft(image.Pt(storyboardGap, storyboardGap))
+	b := redLeft(image.Pt(storyboardGap, 2*storyboardGap+storyboardHeight+storyboardCaption))
+	if dx := b - a; dx < 79 || dx > 81 {
+		t.Fatalf("100 world units moved %d pixels on the sheet, want about 80", dx)
+	}
+}
+
+func TestStoryboardUsesAbsoluteEffectClock(t *testing.T) {
+	root, step := simpleRasterDiagram(), simpleRasterDiagram()
+	root.Shapes[0].Animated, step.Shapes[0].Animated = true, true
+	step.Name = "next"
+	root.Steps = []*d2target.Diagram{step}
+	plan, err := planStoryboard(t.Context(), root, 1250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []storyboardFrameInfo{{"root", 0}, {"root", 500}, {"steps.next", 1250}, {"steps.next", 1500}}
+	if !reflect.DeepEqual(info, want) {
+		t.Fatalf("sample times = %v, want %v", info, want)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	samePanel := func(a, b int) bool {
+		at := func(i int) image.Point {
+			return image.Pt(storyboardGap+(i%2)*(storyboardWidth+storyboardGap), storyboardGap+(i/2)*(storyboardHeight+storyboardCaption+storyboardGap))
+		}
+		pa, pb := at(a), at(b)
+		for y := 0; y < storyboardHeight; y++ {
+			for x := 0; x < storyboardWidth; x++ {
+				if img.At(pa.X+x, pa.Y+y) != img.At(pb.X+x, pb.Y+y) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	if !samePanel(1, 3) || samePanel(2, 3) {
+		t.Fatal("a one-second pulse must peak at both 500ms and 1500ms, with a distinct phase at 1250ms")
 	}
 }
