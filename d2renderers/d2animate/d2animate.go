@@ -153,8 +153,8 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	}
 	fmt.Fprintf(buf, ` preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`, align, width, height, dimensions)
 
-	innerOpening := fmt.Sprintf(`<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d">`,
-		width, height, left, top, width, height)
+	innerOpening := fmt.Sprintf(`<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d" data-d2-animation="%s">`,
+		width, height, left, top, width, height, diagramHash)
 	fmt.Fprint(buf, innerOpening)
 
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
@@ -182,6 +182,8 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	svgsStr := source.String()
 
 	var transitions bytes.Buffer
+	// Pausing keeps the first frame visible and retains manual board navigation.
+	fmt.Fprintf(&transitions, "@media(prefers-reduced-motion:reduce){svg[data-d2-animation=%s]>g{animation-play-state:paused!important}}", diagramHash)
 	hidden, visible := "{opacity:0", "{opacity:1"
 	if len(slots) == 0 && (!uniform || len(svgs) > 100) {
 		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"

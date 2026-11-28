@@ -60,7 +60,7 @@ func svgProgress(buf *bytes.Buffer, hash string, viewport image.Rectangle, total
 		// The global clock pauses while a visitor explores a linked board.
 		fmt.Fprintf(buf, ".d2-layer-link-%s:target~%s{animation-play-state:paused!important}", hash, line)
 	}
-	fmt.Fprintf(buf, "@media(prefers-reduced-motion:reduce){%s{visibility:hidden}}", line)
+	fmt.Fprintf(buf, "@media(prefers-reduced-motion:reduce){%s{visibility:hidden;animation:none!important}}", line)
 	h := min(ProgressHeight, viewport.Dy())
 	return fmt.Sprintf(`<rect class="d2-progress-%s" x="%d" y="%d" width="%d" height="%d" transform="scale(0 1)" pointer-events="none" aria-hidden="true" style="%sanimation:d2Progress-%s %dms linear infinite"/>`,
 		hash, viewport.Min.X, viewport.Max.Y-h, viewport.Dx(), h, paint, hash, totalMS), nil

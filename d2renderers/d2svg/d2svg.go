@@ -2112,15 +2112,18 @@ func writeFontCSS(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2f
 }
 `, diagramHash))
 
-	appendRule("animated-shape", `
+	appendRule("animated-shape", fmt.Sprintf(`
 @keyframes shapeappear {
-    0%, 100% { transform: translateY(0); filter: drop-shadow(0px 0px 0px rgba(0,0,0,0)); }
-    50% { transform: translateY(-4px); filter: drop-shadow(0px 12.6px 25.2px rgba(50,50,93,0.25)) drop-shadow(0px 7.56px 15.12px rgba(0,0,0,0.1)); }
+    0%%, 100%% { transform: translateY(0); filter: drop-shadow(0px 0px 0px rgba(0,0,0,0)); }
+    50%% { transform: translateY(-4px); filter: drop-shadow(0px 12.6px 25.2px rgba(50,50,93,0.25)) drop-shadow(0px 7.56px 15.12px rgba(0,0,0,0.1)); }
 }
 .animated-shape {
 	animation: shapeappear 1s linear infinite;
 }
-`)
+@media (prefers-reduced-motion: reduce) {
+	.%s .animated-shape { animation: none; }
+}
+`, diagramHash))
 
 	appendRule("appendix-icon", `
 .appendix-icon {
