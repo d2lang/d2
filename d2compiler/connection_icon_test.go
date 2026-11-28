@@ -1,6 +1,7 @@
 package d2compiler_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -60,6 +61,29 @@ steps: {
 	cleared := connection(g.Steps[2], 1)
 	if cleared.IconAnimation != nil || !cleared.HasStaticIcon() {
 		t.Fatalf("clearing icon motion should restore a static image: %+v", cleared)
+	}
+}
+
+func TestConnectionIconShapes(t *testing.T) {
+	for _, shape := range []string{"circle", "square", "triangle", "diamond"} {
+		t.Run(shape, func(t *testing.T) {
+			source := fmt.Sprintf(`classes.packet: {icon.shape: %s}
+a -> b: {class: packet}
+steps.start: {(a -> b)[0].icon.style.animated: 2/s}
+steps.stop: {(a -> b)[0].icon.style.animated: false}`, strings.ToUpper(shape))
+			g, _, err := d2compiler.Compile("shapes.d2", strings.NewReader(source), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, board := range []*d2graph.Graph{g, g.Steps[0], g.Steps[1]} {
+				icon := d2exporter.ToConnection(board.Edges[0], nil)
+				moving := board == g.Steps[0]
+				if icon.Icon != nil || icon.IconShape != shape ||
+					icon.HasStaticIcon() == moving || (icon.IconAnimation != nil) != moving {
+					t.Errorf("board %q: expected %s icon (moving=%v), got %+v", board.Name, shape, moving, icon)
+				}
+			}
+		})
 	}
 }
 
@@ -135,6 +159,9 @@ func TestInvalidConnectionIconCadence(t *testing.T) {
 		"a: {icon: ./test.svg; icon.style.animated: 1/s}",
 		"a: {icon.style.animated: 1/s}",
 		"a -> b: {icon.shape: rectangle}",
+		"a -> b: {icon.shape: [triangle]}",
+		"a -> b: {icon.shape: square {width: 10}}",
+		"a: {icon.shape: diamond}",
 		"a -> b: {icon: ./test.svg; icon.shape: circle}",
 	} {
 		if _, _, err := d2compiler.Compile("source.d2", strings.NewReader(src), nil); err == nil {

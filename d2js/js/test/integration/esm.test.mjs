@@ -89,6 +89,22 @@ test("connection icon rates use the duration of the selected animation", async (
   assert.match(await d2.renderSVG(standalone, short), /animateMotion/);
 });
 
+test("connection icon shapes survive compilation and render through the public API", async (t) => {
+  const d2 = new D2();
+  t.after(() => d2.dispose());
+  const shapes = ["square", "triangle", "diamond"];
+  const source = shapes
+    .map((shape) => `a -> ${shape}: {icon.shape: ${shape}; icon.style.animated: true}`)
+    .join("\n");
+  const { diagram } = await d2.compile(source);
+  assert.deepEqual(diagram.connections.map((c) => c.iconShape), shapes);
+  const svg = await d2.render(diagram);
+  assert.equal(Array.from(svg.matchAll(/-icon"><polygon\b/g)).length, shapes.length);
+  assert.match(svg, /animateMotion/);
+  diagram.connections[0].iconShape = "rectangle";
+  await assert.rejects(d2.render(diagram), /iconShape/);
+});
+
 test("connection icon trip durations survive compilation and select the loop period", async (t) => {
   const d2 = new D2();
   t.after(() => d2.dispose());
