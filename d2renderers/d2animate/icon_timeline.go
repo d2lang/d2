@@ -7,6 +7,7 @@ import (
 
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // IconTimeline can seek to any time within an authored board. Entry states
@@ -159,7 +160,7 @@ func (s *iconStream) finishTimedFlights() {
 		s.first = slices.Max(arrivals)
 		return
 	}
-	slices.Sort(arrivals)
+	xsort.Ordered(arrivals)
 	for slot := free; slot < slots; slot++ {
 		// This departure needs a slot vacated by an incoming flight.
 		s.first = max(s.first, arrivals[slot-free]-float64(slot)*s.period)
