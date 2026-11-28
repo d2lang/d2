@@ -30,7 +30,10 @@ The adapter exposes local, in-process entry points:
   and changes to the root direction or seed settings keep their ordinary
   layout. The CLI and JavaScript compiler enable board continuity for TALA.
   Go callers can register `ContinueBoard` under `"tala"` in
-  `d2lib.CompileOptions.LayoutContinuations`.
+  `d2lib.CompileOptions.LayoutContinuations`. Register `TweenResize` under
+  the same key in `LayoutTweens` to animate automatic placement during numeric
+  resizes. It uses the completed start and end layouts to place the intermediate
+  frames. Every authored board keeps its ordinary boxes, routes, and captions.
 - In animated exports, a positive `animate-duration` can draw new connections
   along their routes. A connected node starts opening from its port as the
   incoming stroke covers its last few pixels. Its label appears at its final

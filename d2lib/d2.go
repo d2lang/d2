@@ -62,6 +62,9 @@ type CompileOptions struct {
 	// LayoutContinuations supplies optional refinements for related boards,
 	// keyed by lowercase layout engine name. Independent layers start fresh.
 	LayoutContinuations map[string]d2graph.LayoutContinuation
+	// LayoutTweens supplies optional interstitial placement after both authored
+	// boards have completed the ordinary layout and continuation pipeline.
+	LayoutTweens map[string]d2graph.LayoutTween
 
 	Layout *string
 
@@ -205,7 +208,53 @@ func cloneGraphDataValue(value interface{}) interface{} {
 
 func compile(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts) (*d2target.Diagram, error) {
 	d, _, err := compileBoard(ctx, g, compileOpts, renderOpts, nil, nil, false)
-	return d, err
+	if err != nil || compileOpts.Layout == nil {
+		return d, err
+	}
+	if tween := compileOpts.LayoutTweens[strings.ToLower(*compileOpts.Layout)]; tween != nil {
+		if err := layoutTweenFrames(ctx, g, d, tween, compileOpts); err != nil {
+			return nil, err
+		}
+	}
+	return d, nil
+}
+
+// Finish ordinary layout of the entire board tree before modifying playback.
+// In particular a later cumulative step must never inherit an interstitial's
+// coordinates. Only replace the render data for samples the planner adjusted.
+func layoutTweenFrames(ctx context.Context, g *d2graph.Graph, d *d2target.Diagram, tween d2graph.LayoutTween, opts *CompileOptions) error {
+	previous := g
+	for i, step := range g.Steps {
+		if len(step.TweenFrames) > 0 {
+			changed, err := tween(ctx, previous, step)
+			if err != nil {
+				return err
+			}
+			if changed {
+				for j, sample := range step.TweenFrames {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					updated, err := d2exporter.Export(ctx, sample, opts.FontFamily, opts.MonoFontFamily)
+					if err != nil {
+						return err
+					}
+					frame := d.Steps[i].TweenFrames[j]
+					frame.Shapes, frame.Connections = updated.Shapes, updated.Connections
+				}
+			}
+		}
+		previous = step
+	}
+	for i, group := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps} {
+		diagrams := [3][]*d2target.Diagram{d.Layers, d.Scenarios, d.Steps}[i]
+		for j, child := range group {
+			if err := layoutTweenFrames(ctx, child, diagrams[j], tween, opts); err != nil {
+				return err
+			}
+		}
+	}
+	return ctx.Err()
 }
 
 func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts, previous *d2graph.Graph, reuse *layoutGeometry, captureForCaller bool) (*d2target.Diagram, *layoutGeometry, error) {

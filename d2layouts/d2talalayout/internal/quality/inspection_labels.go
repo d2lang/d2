@@ -68,7 +68,11 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 			if err := chargeEvaluationWork(guard, len(edge.Points)); err != nil {
 				return err
 			}
-			appendLabel(labelBox(edge), nil, edge, inspectionItem{edge.ID, edgeText})
+			part := edgeText
+			if edge.Label.PositionFixed() {
+				part = fixedEdgeText
+			}
+			appendLabel(labelBox(edge), nil, edge, inspectionItem{edge.ID, part})
 		}
 		if edge.SourceArrowheadLabel != nil {
 			if err := chargeEvaluationWork(guard, len(edge.Points)); err != nil {
@@ -147,6 +151,7 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 			}
 			if overlap {
 				score.TextOcclusions++
+				issues.obstructs(placed.item, placed.box)
 				issues.add(placed.item, routeItem(edge), 1, placed.onLoop() || edge.IsLoop())
 			}
 		}

@@ -1147,6 +1147,8 @@ type Connection struct {
 
 	MotionClip  *MotionClip  `json:"motionClip,omitempty"`
 	MotionLabel *MotionLabel `json:"motionLabel,omitempty"`
+	// MotionCorners keeps terminal corners inside short approach segments on a moving wire.
+	MotionCorners bool `json:"motionCorners,omitempty"`
 	// MotionTip marks the free end of a partially drawn connection.
 	MotionTip TraceEndpoint `json:"motionTip,omitempty"`
 	// MotionDashOffset pins a backward trace’s dashes to its stationary end.

@@ -56,3 +56,17 @@ func TestLoopInspectionUsesNonrectangularBoundsOnlyAsVeto(t *testing.T) {
 		t.Fatalf("curve inspection: %+v, %v", result, err)
 	}
 }
+
+func TestResizeRoutesYieldToFixedCaptionsOnly(t *testing.T) {
+	before := &LoopInspection{pairs: map[[2]inspectionItem]int64{}}
+	now := &LoopInspection{pairs: map[[2]inspectionItem]int64{}}
+	movable := inspectionItem{10, edgeText}
+	fixed := inspectionItem{11, fixedEdgeText}
+	movingWire, fixedWire := routeItem(&layoutgraph.Edge{ID: 20}), routeItem(&layoutgraph.Edge{ID: 21})
+	now.add(movable, movingWire, 1, false)
+	now.add(fixed, fixedWire, 1, false)
+	wires, labels := map[layoutgraph.EntityID]bool{}, map[layoutgraph.EntityID]bool{}
+	if !now.CollectObstructedRoutes(before, wires, labels, nil) || wires[movingWire.id] || !wires[fixedWire.id] || !labels[movable.id] {
+		t.Fatalf("incorrect clearance repairs: routes %v labels %v", wires, labels)
+	}
+}

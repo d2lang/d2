@@ -187,6 +187,7 @@ func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, 
 		RouterResolver: func(name string) (d2graph.RouteEdges, error) { return s.routers(engine(name)) },
 		LayoutReuse:    true, AnimateTweens: new(motion != nil),
 		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
+		LayoutTweens:        map[string]d2graph.LayoutTween{"tala": d2talalayout.TweenResize},
 	}
 	if motion != nil {
 		opts.AnimateDuration = motion.AnimateDuration

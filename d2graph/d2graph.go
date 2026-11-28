@@ -64,6 +64,9 @@ type Graph struct {
 	// frame belongs to this board and shares its navigation identity.
 	TweenFrames     []*Graph `json:"-"`
 	TweenDurationMS int      `json:"-"`
+	// TweenReorder marks the first interstitial when siblings exchange places
+	// during a layout tween. The held boards keep ordinary layout and paint.
+	TweenReorder bool `json:"-"`
 
 	Theme *d2themes.Theme `json:"theme,omitempty"`
 
@@ -176,6 +179,11 @@ func (g *Graph) IDA() []string {
 // board. It may change current geometry only and reports whether the boards
 // share coordinates for playback. Both graphs are local to one compilation.
 type LayoutContinuation func(ctx context.Context, previous, current *Graph) (bool, error)
+
+// LayoutTween may refine the interstitial graphs of a completed transition.
+// The start and end layouts are read-only. Return true when end.TweenFrames
+// must be exported again to render their updated geometry.
+type LayoutTween func(ctx context.Context, start, end *Graph) (bool, error)
 
 type LayoutGraph func(context.Context, *Graph) error
 type RouteEdges func(context.Context, *Graph, []*Edge) error

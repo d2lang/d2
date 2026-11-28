@@ -356,6 +356,7 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		AnimateDuration: input.Opts.AnimateDuration,
 
 		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
+		LayoutTweens:        map[string]d2graph.LayoutTween{"tala": d2talalayout.TweenResize},
 	}
 
 	inputPath := DEFAULT_INPUT_PATH
