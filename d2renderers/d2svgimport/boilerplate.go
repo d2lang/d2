@@ -60,6 +60,28 @@ func isAnimationElement(name string) bool {
 	return false
 }
 
+func (i *svgImporter) validateAnimation(element, parent *svgElement) error {
+	if element.name == "mpath" && parent.name != "animateMotion" {
+		return i.errorf("<mpath> must be a child of <animateMotion>")
+	}
+	for _, name := range element.attrOrder {
+		if _, ok := animationAttributes[name]; !ok || (element.name == "mpath" && name != "href" && name != "id") {
+			return i.errorf("element <%s> has unsupported attribute %q", element.name, displayXMLName(name))
+		}
+	}
+	if href, present := element.attrs["href"]; present || element.name == "mpath" {
+		id, local := strings.CutPrefix(href, "#")
+		valid, err := validSVGID(i.ctx, id)
+		if err != nil {
+			return err
+		}
+		if !local || !valid {
+			return i.errorf("element <%s> href must be one local #id reference", element.name)
+		}
+	}
+	return nil
+}
+
 func isNonRenderingElement(name string) bool {
 	if isAnimationElement(name) {
 		return true

@@ -463,22 +463,28 @@ func (i *svgImporter) parse(data []byte) (*svgElement, error) {
 			} else {
 				parent := stack[len(stack)-1]
 				element.parent = parent
-				if name == "mpath" && parent.name != "animateMotion" {
-					return nil, i.errorf("<mpath> must be a child of <animateMotion>")
+				if isAnimationElement(parent.name) {
+					if name == "title" || name == "desc" {
+						// These leaves belong to a skipped animation, so validate
+						// them here instead of the subsequent scene-tree walk.
+						if err := i.compileElement(element); err != nil {
+							return nil, err
+						}
+					} else if name != "mpath" || parent.name != "animateMotion" {
+						return nil, i.errorf("animation element <%s> has unsupported child <%s>", parent.name, name)
+					}
 				}
-				if isAnimationElement(parent.name) && name != "mpath" {
-					return nil, i.errorf("animation element <%s> has unsupported child <%s>", parent.name, name)
+				if isDescription(parent.name) {
+					return nil, i.errorf("non-rendering element <%s> cannot contain child elements", parent.name)
 				}
 				// Raster export draws the authored base state. Animation is parsed
 				// and counted like other XML, but never contributes to the scene.
-				if !isAnimationElement(name) {
-					parent.children = append(parent.children, element)
-				} else {
-					for _, attr := range attributeOrder {
-						if _, ok := animationAttributes[attr]; !ok || (name == "mpath" && attr != "href" && attr != "id") {
-							return nil, i.errorf("element <%s> has unsupported attribute %q", name, displayXMLName(attr))
-						}
+				if isAnimationElement(name) {
+					if err := i.validateAnimation(element, parent); err != nil {
+						return nil, err
 					}
+				} else {
+					parent.children = append(parent.children, element)
 				}
 			}
 			stack = append(stack, element)
