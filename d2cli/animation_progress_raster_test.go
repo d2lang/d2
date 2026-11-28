@@ -25,15 +25,15 @@ func progressRenderOpts() d2svg.RenderOpts {
 	}
 }
 
-func checkProgressStrip(t *testing.T, frame image.Image, extent int) {
+func checkProgressStrip(t *testing.T, frame image.Image, extent, height int) {
 	t.Helper()
 	bounds := frame.Bounds()
-	for y := max(bounds.Min.Y, bounds.Max.Y-7); y < bounds.Max.Y; y++ {
+	for y := max(bounds.Min.Y, bounds.Max.Y-height-1); y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			got := color.RGBAModel.Convert(frame.At(x, y)) == testProgressInk
-			want := y >= bounds.Max.Y-6 && x < bounds.Min.X+extent
+			want := y >= bounds.Max.Y-height && x < bounds.Min.X+extent
 			if got != want {
-				t.Fatalf("pixel (%d,%d) on %v is %v; expected a six-pixel progress line of width %d", x, y, bounds, frame.At(x, y), extent)
+				t.Fatalf("pixel (%d,%d) on %v is %v; want a %dx%d progress line", x, y, bounds, frame.At(x, y), extent, height)
 			}
 		}
 	}
@@ -51,7 +51,7 @@ func TestVideoProgressUsesOutputClockAndLetterbox(t *testing.T) {
 				if tick == total-1 {
 					want = 48
 				}
-				checkProgressStrip(t, im, want)
+				checkProgressStrip(t, im, want, 2)
 				tick++
 			}
 			runs++
@@ -74,7 +74,7 @@ func TestVideoProgressCancellationRestoresBorrowedCanvas(t *testing.T) {
 	p := &videoProgressOverlay{ink: image.NewUniform(testProgressInk), steps: frame.Rect.Dx()}
 	calls := 0
 	err := p.emit(ctx, frame, 5, 50, 60, func(im image.Image, _ int) error {
-		checkProgressStrip(t, im, 4)
+		checkProgressStrip(t, im, 4, 2)
 		calls++
 		cancel()
 		return nil
@@ -106,6 +106,21 @@ func TestVideoProgressWithinCodedPixelBudget(t *testing.T) {
 	}
 }
 
+func TestVideoProgressHeightUsesDeliverySize(t *testing.T) {
+	for _, tc := range []struct {
+		size videoSize
+		want int
+	}{{videoSize{250, 480}, 3}, {videoSize{1024, 600}, 6}} {
+		err := renderVideoFrames(t.Context(), "-", false, simpleRasterDiagram(), progressRenderOpts(), 100, gifLayerOptions{}, time.Millisecond, false, tc.size, func(im image.Image, _ int) error {
+			checkProgressStrip(t, im, im.Bounds().Dx(), tc.want)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestGIFProgressUsesEncodedDelaysOnMixedCanvases(t *testing.T) {
 	single := simpleRasterDiagramWithSize(70, 10)
 	single.Root.Annotation = &d2target.Annotation{Label: "Pause for this caption."}
@@ -116,14 +131,16 @@ func TestGIFProgressUsesEncodedDelaysOnMixedCanvases(t *testing.T) {
 	root := simpleRasterDiagramWithSize(20, 40)
 	root.Steps = []*d2target.Diagram{sparse}
 	for _, tc := range []struct {
-		name           string
-		d              *d2target.Diagram
-		ms, durationCS int
+		name                       string
+		d                          *d2target.Diagram
+		ms, durationCS, lineHeight int
 	}{
-		{"caption", single, 101, (single.ReadingMS() + 9) / 10},
-		{"sparse tween", root, 100, 60},
-		{"single frame", simpleRasterDiagram(), 1, 1},
-		{"short canvas", simpleRasterDiagramWithSize(10, 3), 100, 10},
+		{"caption", single, 101, (single.ReadingMS() + 9) / 10, 2},
+		{"sparse tween", root, 100, 60, 2},
+		{"single frame", simpleRasterDiagram(), 1, 1, 2},
+		{"one row", simpleRasterDiagramWithSize(10, 1), 1, 1, 1},
+		{"short canvas", simpleRasterDiagramWithSize(10, 3), 100, 10, 2},
+		{"medium portrait", simpleRasterDiagramWithSize(350, 600), 1, 1, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data, _, err := renderGIF(t.Context(), "-", false, tc.d, progressRenderOpts(), tc.ms, false, gifLayerOptions{})
@@ -143,7 +160,7 @@ func TestGIFProgressUsesEncodedDelaysOnMixedCanvases(t *testing.T) {
 				if i == len(a.Image)-1 {
 					want = frame.Rect.Dx()
 				}
-				checkProgressStrip(t, frame, want)
+				checkProgressStrip(t, frame, want, tc.lineHeight)
 				if tc.name == "sparse tween" && a.Delay[i] > 6 {
 					t.Fatalf("progress froze for %dcs inside a sparse pose", a.Delay[i])
 				}
@@ -226,7 +243,7 @@ func TestGIFProgressColorIndependentOfBoardPalette(t *testing.T) {
 		if enabled {
 			want = color.RGBA{G: 255, A: 255}
 		}
-		if got := color.RGBAModel.Convert(last.At(24, 45)); got != want {
+		if got := color.RGBAModel.Convert(last.At(24, 47)); got != want {
 			t.Fatalf("progress %t drew %v at the bottom, want %v", enabled, got, want)
 		}
 	}
@@ -314,7 +331,7 @@ func TestGIFProgressReservesAccentOnFullGrayscalePalette(t *testing.T) {
 	if err := p.paint(t.Context(), im); err != nil {
 		t.Fatal(err)
 	}
-	checkProgressStrip(t, im, 256)
+	checkProgressStrip(t, im, 256, 2)
 	if got := color.RGBAModel.Convert(im.At(255, 0)); got != (color.RGBA{255, 255, 255, 255}) {
 		t.Fatalf("white canvas slot changed to %v", got)
 	}

@@ -12,7 +12,7 @@ import (
 
 // Raster formats draw in delivery pixels, after camera and canvas placement.
 func animationProgressStrip(bounds image.Rectangle) image.Rectangle {
-	bounds.Min.Y = max(bounds.Min.Y, bounds.Max.Y-d2animate.ProgressHeight)
+	bounds.Min.Y = bounds.Max.Y - d2animate.ProgressLineHeight(bounds.Dx(), bounds.Dy())
 	return bounds
 }
 

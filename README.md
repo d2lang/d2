@@ -190,7 +190,9 @@ interval show the line only if you pass `--animate-progress` or set
 `animate-progress: true` in the config.
 
 The line fills from left to right over the playback time, including holds, and
-stays fixed during camera moves. It uses the theme's B1 color (the usual solid
+stays fixed during camera moves. Its height is 1% of the shorter canvas dimension,
+rounded to the nearest pixel and limited to 2–6 pixels, or one pixel on a single-row canvas.
+It uses the theme's B1 color (the usual solid
 stroke). To color the bar independently, set
 `vars.d2-config.animate-progress-color: "#E35B42"` or pass
 `--animate-progress-color salmon`.

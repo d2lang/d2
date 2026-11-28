@@ -4,14 +4,24 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"math"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	"github.com/d2lang/d2/lib/svg"
 )
 
-// ProgressHeight is the line height in SVG user units or raster output pixels.
+// ProgressHeight is the maximum playback progress line height in output pixels.
 const ProgressHeight = 6
+
+// ProgressLineHeight is 1% of the shorter canvas side, rounded to whole pixels.
+func ProgressLineHeight(width, height int) int {
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+	return min(height, ProgressHeight, max(2, int(math.Round(float64(min(width, height))/100))))
+}
 
 // ProgressColor resolves the opaque B1 color used by animation overlays.
 // When the override supplies no solid paint, use the original catalog color.
@@ -61,7 +71,17 @@ func svgProgress(buf *bytes.Buffer, hash string, viewport image.Rectangle, total
 		fmt.Fprintf(buf, ".d2-layer-link-%s:target~%s{animation-play-state:paused!important}", hash, line)
 	}
 	fmt.Fprintf(buf, "@media(prefers-reduced-motion:reduce){%s{visibility:hidden}}", line)
-	h := min(ProgressHeight, viewport.Dy())
-	return fmt.Sprintf(`<rect class="d2-progress-%s" x="%d" y="%d" width="%d" height="%d" transform="scale(0 1)" pointer-events="none" aria-hidden="true" style="%sanimation:d2Progress-%s %dms linear infinite"/>`,
-		hash, viewport.Min.X, viewport.Max.Y-h, viewport.Dx(), h, paint, hash, totalMS), nil
+	w, h := viewport.Dx(), viewport.Dy()
+	scale := 1.0
+	if opts.Scale != nil {
+		w, h, err = svg.ScaledSize(w, h, *opts.Scale)
+		if err != nil {
+			return "", err
+		}
+		// The outer SVG fits the viewBox into its rounded pixel dimensions with 'meet'.
+		scale = min(float64(w)/float64(viewport.Dx()), float64(h)/float64(viewport.Dy()))
+	}
+	lineHeight := min(float64(viewport.Dy()), float64(ProgressLineHeight(w, h))/scale)
+	return fmt.Sprintf(`<rect class="d2-progress-%s" x="%d" y="%g" width="%d" height="%g" transform="scale(0 1)" pointer-events="none" aria-hidden="true" style="%sanimation:d2Progress-%s %dms linear infinite"/>`,
+		hash, viewport.Min.X, float64(viewport.Max.Y)-lineHeight, viewport.Dx(), lineHeight, paint, hash, totalMS), nil
 }

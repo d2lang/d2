@@ -1,6 +1,9 @@
 package d2animate
 
 import (
+	"encoding/xml"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -64,7 +67,7 @@ func TestSVGProgressClock(t *testing.T) {
 		line + "{fill:var(--d2-progress-light)}", "@media screen and (prefers-color-scheme:dark){" + line + "{fill:var(--d2-progress-dark)}}",
 		`style="--d2-progress-light:#123456;--d2-progress-dark:#abcdef;`,
 		"@media(prefers-reduced-motion:reduce){" + line + "{visibility:hidden}}",
-		`x="-14" y="12" width="60" height="6" transform="scale(0 1)" pointer-events="none" aria-hidden="true"`,
+		`x="-14" y="16" width="60" height="2" transform="scale(0 1)" pointer-events="none" aria-hidden="true"`,
 		"1000ms linear infinite",
 	} {
 		if !strings.Contains(active, want) {
@@ -86,16 +89,45 @@ func TestSVGProgressClock(t *testing.T) {
 	}
 }
 
-func TestSVGProgressFitsShortCanvas(t *testing.T) {
-	on := true
-	opts := d2svg.RenderOpts{Pad: new(int64), AnimateProgress: &on}
-	frame := []byte(`<g viewBox="0 0 12 3"></g>`)
-	out, err := Wrap(d2target.NewDiagram(), [][]byte{frame}, opts, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(out), `x="0" y="0" width="12" height="3"`) {
-		t.Fatal("progress line should fit the three-unit viewport")
+func TestSVGProgressHeightAtExportSize(t *testing.T) {
+	for _, tc := range []struct {
+		width, height int
+		scale         float64 // zero leaves the SVG responsive
+		want          float64 // pixels at the exported size
+	}{
+		{12, 1, 0, 1}, {622, 84, 0, 2}, {249, 680, 0, 2}, {250, 680, 0, 3},
+		{850, 349, 0, 3}, {850, 350, 0, 4}, {500, 900, 0, 5}, {1920, 1080, 0, 6},
+		{400, 300, 3, 6}, {1000, 600, 0.25, 2}, {501, 419, 0.833, 4},
+	} {
+		t.Run(fmt.Sprintf("%dx%d_at_%g", tc.width, tc.height, tc.scale), func(t *testing.T) {
+			opts := d2svg.RenderOpts{Pad: new(int64)}
+			if tc.scale != 0 {
+				opts.Scale = &tc.scale
+			}
+			frame := fmt.Appendf(nil, `<g viewBox="0 0 %d %d"></g>`, tc.width, tc.height)
+			out, err := Wrap(d2target.NewDiagram(), [][]byte{frame}, opts, 1000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Width  int `xml:"width,attr"`
+				Height int `xml:"height,attr"`
+				Line   struct {
+					Y      float64 `xml:"y,attr"`
+					Height float64 `xml:"height,attr"`
+				} `xml:"svg>rect"`
+			}
+			if err := xml.Unmarshal(out, &doc); err != nil {
+				t.Fatal(err)
+			}
+			scale := 1.0
+			if opts.Scale != nil {
+				scale = min(float64(doc.Width)/float64(tc.width), float64(doc.Height)/float64(tc.height))
+			}
+			if got := doc.Line.Height * scale; math.Abs(got-tc.want) > 1e-9 || math.Abs(doc.Line.Y+doc.Line.Height-float64(tc.height)) > 1e-9 {
+				t.Errorf("line at y=%g, height=%g draws %g output pixels, want %g along the bottom", doc.Line.Y, doc.Line.Height, got, tc.want)
+			}
+		})
 	}
 }
 
