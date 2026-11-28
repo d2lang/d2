@@ -38,9 +38,11 @@ const DEFAULT_SHAPE_SIZE = 100.
 const MIN_SHAPE_SIZE = 5
 
 type Graph struct {
-	FS     fs.FS  `json:"-"`
-	Parent *Graph `json:"-"`
-	Name   string `json:"name"`
+	// Warnings contains non-fatal compile diagnostics on the root board.
+	Warnings []d2ast.Error `json:"-"`
+	FS       fs.FS         `json:"-"`
+	Parent   *Graph        `json:"-"`
+	Name     string        `json:"name"`
 	// BoardRange locates the board declaration in source, including dotted keys and imports.
 	BoardRange d2ast.Range `json:"-"`
 	// IsFolderOnly indicates a board or scenario itself makes no modifications from its

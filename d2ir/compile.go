@@ -2631,7 +2631,10 @@ func (c *compiler) extendLinks(m *Map, importF *Field, importDir string) {
 				continue
 			}
 			linkIDA := link.IDA()
-			if len(linkIDA) == 0 {
+			// compileLink normalizes board references to root or an unresolved
+			// parent. Relative URLs are relative to the exported document.
+			if len(linkIDA) == 0 || !linkIDA[0].IsUnquoted() ||
+				(linkIDA[0].ScalarString() != "root" && linkIDA[0].ScalarString() != "_") {
 				continue
 			}
 

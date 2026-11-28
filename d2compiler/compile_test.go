@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	tassert "github.com/stretchr/testify/assert"
 
@@ -426,6 +427,27 @@ func TestCompilePreservesSafeOrdinaryLinks(t *testing.T) {
 			tassert.NoError(t, err)
 			tassert.NotNil(t, g)
 		})
+	}
+}
+
+func TestRelativeFileLinksAndMissingBoards(t *testing.T) {
+	fs := fstest.MapFS{"card.d2": {Data: []byte(`a.link: next.svg; b.link: docs/page.html`)}}
+	src := `...@card
+c.link: readme.md?raw=1
+bad.link: steps.missing
+steps: {one: {}; two: {prev.link: _.steps.one; wrong.link: _.one}}`
+	g, _, err := d2compiler.Compile("main.d2", strings.NewReader(src), &d2compiler.CompileOptions{FS: fs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"a": "next.svg", "b": "docs/page.html", "c": "readme.md?raw=1", "prev": "root.steps.one"} {
+		obj, ok := g.Steps[1].Root.HasChild([]string{id})
+		if !ok || obj.Link == nil || obj.Link.Value != want {
+			t.Errorf("missing expected link %s = %q", id, want)
+		}
+	}
+	if len(g.Warnings) != 2 {
+		t.Fatalf("warnings = %v, want one per unresolved source link", g.Warnings)
 	}
 }
 

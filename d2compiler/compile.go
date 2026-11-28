@@ -455,6 +455,7 @@ func _findFieldAST(ast *d2ast.Map, path []d2ast.String) *d2ast.Map {
 
 type compiler struct {
 	err             *d2parser.ParseError
+	warnedLinks     map[d2ast.Range]bool
 	activeClassMaps map[*d2ir.Map]struct{}
 	classMapsByRoot map[*d2ir.Map]map[string]*d2ir.Map
 	// classNames are the classes being applied to the object now, outermost first.
@@ -1853,12 +1854,22 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 			continue
 		}
 
-		if linkKey.Path[0].Unbox().ScalarString() != "root" {
-			obj.Link = nil
+		head := linkKey.Path[0].Unbox().ScalarString()
+		if head != "root" && head != "_" && err == nil &&
+			(len(linkKey.Path) > 1 || strings.Contains(u.Path, "/") || u.RawQuery != "" || u.Fragment != "") {
+			// Unlike board references, relative file URLs keep their authored path.
 			continue
 		}
-
-		if !hasBoard(g.RootBoard(), linkKey.IDA()) {
+		if head != "root" || !hasBoard(g.RootBoard(), linkKey.IDA()) {
+			if key := obj.Link.MapKey; key != nil && !c.warnedLinks[key.Range] {
+				if c.warnedLinks == nil {
+					c.warnedLinks = make(map[d2ast.Range]bool)
+				}
+				c.warnedLinks[key.Range] = true
+				msg := fmt.Sprintf("board link %q has no matching board; use _.steps.name for a sibling step or ./name for a file", obj.Link.Value)
+				root := g.RootBoard()
+				root.Warnings = append(root.Warnings, d2ast.Error{Range: key.Range, Message: msg})
+			}
 			obj.Link = nil
 			continue
 		}

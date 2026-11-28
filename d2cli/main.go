@@ -662,6 +662,9 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	if err != nil {
 		return nil, false, err
 	}
+	for _, w := range g.Warnings {
+		ms.Log.Warn.Printf("%s: %s", w.Range, w.Message)
+	}
 	var animateInterval int64
 	if interval := rootDiagram.Config.ResolveAnimateInterval(animateIntervalFlag); interval != nil {
 		animateInterval = *interval
