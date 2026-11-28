@@ -16,6 +16,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/d2svgimport"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/svg"
 )
@@ -304,6 +305,8 @@ type motionTick struct {
 	at    float64
 	pct   string
 	tween bool
+	// Only an authored arrival supplies the duration of its incoming motion.
+	incomingMS int
 }
 type motionValue struct {
 	x, y    float64
@@ -317,12 +320,80 @@ func (v motionValue) css() string {
 	return "translate(" + svg.FormatFloat(v.x) + "px," + svg.FormatFloat(v.y) + "px)"
 }
 
-// Preserve every authored boundary. Within a tween a straight section only
-// needs its endpoints, including when the compiler used many fractional samples.
+// cubicMotionMidpoint recognizes the compiler's rest-to-rest curve from its
+// full sampled geometry. A midpoint alone cannot distinguish it from a line.
+func cubicMotionMidpoint(count int, sample func(int) (fraction, x, y float64), tolerance float64) int {
+	if count < 5 {
+		return -1
+	}
+	t0, x0, y0 := sample(0)
+	t1, x1, y1 := sample(count - 1)
+	if t0 != 0 || t1 != 1 || math.Hypot(x1-x0, y1-y0) <= tolerance {
+		return -1
+	}
+	mid := -1
+	left, right := false, false
+	prev := t0
+	for i := 1; i < count-1; i++ {
+		t, x, y := sample(i)
+		if !(t > prev && t < 1) {
+			return -1
+		}
+		u := animation.EaseInOut(t)
+		if !(math.Abs(x-(x0+(x1-x0)*u)) <= tolerance && math.Abs(y-(y0+(y1-y0)*u)) <= tolerance) {
+			return -1
+		}
+		switch {
+		case math.Abs(t-.5) <= 1e-12:
+			mid = i
+		case t < .5:
+			left = true
+		default:
+			right = true
+		}
+		prev = t
+	}
+	if !left || !right {
+		return -1
+	}
+	return mid
+}
+
+// Preserve every authored boundary. A verified cubic needs a timing function
+// on each half; linear and other sampled motions retain their own timings.
 func writeMotionProperty(css *bytes.Buffer, name, property string, clock []motionTick, values []motionValue, smooth []bool, reduced bool) {
 	fmt.Fprintf(css, "@keyframes %s{", name)
+	writeKey := func(i int, timing string) {
+		fmt.Fprintf(css, "%s{%s:%s", clock[i].pct, property, values[i].css())
+		if timing != "" {
+			css.WriteString(";animation-timing-function:" + timing)
+		}
+		css.WriteByte('}')
+	}
 	prev := 0
-	for i, v := range values {
+	for i := 0; i < len(values); i++ {
+		v := values[i]
+		if property == "transform" && !reduced && clock[i].tween && (i == 0 || !clock[i-1].tween) {
+			end := i
+			for end < len(clock) && smooth[end] {
+				end++
+			}
+			// With no final hold the timeline intentionally shows the endpoint
+			// before the last sample period is over. Preserve that exact cut.
+			if end < len(clock) && clock[end].incomingMS > 0 && clock[end].at-clock[i].at == float64(clock[end].incomingMS) {
+				mid := cubicMotionMidpoint(end-i+1, func(j int) (float64, float64, float64) {
+					k := i + j
+					return (clock[k].at - clock[i].at) / float64(clock[end].incomingMS), values[k].x, values[k].y
+				}, 0.000002) // Rendered SVG coordinates have six fractional digits.
+				if mid >= 0 {
+					writeKey(i, "cubic-bezier(.3333333333,0,.6666666667,0)")
+					writeKey(i+mid, "cubic-bezier(.3333333333,1,.6666666667,1)")
+					prev = i + mid
+					i = end - 1
+					continue
+				}
+			}
+		}
 		if reduced && i > 0 && i+1 < len(values) && clock[i-1].tween && clock[i].tween {
 			continue
 		}
@@ -338,11 +409,11 @@ func writeMotionProperty(css *bytes.Buffer, name, property string, clock []motio
 				}
 			}
 		}
-		fmt.Fprintf(css, "%s{%s:%s", clock[i].pct, property, v.css())
+		var timing string
 		if !reduced && !smooth[i] && i+1 < len(values) {
-			css.WriteString(";animation-timing-function:steps(1,end)")
+			timing = "steps(1,end)"
 		}
-		css.WriteByte('}')
+		writeKey(i, timing)
 		prev = i
 	}
 	css.WriteByte('}')
@@ -437,10 +508,13 @@ func nativeMotionSpan(frames []Frame, svgs [][]byte, hash string, total int, spa
 			}
 			shapes[i][base64.URLEncoding.EncodeToString([]byte(svg.EscapeText(s.ID)))] = s
 		}
-		clock[i] = motionTick{float64(ms) + float64(frame.start.fraction)/float64(time.Millisecond), frame.start.percentage(ms, total), frame.TweenSample}
+		clock[i] = motionTick{at: float64(ms) + float64(frame.start.fraction)/float64(time.Millisecond), pct: frame.start.percentage(ms, total), tween: frame.TweenSample}
+		if !frame.TweenSample {
+			clock[i].incomingMS = frame.Diagram.TweenDurationMS
+		}
 		ms += frame.DurationMS
 	}
-	clock[len(frames)] = motionTick{float64(total), "100%", false}
+	clock[len(frames)] = motionTick{at: float64(total), pct: "100%"}
 	var body, css bytes.Buffer
 	fmt.Fprintf(&body, `<g class="%s">`, hash)
 	cursors := make([]int, len(frames))

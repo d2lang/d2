@@ -95,6 +95,34 @@ func TranslationTracks(board *d2target.Diagram) map[string]d2scene.Track {
 			return nil
 		}
 	}
+	// Physical moves may use cubic acceleration and deceleration. Verify every
+	// pose against that clock before replacing the samples with exact curves.
+	for i := range base.Shapes {
+		track, ok := moving[base.Shapes[i].ID]
+		if !ok || len(track.Keyframes) < 3 || len(samples) < 5 {
+			continue
+		}
+		from, to := base.Shapes[i].RenderedPosition(), board.Shapes[i].RenderedPosition()
+		dx, dy := to.X-from.X, to.Y-from.Y
+		if dx == 0 && dy == 0 {
+			continue
+		}
+		midpoint := cubicMotionMidpoint(len(samples)+1, func(j int) (float64, float64, float64) {
+			if j == len(samples) {
+				return 1, to.X, to.Y
+			}
+			p := samples[j].Shapes[i].RenderedPosition()
+			return float64(j) / float64(len(samples)), p.X, p.Y
+		}, 1e-8)
+		if midpoint >= 0 {
+			a, b := track.Keyframes[0], track.Keyframes[len(track.Keyframes)-1]
+			a.Easing = d2scene.Easing{Kind: d2scene.EaseCubicBezier, X1: 1.0 / 3, X2: 2.0 / 3}
+			mid := d2scene.Keyframe{Offset: .5, Value: d2scene.TransformValue(d2scene.Translate(a.Value.Transform.E+dx/2, a.Value.Transform.F+dy/2)),
+				Easing: d2scene.Easing{Kind: d2scene.EaseCubicBezier, X1: 1.0 / 3, X2: 2.0 / 3, Y1: 1, Y2: 1}}
+			track.Keyframes = []d2scene.Keyframe{a, mid, b}
+			moving[base.Shapes[i].ID] = track
+		}
+	}
 	return moving
 }
 

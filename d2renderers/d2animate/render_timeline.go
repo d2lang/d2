@@ -3,12 +3,13 @@ package d2animate
 import (
 	"math"
 
+	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 )
 
-// RenderSVGFrames renders the artwork for WrapTimeline. A straight translation
-// of otherwise identical artwork needs only the ends of the line. Check the
+// RenderSVGFrames renders the artwork for WrapTimeline. A straight or eased translation
+// of otherwise identical artwork needs only a few reference poses. Check the
 // emitted SVG too, since bundling, appendices and custom renderers can change it.
 func RenderSVGFrames(root *d2target.Diagram, boardPath []string, frames []Frame, opts d2svg.RenderOpts, zoomMS int, render func(*d2target.Diagram) ([]byte, error)) ([]Frame, [][]byte, error) {
 	art := make([][]byte, len(frames))
@@ -23,7 +24,7 @@ func RenderSVGFrames(root *d2target.Diagram, boardPath []string, frames []Frame,
 		return art[i], nil
 	}
 	if opts.MasterID != "" && d2svg.UsesDefaultStylesheet() && (opts.Sketch == nil || !*opts.Sketch) {
-		indices, total := straightMotionFrames(frames)
+		indices, total := sparseMotionFrames(frames)
 		if indices != nil {
 			nav := NewLayerNavigation(root, boardPath)
 			if !nav.HasLayerPortal() && len(layerLinks(nav, frames, zoomMS)) == 0 {
@@ -61,7 +62,7 @@ func RenderSVGFrames(root *d2target.Diagram, boardPath []string, frames []Frame,
 
 // Retain all authored holds and both ends of each sampled run. The last
 // sample matters when the timeline divides its final period with the endpoint.
-func straightMotionFrames(frames []Frame) (indices []int, total int) {
+func sparseMotionFrames(frames []Frame) (indices []int, total int) {
 	start := 0
 	for i, f := range frames {
 		if f.DurationMS <= 0 || f.DurationMS > math.MaxInt-total || f.picture != nil {
@@ -72,32 +73,39 @@ func straightMotionFrames(frames []Frame) (indices []int, total int) {
 			continue
 		}
 		n := i - start
-		straight := n > 2 && n == len(f.Diagram.TweenFrames)
-		if straight {
+		sparse := n > 2 && n == len(f.Diagram.TweenFrames)
+		eased := false
+		if sparse {
 			tracks := TranslationTracks(f.Diagram)
-			straight = len(tracks) > 0
+			sparse = len(tracks) > 0
 			for _, track := range tracks {
-				if len(track.Keyframes) != 2 {
-					straight = false
+				if len(track.Keyframes) == 3 && track.Keyframes[0].Easing.Kind == d2scene.EaseCubicBezier {
+					eased = true
+				} else if len(track.Keyframes) != 2 {
+					sparse = false
 					break
 				}
 			}
 		}
-		if straight {
+		if sparse {
 			left, right := f.Diagram.BoundingBox()
 			for j, sampled := range f.Diagram.TweenFrames {
 				// Each frame paints its own background. Two objects crossing
-				// can temporarily shrink that rectangle even on straight paths.
+				// can temporarily shrink that rectangle during a rigid translation.
 				tl, br := sampled.BoundingBox()
 				if frames[start+j].Diagram != sampled || tl != left || br != right {
-					straight = false
+					sparse = false
 					break
 				}
 			}
 		}
-		if straight {
+		switch {
+		case sparse && !eased:
 			indices = append(indices, start, i-1, i)
-		} else {
+		case sparse && n >= 8 && n%2 == 0 && f.ElapsedMS == f.Diagram.TweenDurationMS:
+			// Both halves of the cubic can be verified from the emitted SVG.
+			indices = append(indices, start, start+n/4, start+n/2, start+3*n/4, i)
+		default:
 			for j := start; j <= i; j++ {
 				indices = append(indices, j)
 			}

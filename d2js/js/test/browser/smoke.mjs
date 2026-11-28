@@ -56,9 +56,11 @@ async function checkFractionalMotion(page) {
     });
   };
   const origin = await at(200);
+  const ease = (t) => t < 0.5 ? 4 * t ** 3 : 1 - 4 * (1 - t) ** 3;
   for (const [ms, distance] of [
-    [1199, 0], [1204, 0.02], [1208, 0.04], [1481, 1.405], [2200, 5],
-    [2350, 5], [2704, 3.48], [3420, 0], [3600, 0],
+    [1199, 0], [1450, 5 / 16], [1481, 5 * ease(0.281)],
+    [1692, 5 * ease(0.492)], [1697, 5 * ease(0.497)], [1950, 75 / 16],
+    [2200, 5], [2350, 5], [2704, 5 * (1 - ease(0.304))], [3420, 0], [3600, 0],
   ]) {
     assert.ok(Math.abs((await at(ms)) - origin - distance) < 0.012, `marker position at ${ms}ms`);
   }
