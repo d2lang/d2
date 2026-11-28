@@ -52,24 +52,7 @@ func Layout(ctx context.Context, g *d2graph.Graph, constantNearGraphs []*d2graph
 			obj := tempGraph.Root.ChildrenArray[0]
 			_, in := currentSet[d2graph.Key(obj.NearKey)[0]]
 			if in {
-				prevX, prevY := obj.TopLeft.X, obj.TopLeft.Y
-				obj.TopLeft = geo.NewPoint(place(obj))
-				dx, dy := obj.TopLeft.X-prevX, obj.TopLeft.Y-prevY
-
-				for _, subObject := range tempGraph.Objects {
-					// `obj` already been replaced above by `place(obj)`
-					if subObject == obj {
-						continue
-					}
-					subObject.TopLeft.X += dx
-					subObject.TopLeft.Y += dy
-				}
-				for _, subEdge := range tempGraph.Edges {
-					for _, point := range subEdge.Route {
-						point.X += dx
-						point.Y += dy
-					}
-				}
+				moveGroup(obj, g, tempGraph.Objects, tempGraph.Edges)
 			}
 		}
 		for _, tempGraph := range constantNearGraphs {
@@ -91,9 +74,63 @@ func Layout(ctx context.Context, g *d2graph.Graph, constantNearGraphs []*d2graph
 	return nil
 }
 
+// Reposition updates constant-near groups after the main diagram geometry changes.
+// Replay the same placement phases as Layout, without reattaching the groups.
+func Reposition(g *d2graph.Graph) {
+	var bounds d2graph.Graph
+	members := make(map[*d2graph.Object][]*d2graph.Object)
+	links := make(map[*d2graph.Object][]*d2graph.Edge)
+	for _, obj := range g.Objects {
+		root := obj.OuterNearContainer()
+		if root == nil || !root.IsConstantNear() {
+			bounds.Objects = append(bounds.Objects, obj)
+		} else {
+			members[root] = append(members[root], obj)
+		}
+	}
+	if len(members) == 0 {
+		return
+	}
+	for _, e := range g.Edges {
+		root := e.Src.OuterNearContainer()
+		if root != nil && root == e.Dst.OuterNearContainer() {
+			links[root] = append(links[root], e)
+		} else {
+			bounds.Edges = append(bounds.Edges, e)
+		}
+	}
+	for _, phase := range []set{VerticalCenterNears, HorizontalCenterNears, NonCenterNears} {
+		var placed []*d2graph.Object
+		for _, root := range g.Root.ChildrenArray {
+			if members[root] == nil {
+				continue
+			}
+			if _, ok := phase[d2graph.Key(root.NearKey)[0]]; ok {
+				moveGroup(root, &bounds, members[root], links[root])
+				placed = append(placed, root)
+			}
+		}
+		bounds.Objects = append(bounds.Objects, placed...)
+	}
+}
+
+func moveGroup(root *d2graph.Object, bounds *d2graph.Graph, objects []*d2graph.Object, edges []*d2graph.Edge) {
+	x, y := place(root, bounds)
+	dx, dy := x-root.TopLeft.X, y-root.TopLeft.Y
+	for _, obj := range objects {
+		obj.TopLeft = geo.NewPoint(obj.TopLeft.X+dx, obj.TopLeft.Y+dy)
+	}
+	for _, e := range edges {
+		for _, p := range e.Route {
+			p.X += dx
+			p.Y += dy
+		}
+	}
+}
+
 // place returns the position of obj, taking into consideration its near value and the diagram
-func place(obj *d2graph.Object) (float64, float64) {
-	tl, br := boundingBox(obj.Graph)
+func place(obj *d2graph.Object, bounds *d2graph.Graph) (float64, float64) {
+	tl, br := boundingBox(bounds)
 	w := br.X - tl.X
 	h := br.Y - tl.Y
 

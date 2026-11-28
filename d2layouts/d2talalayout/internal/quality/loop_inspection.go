@@ -93,3 +93,26 @@ func (s *LoopInspection) Preserves(before *LoopInspection) bool {
 	}
 	return true
 }
+
+// CollectObstructedRoutes identifies the wires whose route or caption acquired
+// a collision on a proposed board placement. Ordinary wire crossings are legal.
+func (s *LoopInspection) CollectObstructedRoutes(before *LoopInspection, edges, labels map[layoutgraph.EntityID]bool) bool {
+	if s.incomplete || before.incomplete {
+		return false
+	}
+	for pair, count := range s.pairs {
+		if count <= before.pairs[pair] || pair[0].part == pair[1].part && (pair[0].part == edgeRoute || pair[0].part == interiorRoute) {
+			continue
+		}
+		for _, item := range pair {
+			if item.part == edgeText && labels != nil {
+				labels[item.id] = true
+			}
+			switch item.part {
+			case edgeRoute, edgeText, sourceText, targetText:
+				edges[item.id] = true
+			}
+		}
+	}
+	return true
+}

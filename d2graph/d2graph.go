@@ -64,6 +64,9 @@ type Graph struct {
 	// frame belongs to this board and shares its navigation identity.
 	TweenFrames     []*Graph `json:"-"`
 	TweenDurationMS int      `json:"-"`
+	// ResizeLayoutOrigin records the authored placement used by a completed
+	// resize. Consecutive resize steps can release space back to this layout.
+	ResizeLayoutOrigin *Graph `json:"-"`
 
 	Theme *d2themes.Theme `json:"theme,omitempty"`
 

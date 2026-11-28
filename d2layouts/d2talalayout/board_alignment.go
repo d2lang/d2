@@ -54,7 +54,9 @@ func alignBoard(ctx context.Context, previous, current *d2graph.Graph) (bool, er
 
 // Leave authored origins and special-purpose grid and sequence playback alone.
 // Bound both the topology walk and the work used to compare candidate offsets.
-func boardCanAlign(g *d2graph.Graph) bool {
+func boardCanAlign(g *d2graph.Graph) bool { return validBoardGeometry(g, false) }
+
+func validBoardGeometry(g *d2graph.Graph, allowConstantNear bool) bool {
 	r := g.Root
 	if !g.IsWholeLayout() || r == nil || r.Parent != nil || r.Top != nil || r.Left != nil || r.NearKey != nil || r.WidthAttr != nil || r.HeightAttr != nil ||
 		r.GridRows != nil || r.GridColumns != nil || r.IsSequenceDiagram() || g.Legend != nil ||
@@ -85,7 +87,7 @@ func boardCanAlign(g *d2graph.Graph) bool {
 		return false
 	}
 	for _, n := range g.Objects {
-		if seen[n] != 1 || n == r || n.Top != nil || n.Left != nil || n.NearKey != nil ||
+		if seen[n] != 1 || n == r || n.Top != nil || n.Left != nil || n.NearKey != nil && !(allowConstantNear && n.Parent == r && n.Graph == g && n.IsConstantNear()) ||
 			n.IsGridDiagram() || n.IsSequenceDiagram() || n.Box == nil || !boardLeafPoint(n.TopLeft) ||
 			!boardLeafDimension(n.Width) || !boardLeafDimension(n.Height) {
 			return false
