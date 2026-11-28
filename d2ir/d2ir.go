@@ -2868,24 +2868,44 @@ func (m *Map) Equal(n2 Node) bool {
 }
 
 func (m *Map) InClass(key *d2ast.Key) bool {
+	if key == nil {
+		return false
+	}
 	classes := m.Map().GetField(d2ast.FlatUnquotedString("classes"))
 	if classes == nil || classes.Map() == nil {
 		return false
 	}
 
 	for _, class := range classes.Map().Fields {
-		if class.Map() == nil {
-			continue
+		if mapHasKeyRef(class.Map(), key) {
+			return true
 		}
-		classF := class.Map().GetField(key.Key.IDA()...)
-		if classF == nil {
-			continue
-		}
+	}
+	return false
+}
 
-		for _, ref := range classF.References {
+func mapHasKeyRef(m *Map, key *d2ast.Key) bool {
+	if m == nil {
+		return false
+	}
+	for _, f := range m.Fields {
+		for _, ref := range f.References {
 			if ref.Context_.Key == key {
 				return true
 			}
+		}
+		if mapHasKeyRef(f.Map(), key) {
+			return true
+		}
+	}
+	for _, e := range m.Edges {
+		for _, ref := range e.References {
+			if ref.Context_.Key == key {
+				return true
+			}
+		}
+		if mapHasKeyRef(e.Map(), key) {
+			return true
 		}
 	}
 	return false

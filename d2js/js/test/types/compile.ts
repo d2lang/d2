@@ -43,6 +43,12 @@ for (const layout of ["dagre", "elk", "tala"] as const) {
 configured.then((response) => {
   const renderOptions: RenderOptions = response.renderOptions;
   d2.render(response.diagram, renderOptions);
+  response.diagram.shapes[0].fillPatternColor = "white";
+  response.diagram.root.fillPatternColor = "#ffffff";
+  const shapeStyle = response.graph.edges[0]?.attributes?.style;
+  if (shapeStyle) {
+    shapeStyle.fillPatternColor = { value: "white" };
+  }
 
   // @ts-expect-error The response exposes renderOptions, not options.
   response.options;

@@ -23,6 +23,9 @@ func validateRenderPaints(diagram *d2target.Diagram, opts *RenderOpts) error {
 	if err := validateFillPattern(diagram.Root.FillPattern, "root fill pattern"); err != nil {
 		return err
 	}
+	if err := validatePaint(diagram.Root.FillPatternColor, "root fill pattern color"); err != nil {
+		return err
+	}
 
 	for i := range diagram.Shapes {
 		if err := validateShapePaints(&diagram.Shapes[i], fmt.Sprintf("shape %q", diagram.Shapes[i].ID)); err != nil {
@@ -69,6 +72,7 @@ func validateShapePaints(shape *d2target.Shape, object string) error {
 		value string
 	}{
 		{name: "fill", value: shape.Fill},
+		{name: "fill pattern color", value: shape.FillPatternColor},
 		{name: "stroke", value: shape.Stroke},
 		{name: "font color", value: shape.Color},
 		{name: "label fill", value: shape.LabelFill},

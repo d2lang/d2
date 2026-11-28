@@ -101,7 +101,7 @@ func skipRecursiveGlobSubtree(name string, triple bool) bool {
 	if triple {
 		return !board
 	}
-	return board || name == "classes" || name == "vars"
+	return board || name == "classes" || name == "vars" || name == "style"
 }
 
 func _tripleGlobField(f *Field, matches *[]*Field, visit func(*Field) bool) bool {

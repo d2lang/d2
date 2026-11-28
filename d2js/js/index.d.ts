@@ -178,6 +178,7 @@ export interface ShapeBase {
   borderRadius: number /* int */;
   fill: string;
   fillPattern?: string;
+  fillPatternColor?: string;
   sketchFillTransition?: { from: string; to: string; progress: number };
   stroke: string;
   animated: boolean;
@@ -462,6 +463,7 @@ export interface Style {
   stroke?: Scalar;
   fill?: Scalar;
   fillPattern?: Scalar;
+  fillPatternColor?: Scalar;
   strokeWidth?: Scalar;
   strokeDash?: Scalar;
   borderRadius?: Scalar;

@@ -1,0 +1,220 @@
+{
+  "graph": {
+    "name": "",
+    "isFolderOnly": false,
+    "ast": {
+      "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,0:0:0-4:0:73",
+      "nodes": [
+        {
+          "map_key": {
+            "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,0:0:0-3:1:72",
+            "key": {
+              "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,0:0:0-0:6:6",
+              "path": [
+                {
+                  "unquoted_string": {
+                    "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,0:0:0-0:6:6",
+                    "value": [
+                      {
+                        "string": "square",
+                        "raw_string": "square"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "primary": {},
+            "value": {
+              "map": {
+                "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,0:8:8-3:1:72",
+                "nodes": [
+                  {
+                    "map_key": {
+                      "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,1:2:12-1:26:36",
+                      "key": {
+                        "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,1:2:12-1:20:30",
+                        "path": [
+                          {
+                            "unquoted_string": {
+                              "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,1:2:12-1:7:17",
+                              "value": [
+                                {
+                                  "string": "style",
+                                  "raw_string": "style"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "unquoted_string": {
+                              "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,1:8:18-1:20:30",
+                              "value": [
+                                {
+                                  "string": "fill-pattern",
+                                  "raw_string": "fill-pattern"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "primary": {},
+                      "value": {
+                        "unquoted_string": {
+                          "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,1:22:32-1:26:36",
+                          "value": [
+                            {
+                              "string": "dots",
+                              "raw_string": "dots"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "map_key": {
+                      "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,2:2:39-2:33:70",
+                      "key": {
+                        "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,2:2:39-2:26:63",
+                        "path": [
+                          {
+                            "unquoted_string": {
+                              "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,2:2:39-2:7:44",
+                              "value": [
+                                {
+                                  "string": "style",
+                                  "raw_string": "style"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "unquoted_string": {
+                              "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,2:8:45-2:20:57",
+                              "value": [
+                                {
+                                  "string": "fill-pattern",
+                                  "raw_string": "fill-pattern"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "unquoted_string": {
+                              "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,2:21:58-2:26:63",
+                              "value": [
+                                {
+                                  "string": "color",
+                                  "raw_string": "color"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "primary": {},
+                      "value": {
+                        "unquoted_string": {
+                          "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,2:28:65-2:33:70",
+                          "value": [
+                            {
+                              "string": "white",
+                              "raw_string": "white"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "root": {
+      "id": "",
+      "id_val": "",
+      "attributes": {
+        "label": {
+          "value": ""
+        },
+        "labelDimensions": {
+          "width": 0,
+          "height": 0
+        },
+        "style": {},
+        "iconStyle": {},
+        "near_key": null,
+        "shape": {
+          "value": ""
+        },
+        "direction": {
+          "value": ""
+        },
+        "constraint": null
+      },
+      "zIndex": 0
+    },
+    "edges": null,
+    "objects": [
+      {
+        "id": "square",
+        "id_val": "square",
+        "references": [
+          {
+            "key": {
+              "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,0:0:0-0:6:6",
+              "path": [
+                {
+                  "unquoted_string": {
+                    "range": "d2/testdata/d2oracle/TestSet/set_fill_pattern_color.d2,0:0:0-0:6:6",
+                    "value": [
+                      {
+                        "string": "square",
+                        "raw_string": "square"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "key_path_index": 0,
+            "map_key_edge_index": -1
+          }
+        ],
+        "attributes": {
+          "label": {
+            "value": "square"
+          },
+          "labelDimensions": {
+            "width": 0,
+            "height": 0
+          },
+          "style": {
+            "fillPattern": {
+              "value": "dots"
+            },
+            "fillPatternColor": {
+              "value": "white"
+            }
+          },
+          "iconStyle": {},
+          "near_key": null,
+          "shape": {
+            "value": "rectangle"
+          },
+          "direction": {
+            "value": ""
+          },
+          "constraint": null
+        },
+        "zIndex": 0
+      }
+    ]
+  },
+  "err": "<nil>"
+}

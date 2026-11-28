@@ -214,7 +214,7 @@ func sketchNodePath(node *d2scene.Node) (d2scene.Path, bool) {
 }
 
 func (b *builder) appendSketchBuiltinPattern(targetShape d2target.Shape, nodes []*d2scene.Node, idPrefix string) ([]*d2scene.Node, error) {
-	pattern, err := b.builtinPattern(targetShape.FillPattern)
+	pattern, err := b.builtinPatternWithColor(targetShape.FillPattern, targetShape.FillPatternColor)
 	if err != nil {
 		return nil, fmt.Errorf("scene: shape %q fill pattern: %w", targetShape.ID, err)
 	}
@@ -476,7 +476,7 @@ func (b *builder) buildSketchShapeEffects(targetShape d2target.Shape, fill d2sce
 		if err != nil {
 			return nil, err
 		}
-		pattern, err := b.builtinPattern(targetShape.FillPattern)
+		pattern, err := b.builtinPatternWithColor(targetShape.FillPattern, targetShape.FillPatternColor)
 		if err != nil {
 			return nil, fmt.Errorf("scene: shape %q fill pattern: %w", targetShape.ID, err)
 		}
@@ -510,7 +510,7 @@ func (b *builder) buildSketchDoubleBorderShape(targetShape d2target.Shape, fill 
 		multiple.Pos.Y -= d2target.MULTIPLE_OFFSET
 		duplicate := doubleBorderPair(multiple, fill, fill, stroke, targetShape.ID+":multiple")
 		if targetShape.Type == "" || targetShape.Type == d2target.ShapeRectangle || targetShape.Type == d2target.ShapeSquare {
-			pattern, err := b.builtinPattern(targetShape.FillPattern)
+			pattern, err := b.builtinPatternWithColor(targetShape.FillPattern, targetShape.FillPatternColor)
 			if err != nil {
 				return nil, fmt.Errorf("scene: shape %q fill pattern: %w", targetShape.ID, err)
 			}

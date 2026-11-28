@@ -24,6 +24,10 @@ func (b *builder) paint(raw, description string) (d2scene.Paint, error) {
 		}
 		return paint, nil
 	}
+	if strings.EqualFold(raw, "currentColor") {
+		// SVG currentColor defaults to opaque black when no ancestor sets color.
+		return d2scene.SolidPaint{Color: color.NRGBA{A: 0xff}}, nil
+	}
 	resolved := d2themes.ResolveThemeColor(b.theme, raw)
 	if resolved == "" {
 		return nil, fmt.Errorf("scene: %s has unknown theme color %q", description, raw)
