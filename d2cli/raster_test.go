@@ -191,8 +191,8 @@ func TestGIFCLIProducesOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(animation.Image) != 30 {
-		t.Fatalf("GIF frames = %d, want 30", len(animation.Image))
+	if len(animation.Image) != 1 {
+		t.Fatalf("GIF frames = %d, want one still", len(animation.Image))
 	}
 	var delay int
 	for _, frameDelay := range animation.Delay {
@@ -359,6 +359,32 @@ func TestRenderGIFSingleBoardWorkspaceMatchesOwnedEncoding(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatal("single-board workspace GIF differs from independently owned frame pipeline")
+	}
+}
+
+func TestGIFLongStillHolds(t *testing.T) {
+	root := simpleRasterDiagram()
+	child := simpleRasterDiagram()
+	child.Shapes[0].Fill = "#0000ff"
+	root.Steps = []*d2target.Diagram{child}
+	for _, tc := range []struct {
+		ms     int
+		delays []int
+	}{
+		{31000, []int{3100, 3100}},
+		{655360, []int{32768, 32768, 32768, 32768}},
+	} {
+		data, _, err := renderGIF(t.Context(), "-", false, root, d2svg.RenderOpts{}, tc.ms, false, gifLayerOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		animation, err := gif.DecodeAll(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(animation.Delay, tc.delays) {
+			t.Errorf("interval %dms: delays %v, want %v", tc.ms, animation.Delay, tc.delays)
+		}
 	}
 }
 
@@ -769,18 +795,18 @@ func TestRenderGIFPreservesExplicitScaleAndBoardOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(animation.Image) != 8 {
-		t.Fatalf("ordered GIF frames = %d, want 8", len(animation.Image))
+	if len(animation.Image) != 4 {
+		t.Fatalf("ordered GIF frames = %d, want 4", len(animation.Image))
 	}
 	wants := []color.NRGBA{
 		{R: 255, A: 255}, {G: 255, A: 255}, {B: 255, A: 255}, {R: 255, G: 255, A: 255},
 	}
 	for board, want := range wants {
-		got := color.NRGBAModel.Convert(animation.Image[board*2].At(5, 5)).(color.NRGBA)
+		got := color.NRGBAModel.Convert(animation.Image[board].At(5, 5)).(color.NRGBA)
 		if got != want {
 			t.Fatalf("GIF board %d color = %#v, want %#v", board, got, want)
 		}
-		delay := animation.Delay[board*2] + animation.Delay[board*2+1]
+		delay := animation.Delay[board]
 		if delay != 4 {
 			t.Fatalf("GIF board %d delay = %d centiseconds, want 4", board, delay)
 		}
