@@ -1,0 +1,48 @@
+# Render with D2 v0.10.0: d2 btree.d2 btree.svg
+# Regular B-tree with three keys per page. The fourth insert promotes 102/v3.
+# The key cards are persistent, independently placed D2 objects. Page backgrounds sit behind them.
+vars: {
+  d2-config: {layout-engine: tala; theme-id: 200; animate-interval: 2000ms; animate-duration: 850ms; pad: 8}
+  root-x: 181
+  root-y: 112
+  root-w: 238
+  k100-x: 190
+  k101-x: 262
+  k102-x: 334
+  k103-x: 406
+  low-y: 122
+  pivot-y: 122
+  high-y: 122
+}
+style.fill: "#102432"
+classes: {
+  page: {height: 78; label.near: center-center; style: {fill: "#1b3542"; stroke: "#708c95"; stroke-width: 2; border-radius: 8}}
+  record: {width: 67; height: 58; label.near: center-center; style: {fill: "#264754"; stroke: "#497180"; font-color: "#eef5f1"; font-size: 19; bold: true; border-radius: 4}}
+  note: {shape: text; style: {font-color: "#d5e9e3"; font-size: 21; bold: true}}
+}
+# Fixed limits keep the camera still as children appear at the foot of the diagram.
+nw: "" {left: 0; top: 0; width: 1; height: 1; style.opacity: 0}
+se: "" {left: 600; top: 292; width: 1; height: 1; style.opacity: 0}
+status: Full root · three keys {class: note; left: 15; top: 8}
+root: "" {class: page; left: ${root-x}; top: ${root-y}; width: ${root-w}}
+left-leaf: "" {class: page; left: 44; top: 196; width: 164; style.opacity: 0}
+right-leaf: "" {class: page; left: 427; top: 196; width: 99; style.opacity: 0}
+k100: "100\nv1" {class: record; left: ${k100-x}; top: ${low-y}}
+k101: "101\nv2" {class: record; left: ${k101-x}; top: ${low-y}}
+k102: "102\nv3" {class: record; left: ${k102-x}; top: ${pivot-y}; style: {fill: "#193b32"; stroke: "#99dba7"; font-color: "#b8f0c0"}}
+steps: {
+  overflow: {
+    vars: {root-x: 143; root-w: 310; k100-x: 152; k101-x: 224; k102-x: 296; k103-x: 368}
+    status.label: Insert 103 · fourth key
+    k103: "103\nv4" {class: record; left: ${k103-x}; top: ${high-y}; style: {fill: "#47362f"; stroke: "#efab88"; font-color: "#ffd0b1"}}
+  }
+  split: {
+    vars: {root-x: 251; root-y: 57; root-w: 98; k100-x: 53; k101-x: 125; k102-x: 266; k103-x: 443; low-y: 206; pivot-y: 67; high-y: 206}
+    status.label: Promote 102 · split into two leaves
+    # Child pages and their ordinary D2 pointers are introduced with the split.
+    left-leaf.style.opacity: 1
+    right-leaf.style.opacity: 1
+    root -> left-leaf: {style: {stroke: "#91acb5"; stroke-width: 2}; target-arrowhead.shape: triangle}
+    root -> right-leaf: {style: {stroke: "#91acb5"; stroke-width: 2}; target-arrowhead.shape: triangle}
+  }
+}

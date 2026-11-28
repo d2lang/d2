@@ -9,5 +9,8 @@
 # worth the bytes, and say so in that change.
 # Linked-layer playback and SVG navigation raised the local Brotli measurement
 # from 3,679,419 to 3,690,963 bytes. Allow another 10,000 compressed bytes.
-raw 10900000
-brotli 3700000
+# Tween route continuity adds 56,900 raw and 17,975 Brotli bytes against
+# de8d49fe0 with the same toolchain. Both native and JS playback need the
+# geometry and obstacle checks. Keep the existing cross-build margin.
+raw 10960000
+brotli 3720000

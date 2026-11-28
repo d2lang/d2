@@ -18,6 +18,7 @@ const maxBoardSampleElements = 1_000_000
 
 type boardTransitionPlan struct {
 	board      *d2target.Diagram
+	tweenFrom  *d2target.Diagram // Authored predecessor of a numeric tween.
 	emptyAfter *d2target.Diagram // An explicitly emptied step is drawable after this board.
 	motion     *gridMotion
 	ink        *boardInk
@@ -67,6 +68,10 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 					p.opacity = opacity
 					stepPlans[next] = p
 				}
+			}
+			if len(next.TweenFrames) > 0 {
+				p.tweenFrom = prev
+				stepPlans[next] = p
 			}
 			prev, prevGraph = next, nextGraph
 		}
@@ -149,6 +154,7 @@ func PrepareSketchTransitions(ctx context.Context, root *d2target.Diagram, durat
 func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, duration, boardLimit int, sketch, pencilOnly bool, stepPlans map[*d2target.Diagram]boardTransitionPlan) error {
 	var plans []boardTransitionPlan
 	available := boardLimit
+	routeBudget := maxBoardSampleElements
 	var previous *d2target.Diagram
 	var walk func(*d2target.Diagram) error
 	walk = func(board *d2target.Diagram) error {
@@ -162,6 +168,17 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 		}
 		if !board.IsFolderOnly {
 			p := stepPlans[board]
+			if p.tweenFrom != nil {
+				// An independent nested board can interrupt step playback. Its
+				// routes do not belong to this tween, even if edge IDs match.
+				from := p.tweenFrom
+				if from != previous {
+					from = nil
+				}
+				if err := stabilizeTweenRoutes(ctx, from, board, &routeBudget); err != nil {
+					return err
+				}
+			}
 			if p.from != nil && p.from != previous {
 				// A nested layer/scenario can interrupt cumulative step playback.
 				// Only draw a structural transition from the board on screen.
