@@ -45,6 +45,27 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 	return buildBoardReveal(prev, next, g, false)
 }
 
+func revealTweenGeometryMatches(next *d2target.Diagram) bool {
+	for _, frame := range next.TweenFrames {
+		if len(frame.Shapes) != len(next.Shapes) || len(frame.Connections) != len(next.Connections) {
+			return false
+		}
+		for i := range frame.Shapes {
+			a, b := &frame.Shapes[i], &next.Shapes[i]
+			if a.ID != b.ID || a.Type != b.Type || !sameSlot(a, b) || a.LabelWidth != b.LabelWidth || a.LabelHeight != b.LabelHeight {
+				return false
+			}
+		}
+		for i := range frame.Connections {
+			a, b := &frame.Connections[i], &next.Connections[i]
+			if a.ID != b.ID || a.IsCurve != b.IsCurve || !slices.EqualFunc(a.Route, b.Route, func(p, q *geo.Point) bool { return p != nil && q != nil && *p == *q }) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Without layout continuity, animate a pure insertion or removal only when
 // every survivor keeps its paint, geometry and stacking order.
 func planStableLeafChange(short, full *d2target.Diagram, g *d2graph.Graph, departing bool) *boardReveal {

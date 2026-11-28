@@ -170,6 +170,24 @@ func requireArrivalOverlap(t *testing.T, step *d2target.Diagram, wire d2target.C
 	}
 }
 
+func TestTALABoardRevealWithValueTween(t *testing.T) {
+	const src = `vars: {d2-config: {animate-interval: 1600; animate-duration: 800}}
+direction: right
+a.style.opacity: 1
+a -> b
+steps: {s1: {b -> c; a.style.opacity: 0.3}}
+`
+	board, _ := compileContinuity(t, src, d2talalayout.ContinueBoard)
+	step := board.Steps[0]
+	requireArrivalOverlap(t, step, step.Connections[1], "c")
+	for _, frame := range step.TweenFrames {
+		if opacity := shapeByID(t, frame, "a").Opacity; opacity > .3 && opacity < 1 {
+			return
+		}
+	}
+	t.Fatal("reveal lost the explicit opacity tween")
+}
+
 func TestTALABoardRevealRequiresDisplayedPredecessor(t *testing.T) {
 	const src = `vars: {d2-config: {animate-interval: 900ms; animate-duration: 600ms}}
 gateway -> queue
