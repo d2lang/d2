@@ -1,0 +1,16 @@
+vars: {
+  x: 0
+  d2-config: {
+    layout-engine: tala
+    animate-duration: 1000ms
+    animate-interval: 1200ms
+    animate-progress: false
+  }
+}
+rail: "" {left: 0; top: 19; width: 100; height: 2}
+marker: "" {shape: circle; left: ${x}; top: 0; width: 40; height: 40; style.fill: blue}
+
+steps: {
+  across: {vars.x: 5; marker.style.fill: red}
+  back: {vars.x: 0; marker.style.fill: blue}
+}

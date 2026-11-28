@@ -138,7 +138,7 @@ scenarios: {
 }
 
 func TestLayoutContinuityAcrossSampledTransition(t *testing.T) {
-	const src = `vars: {n: 100%; d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+	const src = `vars: {n: 100%; d2-config: {animate-interval: 200ms; animate-duration: 64ms}}
 a: "Load ${n}"
 steps: {
   drain: {vars: {n: 0%}}

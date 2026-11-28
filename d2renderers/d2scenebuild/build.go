@@ -103,12 +103,15 @@ type SketchBudget struct {
 // separately.
 type Options struct {
 	// MinimumBounds is the unpadded world-space viewport shared by animation frames.
-	MinimumBounds  *image.Rectangle
-	Pad            *int64
-	Scale          *float64
-	Center         *bool
-	ThemeID        *int64
-	ThemeOverrides *d2target.ThemeOverrides
+	MinimumBounds *image.Rectangle
+	// ShapeTranslations contains absolute translations of each shape's integer
+	// geometry during a continuous sampled step.
+	ShapeTranslations map[string]d2scene.Track
+	Pad               *int64
+	Scale             *float64
+	Center            *bool
+	ThemeID           *int64
+	ThemeOverrides    *d2target.ThemeOverrides
 	// MaxNodes and MaxPathCommands enable an early, target-level admission
 	// guard when positive. The guard rejects only when the target already
 	// proves that the eventual scene must exceed a downstream renderer limit;
@@ -160,6 +163,7 @@ type builder struct {
 	// and marker is cut beneath every connection label and ordinary shape border
 	// label.
 	connectionMask      *d2scene.Mask
+	movingLabelMasks    map[string]*d2scene.Mask
 	links               []d2scene.LinkRegion
 	linkBytes           int
 	appendixItems       []appendixItem
@@ -685,9 +689,18 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		}
 		var node *d2scene.Node
 		var clip *d2target.MotionClip
+		var shape *d2target.Shape
 		if object.shape != nil {
-			clip = object.shape.MotionClip
+			shape, clip = object.shape, object.shape.MotionClip
+			firstLink := len(b.links)
 			node, err = b.buildShape(*object.shape)
+			if offset := shape.MotionOffset; offset != nil {
+				// Rich labels can add separate link regions while building their artwork.
+				for i := firstLink; i < len(b.links); i++ {
+					b.links[i].Box.X += offset.X
+					b.links[i].Box.Y += offset.Y
+				}
+			}
 		} else {
 			clip = object.connection.MotionClip
 			gaps := crossings[object.order-len(b.diagram.Shapes)]
@@ -696,7 +709,7 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		if err != nil {
 			return nil, err
 		}
-		renderedObjects[index] = clipMotionNode(node, clip)
+		renderedObjects[index] = b.placeMotionNode(node, clip, shape)
 		if object.shape != nil {
 			positionedTooltips[index], err = b.buildPositionedTooltip(*object.shape)
 			if err != nil {
@@ -743,11 +756,11 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 			}
 			if tooltip := positionedTooltips[index]; tooltip != nil {
 				tooltip.Opacity = object.shape.Opacity
-				metadataNodes = append(metadataNodes, clipMotionNode(tooltip, object.shape.MotionClip))
+				metadataNodes = append(metadataNodes, b.placeMotionNode(tooltip, object.shape.MotionClip, object.shape))
 			}
 			for _, icon := range icons {
 				icon.Opacity = object.shape.Opacity
-				metadataNodes = append(metadataNodes, clipMotionNode(icon, object.shape.MotionClip))
+				metadataNodes = append(metadataNodes, b.placeMotionNode(icon, object.shape.MotionClip, object.shape))
 			}
 		}
 	}
@@ -833,14 +846,30 @@ func (b *builder) addRootRect(root *d2scene.Node, id string, left, top, width, h
 	return node, nil
 }
 
-func clipMotionNode(node *d2scene.Node, c *d2target.MotionClip) *d2scene.Node {
-	if c == nil {
-		return node
+func (b *builder) placeMotionNode(node *d2scene.Node, clip *d2target.MotionClip, shape *d2target.Shape) *d2scene.Node {
+	if shape != nil {
+		track, animated := b.options.ShapeTranslations[shape.ID]
+		p := shape.MotionOffset
+		if animated || p != nil && (p.X != 0 || p.Y != 0) {
+			// The shape's bounce can override its own transform. Give its
+			// fractional position a separate parent so both effects compose.
+			wrapper := d2scene.NewNode(nil)
+			wrapper.Children = []*d2scene.Node{node}
+			if animated {
+				wrapper.Animations = []d2scene.Track{track}
+			} else {
+				wrapper.Transform = d2scene.Translate(p.X, p.Y)
+			}
+			node = wrapper
+		}
 	}
-	wrapper := d2scene.NewNode(nil)
-	wrapper.Clip = boxClip(d2scene.Box{X: float64(c.X), Y: float64(c.Y), Width: float64(c.Width), Height: float64(c.Height)})
-	wrapper.Children = []*d2scene.Node{node}
-	return wrapper
+	if clip != nil {
+		wrapper := d2scene.NewNode(nil)
+		wrapper.Clip = boxClip(d2scene.Box{X: float64(clip.X), Y: float64(clip.Y), Width: float64(clip.Width), Height: float64(clip.Height)})
+		wrapper.Children = []*d2scene.Node{node}
+		node = wrapper
+	}
+	return node
 }
 
 type diagramObject struct {
@@ -1150,6 +1179,9 @@ func invalidField(object, field string, value any, requirement string) error {
 }
 
 func validateShapeNumbers(object string, targetShape d2target.Shape) error {
+	if !d2target.ValidMotionOffset(targetShape.MotionOffset) {
+		return invalidField(object, "motionOffset", targetShape.MotionOffset, "must be a finite subpixel translation")
+	}
 	if p := targetShape.OutlineProgress; p != nil && !(*p >= 0 && *p <= 1) {
 		return fmt.Errorf("scene: %s outlineProgress must be finite and within [0,1]", object)
 	}
@@ -1261,22 +1293,27 @@ func validateShapeIntegerBounds(object string, targetShape d2target.Shape) error
 	minInt := -maxInt - 1
 	extent := d2target.StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
 	halfStroke := int64(extent/2 + extent%2)
+	dx, dy := 0., 0.
+	if offset := targetShape.MotionOffset; offset != nil {
+		dx, dy = offset.X, offset.Y
+	}
 	for _, axis := range []struct {
+		offset    float64
 		name      string
 		position  int
 		dimension int
 	}{
-		{name: "pos.x", position: targetShape.Pos.X, dimension: targetShape.Width},
-		{name: "pos.y", position: targetShape.Pos.Y, dimension: targetShape.Height},
+		{offset: dx, name: "pos.x", position: targetShape.Pos.X, dimension: targetShape.Width},
+		{offset: dy, name: "pos.y", position: targetShape.Pos.Y, dimension: targetShape.Height},
 	} {
-		if _, ok := checkedSub(int64(axis.position), halfStroke, minInt, maxInt); !ok {
+		if _, ok := checkedSub(int64(axis.position), halfStroke-int64(math.Floor(axis.offset)), minInt, maxInt); !ok {
 			return invalidField(object, axis.name, axis.position, "must fit raster bounds arithmetic with strokeWidth")
 		}
 		end, ok := checkedAdd(int64(axis.position), int64(axis.dimension), minInt, maxInt)
 		if !ok {
 			return invalidField(object, axis.name, axis.position, "must fit raster bounds arithmetic with its dimension")
 		}
-		if _, ok := checkedAdd(end, halfStroke, minInt, maxInt); !ok {
+		if _, ok := checkedAdd(end, halfStroke+int64(math.Ceil(axis.offset)), minInt, maxInt); !ok {
 			return invalidField(object, axis.name, axis.position, "must fit raster bounds arithmetic with strokeWidth")
 		}
 	}

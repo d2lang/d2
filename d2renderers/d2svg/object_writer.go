@@ -67,10 +67,10 @@ func (w *objectWriter) classes(value string) {
 	}
 }
 
-func (w *objectWriter) openGroup(classes []string, opacityStyle string) {
+func (w *objectWriter) openGroup(classes []string, opacityStyle string, attrs ...svg.Attribute) {
 	value := strings.Join(classes, " ")
 	w.classes(value)
-	tag := svg.OpenElement("g", svg.Attr("class", value))
+	tag := svg.OpenElement("g", append([]svg.Attribute{svg.Attr("class", value)}, attrs...)...)
 	if opacityStyle != "" {
 		tag = strings.TrimSuffix(tag, ">") + opacityStyle + ">"
 	}

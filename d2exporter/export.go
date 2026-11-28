@@ -325,6 +325,9 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 	shape.ZIndex = obj.ZIndex
 	shape.Level = int(obj.Level())
 	shape.Pos = d2target.NewPoint(int(obj.TopLeft.X), int(obj.TopLeft.Y))
+	if obj.MotionOffset != nil {
+		shape.MotionOffset = obj.MotionOffset.Copy()
+	}
 	shape.Width = int(obj.Width)
 	shape.Height = int(obj.Height)
 	shape.Language = obj.Language
@@ -553,11 +556,25 @@ func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 	if edge.LabelPercentage != nil {
 		connection.LabelPercentage = float64(float32(*edge.LabelPercentage))
 	}
+	// Keep the existing routed shape and move each port with its pin. A
+	// shared displacement translates every bend and control point rigidly.
+	var from, to geo.Point
+	if edge.Src.MotionOffset != nil {
+		from = *edge.Src.MotionOffset
+	}
+	if edge.Dst.MotionOffset != nil {
+		to = *edge.Dst.MotionOffset
+	}
 	connection.Route = make([]*geo.Point, 0, len(edge.Route))
 	for i := range edge.Route {
 		p := edge.Route[i].Copy()
 		p.TruncateDecimals()
 		p.TruncateFloat32()
+		if (from != (geo.Point{}) || to != (geo.Point{})) && len(edge.Route) > 1 {
+			t := float64(i) / float64(len(edge.Route)-1)
+			p.X += from.X + (to.X-from.X)*t
+			p.Y += from.Y + (to.Y-from.Y)*t
+		}
 		connection.Route = append(connection.Route, p)
 	}
 

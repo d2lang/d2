@@ -26,15 +26,15 @@ func TestBoardGlide(t *testing.T) {
 }
 
 func TestStructuralStepSampling(t *testing.T) {
-	for _, tc := range []struct{ ms, count int }{{0, 0}, {1, 1}, {800, 48}, {4500, d2target.MaxTweenFrames}} {
+	for _, tc := range []struct{ ms, count int }{{0, 0}, {1, 1}, {800, 48}, {4500, 270}, {6000, d2target.MaxTweenFrames}} {
 		src := fmt.Sprintf("vars: {d2-config: {animate-interval: 1600ms; animate-duration: %dms}}\nqueue -> store\nsteps: {delivery: {store -> ship}}", tc.ms)
 		d, _ := compileContinuity(t, src, d2talalayout.ContinueBoard)
 		step := d.Steps[0]
 		if len(step.TweenFrames) != tc.count || step.TweenDurationMS != tc.ms {
 			t.Fatalf("%dms: got %d samples covering %dms", tc.ms, len(step.TweenFrames), step.TweenDurationMS)
 		}
-		if tc.count > 0 && step.TweenFrameEndsMS[tc.count-1] != tc.ms {
-			t.Fatal("motion must finish on the authored clock")
+		if len(step.TweenFrameEndsMS) != 0 {
+			t.Fatal("uniform structural motion should retain its fractional frame boundaries")
 		}
 	}
 }

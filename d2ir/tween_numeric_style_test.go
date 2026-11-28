@@ -10,7 +10,7 @@ import (
 
 func TestDirectNumericProperties(t *testing.T) {
 	const source = `
-vars: {d2-config: {animate-interval: 1s; animate-duration: 80ms}}
+vars: {d2-config: {animate-interval: 1s; animate-duration: 32ms}}
 classes: {card: {style.stroke-width: 1}}
 card: {class: card; width: 100; height: 60; style: {opacity: 0; border-radius: 0; font-size: 12}}
 card -> peer: {style.stroke-dash: 0}
@@ -68,7 +68,7 @@ func TestDirectDimensionsKeepEqualSidedShapesValid(t *testing.T) {
 		} {
 			t.Run(shape+"/"+tc.name, func(t *testing.T) {
 				root, err := compileTween(t, `
-vars: {d2-config: {animate-interval: 1s; animate-duration: 80ms}}
+vars: {d2-config: {animate-interval: 1s; animate-duration: 32ms}}
 node: {`+tc.before+`; style.opacity: 0}
 steps: {change: {node: {width: 100; height: 100; shape: `+shape+`; style.opacity: 1}}}
 `, d2ir.CompileOptions{})
@@ -96,7 +96,7 @@ steps: {change: {node: {width: 100; height: 100; shape: `+shape+`; style.opacity
 func TestDirectDimensionsWithMovingVariableOnShapeChange(t *testing.T) {
 	for _, width := range []string{"width: ${wide}", "class: shared-width"} {
 		root, err := compileTween(t, `
-vars: {d2-config: {animate-interval: 1s; animate-duration: 80ms}; wide: 60}
+vars: {d2-config: {animate-interval: 1s; animate-duration: 32ms}; wide: 60}
 classes: {shared-width: {width: ${wide}}}
 item: {`+width+`; height: 80}
 another: {width: ${wide}}
@@ -117,7 +117,7 @@ steps: {change: {vars: {wide: 100}; item: {shape: circle; height: 100}}}
 func TestDirectIntegerPropertyNearPlatformLimit(t *testing.T) {
 	maxInt := int(^uint(0) >> 1)
 	root, err := compileTween(t, `
-vars: {d2-config: {animate-interval: 1s; animate-duration: 80ms}}
+vars: {d2-config: {animate-interval: 1s; animate-duration: 32ms}}
 node.style.border-radius: "`+strconv.Itoa(maxInt-100)+`"
 steps: {change: {node.style.border-radius: "`+strconv.Itoa(maxInt)+`"}}
 `, d2ir.CompileOptions{})
@@ -148,7 +148,7 @@ steps: {pause: {}}
 
 func TestGeometryEasesIndependentlyOfVariableValues(t *testing.T) {
 	root, err := compileTween(t, `
-vars: {d2-config: {animate-interval: 1s; animate-duration: 160ms}; n: 100; alias: ${n}}
+vars: {d2-config: {animate-interval: 1s; animate-duration: 64ms}; n: 100; alias: ${n}}
 classes: {sized: {height: ${alias}}}
 group: {
   width: 100

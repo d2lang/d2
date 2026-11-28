@@ -121,6 +121,7 @@ func legendShapeIconTarget(index int, targetShape d2target.Shape) d2target.Shape
 	icon := targetShape
 	icon.ID = fmt.Sprintf("legend:shape:%d:icon", index)
 	icon.Pos = d2target.Point{}
+	icon.MotionOffset = nil
 	icon.Width = legendIconSize * legendShapeScaleFactor
 	icon.Height = legendIconSize * legendShapeScaleFactor
 	icon.Label = ""

@@ -350,15 +350,10 @@ func sampleAnnotations(ctx context.Context, root *d2target.Diagram, lifted map[*
 			if ends := board.TweenFrameEndsMS; len(ends) != 0 {
 				span = ends[len(ends)-1]
 			}
+			start := 0
 			for i, frame := range board.TweenFrames {
-				start := int(int64(i) * int64(board.TweenDurationMS) / int64(len(board.TweenFrames)))
-				if ends := board.TweenFrameEndsMS; len(ends) != 0 {
-					start = 0
-					if i > 0 {
-						start = ends[i-1]
-					}
-				}
 				now.attach(frame, plan, float64(start)/float64(span))
+				start = board.TweenFrameEndMS(i)
 			}
 			now.restore(board)
 			previous = board

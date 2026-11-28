@@ -31,7 +31,11 @@ func shapeLabelBox(s *Shape) (*geo.Box, bool) {
 		labelBox = s.OuterLabelBox(geometry.GetBox())
 	}
 	tl := s.LabelTopLeft(position, labelBox)
-	return geo.NewBox(geo.NewPoint(tl.X, tl.Y), float64(s.LabelWidth), float64(s.LabelHeight)), true
+	x, y := tl.X, tl.Y
+	if offset := s.MotionOffset; offset != nil {
+		x, y = x+offset.X, y+offset.Y
+	}
+	return geo.NewBox(geo.NewPoint(x, y), float64(s.LabelWidth), float64(s.LabelHeight)), true
 }
 
 func connectionLabelBox(c *Connection) *geo.Box {

@@ -5,6 +5,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"sort"
 	"testing"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
@@ -40,8 +41,8 @@ steps: {
 	} {
 		at := func(ms int) d2target.Shape {
 			t.Helper()
-			i := slices.Index(tc.step.TweenFrameEndsMS, ms)
-			if i < 0 || i+1 >= len(tc.step.TweenFrames) {
+			i := sort.Search(len(tc.step.TweenFrames), func(i int) bool { return tc.step.TweenFrameEndMS(i) >= ms })
+			if i+1 >= len(tc.step.TweenFrames) || tc.step.TweenFrameEndMS(i) != ms {
 				t.Fatalf("%s missing sample at %d ms", tc.step.Name, ms)
 			}
 			f := tc.step.TweenFrames[i+1]
@@ -148,7 +149,7 @@ func requireArrivalOverlap(t *testing.T, step *d2target.Diagram, wire d2target.C
 				break
 			}
 		}
-		ms := step.TweenFrameEndsMS[i]
+		ms := step.TweenFrameEndMS(i)
 		opacity := node.Opacity / final.Opacity
 		if gap > 8 && opacity > .02 {
 			t.Fatalf("%s at %dms: visible with %.2fpx of route left", id, ms, gap)

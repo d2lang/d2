@@ -98,7 +98,7 @@ func detectGridHandoffs(old, next map[string]*gridNode) *gridHandoffs {
 }
 
 func sameSlot(a, b *d2target.Shape) bool {
-	return a.Pos == b.Pos && a.Width == b.Width && a.Height == b.Height
+	return a.RenderedPosition() == b.RenderedPosition() && a.Width == b.Width && a.Height == b.Height
 }
 
 func handoffCompatible(from, to *d2target.Shape) bool {

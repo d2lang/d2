@@ -57,13 +57,13 @@ steps: {
 			}
 			continue
 		}
-		if len(drain.TweenFrames) != 4 || drain.TweenDurationMS != 160 {
-			t.Fatalf("got %d samples in %dms, want 4 in 160ms", len(drain.TweenFrames), drain.TweenDurationMS)
+		if len(drain.TweenFrames) != 10 || drain.TweenDurationMS != 160 {
+			t.Fatalf("got %d samples in %dms, want 10 in 160ms", len(drain.TweenFrames), drain.TweenDurationMS)
 		}
-		for i, value := range []string{"100%", "75%", "50%", "25%"} {
-			checkValue(drain.TweenFrames[i], value)
+		for i, frame := range drain.TweenFrames {
+			checkValue(frame, strconv.Itoa(100-10*i)+"%")
 		}
-		if !strings.Contains(diagram.GetNestedCorpus(), "Battery · 75%") {
+		if !strings.Contains(diagram.GetNestedCorpus(), "Battery · 90%") {
 			t.Fatal("font corpus omitted intermediate labels")
 		}
 
@@ -78,12 +78,12 @@ steps: {
 		if err := d2target.ValidateRenderTarget(&restored); err != nil {
 			t.Fatal(err)
 		}
-		checkValue(restored.Steps[0].TweenFrames[1], "75%")
+		checkValue(restored.Steps[0].TweenFrames[1], "90%")
 	}
 }
 
 func TestCompileFractionalStrokeWidths(t *testing.T) {
-	const input = `vars: {n: 0; d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+	const input = `vars: {n: 0; d2-config: {animate-interval: 200ms; animate-duration: 64ms}}
 style.stroke-width: 5
 classes: {
   route: {style.stroke-width: "${n}"}

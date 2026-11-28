@@ -21,6 +21,7 @@ type gifLayerOptions struct {
 }
 
 type gifSegment struct {
+	translations map[string]d2scene.Track
 	d2animate.Frame
 	rasterPlacement
 	// Owning board for a stream that continues across tween samples.

@@ -1054,9 +1054,8 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			c.errorf(scalar, "top must be a non-negative integer: %#v", scalar.ScalarString())
 			return
 		}
-		attrs.Top = &d2graph.Scalar{}
-		attrs.Top.Value = scalar.ScalarString()
-		attrs.Top.MapKey = f.LastPrimaryKey()
+		attrs.Top = &d2graph.Scalar{Value: scalar.ScalarString(), MapKey: f.LastPrimaryKey(),
+			TweenOffset: f.Primary().TweenOffset, TweenedPin: f.Primary().NumericTween}
 	case "left":
 		v, err := strconv.Atoi(scalar.ScalarString())
 		if err != nil {
@@ -1067,9 +1066,8 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			c.errorf(scalar, "left must be a non-negative integer: %#v", scalar.ScalarString())
 			return
 		}
-		attrs.Left = &d2graph.Scalar{}
-		attrs.Left.Value = scalar.ScalarString()
-		attrs.Left.MapKey = f.LastPrimaryKey()
+		attrs.Left = &d2graph.Scalar{Value: scalar.ScalarString(), MapKey: f.LastPrimaryKey(),
+			TweenOffset: f.Primary().TweenOffset, TweenedPin: f.Primary().NumericTween}
 	case "link":
 		if textmeasure.IsDangerousLink(scalar.ScalarString()) {
 			c.errorf(scalar, "link uses an unsafe URL scheme")

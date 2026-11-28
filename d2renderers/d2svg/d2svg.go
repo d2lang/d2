@@ -383,6 +383,7 @@ func RenderLegend(buf *bytes.Buffer, diagram *d2target.Diagram, diagramHash stri
 
 func renderLegendShapeIcon(s d2target.Shape, x, y int, diagramHash string, theme *d2themes.Theme) (string, error) {
 	iconShape := s
+	iconShape.MotionOffset = nil
 	const sizeFactor = 5
 	iconShape.Pos.X = 0
 	iconShape.Pos.Y = 0
@@ -1393,6 +1394,19 @@ func render3D(diagramHash string, targetShape d2target.Shape, inlineTheme *d2the
 	return borderMask + face.Render() + sideEl.Render() + borderEl.Render()
 }
 
+func motionTranslation(p *geo.Point) svg.Attribute {
+	return svg.Attr("transform", "translate("+svg.FormatFloat(p.X)+" "+svg.FormatFloat(p.Y)+")")
+}
+
+// The shared mask is in world coordinates. A moving group needs the same
+// holes mapped into its own coordinates before the group translation applies.
+func borderMaskID(shape d2target.Shape, hash string) string {
+	if p := shape.MotionOffset; p != nil && (p.X != 0 || p.Y != 0) && hasBorderLabel(shape) {
+		return hash + "-moving-border-" + svg.SVGID(shape.ID)
+	}
+	return hash
+}
+
 func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, resourceHash string, targetShape d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, err error) {
 	closingTag := "</g>"
 	if c := targetShape.MotionClip; c != nil {
@@ -1425,7 +1439,19 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	if targetShape.Opacity != 1.0 {
 		opacityStyle = fmt.Sprintf(" style='opacity:%s'", svg.FormatFloat(targetShape.Opacity))
 	}
-	writer.openGroup(classes, opacityStyle)
+	if p := targetShape.MotionOffset; p != nil && (p.X != 0 || p.Y != 0) {
+		if targetShape.Animated || len(targetShape.Classes) > 0 {
+			// A class can supply its own CSS transform, including shapeappear.
+			// Compose the position outside that independently animated group.
+			fmt.Fprint(writer, svg.OpenElement("g", motionTranslation(p)))
+			closingTag = "</g>" + closingTag
+			writer.openGroup(classes, opacityStyle)
+		} else {
+			writer.openGroup(classes, opacityStyle, motionTranslation(p))
+		}
+	} else {
+		writer.openGroup(classes, opacityStyle)
+	}
 	tl := geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y))
 	width := float64(targetShape.Width)
 	height := float64(targetShape.Height)
@@ -1454,6 +1480,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 	}
 
 	borderLabelMask := hasBorderLabel(targetShape)
+	maskHash := borderMaskID(targetShape, resourceHash)
 	switch targetShape.Type {
 	case d2target.ShapeClass, d2target.ShapeSQLTable:
 		isClass := targetShape.Type == d2target.ShapeClass
@@ -1486,7 +1513,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			draw(writer, multipleTL, width, height, fill, "", stroke, style, inlineTheme)
 		}
 		if sketch {
-			if err := writer.sketch(sketchOval(targetShape, resourceHash)); err != nil {
+			if err := writer.sketch(sketchOval(targetShape, maskHash)); err != nil {
 				return "", err
 			}
 		} else {
@@ -1569,14 +1596,14 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			if double {
 				sketchRect = d2sketch.DoubleRect
 			}
-			if err := writer.sketch(sketchRect(targetShape, resourceHash)); err != nil {
+			if err := writer.sketch(sketchRect(targetShape, maskHash)); err != nil {
 				return "", err
 			}
 			break
 		}
 		el := rect(0, 0, 0, fill, targetShape.FillPattern)
 		if !double && borderLabelMask {
-			el.SetMaskID(svg.LiteralID(resourceHash))
+			el.SetMaskID(svg.LiteralID(maskHash))
 		}
 		writer.element(el)
 		if double {
@@ -1600,14 +1627,14 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			writer.paths(el, shape.NewShape(s.GetType(), geo.NewBox(multipleTL, width, height)).GetSVGPathData())
 		}
 		if sketch {
-			if err := writer.sketch(d2sketch.Paths(targetShape, resourceHash, s.GetSVGPathData())); err != nil {
+			if err := writer.sketch(d2sketch.Paths(targetShape, maskHash, s.GetSVGPathData())); err != nil {
 				return "", err
 			}
 			break
 		}
 		el.FillPattern = targetShape.FillPattern
 		if borderLabelMask {
-			el.SetMaskID(svg.LiteralID(resourceHash))
+			el.SetMaskID(svg.LiteralID(maskHash))
 		}
 		writer.paths(el, s.GetSVGPathData())
 	}
@@ -1772,6 +1799,10 @@ func addAppendixItems(writer io.Writer, diagramHash string, targetShape d2target
 		if c := targetShape.MotionClip; c != nil {
 			openMotionViewport(writer, c)
 			defer fmt.Fprint(writer, "</svg>")
+		}
+		if p := targetShape.MotionOffset; p != nil && (p.X != 0 || p.Y != 0) {
+			fmt.Fprint(writer, svg.OpenElement("g", motionTranslation(p)))
+			defer fmt.Fprint(writer, "</g>")
 		}
 		if targetShape.Opacity != 1 {
 			fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("opacity", svg.FormatFloat(targetShape.Opacity))))
@@ -2350,6 +2381,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	appendixItemBuf := &bytes.Buffer{}
 
 	var labelMasks []string
+	var movingMasks []d2target.Shape
 	markdown := newMarkdownRenderer(diagram.FontFamily, diagram.MonoFontFamily, inlineTheme)
 	for _, obj := range allObjects {
 		if err := ctx.Err(); err != nil {
@@ -2369,6 +2401,10 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 			if err != nil {
 				return nil, err
 			} else if labelMask != "" {
+				if p := s.MotionOffset; p != nil && (p.X != 0 || p.Y != 0) {
+					labelMask = svg.OpenElement("g", motionTranslation(p)) + labelMask + "</g>"
+					movingMasks = append(movingMasks, s)
+				}
 				labelMasks = append(labelMasks, labelMask)
 			}
 		} else {
@@ -2398,7 +2434,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	// Label masks contain only fixed-color geometry and contribute no font or palette classes.
 	// A connection can reference this mask even without a label. A shape or a
 	// legend can also reference it without a connection on the board.
-	if !UsesDefaultStylesheet() || len(diagram.Connections) != 0 || bytes.Contains(buf.Bytes(), []byte(svg.LocalIRI(svg.LiteralID(isolatedDiagramHash)))) {
+	if !UsesDefaultStylesheet() || len(diagram.Connections) != 0 || len(movingMasks) != 0 || bytes.Contains(buf.Bytes(), []byte(svg.LocalIRI(svg.LiteralID(isolatedDiagramHash)))) {
 		bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", w), svg.IntAttr("height", h)}
 		attrs := []svg.Attribute{svg.Attr("id", isolatedDiagramHash), svg.Attr("maskUnits", "userSpaceOnUse")}
 		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
@@ -2407,6 +2443,16 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 			buf.WriteString(label)
 		}
 		buf.WriteString(svg.CloseElement("mask"))
+		for i := range movingMasks {
+			s := &movingMasks[i]
+			p := s.MotionOffset
+			id := borderMaskID(*s, isolatedDiagramHash)
+			attrs := []svg.Attribute{svg.Attr("id", id), svg.Attr("maskUnits", "userSpaceOnUse")}
+			buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
+			buf.WriteString(svg.EmptyElement("rect", append(bounds, svg.Attr("fill", "white"),
+				motionTranslation(&geo.Point{X: -p.X, Y: -p.Y}), svg.Attr("mask", svg.LocalIRI(svg.LiteralID(isolatedDiagramHash))))...))
+			buf.WriteString(svg.CloseElement("mask"))
+		}
 	}
 
 	viewport.writeCrossings(buf, effects, crossings)

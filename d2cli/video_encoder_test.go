@@ -173,7 +173,7 @@ func testVideoTimedSamples(t *testing.T, format exportExtension, encoder string)
 		holds, durations []int
 	}{
 		{"one tick", []int{1}, []int{1}},
-		{"one static minute", []int{1800}, []int{1799, 1}},
+		{"one static minute", []int{3600}, []int{3599, 1}},
 		{"cuts and holds", []int{1800, 1, 1, 90, 1, 2, 300}, []int{1800, 1, 1, 90, 1, 2, 299, 1}},
 		{"constant frame rate", []int{1, 1, 1, 1, 1}, []int{1, 1, 1, 1, 1}},
 	} {

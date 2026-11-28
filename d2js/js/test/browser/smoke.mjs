@@ -13,6 +13,7 @@ assert.ok(
 const origin = "http://localhost:4173";
 const fixtures = {
   playback: "playback.d2",
+  "fractional-motion": "fractional-motion.d2",
   departure: "departure.d2",
   "layer-steps": "layer-steps.d2",
   "layer-route": "layer-route.d2",
@@ -33,6 +34,43 @@ async function seek(page, ms) {
     await document.fonts.ready;
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }, ms);
+}
+
+// Sample between 60 Hz ticks. The same live marker should cover all five
+// diagram units continuously across both directions and hold at each endpoint.
+async function checkFractionalMotion(page) {
+  const at = async (ms) => {
+    await seek(page, ms);
+    return page.evaluate(() => {
+      const markers = [...document.querySelectorAll(".bWFya2Vy ellipse")].filter(
+        (marker) => !marker.closest("defs")
+      );
+      if (markers.length !== 1) {
+        throw new Error("expected one persistent moving marker, found " + markers.length);
+      }
+      const marker = markers[0];
+      const bounds = marker.getBoundingClientRect();
+      const world = document.querySelector("svg.d2-svg").getScreenCTM();
+      return new DOMPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+        .matrixTransform(world.inverse()).x;
+    });
+  };
+  const origin = await at(200);
+  const ease = (t) => t < 0.5 ? 4 * t ** 3 : 1 - 4 * (1 - t) ** 3;
+  for (const [ms, distance] of [
+    [1199, 0], [1450, 5 / 16], [1481, 5 * ease(0.281)],
+    [1692, 5 * ease(0.492)], [1697, 5 * ease(0.497)], [1950, 75 / 16],
+    [2200, 5], [2350, 5], [2704, 5 * (1 - ease(0.304))], [3420, 0], [3600, 0],
+  ]) {
+    assert.ok(Math.abs((await at(ms)) - origin - distance) < 0.012, `marker position at ${ms}ms`);
+  }
+  await seek(page, 1700);
+  const paint = await page.locator(".bWFya2Vy ellipse").evaluate((el) => getComputedStyle(el).fill);
+  assert.equal(paint, "rgb(128, 0, 128)", "the moving marker is purple halfway through its color change");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  assert.ok(Math.abs((await at(1690)) - origin) < 0.012, "reduced motion holds the authored start");
+  assert.ok(Math.abs((await at(2350)) - origin - 5) < 0.012, "reduced motion reaches the authored endpoint");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
 }
 
 const progressSelector = 'rect[class^="d2-progress-"]';
@@ -549,6 +587,8 @@ for (const engine of [chromium, webkit]) {
     }
     await page.goto(origin + "/playback.svg");
     await checkBoundary(page);
+    await page.goto(origin + "/fractional-motion.svg");
+    await checkFractionalMotion(page);
     await page.goto(origin + "/departure.svg");
     await checkDeparture(page);
     await page.goto(origin + "/layer-steps.svg");

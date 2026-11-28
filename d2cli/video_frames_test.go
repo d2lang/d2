@@ -28,7 +28,7 @@ func TestVideoStaticHoldAndStablePlacement(t *testing.T) {
 	var red []image.Rectangle
 	opts := d2svg.RenderOpts{Pad: new(int64)}
 	err := renderVideoFrames(t.Context(), "-", false, root, opts, 60_000, gifLayerOptions{}, 0, false, videoSize{}, func(im image.Image, repeats int) error {
-		if want := []int{1800, 1799, 1}; len(red) >= len(want) || repeats != want[len(red)] || im.Bounds().Dx()%2 != 0 || im.Bounds().Dy()%2 != 0 {
+		if want := []int{3600, 3599, 1}; len(red) >= len(want) || repeats != want[len(red)] || im.Bounds().Dx()%2 != 0 || im.Bounds().Dy()%2 != 0 {
 			t.Fatalf("frame repeated %d times with bounds %v", repeats, im.Bounds())
 		}
 		var box image.Rectangle
@@ -80,7 +80,7 @@ func TestVideoSingleBoardContinuousMotion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 9 || !moved {
+	if count != 18 || !moved {
 		t.Fatalf("%d samples, motion = %t", count, moved)
 	}
 }
@@ -101,7 +101,7 @@ func TestVideoLayerCameraAndFinalHold(t *testing.T) {
 			t.Fatalf("canvas jumps from %v to %v", size, im.Bounds())
 		}
 		count += repeats
-		if count == 12 {
+		if count == 24 {
 			c := color.NRGBAModel.Convert(im.At(size.X/2, size.Y/2)).(color.NRGBA)
 			if repeats != 1 || c.B != 255 || c.R != 0 {
 				t.Fatalf("final hold repeated %d times, center %v", repeats, c)
@@ -112,14 +112,14 @@ func TestVideoLayerCameraAndFinalHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 12 {
+	if count != 24 {
 		t.Fatalf("got %d frames", count)
 	}
 	p, err := planVideo(root, 200, gifLayerOptions{duration: 100}, 800*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, leg, _ := p.sample(11)
+	_, _, _, leg, _ := p.sample(23)
 	if leg == nil || leg.Zoom.Inward {
 		t.Fatalf("repeated clip lost its return zoom: %v", leg)
 	}
@@ -149,11 +149,49 @@ func TestVideoClockRoundsOnceAndHonorsCaptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range []int{0, 0, 1, 2, 0, 1, 2, 2, 0} {
+	for i, want := range []int{0, 0, 0, 1, 1, 2, 2, 2, 0, 0, 1, 1, 2, 2, 2, 0, 0, 1} {
 		got, _, _, _, _ := p.sample(i)
 		if got != want {
 			t.Fatalf("at frame %d got segment %d, want %d", i, got, want)
 		}
+	}
+}
+
+func TestVideoEveryTweenPoseAt60FPS(t *testing.T) {
+	root, step := simpleRasterDiagram(), simpleRasterDiagram()
+	root.Steps = []*d2target.Diagram{step}
+	step.TweenDurationMS = 1000
+	for range 60 {
+		step.TweenFrames = append(step.TweenFrames, simpleRasterDiagram())
+	}
+	// 1017 ms offsets the transition from the video's clock by 1/3 ms.
+	plan, err := planVideo(root, 1017, gifLayerOptions{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := videoFrameCount(1017 * time.Millisecond)
+	for i, want := range step.TweenFrames {
+		index, _, repeats, _, _ := plan.sample(first + i)
+		if plan.segments[index].Diagram != want || repeats != 1 {
+			t.Fatalf("tick %d: got segment %d held for %d ticks, want tween pose %d for one tick", first+i, index, repeats, i)
+		}
+	}
+}
+
+func TestVideoKeepsExplicitMillisecondBoundaries(t *testing.T) {
+	root, step := simpleRasterDiagram(), simpleRasterDiagram()
+	root.Steps = []*d2target.Diagram{step}
+	step.TweenDurationMS = 50
+	step.TweenFrames = []*d2target.Diagram{simpleRasterDiagram(), simpleRasterDiagram(), simpleRasterDiagram()}
+	step.TweenFrameEndsMS = []int{16, 33, 50}
+	plan, err := planVideo(root, 34, gifLayerOptions{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tick 3 is exactly 50 ms: 16 ms after the tween started.
+	segment, _, _, _, _ := plan.sample(3)
+	if plan.segments[segment].Diagram != step.TweenFrames[1] {
+		t.Fatal("video moved the explicit 16ms boundary")
 	}
 }
 
@@ -203,7 +241,7 @@ func TestVideoDenseTourBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests.Load() != 1 || frames != 3600 || runs != 608 {
+	if requests.Load() != 1 || frames != 7200 || runs != 608 {
 		t.Fatalf("got %d asset requests, %d frames in %d runs", requests.Load(), frames, runs)
 	}
 }
@@ -248,7 +286,7 @@ func TestVideoWorkUsesActualPaintsAndPreservesTrimFraming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if work.builds != 1 || work.paints != 3600 || videoWorkDivisor(work.paints) <= 1 {
+	if work.builds != 1 || work.paints != 7200 || videoWorkDivisor(work.paints) <= 1 {
 		t.Fatalf("unbudgeted continuous motion: %+v", work)
 	}
 }
@@ -262,7 +300,7 @@ func TestVideoLong4KBudget(t *testing.T) {
 		exceeds         bool
 	}{
 		{simpleRasterDiagram(), 1, 2, false},
-		{animatedConnectionRasterDiagram(), 54_000, 54_000, true},
+		{animatedConnectionRasterDiagram(), 108_000, 108_000, true},
 	} {
 		p, err := planVideo(tc.diagram, 1000, gifLayerOptions{}, duration)
 		if err != nil {
@@ -339,7 +377,7 @@ func TestVideoFinishesInFlightIcons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(centers) != 12 || centers[0] < 0 || centers[6] <= centers[5] || centers[7] <= centers[6] || centers[11] != -1 {
+	if len(centers) != 24 || centers[0] < 0 || centers[12] <= centers[10] || centers[14] <= centers[12] || centers[23] != -1 {
 		t.Fatalf("expected the dot to travel across the stop boundary and land, got x centers %v", centers)
 	}
 }

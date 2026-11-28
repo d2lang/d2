@@ -157,6 +157,8 @@ type Scalar struct {
 	// TweenOffset retains precision lost when formatting a numeric sample for
 	// text. Continuous paint properties can use it for the unrounded value.
 	TweenOffset float64 `json:"-"`
+	// NumericTween identifies interpolated numbers, including samples that land on an integer.
+	NumericTween bool `json:"-"`
 }
 
 func (s *Scalar) Copy(newParent Node) Node {

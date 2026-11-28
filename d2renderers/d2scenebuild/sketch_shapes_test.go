@@ -15,7 +15,46 @@ import (
 	"github.com/d2lang/d2/d2renderers/internal/patternassets"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	"github.com/d2lang/d2/lib/geo"
 )
+
+func TestMovingSketchBorderLabelMaskRemainsInWorldCoordinates(t *testing.T) {
+	shape := sketchTestShape("moving", d2target.ShapeRectangle, 0, 0, 120, 80)
+	shape.Label, shape.LabelPosition = "port", "BORDER_TOP_CENTER"
+	shape.MotionOffset = &geo.Point{X: 0.25, Y: -0.5}
+	initial := d2scene.Translate(0.25, -0.5)
+	final := d2scene.Translate(4, 10)
+	track := d2scene.Track{Keyframes: []d2scene.Keyframe{
+		{Value: d2scene.TransformValue(initial)},
+		{Offset: 1, Value: d2scene.TransformValue(final)},
+	}}
+	for _, animated := range []bool{false, true} {
+		worldMask := &d2scene.Mask{Root: d2scene.NewNode(nil), Transform: d2scene.Identity()}
+		b := builder{connectionMask: worldMask}
+		if animated {
+			b.options.ShapeTranslations = map[string]d2scene.Track{shape.ID: track}
+		}
+		one, two := d2scene.NewNode(nil), d2scene.NewNode(nil)
+		b.maskSketchShapeNode(one, shape)
+		b.maskSketchShapeNode(two, shape)
+		if one.Mask == nil || one.Mask == worldMask || two.Mask != one.Mask {
+			t.Fatalf("animated=%v: expected all moving shape paths to share their own mask", animated)
+		}
+		if !animated {
+			if initial.Mul(one.Mask.Transform) != d2scene.Identity() {
+				t.Fatal("fractional shape translation also moved the diagram-wide mask")
+			}
+			continue
+		}
+		inverse := one.Mask.Root.Animations[0].Keyframes
+		for i, translation := range []d2scene.Matrix{initial, final} {
+			if translation.Mul(inverse[i].Value.Transform) != d2scene.Identity() ||
+				inverse[i].Offset != track.Keyframes[i].Offset {
+				t.Fatalf("keyframe %d moved the diagram-wide mask", i)
+			}
+		}
+	}
+}
 
 func TestSketchOrdinaryShapeFamiliesUseTypedRoughPathsDeterministically(t *testing.T) {
 	t.Parallel()

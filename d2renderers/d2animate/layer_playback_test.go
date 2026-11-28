@@ -3,6 +3,8 @@ package d2animate
 import (
 	"bytes"
 	"math"
+	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
@@ -105,6 +107,64 @@ func TestLayerStepTimelines(t *testing.T) {
 	}
 	if len(links) != 5 || links[len(links)-1].from != 5 || links[len(links)-1].to != 1 {
 		t.Fatalf("expected portals in both layers' authored steps and sample, got %+v", links)
+	}
+}
+
+// Check the emitted CSS on the 60 Hz display clock. Starting a board a
+// fraction of a display tick late used to drop and repeat poses.
+func TestSVGTweenPosesOnGlobalAndLayerClocks(t *testing.T) {
+	root, child, step := d2target.NewDiagram(), d2target.NewDiagram(), d2target.NewDiagram()
+	root.Layers, child.Steps = []*d2target.Diagram{child}, []*d2target.Diagram{step}
+	child.Name = "detail"
+	root.Shapes = []d2target.Shape{{ID: "portal", Link: "root.layers.detail", Width: 10, Height: 10}}
+	step.TweenDurationMS = 1000
+	for range 60 {
+		step.TweenFrames = append(step.TweenFrames, d2target.NewDiagram())
+	}
+	frames, err := Timeline(root, 1017)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artwork := make([][]byte, len(frames))
+	for i := range artwork {
+		artwork[i] = []byte(`<g viewBox="0 0 10 10"/>`)
+	}
+	artwork[0] = []byte(`<g viewBox="0 0 10 10"><a href="root.layers.detail" xlink:href="root.layers.detail"><g class="cG9ydGFs"><rect/></g></a></g>`)
+	svg, err := WrapTimeline(root, nil, frames, artwork, d2svg.RenderOpts{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, clock := range []struct {
+		name             string
+		startMS, totalMS int
+	}{
+		{"d2Transition", 2034, 3051}, {"d2LayerStep", 1017, 2034},
+	} {
+		rule := regexp.MustCompile(`@keyframes ` + clock.name + `-d2-[0-9]+-([0-9]+)\{0%\{[^}]+\}([0-9.]+)%\{opacity:1[^}]*\}([0-9.]+)%,100%`)
+		seen := 0
+		for _, m := range rule.FindAllStringSubmatch(string(svg), -1) {
+			index, _ := strconv.Atoi(m[1])
+			if !frames[index].TweenSample {
+				continue
+			}
+			start, _ := strconv.ParseFloat(m[2], 64)
+			end, _ := strconv.ParseFloat(m[3], 64)
+			// Two exact boards precede these sixty tween poses.
+			tick := (clock.startMS*60+999)/1000 + index - 2
+			elapsed := 100 * (float64(tick) * 1000 / 60) / float64(clock.totalMS)
+			if !(start <= elapsed && elapsed < end) {
+				t.Fatalf("%s tick %d at %f%%: pose %d is only visible from %f%% to %f%%", clock.name, tick, elapsed, index-2, start, end)
+			}
+			// A display tick exactly at the tween boundary must also reveal it.
+			aligned := 100 * (float64(clock.startMS) + float64(index-2)*1000/60) / float64(clock.totalMS)
+			if !(start <= aligned && aligned < end) {
+				t.Fatalf("%s pose %d switches after its display tick at %.12f%%", clock.name, index-2, aligned)
+			}
+			seen++
+		}
+		if seen != 60 {
+			t.Fatalf("%s: found %d tween rules, want 60", clock.name, seen)
+		}
 	}
 }
 

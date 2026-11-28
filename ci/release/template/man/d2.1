@@ -228,9 +228,9 @@ Set the total length of an MP4 or WebM export, for example
 By default, a video plays the selected boards once.
 A shorter duration trims the tour and a longer duration repeats it.
 For a single board, independent effects animate throughout the clip.
-Motion is sampled at 30 frames per second.
+Motion is sampled at 60 frames per second.
 Still frames retain their playback duration.
-Durations round up to the next 1/30 second.
+Durations round up to the next 1/60 second.
 Encoding requires
 .Cm ffmpeg
 version 5.1 or newer on PATH with libx264 for MP4 or libvpx-vp9 for WebM.
@@ -243,9 +243,9 @@ Choose either a video size or a positive
 .Fl -scale
 on the command line.
 Each dimension must be even and at least 48 pixels.
-Both formats use the same canvas limits for portable playback. The coded width
+Both formats use the same canvas limits. The coded width
 is at most 4096 pixels and the height at most 2304, subject to the H.264
-Level 5.1 macroblock limit at 30 fps.
+Level 5.2 macroblock limit at 60 fps.
 .It Fl -video-quality Ar low|medium|high|best
 Select the encoding quality for MP4 or WebM.
 The default is high.

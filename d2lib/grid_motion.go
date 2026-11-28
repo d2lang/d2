@@ -8,6 +8,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/animation"
+	"github.com/d2lang/d2/lib/geo"
 )
 
 // A grid is laid out at each authored endpoint. Plan the transition using full
@@ -358,7 +359,14 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 			} else if band := m.bands[shape.ID]; band != gridBandNone {
 				position = bands[band].travel
 			}
-			shape.Pos = item.position(position)
+			pos := item.position(position)
+			// Fold captions and their clipping windows use absolute integer anchors.
+			if m.folds[shape.ID] != nil {
+				shape.Pos = d2target.Point{X: int(math.Round(pos.X)), Y: int(math.Round(pos.Y))}
+				shape.MotionOffset = nil
+			} else {
+				setMotionPosition(&shape, pos.X, pos.Y, position > 0 && position < 1 && item.from.RenderedPosition() != item.to.RenderedPosition())
+			}
 			shape.Width = gridLerpInt(item.from.Width, item.to.Width, position)
 			shape.Height = gridLerpInt(item.from.Height, item.to.Height, position)
 		default:
@@ -391,9 +399,9 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 
 // Interpolate in diagram coordinates. A nested item's two positions already
 // include its parent's motion, so the same straight path works at any depth.
-func (item *gridMotionItem) position(t float64) d2target.Point {
-	a, b := item.from.Pos, item.to.Pos
-	return d2target.Point{X: gridLerpInt(a.X, b.X, t), Y: gridLerpInt(a.Y, b.Y, t)}
+func (item *gridMotionItem) position(t float64) geo.Point {
+	a, b := item.from.RenderedPosition(), item.to.RenderedPosition()
+	return geo.Point{X: a.X + (b.X-a.X)*t, Y: a.Y + (b.Y-a.Y)*t}
 }
 
 func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel float64) d2target.Shape {
@@ -402,22 +410,35 @@ func (item *gridMotionItem) bubble(s d2target.Shape, scale, opacity, travel floa
 	// places a neighbor at a different width. Removed cells already come
 	// from the outgoing board.
 	if item.to != nil {
-		s.Pos, s.Width, s.Height = item.to.Pos, item.to.Width, item.to.Height
+		s.Pos, s.MotionOffset, s.Width, s.Height = item.to.Pos, item.to.MotionOffset, item.to.Width, item.to.Height
 	}
 	p := item.pivot
-	cx, cy := float64(p.Pos.X)+float64(p.Width)/2, float64(p.Pos.Y)+float64(p.Height)/2
-	x := cx + (float64(s.Pos.X)-cx)*scale
-	y := cy + (float64(s.Pos.Y)-cy)*scale
+	pivot, origin := p.RenderedPosition(), s.RenderedPosition()
+	cx, cy := pivot.X+float64(p.Width)/2, pivot.Y+float64(p.Height)/2
+	x := cx + (origin.X-cx)*scale
+	y := cy + (origin.Y-cy)*scale
 	if parent := item.parent; parent != nil && parent.from != nil && parent.to != nil {
-		offset := parent.from.Pos
+		offset := parent.from.RenderedPosition()
 		if item.to != nil {
-			offset = parent.to.Pos
+			offset = parent.to.RenderedPosition()
 		}
 		pos := parent.position(travel)
-		x += float64(pos.X - offset.X)
-		y += float64(pos.Y - offset.Y)
+		x += pos.X - offset.X
+		y += pos.Y - offset.Y
 	}
-	return scaleMotionShape(s, x, y, scale, opacity)
+	s = scaleMotionShape(s, x, y, scale, opacity)
+	setMotionPosition(&s, x, y, x != origin.X || y != origin.Y)
+	return s
+}
+
+// Keep the integer layout anchor and the exact painted location together.
+func setMotionPosition(s *d2target.Shape, x, y float64, moving bool) {
+	rx, ry := math.Round(x), math.Round(y)
+	s.Pos = d2target.Point{X: int(rx), Y: int(ry)}
+	s.MotionOffset = nil
+	if moving || x != rx || y != ry {
+		s.MotionOffset = geo.NewPoint(x-rx, y-ry)
+	}
 }
 
 // Scale the body, text and decorations together at a sampled top-left point.

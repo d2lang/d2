@@ -19,7 +19,7 @@ func TestVariableOpacityKeepsPaintPrecision(t *testing.T) {
 		{"0.1", "0.6", "Phase 0.2", [5]float64{.1, .225, .35, .475, .6}},
 	} {
 		t.Run(tc.start+" to "+tc.end, func(t *testing.T) {
-			input := fmt.Sprintf(`vars: {d2-config: {animate-duration: 160ms; animate-interval: 200ms}; phase: %s; alpha: ${phase}}
+			input := fmt.Sprintf(`vars: {d2-config: {animate-duration: 64ms; animate-interval: 200ms}; phase: %s; alpha: ${phase}}
 classes: {dim: {style.opacity: "${alpha}"}}
 a: "Phase ${phase}" {class: dim}
 b.style.opacity: ${phase}

@@ -52,7 +52,7 @@ func TestWildcardEdgePropertyAcrossSpread(t *testing.T) {
 }
 
 func TestAnimatedWildcardEdgePropertyAcrossImport(t *testing.T) {
-	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 64ms}}
 box: @links
 other: @links
 steps: {

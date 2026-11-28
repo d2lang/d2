@@ -154,6 +154,14 @@ while existing rows and connections stay anchored. Appending a sequence message 
 extend the activation bar and draw the arrow from sender to recipient.
 [Animated TALA example](./docs/examples/tala-step-motion/dispatch.gif) · [D2 source](./docs/examples/tala-step-motion/dispatch.d2)
 
+Animated SVG can reuse a shape, its label, and its artwork across steps. When
+their geometry stays compatible, the browser interpolates movement and supported
+paint changes at display refresh. TALA preserves fractional positions between
+authored pins. MP4 and WebM sample motion at 60 fps. For changes that need
+separate pictures, D2 targets 60 samples per second, up to 288 per transition.
+GIF fits tween samples to its centisecond clock, using delays of at least
+20 ms wherever the authored timing allows.
+
 Nodes moving between pinned positions, shapes changing size, and grid cells
 shifting into place use cubic ease-in-out. Adding a grid column moves the
 neighboring cells aside while the new cells grow and fade into view. Removing
@@ -206,7 +214,7 @@ applies to the full loop across the exported boards.
 
 To export a VP9 WebM, run `d2 tour.d2 tour.webm`. For H.264 MP4, run
 `d2 tour.d2 tour.mp4`. Both play the selected boards once, sample motion at
-30 fps, and store still poses with timestamps. Install FFmpeg 5.1 or newer
+60 fps, and store still poses with timestamps. Install FFmpeg 5.1 or newer
 on your PATH with the encoder for your format (`libvpx-vp9` for WebM or
 `libx264` for MP4).
 
@@ -222,7 +230,7 @@ the requested resolution. By default, the canvas follows the diagram dimensions
 and `--scale`. The quality options are `low`, `medium`, `high` (default), and
 `best`. Lower settings produce smaller files. Use `--video-duration` to record
 a continuously animated board or to trim or repeat a tour. Durations round up
-to the next 1/30 second.
+to the next 1/60 second.
 
 A positive `animate-interval` shows a progress line along the bottom of an
 animated SVG, GIF, MP4, or WebM. Hide it with `vars.d2-config.animate-progress: false`

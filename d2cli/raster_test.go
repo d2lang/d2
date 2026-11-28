@@ -505,9 +505,9 @@ steps: {change: {swatch.style.fill: blue}}`
 		want               []color.RGBA
 		ticks              int
 	}{
-		{"lone midpoint", "*", 41, 50, []color.RGBA{red, purple, blue}, 10},
-		{"selected endpoints", "steps.change.*", 41, 50, []color.RGBA{red, blue}, 5},
-		{"all samples fit", "*", 101, 102, []color.RGBA{red, {170, 0, 85, 255}, {85, 0, 170, 255}, blue}, 22},
+		{"lone midpoint", "*", 33, 50, []color.RGBA{red, purple, blue}, 10},
+		{"selected endpoints", "steps.change.*", 33, 50, []color.RGBA{red, blue}, 5},
+		{"more samples than GIF ticks", "*", 101, 102, []color.RGBA{red, {219, 0, 36, 255}, {146, 0, 109, 255}, {109, 0, 146, 255}, blue}, 22},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data, err := imageCLI(t, t.TempDir(), fmt.Sprintf(source, tc.duration, tc.interval), "--target="+tc.target, "--stdout-format=gif", "-")
@@ -535,6 +535,43 @@ steps: {change: {swatch.style.fill: blue}}`
 			}
 		})
 	}
+}
+
+func TestGIFDensePaintKeepsEndpointHold(t *testing.T) {
+	board := simpleRasterDiagram()
+	board.TweenDurationMS = 1000
+	for range d2target.TweenFrameCount(board.TweenDurationMS) {
+		board.TweenFrames = append(board.TweenFrames, simpleRasterDiagram())
+	}
+	frames := gifBoardFrames(nil, board, nil, 3000)
+	if len(frames) != 51 {
+		t.Fatalf("got %d frames, want 50 paint samples and the endpoint", len(frames))
+	}
+	for i, f := range frames[:50] {
+		if f.ElapsedMS != i*20 || f.DurationMS != 20 {
+			t.Fatalf("sample %d starts at %dms and lasts %dms", i, f.ElapsedMS, f.DurationMS)
+		}
+	}
+	last := frames[50]
+	if last.Diagram != board || last.ElapsedMS != 1000 || last.DurationMS != 2000 {
+		t.Fatalf("endpoint starts at %dms and lasts %dms", last.ElapsedMS, last.DurationMS)
+	}
+}
+
+func TestSparseGIFPaintKeepsHeldPose(t *testing.T) {
+	board := simpleRasterDiagram()
+	board.TweenDurationMS = 100
+	board.TweenFrameEndsMS = []int{10, 20, 30, 80, 90, 100}
+	for range board.TweenFrameEndsMS {
+		board.TweenFrames = append(board.TweenFrames, simpleRasterDiagram())
+	}
+	frames := gifBoardFrames(nil, board, nil, 500)
+	for _, frame := range frames {
+		if frame.ElapsedMS <= 60 && 60 < frame.ElapsedMS+frame.DurationMS && frame.Diagram == board.TweenFrames[3] {
+			return
+		}
+	}
+	t.Fatal("lost the paint pose authored to hold from 30 to 80 ms")
 }
 
 func TestRenderGIFDenseContinuitySamples(t *testing.T) {

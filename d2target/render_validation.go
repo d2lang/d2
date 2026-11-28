@@ -9,6 +9,7 @@ import (
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/lib/color"
+	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/svg"
 )
@@ -419,6 +420,9 @@ func validateRenderShapeNumbers(targetShape Shape, path string) error {
 			return err
 		}
 	}
+	if p := targetShape.MotionOffset; !ValidMotionOffset(p) {
+		return invalidRenderField(path, "motionOffset", p, "must be a finite subpixel translation")
+	}
 	if !finiteRenderNumber(targetShape.MotionScale) || targetShape.MotionScale < 0 || targetShape.MotionScale > 1 {
 		return invalidRenderField(path, "motionScale", targetShape.MotionScale, "must be between zero and one")
 	}
@@ -566,6 +570,12 @@ func (connection *Connection) ValidateIconMotion(path string) error {
 	return nil
 }
 
+// ValidMotionOffset reports whether a sampled translation fits inside one
+// layout unit on each axis. A nil offset uses the integer layout position.
+func ValidMotionOffset(p *geo.Point) bool {
+	return p == nil || math.Abs(p.X) < 1 && math.Abs(p.Y) < 1
+}
+
 // ValidStrokeWidthOffset checks that the fractional part of an animated stroke
 // preserves a nonnegative width and an outward bound representable as an int.
 func ValidStrokeWidthOffset(width int, offset float64) bool {
@@ -641,22 +651,27 @@ func validateRenderShapeIntegerBounds(path string, targetShape Shape) error {
 	minInt := -maxInt - 1
 	stroke := StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
 	halfStroke := int64(stroke/2 + stroke%2)
+	dx, dy := 0., 0.
+	if p := targetShape.MotionOffset; p != nil {
+		dx, dy = p.X, p.Y
+	}
 	for _, axis := range []struct {
+		offset    float64
 		name      string
 		position  int
 		dimension int
 	}{
-		{name: "pos.x", position: targetShape.Pos.X, dimension: targetShape.Width},
-		{name: "pos.y", position: targetShape.Pos.Y, dimension: targetShape.Height},
+		{offset: dx, name: "pos.x", position: targetShape.Pos.X, dimension: targetShape.Width},
+		{offset: dy, name: "pos.y", position: targetShape.Pos.Y, dimension: targetShape.Height},
 	} {
-		if _, ok := checkedRenderSub(int64(axis.position), halfStroke, minInt, maxInt); !ok {
+		if _, ok := checkedRenderSub(int64(axis.position), halfStroke-int64(math.Floor(axis.offset)), minInt, maxInt); !ok {
 			return invalidRenderField(path, axis.name, axis.position, "must fit bounds arithmetic with strokeWidth")
 		}
 		end, ok := checkedRenderAdd(int64(axis.position), int64(axis.dimension), minInt, maxInt)
 		if !ok {
 			return invalidRenderField(path, axis.name, axis.position, "must fit bounds arithmetic with its dimension")
 		}
-		if _, ok := checkedRenderAdd(end, halfStroke, minInt, maxInt); !ok {
+		if _, ok := checkedRenderAdd(end, halfStroke+int64(math.Ceil(axis.offset)), minInt, maxInt); !ok {
 			return invalidRenderField(path, axis.name, axis.position, "must fit bounds arithmetic with strokeWidth")
 		}
 	}

@@ -12,7 +12,7 @@ import (
 )
 
 func TestAnimateDurationExports(t *testing.T) {
-	const source = `vars: {charge: 100%; d2-config: {animate-duration: 80ms; animate-interval: 100ms}}
+	const source = `vars: {charge: 100%; d2-config: {animate-duration: 200ms; animate-interval: 220ms}}
 bar: "${charge}" {
   width: 100
   height: 40
@@ -25,7 +25,7 @@ steps: {empty: {vars: {charge: 0%}}}
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, token := range []string{`offset="50%"`, ">50%</text>", "200ms steps(1,end) infinite"} {
+	for _, token := range []string{`offset="50%"`, ">50%</text>", "440ms steps(1,end) infinite"} {
 		if !bytes.Contains(out, []byte(token)) {
 			t.Fatalf("animated SVG missing %q", token)
 		}
@@ -39,8 +39,8 @@ steps: {empty: {vars: {charge: 0%}}}
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The step spends 80ms draining and 20ms displaying the empty bar.
-	if !reflect.DeepEqual(decoded.Delay, []int{3, 3, 4, 4, 4, 2}) {
+	// The step spends 200ms draining and 20ms displaying the empty bar.
+	if !reflect.DeepEqual(decoded.Delay, []int{3, 3, 3, 3, 3, 3, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}) {
 		t.Fatalf("GIF delays=%v", decoded.Delay)
 	}
 
@@ -56,7 +56,7 @@ steps: {empty: {vars: {charge: 0%}}}
 		}
 		return count
 	}
-	full, halfway, empty := redPixels(decoded.Image[0]), redPixels(decoded.Image[4]), redPixels(decoded.Image[len(decoded.Image)-1])
+	full, halfway, empty := redPixels(decoded.Image[0]), redPixels(animationFrameAt(t, out, 32)), redPixels(decoded.Image[len(decoded.Image)-1])
 	if full == 0 || halfway < full*4/10 || halfway > full*6/10 || empty != 0 {
 		t.Fatalf("unexpected red fill coverage at start/midpoint/end: %d/%d/%d", full, halfway, empty)
 	}
@@ -75,7 +75,7 @@ steps: {empty: {vars: {charge: 0%}}}
 }
 
 func TestAnimateDurationOverrides(t *testing.T) {
-	const source = `vars: {charge: 100%; d2-config: {animate-duration: 80ms; animate-interval: 100ms}}
+	const source = `vars: {charge: 100%; d2-config: {animate-duration: 100ms; animate-interval: 100ms}}
 bar: "${charge}"
 steps: {empty: {vars: {charge: 0%}}}`
 	for _, tc := range []struct {
@@ -86,7 +86,7 @@ steps: {empty: {vars: {charge: 0%}}}`
 	}{
 		{"source", nil, nil, "200ms steps(1,end) infinite", true},
 		{"environment", []string{"D2_ANIMATE_DURATION=160"}, nil, "260ms steps(1,end) infinite", true},
-		{"flag over environment", []string{"D2_ANIMATE_DURATION=0"}, []string{"--animate-duration=80"}, "200ms steps(1,end) infinite", true},
+		{"flag over environment", []string{"D2_ANIMATE_DURATION=0"}, []string{"--animate-duration=100"}, "200ms steps(1,end) infinite", true},
 		{"disable with flag", []string{"D2_ANIMATE_DURATION=160"}, []string{"--animate-duration=0"}, "200ms steps(1,end) infinite", false},
 		{"disable with environment", []string{"D2_ANIMATE_DURATION=0"}, nil, "200ms steps(1,end) infinite", false},
 		{"single board", nil, []string{"--target=steps.empty"}, "100ms steps(1,end) infinite", false},
@@ -122,7 +122,7 @@ steps: {empty: {vars: {charge: 0%}}}`
 }
 
 func TestAnimateDurationSolidFill(t *testing.T) {
-	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 120ms}}
+	const source = `vars: {d2-config: {animate-duration: 200ms; animate-interval: 220ms}}
 swatch: "" {width: 100; height: 40; style: {fill: blue; stroke-width: 0}}
 steps: {alert: {swatch.style.fill: red}}`
 	dir := t.TempDir()
@@ -130,7 +130,7 @@ steps: {alert: {swatch.style.fill: red}}`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(svg, []byte(`fill="#800080"`)) {
+	if !bytes.Contains(svg, []byte(`fill="#800080"`)) && !bytes.Contains(svg, []byte("fill:#800080")) {
 		t.Fatal("the SVG swatch did not pass through purple")
 	}
 
@@ -138,16 +138,16 @@ steps: {alert: {swatch.style.fill: red}}`
 	if err != nil {
 		t.Fatal(err)
 	}
-	// At 160ms the root has held for 120ms and the 80ms color change is halfway.
-	frame := animationFrameAt(t, out, 16)
+	// At 320ms the root has held for 220ms and the 200ms color change is halfway.
+	frame := animationFrameAt(t, out, 32)
 	r, g, b, _ := frame.At(frame.Bounds().Dx()/2, frame.Bounds().Dy()/2).RGBA()
 	if r>>8 != 128 || g != 0 || b>>8 != 128 {
-		t.Fatalf("GIF swatch at 160ms = #%02x%02x%02x, want #800080", r>>8, g>>8, b>>8)
+		t.Fatalf("GIF swatch at 320ms = #%02x%02x%02x, want #800080", r>>8, g>>8, b>>8)
 	}
 }
 
 func TestAnimateDurationDirectOpacityAndGradient(t *testing.T) {
-	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 120ms}}
+	const source = `vars: {d2-config: {animate-duration: 200ms; animate-interval: 220ms}}
 bar: "" {
   width: 100
   height: 40
@@ -177,7 +177,7 @@ steps: {load: {bar.style: {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame := animationFrameAt(t, out, 16)
+	frame := animationFrameAt(t, out, 32)
 	w, y := frame.Bounds().Dx(), frame.Bounds().Dy()/2
 	// Immediately either side of the halfway stop, the bar contains purple
 	// at 50% opacity over white, then white. A jump to either endpoint
@@ -199,20 +199,20 @@ steps: {load: {bar.style: {
 }
 
 func TestAnimateDurationEasesPinnedMotion(t *testing.T) {
-	const source = `vars: {d2-config: {layout-engine: tala; animate-interval: 200ms; animate-duration: 160ms}}
+	const source = `vars: {d2-config: {layout-engine: tala; animate-interval: 500ms; animate-duration: 400ms}}
 node: "" {left: 0; top: 0; width: 40; height: 40; style: {fill: red; stroke-width: 0}}
-steps.move.node.left: 200`
+steps.move.node.left: 192`
 	data, err := imageCLI(t, t.TempDir(), source, "--pad=4", "--stdout-format=gif", "-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The root holds for 200 ms, then the node moves 200 px in 160 ms.
+	// Quarter marks of this move land on both compiler samples and GIF ticks.
 	origin := redIconCenter(animationFrameAt(t, data, 0))
 	if origin < 0 {
 		t.Fatal("missing node at the start of the animation")
 	}
 	for _, sample := range []struct{ centiseconds, distance int }{
-		{20, 0}, {24, 12}, {28, 100}, {32, 188}, {36, 200},
+		{50, 0}, {60, 12}, {70, 96}, {80, 180}, {90, 192},
 	} {
 		center := redIconCenter(animationFrameAt(t, data, sample.centiseconds))
 		if got := center - origin; got != sample.distance {
