@@ -29,7 +29,7 @@ func supportsRefinementStyles(g *d2graph.Graph) bool {
 		}
 	}
 	for _, e := range g.Edges {
-		if e.Icon != nil || e.Tooltip != nil || e.Link != nil || e.Style.Shadow != nil || e.Style.BorderRadius != nil || e.ZIndex != 0 ||
+		if e.HasIcon() || e.Tooltip != nil || e.Link != nil || e.Style.Shadow != nil || e.Style.BorderRadius != nil || e.ZIndex != 0 ||
 			(e.Style.StrokeWidth != nil && e.Style.StrokeWidth.Value != "2") {
 			return false
 		}

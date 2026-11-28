@@ -1,6 +1,7 @@
 package d2lib
 
 import (
+	"math"
 	"reflect"
 	"testing"
 
@@ -35,44 +36,34 @@ steps: {
 	}
 	const duration = 4000
 	target := shapeByID(t, up, "spare")
-	// Midway through either gesture the card should be fully legible while
-	// it still has a visible distance to grow (entry) or shrink (exit).
-	inWidth := func(ms int) int { return shapeByID(t, enter.sample(up, ms, duration), "spare").Width }
-	outWidth := func(ms int) int { return shapeByID(t, exit.sample(down, ms, duration), "spare").Width }
-	halfIn := shapeByID(t, enter.sample(up, 110, duration), "spare")
-	halfOut := shapeByID(t, exit.sample(down, 80, duration), "spare")
-	if halfIn.Opacity != target.Opacity || halfOut.Opacity != target.Opacity ||
-		halfIn.Width > target.Width*9/10 || halfIn.Width != halfOut.Width {
-		t.Fatalf("midpoint width/opacity: entry %d/%.2f, exit %d/%.2f", halfIn.Width, halfIn.Opacity, halfOut.Width, halfOut.Opacity)
-	}
-	if inWidth(110)-inWidth(55) <= inWidth(165)-inWidth(110) {
-		t.Fatal("arrival should decelerate toward the destination")
-	}
-	if outWidth(40)-outWidth(80) >= outWidth(80)-outWidth(120) {
-		t.Fatal("removal should accelerate inward")
+	// The label reaches its authored opacity halfway through the growth.
+	for _, want := range []struct {
+		ms, width int
+		opacity   float64
+	}{{90, 55, .4}, {180, 95, .8}, {270, 134, .8}} {
+		cell := shapeByID(t, enter.sample(up, want.ms, duration), "spare")
+		if cell.Width != want.width || cell.Opacity != want.opacity {
+			t.Errorf("arrival at %dms: width=%d opacity=%g, want %d/%g", want.ms, cell.Width, cell.Opacity, want.width, want.opacity)
+		}
 	}
 	lastWidth, lastOpacity := 0, 0.
-	for ms := 10; ms <= 220; ms += 10 {
-		s := shapeByID(t, enter.sample(up, ms, duration), "spare")
-		if s.Width < lastWidth || s.Width > target.Width || s.Opacity < lastOpacity || s.Opacity > target.Opacity {
-			t.Fatalf("arrival overshot or reversed at %dms: width=%d opacity=%v", ms, s.Width, s.Opacity)
+	for ms := 10; ms < 360; ms += 10 {
+		in := shapeByID(t, enter.sample(up, ms, duration), "spare")
+		out := shapeByID(t, exit.sample(down, 360-ms, duration), "spare")
+		if in.Width != out.Width || math.Abs(in.Opacity-out.Opacity) > 1e-12 {
+			t.Fatalf("entry and reversed exit differ at %dms: width=%d/%d opacity=%g/%g", ms, in.Width, out.Width, in.Opacity, out.Opacity)
 		}
-		lastWidth, lastOpacity = s.Width, s.Opacity
+		if in.Width < lastWidth || in.Width > target.Width || in.Opacity < lastOpacity || in.Opacity > target.Opacity {
+			t.Fatalf("arrival overshot or reversed at %dms: width=%d opacity=%v", ms, in.Width, in.Opacity)
+		}
+		lastWidth, lastOpacity = in.Width, in.Opacity
 	}
-	for _, ms := range []int{220, 400, duration} {
+	for _, ms := range []int{360, 400, duration} {
 		if s := shapeByID(t, enter.sample(up, ms, duration), "spare"); !reflect.DeepEqual(s, target) {
 			t.Fatalf("arrival did not settle at %dms", ms)
 		}
-	}
-	lastWidth, lastOpacity = target.Width, target.Opacity
-	for ms := 0; ms < 160; ms += 10 {
-		s := shapeByID(t, exit.sample(down, ms, duration), "spare")
-		if s.Width > lastWidth || s.Opacity > lastOpacity {
-			t.Fatalf("exit grew or brightened at %dms: width=%d opacity=%v", ms, s.Width, s.Opacity)
+		if got := exit.sample(down, ms, duration); len(got.Shapes) != len(down.Shapes) {
+			t.Fatalf("exit remained visible at %dms", ms)
 		}
-		lastWidth, lastOpacity = s.Width, s.Opacity
-	}
-	if got := exit.sample(down, 160, duration); len(got.Shapes) != len(down.Shapes) {
-		t.Fatal("exit remained visible after 160ms")
 	}
 }

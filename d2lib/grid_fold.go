@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
@@ -81,7 +82,7 @@ func (m *gridMotion) planGridFolds(old, next map[string]*gridNode) {
 			}
 			fit := max(required(f.closed.Width, f.open.Width, s.Pos.X-f.open.Pos.X+s.Width),
 				required(f.closed.Height, f.open.Height, s.Pos.Y-f.open.Pos.Y+s.Height))
-			// From its midpoint onward smoothstep is at least its input.
+			// From its midpoint onward ease-in-out is at least its input.
 			// At this time the entire card fits, including its stroke.
 			visit(child, start+(end-start)*max(.5, fit))
 		}
@@ -125,7 +126,7 @@ func (f *gridFold) caption(s *d2target.Shape, t float64) {
 
 func (d gridFoldDetail) sample(s d2target.Shape, fraction, travel float64) (d2target.Shape, float64) {
 	f := d.fold
-	visible := gridEase(gridPhase(f.progress(fraction), d.revealStart, d.revealStart+gridFoldFade))
+	visible := animation.EaseInOut(gridPhase(f.progress(fraction), d.revealStart, d.revealStart+gridFoldFade))
 	if visible == 0 {
 		return s, 0
 	}
