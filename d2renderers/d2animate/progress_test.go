@@ -63,9 +63,41 @@ func TestSVGProgressFitsShortCanvas(t *testing.T) {
 	}
 }
 
-func TestProgressColorTransparentOverride(t *testing.T) {
-	transparent := "Transparent"
-	if got := ProgressColor(nil, &d2target.ThemeOverrides{B1: &transparent}); got != d2themescatalog.NeutralDefault.Colors.B1 {
-		t.Fatalf("transparent accent produced %q", got)
+func TestSVGProgressColor(t *testing.T) {
+	root := d2target.NewDiagram()
+	on := true
+	root.Config = &d2target.Config{AnimateProgress: &on, AnimateProgressColor: "rebeccapurple"}
+	hash, _ := root.HashID(nil)
+	line := ".d2-progress-" + hash
+	defaultAccent, darkAccent := "#701234", "#abcdef"
+	opts := d2svg.RenderOpts{
+		DarkThemeID: &d2themescatalog.DarkMauve.ID, ThemeOverrides: &d2target.ThemeOverrides{B1: &defaultAccent},
+		DarkThemeOverrides: &d2target.ThemeOverrides{B1: &darkAccent},
+	}
+	frames := [][]byte{[]byte(`<g></g>`)}
+	for _, tc := range []struct{ override, want string }{{"", "rebeccapurple"}, {"#aBC", "#aBC"}} {
+		opts.AnimateProgressColor = tc.override
+		out, err := Wrap(root, frames, opts, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if css := string(out); !strings.Contains(css, `style="fill:`+tc.want+";animation:d2Progress-") || strings.Contains(css, line+"{fill:") {
+			t.Errorf("expected one inline light/dark progress color %q", tc.want)
+		}
+	}
+	for _, invalid := range []string{"currentColor", "transparent", "#1234", "#12345678", "url(#paint)", "red}*{opacity:0}"} {
+		opts.AnimateProgressColor = invalid
+		if out, err := Wrap(root, frames, opts, 1000); err == nil || out != nil {
+			t.Errorf("invalid progress paint %q produced %d bytes and error %v", invalid, len(out), err)
+		}
+	}
+}
+
+func TestProgressColorThemeFallback(t *testing.T) {
+	theme := d2themescatalog.DarkMauve
+	for _, paint := range []string{"", "Transparent", "currentColor", "#11000044", "bogus"} {
+		if got := ProgressColor(&theme.ID, &d2target.ThemeOverrides{B1: &paint}); got != theme.Colors.B1 {
+			t.Errorf("theme B1 %q resolved to %q, want %q", paint, got, theme.Colors.B1)
+		}
 	}
 }

@@ -226,6 +226,11 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	ink, err := animationProgressInk(opts)
+	if err != nil {
+		return err
+	}
+	overlay := videoProgressOverlay{ink: ink}
 	p, err := planVideo(diagram, intervalMS, layers, duration)
 	if err != nil {
 		return err
@@ -262,7 +267,6 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	options.MaxPixels = videoMaxFramePixels
 	buildLimits := sceneOptionsForFrame(gifFrameOptions(0, buildDivisor))
 	buildLimits.omitAppendix = !forceAppendix
-	overlay := videoProgressOverlay{ink: animationProgressInk(opts)}
 	opts = rasterRenderOptions(opts)
 	authoredScale := *opts.Scale
 	opts.Scale = nil // First measure vector scenes in their authored coordinate system.

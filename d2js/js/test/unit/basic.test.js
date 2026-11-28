@@ -194,6 +194,7 @@ container.child -> outside
     const d2 = new D2();
     const source = `
   vars.d2-config.animate-progress: true
+  vars.d2-config.animate-progress-color: "#b86afe"
   x -> y
   layers: {
     numbers: {
@@ -207,6 +208,19 @@ container.child -> outside
     expect(svg).toContain("<svg");
     expect(svg).toContain("</svg>");
     expect(result.renderOptions.animateProgress).toBe(true);
+    expect(result.renderOptions.animateProgressColor).toBe("#b86afe");
+    expect(svg).toContain("#b86afe");
+    const recolored = await d2.render(result.diagram, {
+      ...result.renderOptions,
+      animateProgressColor: "tomato",
+    });
+    expect(recolored).toContain("tomato");
+    await expect(
+      d2.compile(source, { animateProgressColor: "transparent" })
+    ).rejects.toThrow(/animateProgressColor/);
+    await expect(
+      d2.render(result.diagram, { animateProgressColor: "currentColor" })
+    ).rejects.toThrow(/animateProgressColor/);
     expect(svg).toContain('class="d2-progress-');
     const disabled = await d2.render(result.diagram, {
       ...result.renderOptions,

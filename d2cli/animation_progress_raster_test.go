@@ -133,6 +133,35 @@ func TestGIFProgressUsesEncodedDelaysOnMixedCanvases(t *testing.T) {
 	}
 }
 
+func TestGIFProgressColorIndependentOfBoardPalette(t *testing.T) {
+	board := simpleRasterDiagramWithSize(48, 48)
+	board.Shapes[0].Fill = "B1"
+	opts := progressRenderOpts()
+	opts.AnimateProgressColor = "lime"
+	for _, enabled := range []bool{false, true} {
+		opts.AnimateProgress = &enabled
+		data, _, err := renderGIF(t.Context(), "-", false, board, opts, 100, false, gifLayerOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		animation, err := gif.DecodeAll(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		last := animation.Image[len(animation.Image)-1]
+		if got := color.RGBAModel.Convert(last.At(24, 24)); got != testProgressInk {
+			t.Fatalf("progress %t changed the board's B1 fill to %v", enabled, got)
+		}
+		want := testProgressInk
+		if enabled {
+			want = color.RGBA{G: 255, A: 255}
+		}
+		if got := color.RGBAModel.Convert(last.At(24, 45)); got != want {
+			t.Fatalf("progress %t drew %v at the bottom, want %v", enabled, got, want)
+		}
+	}
+}
+
 func TestGIFProgressOffPreservesCaptionedPlayback(t *testing.T) {
 	board := simpleRasterDiagram()
 	board.Root.Annotation = &d2target.Annotation{Label: "Pause for this caption."}

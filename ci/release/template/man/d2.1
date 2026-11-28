@@ -197,6 +197,18 @@ Set the default with
 or
 .Li vars.d2-config.animate-progress .
 The flag takes precedence over the environment, which takes precedence over the file.
+.It Fl -animate-progress-color Ar color
+Override the progress line's color in animated SVG, GIF, and MP4 exports.
+Use an opaque named color or a three- or six-digit hex color.
+The explicit color applies to both light and dark themes.
+Enable the line with
+.Fl -animate-progress
+or the corresponding source setting.
+Set the color with
+.Ev D2_ANIMATE_PROGRESS_COLOR
+or
+.Li vars.d2-config.animate-progress-color .
+The flag takes precedence over the environment, which takes precedence over the file.
 .It Fl -video-duration Ar duration
 Set the total length of an MP4 export, for example
 .Li --video-duration=10s .

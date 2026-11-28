@@ -469,6 +469,11 @@ func renderGIFBoardFrames(
 }
 
 func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMs int, wantPreview bool, layers gifLayerOptions) (encoded, previewSVG []byte, err error) {
+	ink, err := animationProgressInk(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	progress := gifProgressOverlay{ink: ink}
 	session, err := newGIFRenderSession()
 	if err != nil {
 		return nil, nil, err
@@ -479,7 +484,6 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	palettedFrames := make([]*image.Paletted, 0)
 	var incrementalEncoder *xgif.OpaquePalettedAnimationEncoder
 	var incrementalBounds image.Rectangle
-	progress := gifProgressOverlay{ink: animationProgressInk(opts)}
 	summary, err := renderGIFWithSession(
 		ctx, inputPath, cacheImages, diagram, opts, intervalMs, layers, session, &workspace, wantPreview,
 		func(delays []int, boardMS int, bounds image.Rectangle) error {

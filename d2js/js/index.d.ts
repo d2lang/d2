@@ -76,6 +76,8 @@ export interface RenderOptions {
   animateInterval?: number;
   /** Show a thin elapsed-time line at the bottom of an animated SVG. Defaults to the diagram's animate-progress setting, or false. */
   animateProgress?: boolean;
+  /** Color of an enabled progress line. Accepts an opaque named color, #RGB, or #RRGGBB. Overrides the diagram's animate-progress-color setting. */
+  animateProgressColor?: string;
   /** Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output. */
   salt?: string;
   /** Omit XML tag (<?xml ...?>) from output SVG files. Useful when generating SVGs for direct HTML embedding. */

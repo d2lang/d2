@@ -88,6 +88,11 @@ func ValidateRenderTarget(root *Diagram) error {
 }
 
 func validateRenderBoard(diagram *Diagram, path string) error {
+	if diagram.Config != nil {
+		if err := ValidateAnimateProgressColor(diagram.Config.AnimateProgressColor); err != nil {
+			return fmt.Errorf("render target %s.config.animateProgressColor: %w", path, err)
+		}
+	}
 	if len(diagram.TweenFrames) > MaxTweenFrames {
 		return fmt.Errorf("render target %s has more than %d tween frames", path, MaxTweenFrames)
 	}

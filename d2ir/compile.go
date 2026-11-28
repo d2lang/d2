@@ -520,7 +520,7 @@ func (c *compiler) validateConfigs(configs *Field) {
 		}
 
 		name := f.Name.ScalarString()
-		if name == "animate-progress" || name == "animate-duration" {
+		if name == "animate-progress" || name == "animate-progress-color" || name == "animate-duration" {
 			board := ParentMap(ParentMap(configs))
 			if !board.Root() {
 				global := RootMap(board).getFieldIndexed(d2ast.FlatUnquotedString("vars"), configs.Name, f.Name)
@@ -531,6 +531,12 @@ func (c *compiler) validateConfigs(configs *Field) {
 			}
 		}
 		switch name {
+		case "animate-progress-color":
+			if val == "" || f.Composite != nil {
+				c.errorf(f.LastRef().AST(), `"animate-progress-color" needs a single color`)
+			} else if err := d2target.ValidateAnimateProgressColor(val); err != nil {
+				c.errorf(f.LastRef().AST(), `"animate-progress-color": %s`, err)
+			}
 		case "animate-duration":
 			if duration, ok := ParseAnimateInterval(val); !ok || duration > d2target.MaxTweenDurationMS || f.Composite != nil {
 				c.errorf(f.LastRef().AST(), `expected "animate-duration" between 0ms and 10m in whole milliseconds, got %q`, val)

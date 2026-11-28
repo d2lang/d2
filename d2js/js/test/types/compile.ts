@@ -21,6 +21,7 @@ const options: CompileOptions = {
   sketch: false,
   animateDuration: 200,
   animateProgress: true,
+  animateProgressColor: "#e53",
 };
 
 const defaults: Promise<CompileResponse> = d2.compile(source);

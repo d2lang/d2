@@ -99,7 +99,9 @@ type RenderOpts struct {
 	DarkThemeOverrides *d2target.ThemeOverrides
 	// AnimateProgress draws an elapsed-time line on animated exports.
 	AnimateProgress *bool
-	Font            string
+	// AnimateProgressColor overrides the color of an enabled progress line.
+	AnimateProgressColor string
+	Font                 string
 	// the svg will be scaled by this factor, if unset the svg will fit to screen
 	Scale *float64
 
@@ -2175,6 +2177,11 @@ func Render(diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
 func RenderContext(ctx context.Context, diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if opts != nil {
+		if err := d2target.ValidateAnimateProgressColor(opts.AnimateProgressColor); err != nil {
+			return nil, fmt.Errorf("animateProgressColor: %w", err)
+		}
 	}
 	if diagram == nil {
 		return nil, fmt.Errorf("render target is nil")

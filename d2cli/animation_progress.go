@@ -16,12 +16,16 @@ func animationProgressStrip(bounds image.Rectangle) image.Rectangle {
 	return bounds
 }
 
-func animationProgressInk(opts d2svg.RenderOpts) *image.Uniform {
+func animationProgressInk(opts d2svg.RenderOpts) (*image.Uniform, error) {
 	if opts.AnimateProgress == nil || !*opts.AnimateProgress {
-		return nil
+		return nil, nil
 	}
-	ink, _ := d2color.ParseRGBA(d2animate.ProgressColor(opts.ThemeID, opts.ThemeOverrides))
-	return image.NewUniform(ink)
+	paint, err := d2animate.ResolveProgressColor(opts.ThemeID, opts.ThemeOverrides, opts.AnimateProgressColor)
+	if err != nil {
+		return nil, err
+	}
+	ink, _ := d2color.ParseRGBA(paint)
+	return image.NewUniform(ink), nil
 }
 
 func animationProgressWidth(width, elapsed, total int, last bool) int {

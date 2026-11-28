@@ -46,19 +46,20 @@ const (
 var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
-	AnimateProgress    *bool           `json:"animateProgress,omitempty"`
-	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
-	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds for step transitions and linked layer zooms.
-	Scale              *float64        `json:"scale,omitempty"`
-	ForceAppendix      *bool           `json:"forceAppendix,omitempty"`
-	Sketch             *bool           `json:"sketch"`
-	ThemeID            *int64          `json:"themeID"`
-	DarkThemeID        *int64          `json:"darkThemeID"`
-	Pad                *int64          `json:"pad"`
-	Center             *bool           `json:"center"`
-	LayoutEngine       *string         `json:"layoutEngine"`
-	ThemeOverrides     *ThemeOverrides `json:"themeOverrides,omitempty"`
-	DarkThemeOverrides *ThemeOverrides `json:"darkThemeOverrides,omitempty"`
+	AnimateProgress      *bool           `json:"animateProgress,omitempty"`
+	AnimateProgressColor string          `json:"animateProgressColor,omitempty"`
+	AnimateInterval      *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
+	AnimateDuration      *int64          `json:"animateDuration,omitempty"` // Milliseconds for step transitions and linked layer zooms.
+	Scale                *float64        `json:"scale,omitempty"`
+	ForceAppendix        *bool           `json:"forceAppendix,omitempty"`
+	Sketch               *bool           `json:"sketch"`
+	ThemeID              *int64          `json:"themeID"`
+	DarkThemeID          *int64          `json:"darkThemeID"`
+	Pad                  *int64          `json:"pad"`
+	Center               *bool           `json:"center"`
+	LayoutEngine         *string         `json:"layoutEngine"`
+	ThemeOverrides       *ThemeOverrides `json:"themeOverrides,omitempty"`
+	DarkThemeOverrides   *ThemeOverrides `json:"darkThemeOverrides,omitempty"`
 	// Data is a data structure for holding user-defined data
 	// useful for layout engines that allow users to configure within source code
 	Data map[string]interface{} `json:"data,omitempty"`
@@ -79,6 +80,27 @@ func (c *Config) ResolveAnimateProgress(override *bool) bool {
 		return *override
 	}
 	return c != nil && c.AnimateProgress != nil && *c.AnimateProgress
+}
+
+// ResolveAnimateProgressColor gives a nonempty render setting precedence over the source.
+func (c *Config) ResolveAnimateProgressColor(override string) string {
+	if override != "" || c == nil {
+		return override
+	}
+	return c.AnimateProgressColor
+}
+
+// ValidateAnimateProgressColor permits an unset override or a solid, opaque
+// color with the same meaning in SVG and raster exports.
+func ValidateAnimateProgressColor(paint string) error {
+	if paint == "" || color.ColorHexRegex.MatchString(paint) {
+		return nil
+	}
+	name := strings.ToLower(paint)
+	if name != "transparent" && name != "currentcolor" && go2.Contains(color.NamedColors, name) {
+		return nil
+	}
+	return fmt.Errorf("expected an opaque named color or a hex color (#RGB or #RRGGBB), got %q", paint)
 }
 
 // ResolveForceAppendix preserves an explicit false when the source enables footnotes.

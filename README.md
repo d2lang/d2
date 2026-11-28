@@ -186,7 +186,10 @@ to the next 1/30 second.
 Set `vars.d2-config.animate-progress: true` or pass `--animate-progress` to
 draw a thin line along the bottom of an animated SVG, GIF, or MP4. The line
 fills from left to right over the playback time, including holds, and stays
-fixed during camera moves. It uses the theme's B1 color. The default is off.
+fixed during camera moves. Progress is off by default. The line uses the
+theme's B1 color (the usual solid stroke). To color the bar independently, set
+`vars.d2-config.animate-progress-color: "#E35B42"` or pass
+`--animate-progress-color salmon`.
 Enabling it can increase raster export time and file size during long holds.
 
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to

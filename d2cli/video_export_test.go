@@ -30,7 +30,7 @@ func TestMP4Playback(t *testing.T) {
 	requireVideoTool(t, err == nil, "ffprobe unavailable")
 	encoders, err := exec.CommandContext(t.Context(), ffmpeg, "-encoders").Output()
 	requireVideoTool(t, err == nil && bytes.Contains(encoders, []byte(" libx264 ")), "FFmpeg with libx264 unavailable")
-	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 100ms; pad: 0}}
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 100ms; animate-progress-color: lime; theme-overrides: {B1: purple}; pad: 0}}
 swatch: "" {width: 47; height: 41; style: {stroke-width: 0; fill: red}}
 steps: {next: {swatch.style.fill: blue}}`
 	dir := t.TempDir()
@@ -40,7 +40,7 @@ steps: {next: {swatch.style.fill: blue}}`
 	if err != nil {
 		t.Fatal(err)
 	}
-	clip, err := imageCLIWithEnv(t, dir, source, env, "--stdout-format=mp4", "--video-duration=700ms", "-")
+	clip, err := imageCLIWithEnv(t, dir, source, env, "--stdout-format=mp4", "--video-duration=700ms", "--animate-progress", "-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +99,30 @@ steps: {next: {swatch.style.fill: blue}}`
 	red, blend, blue := pixel(0), pixel(8), pixel(11)
 	if red[0] < 220 || red[2] > 25 || blend[0] < 20 || blend[2] < 20 || blue[0] > 25 || blue[2] < 220 {
 		t.Fatalf("decoded colors at frames 0, 8, 11 = %v, %v, %v", red, blend, blue)
+	}
+
+	// The progress color is present in both inputs, but only the stdout
+	// export enables the bar. Sample inside its final six delivery pixels.
+	for _, enabled := range []bool{false, true} {
+		input := output
+		if enabled {
+			input = "pipe:0"
+		}
+		decode := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", input,
+			"-vf", "crop=2:2:2:ih-4,scale=1:1", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1")
+		if enabled {
+			decode.Stdin = bytes.NewReader(clip)
+		}
+		data, err := decode.Output()
+		if err != nil || len(data) < 3 {
+			t.Fatalf("decode progress %t: %v (%d bytes)", enabled, err, len(data))
+		}
+		last := data[len(data)-3:]
+		lime := last[0] < 20 && last[1] > 230 && last[2] < 20
+		white := last[0] > 235 && last[1] > 235 && last[2] > 235
+		if enabled && !lime || !enabled && !white {
+			t.Fatalf("progress %t: final RGB is %v, want lime when enabled and the white letterbox when disabled", enabled, last)
+		}
 	}
 }
 
