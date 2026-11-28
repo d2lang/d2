@@ -183,6 +183,11 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 				if err := stabilizeTweenCaptions(ctx, from, board, p.tweenGraph, &captionBudget); err != nil {
 					return err
 				}
+				if reorder {
+					if err := stabilizeTweenEdgeCaptions(ctx, board, p.tweenGraph, &captionBudget); err != nil {
+						return err
+					}
+				}
 			}
 			if p.from != nil && p.from != previous {
 				// A nested layer/scenario can interrupt cumulative step playback.

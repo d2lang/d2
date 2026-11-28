@@ -1,6 +1,7 @@
 package d2lib
 
 import (
+	"context"
 	"math"
 	"reflect"
 	"testing"
@@ -100,29 +101,38 @@ func TestTransportStraightLaneWithMovingFace(t *testing.T) {
 	}
 }
 
-func TestReorderFadesOnlyLongWireCut(t *testing.T) {
-	var frames []tweenRouteFrame
-	for i := 0; i < 7; i++ {
+func TestReorderLaneSwitchPreservesConnectionOpacity(t *testing.T) {
+	// One long wire changes corridors at full opacity, then again during an
+	// endpoint fade. The route pass must preserve both kinds of samples.
+	var panels []*d2target.Diagram
+	opacities := []float64{.8, .8, .8, .8, .4, 0, .4, .8}
+	for i, opacity := range opacities {
 		a, b := tweenTestBox(0, 0, 100, 100), tweenTestBox(400, 0, 100, 100)
 		a.ID, b.ID = "a", "b"
-		line := []*geo.Point{{X: 100, Y: 50}, {X: 400, Y: 50}}
-		lane := line
-		if i >= 3 {
+		a.Opacity, b.Opacity = opacity/.8, 1
+		lane := []*geo.Point{{X: 100, Y: 50}, {X: 400, Y: 50}}
+		if i >= 2 && i < 5 {
 			lane = []*geo.Point{{X: 50, Y: 100}, {X: 50, Y: 750}, {X: 450, Y: 750}, {X: 450, Y: 100}}
 		}
-		panel := &d2target.Diagram{Shapes: []d2target.Shape{*a, *b}, Connections: []d2target.Connection{
-			{ID: "switched", Src: "a", Dst: "b", Route: lane, Opacity: 0.8},
-			{ID: "unchanged", Src: "a", Dst: "b", Route: line, Opacity: 0.7},
-		}}
-		frames = append(frames, indexTweenRoutes(panel))
-	}
-	fadeReorderWires(frames)
-	for i, opacity := range []float64{0.8, 0.8, 0.4, 0, 0.4, 0.8, 0.8} {
-		if got := frames[i].edges["switched"].Opacity; got != opacity {
-			t.Errorf("sample %d wire opacity = %v, want %v", i, got, opacity)
+		block := tweenTestBox(180, 680, 80, 140)
+		if i >= 2 && i < 5 {
+			block.Pos.Y = 0
 		}
-		if frames[i].edges["unchanged"].Opacity != 0.7 {
-			t.Errorf("sample %d faded an unchanged wire", i)
+		block.ID, block.Opacity = "moving obstacle", 1
+		panels = append(panels, &d2target.Diagram{Shapes: []d2target.Shape{*a, *b, *block}, Connections: []d2target.Connection{
+			{ID: "wire", Src: "a", Dst: "b", Route: lane, Opacity: opacity},
+		}})
+	}
+	end := panels[len(panels)-1]
+	end.TweenFrames = panels[1 : len(panels)-1]
+	budget := maxBoardSampleElements
+	if err := stabilizeTweenRoutes(context.Background(), panels[0], end, &budget, true); err != nil {
+		t.Fatal(err)
+	}
+	for i, panel := range panels {
+		edge := panel.Connections[0]
+		if edge.Opacity != opacities[i] || (len(edge.Route) == 4) != (i >= 2 && i < 5) {
+			t.Errorf("sample %d has %d route points and opacity %g", i, len(edge.Route), edge.Opacity)
 		}
 	}
 }

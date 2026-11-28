@@ -160,7 +160,11 @@ func stabilizeTweenRoutes(ctx context.Context, previous, board *d2target.Diagram
 		// With interrupted playback the first numeric sample defines the
 		// start, regardless of what was on the screen before this step.
 		canProjectBack := previous != nil && !hasPrior && prev.edges[c.ID] == nil
-		stabilizeTweenEdge(track, prior, hasPrior, canProjectBack, budget)
+		if reorder {
+			refineResizeWire(track, budget)
+		} else {
+			stabilizeTweenEdge(track, prior, hasPrior, canProjectBack, budget)
+		}
 		if *budget <= 0 {
 			break
 		}
@@ -190,58 +194,7 @@ func stabilizeTweenRoutes(ctx context.Context, previous, board *d2target.Diagram
 			e.MotionCorners = true
 		}
 	}
-	if reorder {
-		fadeReorderWires(frames)
-	}
 	return ctx.Err()
-}
-
-// During a sibling reorder a long wire can lose its whole corridor while its
-// endpoints move very little. Hide a discrete jump in that wire and its label
-// for one sample. Neighboring samples ease out/in. Small routing changes keep
-// the usual direct switch, and consecutive blocked lanes share a single fade.
-func fadeReorderWires(frames []tweenRouteFrame) {
-	last := len(frames) - 1
-	shade := make(map[*d2target.Connection]float64)
-	for i := 1; i <= last; i++ {
-		before, now := frames[i-1], frames[i]
-		for id, e := range now.edges {
-			old := before.edges[id]
-			if old == nil || old.IsCurve || e.IsCurve || old.Opacity <= 0 || e.Opacity <= 0 ||
-				!validTweenRoute(old.Route) || !validTweenRoute(e.Route) {
-				continue
-			}
-			src, dst := before.shapes[old.Src], before.shapes[old.Dst]
-			nextSrc, nextDst := now.shapes[e.Src], now.shapes[e.Dst]
-			if src == nil || dst == nil || nextSrc == nil || nextDst == nil {
-				continue
-			}
-			motion := max(tweenNodeMotion(src, nextSrc), tweenNodeMotion(dst, nextDst))
-			// A 160-unit floor leaves ordinary lane switches alone at rest.
-			// The motion allowance scales the check for fast-moving diagrams.
-			threshold := max(160, 4*motion)
-			if measureTweenRoute(old.Route).displacement2(measureTweenRoute(e.Route)) <= threshold*threshold {
-				continue
-			}
-			center := min(i, last-1)
-			for j := max(1, center-1); j <= min(last-1, center+1); j++ {
-				wire := frames[j].edges[id]
-				if wire == nil {
-					continue
-				}
-				alpha := 0.5
-				if j == center {
-					alpha = 0
-				}
-				if prior, ok := shade[wire]; !ok || alpha < prior {
-					shade[wire] = alpha
-				}
-			}
-		}
-	}
-	for wire, alpha := range shade {
-		wire.Opacity *= alpha
-	}
 }
 
 // A choice carries one router-produced path along with its endpoints. Switching
@@ -421,4 +374,58 @@ func tweenRouteFaces(r []*geo.Point) [2]byte {
 	}
 	n := len(r) - 1
 	return [2]byte{side(r[0], r[1]), side(r[n], r[n-1])}
+}
+
+// A reorder can close and reopen a lane within a few samples. Keep the native
+// track as a complete option; also try attaching nearby lanes to this frame's
+// endpoints. Each alternative passes the same painted-obstacle check as a held
+// route. The first and final poses are fixed.
+func refineResizeWire(track []tweenRouteSample, budget *int) {
+	last := len(track) - 1
+	type option struct {
+		route     []*geo.Point
+		landmarks routeLandmarks
+	}
+	choices := make([][]option, len(track))
+	var unsettled bool
+	for i, e := range track {
+		p := measureTweenRoute(e.edge.Route)
+		choices[i] = []option{{route: e.edge.Route, landmarks: p}}
+		if i > 0 {
+			old := track[i-1]
+			threshold := 8 + 1.5*max(tweenNodeMotion(old.nodes.src, e.nodes.src), tweenNodeMotion(old.nodes.dst, e.nodes.dst))
+			if p.displacement2(choices[i-1][0].landmarks) > threshold*threshold {
+				unsettled = true
+			}
+		}
+	}
+	if !unsettled {
+		return
+	}
+	for i := 1; i < last; i++ {
+		s := track[i]
+		// Nearby lanes often allow a single bad sample to keep either neighbor's
+		// routing. Both held lanes remain options throughout a longer excursion.
+		for _, j := range []int{0, last, i - 1, i + 1, max(0, i-2), min(last, i+2)} {
+			from := track[j]
+			cost := len(from.edge.Route) * (1 + len(s.frame.Shapes) + len(s.frame.Connections))
+			if cost > *budget {
+				*budget = 0
+				return
+			}
+			*budget -= cost
+			r := transportTweenRoute(from, s)
+			if r == nil {
+				continue
+			}
+			if slices.ContainsFunc(choices[i], func(v option) bool { return slices.EqualFunc(v.route, r, (*geo.Point).Equals) }) || !tweenRouteClear(s.frame, s.edge, r, s.nodes) {
+				continue
+			}
+			choices[i] = append(choices[i], option{route: r, landmarks: measureTweenRoute(r)})
+		}
+	}
+	selected := chooseTweenTrack(choices, func(a, b option) float64 { return a.landmarks.displacement2(b.landmarks) }, func(i int) float64 { return track[i].edge.Opacity }, .03)
+	for i := 1; i < last; i++ {
+		track[i].setRoute(choices[i][selected[i]].route)
+	}
 }

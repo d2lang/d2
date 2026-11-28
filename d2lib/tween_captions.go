@@ -137,6 +137,7 @@ type tweenCaptionFrame struct {
 }
 
 type tweenCaptionWire struct {
+	edge *d2target.Connection
 	ink  tweenRouteInk
 	clip *d2target.MotionClip
 }
@@ -157,22 +158,26 @@ func tweenCaptionBox(s *d2target.Shape, pos label.Position) image.Rectangle {
 }
 
 func (f *tweenCaptionFrame) clear(owner *d2target.Shape, anchor string, budget *int) bool {
-	// Charge before generating paths. Exhaustion preserves the native anchor.
+	box := tweenCaptionBox(owner, label.FromString(anchor))
+	if box.Empty() {
+		return false
+	}
+	box = box.Inset(-label.PADDING)
+	return tweenCaptionFits(owner, box, -1) && f.clearBox(owner, nil, box, budget)
+}
+
+// A caption belongs to a shape or an edge. For an edge caption its own stroke
+// is a legal background, while its arrowheads, icon and endpoint labels are not.
+func (f *tweenCaptionFrame) clearBox(owner *d2target.Shape, edge *d2target.Connection, box image.Rectangle, budget *int) bool {
 	cost := gridFrameElements(f.board)
 	if cost > *budget {
 		*budget = 0
 		return false
 	}
 	*budget -= cost
-	box := tweenCaptionBox(owner, label.FromString(anchor))
 	if box.Empty() {
 		return false
 	}
-	box = box.Inset(-label.PADDING)
-	if !tweenCaptionFits(owner, box, -1) {
-		return false
-	}
-
 	for i := range f.board.Shapes {
 		s := &f.board.Shapes[i]
 		// Resolving annotations can reposition notes on other objects. Keep
@@ -183,14 +188,14 @@ func (f *tweenCaptionFrame) clear(owner *d2target.Shape, anchor string, budget *
 		if s.Opacity <= 0 {
 			continue
 		}
-		ancestor := strings.HasPrefix(owner.ID, s.ID+".")
-		if s.ID == owner.ID || ancestor {
+		ancestor := owner != nil && strings.HasPrefix(owner.ID, s.ID+".") || edge != nil && (strings.HasPrefix(edge.Src, s.ID+".") || strings.HasPrefix(edge.Dst, s.ID+"."))
+		if s == owner || ancestor {
 			// Badges and positioned tooltips have independent renderer geometry.
 			if s.Link != "" || s.Tooltip != "" {
 				return false
 			}
 		}
-		if s.ID != owner.ID {
+		if s != owner {
 			pad := int(math.Ceil(s.RenderedStrokeWidth() / 2))
 			body := tweenShapeBody(f.board, i, pad, !ancestor)
 			if tweenRouteClip(body, s.MotionClip).Overlaps(box) && (!ancestor || !tweenCaptionFits(s, box, pad)) {
@@ -220,12 +225,29 @@ func (f *tweenCaptionFrame) clear(owner *d2target.Shape, anchor string, budget *
 			if src == nil || dst == nil || !validTweenRoute(e.Route) || e.IsCurve && (len(e.Route)-1)%3 != 0 {
 				return false
 			}
-			wires = append(wires, tweenCaptionWire{tweenRouteInkFor(e, tweenRouteShapePair{src, dst}), e.MotionClip})
+			ink := tweenRouteInkFor(e, tweenRouteShapePair{src, dst})
+			// Captions may change anchors between calls. Read their current box
+			// below and cache only the immutable decorations and stroke.
+			if e.Label != "" {
+				ink.decorations = ink.decorations[1:]
+			}
+			wires = append(wires, tweenCaptionWire{e, ink, e.MotionClip})
 		}
 		f.wires = wires
 	}
 	for i := range f.wires {
-		stroke, decoration := f.wires[i].ink.overlap(tweenRouteClip(box, f.wires[i].clip), -1)
+		wire := &f.wires[i]
+		r := tweenRouteClip(box, wire.clip)
+		if edge == wire.edge {
+			if wire.ink.decorationOverlap(r, -1) > 0 {
+				return false
+			}
+			continue
+		}
+		if e := wire.edge; e.Label != "" && tweenRouteTextBox(e.GetLabelTopLeft(), e.LabelWidth, e.LabelHeight).Overlaps(r) {
+			return false
+		}
+		stroke, decoration := wire.ink.overlap(r, -1)
 		if stroke > 0 || decoration > 0 {
 			return false
 		}
