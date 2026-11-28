@@ -244,9 +244,13 @@ func bindLayerLinks(frames [][]byte, links []layerLink, hash string) ([][]byte, 
 // Fragment targets select a layer. Its private sequence starts at the linked
 // destination once the camera arrives. Clearing the fragment resumes the
 // global tour where the visitor left it.
-func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slots []layerSlot) {
+func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slots []layerSlot, frameSibling string, linkedMatte bool) {
 	marker := "d2-layer-link-" + hash
-	allFrames := "." + marker + ":target~.d2-frame-" + hash
+	framePrefix := "#d2-frame-" + hash + "-"
+	if linkedMatte {
+		framePrefix = ".d2-frame-" + hash + "-"
+	}
+	allFrames := "." + marker + ":target~" + frameSibling + ".d2-frame-" + hash
 	hide := "d2-hide-" + hash
 	buf.WriteString(`<style type="text/css"><![CDATA[`)
 	writeCSS(buf, allFrames, "{animation-play-state:paused!important;opacity:0!important;transform:none!important;clip-path:none!important;pointer-events:none!important;--d2-link-visibility:hidden!important}")
@@ -258,8 +262,8 @@ func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slo
 
 	for _, link := range links {
 		id := link.id
-		selected := "#" + id + ":target~"
-		frameSelector := selected + "#d2-frame-" + hash + "-"
+		selected := "#" + id + ":target~" + frameSibling
+		frameSelector := selected + framePrefix
 		from := frameSelector + strconv.Itoa(link.from)
 		to := frameSelector + strconv.Itoa(link.to)
 		if len(link.legs) == 0 {
@@ -292,11 +296,21 @@ func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slo
 				// Paint this ancestor only during transit, without starting its step clock.
 				writeCSS(buf, frame, "{opacity:1!important;--d2-link-visibility:initial!important}", frame, ">g{", hidden, ";animation:", hold, " ", duration, " step-end}")
 			}
-			writeCSS(buf, frame, ">g>g{animation:", camera, " ", duration, " linear both}")
+			fill := " both"
+			if pos == len(link.cameras)-1 {
+				// The destination arrives at its ordinary opacity and pose. Release the
+				// transform so the browser renders settled artwork on its native pixel grid.
+				fill = ""
+			}
+			writeCSS(buf, frame, ">g>g{animation:", camera, " ", duration, " linear", fill, "}")
 		}
 	}
 	writeCSS(buf, "@media(prefers-reduced-motion:reduce){", allFrames, "{--d2-click-time:0s}}")
 	buf.WriteString(`]]></style>`)
+}
+
+func writeLayerTargets(buf *bytes.Buffer, hash string, links []layerLink) {
+	marker := "d2-layer-link-" + hash
 	for _, link := range links {
 		writeCSS(buf, `<g id="`, link.id, `" class="`, marker, `"/>`)
 	}

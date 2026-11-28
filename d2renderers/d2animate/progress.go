@@ -4,14 +4,29 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"math"
+	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	"github.com/d2lang/d2/lib/color"
 )
 
-// ProgressHeight is the line height in SVG user units or raster output pixels.
+// ProgressHeight is the maximum playback progress line height in output pixels.
 const ProgressHeight = 6
+
+// ProgressGap is the clear space between the artwork canvas and the line, in output pixels.
+const ProgressGap = 8
+
+// ProgressLineHeight is 1% of the shorter canvas side, rounded to whole pixels.
+func ProgressLineHeight(width, height int) int {
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+	return min(height, ProgressHeight, max(2, int(math.Round(float64(min(width, height))/100))))
+}
 
 // ProgressColor resolves the opaque B1 color used by animation overlays.
 // When the override supplies no solid paint, use the original catalog color.
@@ -40,7 +55,7 @@ func ResolveProgressColor(themeID *int64, overrides *d2target.ThemeOverrides, ex
 
 // svgProgress adds CSS to the shared clock and returns the overlay that paints
 // last in the tour viewport, outside the moving camera.
-func svgProgress(buf *bytes.Buffer, hash string, viewport image.Rectangle, totalMS int, opts d2svg.RenderOpts, links bool) (string, error) {
+func svgProgress(buf *bytes.Buffer, hash string, footer image.Rectangle, totalMS int, opts d2svg.RenderOpts, links bool) (string, error) {
 	ink, err := ResolveProgressColor(opts.ThemeID, opts.ThemeOverrides, opts.AnimateProgressColor)
 	if err != nil {
 		return "", err
@@ -61,7 +76,72 @@ func svgProgress(buf *bytes.Buffer, hash string, viewport image.Rectangle, total
 		fmt.Fprintf(buf, ".d2-layer-link-%s:target~%s{animation-play-state:paused!important}", hash, line)
 	}
 	fmt.Fprintf(buf, "@media(prefers-reduced-motion:reduce){%s{visibility:hidden}}", line)
-	h := min(ProgressHeight, viewport.Dy())
-	return fmt.Sprintf(`<rect class="d2-progress-%s" x="%d" y="%d" width="%d" height="%d" transform="scale(0 1)" pointer-events="none" aria-hidden="true" style="%sanimation:d2Progress-%s %dms linear infinite"/>`,
-		hash, viewport.Min.X, viewport.Max.Y-h, viewport.Dx(), h, paint, hash, totalMS), nil
+	return fmt.Sprintf(`<rect class="d2-progress-%s" x="0" y="%d" width="%d" height="%d" transform="scale(0 1)" pointer-events="none" aria-hidden="true" style="%sanimation:d2Progress-%s %dms linear infinite"/>`,
+		hash, footer.Min.Y+ProgressGap, footer.Dx(), footer.Dy()-ProgressGap, paint, hash, totalMS), nil
+}
+
+// Match solid board backgrounds in the footer. Gradient and patterned boards
+// keep their artwork intact and use a solid base for the extra margin.
+func footerMatte(css *bytes.Buffer, hash string, footer image.Rectangle, totalMS int, opts d2svg.RenderOpts, root *d2target.Diagram, frames []Frame, links bool, slots []layerSlot) (string, bool) {
+	fill := root.Root.Fill
+	if len(frames) > 0 {
+		fill = frames[0].Diagram.Root.Fill
+	}
+	uniform := true
+	for _, frame := range frames {
+		if frame.Diagram.Root.Fill != fill {
+			uniform = false
+			break
+		}
+	}
+	var theme *d2themes.Theme
+	if opts.DarkThemeID == nil {
+		light := d2themescatalog.NeutralDefault
+		if opts.ThemeID != nil {
+			light = d2themescatalog.Find(*opts.ThemeID)
+		}
+		light.ApplyOverrides(opts.ThemeOverrides)
+		theme = &light
+	}
+	matte := d2themes.NewThemableElement("rect", theme)
+	matte.X, matte.Y = 0, float64(footer.Min.Y)
+	matte.Width, matte.Height = float64(footer.Dx()), float64(footer.Dy())
+	paint := func(fill string) string {
+		if fill == "" || fill == "none" || strings.EqualFold(fill, "transparent") {
+			return ""
+		}
+		if !color.IsThemeColor(fill) {
+			if _, ok := color.ParseRGBA(fill); !ok {
+				fill = d2target.BG_COLOR
+			}
+		}
+		matte.Fill = fill
+		return matte.Render()
+	}
+	var body bytes.Buffer
+	linkedMatte := !uniform && links
+	if uniform {
+		body.WriteString(paint(fill))
+	} else {
+		if linkedMatte {
+			fmt.Fprintf(css, ".d2-footer-%s g{transform:none!important;pointer-events:none!important}", hash)
+		}
+		for i, frame := range frames {
+			if linkedMatte {
+				if rect := paint(frame.Diagram.Root.Fill); rect != "" {
+					writeLayerFrame(&body, hash, i, totalMS, slots, false, true)
+					body.WriteString(rect)
+					body.WriteString("</g></g></g>")
+				}
+			} else {
+				matte.ClassName = fmt.Sprintf("d2-matte-%d", i)
+				matte.Style = fmt.Sprintf("transform:none!important;animation:d2Transition-%s-%d %dms steps(1,end) infinite", hash, i, totalMS)
+				body.WriteString(paint(frame.Diagram.Root.Fill))
+			}
+		}
+	}
+	if body.Len() == 0 {
+		return "", false
+	}
+	return `<g class="` + hash + ` d2-footer-` + hash + `" aria-hidden="true" pointer-events="none">` + body.String() + `</g>`, linkedMatte
 }

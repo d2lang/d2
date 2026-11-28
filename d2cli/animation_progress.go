@@ -10,12 +10,6 @@ import (
 	d2color "github.com/d2lang/d2/lib/color"
 )
 
-// Raster formats draw in delivery pixels, after camera and canvas placement.
-func animationProgressStrip(bounds image.Rectangle) image.Rectangle {
-	bounds.Min.Y = max(bounds.Min.Y, bounds.Max.Y-d2animate.ProgressHeight)
-	return bounds
-}
-
 func animationProgressInk(opts d2svg.RenderOpts) (*image.Uniform, error) {
 	if opts.AnimateProgress == nil || !*opts.AnimateProgress {
 		return nil, nil
@@ -49,9 +43,10 @@ func videoProgressRun(tick, total, steps int) int {
 // The renderer lends this surface until emit returns. Only the bottom strip
 // changes over a static pose. Restore it before releasing the raster workspace.
 type videoProgressOverlay struct {
-	ink   *image.Uniform
-	strip *image.RGBA
-	steps int
+	ink    *image.Uniform
+	strip  *image.RGBA
+	steps  int
+	height int
 }
 
 func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start, repeats, total int, emit func(image.Image, int) error) error {
@@ -59,7 +54,8 @@ func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start
 		return emitVideoHold(frame, repeats, start+repeats == total, emit)
 	}
 	bounds := frame.Bounds()
-	strip := animationProgressStrip(bounds)
+	strip := bounds
+	strip.Min.Y = strip.Max.Y - p.height
 	if p.strip == nil {
 		p.strip = image.NewRGBA(strip)
 	}
