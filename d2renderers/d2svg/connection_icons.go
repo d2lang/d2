@@ -17,6 +17,16 @@ func drawConnectionIcon(w *objectWriter, c d2target.Connection, center geo.Point
 	size := c.IconSize()
 	radius := float64(size) / 2
 	if c.Icon == nil {
+		if vertices := c.IconPolygon(center); len(vertices) != 0 {
+			polygon := d2themes.NewThemableElement("polygon", theme)
+			points := make([]string, len(vertices))
+			for i, pt := range vertices {
+				points[i] = svg.FormatFloat(pt.X) + "," + svg.FormatFloat(pt.Y)
+			}
+			polygon.Points, polygon.Fill = strings.Join(points, " "), fill
+			w.element(polygon)
+			return
+		}
 		dot := d2themes.NewThemableElement("circle", theme)
 		dot.Cx, dot.Cy, dot.R, dot.Fill = center.X, center.Y, radius, fill
 		w.element(dot)

@@ -3,6 +3,7 @@ package d2target
 import (
 	"encoding/json"
 	"math"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -40,6 +41,25 @@ func TestValidateConnectionIconAnimation(t *testing.T) {
 	c.IconPositions = make([]geo.Point, MaxMovingIconsPerConnection+1)
 	if err := validateRenderConnectionNumbers(c, "edge"); err == nil || !strings.Contains(err.Error(), "iconPositions") {
 		t.Errorf("too many sampled icons: %v", err)
+	}
+}
+
+func TestValidateConnectionIconShapes(t *testing.T) {
+	c := BaseConnection()
+	c.IconPosition = "INSIDE_MIDDLE_CENTER"
+	for _, shape := range []string{"circle", "square", "triangle", "diamond"} {
+		c.IconShape = shape
+		if err := c.ValidateIconMotion("edge"); err != nil {
+			t.Errorf("shape %q: %v", shape, err)
+		}
+	}
+	c.IconShape = "rectangle"
+	if err := c.ValidateIconMotion("edge"); err == nil || !strings.Contains(err.Error(), "iconShape") {
+		t.Errorf("unsupported shape: %v", err)
+	}
+	c.IconShape, c.Icon = ShapeSquare, &url.URL{Path: "image.svg"}
+	if err := c.ValidateIconMotion("edge"); err == nil || !strings.Contains(err.Error(), "image URL") {
+		t.Errorf("shape and image: %v", err)
 	}
 }
 

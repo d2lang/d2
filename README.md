@@ -171,9 +171,10 @@ seconds. Higher rates put more dots on the wire at the same travel speed,
 up to 64 icons in flight for a steady stream. On a wire that takes one second
 to cross, rates above `64/s` display as `64/s`.
 Set the rate to `0/s` in a later step to let the last dots arrive, or use
-`true` for one continuously looping icon. Supply an image with `icon` to send
-your own artwork. Labels beside a connection leave room for the icon as it
-passes. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
+`true` for one continuously looping icon. Set `icon.shape` to `circle` (the
+default), `square`, `triangle`, or `diamond`. Each takes the connection's stroke
+color. Supply an image with `icon` to send your own artwork. Labels beside a
+connection leave room for the icon as it passes. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
 
 To loop one icon with a fixed trip time, give the duration in whole
 milliseconds. The icon departs again as soon as it arrives. Each trip keeps
@@ -221,8 +222,11 @@ interval show the line only if you pass `--animate-progress` or set
 `animate-progress: true` in the config.
 
 The line fills from left to right over the playback time, including holds, and
-stays fixed during camera moves. It uses the theme's B1 color (the usual solid
-stroke). To color the bar independently, set
+stays fixed during camera moves. Its height is 1% of the shorter canvas dimension,
+rounded to the nearest pixel and limited to 2–6 pixels, or one pixel on a single-row canvas.
+The export leaves at least 8 pixels between the diagram's existing padding and the line.
+MP4 and WebM exports with `--video-size` fit both within the requested dimensions.
+The line uses the theme's B1 color (the usual solid stroke). To override it, set
 `vars.d2-config.animate-progress-color: "#E35B42"` or pass
 `--animate-progress-color salmon`.
 Enabling it can increase raster export time and file size during long holds.

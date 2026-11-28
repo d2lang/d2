@@ -1,6 +1,7 @@
 vars: {d2-config: {animate-interval: 2s; animate-duration: 900ms; pad: 24}}
 
 direction: right
+style.fill: "#EFE4D5"
 catalog: Catalog {link: layers.catalog}
 shipping: Shipping {link: layers.shipping}
 catalog -> shipping
@@ -8,16 +9,19 @@ catalog -> shipping
 layers: {
   catalog: {
     direction: right
+    style.fill: "#D1E0CA"
     product: Product detail {link: layers.product}
     ship: Go to shipping {link: root.layers.shipping}
     product -> ship
     layers.product: {
+      style.fill: "#E4D0DF"
       item: Product specifications
       back: Back to catalog {link: root.layers.catalog}
       item -> back
     }
   }
   shipping: {
+    style.fill: transparent
     queue: Shipping queue
     back: Back to overview {link: root}
     queue -> back
