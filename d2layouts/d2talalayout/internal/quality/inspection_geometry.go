@@ -67,6 +67,7 @@ func measureGeometry(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGua
 					if rectangular {
 						score.RouteObstructions++
 					}
+					issues.obstructs(nodeItem(node), node.Box)
 					issues.add(nodeItem(node), routeItem(edge), 1, rectangular && (edge.IsLoop() || len(node.LoopOffsets) != 0))
 					break // One obstruction per edge/node, independent of subdivision.
 				}

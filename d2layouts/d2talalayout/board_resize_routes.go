@@ -1,8 +1,10 @@
 package d2talalayout
 
 import (
+	"cmp"
 	"context"
 	"math"
+	"slices"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
@@ -15,46 +17,65 @@ import (
 	"github.com/d2lang/d2/lib/shape"
 )
 
-// routeResizeBetween approaches the authored connection lanes from either end
-// of a numeric transition. The ordinary endpoint graphs are read-only.
-func routeResizeBetween(ctx context.Context, start, end, current *d2graph.Graph, boxes map[*d2graph.Object]*geo.Box, progress float64) bool {
-	reference := start
-	if progress >= 0.5 {
-		reference = end
-	}
-	return routeResizeBoard(ctx, reference, current, boxes)
-}
-
 // routeResizeBoard keeps the preceding board's wires and captions on a proposed
 // placement. Only connections that lose an attachment or acquire an obstruction
 // need the router. Work on a private graph until the whole board is ready.
 func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, plan map[*d2graph.Object]*geo.Box) bool {
-	oldD2 := continuityEdges(previous)
-	for _, e := range current.Edges {
-		old := oldD2[e.AbsID()]
-		if e.IsCurve || old == nil || old.IsCurve {
-			return false // The clearance inspection only certifies polygonal wires.
+	ref := newResizeReference(ctx, previous)
+	return ref != nil && ref.route(ctx, current, plan, nil)
+}
+
+// Translating and inspecting each immutable endpoint once bounds the work per
+// sample to the candidate placement and the affected wires.
+type resizeReference struct {
+	edges    map[string]*d2graph.Edge
+	nodes    map[layoutgraph.EntityID]*layoutgraph.Node
+	lanes    map[layoutgraph.EntityID]*layoutgraph.Edge
+	baseline *quality.LoopInspection
+}
+
+func newResizeReference(ctx context.Context, g *d2graph.Graph) *resizeReference {
+	before := layoutgraph.NewGraph()
+	if _, err := translateGraph(ctx, g, before, true); err != nil {
+		return nil
+	}
+	ref := &resizeReference{
+		edges: continuityEdges(g),
+		nodes: make(map[layoutgraph.EntityID]*layoutgraph.Node, len(before.Nodes)),
+		lanes: make(map[layoutgraph.EntityID]*layoutgraph.Edge, len(before.Edges)),
+	}
+	for _, n := range before.Nodes {
+		ref.nodes[n.ID] = n
+	}
+	for _, e := range before.Edges {
+		if e.IsCurve {
+			return nil
+		}
+		ref.lanes[e.ID] = e
+	}
+	if len(before.Edges) > 0 {
+		var err error
+		ref.baseline, err = quality.InspectLoopClearance(ctx, before)
+		if err != nil {
+			return nil
 		}
 	}
-	before, trial := layoutgraph.NewGraph(), layoutgraph.NewGraph()
-	if _, err := translateGraph(ctx, previous, before, true); err != nil {
-		return false
-	}
+	return ref
+}
+
+func (ref *resizeReference) route(ctx context.Context, current *d2graph.Graph, plan map[*d2graph.Object]*geo.Box, anchors map[string]*d2graph.Object) bool {
+	trial := layoutgraph.NewGraph()
 	bindings, err := translateGraph(ctx, current, trial, true)
 	if err != nil {
 		return false
 	}
 	nodes := make(map[layoutgraph.EntityID]*layoutgraph.Node, len(trial.Nodes))
-	oldNodes := make(map[layoutgraph.EntityID]*layoutgraph.Node, len(before.Nodes))
-	for _, n := range before.Nodes {
-		oldNodes[n.ID] = n
-	}
 	for _, n := range trial.Nodes {
 		nodes[n.ID] = n
 	}
 	for _, o := range current.Objects {
 		n := nodes[bindings.objectIDs[o]]
-		old := oldNodes[n.ID]
+		old := ref.nodes[n.ID]
 		b := plan[o]
 		if old == nil || b == nil || !boardLeafPoint(b.TopLeft) || !boardLeafDimension(b.Width) || !boardLeafDimension(b.Height) ||
 			b.TopLeft.X+b.Width > limits.MaxGraphSize || b.TopLeft.Y+b.Height > limits.MaxGraphSize {
@@ -67,20 +88,24 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 		if n.Icon != nil && old.Icon != nil {
 			n.Icon.Position = old.Icon.Position
 		}
-	}
-	oldEdges := make(map[layoutgraph.EntityID]*layoutgraph.Edge, len(before.Edges))
-	for _, e := range before.Edges {
-		oldEdges[e.ID] = e
+		if anchor := anchors[o.AbsID()]; anchor != nil {
+			if n.Label != nil && anchor.LabelPosition != nil {
+				n.Label.Position = label.FromString(*anchor.LabelPosition)
+			}
+			if n.Icon != nil && anchor.IconPosition != nil {
+				n.Icon.Position = label.FromString(*anchor.IconPosition)
+			}
+		}
 	}
 	needsRoute := make(map[layoutgraph.EntityID]bool)
 	unplaced := make(map[*layoutgraph.Edge]bool)
 	changedLabels := make(map[layoutgraph.EntityID]bool)
 	for _, e := range trial.Edges {
-		old := oldEdges[e.ID]
-		if old == nil || len(old.Points) < 2 {
+		old := ref.lanes[e.ID]
+		if e.IsCurve || old == nil || len(old.Points) < 2 {
 			return false
 		}
-		original := oldD2[*e.D2ID]
+		original := ref.edges[*e.D2ID]
 		if original == nil {
 			return false
 		}
@@ -104,15 +129,46 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 		}
 	}
 	if len(trial.Edges) != 0 {
-		baseline, err := quality.InspectLoopClearance(ctx, before)
-		if err != nil {
+		baseline := ref.baseline
+		candidate, ok := clearResizeLabels(ctx, trial, baseline, changedLabels)
+		obstacles := make(map[layoutgraph.EntityID][]geo.Box)
+		if !ok || !candidate.CollectObstructedRoutes(baseline, needsRoute, nil, obstacles) {
 			return false
 		}
-		candidate, ok := clearResizeLabels(ctx, trial, baseline, changedLabels)
-		if !ok || !candidate.CollectObstructedRoutes(baseline, needsRoute, nil) {
-			return false
+		// An obstruction in one segment does not invalidate the corridor
+		// on the other side of the drawing. Bypass the obstructed interval
+		// locally before handing unresolved attachments to the native router.
+		repaired := false
+		for _, edge := range trial.Edges {
+			boxes := obstacles[edge.ID]
+			if len(boxes) == 0 || len(boxes) > 8 || len(edge.Points) > 128 {
+				continue
+			}
+			slices.SortFunc(boxes, func(a, b geo.Box) int {
+				if n := a.TopLeft.Compare(b.TopLeft); n != 0 {
+					return n
+				}
+				if a.Width != b.Width {
+					return cmp.Compare(a.Width, b.Width)
+				}
+				return cmp.Compare(a.Height, b.Height)
+			})
+			for _, box := range boxes {
+				if detour := bypassResizeBox(edge.Points, box); detour != nil {
+					edge.Points = detour
+					repaired = true
+				}
+			}
+		}
+		if repaired {
+			candidate, ok = clearResizeLabels(ctx, trial, baseline, changedLabels)
+			clear(needsRoute)
+			if !ok || !candidate.CollectObstructedRoutes(baseline, needsRoute, nil, nil) {
+				return false
+			}
 		}
 		for edge, invisible := range unplaced {
+			needsRoute[edge.ID] = true
 			edge.IsInvisible = invisible
 		}
 		if len(needsRoute) != 0 {
@@ -159,7 +215,7 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 		if update.label == nil || needsRoute[bindings.edgeIDs[update.edge]] || changedLabels[bindings.edgeIDs[update.edge]] {
 			continue
 		}
-		old := oldD2[update.edge.AbsID()]
+		old := ref.edges[update.edge.AbsID()]
 		update.label.position, update.label.percentage = nil, nil
 		if old.LabelPosition != nil {
 			update.label.position = new(*old.LabelPosition)
@@ -173,9 +229,9 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 }
 
 func clearResizeLabels(ctx context.Context, trial *layoutgraph.Graph, baseline *quality.LoopInspection, changed map[layoutgraph.EntityID]bool) (*quality.LoopInspection, bool) {
-	scene, err := quality.InspectLoopClearance(ctx, trial)
+	scene, err := quality.InspectRouteClearance(ctx, trial)
 	obscured := make(map[layoutgraph.EntityID]bool)
-	if err != nil || !scene.CollectObstructedRoutes(baseline, nil, obscured) {
+	if err != nil || !scene.CollectObstructedRoutes(baseline, nil, obscured, nil) {
 		return nil, false
 	}
 	if len(obscured) == 0 {
@@ -194,7 +250,7 @@ func clearResizeLabels(ctx context.Context, trial *layoutgraph.Graph, baseline *
 	if err := labeling.PlaceNewEdges(ctx, trial, labels); err != nil {
 		return nil, false
 	}
-	scene, err = quality.InspectLoopClearance(ctx, trial)
+	scene, err = quality.InspectRouteClearance(ctx, trial)
 	return scene, err == nil
 }
 
@@ -292,13 +348,35 @@ func resizeBoardWire(old, current *layoutgraph.Edge) []*geo.Point {
 	}
 	if last == 1 && !old.HasTableColumn() {
 		// The attached ports above include rigidly translated silhouettes. Keep
-		// the original approach directions as their endpoint boxes slide apart. Reciprocal connections bend at opposite thirds.
+		// the original approach directions as the boxes slide apart. Reciprocal
+		// connections bend at opposite thirds.
 		if route[0].X == route[1].X && start.X != end.X && (end.Y-start.Y)*(route[1].Y-route[0].Y) > 0 {
 			y := start.Y + (end.Y-start.Y)/3
 			return []*geo.Point{start, geo.NewPoint(start.X, y), geo.NewPoint(end.X, y), end}
 		}
 		if route[0].Y == route[1].Y && start.Y != end.Y && (end.X-start.X)*(route[1].X-route[0].X) > 0 {
 			x := start.X + (end.X-start.X)/3
+			return []*geo.Point{start, geo.NewPoint(x, start.Y), geo.NewPoint(x, end.Y), end}
+		}
+	}
+	if last == 3 {
+		// A transverse run between parallel approaches can shrink to zero
+		// and grow on its other side as the two ports pass into alignment.
+		// Keep both port directions and the old fraction along the channel.
+		if route[0].X == route[1].X && route[2].X == route[3].X && route[1].Y == route[2].Y &&
+			(route[1].Y-route[0].Y)*(route[3].Y-route[2].Y) > 0 && (end.Y-start.Y)*(route[3].Y-route[0].Y) > 0 {
+			if start.X == end.X {
+				return []*geo.Point{start, end}
+			}
+			y := start.Y + (end.Y-start.Y)*(route[1].Y-route[0].Y)/(route[3].Y-route[0].Y)
+			return []*geo.Point{start, geo.NewPoint(start.X, y), geo.NewPoint(end.X, y), end}
+		}
+		if route[0].Y == route[1].Y && route[2].Y == route[3].Y && route[1].X == route[2].X &&
+			(route[1].X-route[0].X)*(route[3].X-route[2].X) > 0 && (end.X-start.X)*(route[3].X-route[0].X) > 0 {
+			if start.Y == end.Y {
+				return []*geo.Point{start, end}
+			}
+			x := start.X + (end.X-start.X)*(route[1].X-route[0].X)/(route[3].X-route[0].X)
 			return []*geo.Point{start, geo.NewPoint(x, start.Y), geo.NewPoint(x, end.Y), end}
 		}
 	}

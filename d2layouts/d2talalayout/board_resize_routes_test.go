@@ -103,24 +103,44 @@ func TestResizeBetweenSwitchesAuthoredLanesOnce(t *testing.T) {
 		o.TopLeft.X += 100
 	}
 	beforeStart, beforeEnd := snapshotD2Graph(t, start), snapshotD2Graph(t, end)
+	plans := make([]map[*d2graph.Object]*geo.Box, 10)
+	end.TweenFrames = append(end.TweenFrames, start)
 	for i := 1; i < 10; i++ {
 		g, e := newD2TransactionGraph(false)
-		boxes := make(map[*d2graph.Object]*geo.Box)
+		end.TweenFrames = append(end.TweenFrames, g)
+		if i == 4 {
+			e.Style.Opacity = &d2graph.Scalar{Value: "0"}
+		}
+		plans[i] = make(map[*d2graph.Object]*geo.Box)
 		for _, o := range g.Objects {
-			boxes[o] = o.Box.Copy()
-			boxes[o].TopLeft.X += float64(10 * i)
+			plans[i][o] = o.Box.Copy()
+			plans[i][o].TopLeft.X += float64(10 * i)
 		}
-		u := float64(i) / 10
-		if !routeResizeBetween(t.Context(), start, end, g, boxes, u) {
-			t.Fatalf("sample %d rejected", i)
+	}
+	if !routeResizeSequence(t.Context(), start, end, plans) {
+		t.Fatal("could not place lanes across the moving track")
+	}
+	handedOff := false
+	for i := 1; i < 10; i++ {
+		actual := end.TweenFrames[i].Edges[0].Route
+		source := translatedBoardRoute(in.Route, float64(10*i), 0)
+		destination := translatedBoardRoute(out.Route, float64(10*i-100), 0)
+		switch {
+		case reflect.DeepEqual(actual, source):
+			if handedOff {
+				t.Fatalf("sample %d returned to the old lane", i)
+			}
+		case reflect.DeepEqual(actual, destination):
+			if !handedOff && i != 4 && i != 5 {
+				t.Fatalf("visible change to destination at sample %d", i)
+			}
+			handedOff = true
+		default:
+			t.Fatalf("sample %d left both clear lanes", i)
 		}
-		want := translatedBoardRoute(in.Route, float64(10*i), 0)
-		if u >= 0.5 {
-			want = translatedBoardRoute(out.Route, float64(10*i-100), 0)
-		}
-		if !reflect.DeepEqual(e.Route, want) {
-			t.Fatalf("sample %d did not keep the preferred lane attached", i)
-		}
+	}
+	if !handedOff {
+		t.Fatal("did not reach the destination lane")
 	}
 	beforeStart.assertUnchanged(t, start)
 	beforeEnd.assertUnchanged(t, end)
@@ -169,5 +189,37 @@ func TestResizeBoardKeepsTracedPortWhenStraightLaneSeparates(t *testing.T) {
 	if len(e.Route) != 4 || *e.Route[0] != (geo.Point{X: 60, Y: 80}) || *e.Route[3] != (geo.Point{X: 70, Y: 220}) ||
 		e.Route[1].X != 60 || e.Route[2].X != 70 || e.Route[1].Y != e.Route[2].Y {
 		t.Fatalf("traced ports lost their vertical approaches: %v", e.Route)
+	}
+}
+
+func TestResizeBypassesLocalObstructionWithoutMovingDistantLanes(t *testing.T) {
+	lane := []*geo.Point{{X: 20, Y: 0}, {X: 20, Y: 320}, {X: 180, Y: 320}, {X: 180, Y: 10}}
+	block := geo.NewBox(geo.NewPoint(4, 80), 52, 48)
+	detour := bypassResizeBox(lane, *block)
+	if len(detour) < len(lane) || !reflect.DeepEqual(detour[len(detour)-3:], lane[1:]) || !detour[0].Equals(lane[0]) || detour[1].X != lane[0].X {
+		t.Fatalf("discarded a clear port or bend: %v", geo.Points(detour))
+	}
+	for i := 1; i < len(detour); i++ {
+		a, b := detour[i-1], detour[i]
+		if a.X != b.X && a.Y != b.Y || block.Intersects(geo.Segment{Start: a, End: b}, -0.01) {
+			t.Fatalf("unusable local detour: %v", geo.Points(detour))
+		}
+	}
+}
+
+func TestResizeMeasuresDegeneratePortsWithoutChangingThem(t *testing.T) {
+	g, e := newD2TransactionGraph(false)
+	e.Route = append([]*geo.Point{e.Route[0]}, e.Route...)
+	e.Label.Value = "unknown placement"
+	e.LabelPosition = new("UNRECOGNIZED")
+	before := snapshotD2Graph(t, g)
+	poses := resizeWirePoses(g)
+	if poses == nil || resizeWireJump(poses[e.AbsID()], poses[e.AbsID()]) != 0 {
+		t.Fatal("expected a finite measurement of a repeated port")
+	}
+	before.assertUnchanged(t, g)
+	e.Route = []*geo.Point{{X: 10, Y: 10}, {X: 10, Y: 10}}
+	if resizeWirePoses(g) != nil {
+		t.Fatal("all-coincident route has no measurable approach")
 	}
 }

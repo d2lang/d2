@@ -83,6 +83,7 @@ func TweenResize(ctx context.Context, start, end *d2graph.Graph) (bool, error) {
 	// If any sample cannot be certified by the router, restore the entire
 	// ordinary track. A single isolated fallback can look like a layout flash.
 	switching := resizeCrossings(start, last, len(end.TweenFrames))
+	plans := make([]map[*d2graph.Object]*geo.Box, len(end.TweenFrames))
 	var saved []resizeFrame
 	for i, f := range end.TweenFrames {
 		saved = append(saved, saveResizeFrame(f))
@@ -104,12 +105,9 @@ func TweenResize(ctx context.Context, start, end *d2graph.Graph) (bool, error) {
 			}
 		} else {
 			t := float64(i) / float64(len(end.TweenFrames))
-			plan := resizeSamplePlan(f, first, last, switching, t, i, len(end.TweenFrames))
-			if !routeResizeBetween(ctx, start, end, f, plan, t) {
-				break
-			}
+			plans[i] = resizeSamplePlan(f, first, last, switching, t, i, len(end.TweenFrames))
 		}
-		if i+1 == len(end.TweenFrames) && ctx.Err() == nil {
+		if i+1 == len(end.TweenFrames) && ctx.Err() == nil && routeResizeSequence(ctx, start, end, plans) {
 			end.TweenFrames[0].TweenReorder = len(switching) != 0
 			return true, nil
 		}
