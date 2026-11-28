@@ -15,6 +15,16 @@ import (
 	"github.com/d2lang/d2/lib/shape"
 )
 
+// routeResizeBetween approaches the authored connection lanes from either end
+// of a numeric transition. The ordinary endpoint graphs are read-only.
+func routeResizeBetween(ctx context.Context, start, end, current *d2graph.Graph, boxes map[*d2graph.Object]*geo.Box, progress float64) bool {
+	reference := start
+	if progress >= 0.5 {
+		reference = end
+	}
+	return routeResizeBoard(ctx, reference, current, boxes)
+}
+
 // routeResizeBoard keeps the preceding board's wires and captions on a proposed
 // placement. Only connections that lose an attachment or acquire an obstruction
 // need the router. Work on a private graph until the whole board is ready.
@@ -98,25 +108,8 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 		if err != nil {
 			return false
 		}
-		candidate, err := quality.InspectLoopClearance(ctx, trial)
-		obscuredLabels := make(map[layoutgraph.EntityID]bool)
-		if err != nil || !candidate.CollectObstructedRoutes(baseline, nil, obscuredLabels) {
-			return false
-		}
-		if len(obscuredLabels) != 0 {
-			var labels []*layoutgraph.Edge
-			for _, e := range trial.Edges {
-				if obscuredLabels[e.ID] {
-					changedLabels[e.ID] = true
-					labels = append(labels, e)
-				}
-			}
-			if err := labeling.PlaceNewEdges(ctx, trial, labels); err != nil {
-				return false
-			}
-			candidate, err = quality.InspectLoopClearance(ctx, trial)
-		}
-		if err != nil || !candidate.CollectObstructedRoutes(baseline, needsRoute, nil) {
+		candidate, ok := clearResizeLabels(ctx, trial, baseline, changedLabels)
+		if !ok || !candidate.CollectObstructedRoutes(baseline, needsRoute, nil) {
 			return false
 		}
 		for edge, invisible := range unplaced {
@@ -132,11 +125,23 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 			if err := routing.RouteEdges(ctx, trial, changed); err != nil {
 				return false
 			}
+			// A replacement lane can pass through a caption on a different
+			// edge. Label placement must see those final lanes as obstacles.
+			if _, ok := clearResizeLabels(ctx, trial, baseline, changedLabels); !ok {
+				return false
+			}
 		}
 	}
 	patch, err := buildRoutePatch(ctx, current, bindings, trial.Edges)
 	if err != nil || ctx.Err() != nil {
 		return false
+	}
+	for i := range patch.edges {
+		update := &patch.edges[i]
+		update.route = distinctResizePoints(update.route)
+		if len(update.route) < 2 {
+			return false
+		}
 	}
 	for _, o := range current.Objects {
 		n := nodes[bindings.objectIDs[o]]
@@ -165,6 +170,51 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 	}
 	patch.apply()
 	return true
+}
+
+func clearResizeLabels(ctx context.Context, trial *layoutgraph.Graph, baseline *quality.LoopInspection, changed map[layoutgraph.EntityID]bool) (*quality.LoopInspection, bool) {
+	scene, err := quality.InspectLoopClearance(ctx, trial)
+	obscured := make(map[layoutgraph.EntityID]bool)
+	if err != nil || !scene.CollectObstructedRoutes(baseline, nil, obscured) {
+		return nil, false
+	}
+	if len(obscured) == 0 {
+		return scene, true
+	}
+	var labels []*layoutgraph.Edge
+	for _, e := range trial.Edges {
+		if obscured[e.ID] && e.Label != nil && !e.Label.PositionFixed() {
+			changed[e.ID] = true
+			labels = append(labels, e)
+		}
+	}
+	if len(labels) == 0 {
+		return scene, true
+	}
+	if err := labeling.PlaceNewEdges(ctx, trial, labels); err != nil {
+		return nil, false
+	}
+	scene, err = quality.InspectLoopClearance(ctx, trial)
+	return scene, err == nil
+}
+
+// The render target stores float32 coordinates truncated to three decimals.
+// A disappearing elbow can survive double arithmetic yet become precisely
+// the preceding vertex on export. Remove only those indistinguishable legs.
+func distinctResizePoints(route []*geo.Point) []*geo.Point {
+	out := route[:0]
+	var previous geo.Point
+	for _, p := range route {
+		rendered := *p
+		rendered.TruncateDecimals()
+		rendered.TruncateFloat32()
+		if len(out) != 0 && rendered == previous {
+			continue
+		}
+		out = append(out, p)
+		previous = rendered
+	}
+	return out
 }
 
 // Preserve the old interior lanes. A rigid translation applies even to traced
@@ -216,7 +266,19 @@ func resizeBoardWire(old, current *layoutgraph.Edge) []*geo.Point {
 	if old.IsLoop() {
 		return nil
 	}
-	out := translatedBoardRoute(route, 0, 0)
+	// When both endpoint boxes travel together, carry the interior corridor
+	// by their shared displacement. Only the remaining relative motion
+	// belongs in the two approaches.
+	shared := func(a, b float64) float64 {
+		if a > 0 && b > 0 {
+			return min(a, b)
+		}
+		if a < 0 && b < 0 {
+			return max(a, b)
+		}
+		return 0
+	}
+	out := translatedBoardRoute(route, shared(dx, end.X-route[last].X), shared(dy, end.Y-route[last].Y))
 	out[0], out[last] = start, end
 	if last == 2 {
 		// The growing endpoint can swallow the first elbow. The remaining
@@ -228,9 +290,9 @@ func resizeBoardWire(old, current *layoutgraph.Edge) []*geo.Point {
 			return []*geo.Point{start, p}
 		}
 	}
-	if last == 1 && resizeBoardFlatFace(current.From) && resizeBoardFlatFace(current.To) && !old.HasTableColumn() {
-		// Preserve the physical ports and their approach directions as opposing
-		// faces slide apart. Reciprocal connections bend at opposite thirds.
+	if last == 1 && !old.HasTableColumn() {
+		// The attached ports above include rigidly translated silhouettes. Keep
+		// the original approach directions as their endpoint boxes slide apart. Reciprocal connections bend at opposite thirds.
 		if route[0].X == route[1].X && start.X != end.X && (end.Y-start.Y)*(route[1].Y-route[0].Y) > 0 {
 			y := start.Y + (end.Y-start.Y)/3
 			return []*geo.Point{start, geo.NewPoint(start.X, y), geo.NewPoint(end.X, y), end}

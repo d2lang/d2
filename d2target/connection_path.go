@@ -46,7 +46,7 @@ func (c *Connection) arrowheadAdjustments(insets [2]float64) (src, dst *geo.Poin
 		}
 		// A short approach to the first or last corner can be shorter than
 		// the stroke inset. Leave some shaft on its authored side of the bend.
-		if c.MotionTip == tip || !c.IsCurve && len(c.Route) > 2 && distance > v.Length() {
+		if c.MotionTip == tip || c.MotionCorners && !c.IsCurve && len(c.Route) > 2 && distance > v.Length() {
 			distance = min(distance, v.Length()/2)
 		}
 		return v.Unit().Multiply(-distance).ToPoint()
@@ -83,7 +83,7 @@ func (c Connection) PathCommands(srcAdj, dstAdj *geo.Point) iter.Seq[ConnectionP
 		// when a resizing shape leaves a first or last run shorter than its
 		// corner radius. A moving trace tip also needs a forward tangent.
 		radiusAtTip := func(units float64, terminal bool, endpoint TraceEndpoint, corner, tip *geo.Point) float64 {
-			if terminal {
+			if terminal && (c.MotionCorners || c.MotionTip == endpoint) {
 				length := geo.EuclideanDistance(corner.X, corner.Y, tip.X, tip.Y)
 				if c.MotionTip == endpoint {
 					length /= 2

@@ -1,13 +1,18 @@
 package d2lib
 
 import (
+	"context"
+	"math"
+	"reflect"
 	"testing"
+
+	"github.com/d2lang/d2/d2graph"
 
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2target"
 )
 
-func TestResizeLayoutKeepsSiblingOrderAndReleasesSpace(t *testing.T) {
+func TestResizeTweensPreserveEveryAuthoredBoard(t *testing.T) {
 	const source = `vars: {
   d2-config: {animate-interval: 1500ms; animate-duration: 400ms}
   wide: 130
@@ -37,63 +42,88 @@ stores.update -> audit.collector
 legend: Types {near: bottom-right; key: Worker}
 steps.expand.vars.wide: 520
 steps.release.vars.wide: 130
-steps.repeat.vars.wide: 520`
-	board, graph := compileContinuity(t, source, d2talalayout.ContinueBoard)
-	initial := shapeByID(t, board, "orders.workers.consumer")
-	for i, step := range board.Steps {
-		if len(step.TweenFrames) < 4 || graph.Steps[i].ResizeLayoutOrigin != graph {
-			t.Fatalf("step %d lost the resize layout (%d samples, origin %p, root %p)", i, len(step.TweenFrames), graph.Steps[i].ResizeLayoutOrigin, graph)
+steps.repeat.vars.wide: 520
+steps.observe: {orders.log.style.fill: blue}
+steps.observe.layers.other: {a -> b}`
+	ordinary, _ := compileContinuity(t, source, d2talalayout.ContinueBoard)
+	adjusted := 0
+	board, _ := compileContinuityTween(t, source, d2talalayout.ContinueBoard, func(ctx context.Context, a, b *d2graph.Graph) (bool, error) {
+		changed, err := d2talalayout.TweenResize(ctx, a, b)
+		if changed {
+			adjusted++
 		}
-		var last d2target.Shape
-		for j, frame := range append(append([]*d2target.Diagram(nil), step.TweenFrames...), step) {
-			worker := shapeByID(t, frame, "orders.workers.consumer")
-			stores := shapeByID(t, frame, "stores")
-			orders := shapeByID(t, frame, "orders")
-			title := shapeByID(t, frame, "title")
-			legend := shapeByID(t, frame, "legend")
-			if worker.Pos != initial.Pos || worker.Pos.X+worker.Width > orders.Pos.X+orders.Width ||
-				worker.Pos.Y+worker.Height > orders.Pos.Y+orders.Height {
-				t.Fatalf("step %d sample %d worker escaped its original anchor or parent", i, j)
+		return changed, err
+	})
+	if adjusted != 3 {
+		t.Fatalf("refined %d resize tracks, want 3", adjusted)
+	}
+	if err := d2target.ValidateRenderTarget(board); err != nil {
+		t.Fatal(err)
+	}
+	var checkAuthored func(*d2target.Diagram, *d2target.Diagram)
+	checkAuthored = func(got, want *d2target.Diagram) {
+		t.Helper()
+		if !reflect.DeepEqual(got.Shapes, want.Shapes) || !reflect.DeepEqual(got.Connections, want.Connections) ||
+			!reflect.DeepEqual(got.Root, want.Root) || !reflect.DeepEqual(got.Legend, want.Legend) {
+			t.Fatalf("tween changed the ordinary held layout of %q", got.Name)
+		}
+		for i, step := range got.Steps {
+			checkAuthored(step, want.Steps[i])
+		}
+		for i, layer := range got.Layers {
+			checkAuthored(layer, want.Layers[i])
+		}
+	}
+	checkAuthored(board, ordinary)
+
+	// Verify the emitted samples too: keeping the previous layout right up
+	// to the held board would pass endpoint equality but still jump on arrival.
+	for i, step := range board.Steps[:3] {
+		start := board
+		if i > 0 {
+			start = board.Steps[i-1]
+		}
+		if len(step.TweenFrames) < 4 {
+			t.Fatalf("step %d has no useful interstitial samples", i)
+		}
+		end := shapeByID(t, step, "orders.workers.consumer")
+		begin := shapeByID(t, start, end.ID)
+		prevWidth := begin.Width
+		for j, frame := range step.TweenFrames {
+			worker := shapeByID(t, frame, end.ID)
+			if j == 0 && (worker.Pos != begin.Pos || worker.Width != begin.Width) {
+				t.Fatalf("step %d starts at %v with width %d, want %v with width %d", i, worker.Pos, worker.Width, begin.Pos, begin.Width)
 			}
-			overlap := orders.Pos.X < stores.Pos.X+stores.Width && stores.Pos.X < orders.Pos.X+orders.Width && orders.Pos.Y < stores.Pos.Y+stores.Height && stores.Pos.Y < orders.Pos.Y+orders.Height
-			if overlap || title.Pos.Y+title.Height > min(stores.Pos.Y, orders.Pos.Y) ||
-				legend.Pos.X < orders.Pos.X+orders.Width {
-				t.Fatalf("step %d sample %d crossed sibling or decoration: stores %v %dx%d, orders %v %dx%d, title %v %dx%d, legend %v", i, j, stores.Pos, stores.Width, stores.Height, orders.Pos, orders.Width, orders.Height, title.Pos, title.Width, title.Height, legend.Pos)
-			}
-			if j > 0 && (i == 1 && worker.Width > last.Width || i != 1 && worker.Width < last.Width) {
+			if i == 1 && worker.Width > prevWidth || i != 1 && worker.Width < prevWidth {
 				t.Fatalf("step %d sample %d width reversed", i, j)
 			}
-			last = worker
+			prevWidth = worker.Width
 		}
-	}
-	if shapeByID(t, board.Steps[0], "stores").Pos == shapeByID(t, board, "stores").Pos {
-		t.Fatal("fixture did not push the adjacent service container")
-	}
-	for _, pair := range [][2]*d2target.Diagram{{board, board.Steps[1]}, {board.Steps[0], board.Steps[2]}} {
-		for _, want := range pair[0].Shapes {
-			got := shapeByID(t, pair[1], want.ID)
-			if got.Pos != want.Pos || got.Width != want.Width || got.Height != want.Height || got.LabelPosition != want.LabelPosition {
-				t.Fatalf("revisiting the same size moved %s from %v to %v", want.ID, want.Pos, got.Pos)
+		last := step.TweenFrames[len(step.TweenFrames)-1]
+		for _, shape := range step.Shapes {
+			before, penultimate := shapeByID(t, start, shape.ID), shapeByID(t, last, shape.ID)
+			travel := math.Hypot(float64(shape.Pos.X-before.Pos.X), float64(shape.Pos.Y-before.Pos.Y))
+			if travel < 100 {
+				continue
 			}
-		}
-		repeated := indexTweenRoutes(pair[1])
-		for _, want := range pair[0].Connections {
-			got := repeated.edges[want.ID]
-			if got == nil {
-				t.Fatalf("missing connection %s", want.ID)
-			}
-			if measureTweenRoute(got.Route).displacement2(measureTweenRoute(want.Route)) > 1e-12 || got.LabelPosition != want.LabelPosition || got.LabelPercentage != want.LabelPercentage {
-				t.Fatalf("revisiting the same size changed %s: %v %v/%v, want %v %v/%v", want.ID, measureTweenRoute(got.Route), got.LabelPosition, got.LabelPercentage, measureTweenRoute(want.Route), want.LabelPosition, want.LabelPercentage)
+			tail := math.Hypot(float64(shape.Pos.X-penultimate.Pos.X), float64(shape.Pos.Y-penultimate.Pos.Y))
+			if tail > travel*0.4 {
+				t.Fatalf("step %d defers %.0f of %s's %.0f-unit movement to the held board", i, tail, shape.ID, travel)
 			}
 		}
 	}
 }
 
 func TestResizeLayoutHonorsOtherLayoutConstraints(t *testing.T) {
-	for _, constraint := range []string{"a.left: 50\na.top: 40", "group: {grid-columns: 2; l; r}", "c.near: a", "c.near: top-center\na -> c", "a.style.3d: true", "a.style.multiple: true"} {
+	for _, constraint := range []string{"a.left: 50\na.top: 40", "group: {grid-columns: 2; l; r}", "c.near: a", "a.style.3d: true", "a.style.multiple: true"} {
 		src := "vars: {d2-config: {animate-interval: 400ms; animate-duration: 180ms}; wide: 100}\na: {width: ${wide}}\na -> b\nc\n" + constraint + "\nsteps.grow.vars.wide: 220"
-		d, graph := compileContinuity(t, src, d2talalayout.ContinueBoard)
-		if len(d.Steps[0].TweenFrames) == 0 || graph.Steps[0].ResizeLayoutOrigin != nil {
+		adjusted := false
+		d, _ := compileContinuityTween(t, src, d2talalayout.ContinueBoard, func(ctx context.Context, start, end *d2graph.Graph) (bool, error) {
+			var err error
+			adjusted, err = d2talalayout.TweenResize(ctx, start, end)
+			return adjusted, err
+		})
+		if len(d.Steps[0].TweenFrames) == 0 || adjusted {
 			t.Fatalf("resize placement took over %q", constraint)
 		}
 	}
@@ -127,7 +157,7 @@ legend: "Transport" {
 }
 steps.expand.vars.depth: 390
 steps.collapse.vars.depth: 90`
-	board, _ := compileContinuity(t, source, d2talalayout.ContinueBoard)
+	board, _ := compileContinuityTween(t, source, d2talalayout.ContinueBoard, d2talalayout.TweenResize)
 	key := shapeByID(t, board, "legend")
 	var wire *d2target.Connection
 	for i := range board.Connections {
@@ -147,15 +177,20 @@ steps.collapse.vars.depth: 90`
 				t.Fatal("moving the corner key changed its internal route")
 			}
 			for j, point := range moved.Route {
-				if point.X-wire.Route[j].X != float64(legend.Pos.X-key.Pos.X) ||
-					point.Y-wire.Route[j].Y != float64(legend.Pos.Y-key.Pos.Y) {
+				// SVG shape positions are truncated to integer coordinates, but route
+				// points retain their subpixel positions during the translation.
+				if math.Abs(point.X-wire.Route[j].X-float64(legend.Pos.X-key.Pos.X)) > 1 ||
+					math.Abs(point.Y-wire.Route[j].Y-float64(legend.Pos.Y-key.Pos.Y)) > 1 {
 					t.Fatalf("corner key left an internal connection behind at %v", point)
 				}
 			}
 		}
 	}
-	if shapeByID(t, board.Steps[0], key.ID).Pos.Y <= key.Pos.Y ||
-		shapeByID(t, board.Steps[1], key.ID).Pos != key.Pos {
-		t.Fatal("corner key did not follow the height change and return")
+	ordinary, _ := compileContinuity(t, source, d2talalayout.ContinueBoard)
+	for i, step := range board.Steps {
+		if shapeByID(t, step, key.ID).Pos != shapeByID(t, ordinary.Steps[i], key.ID).Pos ||
+			!reflect.DeepEqual(indexTweenRoutes(step).edges[wire.ID], indexTweenRoutes(ordinary.Steps[i]).edges[wire.ID]) {
+			t.Fatalf("step %d changed the ordinary position or wire of the corner key", i)
+		}
 	}
 }

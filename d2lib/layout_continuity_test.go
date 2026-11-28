@@ -13,6 +13,11 @@ import (
 
 func compileContinuity(t *testing.T, source string, adjust d2graph.LayoutContinuation) (*d2target.Diagram, *d2graph.Graph) {
 	t.Helper()
+	return compileContinuityTween(t, source, adjust, nil)
+}
+
+func compileContinuityTween(t *testing.T, source string, adjust d2graph.LayoutContinuation, tween d2graph.LayoutTween) (*d2target.Diagram, *d2graph.Graph) {
+	t.Helper()
 	engine := "TALA"
 	d, g, err := Compile(d2log.WithDefault(t.Context()), source, &CompileOptions{
 		Ruler: layoutReuseTestRuler, Layout: &engine,
@@ -20,6 +25,7 @@ func compileContinuity(t *testing.T, source string, adjust d2graph.LayoutContinu
 			return d2talalayout.DefaultLayout, nil
 		},
 		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": adjust},
+		LayoutTweens:        map[string]d2graph.LayoutTween{"tala": tween},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

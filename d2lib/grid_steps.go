@@ -176,7 +176,8 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 				if from != previous {
 					from = nil
 				}
-				if err := stabilizeTweenRoutes(ctx, from, board, &routeBudget); err != nil {
+				reorder := len(p.tweenGraph.TweenFrames) != 0 && p.tweenGraph.TweenFrames[0].TweenReorder
+				if err := stabilizeTweenRoutes(ctx, from, board, &routeBudget, reorder); err != nil {
 					return err
 				}
 				if err := stabilizeTweenCaptions(ctx, from, board, p.tweenGraph, &captionBudget); err != nil {

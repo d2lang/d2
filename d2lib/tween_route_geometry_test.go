@@ -99,3 +99,30 @@ func TestTransportStraightLaneWithMovingFace(t *testing.T) {
 		t.Fatalf("the stationary port's rail still fits both faces: %v", r)
 	}
 }
+
+func TestReorderFadesOnlyLongWireCut(t *testing.T) {
+	var frames []tweenRouteFrame
+	for i := 0; i < 7; i++ {
+		a, b := tweenTestBox(0, 0, 100, 100), tweenTestBox(400, 0, 100, 100)
+		a.ID, b.ID = "a", "b"
+		line := []*geo.Point{{X: 100, Y: 50}, {X: 400, Y: 50}}
+		lane := line
+		if i >= 3 {
+			lane = []*geo.Point{{X: 50, Y: 100}, {X: 50, Y: 750}, {X: 450, Y: 750}, {X: 450, Y: 100}}
+		}
+		panel := &d2target.Diagram{Shapes: []d2target.Shape{*a, *b}, Connections: []d2target.Connection{
+			{ID: "switched", Src: "a", Dst: "b", Route: lane, Opacity: 0.8},
+			{ID: "unchanged", Src: "a", Dst: "b", Route: line, Opacity: 0.7},
+		}}
+		frames = append(frames, indexTweenRoutes(panel))
+	}
+	fadeReorderWires(frames)
+	for i, opacity := range []float64{0.8, 0.8, 0.4, 0, 0.4, 0.8, 0.8} {
+		if got := frames[i].edges["switched"].Opacity; got != opacity {
+			t.Errorf("sample %d wire opacity = %v, want %v", i, got, opacity)
+		}
+		if frames[i].edges["unchanged"].Opacity != 0.7 {
+			t.Errorf("sample %d faded an unchanged wire", i)
+		}
+	}
+}

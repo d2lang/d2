@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
@@ -95,24 +94,80 @@ func TestResizeBoardRejectsOverflowWithoutMovingObjects(t *testing.T) {
 	}
 }
 
-func TestResizeBoardRejectsOverflowAfterPlacingCornerKey(t *testing.T) {
-	scene := func() *d2graph.Graph {
-		g, _ := newD2TransactionGraph(false)
-		key := appendD2Object(g.Root, "key")
-		key.NearKey = d2ast.MakeKeyPath([]string{"bottom-right"})
-		key.Box = geo.NewBox(geo.NewPoint(600, 160), 100, 40)
-		return g
+func TestResizeBetweenSwitchesAuthoredLanesOnce(t *testing.T) {
+	start, in := newD2TransactionGraph(false)
+	end, out := newD2TransactionGraph(false)
+	in.Route = []*geo.Point{{X: 60, Y: 20}, {X: 60, Y: 0}, {X: 300, Y: 0}, {X: 300, Y: 20}}
+	out.Route = []*geo.Point{{X: 160, Y: 80}, {X: 160, Y: 120}, {X: 400, Y: 120}, {X: 400, Y: 80}}
+	for _, o := range end.Objects {
+		o.TopLeft.X += 100
 	}
-	old, current := scene(), scene()
-	before := snapshotD2Graph(t, current)
-	p := resizePlacement{boxes: make(map[*d2graph.Object]*geo.Box)}
-	for _, o := range current.Objects {
-		p.boxes[o] = o.Box.Copy()
+	beforeStart, beforeEnd := snapshotD2Graph(t, start), snapshotD2Graph(t, end)
+	for i := 1; i < 10; i++ {
+		g, e := newD2TransactionGraph(false)
+		boxes := make(map[*d2graph.Object]*geo.Box)
+		for _, o := range g.Objects {
+			boxes[o] = o.Box.Copy()
+			boxes[o].TopLeft.X += float64(10 * i)
+		}
+		u := float64(i) / 10
+		if !routeResizeBetween(t.Context(), start, end, g, boxes, u) {
+			t.Fatalf("sample %d rejected", i)
+		}
+		want := translatedBoardRoute(in.Route, float64(10*i), 0)
+		if u >= 0.5 {
+			want = translatedBoardRoute(out.Route, float64(10*i-100), 0)
+		}
+		if !reflect.DeepEqual(e.Route, want) {
+			t.Fatalf("sample %d did not keep the preferred lane attached", i)
+		}
 	}
-	right := p.boxes[current.Edges[0].Dst]
-	right.TopLeft.X = limits.MaxGraphSize - right.Width
-	if p.route(t.Context(), old, current, true) {
-		t.Fatal("accepted a decoration extending outside the final diagram range")
+	beforeStart.assertUnchanged(t, start)
+	beforeEnd.assertUnchanged(t, end)
+}
+
+func TestResizeBoardCarriesCorridorWithBothEndpoints(t *testing.T) {
+	old, in := newD2TransactionGraph(false)
+	in.Route = []*geo.Point{{X: 110, Y: 50}, {X: 150, Y: 50}, {X: 150, Y: 110}, {X: 210, Y: 110}, {X: 210, Y: 50}, {X: 250, Y: 50}}
+	current, e := newD2TransactionGraph(false)
+	boxes := map[*d2graph.Object]*geo.Box{e.Src: e.Src.Box.Copy(), e.Dst: e.Dst.Box.Copy()}
+	boxes[e.Src].TopLeft.X += 50
+	boxes[e.Dst].TopLeft.X += 150
+	if !routeResizeBoard(t.Context(), old, current, boxes) {
+		t.Fatal("could not carry an unobstructed moving wire")
 	}
-	before.assertUnchanged(t, current)
+	want := translatedBoardRoute(in.Route, 50, 0)
+	want[len(want)-1].X += 100
+	if !reflect.DeepEqual(e.Route, want) {
+		t.Fatalf("did not carry the shared interior corridor with its endpoint boxes")
+	}
+}
+
+func TestResizeWireDropsElbowCoincidentAfterExport(t *testing.T) {
+	route := []*geo.Point{{X: 10, Y: 60}, {X: 50.0003, Y: 60}, {X: 50.0007, Y: 60}, {X: 50.0007, Y: 90}}
+	want := []*geo.Point{route[0], route[1], route[3]}
+	if got := distinctResizePoints(route); !reflect.DeepEqual(got, want) {
+		t.Fatalf("a subpixel segment collapsed in the render target: %v", got)
+	}
+}
+
+func TestResizeBoardKeepsTracedPortWhenStraightLaneSeparates(t *testing.T) {
+	scene := func() (*d2graph.Graph, *d2graph.Edge) {
+		g, e := newD2TransactionGraph(false)
+		e.Src.Shape.Value = d2target.ShapeCylinder
+		e.Dst.TopLeft = geo.NewPoint(10, 220)
+		e.Route = []*geo.Point{{X: 60, Y: 80}, {X: 60, Y: 220}}
+		return g, e
+	}
+	old, _ := scene()
+	current, e := scene()
+	boxes := map[*d2graph.Object]*geo.Box{e.Src: e.Src.Box.Copy(), e.Dst: e.Dst.Box.Copy()}
+	boxes[e.Dst].TopLeft.X += 10
+	if !routeResizeBoard(t.Context(), old, current, boxes) {
+		t.Fatal("could not carry cylinder port")
+	}
+	if len(e.Route) != 4 || *e.Route[0] != (geo.Point{X: 60, Y: 80}) || *e.Route[3] != (geo.Point{X: 70, Y: 220}) ||
+		e.Route[1].X != 60 || e.Route[2].X != 70 || e.Route[1].Y != e.Route[2].Y {
+		t.Fatalf("traced ports lost their vertical approaches: %v", e.Route)
+	}
 }

@@ -16,6 +16,7 @@ func TestRoundedWireWithShrinkingTerminalRun(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := BaseConnection()
+			c.MotionCorners = true
 			c.BorderRadius = 10
 			c.Route = tc.route
 			from, to := c.ArrowheadAdjustmentsForWidths(4, 4)

@@ -3,150 +3,422 @@ package d2talalayout
 import (
 	"cmp"
 	"context"
+	"errors"
 	"math"
 	"reflect"
 	"slices"
+	"strconv"
 
 	"github.com/d2lang/d2/d2graph"
-	"github.com/d2lang/d2/d2layouts/d2near"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/xsort"
 )
 
-// Independent static layouts can pick entirely different sibling orders one
-// pixel apart. Derive every sample (including the held endpoint) from the same
-// authored layout, so temporary growth neither swaps branches nor accumulates.
-func continueBoardResize(ctx context.Context, previous, current *d2graph.Graph) bool {
-	step := current
-	if len(step.TweenFrames) == 0 {
-		step = current.Parent
-		if step == nil || !slices.Contains(step.TweenFrames, current) {
-			return false
-		}
+// TweenResize replaces the geometry of interstitial samples on an automatic
+// resize. Both held boards have already gone through ordinary layout and board
+// continuation. Their geometry is input only, even when another step follows.
+func TweenResize(ctx context.Context, start, end *d2graph.Graph) (bool, error) {
+	if ctx == nil {
+		return false, errors.New("TALA tween layout requires a context")
 	}
-	if step.Parent == nil {
-		return false
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
-	index := slices.Index(step.Parent.Steps, step)
-	if index < 0 {
-		return false
-	}
-	start := step.Parent
-	if index > 0 {
-		start = step.Parent.Steps[index-1]
-	}
-	if previous != start && !slices.Contains(step.TweenFrames, previous) ||
-		start.Root == nil || step.Root == nil || start.Root.Direction.Value != current.Root.Direction.Value ||
-		start.Root.Direction.Value != step.Root.Direction.Value || step.Root.IsGridDiagram() || step.Root.IsSequenceDiagram() ||
-		!reflect.DeepEqual(start.Data["tala-seeds"], step.Data["tala-seeds"]) ||
-		!reflect.DeepEqual(start.Data["tala-seeds"], current.Data["tala-seeds"]) ||
-		len(start.Objects) != len(current.Objects) || len(step.Objects) != len(current.Objects) ||
-		len(start.Edges) != len(step.Edges) || len(start.Edges) != len(current.Edges) || !validBoardGeometry(start, true) || !validBoardGeometry(current, true) {
-		return false
-	}
-	old := make(map[string]*d2graph.Object, len(start.Objects))
-	for _, obj := range start.Objects {
-		old[obj.AbsID()] = obj
+	if start == nil || end == nil || start.Root == end.Root || len(end.TweenFrames) == 0 || len(end.TweenFrames) > d2target.MaxTweenFrames ||
+		!validBoardGeometry(start, true) || !validBoardGeometry(end, true) ||
+		start.Root.Direction.Value != end.Root.Direction.Value ||
+		!reflect.DeepEqual(start.Data["tala-seeds"], end.Data["tala-seeds"]) ||
+		len(start.Objects) != len(end.Objects) || len(start.Edges) != len(end.Edges) {
+		return false, nil
 	}
 
+	first, last := resizeObjectIndex(start), resizeObjectIndex(end)
+	wires := continuityEdges(start)
 	resize := false
-	for _, dst := range step.Objects {
-		if dst == nil {
-			return false
+	for _, b := range end.Objects {
+		a := first[b.AbsID()]
+		if !sameResizeContent(a, b) {
+			return false, nil
 		}
-		src := old[dst.AbsID()]
-		if !sameResizeObject(src, dst) || dst.Top != nil || dst.Left != nil ||
-			dst.IsGridDiagram() || dst.IsSequenceDiagram() {
-			return false
-		}
-		if boardSizeChanged(src, dst) {
-			if dst.IsContainer() {
-				return false
+		if boardSizeChanged(a, b) {
+			if b.IsContainer() {
+				return false, nil
 			}
 			resize = true
 		}
 	}
 	if !resize {
-		return false
+		return false, nil
 	}
-	edges := continuityEdges(start)
-	for _, e := range step.Edges {
-		// Constant-near groups move as units after the core is routed. A
-		// wire crossing that boundary needs the ordinary near-aware router.
-		if e == nil || e.Src == nil || e.Dst == nil || e.Src.OuterNearContainer() != e.Dst.OuterNearContainer() ||
-			!sameResizeEdge(edges[e.AbsID()], e) {
-			return false
+	for _, e := range end.Edges {
+		if !sameResizeWire(wires[e.AbsID()], e) {
+			return false, nil
 		}
 	}
-	if origin := start.ResizeLayoutOrigin; origin != nil {
-		start = origin
-		edges = continuityEdges(start)
-		clear(old)
-		for _, obj := range start.Objects {
-			old[obj.AbsID()] = obj
+
+	roots := map[*d2graph.Object]bool{start.Root: true, end.Root: true}
+	for _, f := range end.TweenFrames {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if f == nil || roots[f.Root] || !validBoardGeometry(f, true) ||
+			len(f.Objects) != len(first) || len(f.Edges) != len(wires) ||
+			f.Root.Direction.Value != start.Root.Direction.Value || !reflect.DeepEqual(f.Data["tala-seeds"], start.Data["tala-seeds"]) {
+			return false, nil
+		}
+		roots[f.Root] = true
+		for _, n := range f.Objects {
+			if !sameResizeContent(first[n.AbsID()], n) {
+				return false, nil
+			}
+		}
+		for _, e := range f.Edges {
+			if !sameResizeWire(wires[e.AbsID()], e) {
+				return false, nil
+			}
 		}
 	}
-	resized, hasNear := false, false
-	p := resizePlacement{old: make(map[*d2graph.Object]*d2graph.Object, len(old)), boxes: make(map[*d2graph.Object]*geo.Box, len(old))}
-	for _, n := range current.Objects {
-		o := old[n.AbsID()]
-		if !sameResizeObject(o, n) || n.LabelDimensions != o.LabelDimensions ||
-			!reflect.DeepEqual(n.SQLTable, o.SQLTable) || !reflect.DeepEqual(n.Class, o.Class) {
-			return false
+
+	// If any sample cannot be certified by the router, restore the entire
+	// ordinary track. A single isolated fallback can look like a layout flash.
+	switching := resizeCrossings(start, last, len(end.TweenFrames))
+	var saved []resizeFrame
+	for i, f := range end.TweenFrames {
+		saved = append(saved, saveResizeFrame(f))
+		if ctx.Err() != nil {
+			break
 		}
-		hasNear = hasNear || n.NearKey != nil
-		box := o.Box.Copy()
-		if boardSizeChanged(o, n) {
-			box.Width, box.Height = n.Width, n.Height
-		} else if !n.IsContainer() && (n.Width != o.Width || n.Height != o.Height) {
-			// Another change, such as font size, affected intrinsic sizing.
-			return false
+		if i == 0 {
+			for _, n := range f.Objects {
+				o := first[n.AbsID()]
+				n.Box = o.Box.Copy()
+				n.LabelPosition = copyResizeValue(o.LabelPosition)
+				n.IconPosition = copyResizeValue(o.IconPosition)
+			}
+			for _, e := range f.Edges {
+				o := wires[e.AbsID()]
+				e.Route = translatedBoardRoute(o.Route, 0, 0)
+				e.LabelPosition = copyResizeValue(o.LabelPosition)
+				e.LabelPercentage = copyResizeValue(o.LabelPercentage)
+			}
+		} else {
+			t := float64(i) / float64(len(end.TweenFrames))
+			plan := resizeSamplePlan(f, first, last, switching, t, i, len(end.TweenFrames))
+			if !routeResizeBetween(ctx, start, end, f, plan, t) {
+				break
+			}
 		}
-		resized = resized || box.Width != o.Width || box.Height != o.Height
-		p.old[n], p.boxes[n] = o, box
-	}
-	p.gaps = make(map[[2]*d2graph.Object]d2target.TextDimensions)
-	for _, e := range current.Edges {
-		o := edges[e.AbsID()]
-		if !sameResizeEdge(o, e) || e.IsCurve || o.IsCurve || e.LabelDimensions != o.LabelDimensions {
-			return false
-		}
-		if e.Label.Value != "" {
-			p.reserveCaption(e)
-		}
-	}
-	if ctx.Err() != nil {
-		return false
-	}
-	if resized {
-		if !p.fit(current.Root) || !p.route(ctx, start, current, hasNear) {
-			return false
-		}
-	} else {
-		// At the original dimensions the original geometry is already valid,
-		// including ports, intermediate collinear points, and caption anchors.
-		for _, n := range current.Objects {
-			n.Box = p.boxes[n]
-			n.LabelPosition = copyResizeValue(p.old[n].LabelPosition)
-			n.IconPosition = copyResizeValue(p.old[n].IconPosition)
-		}
-		for _, e := range current.Edges {
-			o := edges[e.AbsID()]
-			e.Route = translatedBoardRoute(o.Route, 0, 0)
-			e.LabelPosition = copyResizeValue(o.LabelPosition)
-			e.LabelPercentage = copyResizeValue(o.LabelPercentage)
+		if i+1 == len(end.TweenFrames) && ctx.Err() == nil {
+			end.TweenFrames[0].TweenReorder = len(switching) != 0
+			return true, nil
 		}
 	}
-	if current == step {
-		current.ResizeLayoutOrigin = start
+	for _, f := range saved {
+		f.restore()
 	}
-	return true
+	return false, ctx.Err()
 }
 
-// These are authored inputs that are available even before the held board's
-// layout. An incoming transition with a simultaneous structural change must
-// retain its ordinary layout throughout, including its first numeric samples.
+// Siblings whose bodies would pass through one another switch placement while
+// faded. Work in parent-local coordinates so a moving container neither
+// schedules a second switch for its contents nor disturbs stationary siblings.
+type resizeSwitch struct{ from, to float64 }
+
+func resizeCrossings(start *d2graph.Graph, last map[string]*d2graph.Object, count int) map[string]resizeSwitch {
+	staged := make(map[string]resizeSwitch)
+	cut := float64((count+1)/2) / float64(count)
+	margin := resizeSettleTime(count)
+	poseCut := resizeMotionTime(cut, margin)
+	// Keep stationary context visible, then prefer showing the objects whose
+	// authored dimensions actually change. Even a wholesale permutation has
+	// a moving visual anchor rather than a blank frame.
+	resizes := make(map[*d2graph.Object]bool)
+	for _, o := range start.Objects {
+		if boardSizeChanged(o, last[o.AbsID()]) {
+			for n := o; n != nil && !resizes[n]; n = n.Parent {
+				resizes[n] = true
+			}
+		}
+	}
+	var visit func(*d2graph.Object)
+	visit = func(parent *d2graph.Object) {
+		type track struct {
+			id       string
+			a, b     *geo.Box
+			motion   float64
+			priority int
+		}
+		var children []track
+		for _, o := range parent.ChildrenArray {
+			if o.NearKey != nil {
+				continue
+			}
+			b := last[o.AbsID()]
+			if !o.IsContainer() && continuityHidden(o.Style) && continuityHidden(b.Style) {
+				continue
+			}
+			aBox, bBox := o.Box.Copy(), b.Box.Copy()
+			if parent.Parent != nil {
+				aBox.TopLeft.X -= parent.TopLeft.X
+				aBox.TopLeft.Y -= parent.TopLeft.Y
+				bBox.TopLeft.X -= b.Parent.TopLeft.X
+				bBox.TopLeft.Y -= b.Parent.TopLeft.Y
+			}
+			motion := math.Hypot(bBox.TopLeft.X-aBox.TopLeft.X, bBox.TopLeft.Y-aBox.TopLeft.Y)
+			priority := 2
+			if motion < 1 {
+				priority = 0
+			} else if resizes[o] {
+				priority = 1
+			}
+			children = append(children, track{o.AbsID(), aBox, bBox, motion, priority})
+		}
+		xsort.StableFunc(children, func(a, b track) int {
+			if x := cmp.Compare(a.priority, b.priority); x != 0 {
+				return x
+			}
+			return cmp.Compare(a.motion, b.motion)
+		})
+		var visible []track
+		for _, c := range children {
+			switches := false
+			for _, v := range visible {
+				if resizeOverlap(c.a, c.a, v.a, v.a) || resizeOverlap(c.b, c.b, v.b, v.b) {
+					continue
+				}
+				if resizeOverlap(c.a, c.b, v.a, v.b) {
+					switches = true
+					break
+				}
+			}
+			if switches {
+				staged[c.id] = resizeSwitch{cut, cut}
+			} else {
+				visible = append(visible, c)
+			}
+		}
+		for _, s := range children {
+			window, ok := staged[s.id]
+			if !ok {
+				continue
+			}
+			// The switching subtree holds its endpoint position. Hide it
+			// before an unchanged/moving neighbor reaches its old position,
+			// and reveal it only after the destination position is clear.
+			for _, v := range visible {
+				if resizeOverlap(s.a, s.a, v.a, v.a) || resizeOverlap(s.b, s.b, v.b, v.b) {
+					continue
+				}
+				mid := geo.NewBox(geo.NewPoint(resizeLerp(v.a.TopLeft.X, v.b.TopLeft.X, poseCut), resizeLerp(v.a.TopLeft.Y, v.b.TopLeft.Y, poseCut)), resizeLerp(v.a.Width, v.b.Width, poseCut), resizeLerp(v.a.Height, v.b.Height, poseCut))
+				before, after := s.a.Copy(), s.b.Copy()
+				// A leaf's numeric width/height stays on its authored sample
+				// even while its placement switches under the fade.
+				width, height := resizeLerp(s.a.Width, s.b.Width, cut), resizeLerp(s.a.Height, s.b.Height, cut)
+				before.Width, before.Height = max(before.Width, width), max(before.Height, height)
+				after.Width, after.Height = max(after.Width, width), max(after.Height, height)
+				if lo, _, hits := resizeOverlapInterval(s.a, before, v.a, mid); hits {
+					window.from = min(window.from, margin+lo*poseCut*(1-2*margin))
+				}
+				if _, hi, hits := resizeOverlapInterval(after, s.b, mid, v.b); hits {
+					window.to = max(window.to, cut+hi*(1-poseCut)*(1-2*margin))
+				}
+			}
+			staged[s.id] = window
+		}
+		for _, child := range parent.ChildrenArray {
+			if _, ok := staged[child.AbsID()]; !ok {
+				visit(child)
+			}
+		}
+	}
+	visit(start.Root)
+	return staged
+}
+
+func resizeOverlap(a, b, c, d *geo.Box) bool {
+	_, _, overlap := resizeOverlapInterval(a, b, c, d)
+	return overlap
+}
+
+// Intersect the time intervals where the four separating inequalities hold.
+// Positive-area overlap must persist for some time; touching sides can pass.
+func resizeOverlapInterval(a, b, c, d *geo.Box) (float64, float64, bool) {
+	lo, hi := 0., 1.
+	for _, gap := range [4][2]float64{
+		{c.TopLeft.X + c.Width - a.TopLeft.X, d.TopLeft.X + d.Width - b.TopLeft.X},
+		{a.TopLeft.X + a.Width - c.TopLeft.X, b.TopLeft.X + b.Width - d.TopLeft.X},
+		{c.TopLeft.Y + c.Height - a.TopLeft.Y, d.TopLeft.Y + d.Height - b.TopLeft.Y},
+		{a.TopLeft.Y + a.Height - c.TopLeft.Y, b.TopLeft.Y + b.Height - d.TopLeft.Y},
+	} {
+		x, y := gap[0], gap[1]
+		if x <= 0 && y <= 0 {
+			return 0, 0, false
+		}
+		if x <= 0 {
+			lo = max(lo, x/(x-y))
+		}
+		if y <= 0 {
+			hi = min(hi, x/(x-y))
+		}
+	}
+	return lo, hi, hi-lo > 1e-9
+}
+
+func resizeSamplePlan(f *d2graph.Graph, first, last map[string]*d2graph.Object, switching map[string]resizeSwitch, t float64, index, count int) map[*d2graph.Object]*geo.Box {
+	plan := make(map[*d2graph.Object]*geo.Box, len(first))
+	positionTime := t
+	if len(switching) > 0 {
+		positionTime = resizeMotionTime(t, resizeSettleTime(count))
+	}
+	fading := make(map[*d2graph.Object]float64)
+	cut := (count + 1) / 2
+	var place func(*d2graph.Object, *resizeSwitch)
+	place = func(n *d2graph.Object, window *resizeSwitch) {
+		id := n.AbsID()
+		a, b := first[id], last[id]
+		if w, ok := switching[id]; ok {
+			window = &w
+		}
+		u := positionTime
+		if window != nil {
+			u = 0
+			if index >= cut {
+				u = 1
+			}
+			alpha := 1.
+			if count >= 4 {
+				duration := min(2/float64(count), 0.16)
+				switch {
+				case t < window.from:
+					alpha = min(1, (window.from-t)/min(duration, window.from))
+				case t > window.to:
+					alpha = min(1, (t-window.to)/min(duration, 1-window.to))
+				default:
+					alpha = 0
+				}
+				alpha = alpha * alpha * (3 - 2*alpha)
+			}
+			fading[n] = alpha
+			n.Style.Opacity = resizeOpacity(n.Style.Opacity, alpha)
+		}
+		x, y := resizeLerp(a.TopLeft.X, b.TopLeft.X, u), resizeLerp(a.TopLeft.Y, b.TopLeft.Y, u)
+		if parent := plan[n.Parent]; parent != nil {
+			x += parent.TopLeft.X - resizeLerp(a.Parent.TopLeft.X, b.Parent.TopLeft.X, u)
+			y += parent.TopLeft.Y - resizeLerp(a.Parent.TopLeft.Y, b.Parent.TopLeft.Y, u)
+		}
+		box := geo.NewBox(geo.NewPoint(x, y), resizeLerp(a.Width, b.Width, u), resizeLerp(a.Height, b.Height, u))
+		if !n.IsContainer() {
+			box.Width, box.Height = n.Width, n.Height
+		}
+		plan[n] = box
+		for _, child := range n.ChildrenArray {
+			place(child, window)
+			// Different local motion can temporarily require more space than
+			// a simple interpolation of the parent’s two outer dimensions.
+			c := plan[child]
+			ac, bc := first[child.AbsID()], last[child.AbsID()]
+			right := min(20., a.TopLeft.X+a.Width-ac.TopLeft.X-ac.Width, b.TopLeft.X+b.Width-bc.TopLeft.X-bc.Width)
+			bottom := min(20., a.TopLeft.Y+a.Height-ac.TopLeft.Y-ac.Height, b.TopLeft.Y+b.Height-bc.TopLeft.Y-bc.Height)
+			box.Width = max(box.Width, c.TopLeft.X+c.Width+right-x)
+			box.Height = max(box.Height, c.TopLeft.Y+c.Height+bottom-y)
+		}
+	}
+	for _, root := range f.Root.ChildrenArray {
+		place(root, nil)
+	}
+	for _, e := range f.Edges {
+		alpha := 1.
+		if x, ok := fading[e.Src]; ok {
+			alpha = x
+		}
+		if x, ok := fading[e.Dst]; ok {
+			alpha = min(alpha, x)
+		}
+		e.Style.Opacity = resizeOpacity(e.Style.Opacity, alpha)
+	}
+	return plan
+}
+
+// Allow crossing objects to fade before an anchor starts moving or after it
+// arrives. This prevents a crowded endpoint from appearing in a single frame.
+func resizeSettleTime(count int) float64 { return min(4/float64(count), 0.16) }
+
+func resizeMotionTime(t, margin float64) float64 {
+	return max(0, min(1, (t-margin)/(1-2*margin)))
+}
+
+func resizeOpacity(value *d2graph.Scalar, alpha float64) *d2graph.Scalar {
+	if alpha == 1 {
+		return value
+	}
+	opacity := 1.
+	if value != nil {
+		opacity, _ = strconv.ParseFloat(value.Value, 64)
+	}
+	return &d2graph.Scalar{Value: strconv.FormatFloat(opacity*alpha, 'f', -1, 64)}
+}
+func resizeLerp(a, b, t float64) float64 { return a + (b-a)*t }
+
+func resizeObjectIndex(graph *d2graph.Graph) map[string]*d2graph.Object {
+	result := make(map[string]*d2graph.Object, len(graph.Objects))
+	for _, obj := range graph.Objects {
+		result[obj.AbsID()] = obj
+	}
+	return result
+}
+
+func sameResizeContent(a, b *d2graph.Object) bool {
+	return sameResizeObject(a, b) && a.LabelDimensions == b.LabelDimensions &&
+		reflect.DeepEqual(a.SQLTable, b.SQLTable) && reflect.DeepEqual(a.Class, b.Class)
+}
+
+func sameResizeWire(a, b *d2graph.Edge) bool {
+	return sameResizeEdge(a, b) && !a.IsCurve && !b.IsCurve && a.LabelDimensions == b.LabelDimensions
+}
+
+type resizeObjectState struct {
+	box         *geo.Box
+	label, icon *string
+	opacity     *d2graph.Scalar
+}
+type resizeEdgeState struct {
+	route       []*geo.Point
+	destination *d2graph.Object
+	label       *string
+	percentage  *float64
+	dimensions  d2target.TextDimensions
+	isCurve     bool
+	opacity     *d2graph.Scalar
+}
+type resizeFrame struct {
+	graph *d2graph.Graph
+	edges []*d2graph.Edge
+	boxes []resizeObjectState
+	wires []resizeEdgeState
+}
+
+func saveResizeFrame(g *d2graph.Graph) resizeFrame {
+	s := resizeFrame{graph: g, edges: g.Edges, boxes: make([]resizeObjectState, len(g.Objects)), wires: make([]resizeEdgeState, len(g.Edges))}
+	for i, o := range g.Objects {
+		s.boxes[i] = resizeObjectState{o.Box, o.LabelPosition, o.IconPosition, o.Style.Opacity}
+	}
+	for i, e := range g.Edges {
+		s.wires[i] = resizeEdgeState{e.Route, e.Dst, e.LabelPosition, e.LabelPercentage, e.LabelDimensions, e.IsCurve, e.Style.Opacity}
+	}
+	return s
+}
+func (s resizeFrame) restore() {
+	for i, o := range s.graph.Objects {
+		v := s.boxes[i]
+		o.Box, o.LabelPosition, o.IconPosition, o.Style.Opacity = v.box, v.label, v.icon, v.opacity
+	}
+	s.graph.Edges = s.edges
+	for i, e := range s.edges {
+		v := s.wires[i]
+		e.Route, e.Dst, e.LabelPosition, e.LabelPercentage, e.LabelDimensions, e.IsCurve, e.Style.Opacity = v.route, v.destination, v.label, v.percentage, v.dimensions, v.isCurve, v.opacity
+	}
+}
 func sameResizeObject(a, b *d2graph.Object) bool {
 	if a == nil || b == nil || a.Shape.Value != b.Shape.Value || a.Language != b.Language ||
 		a.Label.Value != b.Label.Value || a.Direction.Value != b.Direction.Value ||
@@ -193,168 +465,4 @@ func sameBoardScalar(a, b *d2graph.Scalar) bool {
 
 func boardSizeChanged(a, b *d2graph.Object) bool {
 	return !sameBoardScalar(a.WidthAttr, b.WidthAttr) || !sameBoardScalar(a.HeightAttr, b.HeightAttr)
-}
-
-type resizePlacement struct {
-	old   map[*d2graph.Object]*d2graph.Object
-	boxes map[*d2graph.Object]*geo.Box
-	gaps  map[[2]*d2graph.Object]d2target.TextDimensions
-}
-
-func (p *resizePlacement) route(ctx context.Context, start, current *d2graph.Graph, hasNear bool) bool {
-	if !hasNear {
-		return routeResizeBoard(ctx, start, current, p.boxes)
-	}
-	// Near positions depend on the final wire extents. The router installs
-	// fresh boxes and routes, so retaining the old values also preserves the
-	// original geometry if a decoration would leave the coordinate range.
-	objects := make([]d2graph.Object, len(current.Objects))
-	for i, obj := range current.Objects {
-		objects[i] = *obj
-	}
-	originalEdges := current.Edges
-	edges := make([]d2graph.Edge, len(originalEdges))
-	for i, edge := range originalEdges {
-		edges[i] = *edge
-	}
-	if !routeResizeBoard(ctx, start, current, p.boxes) {
-		return false
-	}
-	d2near.Reposition(current)
-	if ctx.Err() == nil && canShiftBoardObjects(current.Objects, current.Edges, 0, 0) {
-		return true
-	}
-	for i, obj := range current.Objects {
-		*obj = objects[i]
-	}
-	current.Edges = originalEdges
-	for i, edge := range originalEdges {
-		*edge = edges[i]
-	}
-	return false
-}
-
-// Retain room for edge captions in the gap between the branches they join.
-func (p *resizePlacement) reserveCaption(e *d2graph.Edge) {
-	a, b := e.Src, e.Dst
-	for da, db := a.Level(), b.Level(); da != db; {
-		if da > db {
-			a, da = a.Parent, da-1
-		} else {
-			b, db = b.Parent, db-1
-		}
-	}
-	if a == b {
-		return
-	}
-	for a.Parent != b.Parent {
-		a, b = a.Parent, b.Parent
-	}
-	key := [2]*d2graph.Object{a, b}
-	size := p.gaps[key]
-	size.Width = max(size.Width, e.LabelDimensions.Width)
-	size.Height = max(size.Height, e.LabelDimensions.Height)
-	p.gaps[key], p.gaps[[2]*d2graph.Object{b, a}] = size, size
-}
-
-func (p *resizePlacement) fit(parent *d2graph.Object) bool {
-	var children []*d2graph.Object
-	for _, n := range parent.ChildrenArray {
-		if !p.fit(n) {
-			return false
-		}
-		if n.NearKey == nil {
-			children = append(children, n)
-		}
-	}
-	if len(children) == 0 {
-		return true
-	}
-	// The original separating axis defines sibling order. Consume empty space
-	// first, retaining up to 20 pixels of the original clearance between boxes.
-	for _, horizontal := range []bool{true, false} {
-		xsort.StableFunc(children, func(a, b *d2graph.Object) int {
-			return cmp.Compare(axisStart(p.old[a].Box, horizontal), axisStart(p.old[b].Box, horizontal))
-		})
-		for i, n := range children {
-			oldN := p.old[n].Box
-			start := axisStart(p.boxes[n], horizontal)
-			next := start
-			for _, other := range children[:i] {
-				oldOther := p.old[other].Box
-				gap := axisStart(oldN, horizontal) - axisEnd(oldOther, horizontal)
-				crossGap := max(axisStart(oldN, !horizontal)-axisEnd(oldOther, !horizontal), axisStart(oldOther, !horizontal)-axisEnd(oldN, !horizontal))
-				if gap < 0 || gap < crossGap || gap == crossGap && !horizontal {
-					continue
-				}
-				caption := p.gaps[[2]*d2graph.Object{n, other}]
-				clearance := caption.Height
-				if horizontal {
-					clearance = caption.Width
-				}
-				next = max(next, axisEnd(p.boxes[other], horizontal)+min(gap, float64(clearance)+20))
-			}
-			if next > start {
-				p.shift(n, horizontal, next-start)
-			}
-		}
-	}
-	if parent.Parent == nil {
-		return true
-	}
-	b := p.boxes[parent]
-	original := p.old[parent]
-	for _, horizontal := range []bool{true, false} {
-		before, after := math.Inf(-1), math.Inf(-1)
-		for _, child := range children {
-			before = max(before, axisEnd(p.old[child].Box, horizontal))
-			after = max(after, axisEnd(p.boxes[child], horizontal))
-		}
-		if after == before {
-			continue
-		}
-		if parent.Shape.Value != "" && parent.Shape.Value != d2target.ShapeRectangle {
-			return false
-		}
-		// Preserve the original outer padding. Keep enough room for the
-		// container's caption even when all its children shrink.
-		if horizontal {
-			b.Width = max(float64(parent.LabelDimensions.Width)+20, original.Width+after-before)
-			if parent.WidthAttr != nil {
-				b.Width = max(b.Width, original.Width)
-			}
-		} else {
-			b.Height = max(float64(parent.LabelDimensions.Height)+20, original.Height+after-before)
-			if parent.HeightAttr != nil {
-				b.Height = max(b.Height, original.Height)
-			}
-		}
-	}
-	return true
-}
-
-func axisStart(b *geo.Box, horizontal bool) float64 {
-	if horizontal {
-		return b.TopLeft.X
-	}
-	return b.TopLeft.Y
-}
-
-func axisEnd(b *geo.Box, horizontal bool) float64 {
-	if horizontal {
-		return b.TopLeft.X + b.Width
-	}
-	return b.TopLeft.Y + b.Height
-}
-
-func (p *resizePlacement) shift(n *d2graph.Object, horizontal bool, delta float64) {
-	b := p.boxes[n]
-	if horizontal {
-		b.TopLeft.X += delta
-	} else {
-		b.TopLeft.Y += delta
-	}
-	for _, child := range n.ChildrenArray {
-		p.shift(child, horizontal, delta)
-	}
 }

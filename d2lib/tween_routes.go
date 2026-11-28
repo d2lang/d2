@@ -116,7 +116,7 @@ func tweenNodeMotion(a, b *d2target.Shape) float64 {
 	return math.Hypot(max(math.Abs(x), math.Abs(x+float64(b.Width-a.Width))), max(math.Abs(y), math.Abs(y+float64(b.Height-a.Height))))
 }
 
-func stabilizeTweenRoutes(ctx context.Context, previous, board *d2target.Diagram, budget *int) error {
+func stabilizeTweenRoutes(ctx context.Context, previous, board *d2target.Diagram, budget *int, reorder bool) error {
 	if len(board.Connections) == 0 || len(board.TweenFrames) == 0 || *budget <= 0 {
 		return nil
 	}
@@ -165,7 +165,83 @@ func stabilizeTweenRoutes(ctx context.Context, previous, board *d2target.Diagram
 			break
 		}
 	}
+	// Keep moving terminal bends inside their shortening approaches. The
+	// first sample and either authored wire retain their ordinary rendering.
+	for _, frame := range frames[1 : len(frames)-1] {
+		for id, e := range frame.edges {
+			if e.MotionClip != nil || e.MotionTip != "" || e.IsCurve || len(e.Route) < 3 || !validTweenRoute(e.Route) {
+				continue
+			}
+			s, t := frame.shapes[e.Src], frame.shapes[e.Dst]
+			if s == nil || t == nil {
+				continue
+			}
+			insets := e.EndpointInsets(s.RenderedStrokeWidth(), t.RenderedStrokeWidth())
+			last := len(e.Route) - 1
+			if e.Route[0].VectorTo(e.Route[1]).Length() >= e.BorderRadius+insets[0] &&
+				e.Route[last].VectorTo(e.Route[last-1]).Length() >= e.BorderRadius+insets[1] {
+				continue
+			}
+			from, to := prev.edges[id], frames[len(frames)-1].edges[id]
+			if from != nil && slices.EqualFunc(e.Route, from.Route, (*geo.Point).Equals) ||
+				to != nil && slices.EqualFunc(e.Route, to.Route, (*geo.Point).Equals) {
+				continue
+			}
+			e.MotionCorners = true
+		}
+	}
+	if reorder {
+		fadeReorderWires(frames)
+	}
 	return ctx.Err()
+}
+
+// During a sibling reorder a long wire can lose its whole corridor while its
+// endpoints move very little. Hide a discrete jump in that wire and its label
+// for one sample. Neighboring samples ease out/in. Small routing changes keep
+// the usual direct switch, and consecutive blocked lanes share a single fade.
+func fadeReorderWires(frames []tweenRouteFrame) {
+	last := len(frames) - 1
+	shade := make(map[*d2target.Connection]float64)
+	for i := 1; i <= last; i++ {
+		before, now := frames[i-1], frames[i]
+		for id, e := range now.edges {
+			old := before.edges[id]
+			if old == nil || old.IsCurve || e.IsCurve || old.Opacity <= 0 || e.Opacity <= 0 ||
+				!validTweenRoute(old.Route) || !validTweenRoute(e.Route) {
+				continue
+			}
+			src, dst := before.shapes[old.Src], before.shapes[old.Dst]
+			nextSrc, nextDst := now.shapes[e.Src], now.shapes[e.Dst]
+			if src == nil || dst == nil || nextSrc == nil || nextDst == nil {
+				continue
+			}
+			motion := max(tweenNodeMotion(src, nextSrc), tweenNodeMotion(dst, nextDst))
+			// A 160-unit floor leaves ordinary lane switches alone at rest.
+			// The motion allowance scales the check for fast-moving diagrams.
+			threshold := max(160, 4*motion)
+			if measureTweenRoute(old.Route).displacement2(measureTweenRoute(e.Route)) <= threshold*threshold {
+				continue
+			}
+			center := min(i, last-1)
+			for j := max(1, center-1); j <= min(last-1, center+1); j++ {
+				wire := frames[j].edges[id]
+				if wire == nil {
+					continue
+				}
+				alpha := 0.5
+				if j == center {
+					alpha = 0
+				}
+				if prior, ok := shade[wire]; !ok || alpha < prior {
+					shade[wire] = alpha
+				}
+			}
+		}
+	}
+	for wire, alpha := range shade {
+		wire.Opacity *= alpha
+	}
 }
 
 // A choice carries one router-produced path along with its endpoints. Switching

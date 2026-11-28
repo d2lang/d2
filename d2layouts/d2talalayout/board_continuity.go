@@ -27,13 +27,8 @@ func ContinueBoard(ctx context.Context, previous, current *d2graph.Graph) (bool,
 	}
 	if previous == nil || current == nil || previous.Root == nil || current.Root == nil || previous.Root == current.Root ||
 		previous.Root.Direction.Value != current.Root.Direction.Value ||
-		!reflect.DeepEqual(previous.Data["tala-seeds"], current.Data["tala-seeds"]) {
-		return false, nil
-	}
-	if ok := continueBoardResize(ctx, previous, current); ok || ctx.Err() != nil {
-		return ok, ctx.Err()
-	}
-	if !boardCanAlign(previous) || !boardCanAlign(current) {
+		!reflect.DeepEqual(previous.Data["tala-seeds"], current.Data["tala-seeds"]) ||
+		!boardCanAlign(previous) || !boardCanAlign(current) {
 		return false, nil
 	}
 	if ok, err := continueBoardLeaf(ctx, previous, current); ok || err != nil {
