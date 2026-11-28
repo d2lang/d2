@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 )
 
@@ -121,6 +122,26 @@ func (b *layoutSignatureBuilder) writeEdge(edge *d2graph.Edge) error {
 	b.writeOptionalString(edge.LabelPosition)
 	b.writeOptionalFloat(edge.LabelPercentage)
 	b.writeAttributes(&edge.Attributes)
+	var icon d2target.Connection
+	edge.ExportIcon(&icon)
+	// The static gutter and the clearance around a traveling icon both affect
+	// label placement. Changing the departure rate alone keeps the same layout.
+	b.writeBool(icon.HasStaticIcon())
+	if icon.HasStaticIcon() {
+		b.writeInt(icon.IconSize())
+	}
+	footprint := icon.MovingIconFootprint()
+	b.writeInt(int(footprint))
+	if footprint != 0 && edge.Label.Value != "" {
+		srcWidth, dstWidth := edge.EndpointStrokeWidths()
+		b.writeFloat(srcWidth)
+		b.writeFloat(dstWidth)
+		b.writeOptionalScalar(edge.Style.BorderRadius)
+		b.writeOptionalScalar(edge.Style.StrokeWidth)
+		if edge.Style.StrokeWidth != nil {
+			b.writeFloat(edge.Style.StrokeWidth.TweenOffset)
+		}
+	}
 
 	b.writeBool(edge.SrcArrowhead != nil)
 	if edge.SrcArrowhead != nil {

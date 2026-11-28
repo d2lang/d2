@@ -43,7 +43,7 @@ func loopLabelConnection(g *d2graph.Graph, edge *d2graph.Edge) *d2target.Connect
 	c := d2target.BaseConnection()
 	c.Route, c.IsCurve = edge.Route, edge.IsCurve
 	c.LabelWidth, c.LabelHeight = edge.LabelDimensions.Width, edge.LabelDimensions.Height
-	c.Icon = edge.Icon
+	edge.ExportIcon(c)
 	if edge.LabelPosition != nil {
 		c.LabelPosition = *edge.LabelPosition
 	}
@@ -52,6 +52,10 @@ func loopLabelConnection(g *d2graph.Graph, edge *d2graph.Edge) *d2target.Connect
 	}
 	if edge.Style.StrokeWidth != nil {
 		c.StrokeWidth, _ = strconv.Atoi(edge.Style.StrokeWidth.Value)
+	}
+	if c.IconAnimation != nil && edge.Label.Value != "" {
+		c.SrcArrow, c.DstArrow = edge.Arrowheads()
+		c.IconLabelInsets = c.EndpointInsets(edge.EndpointStrokeWidths())
 	}
 	if g.Theme != nil && g.Theme.SpecialRules.NoCornerRadius {
 		c.BorderRadius = 0
@@ -67,9 +71,10 @@ func loopLabelBounds(c *d2target.Connection) spatialBounds {
 	// The text mask extends two pixels past each end. An accompanying
 	// icon occupies the space to the left of the text.
 	b := spatialBounds{p.X - 2, p.Y, p.X + float64(c.LabelWidth) + 2, p.Y + float64(c.LabelHeight)}
-	if c.Icon != nil {
-		b.minX -= d2target.DEFAULT_ICON_SIZE + d2target.CONNECTION_ICON_LABEL_GAP
-		extra := math.Max(0, (d2target.DEFAULT_ICON_SIZE-float64(c.LabelHeight))/2)
+	if c.HasStaticIcon() {
+		size := float64(c.IconSize())
+		b.minX -= size + d2target.CONNECTION_ICON_LABEL_GAP
+		extra := math.Max(0, (size-float64(c.LabelHeight))/2)
 		b.minY -= extra
 		b.maxY += extra
 	}

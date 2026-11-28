@@ -40,6 +40,7 @@ type Edge struct {
 	MinHeight       int
 	Label           *Label
 	LabelPercentage float64
+	MovingIcon      labelgeom.MovingIconGeometry
 	IsCurve         bool
 
 	// edges between SQL Table shapes
@@ -377,6 +378,19 @@ func (edge *Edge) Length() float64 {
 // LabelTopLeft returns the top-left point for a label of the given size and
 // position on edge.
 func (edge *Edge) LabelTopLeft(labelPosition label.Position, width, height float64) *geo.Point {
+	return edge.LabelTopLeftWithWork(labelPosition, width, height, nil)
+}
+
+func (edge *Edge) LabelTopLeftWithWork(labelPosition label.Position, width, height float64, charge func(int64) bool) *geo.Point {
+	if edge.MovingIcon.Footprint != 0 && !labelPosition.IsOnEdge() {
+		route, fraction := edge.Points, edge.LabelPercentage
+		if edge.ReversedForLayout {
+			route = slices.Clone(route)
+			slices.Reverse(route)
+			labelPosition, fraction = labelPosition.Mirrored(), 1-fraction
+		}
+		return edge.MovingIcon.LabelTopLeft(route, edge.IsCurve, labelPosition, fraction, width, height, charge)
+	}
 	point, _ := labelPosition.GetPointOnRoute(
 		edge.Points,
 		edgeStrokeWidth,

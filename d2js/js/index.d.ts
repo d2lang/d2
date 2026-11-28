@@ -192,7 +192,7 @@ export interface ShapeBase {
   tooltip: string;
   link: string;
   prettyLink?: string;
-  icon?: string /* url.URL */;
+  icon?: IconURL | null;
   iconPosition: string;
   /**
    * Whether the shape should allow shapes behind it to bleed through
@@ -213,6 +213,21 @@ export interface ShapeBase {
   primaryAccentColor?: string;
   secondaryAccentColor?: string;
   neutralAccentColor?: string;
+}
+
+/** JSON representation of an icon URL in compiled diagrams and graphs. */
+export interface IconURL {
+  Scheme?: string;
+  Opaque?: string;
+  User?: Record<string, never> | null;
+  Host?: string;
+  Path?: string;
+  RawPath?: string;
+  OmitHost?: boolean;
+  ForceQuery?: boolean;
+  RawQuery?: string;
+  Fragment?: string;
+  RawFragment?: string;
 }
 
 export interface Point {
@@ -297,7 +312,24 @@ export interface Connection extends Text {
   isCurve?: boolean;
   animated: boolean;
   tooltip: string;
-  icon?: string /* url.URL */;
+  icon?: IconURL | null;
+  iconShape?: "circle";
+  iconBorderRadius?: number;
+  iconAnimation?: {
+    /** Predecessor in the previous step when parallel connections are renumbered. */
+    previousID?: string;
+  } & (
+    | {
+        /** Departures per second. Zero stops departures. An empty object loops one icon at the default speed. */
+        rate?: number;
+        durationMs?: never;
+      }
+    | {
+        /** One icon repeatedly crosses the connection in this many milliseconds. */
+        durationMs: number;
+        rate?: never;
+      }
+  );
   iconPosition?: string;
   /** A mark and note drawn over the connection for this board. */
   annotation?: Annotation;
@@ -383,6 +415,7 @@ export interface Graph {
 }
 
 export interface Edge {
+  iconShape?: Scalar;
   index: number /* int */;
   srcTableColumnIndex?: number /* int */;
   dstTableColumnIndex?: number /* int */;
@@ -406,7 +439,8 @@ export interface Attributes {
   label: Scalar;
   labelDimensions: TextDimensions;
   style: Style;
-  icon?: string /* url.URL */;
+  icon?: IconURL;
+  iconStyle?: Style;
   tooltip?: Scalar;
   link?: Scalar;
   annotation?: {

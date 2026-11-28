@@ -314,6 +314,7 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 		if err != nil {
 			return nil, nil, err
 		}
+		matchStepIconStreams(previous, l, ld)
 		d.Steps = append(d.Steps, ld)
 		previous, reuse = l, stepGeometry
 	}

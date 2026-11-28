@@ -882,48 +882,7 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 				return
 			}
 			if d2ast.Keyword(f.Name) == "near" {
-				if f.Primary() == nil {
-					c.errorf(f.LastPrimaryKey(), `invalid "near" field`)
-				} else {
-					scalar := f.Primary().Value
-					switch scalar := scalar.(type) {
-					case *d2ast.Null:
-						switch keyword {
-						case "label":
-							attrs.LabelPosition = nil
-						case "icon":
-							attrs.IconPosition = nil
-						case "tooltip":
-							attrs.TooltipPosition = nil
-						}
-					default:
-						switch keyword {
-						case "label", "icon":
-							if _, ok := d2ast.LabelPositions[scalar.ScalarString()]; !ok {
-								c.errorf(f.LastPrimaryKey(), `invalid "near" field`)
-							} else {
-								switch keyword {
-								case "label":
-									attrs.LabelPosition = &d2graph.Scalar{}
-									attrs.LabelPosition.Value = scalar.ScalarString()
-									attrs.LabelPosition.MapKey = f.LastPrimaryKey()
-								case "icon":
-									attrs.IconPosition = &d2graph.Scalar{}
-									attrs.IconPosition.Value = scalar.ScalarString()
-									attrs.IconPosition.MapKey = f.LastPrimaryKey()
-								}
-							}
-						case "tooltip":
-							if _, ok := d2ast.TooltipPositions[scalar.ScalarString()]; !ok {
-								c.errorf(f.LastPrimaryKey(), `invalid "near" field`)
-							} else {
-								attrs.TooltipPosition = &d2graph.Scalar{}
-								attrs.TooltipPosition.Value = scalar.ScalarString()
-								attrs.TooltipPosition.MapKey = f.LastPrimaryKey()
-							}
-						}
-					}
-				}
+				c.compileNear(attrs, keyword, f)
 			} else {
 				if f.LastPrimaryKey() != nil {
 					c.errorf(f.LastPrimaryKey(), `unexpected field %s`, f.Name.ScalarString())
@@ -936,8 +895,40 @@ func (c *compiler) compilePosition(attrs *d2graph.Attributes, f *d2ir.Field) {
 	}
 }
 
+func (c *compiler) compileNear(attrs *d2graph.Attributes, keyword string, f *d2ir.Field) {
+	if f.Primary() == nil {
+		c.errorf(fieldErrorNode(f), `invalid "near" field`)
+		return
+	}
+	var field **d2graph.Scalar
+	positions := d2ast.LabelPositions
+	switch keyword {
+	case "label":
+		field = &attrs.LabelPosition
+	case "icon":
+		field = &attrs.IconPosition
+	case "tooltip":
+		field = &attrs.TooltipPosition
+		positions = d2ast.TooltipPositions
+	}
+	scalar := f.Primary().Value
+	if _, null := scalar.(*d2ast.Null); null {
+		*field = nil
+		return
+	}
+	if _, ok := positions[scalar.ScalarString()]; !ok {
+		c.errorf(f.LastPrimaryKey(), `invalid "near" field`)
+		return
+	}
+	*field = &d2graph.Scalar{Value: scalar.ScalarString(), MapKey: f.LastPrimaryKey()}
+}
+
 func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 	keyword := d2ast.Keyword(f.Name)
+	if keyword == "icon" {
+		c.compileIcon(attrs, nil, f)
+		return
+	}
 	if keyword == "elk-layer-constraint" {
 		c.errorf(f.LastRef().AST(), "elk-layer-constraint can only be set on shapes")
 		return
@@ -972,7 +963,7 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 						}
 					}
 				}
-			case "label", "icon", "tooltip":
+			case "label", "tooltip":
 				c.compilePosition(attrs, f)
 			case "annotation":
 				c.compileAnnotation(attrs, f)
@@ -1003,28 +994,6 @@ func (c *compiler) compileReserved(attrs *d2graph.Attributes, f *d2ir.Field) {
 			attrs.Language = d2target.ShapeText
 		}
 		attrs.Shape.MapKey = f.LastPrimaryKey()
-	case "icon":
-		iconURL, err := url.Parse(scalar.ScalarString())
-		if err != nil {
-			c.errorf(scalar, "bad icon url %#v: %s", scalar.ScalarString(), err)
-			return
-		}
-		attrs.Icon = iconURL
-		c.compilePosition(attrs, f)
-		if f.Map() != nil {
-			for _, ff := range f.Map().Fields {
-				if c.stopped() {
-					return
-				}
-				if d2ast.Keyword(ff.Name) == "style" {
-					if ff.Map() == nil || len(ff.Map().Fields) == 0 {
-						c.errorf(f.LastRef().AST(), `"style" expected to be set to a map of key-values, or contain an additional keyword like "style.opacity: 0.4"`)
-						return
-					}
-					c.compileStyle(&attrs.IconStyle, ff.Map())
-				}
-			}
-		}
 	case "near":
 		nearKey, err := d2parser.ParseKey(scalar.ScalarString())
 		if err != nil {
@@ -1406,6 +1375,10 @@ func (c *compiler) compileEdgeField(edge *d2graph.Edge, f *d2ir.Field) {
 	_, isStyleReserved := d2ast.StyleKeywords[keyword]
 	if isStyleReserved {
 		c.errorf(f.LastRef().AST(), "%v must be style.%v", f.Name.ScalarString(), f.Name.ScalarString())
+		return
+	}
+	if keyword == "icon" {
+		c.compileIcon(&edge.Attributes, edge, f)
 		return
 	}
 	_, isReserved := d2ast.SimpleReservedKeywords[keyword]
@@ -1792,6 +1765,15 @@ func (c *compiler) validateEdges(g *d2graph.Graph) {
 	for _, edge := range g.Edges {
 		if c.stopped() {
 			return
+		}
+		// A static icon without a caption is positioned on the connection itself.
+		// A caption supplies its own icon position, and moving icons follow the route.
+		if pos := edge.IconPosition; pos != nil && edge.Label.Value == "" && !d2ast.LabelPositionsMapping[pos.Value].IsEdgePosition() {
+			var icon d2target.Connection
+			edge.ExportIcon(&icon)
+			if icon.HasStaticIcon() {
+				c.errorf(pos.MapKey, "connection icon.near must be a position on the connection, such as center-center or outside-top-center")
+			}
 		}
 		// edges from a grid to something outside is ok
 		//   grid -> outside : ok

@@ -87,5 +87,8 @@ type Track struct {
 	Delay       time.Duration
 	Duration    time.Duration
 	Repeat      bool
-	Keyframes   []Keyframe
+	// Phase advances a track by this duration when playback starts.
+	// Staggered copies can share immutable keyframes and the same clock.
+	Phase     time.Duration
+	Keyframes []Keyframe
 }

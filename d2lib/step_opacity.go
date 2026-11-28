@@ -53,6 +53,33 @@ func planStepOpacity(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.G
 	return &stepOpacity{from: prev, shapes: shapes, edges: edges}
 }
 
+// Match moving icons by the same declarations as opacity tweens. Keep the
+// common case implicit in JSON and record only renumbered or replaced IDs.
+func matchStepIconStreams(oldGraph, nextGraph *d2graph.Graph, board *d2target.Diagram) {
+	if !slices.ContainsFunc(board.Connections, func(e d2target.Connection) bool { return e.IconAnimation != nil }) {
+		return
+	}
+	oldIDs, nextIDs := opacityEdgeIDs(oldGraph), opacityEdgeIDs(nextGraph)
+	previousByID := make(map[string]string, len(nextIDs))
+	for origin, next := range nextIDs {
+		previousByID[next] = oldIDs[origin]
+	}
+	occupied := make(map[string]bool, len(oldGraph.Edges))
+	for _, e := range oldGraph.Edges {
+		occupied[e.AbsID()] = true
+	}
+	for i := range board.Connections {
+		e := &board.Connections[i]
+		if e.IconAnimation == nil {
+			continue
+		}
+		old := previousByID[e.ID]
+		if old != e.ID && (old != "" || occupied[e.ID]) {
+			e.IconAnimation.PreviousID = &old
+		}
+	}
+}
+
 // An edge's rendered index can change after a parallel edge is deleted.
 // A declaration expanded by a wildcard can also create edges between several
 // pairs of nodes. Match the declaration and its endpoints together.

@@ -50,6 +50,9 @@ func TestStepGroupingPreservesAuthoredTransitions(t *testing.T) {
 		{"tooltip", "A -> B: {tooltip: read the checklist}\nB -> C", []string{"A-B", "B-C"}},
 		{"link", "A -> B: {link: https://example.com}\nB -> C", []string{"A-B", "B-C"}},
 		{"icon", "A -> B: {icon: https://example.com/ok.svg}\nB -> C", []string{"A-B", "B-C"}},
+		{"native icon", "A -> B: {icon.shape: circle}\nB -> C", []string{"A-B", "B-C"}},
+		{"moving icon", "A -> B: {icon.style.animated: 2/s}\nB -> C", []string{"A-B", "B-C"}},
+		{"disabled icon", "A -> B: {icon.style.animated: false}\nB -> C", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := compileRoutingDiagram(t, t.Context(), nodes+tc.links, 1, &d2svg.RenderOpts{})

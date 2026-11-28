@@ -1,0 +1,21 @@
+direction: right
+vars.d2-config.pad: 22
+style.fill: "#fbfcf9"
+
+classes.device: {
+  width: 140
+  height: 62
+  style: {fill: "#ffffff"; stroke: "#96a49c"; font-color: "#253a30"; font-size: 17; border-radius: 8}
+}
+
+encoder: Shaft encoder {class: device; style.fill: "#deece3"; style.stroke: "#428265"}
+servo: Servo controller {class: device; width: 152; style.fill: "#deece3"; style.stroke: "#428265"}
+motor: Drive motor {class: device}
+
+encoder -> servo: {
+  icon.shape: circle
+  icon.style.animated: 200ms
+  style.stroke: "#177350"
+}
+servo -> motor: {style.stroke: "#89978d"}
+motor -> encoder: {style.stroke: "#89978d"}

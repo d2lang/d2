@@ -481,7 +481,7 @@ func (m *boardReveal) popClearance(n *d2graph.Object, d *d2target.Diagram, g *d2
 		if w := m.wires[e.ID]; w != nil && w.start >= b.end {
 			continue
 		}
-		if e.Icon != nil || e.Label != "" || e.SrcLabel != nil || e.DstLabel != nil || e.Tooltip != "" || e.Link != "" {
+		if e.HasStaticIcon() || e.IconAnimation != nil || e.Label != "" || e.SrcLabel != nil || e.DstLabel != nil || e.Tooltip != "" || e.Link != "" {
 			return 0
 		}
 		r := area.Inset(-int(math.Ceil(boardArrowReach(e))))
@@ -577,7 +577,8 @@ func (m *boardReveal) apply(frame *d2target.Diagram, progress float64) {
 			}
 			// Labels and badges use the full route for placement.
 			if t < 1 || now < max(m.nodes[e.Src].end, m.nodes[e.Dst].end) {
-				e.Label, e.Icon, e.SrcLabel, e.DstLabel = "", nil, nil, nil
+				e.Label, e.SrcLabel, e.DstLabel = "", nil, nil
+				e.Icon, e.IconShape, e.IconAnimation = nil, "", nil
 				// The click and hover regions belong to the caption's box.
 				e.Link, e.PrettyLink, e.Tooltip = "", "", ""
 				wire.pinDashes(&e, frame.Shapes, &shapeWidths)

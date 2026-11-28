@@ -176,7 +176,7 @@ func TestBoardDepartureEdgeOnlyKeepsCardsAndDropsCaption(t *testing.T) {
 	const src = `vars: {d2-config: {animate-interval: 800ms; animate-duration: 600ms}}
 sender: {left: 0; top: 0}
 receiver: {left: 300; top: 0}
-sender -> receiver: RPC {tooltip: Wire metadata}
+sender -> receiver: RPC {tooltip: Wire metadata; icon.style.animated: 2/s}
 steps: {remove: {(sender -> receiver)[0]: null}}`
 	d, _ := compileContinuity(t, src, d2talalayout.ContinueBoard)
 	step := d.Steps[0]
@@ -187,8 +187,8 @@ steps: {remove: {(sender -> receiver)[0]: null}}`
 		}
 		if len(f.Connections) > 0 && f.Connections[0].MotionTip != "" {
 			e := f.Connections[0]
-			if e.Label != "" || e.Tooltip != "" {
-				t.Fatal("a detached caption or badge remained on the retracting route")
+			if e.Label != "" || e.Tooltip != "" || e.IconShape != "" || e.IconAnimation != nil {
+				t.Fatal("a detached caption, icon or badge remained on the retracting route")
 			}
 			partial = true
 		}

@@ -277,3 +277,91 @@ func TestVideoLong4KBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestVideoCompactsDrainedIconStream(t *testing.T) {
+	root, stop := animatedConnectionRasterDiagram(), animatedConnectionRasterDiagram()
+	root.Steps = []*d2target.Diagram{stop}
+	for _, b := range []*d2target.Diagram{root, stop} {
+		b.Connections[0].Animated = false
+	}
+	root.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{Rate: new(10.)}
+	stop.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{Rate: new(0.)}
+	plan, err := planVideo(root, 30_000, gifLayerOptions{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []time.Duration{20 * time.Second, 30 * time.Second} {
+		if _, _, repeats, _, _ := plan.sample(videoFrameCount(at)); repeats != 1 {
+			t.Fatalf("at %s, holding %d frames while an icon is moving", at, repeats)
+		}
+	}
+	// By 32s every carried icon has landed. The remaining 28s can be held.
+	if _, _, repeats, _, _ := plan.sample(videoFrameCount(32 * time.Second)); repeats != 28*videoFPS {
+		t.Fatalf("drained interval spans %d frames, want %d", repeats, 28*videoFPS)
+	}
+	stop.Connections[0].Animated = true
+	plan, err = planVideo(root, 30_000, gifLayerOptions{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, repeats, _, _ := plan.sample(videoFrameCount(32 * time.Second)); repeats != 1 {
+		t.Fatal("holding the drained stream stopped the animated wire")
+	}
+	legendWire := stop.Connections[0]
+	legendWire.Label = "Traffic"
+	stop.Connections[0].Animated = false
+	stop.Legend = &d2target.Legend{Connections: []d2target.Connection{legendWire}}
+	if rasterMovingUntil(stop) < time.Hour {
+		t.Fatal("the legend's moving dashes should keep the hold animated")
+	}
+}
+
+func TestVideoFinishesInFlightIcons(t *testing.T) {
+	root, drain := animatedConnectionRasterDiagram(), animatedConnectionRasterDiagram()
+	root.Steps = []*d2target.Diagram{drain}
+	for _, board := range []*d2target.Diagram{root, drain} {
+		c := &board.Connections[0]
+		c.Animated, c.Stroke = false, "#ff0000"
+	}
+	root.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{Rate: new(.25)}
+	drain.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{Rate: new(0.)}
+	// The video records a finite 400ms excerpt from a four-second stream.
+	// The first icon is still crossing when the second board stops launches.
+	var centers []int
+	opts := d2svg.RenderOpts{Pad: new(int64)}
+	err := renderVideoFrames(t.Context(), "-", false, root, opts, 200, gifLayerOptions{}, 0, false, videoSize{}, func(frame image.Image, repeats int) error {
+		center := redIconCenter(frame)
+		for range repeats {
+			centers = append(centers, center)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(centers) != 12 || centers[0] < 0 || centers[6] <= centers[5] || centers[7] <= centers[6] || centers[11] != -1 {
+		t.Fatalf("expected the dot to travel across the stop boundary and land, got x centers %v", centers)
+	}
+}
+
+func redIconCenter(frame image.Image) int {
+	var sum, columns int
+	for x := frame.Bounds().Min.X; x < frame.Bounds().Max.X; x++ {
+		var red int
+		for y := frame.Bounds().Min.Y; y < frame.Bounds().Max.Y; y++ {
+			r, g, _, _ := frame.At(x, y).RGBA()
+			if r > 0xe000 && g < 0x2000 {
+				red++
+			}
+		}
+		// The wire itself is only two pixels thick.
+		if red >= 6 {
+			sum += x
+			columns++
+		}
+	}
+	if columns == 0 {
+		return -1
+	}
+	return sum / columns
+}

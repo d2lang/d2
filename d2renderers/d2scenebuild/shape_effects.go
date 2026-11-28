@@ -3,6 +3,8 @@ package d2scenebuild
 import (
 	"fmt"
 	"image/color"
+	"iter"
+	"math"
 	"time"
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -67,33 +69,61 @@ var (
 	}
 )
 
-// ShortestAnimationPeriod returns the shortest visible repeating effect on an
-// authored board. Each dash moves by one pattern length ten times per track
-// cycle, so its appearance repeats sooner than the complete offset track.
+// PaintAnimationPeriods yields the visible periods of native shape pulses
+// and moving dashes. A dash repeats its appearance ten times per track cycle.
+func PaintAnimationPeriods(board *d2target.Diagram) iter.Seq[time.Duration] {
+	return func(yield func(time.Duration) bool) {
+		paint := func(shapes []d2target.Shape, connections []d2target.Connection, legend bool) bool {
+			for i := range shapes {
+				if shapes[i].Animated && shapes[i].Opacity > 0 && (!legend || shapes[i].Label != "") {
+					if !yield(animatedShapeDuration) {
+						return false
+					}
+					break
+				}
+			}
+			for i := range connections {
+				c := &connections[i]
+				if c.Animated && c.Opacity > 0 && c.RenderedStrokeWidth() > 0 && (!legend || c.Label != "") {
+					_, duration, err := animatedConnectionTiming(*c)
+					if period := duration / dashPeriodsPerCycle; err == nil && period > 0 && !yield(period) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+		if paint(board.Shapes, board.Connections, false) && board.Legend != nil {
+			paint(board.Legend.Shapes, board.Legend.Connections, true)
+		}
+	}
+}
+
+// ShortestAnimationPeriod chooses two representative storyboard phases.
+// A sparse stream's visible travel window can be shorter than its launch period.
 func ShortestAnimationPeriod(board *d2target.Diagram) time.Duration {
 	var period time.Duration
-	consider := func(shapes []d2target.Shape, connections []d2target.Connection) {
-		for i := range shapes {
-			if shapes[i].Animated && shapes[i].Opacity > 0 && (period == 0 || animatedShapeDuration < period) {
-				period = animatedShapeDuration
-				break
-			}
+	take := func(p time.Duration) {
+		if p > 0 && (period == 0 || p < period) {
+			period = p
 		}
-		for i := range connections {
-			c := &connections[i]
-			if !c.Animated || c.Opacity <= 0 || c.RenderedStrokeWidth() <= 0 {
-				continue
-			}
-			_, duration, err := animatedConnectionTiming(*c)
-			dashPeriod := duration / dashPeriodsPerCycle
-			if err == nil && dashPeriod > 0 && (period == 0 || dashPeriod < period) {
-				period = dashPeriod
+	}
+	for p := range PaintAnimationPeriods(board) {
+		take(p)
+	}
+	icons := func(d *d2target.Diagram) {
+		for i, path := range d.ConnectionIconRoutes() {
+			c := &d.Connections[i]
+			if c.Opacity > 0 {
+				if launch := path.LaunchPeriod(c.IconAnimation); !math.IsInf(launch, 1) && launch > 0 {
+					take(iconDuration(min(launch, path.TransitDuration(c.IconAnimation))))
+				}
 			}
 		}
 	}
-	consider(board.Shapes, board.Connections)
+	icons(board)
 	if board.Legend != nil {
-		consider(board.Legend.Shapes, board.Legend.Connections)
+		icons(&d2target.Diagram{Shapes: board.Legend.Shapes, Connections: board.Legend.Connections})
 	}
 	return period
 }

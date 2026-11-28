@@ -161,7 +161,7 @@ func newSequenceMessage(e *d2target.Connection) *sequenceMessage {
 	// End labels and icons are positioned on the moving path. Keep their
 	// authored appearance when there is no unambiguous moving arrowhead.
 	if (e.SrcArrow == d2target.NoArrowhead) == (e.DstArrow == d2target.NoArrowhead) ||
-		e.SrcLabel != nil || e.DstLabel != nil || e.Icon != nil || e.Tooltip != "" || e.Link != "" ||
+		e.SrcLabel != nil || e.DstLabel != nil || e.HasStaticIcon() || e.IconAnimation != nil || e.Tooltip != "" || e.Link != "" ||
 		e.IsCurve || len(e.Route) < 2 || slices.Contains(e.Route, nil) {
 		return nil
 	}

@@ -1,6 +1,9 @@
 package graphjson
 
-import "github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
+import (
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labelgeom"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
+)
 
 // SerializedLabel is the fixture representation of label geometry.
 type SerializedLabel struct {
@@ -95,10 +98,11 @@ type SerializedEdge struct {
 	ToTableColumnIndex   *int               `json:"toTableColumnIndex,omitempty"`
 	Style                SerializedStyle    `json:"style,omitempty"`
 
-	ReversedForLayout bool   `json:"reversedForLayout,omitempty"`
-	KeepExplicit      bool   `json:"keepExplicit,omitempty"`
-	SourceArrowhead   string `json:"sourceArrowhead"`
-	TargetArrowhead   string `json:"targetArrowhead"`
+	MovingIcon        labelgeom.MovingIconGeometry `json:"movingIcon,omitzero"`
+	ReversedForLayout bool                         `json:"reversedForLayout,omitempty"`
+	KeepExplicit      bool                         `json:"keepExplicit,omitempty"`
+	SourceArrowhead   string                       `json:"sourceArrowhead"`
+	TargetArrowhead   string                       `json:"targetArrowhead"`
 
 	SourceArrowheadLabel *SerializedLabel `json:"sourceArrowheadLabel,omitempty"`
 	TargetArrowheadLabel *SerializedLabel `json:"targetArrowheadLabel,omitempty"`

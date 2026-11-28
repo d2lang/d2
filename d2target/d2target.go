@@ -524,6 +524,7 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 // InkBoundingBox bounds everything drawn on the board except its caption,
 // which is placed under this box.
 func (diagram Diagram) InkBoundingBox() (topLeft, bottomRight Point) {
+	diagram = *diagram.WithIconLabelInsets()
 	if len(diagram.Shapes) == 0 {
 		return Point{0, 0}, Point{0, 0}
 	}
@@ -613,6 +614,10 @@ func (diagram Diagram) InkBoundingBox() (topLeft, bottomRight Point) {
 	for _, connection := range diagram.Connections {
 		stroke := StrokeWidthExtent(connection.StrokeWidth, connection.StrokeWidthOffset)
 		halfStroke := stroke/2 + stroke%2
+		if connection.IconAnimation != nil {
+			// Reserve the entire trip so playback keeps the same viewport across emissions.
+			halfStroke = max(halfStroke, connection.IconSize()/2)
+		}
 		for _, point := range connection.Route {
 			x1 = go2.Min(x1, int(math.Floor(point.X))-halfStroke)
 			y1 = go2.Min(y1, int(math.Floor(point.Y))-halfStroke)
@@ -629,7 +634,7 @@ func (diagram Diagram) InkBoundingBox() (topLeft, bottomRight Point) {
 		}
 		if icon := connection.GetIconPosition(); icon != nil {
 			x1, y1 = min(x1, int(math.Floor(icon.X))), min(y1, int(math.Floor(icon.Y)))
-			x2, y2 = max(x2, int(math.Ceil(icon.X))+DEFAULT_ICON_SIZE), max(y2, int(math.Ceil(icon.Y))+DEFAULT_ICON_SIZE)
+			x2, y2 = max(x2, int(math.Ceil(icon.X))+connection.IconSize()), max(y2, int(math.Ceil(icon.Y))+connection.IconSize())
 		}
 		if connection.SrcLabel != nil && connection.SrcLabel.Label != "" {
 			labelTL := connection.GetArrowheadLabelPosition(false)
@@ -1125,6 +1130,18 @@ const (
 	TraceDestination TraceEndpoint = "destination"
 )
 
+// A nil Rate repeats one icon. An explicit rate emits icons per second;
+// zero stops new emissions while icons already in flight finish their trips.
+type ConnectionIconAnimation struct {
+	Rate *float64 `json:"rate,omitempty"`
+	// DurationMS sets the trip time of a single repeating icon. A positive duration
+	// is mutually exclusive with Rate. Zero uses the diagram's default travel speed.
+	DurationMS int64 `json:"durationMs,omitempty"`
+	// A parallel edge may be renumbered in an inherited step. An empty
+	// predecessor marks a replacement that reuses a deleted connection's ID.
+	PreviousID *string `json:"previousID,omitempty"`
+}
+
 type Connection struct {
 	ID string `json:"id"`
 
@@ -1164,11 +1181,18 @@ type Connection struct {
 	Route   []*geo.Point `json:"route"`
 	IsCurve bool         `json:"isCurve,omitempty"`
 
-	Animated         bool     `json:"animated"`
-	Tooltip          string   `json:"tooltip"`
-	Icon             *url.URL `json:"icon"`
-	IconPosition     string   `json:"iconPosition,omitempty"`
-	IconBorderRadius float64  `json:"iconBorderRadius,omitempty"`
+	Animated         bool                     `json:"animated"`
+	Tooltip          string                   `json:"tooltip"`
+	Icon             *url.URL                 `json:"icon"`
+	IconPosition     string                   `json:"iconPosition,omitempty"`
+	IconBorderRadius float64                  `json:"iconBorderRadius,omitempty"`
+	IconShape        string                   `json:"iconShape,omitempty"`
+	IconAnimation    *ConnectionIconAnimation `json:"iconAnimation,omitempty"`
+	// IconLabelInsets is derived from the current board's endpoint stroke widths.
+	IconLabelInsets [2]float64 `json:"-"`
+	// IconPositions holds sampled centers. Nil leaves playback to the renderer.
+	IconPositions []geo.Point             `json:"-"`
+	IconSchedule  *ConnectionIconSchedule `json:"-"`
 
 	// Annotation is drawn over the connection without taking part in layout.
 	Annotation *Annotation `json:"annotation,omitempty"`
@@ -1179,18 +1203,30 @@ type Connection struct {
 	ZIndex int `json:"zIndex"`
 }
 
+func (c *Connection) HasStaticIcon() bool {
+	return c.IconAnimation == nil && (c.Icon != nil || c.IconShape == ShapeCircle)
+}
+
+func (c *Connection) IconSize() int {
+	if c.Icon == nil && (c.IconShape == ShapeCircle || c.IconAnimation != nil) {
+		return connectionCircleSize
+	}
+	return DEFAULT_ICON_SIZE
+}
+
 func (c *Connection) GetIconPosition() *geo.Point {
-	if c.Icon == nil {
+	if !c.HasStaticIcon() {
 		return nil
 	}
 
+	size := float64(c.IconSize())
 	if c.Label != "" {
 		labelTL := c.GetLabelTopLeft()
 		if labelTL != nil {
 			// Position icon to the left of the label with a small gap
 			return &geo.Point{
-				X: labelTL.X - CONNECTION_ICON_LABEL_GAP - DEFAULT_ICON_SIZE,
-				Y: labelTL.Y + float64(c.LabelHeight)/2 - DEFAULT_ICON_SIZE/2,
+				X: labelTL.X - CONNECTION_ICON_LABEL_GAP - size,
+				Y: labelTL.Y + float64(c.LabelHeight)/2 - size/2,
 			}
 		}
 	}
@@ -1199,8 +1235,8 @@ func (c *Connection) GetIconPosition() *geo.Point {
 		c.Route,
 		c.RenderedStrokeWidth(),
 		-1,
-		float64(DEFAULT_ICON_SIZE),
-		float64(DEFAULT_ICON_SIZE),
+		size,
+		size,
 	)
 	return point
 }
@@ -1264,14 +1300,7 @@ func (c *Connection) GetLabelTopLeft() *geo.Point {
 	if p := c.MotionLabel; p != nil {
 		return geo.NewPoint(float64(p.X), float64(p.Y))
 	}
-	point, _ := label.FromString(c.LabelPosition).GetPointOnRoute(
-		c.Route,
-		c.RenderedStrokeWidth(),
-		c.LabelPercentage,
-		float64(c.LabelWidth),
-		float64(c.LabelHeight),
-	)
-	return point
+	return c.MovingIconFootprint().LabelTopLeft(c, label.FromString(c.LabelPosition), c.LabelPercentage, float64(c.LabelWidth), float64(c.LabelHeight), nil)
 }
 
 func (connection *Connection) GetArrowheadLabelPosition(isDst bool) *geo.Point {

@@ -13,7 +13,6 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
-	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
@@ -30,10 +29,10 @@ const (
 type videoSegment struct {
 	d2animate.Frame
 	rasterPlacement
-	start, end time.Duration
-	route      []d2animate.LayerLeg
-	moving     bool
-	matte      color.RGBA
+	start, end  time.Duration
+	route       []d2animate.LayerLeg
+	movingUntil time.Duration // local board clock
+	matte       color.RGBA
 }
 
 type videoTimeline struct {
@@ -54,7 +53,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	if duration < 0 || duration > videoMaxDuration {
 		return nil, fmt.Errorf("MP4 duration must be between zero and %s", videoMaxDuration)
 	}
-	frames, err := d2animate.Timeline(root, intervalMS)
+	frames, err := d2animate.SceneTimeline(root, intervalMS, layers.duration)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +77,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	// repeats the tour and can follow the return portal into its next lap.
 	var boardIndex int
 	for i, f := range frames {
-		s := videoSegment{Frame: f, start: p.period, moving: d2scenebuild.ShortestAnimationPeriod(f.Diagram) > 0}
+		s := videoSegment{Frame: f, start: p.period, movingUntil: rasterMovingUntil(f.Picture())}
 		if v := viewports[f.Diagram]; v != nil {
 			s.viewport = v
 			tl, br := f.Diagram.BoundingBox()
@@ -151,7 +150,7 @@ func (p *videoTimeline) sample(index int) (segment int, local time.Duration, rep
 			return segment, local, 1, &s.route[n], phase - float64(n)
 		}
 	}
-	if s.moving {
+	if local < s.movingUntil {
 		return segment, local, 1, nil, 0
 	}
 	// Clamp to the requested duration before converting the boundary to
@@ -305,7 +304,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 		if s.viewport != nil {
 			limits.minimumBounds = &s.viewport.bounds
 		}
-		doc, err := buildSceneWithResourcesAndLinks(ctx, s.Diagram, opts, assets, fonts, links, limits)
+		doc, err := buildSceneWithResourcesAndLinks(ctx, s.Picture(), opts, assets, fonts, links, limits)
 		if err != nil {
 			return nil, fmt.Errorf("MP4 segment %d: %w", index, err)
 		}
