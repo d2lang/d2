@@ -123,7 +123,7 @@ type CompileOptions struct {
 	Partial bool
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
-	// AnimateTweens controls sampling of step transitions. Nil follows
+	// AnimateTweens controls sampling of step and scenario transitions. Nil follows
 	// the root animate-interval. False compiles only the authored endpoints.
 	AnimateTweens *bool
 	// Context stops parsing and compilation when canceled. A nil Context is

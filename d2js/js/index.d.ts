@@ -89,7 +89,7 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
-  /** Transition duration in milliseconds (0–600000, default 0). Animates transitions into and out of linked layers during playback or direct navigation, and changes to numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps. Underlines, Markdown strikethroughs, and sketch fill shading can also animate between boards. Overrides vars.d2-config.animate-duration at compile time. */
+  /** Transition duration in milliseconds (0–600000, default 0). Animates transitions into and out of linked layers during playback or direct navigation, and changes to numeric properties, solid colors, compatible gradients, variables, and grid layouts across steps and adjacent scenarios. Underlines, Markdown strikethroughs, and sketch fill shading can also animate between boards. Overrides vars.d2-config.animate-duration at compile time. */
   animateDuration?: number;
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";

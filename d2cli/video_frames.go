@@ -68,7 +68,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 			p.exact[f.Diagram] = i
 		}
 	}
-	viewports := gifViewports(root, boards)
+	viewports := gifViewports(root, boards, layers.duration > 0)
 	var nav *d2animate.LayerNavigation
 	if p.zoom > 0 {
 		nav = d2animate.NewLayerNavigation(root, layers.boardPath)

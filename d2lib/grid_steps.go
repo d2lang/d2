@@ -12,16 +12,16 @@ import (
 	"github.com/d2lang/d2/lib/xsort"
 )
 
-// A single source may have many large steps. Bound the total geometry copied
+// A single source may have many large boards. Bound the total geometry copied
 // into render targets before allocating it, including the points of routes.
 const maxBoardSampleElements = 1_000_000
 
 type boardTransitionPlan struct {
 	board      *d2target.Diagram
-	emptyAfter *d2target.Diagram // An explicitly emptied step is drawable after this board.
+	emptyAfter *d2target.Diagram // An explicitly emptied board is drawable after this board.
 	motion     *gridMotion
 	ink        *boardInk
-	opacity    *stepOpacity
+	opacity    *boardOpacity
 	from       *d2target.Diagram // logical predecessor required for structural effects
 	reveal     *boardReveal
 	outline    *boardOutline
@@ -32,50 +32,74 @@ type boardTransitionPlan struct {
 	cost       int // Geometry elements per sample.
 }
 
-// Compare successive drawable boards for ink changes after layout. Grid moves
-// are still determined by step inheritance, independently of playback order.
+// Plan motion for related boards, then distribute the available samples across
+// the document. Steps are cumulative. A scenario compares two alternatives
+// only when its parent or a sibling is actually on screen.
 func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *d2graph.Graph, duration, boardLimit int, sketch, structural bool) error {
-	// Discover empty grid endpoints before walking playback order, since those
-	// boards gain a visible slot when cells enter or leave them.
-	stepPlans := make(map[*d2target.Diagram]boardTransitionPlan)
+	plans := make(map[*d2target.Diagram]boardTransitionPlan)
+	var last *d2target.Diagram
 	var visit func(*d2target.Diagram, *d2graph.Graph) error
 	visit = func(board *d2target.Diagram, g *d2graph.Graph) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// An empty grid can gain a visible slot when a step fills it.
 		prev, prevGraph := board, g
-		for i, next := range board.Steps {
-			nextGraph := g.Steps[i]
-			previousEmpty := stepPlans[prev].emptyAfter != nil
-			emptyLeaf := next.IsFolderOnly && len(next.Shapes) == 0 && len(next.Layers)+len(next.Scenarios)+len(next.Steps) == 0
-			if motion, cost := planGridStep(prev, next, prevGraph, nextGraph); motion != nil {
-				prev.IsFolderOnly, next.IsFolderOnly = false, false
-				stepPlans[next] = boardTransitionPlan{motion: motion, cost: cost}
-			} else if structural && (!prev.IsFolderOnly || previousEmpty) && (!next.IsFolderOnly || emptyLeaf) {
-				p := planStructuralStep(prev, next, prevGraph, nextGraph, sketch)
-				if emptyLeaf && (p.reveal != nil && p.reveal.departing || previousEmpty && sameBoardCanvas(prev, next)) {
-					p.emptyAfter = prev
-				}
-				if p.from != nil || p.emptyAfter != nil {
-					stepPlans[next] = p
-				}
-			}
-			p := stepPlans[next]
-			// Sequence tracing owns the visibility of newly exposed messages.
-			if !prev.IsFolderOnly && !next.IsFolderOnly && p.sequence == nil {
-				if opacity := planStepOpacity(prev, next, prevGraph, nextGraph); opacity != nil {
-					p.opacity = opacity
-					stepPlans[next] = p
-				}
-			}
-			prev, prevGraph = next, nextGraph
+		for i, step := range board.Steps {
+			planRelatedBoard(plans, prev, step, prevGraph, g.Steps[i], sketch, structural)
+			prev, prevGraph = step, g.Steps[i]
 		}
-		for i, children := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
-			graphs := [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps}[i]
-			for j, child := range children {
-				if err := visit(child, graphs[j]); err != nil {
-					return err
+		if last != nil && plans[board].emptyAfter == last {
+			board.IsFolderOnly = false
+		}
+		if !board.IsFolderOnly {
+			last = board
+		}
+		for i, child := range board.Layers {
+			if err := visit(child, g.Layers[i]); err != nil {
+				return err
+			}
+		}
+		prev, prevGraph = board, g
+		iconSources := make([]*d2graph.Graph, len(board.Scenarios))
+		prevAligned := true // The parent is the coordinate frame of its scenarios.
+		for i, scenario := range board.Scenarios {
+			child := g.Scenarios[i]
+			alignedToParent := scenario.LayoutContinuity
+			if last == prev {
+				scenario.LayoutContinuity = alignedToParent && prevAligned
+				if len(prev.Shapes) == 0 {
+					// An animated deletion can make an authored empty board
+					// visible after the compiler selected its paint samples.
+					scenario.TweenFrames, scenario.TweenDurationMS = nil, 0
+					child.TweenFrames, child.TweenDurationMS = nil, 0
 				}
+				if !scenario.IsFolderOnly || len(scenario.Shapes)+len(scenario.Layers)+len(scenario.Scenarios)+len(scenario.Steps) == 0 {
+					planRelatedBoard(plans, prev, scenario, prevGraph, child, sketch, structural)
+					iconSources[i] = prevGraph
+				}
+			} else {
+				// A nested board or layer interrupts this incoming comparison.
+				scenario.TweenFrames, scenario.TweenDurationMS, scenario.LayoutContinuity = nil, 0, false
+				child.TweenFrames, child.TweenDurationMS = nil, 0
+			}
+			if err := visit(scenario, child); err != nil {
+				return err
+			}
+			if !scenario.IsFolderOnly {
+				prev, prevGraph, prevAligned = scenario, child, alignedToParent
+			}
+		}
+		for i, step := range board.Steps {
+			if err := visit(step, g.Steps[i]); err != nil {
+				return err
+			}
+		}
+		// Stream origins are playback metadata. Add them after testing the
+		// geometry and paint of every sibling and descendant for changes.
+		for i, source := range iconSources {
+			if source != nil {
+				matchBoardIconStreams(source, g.Scenarios[i], board.Scenarios[i], true)
 			}
 		}
 		return nil
@@ -83,10 +107,32 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 	if err := visit(root, graph); err != nil {
 		return err
 	}
-	return samplePlannedTransitions(ctx, root, duration, boardLimit, sketch, false, stepPlans)
+	return samplePlannedTransitions(ctx, root, duration, boardLimit, sketch, false, plans)
 }
 
-func planStructuralStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph, sketch bool) boardTransitionPlan {
+func planRelatedBoard(plans map[*d2target.Diagram]boardTransitionPlan, prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph, sketch, structural bool) {
+	var p boardTransitionPlan
+	previousEmpty := plans[prev].emptyAfter != nil
+	emptyLeaf := next.IsFolderOnly && len(next.Shapes) == 0 && len(next.Layers)+len(next.Scenarios)+len(next.Steps) == 0
+	if motion, cost := planGridTransition(prev, next, prevGraph, nextGraph); motion != nil {
+		prev.IsFolderOnly, next.IsFolderOnly = false, false
+		p.motion, p.cost = motion, cost
+	} else if structural && (!prev.IsFolderOnly || previousEmpty) && (!next.IsFolderOnly || emptyLeaf) {
+		p = planStructuralTransition(prev, next, prevGraph, nextGraph, sketch)
+		if emptyLeaf && (p.reveal != nil && p.reveal.departing || previousEmpty && sameBoardCanvas(prev, next)) {
+			p.emptyAfter = prev
+		}
+	}
+	// Sequence tracing owns the visibility of newly exposed messages.
+	if !prev.IsFolderOnly && !next.IsFolderOnly && p.sequence == nil {
+		p.opacity = planBoardOpacity(prev, next, prevGraph, nextGraph)
+	}
+	if p.motion != nil || p.from != nil || p.emptyAfter != nil || p.opacity != nil {
+		plans[next] = p
+	}
+}
+
+func planStructuralTransition(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph, sketch bool) boardTransitionPlan {
 	var p boardTransitionPlan
 	// Tables and sequence diagrams can prove their own anchors from the
 	// rendered endpoints even when TALA did not continue the graph layout.
@@ -146,7 +192,7 @@ func PrepareSketchTransitions(ctx context.Context, root *d2target.Diagram, durat
 	return samplePlannedTransitions(ctx, root, int(duration), d2target.MaxRenderTargetBoards, true, true, nil)
 }
 
-func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, duration, boardLimit int, sketch, pencilOnly bool, stepPlans map[*d2target.Diagram]boardTransitionPlan) error {
+func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, duration, boardLimit int, sketch, pencilOnly bool, boardPlans map[*d2target.Diagram]boardTransitionPlan) error {
 	var plans []boardTransitionPlan
 	available := boardLimit
 	var previous *d2target.Diagram
@@ -156,14 +202,10 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 			return err
 		}
 		available -= 1 + len(board.TweenFrames)
-		if p := stepPlans[board]; board.IsFolderOnly && p.emptyAfter != nil && p.emptyAfter == previous {
-			// A deletion or subsequent hold makes the empty canvas visible.
-			board.IsFolderOnly = false
-		}
 		if !board.IsFolderOnly {
-			p := stepPlans[board]
+			p := boardPlans[board]
 			if p.from != nil && p.from != previous {
-				// A nested layer/scenario can interrupt cumulative step playback.
+				// A nested board can interrupt cumulative step playback.
 				// Only draw a structural transition from the board on screen.
 				p = boardTransitionPlan{}
 			}
@@ -179,7 +221,7 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 				if p.from != nil {
 					// Give a short arrival or landing enough distinct samples to
 					// show its acceleration. The existing per-board and total
-					// geometry limits still apply when many steps play together.
+					// geometry limits still apply when many boards play together.
 					count = min(d2target.MaxTweenFrames, (60*duration+999)/1000)
 				} else if p.ink != nil || p.opacity != nil {
 					count = d2target.TweenFrameCount(duration)
@@ -320,7 +362,7 @@ func fitBoardSamples(plans []boardTransitionPlan, available, geometryLimit int) 
 	return nil
 }
 
-func planGridStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph) (*gridMotion, int) {
+func planGridTransition(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph) (*gridMotion, int) {
 	// A folder contributes no playback slot. An explicitly empty grid, or a
 	// step removing the last cell, does have an observable animation state.
 	if prev.IsFolderOnly && (len(prev.Shapes) != 0 || !prevGraph.Root.IsGridDiagram()) {
@@ -346,7 +388,7 @@ func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// Reuse intermediate paint and variable values when the same step
+		// Reuse intermediate paint and variable values when the same board
 		// also has an authored property tween.
 		base := p.board
 		if len(base.TweenFrames) != 0 {

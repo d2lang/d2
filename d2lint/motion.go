@@ -32,7 +32,7 @@ type board struct {
 	path  string
 	// Each independent layer starts a fresh namespace for object identity.
 	layer string
-	base  *board // only set for an incoming step
+	base  *board // source for an incoming step or scenario
 }
 
 func (b *board) diagnostic(code, object, message string, key *d2ast.Key) Diagnostic {
@@ -61,7 +61,7 @@ func Motion(ctx context.Context, diagram *d2target.Diagram, graph *d2graph.Graph
 
 	var boards []*board
 	root := &board{Diagram: diagram, graph: graph, path: "root", layer: "root"}
-	if err := root.collect(&boards); err != nil {
+	if err := root.collect(&boards, diagram.ScenarioPredecessors()); err != nil {
 		return nil, err
 	}
 
@@ -114,7 +114,7 @@ func Motion(ctx context.Context, diagram *d2target.Diagram, graph *d2graph.Graph
 			}
 		}
 		if n := crowded(starts); n >= 6 {
-			findings = append(findings, b.diagnostic("crowded-step", "", fmt.Sprintf("%d objects start changing within 200 ms. Stagger them or split the step.", n), nil))
+			findings = append(findings, b.diagnostic("crowded-step", "", fmt.Sprintf("%d objects start changing within 200 ms. Stagger them across boards.", n), nil))
 		}
 		if caption := b.Root.Annotation; caption != nil && b.graph.Root.Annotation != nil {
 			for _, id := range caption.Cues {
@@ -123,7 +123,7 @@ func Motion(ctx context.Context, diagram *d2target.Diagram, graph *d2graph.Graph
 				case !seenCue[id]:
 					message = fmt.Sprintf("The caption names %s while it is hidden. Reveal it while the caption is on screen.", id)
 				case !visible(previous[id]) && frames[len(frames)-1].DurationMS >= 200:
-					message = fmt.Sprintf("The caption names %s, but it is hidden once the step settles. Keep it visible while the caption is on screen.", id)
+					message = fmt.Sprintf("The caption names %s, but it is hidden once the board settles. Keep it visible while the caption is on screen.", id)
 				}
 				if message != "" {
 					findings = append(findings, b.diagnostic("hidden-cue", id, message, b.graph.Root.Annotation.Label.MapKey))
@@ -142,8 +142,8 @@ func Motion(ctx context.Context, diagram *d2target.Diagram, graph *d2graph.Graph
 }
 
 // collect follows export order but also preserves the semantic predecessor
-// used by the compiler to build incoming steps, including nested steps.
-func (b *board) collect(boards *[]*board) error {
+// used by the compiler to build incoming steps and scenarios.
+func (b *board) collect(boards *[]*board, scenarioBases map[*d2target.Diagram]*d2target.Diagram) error {
 	d, g := b.Diagram, b.graph
 	if g == nil || d.Name != g.Name || len(d.Layers) != len(g.Layers) || len(d.Scenarios) != len(g.Scenarios) || len(d.Steps) != len(g.Steps) {
 		return fmt.Errorf("motion review requires a matching source graph at %s", b.path)
@@ -173,7 +173,10 @@ func (b *board) collect(boards *[]*board) error {
 			if group.name == "steps" && !prev.IsFolderOnly {
 				next.base = prev
 			}
-			if err := next.collect(boards); err != nil {
+			if scenarioBases[child] != nil {
+				next.base = (*boards)[len(*boards)-1]
+			}
+			if err := next.collect(boards, scenarioBases); err != nil {
 				return err
 			}
 			prev = next
@@ -295,7 +298,7 @@ func replacements(b *board, old, now map[string]*d2target.Shape) []Diagnostic {
 		if removedAt := removals[removed]; removedAt != nil {
 			object, key = from, removedAt
 		}
-		out = append(out, b.diagnostic("replaced-id", object, fmt.Sprintf("%s disappears as %s takes its place. If they represent the same object, keep one ID across steps.", from, to), key))
+		out = append(out, b.diagnostic("replaced-id", object, fmt.Sprintf("%s disappears as %s takes its place. If they represent the same object, keep one ID across boards.", from, to), key))
 	}
 	return out
 }

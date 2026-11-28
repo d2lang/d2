@@ -15,7 +15,7 @@ type Frame struct {
 	// TweenSample distinguishes an already sampled transition from a board
 	// whose independent shape and connection animations still need sampling.
 	TweenSample bool
-	// ElapsedMS is the local time of a sampled frame within its step.
+	// ElapsedMS is the local time of a sampled frame within its board.
 	ElapsedMS int
 }
 
@@ -28,7 +28,7 @@ func (f Frame) Picture() *d2target.Diagram {
 }
 
 // Timeline returns the same root, layer, scenario and step order as a normal
-// multiboard export, inserting each step's samples immediately before it.
+// multiboard export, inserting incoming transition samples immediately before each board.
 func Timeline(root *d2target.Diagram, intervalMS int) ([]Frame, error) {
 	return SVGTimeline(root, nil, intervalMS, 0)
 }

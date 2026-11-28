@@ -154,6 +154,14 @@ while existing rows and connections stay anchored. Appending a sequence message 
 extend the activation bar and draw the arrow from sender to recipient.
 [Animated TALA example](./docs/examples/tala-step-motion/dispatch.gif) · [D2 source](./docs/examples/tala-step-motion/dispatch.d2)
 
+Scenarios let you compare independent failures on the same architecture. In this
+example, the Orders API writes each order and its outbox event in one PostgreSQL
+transaction. During a one-minute Kafka outage, all 120 orders are accepted and
+their events wait in the outbox. During a PostgreSQL primary outage, all 120
+requests receive HTTP 503, while the fulfillment worker processes the 30 events
+already waiting in Kafka.
+[Animated order-processing architecture](./docs/examples/order-outbox-failures.gif) · [D2 source](./docs/examples/order-outbox-failures.d2)
+
 A positive `animate-interval` cycles through all exported boards, including
 linked layers. Link a shape with `gateway.link: layers.gateway` and set
 `animate-duration` to zoom through that shape when playback enters the layer

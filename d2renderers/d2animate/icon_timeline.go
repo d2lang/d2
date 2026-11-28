@@ -51,19 +51,19 @@ func NewIconTimeline(root *d2target.Diagram, intervalMS int) (*IconTimeline, err
 }
 
 func newIconTimeline(root *d2target.Diagram, intervalMS int) *IconTimeline {
+	var scenarioBases map[*d2target.Diagram]*d2target.Diagram
 	var timeline IconTimeline
 	var last *d2target.Diagram
 	var visit func(board, predecessor *d2target.Diagram)
 	visit = func(board, predecessor *d2target.Diagram) {
 		if !board.IsFolderOnly {
-			// Unrelated layers and scenarios can reuse the same object and edge IDs.
-			// Carry a stream only into its adjacent inheriting step.
+			// A nested board can interrupt the sequence before an inheriting step.
 			var prev *iconBoard
 			continuing := predecessor != nil && predecessor == last
 			if continuing {
 				prev = timeline.boards[predecessor]
 			}
-			b := makeIconBoard(board, intervalMS, prev, continuing)
+			b := makeIconBoard(board, intervalMS, prev, continuing, scenarioBases[board] != nil)
 			if b != nil {
 				if timeline.boards == nil {
 					timeline.boards = make(map[*d2target.Diagram]*iconBoard)
@@ -72,10 +72,14 @@ func newIconTimeline(root *d2target.Diagram, intervalMS int) *IconTimeline {
 			}
 			last = board
 		}
-		for _, group := range [][]*d2target.Diagram{board.Layers, board.Scenarios} {
-			for _, child := range group {
-				visit(child, nil)
-			}
+		for _, layer := range board.Layers {
+			visit(layer, nil)
+		}
+		if len(board.Scenarios) > 0 && scenarioBases == nil {
+			scenarioBases = root.ScenarioPredecessors()
+		}
+		for _, scenario := range board.Scenarios {
+			visit(scenario, scenarioBases[scenario])
 		}
 		prev := board
 		for _, step := range board.Steps {
@@ -99,7 +103,7 @@ func iconStrokeWidths(board *d2target.Diagram) map[string]float64 {
 	return widths
 }
 
-func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, continuing bool) *iconBoard {
+func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, continuing, scenario bool) *iconBoard {
 	var b *iconBoard
 	for i, path := range board.ConnectionIconRoutes() {
 		e := &board.Connections[i]
@@ -111,7 +115,10 @@ func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, con
 		if e.IconAnimation.PreviousID != nil {
 			prevID = *e.IconAnimation.PreviousID
 		}
-		if prev != nil && prevID != "" && prev.streams[prevID] != nil {
+		// The compiler records a scenario connection's origin only when its
+		// board has an eligible tween. Other streams start independently.
+		linked := continuing && (!scenario || e.IconAnimation.PreviousID != nil)
+		if linked && prev != nil && prevID != "" && prev.streams[prevID] != nil {
 			old := prev.streams[prevID]
 			// At a boundary the next board owns the departure at that exact instant.
 			s.carried = old.flights(prev.duration, false)
@@ -119,7 +126,7 @@ func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, con
 				s.first = old.nextLaunch(prev.duration) / old.period * s.period
 			}
 			s.admitDepartures()
-		} else if !continuing {
+		} else if !linked {
 			// The opening board shows the stream already running.
 			transit := path.TransitDuration(s.animation)
 			for n := 1; n < d2target.MaxMovingIconsPerConnection; n++ {
