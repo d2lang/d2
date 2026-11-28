@@ -147,7 +147,7 @@ func chooseEdgeCaptionTrack(track []*d2target.Connection, frames []tweenCaptionF
 		// that case; leave the held boards and all authored anchors alone.
 		if obscured[i] {
 			for _, p := range edgeCaptionSides(e) {
-				for _, fraction := range []float64{.25, .5, .75, .125, .375, .625, .875} {
+				for _, fraction := range []float64{.25, .5, .75, .125, .375, .625, .875, .0625, .9375} {
 					add(edgeCaptionAnchor{p.String(), fraction})
 				}
 			}
