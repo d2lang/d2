@@ -463,8 +463,11 @@ func (i *svgImporter) parse(data []byte) (*svgElement, error) {
 			} else {
 				parent := stack[len(stack)-1]
 				element.parent = parent
-				if isAnimationElement(parent.name) {
-					return nil, i.errorf("animation element <%s> cannot contain child elements", parent.name)
+				if name == "mpath" && parent.name != "animateMotion" {
+					return nil, i.errorf("<mpath> must be a child of <animateMotion>")
+				}
+				if isAnimationElement(parent.name) && name != "mpath" {
+					return nil, i.errorf("animation element <%s> has unsupported child <%s>", parent.name, name)
 				}
 				// Raster export draws the authored base state. Animation is parsed
 				// and counted like other XML, but never contributes to the scene.
@@ -472,7 +475,7 @@ func (i *svgImporter) parse(data []byte) (*svgElement, error) {
 					parent.children = append(parent.children, element)
 				} else {
 					for _, attr := range attributeOrder {
-						if _, ok := animationAttributes[attr]; !ok {
+						if _, ok := animationAttributes[attr]; !ok || (name == "mpath" && attr != "href" && attr != "id") {
 							return nil, i.errorf("element <%s> has unsupported attribute %q", name, displayXMLName(attr))
 						}
 					}

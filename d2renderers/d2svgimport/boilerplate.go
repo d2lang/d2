@@ -54,7 +54,7 @@ var animationAttributes = map[string]struct{}{
 
 func isAnimationElement(name string) bool {
 	switch name {
-	case "animate", "animateTransform", "animateMotion", "set":
+	case "animate", "animateTransform", "animateMotion", "set", "mpath":
 		return true
 	}
 	return false
