@@ -215,12 +215,14 @@ container.child -> outside
       animateProgressColor: "tomato",
     });
     expect(recolored).toContain("tomato");
-    await expect(
-      d2.compile(source, { animateProgressColor: "transparent" })
-    ).rejects.toThrow(/animateProgressColor/);
-    await expect(
-      d2.render(result.diagram, { animateProgressColor: "currentColor" })
-    ).rejects.toThrow(/animateProgressColor/);
+    const invalidColors = await Promise.allSettled([
+      d2.compile(source, { animateProgressColor: "transparent" }),
+      d2.render(result.diagram, { animateProgressColor: "currentColor" }),
+    ]);
+    for (const result of invalidColors) {
+      expect(result.status).toBe("rejected");
+      expect(result.reason.message).toContain("animateProgressColor");
+    }
     expect(svg).toContain('class="d2-progress-');
     const disabled = await d2.render(result.diagram, {
       ...result.renderOptions,
