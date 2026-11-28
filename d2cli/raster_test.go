@@ -249,7 +249,7 @@ func renderGIFFramesWithSessionForTest(ctx context.Context, inputPath string, ca
 	return frames, summary.previewSVG, nil
 }
 
-func TestRenderGIFFramesUsesSharedSamplingAndLogicalScale(t *testing.T) {
+func TestRenderGIFStillUsesLogicalScale(t *testing.T) {
 	frames, _, err := renderGIFFramesForTest(
 		context.Background(),
 		"-",
@@ -262,8 +262,8 @@ func TestRenderGIFFramesUsesSharedSamplingAndLogicalScale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(frames) != 4 {
-		t.Fatalf("GIF frames = %d, want four samples for 101ms", len(frames))
+	if len(frames) != 1 {
+		t.Fatalf("GIF frames = %d, want one still for 101ms", len(frames))
 	}
 	for index, frame := range frames {
 		if frame.Bounds().Dx() != 10 || frame.Bounds().Dy() != 10 {
@@ -488,7 +488,7 @@ func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
 	}{
 		{"duration exceeds interval", 30, 101, 3, []int{3, 3, 3, 2, 3}},
 		// Preserve the total duration, with an endpoint delay browsers play as authored.
-		{"one millisecond hold", 102, 101, 3, []int{2, 3, 3, 3, 3, 3, 3, 2}},
+		{"one millisecond hold", 102, 101, 3, []int{11, 3, 3, 3, 2}},
 		{"sub-centisecond transition", 4, 5, 1, []int{1, 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

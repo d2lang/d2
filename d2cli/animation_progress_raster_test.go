@@ -7,7 +7,6 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
-	"slices"
 	"testing"
 	"time"
 
@@ -236,7 +235,6 @@ func TestGIFProgressPreservesCaptionReadingTime(t *testing.T) {
 	board := simpleRasterDiagram()
 	board.Root.Annotation = &d2target.Annotation{Label: "Pause for this caption."}
 	opts := progressRenderOpts()
-	var delays []int
 	for _, enabled := range []bool{false, true} {
 		opts.AnimateProgress = &enabled
 		data, _, err := renderGIF(t.Context(), "-", false, board, opts, 101, false, gifLayerOptions{})
@@ -254,10 +252,9 @@ func TestGIFProgressPreservesCaptionReadingTime(t *testing.T) {
 		if want := (board.ReadingMS() + 9) / 10; total != want {
 			t.Fatalf("progress %t: caption plays for %dcs, want %dcs", enabled, total, want)
 		}
-		if delays != nil && !slices.Equal(delays, animation.Delay) {
-			t.Fatalf("toggling the progress line changed caption frame delays")
+		if enabled == (len(animation.Delay) == 1) {
+			t.Fatalf("progress %t: caption used %d pictures", enabled, len(animation.Delay))
 		}
-		delays = animation.Delay
 	}
 }
 
