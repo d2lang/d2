@@ -130,7 +130,7 @@ steps: {alert: {swatch.style.fill: red}}`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(svg, []byte(`fill="#800080"`)) {
+	if !bytes.Contains(svg, []byte(`fill="#800080"`)) && !bytes.Contains(svg, []byte("fill:#800080")) {
 		t.Fatal("the SVG swatch did not pass through purple")
 	}
 

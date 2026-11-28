@@ -32,4 +32,12 @@ func TestMotionOffsetTranslatesBorderLabelAndLink(t *testing.T) {
 		!strings.Contains(out, `-moving-border-`) {
 		t.Fatal("missing translation for the shape, appendix or mask")
 	}
+	d.Shapes[0].Animated = true
+	b, err = d2svg.Render(d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `<g transform="translate(0.25 -0.5)"><g class="Ym94 animated-shape"`) {
+		t.Fatal("the independent shape animation must compose with the motion offset")
+	}
 }

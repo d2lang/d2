@@ -105,6 +105,38 @@ func (b *builder) maskSketchShapeNode(node *d2scene.Node, targetShape d2target.S
 		return
 	}
 	node.Mask = b.connectionMask
+	track, animated := b.options.ShapeTranslations[targetShape.ID]
+	offset := targetShape.MotionOffset
+	if !animated && (offset == nil || offset.X == 0 && offset.Y == 0) {
+		return
+	}
+	// The diagram-wide mask is in world coordinates. Cancel the shape's
+	// enclosing placement so every masked path uses the same label holes.
+	if mask := b.movingLabelMasks[targetShape.ID]; mask != nil {
+		node.Mask = mask
+		return
+	}
+	mask := *b.connectionMask
+	if animated {
+		keys := make([]d2scene.Keyframe, len(track.Keyframes))
+		for i, key := range track.Keyframes {
+			m := key.Value.Transform
+			key.Value = d2scene.TransformValue(d2scene.Translate(-m.E, -m.F))
+			keys[i] = key
+		}
+		track.Keyframes = keys
+		wrapper := d2scene.NewNode(nil)
+		wrapper.Children = []*d2scene.Node{mask.Root}
+		wrapper.Animations = []d2scene.Track{track}
+		mask.Root = wrapper
+	} else {
+		mask.Transform = d2scene.Translate(-offset.X, -offset.Y).Mul(mask.Transform)
+	}
+	node.Mask = &mask
+	if b.movingLabelMasks == nil {
+		b.movingLabelMasks = make(map[string]*d2scene.Mask)
+	}
+	b.movingLabelMasks[targetShape.ID] = node.Mask
 }
 
 func (b *builder) buildSketchOrdinaryShape(targetShape d2target.Shape, idPrefix string) ([]*d2scene.Node, error) {

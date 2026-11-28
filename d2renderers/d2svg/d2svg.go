@@ -1440,7 +1440,15 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		opacityStyle = fmt.Sprintf(" style='opacity:%s'", svg.FormatFloat(targetShape.Opacity))
 	}
 	if p := targetShape.MotionOffset; p != nil && (p.X != 0 || p.Y != 0) {
-		writer.openGroup(classes, opacityStyle, motionTranslation(p))
+		if targetShape.Animated || len(targetShape.Classes) > 0 {
+			// A class can supply its own CSS transform, including shapeappear.
+			// Compose the position outside that independently animated group.
+			fmt.Fprint(writer, svg.OpenElement("g", motionTranslation(p)))
+			closingTag = "</g>" + closingTag
+			writer.openGroup(classes, opacityStyle)
+		} else {
+			writer.openGroup(classes, opacityStyle, motionTranslation(p))
+		}
 	} else {
 		writer.openGroup(classes, opacityStyle)
 	}

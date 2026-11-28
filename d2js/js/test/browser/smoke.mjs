@@ -62,6 +62,9 @@ async function checkFractionalMotion(page) {
   ]) {
     assert.ok(Math.abs((await at(ms)) - origin - distance) < 0.012, `marker position at ${ms}ms`);
   }
+  await seek(page, 1700);
+  const paint = await page.locator(".bWFya2Vy ellipse").evaluate((el) => getComputedStyle(el).fill);
+  assert.equal(paint, "rgb(128, 0, 128)", "the moving marker is purple halfway through its color change");
   await page.emulateMedia({ reducedMotion: "reduce" });
   assert.ok(Math.abs((await at(1690)) - origin) < 0.012, "reduced motion holds the authored start");
   assert.ok(Math.abs((await at(2350)) - origin - 5) < 0.012, "reduced motion reaches the authored endpoint");

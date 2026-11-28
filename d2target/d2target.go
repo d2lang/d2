@@ -999,7 +999,7 @@ func (s *Shape) RenderedPosition() geo.Point {
 	return p
 }
 
-func (s *Shape) RenderedBox() *geo.Box {
+func (s *Shape) renderedBox() *geo.Box {
 	p := s.RenderedPosition()
 	return geo.NewBox(&p, float64(s.Width), float64(s.Height))
 }

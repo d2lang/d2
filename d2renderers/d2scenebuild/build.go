@@ -163,6 +163,7 @@ type builder struct {
 	// and marker is cut beneath every connection label and ordinary shape border
 	// label.
 	connectionMask      *d2scene.Mask
+	movingLabelMasks    map[string]*d2scene.Mask
 	links               []d2scene.LinkRegion
 	linkBytes           int
 	appendixItems       []appendixItem

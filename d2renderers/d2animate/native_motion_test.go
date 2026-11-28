@@ -104,3 +104,18 @@ func TestNativeMotionIsolatesChangingArtworkAndResourceOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeStrokeWidthKeepsFractionalInk(t *testing.T) {
+	var frames []Frame
+	var parts [][]byte
+	for i, w := range []string{"1", "1.25", "1.5"} {
+		board := d2target.NewDiagram()
+		board.Shapes = []d2target.Shape{{ID: "s"}}
+		frames = append(frames, Frame{Diagram: board, TweenSample: i != 2, DurationMS: 10})
+		parts = append(parts, []byte(`<g class="d2-test"><g class="cw=="><rect x="0" y="0" style="stroke-width:`+w+`;stroke-dasharray:2 2"/></g></g>`))
+	}
+	out, css, clock := nativeMotion(frames, parts, "d2-test", 30)
+	if clock || bytes.Count(out, []byte("<rect ")) != 1 || !bytes.Contains(css, []byte("stroke-width:1.25px")) || !bytes.Contains(out, []byte("stroke-dasharray:2 2")) {
+		t.Fatalf("fractional stroke not preserved in native playback: %s %s", out, css)
+	}
+}

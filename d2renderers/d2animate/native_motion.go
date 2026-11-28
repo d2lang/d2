@@ -24,6 +24,7 @@ type motionChild struct {
 	start, end int
 	id         string
 	resources  []string
+	tag        string
 }
 
 // Board groups only carry sizing metadata. A nested SVG, authored stylesheet,
@@ -51,7 +52,7 @@ func motionChildren(frame []byte, hash string) ([]motionChild, bool) {
 		}
 		switch el := t.(type) {
 		case xml.StartElement:
-			c := motionChild{start: start}
+			c := motionChild{start: start, tag: el.Name.Local}
 			if el.Name == (xml.Name{Local: "g"}) {
 				c.id = attrValue(el, "class")
 			}
@@ -204,6 +205,27 @@ func readMotionShape(raw []byte, shape *d2target.Shape) (motionPose, string, boo
 							return pose, "", false
 						}
 						el.Attr[i].Value = p
+					case "stroke-width":
+						if v, ok := motionStrokeWidth(a.Value); ok {
+							pose.paint = append(pose.paint, motionPaint{selector, "stroke-width", v})
+							el.Attr[i].Value = "#"
+						}
+					case "style":
+						// D2 writes ordinary shape strokes as inline style declarations.
+						// Keep all other declarations in the compatibility signature.
+						if strings.Contains(a.Value, "stroke-width:") && attrValue(el, "stroke-width") == "" {
+							parts := strings.Split(a.Value, ";")
+							for j, part := range parts {
+								name, value, _ := strings.Cut(part, ":")
+								if name == "stroke-width" {
+									if v, ok := motionStrokeWidth(value); ok {
+										pose.paint = append(pose.paint, motionPaint{selector, name, v})
+										parts[j] = "stroke-width:#"
+									}
+								}
+							}
+							el.Attr[i].Value = strings.Join(parts, ";")
+						}
 					case "fill", "stroke":
 						// Only literal paints independent of a theme rule can be
 						// animated without overriding the light/dark stylesheet.
@@ -236,6 +258,14 @@ func readMotionShape(raw []byte, shape *d2target.Shape) (motionPose, string, boo
 		return pose, "", false
 	}
 	return pose, signature.String(), true
+}
+
+func motionStrokeWidth(value string) (string, bool) {
+	v, err := strconv.ParseFloat(strings.TrimSuffix(value, "px"), 64)
+	if err != nil || !(v >= 0) || math.IsInf(v, 0) {
+		return "", false
+	}
+	return svg.FormatFloat(v) + "px", true
 }
 
 func relativeMotionPath(data string, x, y float64) (string, bool) {
@@ -365,6 +395,10 @@ func writeNativeShape(css *bytes.Buffer, prefix string, clock []motionTick, pose
 // Stable anchors partition the original paint order. Content between them can
 // enter, disappear, change topology or reorder without invalidating their motion.
 func nativeMotion(frames []Frame, svgs [][]byte, hash string, total int) (art, styles []byte, needsFrameClock bool) {
+	return nativeMotionSpan(frames, svgs, hash, total, motionSpan{})
+}
+
+func nativeMotionSpan(frames []Frame, svgs [][]byte, hash string, total int, span motionSpan) (art, styles []byte, needsFrameClock bool) {
 	if len(frames) < 2 || len(frames) != len(svgs) || !d2svg.UsesDefaultStylesheet() || !slices.ContainsFunc(frames, func(f Frame) bool { return f.TweenSample }) {
 		return
 	}
@@ -372,7 +406,7 @@ func nativeMotion(frames []Frame, svgs [][]byte, hash string, total int) (art, s
 	positions := make([]map[string]int, len(frames))
 	shapes := make([]map[string]*d2target.Shape, len(frames))
 	clock := make([]motionTick, len(frames)+1)
-	ms := 0
+	ms := span.startMS
 	for i, frame := range frames {
 		raw := svgs[i]
 
@@ -427,8 +461,12 @@ func nativeMotion(frames []Frame, svgs [][]byte, hash string, total int) (art, s
 	gap := func(ends []int) {
 		gapIndex++
 		chunks := make([][]byte, len(frames))
+		defsOnly := true
 		for i, row := range rows {
 			for _, c := range row[cursors[i]:ends[i]] {
+				if c.tag != "mask" && c.tag != "defs" && c.tag != "marker" {
+					defsOnly = false
+				}
 				for _, id := range c.resources {
 					if owner, ok := resourceOwner[id]; ok && owner != gapIndex {
 						orderSafe = false
@@ -444,18 +482,58 @@ func nativeMotion(frames []Frame, svgs [][]byte, hash string, total int) (art, s
 			writeGap(chunks[0])
 			return
 		}
+		if defsOnly {
+			for _, c := range chunks {
+				writeGap(c)
+			}
+			return
+		}
 		needsFrameClock = true
 		for i, c := range chunks {
 			if len(c) == 0 {
 				continue
 			}
-			fmt.Fprintf(&body, `<g style="animation: d2Transition-%s-%d %dms steps(1,end) infinite">`, hash, i, total)
+			fmt.Fprintf(&body, `<g style="animation: d2Transition-%s-%d %dms steps(1,end) infinite">`, hash, i+span.first, total)
 			writeGap(c)
 			body.WriteString("</g>")
 		}
 	}
+	wires := collectWireTracks(frames, svgs, rows, positions, shapes)
 	for index, child := range rows[0] {
 		id := child.id
+		if wire, ok := wires[id]; ok {
+			ordered := true
+			for i, k := range wire.indices {
+				if k < cursors[i] {
+					ordered = false
+					break
+				}
+			}
+			if !ordered {
+				continue
+			}
+			gap(wire.indices)
+			name := "d2Wire-" + hash + span.suffix + "-" + strconv.Itoa(index)
+			wire.write(&body, &css, writeGap, svgs, rows, clock, name, hash, span.first, total)
+			gapIndex++
+			for i, k := range wire.indices {
+				for _, id := range rows[i][k].resources {
+					if owner, ok := resourceOwner[id]; ok && owner != gapIndex {
+						orderSafe = false
+					}
+					resourceOwner[id] = gapIndex
+				}
+				cursors[i] = k + 1
+			}
+			if span.accepted != nil {
+				span.accepted[id] = true
+			}
+			if span.animated != nil {
+				span.animated[id] = true
+			}
+			animated, needsFrameClock = true, true
+			continue
+		}
 		if shapes[0][id] == nil {
 			continue
 		}
@@ -492,8 +570,14 @@ func nativeMotion(frames []Frame, svgs [][]byte, hash string, total int) (art, s
 			continue
 		}
 		gap(indices)
-		prefix := "d2Motion-" + hash + "-" + strconv.Itoa(index)
+		prefix := "d2Motion-" + hash + span.suffix + "-" + strconv.Itoa(index)
+		if span.accepted != nil {
+			span.accepted[id] = true
+		}
 		if writeNativeShape(&css, prefix, clock, poses, total) {
+			if span.animated != nil {
+				span.animated[id] = true
+			}
 			fmt.Fprintf(&body, `<g class="%s">`, prefix)
 			body.Write(raw)
 			body.WriteString("</g>")
@@ -518,7 +602,9 @@ func nativeMotion(frames []Frame, svgs [][]byte, hash string, total int) (art, s
 	}
 	body.WriteString("</g>")
 	out := body.Bytes()
-	if needsFrameClock {
+	// A resource in a local span may be referenced by a later board. Retain
+	// its original ID and definition when only part of the film is visible here.
+	if needsFrameClock && span.suffix == "" {
 		out = compactMotionGaps(out, spans, hash)
 	}
 	return out, css.Bytes(), needsFrameClock

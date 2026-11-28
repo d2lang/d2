@@ -201,7 +201,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	needFrameClock := true
 	if len(offsets) == 0 {
 		var tracks []byte
-		native, tracks, needFrameClock = nativeMotion(frames, svgs, diagramHash, totalMS)
+		native, tracks, needFrameClock = nativeTimelineMotion(frames, svgs, diagramHash, totalMS)
 		if native != nil {
 			transitions.Write(tracks)
 			svgs = [][]byte{native}
