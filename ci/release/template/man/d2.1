@@ -10,7 +10,7 @@
 .Op Fl -theme Ar theme
 .Op Fl -salt Ar string
 .Ar file.d2
-.Op Ar file.svg | file.png | file.pdf | file.pptx | file.gif | file.mp4 | file.txt
+.Op Ar file.svg | file.png | file.pdf | file.pptx | file.gif | file.mp4 | file.webm | file.txt
 .Nm d2
 .Ar layout Op Ar name
 .Nm d2
@@ -53,6 +53,8 @@ to
 .Ar file.gif
 |
 .Ar file.mp4
+|
+.Ar file.webm
 |
 .Ar file.txt
 .Ns .
@@ -155,14 +157,14 @@ Path to .ttf file to use for the monospace semibold font. If none provided, Sour
 Pixels padded around the rendered diagram
 .Ns .
 .It Fl -animate-interval Ar 0
-Set the minimum time each board is displayed in an animated SVG, GIF, or MP4. The flag takes milliseconds.
+Set the minimum time each board is displayed in an animated SVG, GIF, MP4, or WebM. The flag takes milliseconds.
 Set the same interval in D2 source with
 .Li "vars: {d2-config: {animate-interval: 800ms}}" .
 A positive interval plays the exported boards in order, including linked layers.
 The source value accepts integer milliseconds or a duration such as 1.5s.
 The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over the file.
 Zero selects ordinary SVG export.
-MP4 and multiboard GIFs default to 1000ms per board. GIFs allow time for icon departures and derive a single-board loop from the animation.
+Video exports and multiboard GIFs default to 1000ms per board. GIFs allow time for icon departures and derive a single-board loop from the animation.
 .Ns .
 .It Fl -animate-duration Ar 0
 Set the transition duration for changes to numeric properties, colors, and grid layouts between steps.
@@ -189,7 +191,7 @@ The flag takes precedence over D2_ANIMATE_DURATION, which takes precedence over 
 Static exports show the authored values.
 .Ns .
 .It Fl -animate-progress
-Show elapsed playback time as a thin line at the bottom of an animated SVG, GIF, or MP4.
+Show elapsed playback time as a thin line at the bottom of an animated SVG, GIF, MP4, or WebM.
 The line uses the theme's B1 color and stays fixed during camera moves.
 Its height is 1% of the shorter canvas dimension, rounded to the nearest pixel
 and limited to two through six pixels (one on a single-row canvas).
@@ -203,14 +205,14 @@ or source interval is positive.
 Set
 .Li --animate-progress=false
 to hide it.
-GIF and MP4 exports using their built-in interval show the line only when explicitly enabled.
+GIF and video exports using their built-in interval show the line only when explicitly enabled.
 Set the default with
 .Ev D2_ANIMATE_PROGRESS
 or
 .Li vars.d2-config.animate-progress .
 The flag takes precedence over the environment, which takes precedence over the file.
 .It Fl -animate-progress-color Ar color
-Override the progress line's color in animated SVG, GIF, and MP4 exports.
+Override the progress line's color in animated SVG, GIF, MP4, and WebM exports.
 Use an opaque named color or a three- or six-digit hex color.
 The explicit color applies to both light and dark themes.
 Set the color with
@@ -219,9 +221,9 @@ or
 .Li vars.d2-config.animate-progress-color .
 The flag takes precedence over the environment, which takes precedence over the file.
 .It Fl -video-duration Ar duration
-Set the total length of an MP4 export, for example
+Set the total length of an MP4 or WebM export, for example
 .Li --video-duration=10s .
-By default, MP4 plays the selected boards once.
+By default, a video plays the selected boards once.
 A shorter duration trims the tour and a longer duration repeats it.
 For a single board, independent effects animate throughout the clip.
 Motion is sampled at 30 frames per second.
@@ -229,7 +231,7 @@ Still frames retain their playback duration.
 Durations round up to the next 1/30 second.
 Encoding requires
 .Cm ffmpeg
-version 5.1 or newer with the libx264 encoder on PATH.
+version 5.1 or newer on PATH with libx264 for MP4 or libvpx-vp9 for WebM.
 .It Fl -video-size Ar WIDTHxHEIGHT
 Render into an exact canvas, preserving the diagram's aspect ratio and centering it.
 For example, use 1920x1080, 3840x2160 or 1080x1920.
@@ -239,10 +241,11 @@ Choose either a video size or a positive
 .Fl -scale
 on the command line.
 Each dimension must be even and at least 48 pixels.
-For portable H.264 playback, the coded width is at most 4096 pixels and the
-height at most 2304, subject to the High Level 5.1 limit at 30 fps.
+Both formats use the same canvas limits for portable playback. The coded width
+is at most 4096 pixels and the height at most 2304, subject to the H.264
+Level 5.1 macroblock limit at 30 fps.
 .It Fl -video-quality Ar low|medium|high|best
-Select H.264 encoding quality.
+Select the encoding quality for MP4 or WebM.
 The default is high.
 Lower settings reduce file size.
 Higher settings preserve finer detail.
@@ -305,7 +308,7 @@ Allow remote image assets to access private, loopback, and link-local networks. 
 Allow the diagram to read local files: imports, and images bundled into or rendered in the output. Disable it to render untrusted diagrams
 .Ns .
 .It Fl -force-appendix Ar false
-Add a numbered appendix for tooltips and links to SVG and MP4 exports and to storyboard panels.
+Add a numbered appendix for tooltips and links to SVG and video exports and to storyboard panels.
 Ordinary PNG exports include an appendix by default.
 Set this preference in the diagram with
 .Li "vars: {d2-config: {force-appendix: true}}" .
@@ -324,7 +327,7 @@ In watch mode, images used in icons are cached for subsequent compilations. This
 .Ns .
 .It Fl -timeout Ar 120
 Set the maximum render time in seconds.
-MP4 exports have no default timeout.
+Video exports have no default timeout.
 .Ns .
 .It Fl -check Ar false
 With fmt, exit with status 1 if an input needs formatting.
@@ -341,7 +344,7 @@ Print usage information and exit
 Print version information and exit
 .Ns .
 .It Fl -stdout-format Ar string
-Set the output format when writing to stdout. Supported formats are: png, svg, ascii, txt, pdf, pptx, gif, mp4. Only used when output is set to stdout (-)
+Set the output format when writing to stdout. Supported formats are: png, svg, ascii, txt, pdf, pptx, gif, mp4, webm. Only used when output is set to stdout (-)
 .Ns .
 .It Fl -no-xml-tag Ar false
 Omit XML tag (<?xml ...?>) from output SVG files. Useful when generating SVGs for direct HTML embedding

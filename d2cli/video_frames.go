@@ -51,14 +51,14 @@ func videoFrameCount(duration time.Duration) int {
 
 func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, duration time.Duration) (*videoTimeline, error) {
 	if duration < 0 || duration > videoMaxDuration {
-		return nil, fmt.Errorf("MP4 duration must be between zero and %s", videoMaxDuration)
+		return nil, fmt.Errorf("video duration must be between zero and %s", videoMaxDuration)
 	}
 	frames, err := d2animate.SceneTimeline(root, intervalMS, layers.duration)
 	if err != nil {
 		return nil, err
 	}
 	if len(frames) == 0 {
-		return nil, fmt.Errorf("MP4 requires at least one renderable board")
+		return nil, fmt.Errorf("video requires at least one renderable board")
 	}
 	p := &videoTimeline{exact: make(map[*d2target.Diagram]int), zoom: time.Duration(layers.duration) * time.Millisecond}
 	var boards []*d2target.Diagram
@@ -96,7 +96,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 			s.DurationMS = max(s.DurationMS, layers.duration)
 		}
 		if int64(s.DurationMS) > (math.MaxInt64-int64(s.start))/int64(time.Millisecond) {
-			return nil, fmt.Errorf("MP4 timeline duration overflows at segment %d", i)
+			return nil, fmt.Errorf("video timeline duration overflows at segment %d", i)
 		}
 		s.end = s.start + time.Duration(s.DurationMS)*time.Millisecond
 		p.period = s.end
@@ -118,7 +118,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 		p.duration = p.period
 	}
 	if p.duration <= 0 || p.duration > videoMaxDuration {
-		return nil, fmt.Errorf("MP4 exceeds the %s duration limit", videoMaxDuration)
+		return nil, fmt.Errorf("video exceeds the %s duration limit", videoMaxDuration)
 	}
 	p.frames = videoFrameCount(p.duration)
 	// A final endpoint can be shorter than one frame. Reserve the last sample
@@ -167,7 +167,7 @@ type videoWork struct{ builds, paints, samples int }
 
 func (w videoWork) checkPixels(output image.Rectangle) error {
 	if int64(output.Dx())*int64(output.Dy()) > videoMaxTotalPixels/int64(w.samples) {
-		return fmt.Errorf("MP4 canvas %dx%d over %d coded samples exceeds the %d cumulative-pixel limit; reduce --video-size, --scale, or --video-duration", output.Dx(), output.Dy(), w.samples, videoMaxTotalPixels)
+		return fmt.Errorf("video canvas %dx%d over %d coded samples exceeds the %d cumulative-pixel limit; reduce --video-size, --scale, or --video-duration", output.Dx(), output.Dy(), w.samples, videoMaxTotalPixels)
 	}
 	return nil
 }
@@ -326,7 +326,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 		}
 		doc, err := buildSceneWithResourcesAndLinks(ctx, s.Picture(), opts, assets, fonts, links, limits)
 		if err != nil {
-			return nil, fmt.Errorf("MP4 segment %d: %w", index, err)
+			return nil, fmt.Errorf("video segment %d: %w", index, err)
 		}
 		cache.docs[0] = doc
 		return doc, nil
@@ -398,7 +398,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 				from, haveFrom := p.exact[leg.From]
 				to, haveTo := p.exact[leg.To]
 				if !haveFrom || !haveTo {
-					return fmt.Errorf("MP4 layer route leaves the selected boards")
+					return fmt.Errorf("video layer route leaves the selected boards")
 				}
 				a, err := loadForPlayback(from)
 				if err != nil {
@@ -437,7 +437,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 				return err
 			}
 		}
-		if err := validateRenderSession("MP4", session); err != nil {
+		if err := validateRenderSession("video", session); err != nil {
 			return err
 		}
 		i += repeat
