@@ -3,9 +3,9 @@ package d2talalayout
 import (
 	"cmp"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // Replace the section inside an obstacle by the shorter walk around its
@@ -75,7 +75,7 @@ func bypassResizeBox(route []*geo.Point, obstacle geo.Box) []*geo.Point {
 			around = append(around, p)
 		}
 	}
-	slices.SortFunc(around, func(a, b *geo.Point) int {
+	xsort.Func(around, func(a, b *geo.Point) int {
 		order := cmp.Compare(math.Mod(offset(a)-u+perimeter, perimeter), math.Mod(offset(b)-u+perimeter, perimeter))
 		if clockwise > perimeter/2 {
 			return -order

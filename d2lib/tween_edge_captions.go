@@ -5,12 +5,12 @@ import (
 	"context"
 	"image"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // Lay out an automatic caption on the selected wire. A static labeler can
@@ -162,7 +162,7 @@ func chooseEdgeCaptionTrack(track []*d2target.Connection, frames []tweenCaptionF
 		}
 		native := choices[i][0]
 		choices[i] = choices[i][1:]
-		slices.SortStableFunc(choices[i], func(a, b edgeCaptionChoice) int {
+		xsort.StableFunc(choices[i], func(a, b edgeCaptionChoice) int {
 			return cmp.Compare(captionDistance2(a.point, native.point), captionDistance2(b.point, native.point))
 		})
 	}

@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"math"
-	"slices"
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
@@ -15,6 +14,7 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
+	"github.com/d2lang/d2/lib/xsort"
 )
 
 // routeResizeBoard keeps the preceding board's wires and captions on a proposed
@@ -144,7 +144,7 @@ func (ref *resizeReference) route(ctx context.Context, current *d2graph.Graph, p
 			if len(boxes) == 0 || len(boxes) > 8 || len(edge.Points) > 128 {
 				continue
 			}
-			slices.SortFunc(boxes, func(a, b geo.Box) int {
+			xsort.Func(boxes, func(a, b geo.Box) int {
 				if n := a.TopLeft.Compare(b.TopLeft); n != 0 {
 					return n
 				}
