@@ -43,7 +43,7 @@ var keywordDocs = map[string]keywordDoc{
 	"border-radius":        {"style", "Corner rounding. Integer, 0 or greater."},
 	"font":                 {"style", "Font family. `mono` for monospace."},
 	"font-size":            {"style", "Text size. Integer from 8 to 100."},
-	"font-color":           {"style", "Text color."},
+	"font-color":           {"style", "Text color. Use a CSS color name, a quoted hex code, or a gradient."},
 	"bold":                 {"style", "`true` or `false`."},
 	"italic":               {"style", "`true` or `false`."},
 	"underline":            {"style", "`true` or `false`."},
