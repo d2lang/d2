@@ -1,8 +1,13 @@
 vars: {d2-config: {animate-interval: 1s; animate-duration: 300ms; pad: 8}}
+style.fill: "#F0CFB0"
 
 portal: Enter detail {link: layers.detail}
 layers.detail: {
+  style.fill: "#A0C0E0"
   back: Return to overview {link: root}
-  steps.next: {back.label: Return from detail step}
+  steps.next: {
+    back.label: Return from detail step
+    style.fill: "#B0D0A0"
+  }
 }
 steps.next: {portal.label: Enter from overview step}

@@ -296,9 +296,9 @@ async function checkLayerZoom(page) {
 
 async function checkLayerSteps(page) {
   const links = page.locator("a");
-  async function active(ms) {
+  async function checkBoard(ms, label, color) {
     await seek(page, ms);
-    return links.evaluateAll((links) =>
+    const active = await links.evaluateAll((links) =>
       links
         .filter((link) => {
           const r = link.getBoundingClientRect();
@@ -307,24 +307,33 @@ async function checkLayerSteps(page) {
         })
         .map((link) => link.querySelector("text").textContent)
     );
+    assert.deepEqual(active, [label], `active board at ${ms}ms`);
+    const point = await page.locator(progressSelector).evaluate((line) => {
+      const viewport = line.ownerSVGElement;
+      const point = new DOMPoint(2, line.y.baseVal.value - 4).matrixTransform(viewport.getScreenCTM());
+      return { x: Math.floor(point.x), y: Math.floor(point.y) };
+    });
+    const { data, width } = PNG.sync.read(await page.screenshot());
+    const pixel = 4 * (point.y * width + point.x);
+    assert.equal(data.toString("hex", pixel, pixel + 3), color, `footer below ${label} at ${ms}ms`);
   }
 
-  for (const [ms, label] of [
-    [500, "Enter detail"],
-    [1500, "Return to overview"],
-    [2500, "Return from detail step"],
-    [3500, "Enter from overview step"],
-    [4500, "Enter detail"],
+  for (const [ms, label, color] of [
+    [500, "Enter detail", "f0cfb0"],
+    [1500, "Return to overview", "a0c0e0"],
+    [2500, "Return from detail step", "b0d0a0"],
+    [3500, "Enter from overview step", "f0cfb0"],
+    [4500, "Enter detail", "f0cfb0"],
   ]) {
-    assert.deepEqual(await active(ms), [label], `automatic board at ${ms}ms`);
+    await checkBoard(ms, label, color);
   }
   await seek(page, 3500);
-  await links.filter({ hasText: "Enter from overview step" }).click();
-  assert.deepEqual(await active(500), ["Return to overview"]);
-  assert.deepEqual(await active(1800), ["Return from detail step"]);
-  await links.filter({ hasText: "Return from detail step" }).click();
-  assert.deepEqual(await active(500), ["Enter detail"]);
-  assert.deepEqual(await active(1800), ["Enter from overview step"]);
+  await page.getByRole("link", { name: "Enter from overview step" }).click();
+  await checkBoard(500, "Return to overview", "a0c0e0");
+  await checkBoard(1800, "Return from detail step", "b0d0a0");
+  await page.getByRole("link", { name: "Return from detail step" }).click();
+  await checkBoard(500, "Enter detail", "f0cfb0");
+  await checkBoard(1800, "Enter from overview step", "f0cfb0");
 }
 
 async function checkLayerRoute(page) {

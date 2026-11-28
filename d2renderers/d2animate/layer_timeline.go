@@ -1,6 +1,10 @@
 package d2animate
 
-import "github.com/d2lang/d2/d2target"
+import (
+	"fmt"
+
+	"github.com/d2lang/d2/d2target"
+)
 
 type layerSequence struct {
 	id, count, totalMS int
@@ -9,6 +13,10 @@ type layerSequence struct {
 type layerSlot struct {
 	*layerSequence
 	startMS int
+}
+
+func (s layerSlot) stepClock(hash string, frame int) string {
+	return fmt.Sprintf("--d2-slot:d2LayerStep-%s-%d %dms steps(1,end)", hash, frame, s.totalMS)
 }
 
 // A link opens a new local playback sequence. Its steps, scenarios and

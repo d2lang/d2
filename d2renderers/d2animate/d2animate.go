@@ -279,7 +279,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 				slot := slots[i]
 				fmt.Fprintf(buf, " d2-layer-%s-%d", diagramHash, slot.id)
 				if slot.count > 1 {
-					local = fmt.Sprintf("--d2-slot:d2LayerStep-%s-%d %dms steps(1,end);", diagramHash, i, slot.totalMS)
+					local = slot.stepClock(diagramHash, i) + ";"
 				}
 			}
 			// Each wrapper owns a separate transform or clock: the global tour,

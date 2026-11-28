@@ -129,7 +129,7 @@ func footerMatte(css *bytes.Buffer, hash string, footer image.Rectangle, totalMS
 			matte.ClassName = "d2-matte-" + strconv.Itoa(i)
 			if len(slots) > 0 && slots[i].count > 1 {
 				matte.ClassName += " d2-matte-slot-" + strconv.Itoa(slots[i].id)
-				matte.Style += fmt.Sprintf(";--d2-slot:d2LayerStep-%s-%d %dms", hash, i, slots[i].totalMS)
+				matte.Style += ";" + slots[i].stepClock(hash, i)
 			}
 			body.WriteString(paint(frame.Diagram.Root.Fill))
 		}
