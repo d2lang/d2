@@ -78,15 +78,13 @@ func newTweenGradient(start, end string) (tweenValue, bool) {
 
 func resolveTweenStops(gradient d2color.Gradient) ([]tweenStop, bool) {
 	stops := make([]tweenStop, len(gradient.ColorStops))
-	previous := 0.0
 	for i, stop := range gradient.ColorStops {
 		paint, ok := d2color.ParseRGBA(stop.Color)
-		offset, err := stop.Offset(i, len(stops), previous)
+		offset, err := stop.AuthoredOffset(i, len(stops))
 		if !ok || err != nil {
 			return nil, false
 		}
 		stops[i] = tweenStop{color: paint, offset: offset}
-		previous = offset
 	}
 	return stops, true
 }
@@ -137,7 +135,8 @@ func (g tweenGradient) at(fraction float64) string {
 		b := g.to[i]
 		buf.WriteString(d2color.InterpolateHex(a.color, b.color, fraction))
 		buf.WriteByte(' ')
-		offset := a.offset + (b.offset-a.offset)*fraction
+		offset := (1-fraction)*a.offset + fraction*b.offset
+		offset = max(0, min(1, offset))
 		buf.WriteString(strconv.FormatFloat(offset*100, 'g', 15, 64))
 		buf.WriteByte('%')
 	}
