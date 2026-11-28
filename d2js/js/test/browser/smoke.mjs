@@ -294,12 +294,13 @@ async function checkLayerZoom(page) {
   assert.deepEqual(await visible(), [true, false], "reduced motion returns immediately");
 }
 
-async function footerColor(page) {
-  const point = await page.locator(progressSelector).evaluate((line) => {
+async function footerColor(page, ink = false) {
+  const point = await page.locator(progressSelector).evaluate((line, ink) => {
     const viewport = line.ownerSVGElement;
-    const point = new DOMPoint(2, line.y.baseVal.value - 4).matrixTransform(viewport.getScreenCTM());
+    const y = line.y.baseVal.value + (ink ? line.height.baseVal.value / 2 : -4);
+    const point = new DOMPoint(2, y).matrixTransform(viewport.getScreenCTM());
     return { x: Math.floor(point.x), y: Math.floor(point.y) };
-  });
+  }, ink);
   const { data, width } = PNG.sync.read(await page.screenshot());
   const pixel = 4 * (point.y * width + point.x);
   return data.toString("hex", pixel, pixel + 3);
@@ -320,12 +321,14 @@ async function checkLayerSteps(page) {
     );
     assert.deepEqual(active, [label], `active board at ${ms}ms`);
     assert.equal(await footerColor(page), color, `footer below ${label} at ${ms}ms`);
+    const ink = { f0cfb0: "0f304f", a0c0e0: "5f3f1f", "757575": "ffffff" }[color];
+    assert.equal(await footerColor(page, true), ink, `progress on ${label} at ${ms}ms`);
   }
 
   for (const [ms, label, color] of [
     [500, "Enter detail", "f0cfb0"],
     [1500, "Return to overview", "a0c0e0"],
-    [2500, "Return from detail step", "b0d0a0"],
+    [2500, "Return from detail step", "757575"],
     [3500, "Enter from overview step", "f0cfb0"],
     [4500, "Enter detail", "f0cfb0"],
   ]) {
@@ -333,15 +336,22 @@ async function checkLayerSteps(page) {
   }
   await seek(page, 3500);
   await page.getByRole("link", { name: "Enter from overview step" }).click();
+  assert.equal(await page.locator(progressSelector).evaluate((line) => getComputedStyle(line).animationPlayState), "paused");
   await seek(page, 150);
   assert.equal(await footerColor(page), "f0cfb0", "the camera pans across the source board first");
   await seek(page, 280);
-  assert.ok(!["f0cfb0", "a0c0e0"].includes(await footerColor(page)), "footer crossfades on entry");
+  const matte = await footerColor(page);
+  assert.ok(!["f0cfb0", "a0c0e0"].includes(matte), "footer crossfades on entry");
+  const ink = Buffer.from(await footerColor(page, true), "hex");
+  assert.ok(
+    Buffer.from(matte, "hex").every((v, i) => Math.abs(255 - v - ink[i]) <= 3),
+    `progress follows the camera's blended background (${matte}, ${ink.toString("hex")})`
+  );
   await checkBoard(500, "Return to overview", "a0c0e0");
-  await checkBoard(1800, "Return from detail step", "b0d0a0");
+  await checkBoard(1800, "Return from detail step", "757575");
   await page.getByRole("link", { name: "Return from detail step" }).click();
   await seek(page, 0);
-  assert.equal(await footerColor(page), "b0d0a0", "return starts with the selected step's color");
+  assert.equal(await footerColor(page), "757575", "return starts with the selected step's color");
   await checkBoard(500, "Enter detail", "f0cfb0");
   await checkBoard(1800, "Enter from overview step", "f0cfb0");
 }
@@ -361,6 +371,7 @@ async function checkLayerRoute(page) {
   }
   for (const ms of [500, 2500, 4500, 6500]) pictures.push(await picture(ms));
   assert.equal(await footerColor(page), "e3ebf2", "the shipping footer preserves transparency");
+  assert.equal(await footerColor(page, true), "000000", "transparent shipping uses the theme canvas to pick ink");
 
   async function accessibleBoard(board) {
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
@@ -477,6 +488,7 @@ async function checkLayerRoute(page) {
   await page.getByRole("link", { name: "Go to shipping" }).press("Enter");
   await accessibleBoard(3);
   assert.equal(await footerColor(page), "e3ebf2", "reduced motion immediately opens the transparent board");
+  assert.equal(await footerColor(page, true), "e3ebf2", "reduced motion hides the line over the host");
   await settledCamera(3);
   await page.getByRole("link", { name: "Back to overview" }).press("Enter");
   await accessibleBoard(0);

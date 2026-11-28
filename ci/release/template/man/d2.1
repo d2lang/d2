@@ -192,7 +192,8 @@ Static exports show the authored values.
 .Ns .
 .It Fl -animate-progress
 Show elapsed playback time as a thin line at the bottom of an animated SVG, GIF, MP4, or WebM.
-The line uses the theme's B1 color and stays fixed during camera moves.
+The line stays fixed during camera moves and uses the RGB inverse of its background.
+If the inverse has less than 3:1 contrast, D2 uses whichever of black or white has higher contrast.
 Its height is 1% of the shorter canvas dimension, rounded to the nearest pixel
 and limited to two through six pixels (one on a single-row canvas).
 The line sits at least eight pixels below the diagram's padded area.
