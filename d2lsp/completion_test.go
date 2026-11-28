@@ -198,10 +198,10 @@ layers: {
 			want:   getIconCompletions(),
 		},
 		{
-			name:   "icon near completions",
-			text:   "a -> b: { icon.near: }",
+			name:   "shape icon near completions",
+			text:   "a: { icon.near: }",
 			line:   0,
-			column: 20,
+			column: 15,
 			want:   getNearCompletions(),
 		},
 		{
@@ -578,6 +578,8 @@ func TestConnectionIconCompletions(t *testing.T) {
 		{"a -> b: {icon: { | }}", "shape", "fill"},
 		{"(a -> b)[0].icon.style.|", "animated", "fill"},
 		{"a -> b: {icon.shape: |}", "circle", "rectangle"},
+		{"a -> b: {icon.near: |}", "outside-top-center", "top-left"},
+		{"(a -> b)[0].icon: {near: |}", "center-center", "(object ID)"},
 		{"a -> b: {icon.style.animated: |}", "2/s", "circle"},
 		{"a -> b: {icon: {style: {animated: |}}}", "2/s", "circle"},
 		{"(a -> b)[0].icon.style.animated: |", "2/s", "circle"},

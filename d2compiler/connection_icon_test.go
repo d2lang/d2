@@ -103,3 +103,22 @@ func TestInvalidConnectionIconCadence(t *testing.T) {
 		t.Errorf("finite rates should compile: %v", err)
 	}
 }
+
+func TestStaticConnectionIconPlacement(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		usable bool
+	}{
+		{"a -> b: {icon.shape: circle; icon.near: top-left}", false},
+		{"a -> b: {icon: image.svg; icon.near: outside-left-center}", false},
+		{"a -> b: {icon.shape: circle; icon.near: outside-top-center}", true},
+		{"a -> b: caption {icon.shape: circle; icon.near: top-left}", true},
+		{"a -> b: {icon.style.animated: 1/s; icon.near: top-left}", true},
+		{"a: {icon: image.svg; icon.near: top-left}", true},
+	} {
+		_, _, err := d2compiler.Compile("near.d2", strings.NewReader(tc.source), nil)
+		if tc.usable && err != nil || !tc.usable && (err == nil || !strings.Contains(err.Error(), "connection icon.near")) {
+			t.Errorf("%s: %v", tc.source, err)
+		}
+	}
+}

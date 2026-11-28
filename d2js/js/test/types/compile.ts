@@ -44,6 +44,20 @@ configured.then((response) => {
   const renderOptions: RenderOptions = response.renderOptions;
   d2.render(response.diagram, renderOptions);
 
+  const edge = response.diagram.connections[0];
+  if (edge) {
+    edge.iconShape satisfies "circle" | undefined;
+    edge.iconAnimation?.rate satisfies number | undefined;
+    edge.iconAnimation?.previousID satisfies string | undefined;
+    edge.icon?.Path satisfies string | undefined;
+    const circle = { ...edge, icon: null, iconShape: "circle" as const, iconAnimation: { rate: 2 } };
+    const image = { ...edge, icon: { Path: "letter.svg" }, iconShape: undefined, iconAnimation: {} };
+    d2.render({ ...response.diagram, connections: [circle] });
+    d2.render({ ...response.diagram, connections: [image] });
+  }
+  response.graph.edges[0]?.iconShape?.value satisfies string | undefined;
+  response.graph.edges[0]?.attributes?.iconStyle?.animated?.value satisfies string | undefined;
+
   // @ts-expect-error The response exposes renderOptions, not options.
   response.options;
 });

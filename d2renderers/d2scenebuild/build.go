@@ -490,9 +490,6 @@ func (b *builder) preflightConnection(connection d2target.Connection) error {
 		}
 	}
 	if connection.HasStaticIcon() {
-		if connection.Label == "" && !label.FromString(connection.IconPosition).IsEdgePosition() {
-			return invalidField(object, "iconPosition", connection.IconPosition, "must identify a connection icon position")
-		}
 		topLeft := connection.GetIconPosition()
 		if topLeft == nil || !finite(topLeft.X) || !finite(topLeft.Y) {
 			return invalidField(object, "iconPosition", connection.IconPosition, "must resolve to a finite point on the route")

@@ -524,6 +524,9 @@ func (connection *Connection) ValidateIconMotion(path string) error {
 	if connection.IconShape != "" && (connection.IconShape != ShapeCircle || connection.Icon != nil) {
 		return invalidRenderField(path, "iconShape", connection.IconShape, "must be a circle with no image URL")
 	}
+	if connection.HasStaticIcon() && connection.Label == "" && !label.FromString(connection.IconPosition).IsEdgePosition() {
+		return invalidRenderField(path, "iconPosition", connection.IconPosition, "must identify a connection icon position")
+	}
 	if a := connection.IconAnimation; a != nil && a.Rate != nil && (!finiteRenderNumber(*a.Rate) || *a.Rate < 0) {
 		return invalidRenderField(path, "iconAnimation.rate", *a.Rate, "must be finite and non-negative")
 	}

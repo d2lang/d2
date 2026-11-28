@@ -1766,6 +1766,15 @@ func (c *compiler) validateEdges(g *d2graph.Graph) {
 		if c.stopped() {
 			return
 		}
+		// A static icon without a caption is positioned on the connection itself.
+		// A caption supplies its own icon position, and moving icons follow the route.
+		if pos := edge.IconPosition; pos != nil && edge.Label.Value == "" && !d2ast.LabelPositionsMapping[pos.Value].IsEdgePosition() {
+			var icon d2target.Connection
+			edge.ExportIcon(&icon)
+			if icon.HasStaticIcon() {
+				c.errorf(pos.MapKey, "connection icon.near must be a position on the connection, such as center-center or outside-top-center")
+			}
+		}
 		// edges from a grid to something outside is ok
 		//   grid -> outside : ok
 		//   grid -> grid.cell : not ok

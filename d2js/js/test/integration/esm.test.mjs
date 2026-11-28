@@ -79,6 +79,9 @@ test("connection icon rates use the duration of the selected animation", async (
   await assert.rejects(d2.compile(source, short), /0\.25\/s/);
   await assert.rejects(d2.renderSVG(source, short), /0\.25\/s/);
   const compiled = await d2.compile(source, enough);
+  assert.equal(compiled.diagram.connections[0].iconShape, "circle");
+  assert.deepEqual(compiled.diagram.connections[0].iconAnimation, { rate: 0.25 });
+  assert.equal(compiled.graph.edges[0].attributes.iconStyle.animated.value, "0.25/s");
   await assert.rejects(d2.render(compiled.diagram, short), /0\.25\/s/);
   assert.match(await d2.render(compiled.diagram, enough), /d2-moving-icons/);
 

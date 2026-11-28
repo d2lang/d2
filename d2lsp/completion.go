@@ -91,6 +91,14 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 			{Label: "shape", Kind: StyleCompletion, Detail: "native icon", InsertText: "shape: "},
 			{Label: "style", Kind: StyleCompletion, Detail: "icon animation and border radius", InsertText: "style."},
 		}, nil
+	case "connection.icon.near:":
+		var items []CompletionItem
+		for _, pos := range d2ast.LabelPositionsArray {
+			if d2ast.LabelPositionsMapping[pos].IsEdgePosition() {
+				items = append(items, CompletionItem{Label: pos, Kind: KeywordCompletion, InsertText: pos})
+			}
+		}
+		return items, nil
 	case "connection.icon.shape:":
 		return []CompletionItem{{Label: d2target.ShapeCircle, Kind: ShapeCompletion, Detail: "filled dot", InsertText: d2target.ShapeCircle}}, nil
 	case "connection.icon.style.":
@@ -247,7 +255,7 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		lineText := lines[keyRange.End.Line]
 
 		if isAfterColon(lineText, lineColumn) {
-			if edgeField == "connection.icon.shape" || edgeField == "connection.icon.style.animated" {
+			if edgeField == "connection.icon.near" || edgeField == "connection.icon.shape" || edgeField == "connection.icon.style.animated" {
 				return edgeField + ":"
 			}
 			if key != nil && len(key.Path) > 1 {
@@ -285,7 +293,7 @@ func connectionIconKey(parent string, key *d2ast.KeyPath) string {
 	}
 	for _, part := range key.Path {
 		switch path := parent + "." + d2ast.Keyword(part.Unbox()); path {
-		case "connection.icon", "connection.icon.style", "connection.icon.shape", "connection.icon.style.animated":
+		case "connection.icon", "connection.icon.style", "connection.icon.near", "connection.icon.shape", "connection.icon.style.animated":
 			parent = path
 		default:
 			return ""
