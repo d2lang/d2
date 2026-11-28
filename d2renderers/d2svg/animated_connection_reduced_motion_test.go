@@ -176,7 +176,7 @@ steps: {
 		t.Fatalf("multiboard SVG emitted the scoped animated-connection reduced-motion override %d times, want 1", got)
 	}
 	for _, selector := range []string{
-		"svg[data-d2-animation=" + masterID + "]>g{animation-play-state:paused!important}",
+		"svg[data-d2-animation=" + masterID + "]>g,.d2-footer-" + masterID + ">*{animation-play-state:paused!important}",
 		"." + masterID + " .animated-shape{animation:none}",
 	} {
 		if !strings.Contains(svg, selector) {

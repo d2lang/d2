@@ -135,9 +135,23 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		return nil, fmt.Errorf("animation viewport dimensions exceed the supported range")
 	}
 
-	dimensions, err := svg.ScaledDimensions(width, height, renderOpts.Scale)
-	if err != nil {
-		return nil, err
+	artW, artH := width, height
+	if renderOpts.Scale != nil {
+		artW, artH, err = svg.ScaledSize(width, height, *renderOpts.Scale)
+		if err != nil {
+			return nil, err
+		}
+	}
+	showProgress := totalMS > 0 && !viewport.Empty() && rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress, true)
+	var footer image.Rectangle
+	canvasW, canvasH := width, height
+	if showProgress {
+		extra := ProgressGap + ProgressLineHeight(artW, artH)
+		if artH > math.MaxInt-extra {
+			return nil, fmt.Errorf("animation progress footer exceeds the supported SVG height")
+		}
+		footer = image.Rect(0, artH, artW, artH+extra)
+		canvasW, canvasH = artW, footer.Max.Y
 	}
 
 	if renderOpts.NoXMLTag == nil || !*renderOpts.NoXMLTag {
@@ -151,11 +165,39 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if renderOpts.Center != nil && *renderOpts.Center {
 		align = "xMidYMid"
 	}
-	fmt.Fprintf(buf, ` preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`, align, width, height, dimensions)
-
-	innerOpening := fmt.Sprintf(`<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d" data-d2-animation="%s">`,
-		width, height, left, top, width, height, diagramHash)
-	fmt.Fprint(buf, innerOpening)
+	var dimensions, artAlign string
+	innerW, innerH := width, height
+	if renderOpts.Scale != nil {
+		dimensions = svg.RenderAttributes(svg.IntAttr("width", artW), svg.IntAttr("height", artH+footer.Dy()))
+		if showProgress {
+			innerW, innerH = artW, artH
+			artAlign = ` preserveAspectRatio="` + align + ` meet"`
+		}
+	}
+	fmt.Fprintf(buf, ` preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`, align, canvasW, canvasH, dimensions)
+	frameSibling := ""
+	if showProgress && len(links) > 0 {
+		// The fragment precedes the artwork and footer so their clocks can use
+		// the same sibling selectors without requiring CSS ancestor selection.
+		writeLayerTargets(buf, diagramHash, links)
+		frameSibling = "*>"
+	}
+	// The nested SVG clips all camera and board paint to the original artwork viewport.
+	fmt.Fprintf(buf, `<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d"%s data-d2-animation="%s">`, innerW, innerH, left, top, width, height, artAlign, diagramHash)
+	var transitions bytes.Buffer
+	// Freeze both the artwork and the matching footer paint while keeping
+	// fragment navigation available for readers who choose another board.
+	fmt.Fprintf(&transitions, "@media(prefers-reduced-motion:reduce){svg[data-d2-animation=%[1]s]>g,.d2-footer-%[1]s>*{animation-play-state:paused!important}}", diagramHash)
+	var progress, matte string
+	var linkedMatte bool
+	if showProgress {
+		renderOpts.AnimateProgressColor = rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
+		progress, err = svgProgress(&transitions, diagramHash, footer, totalMS, renderOpts, len(links) > 0)
+		if err != nil {
+			return nil, err
+		}
+		matte, linkedMatte = footerMatte(&transitions, diagramHash, footer, totalMS, renderOpts, rootDiagram, frames, len(links) > 0, slots)
+	}
 
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
 	styleFrames := svgs
@@ -167,12 +209,13 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		styleGraphics = graphics
 		styleFrames = svgs
 	}
-	sourceSize := len(defs) + len(styleGraphics) + len(styleFrames) // One separator per frame.
+	sourceSize := len(matte) + len(defs) + len(styleGraphics) + len(styleFrames) // One separator per frame.
 	for _, frame := range styleFrames {
 		sourceSize += len(frame)
 	}
 	var source strings.Builder
 	source.Grow(sourceSize)
+	source.WriteString(matte) // Keep footer theme tokens when pruning the responsive styles.
 	source.Write(defs)
 	source.Write(styleGraphics)
 	for _, frame := range styleFrames {
@@ -181,9 +224,6 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	}
 	svgsStr := source.String()
 
-	var transitions bytes.Buffer
-	// Pausing keeps the first frame visible and retains manual board navigation.
-	fmt.Fprintf(&transitions, "@media(prefers-reduced-motion:reduce){svg[data-d2-animation=%s]>g{animation-play-state:paused!important}}", diagramHash)
 	hidden, visible := "{opacity:0", "{opacity:1"
 	if len(slots) == 0 && (!uniform || len(svgs) > 100) {
 		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"
@@ -220,22 +260,17 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if zoomMS > 0 && len(links) > 0 {
 		writeClickZooms(&transitions, links, diagramHash, viewport, offsets)
 	}
-	var progress string
-	if totalMS > 0 && !viewport.Empty() && rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress, true) {
-		renderOpts.AnimateProgressColor = rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
-		progress, err = svgProgress(&transitions, diagramHash, viewport, totalMS, renderOpts, len(links) > 0)
-		if err != nil {
-			return nil, err
-		}
-	}
 	if err := d2svg.WriteAnimationStylesWithTransitions(buf, diagramHash, svgsStr, rootDiagram, renderOpts, transitions.Bytes()); err != nil {
 		return nil, err
 	}
 	if len(links) > 0 {
-		writeLayerNavigation(buf, diagramHash, links, slots)
+		writeLayerNavigation(buf, diagramHash, links, slots, frameSibling, linkedMatte)
+		if frameSibling == "" {
+			writeLayerTargets(buf, diagramHash, links)
+		}
 	}
 	if strings.Contains(svgsStr, `class="d2-icon-tour-clock"`) {
-		writeLayerIconClocks(buf, diagramHash, links, slots)
+		writeLayerIconClocks(buf, diagramHash, links, slots, frameSibling)
 	}
 
 	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"
@@ -243,7 +278,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	// Reserve room for the artwork and its timing attributes before copying
 	// multi-megabyte frames into the final output buffer.
 	attributeSize := len(stylePrefix) + len(strconv.Itoa(len(svgs))) + len(styleSuffix)
-	artworkSize := len(defs) + len(graphics) + len("</svg></svg>") + len(svgs)*attributeSize
+	artworkSize := len(defs) + len(graphics) + len(matte) + len(progress) + len("</svg></svg>") + len(svgs)*attributeSize
 	for _, frame := range svgs {
 		artworkSize += len(frame)
 	}
@@ -252,19 +287,8 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	buf.Write(graphics)
 	for i, frame := range svgs {
 		if len(offsets) > 0 {
-			fmt.Fprintf(buf, `<g id="d2-frame-%s-%d" class="d2-frame-%s`, diagramHash, i, diagramHash)
-			local := ""
-			if len(slots) > 0 {
-				slot := slots[i]
-				fmt.Fprintf(buf, " d2-layer-%s-%d", diagramHash, slot.id)
-				if slot.count > 1 {
-					local = fmt.Sprintf("--d2-slot:d2LayerStep-%s-%d %dms steps(1,end);", diagramHash, i, slot.totalMS)
-				}
-			}
-			// Each wrapper owns a separate transform or clock: the global tour,
-			// the manually selected layer's steps, its camera and the placement.
-			fmt.Fprintf(buf, `" style="%sanimation: d2Transition-%s-%d %dms steps(1,end) infinite"><g><g><g transform="translate(%d %d)">`,
-				local, diagramHash, i, totalMS, offsets[i].X, offsets[i].Y)
+			writeLayerFrame(buf, diagramHash, i, totalMS, slots, true, linkedMatte)
+			fmt.Fprintf(buf, `<g transform="translate(%d %d)">`, offsets[i].X, offsets[i].Y)
 			buf.Write(frame)
 			buf.WriteString("</g></g></g></g>")
 			continue
@@ -279,10 +303,34 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 			buf.Write(after)
 		}
 	}
+	buf.WriteString("</svg>")
+	buf.WriteString(matte)
 	buf.WriteString(progress)
-	buf.WriteString("</svg></svg>")
+	buf.WriteString("</svg>")
 
 	return buf.Bytes(), nil
+}
+
+// The three groups own the global clock, the manually selected layer's steps,
+// and its camera. A linked footer uses the same clocks without spatial transforms.
+func writeLayerFrame(buf *bytes.Buffer, hash string, i, totalMS int, slots []layerSlot, artwork, linkedMatte bool) {
+	buf.WriteString("<g")
+	if artwork {
+		fmt.Fprintf(buf, ` id="d2-frame-%s-%d"`, hash, i)
+	}
+	fmt.Fprintf(buf, ` class="d2-frame-%s`, hash)
+	if linkedMatte {
+		fmt.Fprintf(buf, " d2-frame-%s-%d", hash, i)
+	}
+	local := ""
+	if len(slots) > 0 {
+		slot := slots[i]
+		fmt.Fprintf(buf, " d2-layer-%s-%d", hash, slot.id)
+		if slot.count > 1 {
+			local = fmt.Sprintf("--d2-slot:d2LayerStep-%s-%d %dms steps(1,end);", hash, i, slot.totalMS)
+		}
+	}
+	fmt.Fprintf(buf, `" style="%sanimation: d2Transition-%s-%d %dms steps(1,end) infinite"><g><g>`, local, hash, i, totalMS)
 }
 
 // Switch whole frames on their authored boundary so shared artwork stays solid.

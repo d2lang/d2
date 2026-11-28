@@ -92,7 +92,7 @@ func TestWrapDefaultsMissingPadding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wrap() error = %v", err)
 	}
-	if !strings.Contains(string(out), `viewBox="0 0 200 200"`) {
+	if !strings.Contains(string(out), `viewBox="-100 -100 200 200"`) {
 		t.Fatalf("Wrap() did not use default padding: %q", out)
 	}
 }

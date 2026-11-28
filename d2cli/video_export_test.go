@@ -3,6 +3,9 @@ package d2cli
 import (
 	"bytes"
 	"encoding/json"
+	"image/color"
+	"image/gif"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,11 +75,12 @@ steps: {next: {swatch.style.fill: blue}}`
 		}
 	}
 	cmd := exec.CommandContext(t.Context(), ffprobe, "-v", "error", "-select_streams", "v:0",
-		"-show_entries", "format=duration", "-of", "csv=p=0", "-i", "pipe:0")
+		"-show_entries", "stream=width,height:format=duration", "-of", "csv=p=0", "-i", "pipe:0")
 	cmd.Stdin = bytes.NewReader(clip)
 	count, err := cmd.Output()
-	if err != nil || string(bytes.TrimSpace(count)) != "0.700000" {
-		t.Fatalf("700ms stdout clip has duration %q: %v", count, err)
+	entries := strings.Fields(string(count))
+	if err != nil || len(entries) != 2 || entries[0] != "48,58" || entries[1] != "0.700000" {
+		t.Fatalf("stdout clip dimensions/duration %q, want 48x58 at 700ms: %v", count, err)
 	}
 	probe, err := exec.CommandContext(t.Context(), ffprobe, "-v", "error", "-count_packets", "-show_streams", "-show_format", "-of", "json", output).Output()
 	if err != nil {
@@ -108,6 +112,21 @@ steps: {next: {swatch.style.fill: blue}}`
 		s.Codec != codec || s.Format != "yuv420p" || s.Width != 320 || s.Height != 180 ||
 		s.ColorSpace != "bt709" || s.Primaries != "bt709" || s.Transfer != "iec61966-2-1" || s.ColorRange != "tv" {
 		t.Fatalf("unexpected video metadata: %+v", info)
+	}
+
+	// Decode the gap on every pose, including transition samples. The
+	// automatic 48px canvas grows by eight clear rows and a two-row line.
+	gap := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", "pipe:0",
+		"-vf", "crop=2:8:24:ih-10", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "gray", "-threads", "1", "pipe:1")
+	gap.Stdin = bytes.NewReader(clip)
+	gapRows, err := gap.Output()
+	if err != nil || len(gapRows) == 0 {
+		t.Fatalf("decode progress gap: %v", err)
+	}
+	for _, luma := range gapRows {
+		if luma < 235 {
+			t.Fatalf("artwork or progress ink entered the gap: decoded gray %d", luma)
+		}
 	}
 
 	// Take the center pixel of the swatch in each decoded frame.
@@ -146,7 +165,7 @@ steps: {next: {swatch.style.fill: blue}}`
 			input = "pipe:0"
 		}
 		decode := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", input,
-			"-vf", "crop=2:2:2:ih-4,scale=1:1", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1")
+			"-vf", "crop=2:2:2:ih-2,scale=1:1", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1")
 		if tc.clip != nil {
 			decode.Stdin = bytes.NewReader(tc.clip)
 		}
@@ -155,11 +174,86 @@ steps: {next: {swatch.style.fill: blue}}`
 			t.Fatalf("%s: decode error %v (%d bytes)", tc.name, err, len(data))
 		}
 		last := data[len(data)-3:]
-		lime := last[0] < 20 && last[1] > 230 && last[2] < 20
+		// Chroma subsampling can soften the edge of a two-pixel line.
+		lime := last[0] < 40 && last[1] > 220 && last[2] < 40
 		white := last[0] > 235 && last[1] > 235 && last[2] > 235
 		if tc.wantLime && !lime || !tc.wantLime && !white {
 			t.Fatalf("%s: final RGB is %v, want lime when enabled and the white letterbox when disabled", tc.name, last)
 		}
+	}
+}
+
+func TestGradientProgressFooterMatchesSVG(t *testing.T) {
+	const source = `vars.d2-config: {animate-interval: 150ms; theme-id: 200; theme-overrides: {N7: "#163050"}; pad: 4}
+style.fill: "linear-gradient(to bottom, transparent, #204060)"
+blank: "" {width: 112; height: 20; style: {fill: transparent; stroke-width: 0}}`
+	dir := t.TempDir()
+	env := []string{"PATH=" + os.Getenv("PATH")}
+	export := func(t *testing.T, format string, flags ...string) []byte {
+		t.Helper()
+		args := append([]string{"--stdout-format=" + format}, flags...)
+		out, err := imageCLIWithEnv(t, dir, source, env, append(args, "-")...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	_, rest, ok := bytes.Cut(export(t, "svg"), []byte(" d2-footer-"))
+	footer, _, _ := bytes.Cut(rest, []byte("</g>"))
+	if !ok || !bytes.Contains(footer, []byte(`fill="#163050"`)) {
+		t.Fatalf("missing the N7 override on the SVG gradient footer")
+	}
+	decodeGIF := func(flags ...string) *gif.GIF {
+		clip, err := gif.DecodeAll(bytes.NewReader(export(t, "gif", flags...)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return clip
+	}
+	original, padded := decodeGIF("--animate-progress=false"), decodeGIF()
+	if got := color.RGBAModel.Convert(padded.Image[0].At(2, padded.Config.Height-6)); got != (color.RGBA{0x16, 0x30, 0x50, 255}) {
+		t.Fatalf("GIF gradient footer is %v", got)
+	}
+	for y := 0; y < original.Config.Height; y++ {
+		for x := 0; x < original.Config.Width; x++ {
+			if color.RGBAModel.Convert(original.Image[0].At(x, y)) != color.RGBAModel.Convert(padded.Image[0].At(x, y)) {
+				t.Fatalf("GIF gradient compositing changed at (%d,%d)", x, y)
+			}
+		}
+	}
+
+	for _, tc := range []struct{ format, encoder string }{{"mp4", "libx264"}, {"webm", "libvpx-vp9"}} {
+		t.Run(tc.format, func(t *testing.T) {
+			ffmpeg, _ := videoTestTools(t, tc.encoder)
+			const w, h = 160, 120
+			decode := func(flag string) []byte {
+				cmd := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", "pipe:0", "-frames:v", "1", "-threads", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+				cmd.Stdin = bytes.NewReader(export(t, tc.format, "--video-size=160x120", flag))
+				pixels, err := cmd.Output()
+				if err != nil || len(pixels) != w*h*3 {
+					t.Fatalf("decode: %v (%d bytes)", err, len(pixels))
+				}
+				return pixels
+			}
+			before, after := decode("--animate-progress=false"), decode("--animate-progress=true")
+			check := func(pixels []byte, x, y int, want []byte) {
+				t.Helper()
+				got := pixels[3*(y*w+x):][:3]
+				for i := range got {
+					if math.Abs(float64(got[i])-float64(want[i])) > 6 {
+						t.Fatalf("at (%d,%d) got %v, want %v", x, y, got, want)
+					}
+				}
+			}
+			white := []byte{255, 255, 255}
+			check(before, 80, 114, white)
+			check(after, 80, 114, []byte{0x16, 0x30, 0x50})
+			check(after, 80, 10, white)
+			check(after, 80, 100, white)
+			// This wide diagram fits above the footer without moving. Its partially
+			// transparent gradient must retain the same backing in both clips.
+			check(after, 80, 51, before[3*(51*w+80):][:3])
+		})
 	}
 }
 
