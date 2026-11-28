@@ -78,6 +78,17 @@ func TestOutputFormat(t *testing.T) {
 			requiresAnimationInterval: false,
 		},
 		{
+			outputPath:        "/out.mp4",
+			extension:         MP4,
+			supportsAnimation: true,
+		},
+		{
+			stdoutFormatFlag:  "mp4",
+			outputPath:        "-",
+			extension:         MP4,
+			supportsAnimation: true,
+		},
+		{
 			outputPath:                "/out.gif",
 			extension:                 GIF,
 			supportsDarkTheme:         false,
@@ -208,5 +219,27 @@ func TestTextExportHonorsSourceLayout(t *testing.T) {
 	_, err = imageCLI(t, t.TempDir(), source, "--layout=DAGRE", "--stdout-format=txt", "-")
 	if err == nil || !strings.Contains(err.Error(), `layout engine "elk"`) {
 		t.Fatalf("explicit Dagre should select ELK for text: %v", err)
+	}
+}
+
+func TestVideoDurationUsage(t *testing.T) {
+	for _, tc := range []struct {
+		format   string
+		duration string
+		wantErr  string
+	}{
+		{"svg", "1s", "requires MP4 output"},
+		{"gif", "1s", "requires MP4 output"},
+		{"png", "1s", "requires MP4 output"},
+		{"mp4", "0s", "must be positive"},
+		{"mp4", "-2s", "must be positive"},
+		{"mp4", "2", "--video-duration"},
+	} {
+		t.Run(tc.format+"_"+tc.duration, func(t *testing.T) {
+			data, err := imageCLI(t, t.TempDir(), "x", "--stdout-format="+tc.format, "--video-duration="+tc.duration, "-")
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || len(data) != 0 {
+				t.Fatalf("got %d bytes and error %v, want %q", len(data), err, tc.wantErr)
+			}
+		})
 	}
 }

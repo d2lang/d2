@@ -144,11 +144,11 @@ one, please see [./d2renderers/d2fonts](./d2renderers/d2fonts).
 
 ## Export file types
 
-D2 renders SVG, PNG, GIF, PDF, PowerPoint (`.pptx`), and text diagrams (`.txt`) without a browser.
+D2 renders SVG, PNG, GIF, MP4, PDF, PowerPoint (`.pptx`), and text diagrams (`.txt`) without a browser.
 For example, `d2 hello.d2 hello.txt` draws the diagram with Unicode characters.
 Use `--ascii-mode=standard` for plain ASCII. [Export guide](https://d2lang.com/tour/exports/)
 
-For animated SVG and GIF, set `animate-interval` and `animate-duration` in
+For animated SVG, GIF, and MP4, set `animate-interval` and `animate-duration` in
 `vars.d2-config`. With TALA, newly appended SQL rows can drop into place
 while existing rows and connections stay anchored. Appending a sequence message can
 extend the activation bar and draw the arrow from sender to recipient.
@@ -164,6 +164,24 @@ uses one transition duration. If a link is missing along the route, playback
 cuts to the destination. Clicking a board link in a standalone SVG pauses the
 tour for manual navigation.
 [Order fulfillment example](./docs/examples/order-fulfillment/order-fulfillment.svg) · [D2 source](./docs/examples/order-fulfillment/order-fulfillment.d2)
+
+To share a tour as an H.264 video, run `d2 tour.d2 tour.mp4`. The CLI plays
+the selected boards once. It samples motion at 30 fps and records holds using
+timestamps. MP4 export requires FFmpeg 5.1 or newer with the `libx264` encoder
+on your PATH.
+
+```sh
+d2 --video-size=1920x1080 --video-quality=medium tour.d2 tour.mp4
+d2 --video-duration=10s flow.d2 flow.mp4
+```
+
+`--video-size` fits and centers the diagram in an exact pixel canvas, including
+`3840x2160` for UHD or `1080x1920` for portrait. D2 draws text and shapes at
+the requested resolution. By default, the canvas follows the diagram dimensions
+and `--scale`. The quality options are `low`, `medium`, `high` (default), and
+`best`. Lower settings produce smaller files. Use `--video-duration` to record
+a continuously animated board or to trim or repeat a tour. Durations round up
+to the next 1/30 second.
 
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
 see each board and its timestamp in playback order, including intermediate frames

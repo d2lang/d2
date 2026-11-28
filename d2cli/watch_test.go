@@ -1,7 +1,13 @@
 package d2cli
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/xml"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,5 +92,51 @@ func TestWatchResolvesImportsRelativeToEntryFile(t *testing.T) {
 	}
 	if len(fs.opened) != 1 || fs.opened[0] != dep {
 		t.Fatalf("watched imports = %v, want %v", fs.opened, dep)
+	}
+}
+
+func TestVideoWatchPreviewUsesFirstFrame(t *testing.T) {
+	var preview []byte
+	var sent int
+	scale := 2.
+	emit := withVideoWatchPreview(t.Context(), &scale, &preview, func(_ image.Image, repeats int) error {
+		sent += repeats
+		return nil
+	})
+	frame := image.NewNRGBA(image.Rect(0, 0, 4, 2))
+	frame.SetNRGBA(0, 0, color.NRGBA{R: 50, A: 255})
+	if err := emit(frame, 2); err != nil {
+		t.Fatal(err)
+	}
+	frame.SetNRGBA(0, 0, color.NRGBA{B: 100, A: 255})
+	if err := emit(frame, 3); err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Inner struct {
+			Class  string `xml:"class,attr"`
+			Width  int    `xml:"width,attr"`
+			Height int    `xml:"height,attr"`
+			Image  struct {
+				Href string `xml:"href,attr"`
+			} `xml:"image"`
+		} `xml:"svg"`
+	}
+	if err := xml.Unmarshal(preview, &document); err != nil {
+		t.Fatal(err)
+	}
+	if sent != 5 || document.Inner.Class != "d2-svg" || document.Inner.Width != 2 || document.Inner.Height != 1 {
+		t.Fatalf("sent %d frames with watch preview %+v", sent, document.Inner)
+	}
+	packed, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(document.Inner.Image.Href, "data:image/png;base64,"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	picture, err := png.Decode(bytes.NewReader(packed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pixel := color.NRGBAModel.Convert(picture.At(0, 0)); pixel != (color.NRGBA{R: 50, A: 255}) {
+		t.Fatalf("watch preview pixel = %v", pixel)
 	}
 }
