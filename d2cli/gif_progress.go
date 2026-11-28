@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 
+	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/lib/xgif"
 )
 
@@ -18,7 +19,7 @@ func (s *gifRenderSummary) splitProgressHolds(ctx context.Context, poses []*imag
 	for _, delay := range s.delays {
 		wanted += extraFor(delay)
 	}
-	pixels := int64(s.maxWidth) * int64(s.maxHeight)
+	pixels := int64(s.maxWidth) * int64(s.maxHeight+s.footerHeight)
 	limit := min(int64(gifMaxFrames), gifMaxNormalizedPixels/pixels)
 	extra := min(wanted, limit-int64(len(poses)))
 	if extra <= 0 {
@@ -28,6 +29,10 @@ func (s *gifRenderSummary) splitProgressHolds(ctx context.Context, poses []*imag
 	capacity := len(poses) + int(extra)
 	images := make([]*image.Paletted, 0, capacity)
 	delays := make([]int, 0, capacity)
+	var mattes []color.RGBA
+	if s.mattes != nil {
+		mattes = make([]color.RGBA, 0, capacity)
+	}
 	var offsets []image.Point
 	if s.offsets != nil {
 		offsets = make([]image.Point, 0, capacity)
@@ -43,6 +48,9 @@ func (s *gifRenderSummary) splitProgressHolds(ctx context.Context, poses []*imag
 		}
 		for range count {
 			images = append(images, pose)
+			if s.mattes != nil {
+				mattes = append(mattes, s.mattes[i])
+			}
 		}
 		delays = xgif.AppendFrameDelays(delays, s.delays[i], count)
 		if s.offsets != nil {
@@ -51,7 +59,7 @@ func (s *gifRenderSummary) splitProgressHolds(ctx context.Context, poses []*imag
 			}
 		}
 	}
-	s.delays, s.offsets, s.totalFrames = delays, offsets, len(images)
+	s.delays, s.offsets, s.mattes, s.totalFrames = delays, offsets, mattes, len(images)
 	return images, nil
 }
 
@@ -59,18 +67,44 @@ func (s *gifRenderSummary) splitProgressHolds(ctx context.Context, poses []*imag
 // is the playback clock, even when adjacent frames have very different delays.
 type gifProgressOverlay struct {
 	ink                   *image.Uniform
-	delays                []int
+	plan                  gifRenderSummary
+	poses                 []*image.Paletted
+	streamCanvas          *image.Paletted
+	lastCanvas            *image.Paletted
+	matteIndex, lastWidth int
 	index, elapsed, total int
 }
 
-func (p *gifProgressOverlay) start(delays []int) {
+func (p *gifProgressOverlay) start(plan gifRenderSummary, poses []*image.Paletted) {
 	if p.ink == nil {
 		return
 	}
-	p.delays = delays
-	for _, delay := range delays {
+	p.plan, p.poses = plan, poses
+	for _, delay := range plan.delays {
 		p.total += delay
 	}
+	if poses == nil {
+		p.streamCanvas = image.NewPaletted(image.Rect(0, 0, plan.maxWidth, plan.maxHeight+plan.footerHeight), nil)
+	}
+}
+
+// The single-board encoder consumes pixels synchronously. Append the footer
+// using one reusable indexed buffer, without re-quantizing the board.
+func (p *gifProgressOverlay) extendSingleBoard(src *image.Paletted) *image.Paletted {
+	dst := p.streamCanvas
+	if dst == nil {
+		return src
+	}
+	p.lastCanvas = nil
+	dst.Palette = src.Palette
+	if src.Stride == dst.Stride {
+		copy(dst.Pix, src.Pix[:src.Rect.Dy()*src.Stride])
+	} else {
+		for y := range src.Rect.Dy() {
+			copy(dst.Pix[y*dst.Stride:(y+1)*dst.Stride], src.Pix[y*src.Stride:])
+		}
+	}
+	return dst
 }
 
 func (p *gifProgressOverlay) paint(ctx context.Context, frame *image.Paletted) error {
@@ -78,21 +112,65 @@ func (p *gifProgressOverlay) paint(ctx context.Context, frame *image.Paletted) e
 		return nil
 	}
 	bounds := frame.Bounds()
-	extent := animationProgressWidth(bounds.Dx(), p.elapsed, p.total, p.index == len(p.delays)-1)
-	p.elapsed += p.delays[p.index]
+	if p.lastCanvas != frame {
+		if err := p.prepareCanvas(ctx, frame); err != nil {
+			return err
+		}
+		p.lastCanvas, p.lastWidth = frame, 0
+	}
+	extent := animationProgressWidth(bounds.Dx(), p.elapsed, p.total, p.index == len(p.plan.delays)-1)
+	p.elapsed += p.plan.delays[p.index]
 	p.index++
-	if extent == 0 {
+	if extent == p.lastWidth {
 		return nil
 	}
-	index, err := gifProgressColorIndex(ctx, frame, p.ink.C)
+	index, err := gifProgressColorIndex(ctx, frame, p.ink.C, p.matteIndex)
 	if err != nil {
 		return err
 	}
-	strip := animationProgressStrip(bounds)
-	for y := strip.Min.Y; y < strip.Max.Y; y++ {
-		start := frame.PixOffset(bounds.Min.X, y)
-		for i := range extent {
-			frame.Pix[start+i] = uint8(index)
+	line := image.Rect(p.lastWidth, p.plan.maxHeight+d2animate.ProgressGap, extent, bounds.Max.Y)
+	p.lastWidth = extent
+	return fillGIFMargin(ctx, frame, line, uint8(index))
+}
+
+// Extend the board or camera matte across its footer and any margins. Keep
+// the old board placement, and prepare only once across repeated static poses.
+func (p *gifProgressOverlay) prepareCanvas(ctx context.Context, frame *image.Paletted) error {
+	canvas := image.Rect(0, 0, p.plan.maxWidth, p.plan.maxHeight)
+	matte := p.plan.mattes[p.index]
+	matteIndex, err := gifProgressColorIndex(ctx, frame, matte, -1)
+	if err != nil {
+		return err
+	}
+	p.matteIndex = matteIndex
+	if p.poses != nil && matte != (color.RGBA{255, 255, 255, 255}) {
+		pose := p.poses[p.index].Rect
+		board := pose.Sub(pose.Min).Add(p.plan.offsets[p.index])
+		if board != canvas {
+			for _, margin := range [...]image.Rectangle{
+				image.Rect(0, 0, canvas.Max.X, board.Min.Y),
+				image.Rect(0, board.Min.Y, board.Min.X, board.Max.Y),
+				image.Rect(board.Max.X, board.Min.Y, canvas.Max.X, board.Max.Y),
+				image.Rect(0, board.Max.Y, canvas.Max.X, canvas.Max.Y),
+			} {
+				if err := fillGIFMargin(ctx, frame, margin, uint8(matteIndex)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return fillGIFMargin(ctx, frame, image.Rect(0, canvas.Max.Y, canvas.Max.X, frame.Rect.Max.Y), uint8(matteIndex))
+}
+
+func fillGIFMargin(ctx context.Context, frame *image.Paletted, rect image.Rectangle, index uint8) error {
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
+		if y%256 == 0 && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		at := frame.PixOffset(rect.Min.X, y)
+		row := frame.Pix[at : at+rect.Dx()]
+		for i := range row {
+			row[i] = index
 		}
 	}
 	return nil
@@ -100,7 +178,7 @@ func (p *gifProgressOverlay) paint(ctx context.Context, frame *image.Paletted) e
 
 // Reserve an exact overlay color after quantization so a narrow accent cannot
 // disappear into a grayscale or photographic scene's palette.
-func gifProgressColorIndex(ctx context.Context, frame *image.Paletted, ink color.Color) (int, error) {
+func gifProgressColorIndex(ctx context.Context, frame *image.Paletted, ink color.Color, protected int) (int, error) {
 	palette := frame.Palette
 	index := palette.Index(ink)
 	if color.RGBAModel.Convert(palette[index]) == color.RGBAModel.Convert(ink) {
@@ -126,8 +204,11 @@ func gifProgressColorIndex(ctx context.Context, frame *image.Paletted, ink color
 	}
 	white := palette.Index(color.White)
 	index = (white + 1) % 256
+	if index == protected {
+		index = (index + 1) % 256
+	}
 	for i, count := range counts {
-		if i != white && count < counts[index] {
+		if i != white && i != protected && count < counts[index] {
 			index = i
 		}
 	}

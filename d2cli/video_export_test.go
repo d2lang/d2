@@ -48,11 +48,11 @@ steps: {next: {swatch.style.fill: blue}}`
 		t.Fatal("stdout MP4 is missing its fast-start index")
 	}
 	cmd := exec.CommandContext(t.Context(), ffprobe, "-v", "error", "-select_streams", "v:0",
-		"-show_entries", "stream=duration", "-of", "csv=p=0", "-i", "pipe:0")
+		"-show_entries", "stream=width,height,duration", "-of", "csv=p=0", "-i", "pipe:0")
 	cmd.Stdin = bytes.NewReader(clip)
 	count, err := cmd.Output()
-	if err != nil || string(bytes.TrimSpace(count)) != "0.700000" {
-		t.Fatalf("700ms stdout clip has duration %q: %v", count, err)
+	if err != nil || string(bytes.TrimSpace(count)) != "48,58,0.700000" {
+		t.Fatalf("stdout clip dimensions/duration %q, want 48x58 at 700ms: %v", count, err)
 	}
 	probe, err := exec.CommandContext(t.Context(), ffprobe, "-v", "error", "-show_streams", "-of", "json", output).Output()
 	if err != nil {
@@ -84,6 +84,21 @@ steps: {next: {swatch.style.fill: blue}}`
 		s.Codec != "h264" || s.Format != "yuv420p" || s.Width != 320 || s.Height != 180 ||
 		s.ColorSpace != "bt709" || s.Primaries != "bt709" || s.Transfer != "iec61966-2-1" || s.ColorRange != "tv" {
 		t.Fatalf("unexpected video stream: %+v", s)
+	}
+
+	// Decode the gap on every pose, including transition samples. The
+	// automatic 48px canvas grows by eight clear rows and a two-row line.
+	gap := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", "pipe:0",
+		"-vf", "crop=2:8:24:ih-10", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "gray", "-threads", "1", "pipe:1")
+	gap.Stdin = bytes.NewReader(clip)
+	gapRows, err := gap.Output()
+	if err != nil || len(gapRows) == 0 {
+		t.Fatalf("decode progress gap: %v", err)
+	}
+	for _, luma := range gapRows {
+		if luma < 235 {
+			t.Fatalf("artwork or progress ink entered the gap: decoded gray %d", luma)
+		}
 	}
 
 	// Take the center pixel of the swatch in each decoded frame.

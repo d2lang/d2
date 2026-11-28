@@ -26,6 +26,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2renderers/d2svgimport"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/imageasset"
 	"github.com/d2lang/d2/lib/netpolicy"
 	"github.com/d2lang/d2/lib/xgif"
@@ -409,7 +410,7 @@ type gifFrameRenderer func(context.Context, int, time.Duration, d2raster.FrameOp
 
 type gifFrameConsumer func(frameIndex int, frame image.Image) error
 
-type gifBoardPlanConsumer func(delays []int, intervalMS int, bounds image.Rectangle) error
+type gifBoardPlanConsumer func(gifRenderSummary, int, image.Rectangle) error
 
 // renderGIFBoardFrames paints and consumes one frame at a time. The consumer
 // can quantize and release each full-color image before the next render begins.
@@ -489,10 +490,10 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	var incrementalBounds image.Rectangle
 	summary, err := renderGIFWithSession(
 		ctx, inputPath, cacheImages, diagram, opts, intervalMs, layers, session, &workspace, wantPreview,
-		func(delays []int, boardMS int, bounds image.Rectangle) error {
-			progress.start(delays)
+		func(plan gifRenderSummary, boardMS int, bounds image.Rectangle) error {
+			progress.start(plan, nil)
 			encoder, encoderErr := xgif.NewOpaquePalettedAnimationEncoder(
-				ctx, bounds.Dx(), bounds.Dy(), len(delays), boardMS, gifMaxEncodedBytes,
+				ctx, bounds.Dx(), bounds.Dy()+plan.footerHeight, len(plan.delays), boardMS, gifMaxEncodedBytes,
 			)
 			if encoderErr != nil {
 				return encoderErr
@@ -510,6 +511,7 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 						consumeErr = fmt.Errorf("GIF frame %d normalization: %w", frameIndex, normalizeErr)
 						return consumeErr
 					}
+					normalized = progress.extendSingleBoard(normalized)
 					for j := range repeats {
 						if err := progress.paint(ctx, normalized); err != nil {
 							return err
@@ -558,11 +560,11 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 		if err != nil {
 			return nil, nil, err
 		}
-		progress.start(summary.delays)
+		progress.start(summary, palettedFrames)
 		paint = progress.paint
 	}
 	encoded, err = xgif.AnimateTimedOpaquePalettedImagesWithOverlay(
-		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, summary.offsets, summary.delays, gifMaxEncodedBytes, paint,
+		ctx, palettedFrames, summary.maxWidth, summary.maxHeight+summary.footerHeight, summary.offsets, summary.delays, gifMaxEncodedBytes, paint,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -587,7 +589,9 @@ type gifRenderSummary struct {
 	totalFrames         int
 	delays              []int
 	offsets             []image.Point
-	maxWidth, maxHeight int
+	maxWidth, maxHeight int // Board canvas before adding the progress footer.
+	footerHeight        int
+	mattes              []color.RGBA
 }
 
 // Browsers commonly display a 0cs or 1cs GIF frame for 100ms. Motion can
@@ -813,6 +817,22 @@ func renderGIFWithSession(
 			totalFrames += count
 		}
 	}
+	showProgress := opts.AnimateProgress != nil && *opts.AnimateProgress
+	if showProgress {
+		theme := d2themescatalog.Find(themeID(opts))
+		theme.ApplyOverrides(opts.ThemeOverrides)
+		for _, segment := range timeline {
+			matte := videoBoardMatte(theme, segment.Diagram.Root.Fill)
+			for range segment.count - len(segment.zoom) {
+				summary.mattes = append(summary.mattes, matte)
+			}
+			for _, sample := range segment.zoom {
+				leg := segment.route[sample.leg]
+				from, to := videoBoardMatte(theme, leg.From.Root.Fill), videoBoardMatte(theme, leg.To.Root.Fill)
+				summary.mattes = append(summary.mattes, blendVideoMatte(from, to, sample.progress))
+			}
+		}
+	}
 	hasZoom := extraPaints > 0
 	buildCount := len(timeline)
 	var boardIndexByDiagram map[*d2target.Diagram]int
@@ -880,7 +900,13 @@ func renderGIFWithSession(
 		canvas := segment.measure(plannedBounds, document, scale)
 		summary.maxWidth = max(summary.maxWidth, canvas.Dx())
 		summary.maxHeight = max(summary.maxHeight, canvas.Dy())
-		if err := validateGIFNormalizedFootprint(summary.maxWidth, summary.maxHeight, totalFrames); err != nil {
+		if showProgress {
+			summary.footerHeight = d2animate.ProgressGap + d2animate.ProgressLineHeight(summary.maxWidth, summary.maxHeight)
+			if summary.maxHeight+summary.footerHeight > rasterMaxDimension {
+				return fmt.Errorf("GIF progress footer exceeds the %d-pixel height limit", rasterMaxDimension)
+			}
+		}
+		if err := validateGIFNormalizedFootprint(summary.maxWidth, summary.maxHeight+summary.footerHeight, totalFrames); err != nil {
 			return fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
 		return nil
@@ -938,7 +964,7 @@ func renderGIFWithSession(
 			summary.previewSVG = sourceSVG
 		}
 		if plan != nil && len(boards) == 1 && len(boards[0].TweenFrames) == 0 {
-			if err := plan(summary.delays, segment.DurationMS, plannedBounds); err != nil {
+			if err := plan(summary, segment.DurationMS, plannedBounds); err != nil {
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}
 		}
@@ -973,6 +999,9 @@ func renderGIFWithSession(
 						// The intermediate board is only passing through its resting
 						// pose, so its own independent animation clock stays at zero.
 						frameOptions.Time = 0
+					}
+					if showProgress {
+						frameOptions.Background = summary.mattes[renderedFrameCount]
 					}
 					frame, err := camera.render(renderCtx, session, frameOptions, sample.progress, 0)
 					if err != nil {
@@ -1009,7 +1038,7 @@ func renderGIFWithSession(
 			return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
 	}
-	if len(viewports) != 0 || hasZoom {
+	if len(viewports) != 0 || hasZoom || showProgress {
 		canvas := image.Rect(0, 0, summary.maxWidth, summary.maxHeight)
 		for _, segment := range timeline {
 			offset := segment.offset(canvas)

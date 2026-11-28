@@ -192,6 +192,8 @@ interval show the line only if you pass `--animate-progress` or set
 The line fills from left to right over the playback time, including holds, and
 stays fixed during camera moves. Its height is 1% of the shorter canvas dimension,
 rounded to the nearest pixel and limited to 2–6 pixels, or one pixel on a single-row canvas.
+The export leaves at least 8 pixels between the diagram's existing padding and the line.
+An MP4 with `--video-size` fits both within the requested dimensions.
 It uses the theme's B1 color (the usual solid
 stroke). To color the bar independently, set
 `vars.d2-config.animate-progress-color: "#E35B42"` or pass

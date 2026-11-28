@@ -307,7 +307,7 @@ async function checkLayerRoute(page) {
     );
     const parent = frames.nth(inward ? from : to);
     const distance = await parent.locator("a").filter({ hasText: portalLabel }).evaluate((link) => {
-      const svg = document.documentElement;
+      const svg = link.closest("svg.d2-svg");
       const view = svg.viewBox.baseVal;
       const center = new DOMPoint(view.x + view.width / 2, view.y + view.height / 2);
       const screen = center.matrixTransform(svg.getScreenCTM());

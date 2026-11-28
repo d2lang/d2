@@ -135,9 +135,23 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		return nil, fmt.Errorf("animation viewport dimensions exceed the supported range")
 	}
 
-	dimensions, err := svg.ScaledDimensions(width, height, renderOpts.Scale)
-	if err != nil {
-		return nil, err
+	artW, artH := width, height
+	if renderOpts.Scale != nil {
+		artW, artH, err = svg.ScaledSize(width, height, *renderOpts.Scale)
+		if err != nil {
+			return nil, err
+		}
+	}
+	showProgress := totalMS > 0 && !viewport.Empty() && rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress, true)
+	var footer image.Rectangle
+	canvasW, canvasH := width, height
+	if showProgress {
+		extra := ProgressGap + ProgressLineHeight(artW, artH)
+		if artH > math.MaxInt-extra {
+			return nil, fmt.Errorf("animation progress footer exceeds the supported SVG height")
+		}
+		footer = image.Rect(0, artH, artW, artH+extra)
+		canvasW, canvasH = artW, footer.Max.Y
 	}
 
 	if renderOpts.NoXMLTag == nil || !*renderOpts.NoXMLTag {
@@ -151,11 +165,28 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if renderOpts.Center != nil && *renderOpts.Center {
 		align = "xMidYMid"
 	}
-	fmt.Fprintf(buf, ` preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`, align, width, height, dimensions)
-
-	innerOpening := fmt.Sprintf(`<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d">`,
-		width, height, left, top, width, height)
-	fmt.Fprint(buf, innerOpening)
+	var dimensions, artAlign string
+	innerW, innerH := width, height
+	if renderOpts.Scale != nil {
+		dimensions = svg.RenderAttributes(svg.IntAttr("width", artW), svg.IntAttr("height", artH+footer.Dy()))
+		if showProgress {
+			innerW, innerH = artW, artH
+			artAlign = ` preserveAspectRatio="` + align + ` meet"`
+		}
+	}
+	fmt.Fprintf(buf, ` preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`, align, canvasW, canvasH, dimensions)
+	// The nested SVG clips all camera and board paint to the original artwork viewport.
+	fmt.Fprintf(buf, `<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d"%s>`, innerW, innerH, left, top, width, height, artAlign)
+	var transitions bytes.Buffer
+	var progress, matte string
+	if showProgress {
+		renderOpts.AnimateProgressColor = rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
+		progress, err = svgProgress(&transitions, diagramHash, footer, totalMS, renderOpts, len(links) > 0)
+		if err != nil {
+			return nil, err
+		}
+		matte = footerMatte(&transitions, diagramHash, footer, totalMS, renderOpts, rootDiagram, frames, links)
+	}
 
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
 	styleFrames := svgs
@@ -167,12 +198,13 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		styleGraphics = graphics
 		styleFrames = svgs
 	}
-	sourceSize := len(defs) + len(styleGraphics) + len(styleFrames) // One separator per frame.
+	sourceSize := len(matte) + len(defs) + len(styleGraphics) + len(styleFrames) // One separator per frame.
 	for _, frame := range styleFrames {
 		sourceSize += len(frame)
 	}
 	var source strings.Builder
 	source.Grow(sourceSize)
+	source.WriteString(matte) // Keep footer theme tokens when pruning the responsive styles.
 	source.Write(defs)
 	source.Write(styleGraphics)
 	for _, frame := range styleFrames {
@@ -181,7 +213,6 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	}
 	svgsStr := source.String()
 
-	var transitions bytes.Buffer
 	hidden, visible := "{opacity:0", "{opacity:1"
 	if len(slots) == 0 && (!uniform || len(svgs) > 100) {
 		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"
@@ -217,14 +248,6 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	}
 	if zoomMS > 0 && len(links) > 0 {
 		writeClickZooms(&transitions, links, diagramHash, viewport, offsets)
-	}
-	var progress string
-	if totalMS > 0 && !viewport.Empty() && rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress, true) {
-		renderOpts.AnimateProgressColor = rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
-		progress, err = svgProgress(&transitions, diagramHash, viewport, totalMS, renderOpts, len(links) > 0)
-		if err != nil {
-			return nil, err
-		}
 	}
 	if err := d2svg.WriteAnimationStylesWithTransitions(buf, diagramHash, svgsStr, rootDiagram, renderOpts, transitions.Bytes()); err != nil {
 		return nil, err
@@ -274,8 +297,10 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 			buf.Write(after)
 		}
 	}
+	buf.WriteString("</svg>")
+	buf.WriteString(matte)
 	buf.WriteString(progress)
-	buf.WriteString("</svg></svg>")
+	buf.WriteString("</svg>")
 
 	return buf.Bytes(), nil
 }

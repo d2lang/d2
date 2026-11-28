@@ -49,9 +49,10 @@ func videoProgressRun(tick, total, steps int) int {
 // The renderer lends this surface until emit returns. Only the bottom strip
 // changes over a static pose. Restore it before releasing the raster workspace.
 type videoProgressOverlay struct {
-	ink   *image.Uniform
-	strip *image.RGBA
-	steps int
+	ink    *image.Uniform
+	strip  *image.RGBA
+	steps  int
+	height int
 }
 
 func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start, repeats, total int, emit func(image.Image, int) error) error {
@@ -59,7 +60,8 @@ func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start
 		return emitVideoHold(frame, repeats, start+repeats == total, emit)
 	}
 	bounds := frame.Bounds()
-	strip := animationProgressStrip(bounds)
+	strip := bounds
+	strip.Min.Y = strip.Max.Y - p.height
 	if p.strip == nil {
 		p.strip = image.NewRGBA(strip)
 	}

@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/gif"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,7 +72,7 @@ func TestVideoProgressCancellationRestoresBorrowedCanvas(t *testing.T) {
 	defer cancel()
 	frame := image.NewRGBA(image.Rect(3, 7, 51, 11))
 	original := bytes.Clone(frame.Pix)
-	p := &videoProgressOverlay{ink: image.NewUniform(testProgressInk), steps: frame.Rect.Dx()}
+	p := &videoProgressOverlay{ink: image.NewUniform(testProgressInk), steps: frame.Rect.Dx(), height: 2}
 	calls := 0
 	err := p.emit(ctx, frame, 5, 50, 60, func(im image.Image, _ int) error {
 		checkProgressStrip(t, im, 4, 2)
@@ -151,8 +152,8 @@ func TestGIFProgressUsesEncodedDelaysOnMixedCanvases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.name == "short canvas" && a.Config.Height != 3 {
-				t.Fatalf("short GIF canvas is %d pixels high, want 3", a.Config.Height)
+			if tc.name == "short canvas" && a.Config.Height != 13 {
+				t.Fatalf("short GIF canvas is %d pixels high, want 13", a.Config.Height)
 			}
 			elapsed := 0
 			for i, frame := range a.Image {
@@ -177,17 +178,17 @@ func TestGIFProgressSpendsOnlySpareFrameAndPixelBudget(t *testing.T) {
 	a := image.NewPaletted(image.Rect(0, 0, 1, 1), color.Palette{color.Black})
 	b := image.NewPaletted(a.Rect, color.Palette{color.White})
 	for _, tc := range []struct {
-		name               string
-		side, limit, spare int
+		name                       string
+		side, footer, limit, spare int
 	}{
-		{"frame limit", 8, gifMaxFrames, 2},
-		{"normalized pixel limit", 512, int(gifMaxNormalizedPixels / (512 * 512)), 2},
-		{"no spare slots", 8, gifMaxFrames, 0},
+		{"frame limit", 8, 0, gifMaxFrames, 2},
+		{"normalized pixel limit with footer", 512, 13, int(gifMaxNormalizedPixels / (512 * 525)), 2},
+		{"no spare slots", 8, 0, gifMaxFrames, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n := tc.limit - tc.spare
 			poses := make([]*image.Paletted, n)
-			s := gifRenderSummary{maxWidth: tc.side, maxHeight: tc.side, totalFrames: n, delays: make([]int, n), offsets: make([]image.Point, n)}
+			s := gifRenderSummary{maxWidth: tc.side, maxHeight: tc.side, footerHeight: tc.footer, totalFrames: n, delays: make([]int, n), offsets: make([]image.Point, n)}
 			for i := range poses {
 				poses[i] = a
 				s.delays[i] = 3
@@ -243,9 +244,102 @@ func TestGIFProgressColorIndependentOfBoardPalette(t *testing.T) {
 		if enabled {
 			want = color.RGBA{G: 255, A: 255}
 		}
-		if got := color.RGBAModel.Convert(last.At(24, 47)); got != want {
+		if got := color.RGBAModel.Convert(last.At(24, last.Rect.Max.Y-1)); got != want {
 			t.Fatalf("progress %t drew %v at the bottom, want %v", enabled, got, want)
 		}
+	}
+}
+
+func TestGIFProgressFooterPreservesBoardPlacementAndMatte(t *testing.T) {
+	for _, multi := range []bool{false, true} {
+		root := simpleRasterDiagramWithSize(250, 249)
+		root.Root.Fill = "N1"
+		opts := progressRenderOpts()
+		opts.ThemeOverrides.N1 = go2.Pointer("#102030")
+		if multi {
+			small := simpleRasterDiagramWithSize(60, 100)
+			small.Root.Fill = "#231f40"
+			root.Layers = []*d2target.Diagram{small}
+		}
+		render := func(enabled bool) *gif.GIF {
+			opts.AnimateProgress = &enabled
+			data, _, err := renderGIF(t.Context(), "-", false, root, opts, 100, false, gifLayerOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := gif.DecodeAll(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return decoded
+		}
+		original, padded := render(false), render(true)
+		// The short side of the original canvas rounds to two pixels. The
+		// footer itself would put the canvas over the three-pixel threshold.
+		if padded.Config.Width != original.Config.Width || padded.Config.Height != original.Config.Height+8+2 ||
+			!slices.Equal(original.Delay, padded.Delay) {
+			t.Fatalf("multi=%t: changed playback or canvas: %v/%v vs %v/%v", multi, original.Config, original.Delay, padded.Config, padded.Delay)
+		}
+		for _, i := range []int{0, len(padded.Image) - 1} {
+			red := color.RGBA{255, 0, 0, 255}
+			bg := color.RGBA{0x10, 0x20, 0x30, 255}
+			if multi && i != 0 {
+				bg = color.RGBA{0x23, 0x1f, 0x40, 255}
+			}
+			frame := padded.Image[i]
+			for y := 0; y < original.Config.Height+8; y++ {
+				for x := 0; x < frame.Rect.Dx(); x++ {
+					want := bg
+					if y < original.Config.Height && color.RGBAModel.Convert(original.Image[i].At(x, y)) == red {
+						want = red
+					}
+					if got := color.RGBAModel.Convert(frame.At(x, y)); got != want {
+						t.Fatalf("multi=%t frame %d pixel (%d,%d) = %v, want %v", multi, i, x, y, got, want)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestGIFProgressFooterBlendsLinkedLayerMattes(t *testing.T) {
+	const source = `vars.d2-config: {animate-interval: 600ms; animate-duration: 400ms; pad: 4}
+style.fill: "#102030"
+portal: A {link: layers.inner}
+layers: {inner: {style.fill: "#304050"; b}}`
+	data, err := imageCLI(t, t.TempDir(), source, "--stdout-format=gif", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clip, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, to := color.RGBA{0x10, 0x20, 0x30, 255}, color.RGBA{0x30, 0x40, 0x50, 255}
+	var atStart, atEnd, blended bool
+	for _, im := range clip.Image {
+		got := color.RGBAModel.Convert(im.At(0, im.Rect.Max.Y-7)).(color.RGBA)
+		if got.G != got.R+16 || got.B != got.R+32 || got.R < from.R || got.R > to.R {
+			t.Fatalf("unexpected footer matte %v", got)
+		}
+		switch got {
+		case from:
+			atStart = true
+		case to:
+			atEnd = true
+		default:
+			blended = true
+		}
+	}
+	if !atStart || !atEnd || !blended {
+		t.Fatalf("missing linked-layer matte: start=%v end=%v blended=%v", atStart, atEnd, blended)
+	}
+}
+
+func TestGIFProgressFooterRespectsHeightLimit(t *testing.T) {
+	_, _, err := renderGIF(t.Context(), "-", false, simpleRasterDiagramWithSize(8, rasterMaxDimension-8), progressRenderOpts(), 1, false, gifLayerOptions{})
+	if err == nil || !strings.Contains(err.Error(), "height limit") {
+		t.Fatalf("expected height limit error for padded GIF, got %v", err)
 	}
 }
 
@@ -327,7 +421,8 @@ func TestGIFProgressReservesAccentOnFullGrayscalePalette(t *testing.T) {
 		im.Pix[i] = uint8(i)
 	}
 	p := gifProgressOverlay{ink: image.NewUniform(testProgressInk)}
-	p.start([]int{3})
+	p.start(gifRenderSummary{maxWidth: 256, maxHeight: 7, footerHeight: 10, delays: []int{3}, mattes: []color.RGBA{{255, 255, 255, 255}}}, nil)
+	im = p.extendSingleBoard(im)
 	if err := p.paint(t.Context(), im); err != nil {
 		t.Fatal(err)
 	}
