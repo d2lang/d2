@@ -138,7 +138,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG or GIF. A positive interval loops through all exported boards, including linked layers, and packages multiple boards into one SVG. GIF exports default to 1000ms. Also configurable through vars.d2-config.animate-interval.")
+	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG or GIF. A positive interval loops through all exported boards, including linked layers, and packages multiple boards into one SVG. A single-board GIF derives its default loop from the animation. Other GIFs default to 1000ms per board and allow time for icon departures. Also configurable through vars.d2-config.animate-interval.")
 	if err != nil {
 		return err
 	}
@@ -613,10 +613,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 			return nil, false, err
 		}
 	}
-	if ext == GIF && animateInterval == 0 {
-		animateInterval = 1000
-		ms.Log.Debug.Printf("GIF export: animate-interval not specified, defaulting to 1000ms")
-	}
 	appendixOption := rootDiagram.Config.ResolveForceAppendix(forceAppendixFlag)
 	forceAppendix := appendixOption != nil && *appendixOption
 	// The CLI's automatic scale sentinel must survive source option resolution.
@@ -641,7 +637,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		diagram.Steps = nil
 	}
 
-	if animateInterval > 0 {
+	if animateInterval > 0 || ext == GIF {
 		masterID, err := diagram.HashID(renderOpts.Salt)
 		if err != nil {
 			return nil, false, err

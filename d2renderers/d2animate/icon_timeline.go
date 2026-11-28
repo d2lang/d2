@@ -88,17 +88,11 @@ func iconStrokeWidths(board *d2target.Diagram) map[string]float64 {
 
 func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, continuing bool) *iconBoard {
 	var b *iconBoard
-	var widths map[string]float64
-	for i := range board.Connections {
+	for i, path := range board.ConnectionIconRoutes() {
 		e := &board.Connections[i]
-		if e.IconAnimation == nil {
-			continue
-		}
 		if b == nil {
 			b = &iconBoard{streams: make(map[string]*iconStream), duration: float64(max(intervalMS, board.ReadingMS(), board.TweenDurationMS)) / 1000}
-			widths = iconStrokeWidths(board)
 		}
-		path := e.IconMotionPath(widths[e.Src], widths[e.Dst])
 		s := &iconStream{path: path, period: path.LaunchPeriod(e.IconAnimation)}
 		prevID := e.ID
 		if e.IconAnimation.PreviousID != nil {

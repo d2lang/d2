@@ -36,6 +36,60 @@ func Timeline(root *d2target.Diagram, intervalMS int) ([]Frame, error) {
 // SVGTimeline also accounts for the travel time of linked-layer zooms when
 // rendering a selected subtree of the document.
 func SVGTimeline(root *d2target.Diagram, boardPath []string, intervalMS, zoomMS int) ([]Frame, error) {
+	plan, err := planSVGFrames(root, boardPath, intervalMS, zoomMS)
+	if err != nil {
+		return nil, err
+	}
+	if len(plan.boundaries) == 0 {
+		return plan.frames, nil
+	}
+	icons := newIconTimeline(root, intervalMS)
+	links := layerLinks(plan.nav, plan.frames, zoomMS)
+	var fixedLayers map[int]bool
+	if len(links) != 0 {
+		slots := layerSlots(plan.nav, plan.frames, links)
+		fixedLayers = make(map[int]bool)
+		for _, link := range links {
+			if len(link.legs) == 0 || slots[link.to].count == 1 {
+				fixedLayers[link.to] = true
+			}
+		}
+	}
+	total := plan.boundaries[len(plan.frames)]
+	for _, span := range plan.iconBoards {
+		if !icons.Active(span.board) {
+			continue
+		}
+		for i := span.start; i < span.end; i++ {
+			actual := plan.frames[i]
+			start := plan.boundaries[i]
+			actual.DurationMS = plan.boundaries[i+1] - start
+			plan.frames[i].picture = icons.scheduledPicture(span.board, actual, start, total, fixedLayers[i])
+		}
+	}
+	return plan.frames, nil
+}
+
+// ValidateSVGIconLoop checks an explicitly selected animation without creating
+// per-frame pictures. A single drawable SVG runs its icon clocks continuously.
+func ValidateSVGIconLoop(root *d2target.Diagram, boardPath []string, intervalMS, zoomMS int) error {
+	_, err := planSVGFrames(root, boardPath, intervalMS, zoomMS)
+	return err
+}
+
+type iconBoardSpan struct {
+	board      *d2target.Diagram
+	start, end int
+}
+
+type svgFramePlan struct {
+	frames     []Frame
+	iconBoards []iconBoardSpan
+	boundaries []int // millisecond offsets, including the end of the film
+	nav        *LayerNavigation
+}
+
+func planSVGFrames(root *d2target.Diagram, boardPath []string, intervalMS, zoomMS int) (*svgFramePlan, error) {
 	if zoomMS < 0 || zoomMS > d2target.MaxTweenDurationMS {
 		return nil, fmt.Errorf("invalid layer transition duration %dms", zoomMS)
 	}
@@ -45,19 +99,16 @@ func SVGTimeline(root *d2target.Diagram, boardPath []string, intervalMS, zoomMS 
 	if intervalMS <= 0 {
 		return nil, fmt.Errorf("animation interval must be positive")
 	}
-	icons := newIconTimeline(root, intervalMS)
-	// Direct single-board SVG uses its continuously looping native track.
-	standalone := len(root.Layers)+len(root.Scenarios)+len(root.Steps)+len(root.TweenFrames) == 0
-	var frames []Frame
-	var owners []*d2target.Diagram
+	var p svgFramePlan
 	var walk func(*d2target.Diagram)
 	walk = func(board *d2target.Diagram) {
 		if !board.IsFolderOnly {
-			start := len(frames)
-			frames = AppendBoardFrames(frames, board, intervalMS)
-			if icons != nil && !standalone {
-				for range len(frames) - start {
-					owners = append(owners, board)
+			start := len(p.frames)
+			p.frames = AppendBoardFrames(p.frames, board, intervalMS)
+			for i := range board.Connections {
+				if board.Connections[i].IconAnimation != nil {
+					p.iconBoards = append(p.iconBoards, iconBoardSpan{board, start, len(p.frames)})
+					break
 				}
 			}
 		}
@@ -68,50 +119,31 @@ func SVGTimeline(root *d2target.Diagram, boardPath []string, intervalMS, zoomMS 
 		}
 	}
 	walk(root)
-	if len(owners) != 0 {
-		nav := NewLayerNavigation(root, boardPath)
-		links := layerLinks(nav, frames, zoomMS)
-		var fixedLayers map[int]bool
-		if len(links) != 0 {
-			slots := layerSlots(nav, frames, links)
-			fixedLayers = make(map[int]bool)
-			for _, link := range links {
-				if len(link.legs) == 0 || slots[link.to].count == 1 {
-					fixedLayers[link.to] = true
-				}
-			}
+	if len(p.frames) < 2 || len(p.iconBoards) == 0 {
+		return &p, nil
+	}
+	p.nav = NewLayerNavigation(root, boardPath)
+	var zooms map[int][]frameLeg
+	if zoomMS > 0 && len(p.nav.focus) > 0 {
+		zooms = playbackZooms(p.nav, p.frames)
+	}
+	p.boundaries = make([]int, len(p.frames)+1)
+	for i, frame := range p.frames {
+		hold := frame.DurationMS
+		if zooms[i] != nil {
+			hold = max(hold, zoomMS)
 		}
-		var zooms map[int][]frameLeg
-		if zoomMS > 0 && len(nav.focus) > 0 {
-			zooms = playbackZooms(nav, frames)
+		if hold > math.MaxInt-p.boundaries[i] {
+			return nil, fmt.Errorf("animation duration exceeds the supported range")
 		}
-		hold := func(i int) int {
-			duration := frames[i].DurationMS
-			if zooms[i] != nil {
-				return max(duration, zoomMS)
-			}
-			return duration
-		}
-		total := 0
-		for i := range frames {
-			duration := hold(i)
-			if duration > math.MaxInt-total {
-				return nil, fmt.Errorf("animation duration exceeds the supported range")
-			}
-			total += duration
-		}
-		start := 0
-		for i, owner := range owners {
-			f := &frames[i]
-			if icons.Active(owner) {
-				actual := *f
-				actual.DurationMS = hold(i)
-				f.picture = icons.scheduledPicture(owner, actual, start, total, fixedLayers[i])
-			}
-			start += hold(i)
+		p.boundaries[i+1] = p.boundaries[i] + hold
+	}
+	for _, span := range p.iconBoards {
+		if err := d2target.ValidateIconLoopDuration(span.board, p.boundaries[len(p.frames)]); err != nil {
+			return nil, err
 		}
 	}
-	return frames, nil
+	return &p, nil
 }
 
 // AppendBoardFrames expands one validated, drawable board. Raster exporters

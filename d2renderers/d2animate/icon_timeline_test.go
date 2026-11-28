@@ -3,7 +3,9 @@ package d2animate
 import (
 	"bytes"
 	"math"
+	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
@@ -207,5 +209,61 @@ func TestPlainLinkToStoppedStream(t *testing.T) {
 	writeLayerIconClocks(&css, "test", links, layerSlots(nav, frames, links))
 	if !bytes.Contains(css.Bytes(), []byte("calc(var(--d2-click-time,0ms) + var(--d2-icon-delay,0s))")) {
 		t.Fatal("plain board links must start draining immediately")
+	}
+}
+
+func TestIconRateFitsCompleteSVGLoop(t *testing.T) {
+	root := iconTestBoard(.25)
+	if _, err := SVGTimeline(root, nil, 1000, 0); err != nil {
+		t.Fatalf("standalone SVG runs continuously: %v", err)
+	}
+	step := iconTestBoard(.25)
+	root.Steps = []*d2target.Diagram{step}
+	if _, err := SVGTimeline(root, nil, 1000, 0); err == nil || !strings.Contains(err.Error(), "at least 4s (got 2s)") {
+		t.Fatalf("expected the two-second film to reject a four-second period: %v", err)
+	}
+	if _, err := SVGTimeline(root, nil, 2000, 0); err != nil {
+		t.Fatalf("two short steps together make one full departure period: %v", err)
+	}
+	root.Steps = nil
+	root.Layers = []*d2target.Diagram{step}
+	step.Name = "detail"
+	root.Shapes[0].Link, step.Shapes[1].Link = "root.layers.detail", "root"
+	if err := ValidateSVGIconLoop(root, nil, 1000, 2000); err != nil {
+		t.Fatalf("linked-board camera holds extend the actual loop to four seconds: %v", err)
+	}
+}
+
+func TestIconLoopChecksOnlyVisibleNumericRates(t *testing.T) {
+	board := iconTestBoard(.25)
+	c := &board.Connections[0]
+	c.Opacity = 0
+	if err := d2target.ValidateIconLoopDuration(board, 100); err != nil {
+		t.Fatal(err)
+	}
+	c.Opacity = 1
+	for _, stroke := range []string{"transparent", "#ff000000"} {
+		c.Stroke = stroke
+		if err := d2target.ValidateIconLoopDuration(board, 100); err != nil {
+			t.Fatalf("invisible circle on %q: %v", stroke, err)
+		}
+	}
+	c.IconShape, c.Icon = "", &url.URL{Path: "envelope.svg"}
+	if err := d2target.ValidateIconLoopDuration(board, 100); err == nil {
+		t.Fatal("an image remains visible on a transparent wire")
+	}
+	c.Icon, c.IconShape, c.Stroke = nil, d2target.ShapeCircle, "#000"
+	c.IconAnimation.Rate = nil
+	if err := d2target.ValidateIconLoopDuration(board, 100); err != nil {
+		t.Fatalf("a single repeating icon has no authored departure rate: %v", err)
+	}
+	c.IconAnimation.Rate = new(0.)
+	if err := d2target.ValidateIconLoopDuration(board, 100); err != nil {
+		t.Fatalf("a stopped stream has no departures: %v", err)
+	}
+	c.IconAnimation.Rate = new(1000.)
+	c.Route = []*geo.Point{geo.NewPoint(0, 0), geo.NewPoint(230402, 0)}
+	if err := d2target.ValidateIconLoopDuration(board, 1000); err == nil {
+		t.Fatal("a crowded long route must use its effective departure period")
 	}
 }

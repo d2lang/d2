@@ -125,8 +125,14 @@ Use `true` for one icon repeating its trip. A step can set the rate to `0/s`
 to let the stream drain. The default icon is a filled circle in the wire's
 color. Set `icon` to an image path to use your own artwork.
 Choose what one icon represents for your diagram, for example a batch of 100
-requests. When more than 64 icons would be traveling on one connection at
-once, D2 shows a regularly spaced subset.
+requests. D2 caps the displayed rate so a steady stream has at most 64 icons in flight.
+On a wire with a two-second trip, `32/s` and higher rates all show 32
+departures per second.
+
+For a single-board GIF, omit `animate-interval` to let D2 derive the loop
+from the animation. A stream at `0.25/s` needs a four-second loop. If you
+specify an interval, the full exported loop must cover at least one departure
+period for each positive rate. Individual steps can be shorter.
 
 ```d2
 relay -> broker: OrderPlaced {

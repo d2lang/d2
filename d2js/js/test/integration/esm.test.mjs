@@ -69,3 +69,19 @@ test("renderSVG propagates compile and render errors and rejects ASCII output", 
     /ASCII/
   );
 });
+
+test("connection icon rates use the duration of the selected animation", async (t) => {
+  const d2 = new D2();
+  t.after(() => d2.dispose());
+  const source = "a -> b: {icon.style.animated: 0.25/s}\nsteps.next: {(a -> b)[0].label: next}";
+  const short = { target: "*", animateInterval: 1000 };
+  const enough = { target: "*", animateInterval: 2000 };
+  await assert.rejects(d2.compile(source, short), /0\.25\/s/);
+  await assert.rejects(d2.renderSVG(source, short), /0\.25\/s/);
+  const compiled = await d2.compile(source, enough);
+  await assert.rejects(d2.render(compiled.diagram, short), /0\.25\/s/);
+  assert.match(await d2.render(compiled.diagram, enough), /d2-moving-icons/);
+
+  const standalone = "a -> b: {icon.style.animated: 0.25/s}";
+  assert.match(await d2.renderSVG(standalone, short), /animateMotion/);
+});

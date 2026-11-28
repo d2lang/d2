@@ -167,10 +167,17 @@ tour for manual navigation.
 
 Give a connection a stream of icons with `icon.style.animated`. For example,
 `gateway -> canary: {icon.style.animated: 0.5/s}` sends one dot every two
-seconds. Higher rates put more dots on the wire at the same travel speed.
+seconds. Higher rates put more dots on the wire at the same travel speed,
+up to 64 icons in flight for a steady stream. On a wire that takes one second
+to cross, rates above `64/s` display as `64/s`.
 Set the rate to `0/s` in a later step to let the last dots arrive, or use
 `true` for one continuously looping icon. Supply an image with `icon` to send
 your own artwork. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
+
+A single-board GIF with `icon.style.animated: 0.25/s` automatically loops
+every four seconds. An explicit loop must last at least the time between
+departures on each active stream. For a diagram with steps, this requirement
+applies to the full loop across the exported boards.
 
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
 see each board and its timestamp in playback order, including intermediate frames

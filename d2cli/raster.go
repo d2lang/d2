@@ -409,7 +409,7 @@ type gifFrameRenderer func(context.Context, int, time.Duration, d2raster.FrameOp
 
 type gifFrameConsumer func(frameIndex int, frame image.Image) error
 
-type gifBoardPlanConsumer func(totalFrames int, bounds image.Rectangle) error
+type gifBoardPlanConsumer func(totalFrames, durationMS int, bounds image.Rectangle) error
 
 // renderGIFBoardFrames paints and consumes one frame at a time. The consumer
 // can quantize and release each full-color image before the next render begins.
@@ -481,9 +481,9 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	var incrementalBounds image.Rectangle
 	summary, err := renderGIFWithSession(
 		ctx, inputPath, cacheImages, diagram, opts, intervalMs, layers, session, &workspace, wantPreview,
-		func(totalFrames int, bounds image.Rectangle) error {
+		func(totalFrames, durationMS int, bounds image.Rectangle) error {
 			encoder, encoderErr := xgif.NewOpaquePalettedAnimationEncoder(
-				ctx, bounds.Dx(), bounds.Dy(), totalFrames, intervalMs, gifMaxEncodedBytes,
+				ctx, bounds.Dx(), bounds.Dy(), totalFrames, durationMS, gifMaxEncodedBytes,
 			)
 			if encoderErr != nil {
 				return encoderErr
@@ -703,6 +703,10 @@ func renderGIFWithSession(
 	if consume == nil {
 		return summary, fmt.Errorf("GIF frame consumer is nil")
 	}
+	automatic := intervalMs == 0
+	if automatic {
+		intervalMs = defaultGIFBoardMS
+	}
 	framesPerBoard, err := xgif.AnimationFrameCount(intervalMs)
 	if err != nil {
 		return summary, err
@@ -726,13 +730,34 @@ func renderGIFWithSession(
 	if err != nil {
 		return summary, err
 	}
+	steadyBoard := len(boards) == 1 && len(boards[0].TweenFrames) == 0
+	sampleGIFClock := steadyBoard && (automatic || slices.ContainsFunc(boards[0].Connections, func(c d2target.Connection) bool {
+		return c.IconAnimation != nil
+	}))
+	var minimumFilmSeconds float64
+	if automatic {
+		if steadyBoard {
+			intervalMs, err = automaticGIFLoopMS(boards[0])
+			if err != nil {
+				return summary, err
+			}
+		} else {
+			for _, board := range boards {
+				for edge, period := range board.ConnectionIconPeriods() {
+					if edge.IconAnimation.Rate != nil {
+						minimumFilmSeconds = max(minimumFilmSeconds, period)
+					}
+				}
+			}
+		}
+	}
 	var navigation *d2animate.LayerNavigation
 	if layers.duration > 0 {
 		navigation = d2animate.NewLayerNavigation(diagram, layers.boardPath)
 	}
 	viewports := gifViewports(diagram, boards)
 	var timeline []gifSegment
-	totalFrames, extraPaints := 0, 0
+	totalFrames, extraPaints, filmMS := 0, 0, 0
 	var boardFrames []d2animate.Frame
 	for i, board := range boards {
 		var previous *d2target.Diagram
@@ -751,6 +776,18 @@ func renderGIFWithSession(
 					segment.DurationMS = max(segment.DurationMS, layers.duration)
 				}
 			}
+			if i == len(boards)-1 && !segment.TweenSample && minimumFilmSeconds > 0 {
+				// Keep all preceding steps and camera transitions on their authored
+				// clocks. Only the final hold needs to cover any missing time.
+				missingMS := math.Ceil(math.Nextafter(minimumFilmSeconds, 0)*1000) - float64(filmMS)
+				if missingMS > float64(maxGIFLoopMS()) {
+					return summary, fmt.Errorf("GIF loop needs %g seconds for its slowest icon rate, exceeding the %d-frame limit; use SVG for continuous playback", minimumFilmSeconds, gifMaxFrames)
+				}
+				if missingMS > 0 {
+					segment.DurationMS = max(segment.DurationMS, int(missingMS))
+				}
+			}
+			filmMS += segment.DurationMS
 			delay := gifStepDelay(segment)
 			if delay == 0 {
 				continue
@@ -796,6 +833,11 @@ func renderGIFWithSession(
 			timeline = append(timeline, scheduled)
 			extraPaints += len(zoom)
 			totalFrames += count
+		}
+	}
+	for _, board := range boards {
+		if err := d2target.ValidateIconLoopDuration(board, filmMS); err != nil {
+			return summary, err
 		}
 	}
 	hasZoom := extraPaints > 0
@@ -887,6 +929,9 @@ func renderGIFWithSession(
 		summary.maxWidth = max(summary.maxWidth, canvas.Dx())
 		summary.maxHeight = max(summary.maxHeight, canvas.Dy())
 		if err := validateGIFNormalizedFootprint(summary.maxWidth, summary.maxHeight, totalFrames); err != nil {
+			if automatic && sampleGIFClock {
+				return fmt.Errorf("automatic %dms GIF loop: %w; reduce --scale or use SVG", intervalMs, err)
+			}
 			return fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
 		return nil
@@ -943,8 +988,8 @@ func renderGIFWithSession(
 		if needsPreview {
 			summary.previewSVG = sourceSVG
 		}
-		if plan != nil && len(boards) == 1 && len(boards[0].TweenFrames) == 0 {
-			if err := plan(totalFrames, plannedBounds); err != nil {
+		if plan != nil && steadyBoard {
+			if err := plan(totalFrames, segment.DurationMS, plannedBounds); err != nil {
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}
 		}
@@ -958,7 +1003,7 @@ func renderGIFWithSession(
 				if extraPaints > 0 {
 					frameOptions = gifFrameOptions(frameOptions.Time, totalFrames+extraPaints)
 				}
-				if segment.iconBoard != nil {
+				if sampleGIFClock || segment.iconBoard != nil {
 					// Use the encoded GIF delays for both the hold and the layer zoom.
 					frameOptions.Time = time.Duration(elapsedMS) * time.Millisecond
 					elapsedMS += 10 * summary.delays[renderedFrameCount]

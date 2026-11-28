@@ -115,14 +115,9 @@ func (p IconMotionPath) LaunchPeriod(animation *ConnectionIconAnimation) float64
 	if *animation.Rate <= 0 {
 		return math.Inf(1)
 	}
-	period := min(math.MaxFloat64, 1 / *animation.Rate)
-	// For an overcrowded route, draw every nth launch on the original clock.
-	stride := math.Max(1, math.Ceil(transit/(period*MaxMovingIconsPerConnection)))
-	if math.IsInf(stride, 1) {
-		// Adjacent integral strides are indistinguishable at this magnitude.
-		return transit / MaxMovingIconsPerConnection
-	}
-	return stride * period
+	// Hold the stream at capacity once its requested departures would put
+	// more than the maximum number of icons on the wire at the same time.
+	return max(min(math.MaxFloat64, 1 / *animation.Rate), transit/MaxMovingIconsPerConnection)
 }
 
 // ConnectionIconSchedule describes a fixed picture on a repeating multiboard
