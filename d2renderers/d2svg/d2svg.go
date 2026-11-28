@@ -97,7 +97,9 @@ type RenderOpts struct {
 	DarkThemeID        *int64
 	ThemeOverrides     *d2target.ThemeOverrides
 	DarkThemeOverrides *d2target.ThemeOverrides
-	Font               string
+	// AnimateProgress draws an elapsed-time line on animated exports.
+	AnimateProgress *bool
+	Font            string
 	// the svg will be scaled by this factor, if unset the svg will fit to screen
 	Scale *float64
 

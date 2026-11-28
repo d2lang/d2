@@ -348,7 +348,7 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		}
 	}
 
-	renderOpts := &d2svg.RenderOpts{}
+	renderOpts := &d2svg.RenderOpts{AnimateProgress: input.Opts.AnimateProgress}
 	if input.Opts != nil && input.Opts.Sketch != nil {
 		renderOpts.Sketch = input.Opts.Sketch
 	}
@@ -401,6 +401,7 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 			ForceAppendix:      diagram.Config.ResolveForceAppendix(input.Opts.ForceAppendix),
 			Target:             input.Opts.Target,
 			AnimateInterval:    diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval),
+			AnimateProgress:    renderOpts.AnimateProgress,
 			Salt:               input.Opts.Salt,
 			NoXMLTag:           input.Opts.NoXMLTag,
 			ASCII:              input.Opts.ASCII,
@@ -564,6 +565,7 @@ func render(input RenderRequest) ([]byte, error) {
 	}
 
 	renderOpts := &d2svg.RenderOpts{
+		AnimateProgress:    go2.Pointer(input.Diagram.Config.ResolveAnimateProgress(input.Opts.AnimateProgress)),
 		Scale:              scale,
 		Salt:               input.Opts.Salt,
 		Sketch:             input.Opts.Sketch,

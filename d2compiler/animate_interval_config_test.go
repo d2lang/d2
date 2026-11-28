@@ -41,3 +41,31 @@ func TestAnimateIntervalConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestAnimateProgressConfig(t *testing.T) {
+	const source = `vars: {show: true; d2-config: {animate-progress: ${show}}}
+a
+steps: {next: {b}}`
+	_, config, err := d2compiler.Compile("progress.d2", strings.NewReader(source), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.ResolveAnimateProgress(nil) {
+		t.Fatal("progress should be enabled by the source")
+	}
+
+	for _, tc := range []struct {
+		source, diagnostic string
+	}{
+		{"vars.d2-config.animate-progress: sometimes", "expected a boolean"},
+		{"vars.d2-config.animate-progress: true {extra: 1}", "expected a boolean"},
+		{"vars.d2-config.animate-progress: [true]", "needs a value"},
+		{"layers: {sub: {vars.d2-config.animate-progress: true}}", "root vars.d2-config"},
+		{source + "\nsteps.next.vars.d2-config.animate-progress: false", "root vars.d2-config"},
+	} {
+		_, _, err := d2compiler.Compile("invalid.d2", strings.NewReader(tc.source), nil)
+		if err == nil || !strings.Contains(err.Error(), tc.diagnostic) || !strings.Contains(err.Error(), "animate-progress") {
+			t.Errorf("%s: expected %q diagnostic for animate-progress, got %v", tc.source, tc.diagnostic, err)
+		}
+	}
+}

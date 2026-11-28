@@ -1067,6 +1067,10 @@ func quantizeImageThroughGIF(ctx context.Context, img image.Image) (*image.Palet
 // buffer. Otherwise the returned frame owns its pixel buffer and palette.
 // Callers must impose appropriate canvas and aggregate pixel limits.
 func NormalizePalettedImage(ctx context.Context, img *image.Paletted, width, height int) (*image.Paletted, error) {
+	return normalizePalettedImage(ctx, img, width, height, nil)
+}
+
+func normalizePalettedImage(ctx context.Context, img *image.Paletted, width, height int, offset *image.Point) (*image.Paletted, error) {
 	ctx = nonNilContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1087,6 +1091,14 @@ func NormalizePalettedImage(ctx context.Context, img *image.Paletted, width, hei
 	if width >= 1<<16 || height >= 1<<16 {
 		return nil, fmt.Errorf("GIF canvas dimensions must be smaller than 65536")
 	}
+	top := (height - bounds.Dy()) / 2
+	left := (width - bounds.Dx()) / 2
+	if offset != nil {
+		left, top = offset.X, offset.Y
+		if left < 0 || top < 0 || left > width-bounds.Dx() || top > height-bounds.Dy() {
+			return nil, fmt.Errorf("GIF image at offset %v falls outside the %dx%d canvas", *offset, width, height)
+		}
+	}
 	if bounds.Min == (image.Point{}) && bounds.Dx() == width && bounds.Dy() == height {
 		img.Palette, _ = paletteWithBackground(img.Palette)
 		return img, nil
@@ -1094,8 +1106,6 @@ func NormalizePalettedImage(ctx context.Context, img *image.Paletted, width, hei
 
 	palette, backgroundIndex := ownedPaletteWithBackground(img.Palette)
 	frame := image.NewPaletted(image.Rect(0, 0, width, height), palette)
-	top := (height - bounds.Dy()) / 2
-	left := (width - bounds.Dx()) / 2
 	sourcePixels := bounds.Dx() * bounds.Dy()
 	sourceOnCanvas := image.Rect(left, top, left+bounds.Dx(), top+bounds.Dy())
 	// Margin-only filling saves writes for large frames. Restrict it to wide

@@ -193,6 +193,7 @@ container.child -> outside
   test("animated multi-board works", async () => {
     const d2 = new D2();
     const source = `
+  vars.d2-config.animate-progress: true
   x -> y
   layers: {
     numbers: {
@@ -205,6 +206,10 @@ container.child -> outside
     const svg = await d2.render(result.diagram, result.renderOptions);
     expect(svg).toContain("<svg");
     expect(svg).toContain("</svg>");
+    expect(result.renderOptions.animateProgress).toBe(true);
+    expect(svg).toContain('class="d2-progress-');
+    const disabled = await d2.render(result.diagram, { ...result.renderOptions, animateProgress: false });
+    expect(disabled).not.toContain("d2-progress-");
     await d2.dispose();
   }, 20000);
 

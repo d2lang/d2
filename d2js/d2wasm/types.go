@@ -50,6 +50,7 @@ type RenderOptions struct {
 	ForceAppendix      *bool                    `json:"forceAppendix"`
 	Target             *string                  `json:"target"`
 	AnimateInterval    *int64                   `json:"animateInterval"`
+	AnimateProgress    *bool                    `json:"animateProgress"`
 	Salt               *string                  `json:"salt"`
 	NoXMLTag           *bool                    `json:"noXMLTag"`
 	ASCII              *bool                    `json:"ascii"`

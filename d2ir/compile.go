@@ -519,16 +519,19 @@ func (c *compiler) validateConfigs(configs *Field) {
 			val = f.Primary().Value.ScalarString()
 		}
 
-		switch f.Name.ScalarString() {
-		case "animate-duration":
+		name := f.Name.ScalarString()
+		if name == "animate-progress" || name == "animate-duration" {
 			board := ParentMap(ParentMap(configs))
 			if !board.Root() {
 				global := RootMap(board).getFieldIndexed(d2ast.FlatUnquotedString("vars"), configs.Name, f.Name)
 				if global == nil || global.LastRef().AST() != f.LastRef().AST() {
-					c.errorf(f.LastRef().AST(), `"animate-duration" can only be set in the diagram's root vars.d2-config`)
+					c.errorf(f.LastRef().AST(), `"%s" can only be set in the diagram's root vars.d2-config`, name)
 					continue
 				}
 			}
+		}
+		switch name {
+		case "animate-duration":
 			if duration, ok := ParseAnimateInterval(val); !ok || duration > d2target.MaxTweenDurationMS || f.Composite != nil {
 				c.errorf(f.LastRef().AST(), `expected "animate-duration" between 0ms and 10m in whole milliseconds, got %q`, val)
 			}
@@ -541,9 +544,9 @@ func (c *compiler) validateConfigs(configs *Field) {
 			if err != nil || math.IsNaN(scale) || math.IsInf(scale, 0) || (scale <= 0 && scale != -1) || f.Composite != nil {
 				c.errorf(f.LastRef().AST(), `expected a finite positive scale or -1 for automatic sizing, got %q`, val)
 			}
-		case "sketch", "center", "force-appendix":
+		case "sketch", "center", "force-appendix", "animate-progress":
 			_, err := strconv.ParseBool(val)
-			if err != nil || (f.Name.ScalarString() == "force-appendix" && f.Composite != nil) {
+			if err != nil || ((name == "force-appendix" || name == "animate-progress") && f.Composite != nil) {
 				c.errorf(f.LastRef().AST(), `expected a boolean for "%s", got "%s"`, f.Name.ScalarString(), val)
 				continue
 			}

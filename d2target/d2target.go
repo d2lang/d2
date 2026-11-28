@@ -46,6 +46,7 @@ const (
 var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
+	AnimateProgress    *bool           `json:"animateProgress,omitempty"`
 	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
 	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds for step transitions and linked layer zooms.
 	Scale              *float64        `json:"scale,omitempty"`
@@ -70,6 +71,14 @@ func (c *Config) ResolveAnimateInterval(override *int64) *int64 {
 		return override
 	}
 	return c.AnimateInterval
+}
+
+// ResolveAnimateProgress gives an explicit render setting precedence over the source.
+func (c *Config) ResolveAnimateProgress(override *bool) bool {
+	if override != nil {
+		return *override
+	}
+	return c != nil && c.AnimateProgress != nil && *c.AnimateProgress
 }
 
 // ResolveForceAppendix preserves an explicit false when the source enables footnotes.

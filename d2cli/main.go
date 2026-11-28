@@ -146,6 +146,10 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
+	animateProgressFlag, err := ms.Opts.Bool("D2_ANIMATE_PROGRESS", "animate-progress", "", false, "show playback progress along the bottom of animated SVG, GIF, and MP4 exports. Also configurable through vars.d2-config.animate-progress.")
+	if err != nil {
+		return err
+	}
 	videoDuration := ms.Opts.Flags.Duration("video-duration", 0, "total MP4 playback duration (e.g. 10s or 250ms). By default a video plays the board sequence once. A shorter duration cuts it, and a longer duration repeats it.")
 	videoSizeFlag := ms.Opts.Flags.String("video-size", "", "MP4 canvas in pixels, e.g. 1920x1080. Fits and centers the diagram at this resolution.")
 	videoQualityFlag := ms.Opts.Flags.String("video-quality", "high", "MP4 encoding quality: low, medium, high, or best.")
@@ -393,6 +397,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if !ms.Opts.Flags.Changed("animate-duration") && ms.Env.Getenv("D2_ANIMATE_DURATION") == "" {
 		animateDurationFlag = nil
 	}
+	if !ms.Opts.Flags.Changed("animate-progress") && ms.Env.Getenv("D2_ANIMATE_PROGRESS") == "" {
+		animateProgressFlag = nil
+	}
 	if !ms.Opts.Flags.Changed("force-appendix") && ms.Env.Getenv("D2_FORCE_APPENDIX") == "" {
 		forceAppendixFlag = nil
 	}
@@ -437,15 +444,16 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		}
 	}
 	renderOpts := d2svg.RenderOpts{
-		Pad:         padFlag,
-		Sketch:      sketchFlag,
-		Center:      centerFlag,
-		ThemeID:     themeFlag,
-		DarkThemeID: darkThemeFlag,
-		Scale:       scaleFlag,
-		NoXMLTag:    noXMLTagFlag,
-		Salt:        saltFlag,
-		OmitVersion: omitVersionFlag,
+		AnimateProgress: animateProgressFlag,
+		Pad:             padFlag,
+		Sketch:          sketchFlag,
+		Center:          centerFlag,
+		ThemeID:         themeFlag,
+		DarkThemeID:     darkThemeFlag,
+		Scale:           scaleFlag,
+		NoXMLTag:        noXMLTagFlag,
+		Salt:            saltFlag,
+		OmitVersion:     omitVersionFlag,
 	}
 
 	timeout := time.Duration(*timeoutFlag) * time.Second

@@ -226,6 +226,7 @@ All [RenderOptions](#renderoptions) properties in addition to:
 - `forceAppendix`: Adds a numbered SVG appendix for tooltips and links (default `false`). An explicit option overrides `vars.d2-config.force-appendix`, including `false`.
 - `target`: Target board/s to render. If target ends with '*', it will be rendered with all of its scenarios, steps, and layers. Otherwise, only the target board will be rendered. E.g. `target: 'layers.x.*'` to render layer 'x' with all of its children. Pass '*' to render all scenarios, steps, and layers. By default, only the root board is rendered. Multi-board SVG requires a positive animation interval.
 - `animateInterval`: Minimum milliseconds per board in a multiboard SVG. A positive interval loops through all exported boards, including linked layers. Defaults to the diagram’s `vars.d2-config.animate-interval` setting. An explicit option overrides the source setting, including `0` to disable animation.
+- `animateProgress`: Show a thin elapsed-time line at the bottom of an animated SVG. Defaults to the diagram’s `vars.d2-config.animate-progress` setting, or `false`.
 - `salt`: Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output.
 - `noXMLTag`: Omit XML tag `(<?xml ...?>)` from output SVG files. Useful when generating SVGs for direct HTML embedding.
 

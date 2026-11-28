@@ -187,6 +187,15 @@ The duration defaults to zero, which disables interpolation, and accepts values 
 The flag takes precedence over D2_ANIMATE_DURATION, which takes precedence over the file.
 Static exports show the authored values.
 .Ns .
+.It Fl -animate-progress
+Show elapsed playback time as a thin line at the bottom of an animated SVG, GIF, or MP4.
+The line uses the theme's B1 color and stays fixed during camera moves.
+It is disabled by default.
+Set the default with
+.Ev D2_ANIMATE_PROGRESS
+or
+.Li vars.d2-config.animate-progress .
+The flag takes precedence over the environment, which takes precedence over the file.
 .It Fl -video-duration Ar duration
 Set the total length of an MP4 export, for example
 .Li --video-duration=10s .

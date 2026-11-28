@@ -74,6 +74,8 @@ export interface RenderOptions {
   target?: string;
   /** Minimum milliseconds per board in a multiboard SVG. A positive interval loops through all exported boards, including linked layers. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
   animateInterval?: number;
+  /** Show a thin elapsed-time line at the bottom of an animated SVG. Defaults to the diagram's animate-progress setting, or false. */
+  animateProgress?: boolean;
   /** Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output. */
   salt?: string;
   /** Omit XML tag (<?xml ...?>) from output SVG files. Useful when generating SVGs for direct HTML embedding. */

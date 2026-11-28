@@ -262,6 +262,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	options.MaxPixels = videoMaxFramePixels
 	buildLimits := sceneOptionsForFrame(gifFrameOptions(0, buildDivisor))
 	buildLimits.omitAppendix = !forceAppendix
+	overlay := videoProgressOverlay{ink: animationProgressInk(opts)}
 	opts = rasterRenderOptions(opts)
 	authoredScale := *opts.Scale
 	opts.Scale = nil // First measure vector scenes in their authored coordinate system.
@@ -300,6 +301,23 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	if err != nil {
 		return err
 	}
+	if overlay.ink != nil {
+		// A static scene still gets only one paint. Its moving overlay may
+		// require additional coded samples, which share the output budget.
+		work.samples = 0
+		for tick := 0; tick < p.frames; {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			_, _, repeat, _, _ := p.sample(tick)
+			for stop := tick + repeat; tick < stop; {
+				_, run := videoProgressRun(tick, p.frames, output.Dx())
+				run = min(run, stop-tick)
+				work.samples += min(run, 2)
+				tick += run
+			}
+		}
+	}
 	if err := work.checkPixels(output); err != nil {
 		return err
 	}
@@ -317,17 +335,17 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	// remains when placing it on the shared canvas or inside the letterbox.
 	margin := image.Pt((output.Dx()-canvas.Dx())/2, (output.Dy()-canvas.Dy())/2)
 	var letterboxed *image.RGBA
-	present := func(frame image.Image, origin image.Point, matte color.Color, repeat int) error {
+	present := func(frame draw.Image, origin image.Point, matte color.Color, start, repeat int) error {
 		origin = origin.Add(margin)
 		if origin == (image.Point{}) && frame.Bounds() == output {
-			return emit(frame, repeat)
+			return overlay.emit(ctx, frame, start, repeat, p.frames, emit)
 		}
 		if letterboxed == nil {
 			letterboxed = image.NewRGBA(output)
 		}
 		draw.Draw(letterboxed, output, image.NewUniform(matte), image.Point{}, draw.Src)
 		draw.Draw(letterboxed, frame.Bounds().Add(origin), frame, frame.Bounds().Min, draw.Src)
-		return emit(letterboxed, repeat)
+		return overlay.emit(ctx, letterboxed, start, repeat, p.frames, emit)
 	}
 	var padded *image.RGBA
 	var workspace d2raster.RenderWorkspace
@@ -368,7 +386,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 			if err := camera.renderInto(ctx, session, &workspace, cameraOptions, progress, 0, padded); err != nil {
 				return err
 			}
-			if err := present(padded, image.Point{}, cameraOptions.Background, repeat); err != nil {
+			if err := present(padded, image.Point{}, cameraOptions.Background, i, repeat); err != nil {
 				return err
 			}
 		} else {
@@ -378,7 +396,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 				return err
 			}
 			err = workspace.Render(ctx, session, doc, options, func(frame *image.NRGBA) error {
-				return present(frame, p.segments[index].offset(canvas), p.segments[index].matte, repeat)
+				return present(frame, p.segments[index].offset(canvas), p.segments[index].matte, i, repeat)
 			})
 			if err != nil {
 				return err

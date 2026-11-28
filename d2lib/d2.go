@@ -360,6 +360,9 @@ func applyConfigs(config *d2target.Config, compileOpts *CompileOptions, renderOp
 	if renderOpts.Sketch == nil {
 		renderOpts.Sketch = config.Sketch
 	}
+	if renderOpts.AnimateProgress == nil {
+		renderOpts.AnimateProgress = config.AnimateProgress
+	}
 	if renderOpts.Pad == nil {
 		renderOpts.Pad = config.Pad
 	}

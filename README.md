@@ -183,6 +183,12 @@ and `--scale`. The quality options are `low`, `medium`, `high` (default), and
 a continuously animated board or to trim or repeat a tour. Durations round up
 to the next 1/30 second.
 
+Set `vars.d2-config.animate-progress: true` or pass `--animate-progress` to
+draw a thin line along the bottom of an animated SVG, GIF, or MP4. The line
+fills from left to right over the playback time, including holds, and stays
+fixed during camera moves. It uses the theme's B1 color. The default is off.
+Enabling it can increase raster export time and file size during long holds.
+
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
 see each board and its timestamp in playback order, including intermediate frames
 from animated transitions. Panels share the animated SVG’s coordinate system, so

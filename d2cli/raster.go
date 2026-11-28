@@ -409,7 +409,7 @@ type gifFrameRenderer func(context.Context, int, time.Duration, d2raster.FrameOp
 
 type gifFrameConsumer func(frameIndex int, frame image.Image) error
 
-type gifBoardPlanConsumer func(totalFrames int, bounds image.Rectangle) error
+type gifBoardPlanConsumer func(delays []int, intervalMS int, bounds image.Rectangle) error
 
 // renderGIFBoardFrames paints and consumes one frame at a time. The consumer
 // can quantize and release each full-color image before the next render begins.
@@ -479,11 +479,17 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	palettedFrames := make([]*image.Paletted, 0)
 	var incrementalEncoder *xgif.OpaquePalettedAnimationEncoder
 	var incrementalBounds image.Rectangle
+	progress := gifProgressOverlay{ink: animationProgressInk(opts)}
 	summary, err := renderGIFWithSession(
 		ctx, inputPath, cacheImages, diagram, opts, intervalMs, layers, session, &workspace, wantPreview,
-		func(totalFrames int, bounds image.Rectangle) error {
+		func(delays []int, boardMS int, bounds image.Rectangle) error {
+			if progress.ink == nil {
+				boardMS = intervalMs
+			} else {
+				progress.start(delays)
+			}
 			encoder, encoderErr := xgif.NewOpaquePalettedAnimationEncoder(
-				ctx, bounds.Dx(), bounds.Dy(), totalFrames, intervalMs, gifMaxEncodedBytes,
+				ctx, bounds.Dx(), bounds.Dy(), len(delays), boardMS, gifMaxEncodedBytes,
 			)
 			if encoderErr != nil {
 				return encoderErr
@@ -500,6 +506,9 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 					if normalizeErr != nil {
 						consumeErr = fmt.Errorf("GIF frame %d normalization: %w", frameIndex, normalizeErr)
 						return consumeErr
+					}
+					if err := progress.paint(ctx, normalized); err != nil {
+						return err
 					}
 					if encodeErr := incrementalEncoder.WriteFrame(normalized); encodeErr != nil {
 						consumeErr = fmt.Errorf("GIF frame %d encoding: %w", frameIndex, encodeErr)
@@ -536,8 +545,13 @@ func renderGIF(ctx context.Context, inputPath string, cacheImages bool, diagram 
 	if len(palettedFrames) != summary.totalFrames {
 		return nil, nil, fmt.Errorf("GIF encoded frame count %d differs from render schedule %d", len(palettedFrames), summary.totalFrames)
 	}
-	encoded, err = xgif.AnimateTimedOpaquePalettedImages(
-		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, summary.offsets, summary.delays, gifMaxEncodedBytes,
+	var paint func(context.Context, *image.Paletted) error
+	if progress.ink != nil {
+		progress.start(summary.delays)
+		paint = progress.paint
+	}
+	encoded, err = xgif.AnimateTimedOpaquePalettedImagesWithOverlay(
+		ctx, palettedFrames, summary.maxWidth, summary.maxHeight, summary.offsets, summary.delays, gifMaxEncodedBytes, paint,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -750,6 +764,11 @@ func renderGIFWithSession(
 				continue
 			}
 			count := 1
+			if segment.TweenSample && opts.AnimateProgress != nil && *opts.AnimateProgress {
+				// Sparse tween samples can hold for seconds. Follow elapsed time
+				// within that pose without introducing sub-20ms GIF frames.
+				count = max(1, delay/3)
+			}
 			if !segment.TweenSample {
 				count, err = xgif.AnimationFrameCount(segment.DurationMS)
 				if err != nil {
@@ -913,7 +932,7 @@ func renderGIFWithSession(
 			summary.previewSVG = sourceSVG
 		}
 		if plan != nil && len(boards) == 1 && len(boards[0].TweenFrames) == 0 {
-			if err := plan(totalFrames, plannedBounds); err != nil {
+			if err := plan(summary.delays, segment.DurationMS, plannedBounds); err != nil {
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}
 		}

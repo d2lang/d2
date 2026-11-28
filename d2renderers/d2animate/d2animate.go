@@ -218,6 +218,10 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if zoomMS > 0 && len(links) > 0 {
 		writeClickZooms(&transitions, links, diagramHash, viewport, offsets)
 	}
+	progress := rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress) && totalMS > 0 && width > 0 && height > 0
+	if progress {
+		writeProgressStyles(&transitions, diagramHash, renderOpts, len(links) > 0)
+	}
 	if err := d2svg.WriteAnimationStylesWithTransitions(buf, diagramHash, svgsStr, rootDiagram, renderOpts, transitions.Bytes()); err != nil {
 		return nil, err
 	}
@@ -265,6 +269,12 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 			buf.WriteString(styleSuffix)
 			buf.Write(after)
 		}
+	}
+	if progress {
+		// The line is in the common viewport, outside the moving camera.
+		h := min(2, height)
+		fmt.Fprintf(buf, `<rect class="d2-progress-%s" x="%d" y="%d" width="0" height="%d" pointer-events="none" aria-hidden="true" style="animation:d2Progress-%s %dms linear infinite"/>`,
+			diagramHash, left, viewport.Max.Y-h, h, diagramHash, totalMS)
 	}
 	buf.WriteString("</svg></svg>")
 
