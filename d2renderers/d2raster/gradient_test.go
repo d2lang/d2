@@ -171,8 +171,8 @@ func TestSpreadMethodsCoverPositiveAndNegativePeriods(t *testing.T) {
 		value  float64
 		want   float64
 	}{
-		{d2scene.SpreadPad, -2.25, 0},
-		{d2scene.SpreadPad, 1.25, 1},
+		{d2scene.SpreadPad, -2.25, -2.25},
+		{d2scene.SpreadPad, 1.25, 1.25},
 		{d2scene.SpreadRepeat, -2.25, .75},
 		{d2scene.SpreadRepeat, 2.25, .25},
 		{d2scene.SpreadRepeat, 1, 0},
@@ -622,6 +622,21 @@ func TestLinearGradientSpreadRendering(t *testing.T) {
 			assertSampleNear(t, paint, test.x, 0, test.want, 1)
 		})
 	}
+}
+
+func TestPaddedGradientWithCoincidentInitialStops(t *testing.T) {
+	red, blue := gradientStops[0].Color, gradientStops[1].Color
+	paint, err := prepareLinearGradient(d2scene.LinearGradient{
+		Start: d2scene.Point{}, End: d2scene.Point{X: 10},
+		Stops: []d2scene.GradientStop{{Offset: 0, Color: red}, {Offset: 0, Color: blue}},
+		Units: d2scene.UserSpaceOnUse, Transform: d2scene.Identity(), Spread: d2scene.SpreadPad,
+	}, d2scene.Box{Width: 1, Height: 1}, d2scene.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSampleNear(t, paint, -1, 0, red, 0)
+	assertSampleNear(t, paint, 0, 0, blue, 0)
+	assertSampleNear(t, paint, 11, 0, blue, 0)
 }
 
 func TestGradientInterpolationIsUnpremultipliedAndCompositesAlpha(t *testing.T) {
