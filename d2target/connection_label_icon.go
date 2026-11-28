@@ -11,7 +11,7 @@ import (
 	"github.com/d2lang/d2/lib/xsort"
 )
 
-const connectionCircleSize = 10
+const connectionIconShapeSize = 10
 
 // MovingIconFootprint describes the artwork that a primary caption must clear.
 // A stopped stream keeps its footprint while its last icons finish traveling.
@@ -21,6 +21,7 @@ const (
 	noMovingIcon MovingIconFootprint = iota
 	movingCircle
 	movingImage
+	movingPolygon
 )
 
 func (c *Connection) MovingIconFootprint() MovingIconFootprint {
@@ -29,6 +30,9 @@ func (c *Connection) MovingIconFootprint() MovingIconFootprint {
 	}
 	if c.Icon != nil {
 		return movingImage
+	}
+	if c.IconShape != "" && c.IconShape != ShapeCircle {
+		return movingPolygon
 	}
 	return movingCircle
 }
@@ -52,11 +56,16 @@ func (icon MovingIconFootprint) LabelTopLeft(c *Connection, pos label.Position, 
 	// mask extends two units past either end of the measured caption.
 	cx, cy := topLeft.X+width/2, topLeft.Y+height/2
 	extent := func(x, y float64) float64 {
-		radius := float64(connectionCircleSize) / 2
-		if icon == movingImage {
-			radius = float64(DEFAULT_ICON_SIZE) / 2 * (math.Abs(x) + math.Abs(y))
+		x, y = math.Abs(x), math.Abs(y)
+		radius := float64(connectionIconShapeSize) / 2
+		switch icon {
+		case movingPolygon:
+			// All native polygons stay upright inside the same square.
+			radius *= x + y
+		case movingImage:
+			radius = float64(DEFAULT_ICON_SIZE) / 2 * (x + y)
 		}
-		return (width/2+2)*math.Abs(x) + height/2*math.Abs(y) + max(radius, c.RenderedStrokeWidth()/2) + label.PADDING
+		return (width/2+2)*x + height/2*y + max(radius, c.RenderedStrokeWidth()/2) + label.PADDING
 	}
 	normalGap := extent(nx, ny) - ((cx-a.X)*nx + (cy-a.Y)*ny)
 	if normalGap > 0 {

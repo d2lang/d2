@@ -408,6 +408,15 @@ func benchmarkStyleOnlyBoards(nodes, scenarios, steps int) string {
 
 func TestLayoutReuseIncludesConnectionIconFootprint(t *testing.T) {
 	input := `a -> b: caption { icon.style.animated: 1/s }
+scenarios: {
+  packets: {
+    (a -> b)[0].icon.shape: square
+    steps: {
+      change: { (a -> b)[0].icon.shape: triangle }
+      change-again: { (a -> b)[0].icon.shape: diamond }
+    }
+  }
+}
 steps: {
   resize: { (a -> b)[0].icon: art.svg }
   faster: { (a -> b)[0].icon.style.animated: 10/s }
@@ -416,8 +425,8 @@ steps: {
 }`
 	optimized, calls := compileForLayoutReuseTest(t, input, true)
 	baseline, _ := compileForLayoutReuseTest(t, input, false)
-	if calls != 3 {
-		t.Fatalf("got %d layouts for dot, moving image and stationary image, want 3", calls)
+	if calls != 4 {
+		t.Fatalf("got %d layouts for dot, moving polygon, moving image and stationary image, want 4", calls)
 	}
 	assertExactDiagramAndSVG(t, optimized, baseline)
 }

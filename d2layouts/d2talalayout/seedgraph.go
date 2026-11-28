@@ -51,7 +51,7 @@ func hasPlainTextLoop(graph *d2graph.Graph) bool {
 		return false
 	}
 	return e.Src == obj && e.Dst == obj && e.SrcArrow != e.DstArrow && e.SrcArrowhead == nil && e.DstArrowhead == nil &&
-		len(e.Classes) == 0 && e.Label.Value == "" && e.Tooltip == nil && e.Link == nil && e.Icon == nil && e.Style == (d2graph.Style{})
+		len(e.Classes) == 0 && e.Label.Value == "" && e.Tooltip == nil && e.Link == nil && !e.HasIcon() && e.Style == (d2graph.Style{})
 }
 
 // runSeed runs one TALA variation in a new workspace. Input remains unchanged

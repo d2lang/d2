@@ -31,31 +31,32 @@ func TestOutsideConnectionLabelClearsTravelingIcon(t *testing.T) {
 			static := c.GetLabelTopLeft()
 			c.IconAnimation = &ConnectionIconAnimation{}
 			dot := c.GetLabelTopLeft()
-			for _, image := range []bool{false, true} {
-				if image {
+			path := c.IconMotionPath(2, 2)
+			for _, shape := range []string{ShapeCircle, ShapeSquare, ConnectionIconTriangle, ShapeDiamond, ""} {
+				c.IconShape = shape
+				if shape == "" {
 					c.Icon = &url.URL{Path: "art.svg"}
 				}
 				topLeft := c.GetLabelTopLeft()
-				if image && (dot.Equals(topLeft) || static.Equals(topLeft)) {
+				if shape == "" && (dot.Equals(topLeft) || static.Equals(topLeft)) {
 					t.Fatalf("artwork, dot and ordinary caption should reserve different footprints: %v %v %v", topLeft, dot, static)
 				}
 				// Match both renderers' rounded text mask, including its side padding.
 				left, top := math.Round(topLeft.X)-2, math.Round(topLeft.Y)
 				right, bottom := left+float64(c.LabelWidth)+4, top+float64(c.LabelHeight)
-				path := c.IconMotionPath(2, 2)
 				for distance := 0.; distance <= path.Length(); distance += .2 {
 					p := path.PointAt(distance)
 					dx := max(left-p.X, p.X-right, 0.)
 					dy := max(top-p.Y, p.Y-bottom, 0.)
 					gap := math.Hypot(dx, dy)
-					if image {
+					if shape != ShapeCircle {
 						gap = max(dx, dy)
 					}
 					if gap < float64(c.IconSize())/2+3 {
-						t.Fatalf("icon overlaps the caption clearance at %v (distance %g, mask %.1f %.1f %.1f %.1f)", p, gap, left, top, right, bottom)
+						t.Fatalf("icon %q overlaps the caption clearance at %v (distance %g, mask %.1f %.1f %.1f %.1f)", shape, p, gap, left, top, right, bottom)
 					}
 				}
-				if image && tc.name == "study elbow" && (topLeft.Y < 180 || topLeft.X > 440) {
+				if shape == "" && tc.name == "study elbow" && (topLeft.Y < 180 || topLeft.X > 440) {
 					t.Fatalf("the caption should slide just beyond the elbow, got %v", topLeft)
 				}
 			}
@@ -70,10 +71,20 @@ func TestOutsideConnectionLabelClearsTravelingIcon(t *testing.T) {
 func TestConnectionLabelRetainsInlineStaticAndAnchoredPositions(t *testing.T) {
 	c := BaseConnection()
 	c.Route = geo.Route{{X: 0, Y: 0}, {X: 200, Y: 0}}
-	c.LabelWidth, c.LabelHeight = 80, 20
+	c.Label, c.LabelWidth, c.LabelHeight = "caption", 80, 20
 	c.LabelPosition = label.UnlockedTop.String()
 	c.LabelPercentage = .5
 	want := c.GetLabelTopLeft()
+	for _, shape := range ConnectionIconShapes {
+		c.IconShape = shape
+		icon := c.GetIconPosition()
+		size := float64(c.IconSize())
+		wantIcon := geo.NewPoint(want.X-CONNECTION_ICON_LABEL_GAP-size, want.Y+(float64(c.LabelHeight)-size)/2)
+		if !want.Equals(c.GetLabelTopLeft()) || icon == nil || !icon.Equals(wantIcon) {
+			t.Fatalf("static %s at %v should sit beside the caption at %v", shape, icon, want)
+		}
+	}
+	c.IconShape = ""
 	c.Icon = &url.URL{Path: "art.svg"}
 	if got := c.GetLabelTopLeft(); !got.Equals(want) {
 		t.Fatalf("static artwork moved the caption, got %v, want %v", got, want)

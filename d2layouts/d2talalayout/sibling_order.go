@@ -65,7 +65,7 @@ func orderEquivalentBranchSlots(ctx context.Context, source *d2graph.Graph, resu
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		flags := branchEdgePresentation{decorated: edge.Icon != nil || edge.ZIndex != 0, reversed: edge.SrcArrow && !edge.DstArrow}
+		flags := branchEdgePresentation{decorated: edge.HasIcon() || edge.ZIndex != 0, reversed: edge.SrcArrow && !edge.DstArrow}
 		if flags.decorated || flags.reversed {
 			presentation[result.bindings.edgeIDs[edge]] = flags
 		}

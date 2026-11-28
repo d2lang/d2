@@ -67,6 +67,49 @@ func TestConnectionIconStreamSamples(t *testing.T) {
 	}
 }
 
+func TestConnectionIconPolygonPixels(t *testing.T) {
+	// Both the static icon and the midpoint of a 200ms trip are centered at
+	// (50,10). Sample away from the wire to distinguish all three silhouettes.
+	for _, tc := range []struct {
+		shape                 string
+		upperLeft, lowerRight bool
+	}{
+		{d2target.ShapeSquare, true, true},
+		{d2target.ConnectionIconTriangle, false, true},
+		{d2target.ShapeDiamond, false, false},
+	} {
+		for _, mode := range []string{"static", "moving"} {
+			t.Run(tc.shape+"/"+mode, func(t *testing.T) {
+				d := validDiagram()
+				c := &d.Connections[0]
+				c.IconShape, c.Stroke, c.IconPosition = tc.shape, "#ff0000", "INSIDE_MIDDLE_CENTER"
+				if mode == "moving" {
+					c.IconAnimation = &d2target.ConnectionIconAnimation{DurationMS: 200}
+				}
+				doc, err := Build(context.Background(), d, Options{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				opts := shapeEffectFrameOptions()
+				opts.Time = 100 * time.Millisecond
+				img, err := d2raster.Render(context.Background(), doc, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, sample := range []struct {
+					x, y   int
+					filled bool
+				}{{46, 6, tc.upperLeft}, {53, 13, tc.lowerRight}, {50, 7, true}} {
+					pixel := img.NRGBAAt(sample.x-int(doc.ViewBox.X), sample.y-int(doc.ViewBox.Y))
+					if pixel.R != 255 || (sample.filled && pixel.G > 25) || (!sample.filled && pixel.G < 230) {
+						t.Errorf("at (%d,%d) got %v, want red fill: %t", sample.x, sample.y, pixel, sample.filled)
+					}
+				}
+			})
+		}
+	}
+}
+
 // The image is intentionally asymmetric: it should remain upright as the
 // arrow points left, and all repeated copies should use the same asset.
 func TestConnectionIconImageFollowsReverseArrow(t *testing.T) {

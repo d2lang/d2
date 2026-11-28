@@ -1203,13 +1203,17 @@ type Connection struct {
 	ZIndex int `json:"zIndex"`
 }
 
+const ConnectionIconTriangle = "triangle"
+
+var ConnectionIconShapes = []string{ShapeCircle, ShapeSquare, ConnectionIconTriangle, ShapeDiamond}
+
 func (c *Connection) HasStaticIcon() bool {
-	return c.IconAnimation == nil && (c.Icon != nil || c.IconShape == ShapeCircle)
+	return c.IconAnimation == nil && (c.Icon != nil || c.IconShape != "")
 }
 
 func (c *Connection) IconSize() int {
-	if c.Icon == nil && (c.IconShape == ShapeCircle || c.IconAnimation != nil) {
-		return connectionCircleSize
+	if c.Icon == nil && (c.IconShape != "" || c.IconAnimation != nil) {
+		return connectionIconShapeSize
 	}
 	return DEFAULT_ICON_SIZE
 }
