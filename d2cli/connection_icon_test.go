@@ -2,6 +2,7 @@ package d2cli
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/png"
 	"testing"
@@ -37,6 +38,55 @@ steps: {stop: {(a -> b)[0].icon.style.animated: 0/s}}`
 	stopping := redPixels(animationFrameAt(t, data, 150))
 	if after == 0 || before <= after || stopping <= after {
 		t.Fatalf("red pixel counts: running=%d just stopped=%d drained=%d", before, stopping, after)
+	}
+}
+
+func TestStoryboardShowsSparseAndDrainingIcons(t *testing.T) {
+	board := func(rate float64) *d2target.Diagram {
+		b := animatedConnectionRasterDiagram()
+		b.Shapes[1].Pos.X = 42
+		wire := &b.Connections[0]
+		wire.Route[1].X = 42 // A trip lasts about 110ms.
+		wire.Animated = false
+		wire.IconAnimation = &d2target.ConnectionIconAnimation{Rate: &rate}
+		return b
+	}
+	for _, tc := range []struct {
+		name               string
+		interval           int
+		nextRate           float64
+		boardCount         int
+		wantStart, wantEnd int
+	}{
+		{"late departure", 2200, .5, 2, 1600, 1712},
+		{"draining the previous departure", 2050, 0, 2, 0, 62},
+		{"one cell per board", 2200, .5, storyboardMaxFrames, 1600, 1712},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, next := board(1), board(tc.nextRate)
+			next.Name = "change"
+			root.Steps = []*d2target.Diagram{next}
+			for len(root.Steps)+1 < tc.boardCount {
+				b := board(0)
+				b.Name = fmt.Sprintf("hold%d", len(root.Steps))
+				root.Steps = append(root.Steps, b)
+			}
+			plan, err := planStoryboard(t.Context(), root, tc.interval)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan) > storyboardMaxFrames {
+				t.Fatalf("exceeded the storyboard limit with %d frames", len(plan))
+			}
+			for _, sample := range plan {
+				local := int(sample.TimeMS) - tc.interval
+				if sample.board == next && local >= tc.wantStart && local < tc.wantEnd &&
+					len(sample.diagram.Connections[0].IconPositions) > 0 {
+					return
+				}
+			}
+			t.Fatal("no sample showed the traveling icon on the changed board")
+		})
 	}
 }
 

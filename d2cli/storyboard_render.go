@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -169,6 +170,7 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 			return &samples[len(samples)-1]
 		}
 		hold := endpoint.ElapsedMS + holdMS/2
+		holdSamples := []int{hold}
 		if extra > 0 && len(frames) > 1 {
 			at := min(b.TweenDurationMS/2, endpoint.ElapsedMS-1)
 			for _, frame := range frames {
@@ -181,12 +183,23 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 		} else if extra > 0 && hold > 0 {
 			if period := d2scenebuild.ShortestAnimationPeriod(b); period > 0 {
 				first, second := storyboardEffectSamples(startMS, hold, period)
-				add(icons.Sample(b, b, first), first)
-				hold = second
+				holdSamples = []int{first, second}
 				extra--
 			}
 		}
-		add(icons.Sample(b, b, hold), hold)
+		if at, ok := icons.MissingIconSample(b, endpoint.ElapsedMS, endpoint.ElapsedMS+holdMS, holdSamples); ok {
+			if len(holdSamples) == 1 && len(frames) == 1 && extra > 0 {
+				// A stopped stream can still drain, even without a repeating effect.
+				holdSamples = append(holdSamples, at)
+				extra--
+			} else {
+				holdSamples[len(holdSamples)-1] = at
+			}
+			slices.Sort(holdSamples)
+		}
+		for _, at := range holdSamples {
+			add(icons.Sample(b, b, at), at)
+		}
 		if extra > 0 && len(route) > 0 && zoomMS > 1 {
 			mid := zoomMS / 2
 			t := float64(mid) * float64(len(route)) / float64(zoomMS)

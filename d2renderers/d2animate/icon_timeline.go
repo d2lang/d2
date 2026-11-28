@@ -168,6 +168,49 @@ func (tl *IconTimeline) Active(board *d2target.Diagram) bool {
 	return tl != nil && tl.boards[board] != nil && tl.boards[board].active
 }
 
+// MissingIconSample chooses a time inside the board's hold if the proposed
+// storyboard samples all miss the moving artwork. Work depends on the number
+// of streams, regardless of how long it takes for the next departure.
+func (tl *IconTimeline) MissingIconSample(board *d2target.Diagram, startMS, endMS int, samples []int) (int, bool) {
+	if !tl.Active(board) || startMS >= endMS {
+		return 0, false
+	}
+	start, end := float64(startMS)/1000, float64(endMS)/1000
+	best := endMS
+	for i := range board.Connections {
+		c := &board.Connections[i]
+		if !c.HasVisibleIconStream() {
+			continue
+		}
+		s := tl.boards[board].streams[c.ID]
+		for _, at := range samples {
+			if len(s.distances(float64(at)/1000, true)) > 0 {
+				return 0, false
+			}
+		}
+		// A carried copy may already be traveling when the hold begins.
+		// Otherwise the next launch starts the first visible interval.
+		travel := s.path.Length() / d2target.IconMotionSpeed
+		begin, remaining := start, 0.
+		for _, distance := range s.distances(start, true) {
+			remaining = max(remaining, travel-distance/d2target.IconMotionSpeed)
+		}
+		if remaining == 0 {
+			begin += s.nextLaunch(start)
+			remaining = travel
+		}
+		finish := min(begin+remaining, end)
+		if begin >= finish {
+			continue
+		}
+		at := min(endMS-1, int(math.Round((begin+finish)*500)))
+		if at < best && len(s.distances(float64(at)/1000, true)) > 0 {
+			best = at
+		}
+	}
+	return best, best < endMS
+}
+
 // Sample keeps the route of picture (which may be a tween), and evaluates the
 // icon clock at elapsedMS since the beginning of the authored board.
 func (tl *IconTimeline) Sample(board, picture *d2target.Diagram, elapsedMS int) *d2target.Diagram {

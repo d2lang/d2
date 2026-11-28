@@ -32,6 +32,13 @@ func (d *Diagram) ConnectionIconRoutes() iter.Seq2[int, IconMotionPath] {
 	}
 }
 
+// HasVisibleIconStream reports whether the connection's clock can paint an icon.
+// An image remains visible on a transparent wire, as can part of a gradient.
+func (c *Connection) HasVisibleIconStream() bool {
+	return c.IconAnimation != nil && c.Opacity > 0 && c.IconPositions == nil &&
+		(c.Icon != nil || c.Stroke == "" || color.IsGradient(c.Stroke) || color.PaintVisibleThroughout(c.Stroke))
+}
+
 // ConnectionIconPeriods yields the effective departure period in seconds for
 // each visible stream on this laid-out board. For a single repeating icon,
 // the period is the travel time along its painted route.
@@ -39,12 +46,7 @@ func (d *Diagram) ConnectionIconPeriods() iter.Seq2[*Connection, float64] {
 	return func(yield func(*Connection, float64) bool) {
 		for i, path := range d.ConnectionIconRoutes() {
 			c := &d.Connections[i]
-			if c.Opacity == 0 || c.IconPositions != nil {
-				continue
-			}
-			// A native circle takes its fill from the wire. An image can still
-			// be visible on a transparent wire, as can part of a gradient.
-			if c.Icon == nil && c.Stroke != "" && !color.IsGradient(c.Stroke) && !color.PaintVisibleThroughout(c.Stroke) {
+			if !c.HasVisibleIconStream() {
 				continue
 			}
 			period := path.LaunchPeriod(c.IconAnimation)
