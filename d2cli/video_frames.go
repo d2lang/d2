@@ -368,7 +368,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	present := func(frame draw.Image, origin image.Point, matte rasterMattes, start, repeat int) error {
 		origin = origin.Add(framing.margin)
 		if origin == (image.Point{}) && frame.Bounds() == output {
-			return overlay.emit(ctx, frame, start, repeat, p.frames, emit)
+			return overlay.emit(ctx, frame, matte.footer, start, repeat, p.frames, emit)
 		}
 		if letterboxed == nil {
 			letterboxed = image.NewRGBA(output)
@@ -379,7 +379,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 			footer.Min.Y = framing.artHeight
 			draw.Draw(letterboxed, footer, image.NewUniform(matte.footer), image.Point{}, draw.Src)
 		}
-		return overlay.emit(ctx, letterboxed, start, repeat, p.frames, emit)
+		return overlay.emit(ctx, letterboxed, matte.footer, start, repeat, p.frames, emit)
 	}
 	var padded *image.RGBA
 	var workspace d2raster.RenderWorkspace

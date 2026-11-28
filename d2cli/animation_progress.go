@@ -3,23 +3,29 @@ package d2cli
 import (
 	"context"
 	"image"
+	"image/color"
 	"image/draw"
 
-	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2svg"
+	"github.com/d2lang/d2/d2target"
 	d2color "github.com/d2lang/d2/lib/color"
 )
 
-func animationProgressInk(opts d2svg.RenderOpts) (*image.Uniform, error) {
+// Choose the ink from the opaque footer of each pose, including camera blends.
+type rasterProgressInk func(footer color.RGBA) color.RGBA
+
+func animationProgressInk(opts d2svg.RenderOpts) (rasterProgressInk, error) {
 	if opts.AnimateProgress == nil || !*opts.AnimateProgress {
 		return nil, nil
 	}
-	paint, err := d2animate.ResolveProgressColor(opts.ThemeID, opts.ThemeOverrides, opts.AnimateProgressColor)
-	if err != nil {
+	if opts.AnimateProgressColor == "" {
+		return d2color.InverseContrast, nil
+	}
+	if err := d2target.ValidateAnimateProgressColor(opts.AnimateProgressColor); err != nil {
 		return nil, err
 	}
-	ink, _ := d2color.ParseRGBA(paint)
-	return image.NewUniform(ink), nil
+	paint, _ := d2color.ParseRGBA(opts.AnimateProgressColor)
+	return func(color.RGBA) color.RGBA { return color.RGBA(paint) }, nil
 }
 
 func animationProgressWidth(width, elapsed, total int, last bool) int {
@@ -43,13 +49,13 @@ func videoProgressRun(tick, total, steps int) int {
 // The renderer lends this surface until emit returns. Only the bottom strip
 // changes over a static pose. Restore it before releasing the raster workspace.
 type videoProgressOverlay struct {
-	ink    *image.Uniform
+	ink    rasterProgressInk
 	strip  *image.RGBA
 	steps  int
 	height int
 }
 
-func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start, repeats, total int, emit func(image.Image, int) error) error {
+func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, footer color.RGBA, start, repeats, total int, emit func(image.Image, int) error) error {
 	if p.ink == nil {
 		return emitVideoHold(frame, repeats, start+repeats == total, emit)
 	}
@@ -61,6 +67,7 @@ func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start
 	}
 	draw.Draw(p.strip, strip, frame, strip.Min, draw.Src)
 	defer draw.Draw(frame, strip, p.strip, strip.Min, draw.Src)
+	paint := image.NewUniform(p.ink(footer))
 	left := strip.Min.X
 	for tick, stop := start, start+repeats; tick < stop; {
 		if err := ctx.Err(); err != nil {
@@ -69,7 +76,7 @@ func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start
 		extent := animationProgressWidth(bounds.Dx(), tick, total, tick == total-1)
 		run := videoProgressRun(tick, total, p.steps)
 		right := bounds.Min.X + extent
-		draw.Draw(frame, image.Rect(left, strip.Min.Y, right, strip.Max.Y), p.ink, image.Point{}, draw.Src)
+		draw.Draw(frame, image.Rect(left, strip.Min.Y, right, strip.Max.Y), paint, image.Point{}, draw.Src)
 		left = right
 		run = min(run, stop-tick)
 		if err := emit(frame, run); err != nil {
