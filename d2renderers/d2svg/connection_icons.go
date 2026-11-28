@@ -54,19 +54,33 @@ func drawMovingConnectionIcons(w *objectWriter, scope string, c d2target.Connect
 	drawConnectionIcon(w, c, geo.Point{}, fill, theme)
 	fmt.Fprint(w, "</g>")
 	routeID := svg.ScopedID(scope+"-flow-", c.ID, "-path")
+	var line, cssShape strings.Builder
 	if c.IconPositions == nil {
-		var line strings.Builder
 		for i, pt := range path.Points {
+			x, y := svg.FormatFloat(pt.X), svg.FormatFloat(pt.Y)
 			if i == 0 {
 				line.WriteByte('M')
 			} else {
 				line.WriteByte('L')
 			}
-			line.WriteString(svg.FormatFloat(pt.X))
+			line.WriteString(x)
 			line.WriteByte(' ')
-			line.WriteString(svg.FormatFloat(pt.Y))
+			line.WriteString(y)
+			if c.IconSchedule != nil {
+				if i == 0 {
+					cssShape.WriteString("from ")
+				} else {
+					cssShape.WriteString(",line to ")
+				}
+				cssShape.WriteString(x)
+				cssShape.WriteString("px ")
+				cssShape.WriteString(y)
+				cssShape.WriteString("px")
+			}
 		}
-		fmt.Fprint(w, svg.EmptyElement("path", svg.Attr("id", routeID.String()), svg.Attr("d", line.String())))
+		if c.IconSchedule == nil {
+			fmt.Fprint(w, svg.EmptyElement("path", svg.Attr("id", routeID.String()), svg.Attr("d", line.String())))
+		}
 	}
 	fmt.Fprint(w, "</defs>")
 	href := svg.Attr("href", "#"+id.String())
@@ -76,7 +90,7 @@ func drawMovingConnectionIcons(w *objectWriter, scope string, c d2target.Connect
 
 	fmt.Fprint(w, svg.OpenElement("g", svg.Attr("class", "d2-moving-icons"), svg.Attr("pointer-events", "none")))
 	if s := c.IconSchedule; s != nil {
-		drawScheduledIcons(w, s, href, routeID.String())
+		drawScheduledIcons(w, s, href, line.String(), cssShape.String())
 	} else if c.IconPositions != nil {
 		for _, pt := range c.IconPositions {
 			use(pt)

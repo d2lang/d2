@@ -10,6 +10,6 @@
 # Linked-layer playback and SVG navigation raised the local Brotli measurement
 # from 3,679,419 to 3,690,963 bytes. Allow another 10,000 compressed bytes.
 # Animating connection icons and keeping them in flight across boards raised
-# the local Brotli measurement from 3,693,601 to 3,710,218 bytes.
+# the local Brotli measurement from 3,693,601 to 3,710,756 bytes.
 raw 10900000
 brotli 3720000

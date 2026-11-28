@@ -21,6 +21,7 @@ func writeLayerIconClocks(buf *bytes.Buffer, hash string, links []layerLink, slo
 .d2-icon-layer-clock{animation:var(--d2-icon-private-clock,none)}
 .d2-icon-trips{--d2-icon-elapsed:calc(var(--d2-icon-tour-phase) * var(--d2-icon-film) - var(--d2-icon-start));--d2-icon-t:calc(max(0,var(--d2-icon-elapsed)) * max(0,sign(var(--d2-icon-hold) - var(--d2-icon-elapsed))))}
 .d2-icon-trips>g{--d2-icon-age:calc(var(--d2-icon-t) - var(--d2-icon-origin));--d2-icon-phase:var(--d2-icon-age);offset-path:var(--d2-icon-route);offset-anchor:0px 0px;offset-position:0px 0px;offset-rotate:0deg;offset-distance:calc(var(--d2-icon-phase) / var(--d2-icon-transit) * 100%);opacity:calc(var(--d2-icon-alive,1) * clamp(0,var(--d2-icon-age) * 1000000 + 1,1) * clamp(0,(var(--d2-icon-transit) - var(--d2-icon-phase)) * 1000000,1))}
+@supports(offset-path:shape(from 0px 0px,line to 1px 1px) view-box){.d2-icon-trips>g{offset-path:var(--d2-icon-shape)}}
 `)
 	fmt.Fprintf(buf, `.d2-layer-link-%s:target~.d2-frame-%s{--d2-icon-tour-play:paused}`, hash, hash)
 	for i, s := range slots {

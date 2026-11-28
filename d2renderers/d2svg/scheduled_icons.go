@@ -11,9 +11,11 @@ import (
 
 // Reuse one instance for successive trips on a repeating clock. Even a long
 // board hold needs only the copies that can fit along the route at one time.
-func drawScheduledIcons(w *objectWriter, s *d2target.ConnectionIconSchedule, href svg.Attribute, routeID string) {
+func drawScheduledIcons(w *objectWriter, s *d2target.ConnectionIconSchedule, href svg.Attribute, pathData, shapeData string) {
 	num := func(x float64) string { return strconv.FormatFloat(x, 'g', -1, 64) }
-	global := fmt.Sprintf("--d2-icon-film-ms:%dms;--d2-icon-start:%s;--d2-icon-film:%s;--d2-icon-hold:%s;--d2-icon-route:url(#%s);--d2-icon-transit:%s", s.FilmMS, num(float64(s.StartMS)/1000), num(float64(s.FilmMS)/1000), num(float64(s.DurationMS)/1000), routeID, num(s.Transit))
+	// A CSS url(#path) can use a different coordinate space at non-default
+	// zoom. Use view-box coordinates, with a literal path for older browsers.
+	global := fmt.Sprintf("--d2-icon-film-ms:%dms;--d2-icon-start:%s;--d2-icon-film:%s;--d2-icon-hold:%s;--d2-icon-route:path('%s');--d2-icon-shape:shape(%s) view-box;--d2-icon-transit:%s", s.FilmMS, num(float64(s.StartMS)/1000), num(float64(s.FilmMS)/1000), num(float64(s.DurationMS)/1000), pathData, shapeData, num(s.Transit))
 	fmt.Fprint(w, svg.OpenElement("g", svg.Attr("class", "d2-icon-tour-clock"), svg.Attr("style", global)), `<g class="d2-icon-layer-clock"><g class="d2-icon-trips">`)
 	track := func(delay, initial, cycle float64) {
 		if !s.FixedLayer && delay >= float64(s.DurationMS)/1000 {

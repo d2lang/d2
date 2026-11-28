@@ -17,6 +17,7 @@ const fixtures = {
   "layer-steps": "layer-steps.d2",
   "layer-route": "layer-route.d2",
   "layer-zoom": "../../../../docs/examples/layer-zoom.d2",
+  "checkout-rollout": "../../../../docs/examples/connection-icons/checkout-rollout.d2",
 };
 const fixtureNames = Object.keys(fixtures);
 
@@ -76,6 +77,60 @@ async function checkBoundary(page) {
     !pictures.get("before").equals(pictures.get("after")),
     "both boards painted identically"
   );
+}
+
+// An SVG motion-path URL can resolve at a different scale than its painted
+// connection in a zoomed document. Check both an inline diagram and the
+// gallery's iframe against the actual painted wires.
+async function checkConnectionIconPositions(page, svg, embedded) {
+  await page.goto(origin);
+  let frame = page.mainFrame();
+  if (embedded) {
+    await page.setContent('<body style="zoom:1.5"><iframe style="width:600px;height:190px;border:0"></iframe>');
+    await page.locator("iframe").evaluate((iframe, svg) => {
+      iframe.srcdoc = '<style>body{margin:0}body>svg{width:100%;display:block}</style>' + svg;
+    }, svg);
+    frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
+  } else {
+    await page.setContent('<style>body{zoom:1.5}body>svg{width:600px;display:block}</style>' + svg);
+  }
+  await frame.locator(".d2-moving-icons").first().waitFor({ state: "attached" });
+  // Paint a small magenta center in each real dot. A copy of the visible
+  // connection drawn over the centers should cover every one of them.
+  await frame.evaluate(() => {
+    for (const wire of document.querySelectorAll("path.connection")) {
+      const edge = wire.parentElement;
+      if (!edge.querySelector(".d2-moving-icons")) continue;
+      for (const dot of edge.querySelectorAll("defs circle")) {
+        dot.style.fill = "#ff00ff";
+        dot.setAttribute("r", "1.5");
+      }
+      const cover = document.createElementNS(wire.namespaceURI, "path");
+      cover.setAttribute("d", wire.getAttribute("d"));
+      cover.setAttribute("class", "test-wire-cover");
+      cover.setAttribute("style", "fill:none;stroke:black;stroke-width:5;display:none");
+      edge.append(cover);
+    }
+  });
+  const centerPixels = async () => {
+    const { data } = PNG.sync.read(await page.screenshot());
+    let count = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 210 && data[i + 1] < 70 && data[i + 2] > 210) count++;
+    }
+    return count;
+  };
+  for (const ms of [370, 6420, 9470]) {
+    await seek(frame, ms);
+    for (const covered of [false, true]) {
+      await frame.locator(".test-wire-cover").evaluateAll((paths, show) => {
+        for (const path of paths) path.style.display = show ? "inline" : "none";
+      }, covered);
+      const count = await centerPixels();
+      if (covered) assert.equal(count, 0, `icon centers off their wires at ${ms}ms`);
+      else assert.ok(count >= 8, `expected visible icon centers at ${ms}ms`);
+    }
+  }
 }
 
 // Compare each frame with the same frame after hiding one fixture paint. This
@@ -416,5 +471,9 @@ for (const engine of [chromium, webkit]) {
     await checkLayerRoute(page);
     await page.goto(origin + "/layer-zoom.svg");
     await checkLayerZoom(page);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const checkoutSVG = assets.get("/checkout-rollout.svg").body.toString();
+    await checkConnectionIconPositions(page, checkoutSVG, true);
+    await checkConnectionIconPositions(page, checkoutSVG, false);
   });
 }

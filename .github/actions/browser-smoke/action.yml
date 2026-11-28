@@ -36,4 +36,5 @@ runs:
           "$output/d2" "d2js/js/test/browser/$fixture.d2" "$output/$fixture.svg"
         done
         "$output/d2" docs/examples/layer-zoom.d2 "$output/layer-zoom.svg"
+        "$output/d2" docs/examples/connection-icons/checkout-rollout.d2 "$output/checkout-rollout.svg"
         node d2js/js/test/browser/smoke.mjs native "$output"

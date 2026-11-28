@@ -60,6 +60,23 @@ func TestConnectionIconStreamSVG(t *testing.T) {
 	}
 }
 
+func TestScheduledIconPathUsesWireCoordinates(t *testing.T) {
+	c := *d2target.BaseConnection()
+	c.ID, c.Stroke, c.IconShape = "stream", "#f00", d2target.ShapeCircle
+	c.IconAnimation = &d2target.ConnectionIconAnimation{}
+	c.IconSchedule = &d2target.ConnectionIconSchedule{DurationMS: 1000, FilmMS: 1000, Period: 1, Transit: 1}
+	c.Route = []*geo.Point{{X: -64, Y: 30}, {X: 116, Y: 30}}
+	d := d2target.NewDiagram()
+	d.Connections = []d2target.Connection{c}
+	doc := renderCrossingSVG(t, d, nil)
+	style := doc.Find(".d2-icon-tour-clock").AttrOr("style", "")
+	// Both endpoints are inset by half the two-unit stroke.
+	if !strings.Contains(style, "--d2-icon-shape:shape(from -63px 30px,line to 115px 30px) view-box") ||
+		!strings.Contains(style, "--d2-icon-route:path('M-63 30L115 30')") {
+		t.Fatalf("scheduled motion must use the wire coordinates directly: %s", style)
+	}
+}
+
 func TestConnectionIconStreamUsesNeighborLabelMask(t *testing.T) {
 	c := *d2target.BaseConnection()
 	c.ID, c.Stroke, c.IconShape = "stream", "#f00", d2target.ShapeCircle
