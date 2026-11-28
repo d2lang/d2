@@ -83,7 +83,7 @@ func svgProgress(buf *bytes.Buffer, hash string, footer image.Rectangle, totalMS
 
 // Match solid board backgrounds in the footer. Gradient and patterned boards
 // keep their artwork intact and use a solid base for the extra margin.
-func footerMatte(css *bytes.Buffer, hash string, footer image.Rectangle, totalMS int, opts d2svg.RenderOpts, root *d2target.Diagram, frames []Frame, links []layerLink) string {
+func footerMatte(css *bytes.Buffer, hash string, footer image.Rectangle, totalMS int, opts d2svg.RenderOpts, root *d2target.Diagram, frames []Frame, links []layerLink, slots []layerSlot) string {
 	fill := root.Root.Fill
 	if len(frames) > 0 {
 		fill = frames[0].Diagram.Root.Fill
@@ -127,12 +127,24 @@ func footerMatte(css *bytes.Buffer, hash string, footer image.Rectangle, totalMS
 		for i, frame := range frames {
 			matte.Style = fmt.Sprintf("transform:none!important;animation:d2Transition-%s-%d %dms steps(1,end) infinite", hash, i, totalMS)
 			matte.ClassName = "d2-matte-" + strconv.Itoa(i)
+			if len(slots) > 0 && slots[i].count > 1 {
+				matte.ClassName += " d2-matte-slot-" + strconv.Itoa(slots[i].id)
+				matte.Style += fmt.Sprintf(";--d2-slot:d2LayerStep-%s-%d %dms", hash, i, slots[i].totalMS)
+			}
 			body.WriteString(paint(frame.Diagram.Root.Fill))
 		}
 		if len(links) != 0 {
-			fmt.Fprintf(css, "svg:has(>.d2-layer-link-%[1]s:target)~.d2-footer-%[1]s>rect{animation-play-state:paused!important;opacity:0!important;clip-path:none!important}", hash)
+			fmt.Fprintf(css, "svg:has(>.d2-layer-link-%[1]s:target)~.d2-footer-%[1]s>rect{visibility:hidden;animation-play-state:paused!important}@media(prefers-reduced-motion:reduce){.d2-footer-%[1]s{--d2-click-time:0s}}", hash)
 			for _, link := range links {
-				fmt.Fprintf(css, "svg:has(>#%s:target)~.d2-footer-%s>.d2-matte-%d{opacity:1!important}", link.id, hash, link.to)
+				selected := fmt.Sprintf("svg:has(>#%s:target)~.d2-footer-%s>", link.id, hash)
+				if len(link.legs) > 0 && slots[link.to].count > 1 {
+					// Match the linked layer's private step clock after its camera arrives.
+					slot := slots[link.to]
+					duration := "var(--d2-click-time," + strconv.Itoa(link.duration) + "ms)"
+					fmt.Fprintf(css, "%s.d2-matte-slot-%d{visibility:visible;animation:var(--d2-slot) calc(%s - %dms) infinite,var(--d2-intro,d2-hide-%s) %s step-end!important}%s.d2-matte-%d{--d2-intro:d2-hold-%s}", selected, slot.id, duration, slot.startMS, hash, duration, selected, link.to, link.id)
+				} else {
+					fmt.Fprintf(css, "%s.d2-matte-%d{visibility:visible;opacity:1!important;clip-path:none!important}", selected, link.to)
+				}
 			}
 		}
 	}

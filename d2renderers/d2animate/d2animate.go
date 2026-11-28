@@ -185,7 +185,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		if err != nil {
 			return nil, err
 		}
-		matte = footerMatte(&transitions, diagramHash, footer, totalMS, renderOpts, rootDiagram, frames, links)
+		matte = footerMatte(&transitions, diagramHash, footer, totalMS, renderOpts, rootDiagram, frames, links, slots)
 	}
 
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)

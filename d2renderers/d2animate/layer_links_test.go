@@ -178,7 +178,7 @@ func TestLinksWithoutCamerasSelectOnlyIncludedBoards(t *testing.T) {
 		t.Fatal("internal and external anchor destinations were not preserved")
 	}
 	hash, _ := root.HashID(nil)
-	if !bytes.Contains(out, []byte(".d2-layer-link-"+hash+":target~.d2-progress-"+hash+"{animation-play-state:paused!important}")) {
+	if !bytes.Contains(out, []byte("svg:has(>.d2-layer-link-"+hash+":target)~.d2-progress-"+hash+"{animation-play-state:paused!important}")) {
 		t.Fatal("manual board navigation must pause the global progress clock")
 	}
 }

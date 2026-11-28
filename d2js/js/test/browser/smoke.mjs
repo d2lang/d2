@@ -62,13 +62,18 @@ async function checkBoundary(page) {
     await seek(page, ms);
     const progress = await page.locator(progressSelector).evaluate((line) => {
       const viewport = line.ownerSVGElement;
+      const artwork = viewport.querySelector("svg.d2-svg");
+      const bounds = line.getBoundingClientRect();
+      const scale = viewport.getScreenCTM().a;
       return {
         visible: getComputedStyle(line).visibility,
-        width: line.getBoundingClientRect().width,
-        total: viewport.viewBox.baseVal.width * viewport.getScreenCTM().a,
+        width: bounds.width,
+        total: viewport.viewBox.baseVal.width * scale,
+        gap: (bounds.top - artwork.getBoundingClientRect().bottom) / scale,
       };
     });
     assert.equal(progress.visible, "visible", `progress hidden at ${ms}ms`);
+    assert.ok(Math.abs(progress.gap - 8) < 0.1, `artwork gap at ${ms}ms: ${progress.gap}px`);
     const expected = progress.total * ((ms % 2000) / 2000);
     assert.ok(
       Math.abs(progress.width - expected) <= 1,
@@ -246,6 +251,11 @@ async function checkLayerZoom(page) {
   assert.deepEqual(await visible(), [true, false], "the next loop starts on the overview");
 
   await links.first().click();
+  assert.equal(
+    await page.locator(progressSelector).evaluate((line) => getComputedStyle(line).animationPlayState),
+    "paused",
+    "opening a layer pauses the progress clock in the footer"
+  );
   const clickEntering = await scales(800);
   const clickCloser = await scales(950);
   assert.ok(clickCloser.every((scale, i) => scale > clickEntering[i]), "clicking zooms in");
