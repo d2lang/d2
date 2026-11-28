@@ -282,7 +282,7 @@ func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slo
 		// Source shows only while the click camera is running.
 		writeCSS(buf, from, ">g{", hidden, ";animation:", hold, " ", duration, " step-end}")
 		if slot := slots[link.to]; slot.count > 1 {
-			writeCSS(buf, group, ">g{animation:var(--d2-slot) calc(", duration, " - ", strconv.Itoa(slot.startMS), "ms) infinite,var(--d2-intro,", hide, ") ", duration, " step-end}")
+			writeCSS(buf, group, ">g{animation:var(--d2-slot) calc(", duration, " - ", strconv.Itoa(slot.startMS), "ms) infinite,var(--d2-intro,", hide, ") ", duration, " step-end;animation-play-state:var(--d2-step-play,running),running}")
 			writeCSS(buf, to, ">g{--d2-intro:", hold, "}")
 		} else {
 			writeCSS(buf, to, ">g{", visible, ";animation:", hold, " ", duration, " step-end}")
@@ -305,7 +305,7 @@ func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slo
 			writeCSS(buf, frame, ">g>g{animation:", camera, " ", duration, " linear", fill, "}")
 		}
 	}
-	writeCSS(buf, "@media(prefers-reduced-motion:reduce){", allFrames, "{--d2-click-time:0s}}")
+	writeCSS(buf, "@media(prefers-reduced-motion:reduce){", allFrames, "{--d2-click-time:0s;--d2-step-play:paused}}")
 	buf.WriteString(`]]></style>`)
 }
 

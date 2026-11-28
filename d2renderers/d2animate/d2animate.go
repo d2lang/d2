@@ -183,8 +183,11 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		frameSibling = "*>"
 	}
 	// The nested SVG clips all camera and board paint to the original artwork viewport.
-	fmt.Fprintf(buf, `<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d"%s>`, innerW, innerH, left, top, width, height, artAlign)
+	fmt.Fprintf(buf, `<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d"%s data-d2-animation="%s">`, innerW, innerH, left, top, width, height, artAlign, diagramHash)
 	var transitions bytes.Buffer
+	// Freeze both the artwork and the matching footer paint while keeping
+	// fragment navigation available for readers who choose another board.
+	fmt.Fprintf(&transitions, "@media(prefers-reduced-motion:reduce){svg[data-d2-animation=%[1]s]>g,.d2-footer-%[1]s>*{animation-play-state:paused!important}}", diagramHash)
 	var progress, matte string
 	var linkedMatte bool
 	if showProgress {

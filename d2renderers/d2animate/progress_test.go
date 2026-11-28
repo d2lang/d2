@@ -66,7 +66,7 @@ func TestSVGProgressClock(t *testing.T) {
 		"@keyframes d2Progress-" + hash + "{from{transform:scaleX(0)}to{transform:scaleX(1)}}",
 		line + "{fill:var(--d2-progress-light)}", "@media screen and (prefers-color-scheme:dark){" + line + "{fill:var(--d2-progress-dark)}}",
 		`style="--d2-progress-light:#123456;--d2-progress-dark:#abcdef;`,
-		"@media(prefers-reduced-motion:reduce){" + line + "{visibility:hidden}}",
+		"@media(prefers-reduced-motion:reduce){" + line + "{visibility:hidden;animation:none!important}}",
 		`x="0" y="32" width="60" height="2" transform="scale(0 1)" pointer-events="none" aria-hidden="true"`,
 		"1000ms linear infinite",
 	} {

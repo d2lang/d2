@@ -136,7 +136,8 @@ func TestAnimatedConnectionReducedMotionMultiboard(t *testing.T) {
 	layoutResolver := func(string) (d2graph.LayoutGraph, error) {
 		return d2dagrelayout.DefaultLayout, nil
 	}
-	script := `a -> b
+	script := `a.style.animated: true
+a -> b
 steps: {
 	1: {
 		a -> b: { style.animated: true }
@@ -173,6 +174,14 @@ steps: {
 	)
 	if got := strings.Count(svg, reducedMotionRule); got != 1 {
 		t.Fatalf("multiboard SVG emitted the scoped animated-connection reduced-motion override %d times, want 1", got)
+	}
+	for _, selector := range []string{
+		"svg[data-d2-animation=" + masterID + "]>g,.d2-footer-" + masterID + ">*{animation-play-state:paused!important}",
+		"." + masterID + " .animated-shape{animation:none}",
+	} {
+		if !strings.Contains(svg, selector) {
+			t.Errorf("missing reduced-motion rule %q", selector)
+		}
 	}
 	const unscopedReducedMotionSelector = "{.animated-connection{"
 	if strings.Contains(svg, unscopedReducedMotionSelector) {
