@@ -234,7 +234,7 @@ func layoutGrid(g *d2graph.Graph, obj *d2graph.Object) (*gridDiagram, error) {
 				o.LabelPosition = go2.Pointer(label.OutsideTopCenter.String())
 			} else if o.HasOutsideBottomLabel() {
 				o.LabelPosition = go2.Pointer(label.OutsideBottomCenter.String())
-			} else if o.Icon != nil {
+			} else if o.Icon != nil && (o.IconPosition == nil || !label.FromString(*o.IconPosition).IsOutside()) {
 				o.LabelPosition = go2.Pointer(label.InsideTopCenter.String())
 			} else {
 				o.LabelPosition = go2.Pointer(label.InsideMiddleCenter.String())

@@ -714,7 +714,7 @@
       "underline": false,
       "labelWidth": 5,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 3
     },

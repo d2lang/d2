@@ -1398,7 +1398,7 @@ func positionLabelsIconsWith(obj *d2graph.Object, newString func(string) *string
 			obj.LabelPosition = newString(label.InsideTopCenter.String())
 		} else if obj.HasOutsideBottomLabel() {
 			obj.LabelPosition = newString(label.OutsideBottomCenter.String())
-		} else if obj.Icon != nil {
+		} else if obj.Icon != nil && (obj.IconPosition == nil || !label.FromString(*obj.IconPosition).IsOutside()) {
 			obj.LabelPosition = newString(label.InsideTopCenter.String())
 		} else {
 			obj.LabelPosition = newString(label.InsideMiddleCenter.String())
