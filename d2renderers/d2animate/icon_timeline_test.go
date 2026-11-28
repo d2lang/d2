@@ -206,7 +206,7 @@ func TestPlainLinkToStoppedStream(t *testing.T) {
 	nav := NewLayerNavigation(root, nil)
 	links := layerLinks(nav, frames, 650)
 	var css bytes.Buffer
-	writeLayerIconClocks(&css, "test", links, layerSlots(nav, frames, links))
+	writeLayerIconClocks(&css, "test", links, layerSlots(nav, frames, links), "")
 	if !bytes.Contains(css.Bytes(), []byte("calc(var(--d2-click-time,0ms) + var(--d2-icon-delay,0s))")) {
 		t.Fatal("plain board links must start draining immediately")
 	}

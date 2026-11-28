@@ -27,7 +27,8 @@ func TestClickedLayerUsesItsOwnShape(t *testing.T) {
 	var buf bytes.Buffer
 	slots := []layerSlot{{&layerSequence{count: 1}, 0}, {&layerSequence{id: 1, count: 1}, 0}}
 	out, links := bindLayerLinks(frames, links, "d2-test")
-	writeLayerNavigation(&buf, "d2-test", links, slots)
+	writeLayerNavigation(&buf, "d2-test", links, slots, "", false)
+	writeLayerTargets(&buf, "d2-test", links)
 	got := string(out[0])
 	for _, want := range []string{
 		`href="#d2-layer-link-d2-test-0" xlink:href="#d2-layer-link-d2-test-0"><g class="YQ=="`,
@@ -46,6 +47,8 @@ func TestClickedLayerUsesItsOwnShape(t *testing.T) {
 		"#d2-layer-link-d2-test-1:target~#d2-frame-d2-test-0",
 		"#d2-layer-link-d2-test-1:target~#d2-frame-d2-test-1",
 		"animation-play-state:paused!important",
+		"animation:Aout var(--d2-click-time,1000ms) linear both}",
+		"animation:Ain var(--d2-click-time,1000ms) linear}",
 		"prefers-reduced-motion:reduce",
 	} {
 		if !strings.Contains(buf.String(), want) {
