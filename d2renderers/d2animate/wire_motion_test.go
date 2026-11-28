@@ -56,3 +56,10 @@ func TestNativeWireUsesOneClockAndKeepsSampledFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeWireKeepsGradientResourceInOriginalFrame(t *testing.T) {
+	group := []byte(`<g class="edge"><path class="connection" d="M0 0L1 1" stroke="url(#gradient)"/></g>`)
+	if _, ok := readWireLine(group); ok {
+		t.Fatal("a frame-local gradient needs its original wire")
+	}
+}

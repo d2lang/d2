@@ -84,6 +84,11 @@ func readWireLine(raw []byte) (wireLine, bool) {
 						}
 						line.refs = append(line.refs, strings.TrimSuffix(strings.TrimPrefix(a.Value, "url(#"), ")"))
 						a.Value = "local"
+					default:
+						// Other paint servers can depend on frame-local geometry.
+						if strings.Contains(strings.ToLower(a.Value), "url(") {
+							return line, false
+						}
 					}
 					fmt.Fprintf(&style, "%q=%q ", a.Name.Local, a.Value)
 				}
