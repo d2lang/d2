@@ -50,7 +50,7 @@ type watcherOpts struct {
 	renderOpts      d2svg.RenderOpts
 	animateInterval *int64
 	animateDuration *int64
-	videoDuration   time.Duration
+	video           videoOptions
 	compileTimeout  time.Duration
 	host            string
 	port            string
@@ -486,7 +486,7 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 		if w.compileTimeout > 0 {
 			compileCtx, cancel = context.WithTimeout(ctx, w.compileTimeout)
 		}
-		svg, _, err := compile(compileCtx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.videoDuration, w.inputPath, w.outputPath, nil, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, &boardPath)
+		svg, _, err := compile(compileCtx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.video, w.inputPath, w.outputPath, nil, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, &boardPath)
 		if cancel != nil {
 			cancel()
 		}

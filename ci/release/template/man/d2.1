@@ -193,14 +193,28 @@ Set the total length of an MP4 export, for example
 By default, MP4 plays the selected boards once.
 A shorter duration trims the tour and a longer duration repeats it.
 For a single board, independent effects animate throughout the clip.
-MP4 is encoded at 30 frames per second.
-Durations round up to a whole frame.
+Motion is sampled at 30 frames per second.
+Still frames retain their playback duration.
+Durations round up to the next 1/30 second.
 Encoding requires
 .Cm ffmpeg
-with the libx264 encoder on PATH.
-Use
+version 5.1 or newer with the libx264 encoder on PATH.
+.It Fl -video-size Ar WIDTHxHEIGHT
+Render into an exact canvas, preserving the diagram's aspect ratio and centering it.
+For example, use 1920x1080, 3840x2160 or 1080x1920.
+The default uses the diagram dimensions and scale.
+An explicit video size overrides the diagram's scale.
+Choose either a video size or a positive
 .Fl -scale
-to change the video resolution.
+on the command line.
+Each dimension must be even and at least 48 pixels.
+For portable H.264 playback, the coded width is at most 4096 pixels and the
+height at most 2304, subject to the High Level 5.1 limit at 30 fps.
+.It Fl -video-quality Ar low|medium|high|best
+Select H.264 encoding quality.
+The default is high.
+Lower settings reduce file size.
+Higher settings preserve finer detail.
 .It Fl -browser Ar true
 Browser executable that watch opens. Setting to 0 opens no browser
 .Ns .

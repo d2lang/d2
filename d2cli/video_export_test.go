@@ -6,31 +6,37 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
+
+func requireVideoTool(t *testing.T, available bool, message string) {
+	t.Helper()
+	if !available {
+		if os.Getenv("D2_REQUIRE_MP4_TESTS") == "1" {
+			t.Fatal(message)
+		}
+		t.Skip(message)
+	}
+}
 
 // Exercise the real muxer, then decode frames on both sides of an authored
 // transition. A valid MP4 header alone doesn't verify the playback clock.
 func TestMP4Playback(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		t.Skip("ffmpeg unavailable")
-	}
+	requireVideoTool(t, err == nil, "ffmpeg unavailable")
 	ffprobe, err := exec.LookPath("ffprobe")
-	if err != nil {
-		t.Skip("ffprobe unavailable")
-	}
+	requireVideoTool(t, err == nil, "ffprobe unavailable")
 	encoders, err := exec.CommandContext(t.Context(), ffmpeg, "-encoders").Output()
-	if err != nil || !bytes.Contains(encoders, []byte(" libx264 ")) {
-		t.Skip("FFmpeg with libx264 unavailable")
-	}
+	requireVideoTool(t, err == nil && bytes.Contains(encoders, []byte(" libx264 ")), "FFmpeg with libx264 unavailable")
 	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 100ms; pad: 0}}
 swatch: "" {width: 47; height: 41; style: {stroke-width: 0; fill: red}}
 steps: {next: {swatch.style.fill: blue}}`
 	dir := t.TempDir()
 	env := []string{"PATH=" + os.Getenv("PATH")}
-	output := filepath.Join(dir, "tour.mp4")
-	_, err = imageCLIWithEnv(t, dir, source, env, output)
+	output := filepath.Join(dir, "video output", "two boards.mp4")
+	_, err = imageCLIWithEnv(t, dir, source, env, "--video-quality=high", "--video-size=320x180", output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,11 +48,11 @@ steps: {next: {swatch.style.fill: blue}}`
 		t.Fatal("stdout MP4 is missing its fast-start index")
 	}
 	cmd := exec.CommandContext(t.Context(), ffprobe, "-v", "error", "-select_streams", "v:0",
-		"-show_entries", "stream=nb_frames", "-of", "csv=p=0", "-i", "pipe:0")
+		"-show_entries", "stream=duration", "-of", "csv=p=0", "-i", "pipe:0")
 	cmd.Stdin = bytes.NewReader(clip)
 	count, err := cmd.Output()
-	if err != nil || string(bytes.TrimSpace(count)) != "21" {
-		t.Fatalf("700ms stdout clip has frame count %q: %v", count, err)
+	if err != nil || string(bytes.TrimSpace(count)) != "0.700000" {
+		t.Fatalf("700ms stdout clip has duration %q: %v", count, err)
 	}
 	probe, err := exec.CommandContext(t.Context(), ffprobe, "-v", "error", "-show_streams", "-of", "json", output).Output()
 	if err != nil {
@@ -54,12 +60,16 @@ steps: {next: {swatch.style.fill: blue}}`
 	}
 	var info struct {
 		Streams []struct {
-			Codec  string `json:"codec_name"`
-			Format string `json:"pix_fmt"`
-			FPS    string `json:"avg_frame_rate"`
-			Frames string `json:"nb_frames"`
-			Width  int
-			Height int
+			Codec      string `json:"codec_name"`
+			Format     string `json:"pix_fmt"`
+			Duration   string `json:"duration"`
+			ColorRange string `json:"color_range"`
+			ColorSpace string `json:"color_space"`
+			Primaries  string `json:"color_primaries"`
+			Transfer   string `json:"color_transfer"`
+			Frames     string `json:"nb_frames"`
+			Width      int
+			Height     int
 		}
 	}
 	if err := json.Unmarshal(probe, &info); err != nil {
@@ -69,14 +79,16 @@ steps: {next: {swatch.style.fill: blue}}`
 		t.Fatalf("expected a single video stream, got %d", len(info.Streams))
 	}
 	s := info.Streams[0]
-	if s.Codec != "h264" || s.Format != "yuv420p" || s.FPS != "30/1" || s.Frames != "12" ||
-		s.Width%2 != 0 || s.Height%2 != 0 {
+	frames, err := strconv.Atoi(s.Frames)
+	if err != nil || frames < 2 || frames >= 12 || s.Duration != "0.400000" ||
+		s.Codec != "h264" || s.Format != "yuv420p" || s.Width != 320 || s.Height != 180 ||
+		s.ColorSpace != "bt709" || s.Primaries != "bt709" || s.Transfer != "iec61966-2-1" || s.ColorRange != "tv" {
 		t.Fatalf("unexpected video stream: %+v", s)
 	}
 
 	// Take the center pixel of the swatch in each decoded frame.
 	samples, err := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", output,
-		"-vf", "crop=2:2,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1").Output()
+		"-vf", "fps=30:start_time=0,crop=2:2,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,5 +99,26 @@ steps: {next: {swatch.style.fill: blue}}`
 	red, blend, blue := pixel(0), pixel(8), pixel(11)
 	if red[0] < 220 || red[2] > 25 || blend[0] < 20 || blend[2] < 20 || blue[0] > 25 || blue[2] < 220 {
 		t.Fatalf("decoded colors at frames 0, 8, 11 = %v, %v, %v", red, blend, blue)
+	}
+}
+
+func TestVideoOutputOptions(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--video-quality=ultra", "out.mp4"}, "low, medium, high, or best"},
+		{[]string{"--video-quality=", "out.mp4"}, "low, medium, high, or best"},
+		{[]string{"--video-quality=high", "out.svg"}, "--video-quality requires MP4"},
+		{[]string{"--video-size=1920x1080", "out.gif"}, "--video-size requires MP4"},
+		{[]string{"--video-size=1080p", "out.mp4"}, "--video-size"},
+		{[]string{"--video-size=1920x1080", "--scale=2", "out.mp4"}, "--scale and --video-size"},
+	} {
+		t.Run(strings.Join(tc.args, "_"), func(t *testing.T) {
+			data, err := imageCLI(t, t.TempDir(), "x", tc.args...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || len(data) != 0 {
+				t.Fatalf("got %d bytes and %v, want %q", len(data), err, tc.want)
+			}
+		})
 	}
 }

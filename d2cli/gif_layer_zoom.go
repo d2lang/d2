@@ -153,7 +153,18 @@ func newGIFLayerCamera(canvas image.Rectangle, zoom d2animate.LayerZoom, from *d
 }
 
 func (c *gifLayerCamera) render(ctx context.Context, session *d2raster.RenderSession, options d2raster.FrameOptions, progress float64, arrivalTime time.Duration) (*image.RGBA, error) {
+	// GIF and storyboard consumers may retain this image after the next sample.
 	output := image.NewRGBA(c.canvas)
+	var workspace d2raster.RenderWorkspace
+	if err := c.renderInto(ctx, session, &workspace, options, progress, arrivalTime, output); err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+// Video consumes each image synchronously and can reuse both the composition
+// canvas and the raster workspace across samples, boards and camera legs.
+func (c *gifLayerCamera) renderInto(ctx context.Context, session *d2raster.RenderSession, workspace *d2raster.RenderWorkspace, options d2raster.FrameOptions, progress float64, arrivalTime time.Duration, output *image.RGBA) error {
 	matte := options.Background
 	if matte == nil {
 		matte = color.White
@@ -166,7 +177,8 @@ func (c *gifLayerCamera) render(ctx context.Context, session *d2raster.RenderSes
 		arriving bool
 	}{{c.parent, parent, !c.zoom.Inward}, {c.child, child, c.zoom.Inward}} {
 		layer, pose := item.layer, item.pose
-		if pose.Opacity <= 0 {
+		opacity := uint8(math.Round(pose.Opacity * 255))
+		if opacity == 0 {
 			continue
 		}
 		// Rasterize the transformed vectors at the GIF resolution so labels
@@ -186,12 +198,50 @@ func (c *gifLayerCamera) render(ctx context.Context, session *d2raster.RenderSes
 		if item.arriving {
 			frameOptions.Time = arrivalTime
 		}
-		frame, err := session.Render(ctx, &document, frameOptions)
+		err := workspace.Render(ctx, session, &document, frameOptions, func(frame *image.NRGBA) error {
+			return compositeLayer(ctx, output, frame, opacity)
+		})
 		if err != nil {
-			return nil, fmt.Errorf("layer zoom: %w", err)
+			return fmt.Errorf("layer zoom: %w", err)
 		}
-		mask := image.NewUniform(color.Alpha{A: uint8(math.Round(pose.Opacity * 255))})
-		draw.DrawMask(output, c.canvas, frame, image.Point{}, mask, image.Point{}, draw.Over)
 	}
-	return output, nil
+	return nil
+}
+
+// compositeLayer is draw.Over with a constant alpha mask, for the native
+// rasterizer's straight-alpha source and a premultiplied composition canvas.
+// Match image/draw's 16-bit arithmetic, including both integer divisions.
+func compositeLayer(ctx context.Context, dst *image.RGBA, src *image.NRGBA, opacity uint8) error {
+	if opacity == 0 {
+		return nil
+	}
+	const full = 0xffff
+	mask := uint32(opacity) * 0x101
+	width := min(dst.Rect.Dx(), src.Rect.Dx()) * 4
+	height := min(dst.Rect.Dy(), src.Rect.Dy())
+	for y := range height {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		dest := dst.Pix[y*dst.Stride:][:width]
+		source := src.Pix[y*src.Stride:][:width]
+		for x := 0; x < width; x += 4 {
+			s, d := source[x:x+4:x+4], dest[x:x+4:x+4]
+			if s[3] == 0 {
+				continue
+			}
+			if s[3] == 255 && opacity == 255 {
+				copy(d, s)
+				continue
+			}
+			alpha := uint32(s[3]) * 0x101
+			inverse := (full - alpha*mask/full) * 0x101
+			for channel := range 3 {
+				premultiplied := uint32(s[channel]) * alpha / 0xff
+				d[channel] = uint8((uint32(d[channel])*inverse + premultiplied*mask) / full >> 8)
+			}
+			d[3] = uint8((uint32(d[3])*inverse + alpha*mask) / full >> 8)
+		}
+	}
+	return nil
 }

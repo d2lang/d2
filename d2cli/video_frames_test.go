@@ -27,7 +27,7 @@ func TestVideoStaticHoldAndStablePlacement(t *testing.T) {
 	root.Steps = []*d2target.Diagram{next}
 	var red []image.Rectangle
 	opts := d2svg.RenderOpts{Pad: new(int64)}
-	err := renderVideoFrames(t.Context(), "-", false, root, opts, 60_000, gifLayerOptions{}, 0, false, func(im image.Image, repeats int) error {
+	err := renderVideoFrames(t.Context(), "-", false, root, opts, 60_000, gifLayerOptions{}, 0, false, videoSize{}, func(im image.Image, repeats int) error {
 		if repeats != 1800 || im.Bounds().Dx()%2 != 0 || im.Bounds().Dy()%2 != 0 {
 			t.Fatalf("frame repeated %d times with bounds %v", repeats, im.Bounds())
 		}
@@ -60,12 +60,12 @@ func TestVideoSingleBoardContinuousMotion(t *testing.T) {
 	var first []byte
 	moved := false
 	var count int
-	err := renderVideoFrames(t.Context(), "-", false, board, opts, 1, gifLayerOptions{}, 300*time.Millisecond, false, func(im image.Image, repeats int) error {
+	err := renderVideoFrames(t.Context(), "-", false, board, opts, 1, gifLayerOptions{}, 300*time.Millisecond, false, videoSize{}, func(im image.Image, repeats int) error {
 		if repeats != 1 {
 			t.Fatalf("animated frame repeated %d times", repeats)
 		}
 		var raw bytes.Buffer
-		if err := writeVideoFrame(&raw, im, 1); err != nil {
+		if err := writeVideoFrame(&raw, im); err != nil {
 			t.Fatal(err)
 		}
 		pixels := raw.Bytes()
@@ -93,7 +93,7 @@ func TestVideoLayerCameraAndFinalHold(t *testing.T) {
 	opts := d2svg.RenderOpts{Pad: new(int64)}
 	var count int
 	var size image.Point
-	err := renderVideoFrames(t.Context(), "-", false, root, opts, 200, gifLayerOptions{duration: 100}, 0, false, func(im image.Image, repeats int) error {
+	err := renderVideoFrames(t.Context(), "-", false, root, opts, 200, gifLayerOptions{duration: 100}, 0, false, videoSize{}, func(im image.Image, repeats int) error {
 		if count == 0 {
 			size = im.Bounds().Size()
 		}
@@ -159,7 +159,7 @@ func TestVideoClockRoundsOnceAndHonorsCaptions(t *testing.T) {
 
 func TestVideoPropagatesConsumerError(t *testing.T) {
 	stop := errors.New("consumer stopped")
-	err := renderVideoFrames(t.Context(), "-", false, simpleRasterDiagram(), d2svg.RenderOpts{}, 1000, gifLayerOptions{}, 0, false, func(image.Image, int) error { return stop })
+	err := renderVideoFrames(t.Context(), "-", false, simpleRasterDiagram(), d2svg.RenderOpts{}, 1000, gifLayerOptions{}, 0, false, videoSize{}, func(image.Image, int) error { return stop })
 	if !errors.Is(err, stop) {
 		t.Fatalf("got %v", err)
 	}
@@ -189,7 +189,7 @@ func TestVideoDenseTourBudgets(t *testing.T) {
 		root.Steps = append(root.Steps, step)
 	}
 	var frames, runs int
-	err = renderVideoFrames(trustedAssetContext(), "-", false, root, d2svg.RenderOpts{Pad: new(int64)}, 18_000, gifLayerOptions{}, 120*time.Second, false, func(im image.Image, n int) error {
+	err = renderVideoFrames(trustedAssetContext(), "-", false, root, d2svg.RenderOpts{Pad: new(int64)}, 18_000, gifLayerOptions{}, 120*time.Second, false, videoSize{}, func(im image.Image, n int) error {
 		if frames == 0 {
 			c := color.NRGBAModel.Convert(im.At(im.Bounds().Dx()/2, im.Bounds().Dy()/2)).(color.NRGBA)
 			if c.G != 255 || c.R != 0 || c.B != 0 {
@@ -220,11 +220,11 @@ func TestVideoWorkUsesActualPaintsAndPreservesTrimFraming(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		builds, paints, err := plan.work(ctx)
+		work, err := plan.work(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = renderVideoFrames(ctx, "-", false, root, opts, 60_000, gifLayerOptions{}, duration, false, func(im image.Image, repeats int) error {
+		err = renderVideoFrames(ctx, "-", false, root, opts, 60_000, gifLayerOptions{}, duration, false, videoSize{}, func(im image.Image, repeats int) error {
 			calls++
 			if duration == 0 {
 				full = im.Bounds()
@@ -236,19 +236,44 @@ func TestVideoWorkUsesActualPaintsAndPreservesTrimFraming(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if builds != 2 || paints != calls || videoWorkDivisor(paints) != 1 {
-			t.Fatalf("unexpected work on %v clip: %d builds, %d paints, %d emitted runs", duration, builds, paints, calls)
+		if work.builds != 2 || work.paints != calls || videoWorkDivisor(work.paints) != 1 {
+			t.Fatalf("unexpected work on %v clip: %+v for %d emitted runs", duration, work, calls)
 		}
 	}
 	p, err := planVideo(animatedConnectionRasterDiagram(), 1000, gifLayerOptions{}, 120*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	builds, paints, err := p.work(t.Context())
+	work, err := p.work(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if builds != 1 || paints != 3600 || videoWorkDivisor(paints) <= 1 {
-		t.Fatalf("unbudgeted continuous motion: %d builds, %d paints", builds, paints)
+	if work.builds != 1 || work.paints != 3600 || videoWorkDivisor(work.paints) <= 1 {
+		t.Fatalf("unbudgeted continuous motion: %+v", work)
+	}
+}
+
+func TestVideoLong4KBudget(t *testing.T) {
+	const duration = 30 * time.Minute
+	uhd := image.Rect(0, 0, 3840, 2160)
+	for _, tc := range []struct {
+		diagram         *d2target.Diagram
+		paints, samples int
+		exceeds         bool
+	}{
+		{simpleRasterDiagram(), 1, 2, false},
+		{animatedConnectionRasterDiagram(), 54_000, 54_000, true},
+	} {
+		p, err := planVideo(tc.diagram, 1000, gifLayerOptions{}, duration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		work, err := p.work(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if work.paints != tc.paints || work.samples != tc.samples || (work.checkPixels(uhd) != nil) != tc.exceeds {
+			t.Fatalf("unexpected 30-minute UHD work %+v, budget error %v", work, work.checkPixels(uhd))
+		}
 	}
 }

@@ -30,7 +30,7 @@ It defaults to file.svg if an output path is not provided.
 
 Use - to have d2 read from stdin or write to stdout.
 
-MP4 exports require FFmpeg with the libx264 encoder on PATH.
+MP4 exports require FFmpeg 5.1 or newer with the libx264 encoder on PATH.
 PNG exports support up to 32768 pixels per dimension, subject to rendering resource limits.
 
 See man d2 for more detailed docs.

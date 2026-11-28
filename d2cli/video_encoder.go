@@ -19,13 +19,13 @@ import (
 
 // The MP4 muxer seeks when moving its index to the front of the file. Stage
 // even stdout so pipes and redirected output get the same seekable movie.
-func writeVideoWithStatus(ctx context.Context, ms *xmain.State, outputPath string, render func(emit func(image.Image, int) error) error) (bool, error) {
+func writeVideoWithStatus(ctx context.Context, ms *xmain.State, outputPath string, quality videoQuality, render func(emit func(image.Image, int) error) error) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
-		return false, fmt.Errorf("MP4 export requires FFmpeg with libx264 on PATH: %w", err)
+		return false, fmt.Errorf("MP4 export requires FFmpeg 5.1 or newer with libx264 on PATH: %w", err)
 	}
 
 	dir := ""
@@ -43,7 +43,7 @@ func writeVideoWithStatus(ctx context.Context, ms *xmain.State, outputPath strin
 	if err := staged.Close(); err != nil {
 		return false, err
 	}
-	if err := encodeVideo(ctx, ffmpeg, staged.Name(), render); err != nil {
+	if err := encodeVideo(ctx, ffmpeg, staged.Name(), quality, render); err != nil {
 		return false, err
 	}
 	return runStatusFinalizer(ctx, func() (bool, error) {
@@ -57,21 +57,40 @@ func writeVideoWithStatus(ctx context.Context, ms *xmain.State, outputPath strin
 			return false, err
 		}
 		defer source.Close()
-		n, err := io.Copy(rasterPNGContextWriter{ctx: ctx, output: ms.Stdout}, source)
-		if err != nil {
-			return n > 0, err
-		}
-		return n > 0, ms.Stdout.Close()
+		return copyVideoStdout(ctx, ms.Stdout, source)
 	})
 }
 
-func encodeVideo(ctx context.Context, ffmpeg, path string, render func(func(image.Image, int) error) error) error {
+type videoQuality string
+
+// The zero value uses the same high-quality setting as an ordinary CLI export.
+func (q videoQuality) crf() (int, bool) {
+	switch q {
+	case "low":
+		return 28, true
+	case "medium":
+		return 22, true
+	case "", "high":
+		return 18, true
+	case "best":
+		return 12, true
+	default:
+		return 0, false
+	}
+}
+
+func encodeVideo(ctx context.Context, ffmpeg, path string, quality videoQuality, render func(func(image.Image, int) error) error) error {
+	crf, ok := quality.crf()
+	if !ok {
+		return fmt.Errorf("invalid MP4 quality %q", quality)
+	}
 	encoderCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var cmd *exec.Cmd
 	var input io.WriteCloser
 	var diagnostics videoEncoderDiagnostics
 	var size image.Point
+	var tick int
 	renderErr := render(func(frame image.Image, repeats int) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -87,13 +106,18 @@ func encodeVideo(ctx context.Context, ffmpeg, path string, render func(func(imag
 			size = dimensions
 			cmd = exec.CommandContext(encoderCtx, ffmpeg,
 				"-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-filter_threads", "1",
-				"-f", "rawvideo", "-pixel_format", "rgba", "-video_size", fmt.Sprintf("%dx%d", size.X, size.Y),
-				"-framerate", strconv.Itoa(videoFPS), "-i", "pipe:0",
-				"-an", "-c:v", "libx264", "-threads", "4", "-preset", "veryfast", "-crf", "18",
-				// Convert sRGB to limited-range YUV and tag the matching matrix and transfer function.
-				"-vf", "scale=in_range=full:out_range=limited:out_color_matrix=bt709", "-pix_fmt", "yuv420p",
-				"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "iec61966-2-1", "-color_range", "tv",
-				"-movflags", "+faststart", "-f", "mp4", "file:"+path)
+				"-f", "matroska", "-i", "pipe:0",
+				// Preserve presentation order. With reordered B-frames the MP4
+				// sample durations can land on neighboring pictures at a long hold.
+				"-an", "-c:v", "libx264", "-threads", "4", "-bf", "0", "-preset", "medium", "-crf", strconv.Itoa(crf),
+				// Bound the number of UHD pictures held for rate control.
+				"-x264-params", "rc-lookahead=4:sync-lookahead=0",
+				// Tag the converted frames themselves; output metadata alone can
+				// lose the sRGB transfer function at the filter/encoder boundary.
+				"-vf", "scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv420p,"+
+					"setparams=range=limited:color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709",
+				"-enc_time_base", fmt.Sprintf("1:%d", videoFPS), "-fps_mode", "passthrough",
+				"-movie_timescale", "30000", "-movflags", "+faststart", "-f", "mp4", "file:"+path)
 			cmd.Stderr = &diagnostics
 			cmd.WaitDelay = 2 * time.Second
 			var err error
@@ -104,10 +128,28 @@ func encodeVideo(ctx context.Context, ffmpeg, path string, render func(func(imag
 			if err := cmd.Start(); err != nil {
 				return fmt.Errorf("start FFmpeg: %w", err)
 			}
+			if _, err := input.Write(videoTrackHeader(size)); err != nil {
+				return err
+			}
 		} else if dimensions != size {
 			return fmt.Errorf("MP4 frame dimensions changed from %v to %v", size, dimensions)
 		}
-		return writeVideoFrame(input, frame, repeats)
+		writePose := func(hold int) error {
+			if _, err := input.Write(videoBlockHeader(tick, hold, size.X*size.Y*4)); err != nil {
+				return err
+			}
+			tick += hold
+			return writeVideoFrame(input, frame)
+		}
+		if repeats > 1 {
+			// Some FFmpeg versions discard the last packet's input duration.
+			// Stamp both endpoints of a hold while we still own its pixels:
+			// even those encoders can infer its entire length from timestamps.
+			if err := writePose(repeats - 1); err != nil {
+				return err
+			}
+		}
+		return writePose(1)
 	})
 
 	if cmd == nil || cmd.Process == nil {
@@ -126,6 +168,9 @@ func encodeVideo(ctx context.Context, ffmpeg, path string, render func(func(imag
 		return err
 	}
 	if message := strings.TrimSpace(diagnostics.String()); waitErr != nil && message != "" {
+		if strings.Contains(message, "fps_mode") {
+			message += " (MP4 export requires FFmpeg 5.1 or newer)"
+		}
 		return errors.Join(renderErr, fmt.Errorf("FFmpeg (libx264): %w: %s", waitErr, message))
 	}
 	if renderErr != nil {
@@ -139,7 +184,7 @@ func encodeVideo(ctx context.Context, ffmpeg, path string, render func(func(imag
 
 // Frames produced by the rasterizer are opaque, so RGBA and NRGBA share
 // their on-wire representation. Subimages may have padding between rows.
-func writeVideoFrame(output io.Writer, frame image.Image, repeats int) error {
+func writeVideoFrame(output io.Writer, frame image.Image) error {
 	bounds := frame.Bounds()
 	var pixels []byte
 	var stride int
@@ -154,17 +199,13 @@ func writeVideoFrame(output io.Writer, frame image.Image, repeats int) error {
 		pixels, stride = converted.Pix, converted.Stride
 	}
 	rowBytes := 4 * bounds.Dx()
-	for range repeats {
-		if stride == rowBytes {
-			if _, err := output.Write(pixels[:rowBytes*bounds.Dy()]); err != nil {
-				return err
-			}
-			continue
-		}
-		for y := range bounds.Dy() {
-			if _, err := output.Write(pixels[y*stride : y*stride+rowBytes]); err != nil {
-				return err
-			}
+	if stride == rowBytes {
+		_, err := output.Write(pixels[:rowBytes*bounds.Dy()])
+		return err
+	}
+	for y := range bounds.Dy() {
+		if _, err := output.Write(pixels[y*stride : y*stride+rowBytes]); err != nil {
+			return err
 		}
 	}
 	return nil

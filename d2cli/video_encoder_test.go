@@ -3,12 +3,15 @@ package d2cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,10 +41,10 @@ func TestVideoFramePackedPixels(t *testing.T) {
 	}
 	for _, frame := range []image.Image{rgba, nrgba, packed, indexed} {
 		var got bytes.Buffer
-		if err := writeVideoFrame(&got, frame, 2); err != nil {
+		if err := writeVideoFrame(&got, frame); err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(got.Bytes(), bytes.Repeat(want, 2)) {
+		if !bytes.Equal(got.Bytes(), want) {
 			t.Fatalf("%T packed pixels = %x", frame, got.Bytes())
 		}
 	}
@@ -51,11 +54,11 @@ func TestVideoMissingFFmpeg(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	dir := t.TempDir()
 	path := filepath.Join(dir, "movie.mp4")
-	written, err := writeVideoWithStatus(context.Background(), &xmain.State{}, path, func(func(image.Image, int) error) error {
+	written, err := writeVideoWithStatus(context.Background(), &xmain.State{}, path, "high", func(func(image.Image, int) error) error {
 		t.Fatal("render started before checking FFmpeg")
 		return nil
 	})
-	if written || err == nil || !strings.Contains(err.Error(), "FFmpeg with libx264 on PATH") {
+	if written || err == nil || !strings.Contains(err.Error(), "FFmpeg 5.1 or newer with libx264 on PATH") {
 		t.Fatalf("written %v, error %v", written, err)
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
@@ -94,7 +97,7 @@ func TestVideoEncoderFailuresPreserveDestination(t *testing.T) {
 			defer stop()
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
-			written, err := writeVideoWithStatus(ctx, &xmain.State{}, path, func(emit func(image.Image, int) error) error {
+			written, err := writeVideoWithStatus(ctx, &xmain.State{}, path, "high", func(emit func(image.Image, int) error) error {
 				if err := emit(image.NewNRGBA(image.Rect(0, 0, 2, 2)), 1); err != nil {
 					return err
 				}
@@ -113,6 +116,86 @@ func TestVideoEncoderFailuresPreserveDestination(t *testing.T) {
 			}
 			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
 				t.Fatalf("temporary file leaked: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestVideoQualityCRF(t *testing.T) {
+	for quality, want := range map[videoQuality]int{"": 18, "low": 28, "medium": 22, "high": 18, "best": 12} {
+		if got, ok := quality.crf(); !ok || got != want {
+			t.Errorf("%q: CRF %d, %v; want %d", quality, got, ok, want)
+		}
+	}
+	if _, ok := videoQuality("unknown").crf(); ok {
+		t.Fatal("accepted unknown video quality")
+	}
+}
+
+// Check timestamps and lengths of actual MP4 samples, including the last
+// sample. A valid duration in the container header alone can mask misplaced
+// packet durations in a movie with long holds and short intervening motion.
+func TestVideoTimedSamples(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	requireVideoTool(t, err == nil, "ffmpeg unavailable")
+	ffprobe, err := exec.LookPath("ffprobe")
+	requireVideoTool(t, err == nil, "ffprobe unavailable")
+	encoders, err := exec.CommandContext(t.Context(), ffmpeg, "-encoders").Output()
+	requireVideoTool(t, err == nil && bytes.Contains(encoders, []byte(" libx264 ")), "FFmpeg with libx264 unavailable")
+	for _, tc := range []struct {
+		name             string
+		holds, durations []int
+	}{
+		{"one tick", []int{1}, []int{1}},
+		{"one static minute", []int{1800}, []int{1799, 1}},
+		{"cuts and holds", []int{1800, 1, 1, 90, 1, 2, 300}, []int{1799, 1, 1, 1, 89, 1, 1, 1, 1, 299, 1}},
+		{"constant frame rate", []int{1, 1, 1, 1, 1}, []int{1, 1, 1, 1, 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "samples.mp4")
+			if err := encodeVideo(t.Context(), ffmpeg, path, "high", func(emit func(image.Image, int) error) error {
+				frame := image.NewNRGBA(image.Rect(0, 0, 64, 48))
+				for i, hold := range tc.holds {
+					for j := 0; j < len(frame.Pix); j += 4 {
+						frame.Pix[j], frame.Pix[j+3] = byte(i*39), 255
+					}
+					if err := emit(frame, hold); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := exec.CommandContext(t.Context(), ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=time_base:packet=pts,duration", "-of", "json", path).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var meta struct {
+				Streams []struct {
+					Base string `json:"time_base"`
+				}
+				Packets []struct{ PTS, Duration int }
+			}
+			if err := json.Unmarshal(data, &meta); err != nil {
+				t.Fatal(err)
+			}
+			if len(meta.Streams) != 1 || len(meta.Packets) != len(tc.durations) {
+				t.Fatalf("unexpected sample table: %s", data)
+			}
+			base, ok := strings.CutPrefix(meta.Streams[0].Base, "1/")
+			scale, err := strconv.Atoi(base)
+			if !ok || err != nil || scale%videoFPS != 0 {
+				t.Fatalf("invalid video timescale %q", meta.Streams[0].Base)
+			}
+			step := scale / videoFPS
+			pts := 0
+			for i, duration := range tc.durations {
+				packet := meta.Packets[i]
+				if packet.PTS != pts || packet.Duration != duration*step {
+					t.Fatalf("packet %d: PTS %d duration %d, want PTS %d duration %d", i, packet.PTS, packet.Duration, pts, duration*step)
+				}
+				pts += duration * step
 			}
 		})
 	}

@@ -147,6 +147,8 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return err
 	}
 	videoDuration := ms.Opts.Flags.Duration("video-duration", 0, "total MP4 playback duration (e.g. 10s or 250ms). By default a video plays the board sequence once. A shorter duration cuts it, and a longer duration repeats it.")
+	videoSizeFlag := ms.Opts.Flags.String("video-size", "", "MP4 canvas in pixels, e.g. 1920x1080. Fits and centers the diagram at this resolution.")
+	videoQualityFlag := ms.Opts.Flags.String("video-quality", "high", "MP4 encoding quality: low, medium, high, or best.")
 	timeoutFlag, err := ms.Opts.Int64("D2_TIMEOUT", "timeout", "", 120, "the maximum number of seconds that D2 runs for before timing out and exiting. Set this option to apply a timeout to MP4 exports.")
 	if err != nil {
 		return err
@@ -338,13 +340,26 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	} else if ms.Opts.Flags.Changed("stdout-format") && (review != "storyboard" || !strings.EqualFold(*stdoutFormatFlag, "png")) {
 		return xmain.UsageErrorf("--stdout-format does not apply to d2 %s", review)
 	}
-	if ms.Opts.Flags.Changed("video-duration") {
-		if outputFormat != MP4 {
-			return xmain.UsageErrorf("--video-duration requires MP4 output")
+	video := videoOptions{duration: *videoDuration, quality: videoQuality(*videoQualityFlag)}
+	for _, name := range []string{"video-duration", "video-size", "video-quality"} {
+		if ms.Opts.Flags.Changed(name) && outputFormat != MP4 {
+			return xmain.UsageErrorf("--%s requires MP4 output", name)
 		}
-		if *videoDuration <= 0 {
-			return xmain.UsageErrorf("--video-duration must be positive")
+	}
+	if ms.Opts.Flags.Changed("video-duration") && video.duration <= 0 {
+		return xmain.UsageErrorf("--video-duration must be positive")
+	}
+	if ms.Opts.Flags.Changed("video-size") {
+		video.size, err = parseVideoSize(*videoSizeFlag)
+		if err != nil {
+			return xmain.UsageErrorf("--video-size: %v", err)
 		}
+		if ms.Opts.Flags.Changed("scale") && *scaleFlag > 0 {
+			return xmain.UsageErrorf("--scale and --video-size both set the MP4 resolution; choose one")
+		}
+	}
+	if _, ok := video.quality.crf(); !ok || *videoQualityFlag == "" {
+		return xmain.UsageErrorf("--video-quality must be low, medium, high, or best")
 	}
 	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
 		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
@@ -463,7 +478,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			renderOpts:      renderOpts,
 			animateInterval: animateIntervalFlag,
 			animateDuration: animateDurationFlag,
-			videoDuration:   *videoDuration,
+			video:           video,
 			compileTimeout:  timeout,
 			host:            *hostFlag,
 			port:            *portFlag,
@@ -502,7 +517,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		boardPath = key.StringIDA()
 	}
 
-	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, *videoDuration, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, nil)
+	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, video, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, nil)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
@@ -570,7 +585,13 @@ func newCLICompileOptions(ctx context.Context, ms *xmain.State, fs fs.FS, inputP
 	}, nil
 }
 
-func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, videoDuration time.Duration, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, watchURLPath *string) (_ []byte, written bool, _ error) {
+type videoOptions struct {
+	duration time.Duration
+	size     videoSize
+	quality  videoQuality
+}
+
+func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, video videoOptions, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, watchURLPath *string) (_ []byte, written bool, _ error) {
 	wantPreview := watchURLPath != nil
 
 	start := time.Now()
@@ -641,6 +662,9 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	if renderOptions.Scale != nil && !(*renderOptions.Scale > 0) {
 		renderOptions.Scale = nil
 	}
+	if ext == MP4 && video.size != (videoSize{}) {
+		renderOptions.Scale = nil
+	}
 	renderOpts := *renderOptions
 	cancel()
 
@@ -684,11 +708,11 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		layers := gifLayerOptions{boardPath: resolvedPath, duration: layerDuration}
 		if ext == MP4 {
 			var preview []byte
-			written, err := writeVideoWithStatus(ctx, ms, outputPath, func(emit func(image.Image, int) error) error {
+			written, err := writeVideoWithStatus(ctx, ms, outputPath, video.quality, func(emit func(image.Image, int) error) error {
 				if wantPreview {
 					emit = withVideoWatchPreview(ctx, renderOpts.Scale, &preview, emit)
 				}
-				return renderVideoFrames(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), layers, videoDuration, forceAppendix, emit)
+				return renderVideoFrames(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), layers, video.duration, forceAppendix, video.size, emit)
 			})
 			if err != nil {
 				return nil, written, err

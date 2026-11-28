@@ -23,8 +23,7 @@ const (
 	videoFPS                  = 30
 	videoMaxDuration          = time.Hour
 	videoMaxFramePixels int64 = 4096 * 2160
-	// Encoded samples include repeats, even when a static board paints only
-	// once. Bound pixel throughput separately from the peak size of a frame.
+	// Bound total coded pixels separately from peak raster and scene work.
 	videoMaxTotalPixels int64 = 4096 * 2160 * videoFPS * 5 * 60
 )
 
@@ -165,14 +164,23 @@ func (p *videoTimeline) sample(index int) (segment int, local time.Duration, rep
 	return segment, local, max(1, end-index), nil, 0
 }
 
-// Count actual scene builds (including misses in the two-scene cache) and
-// paints before assigning operation-wide budgets. A minute-long static hold
-// costs one paint; a moving camera may paint both sides of every transition.
-func (p *videoTimeline) work(ctx context.Context) (builds, paints int, err error) {
+type videoWork struct{ builds, paints, samples int }
+
+func (w videoWork) checkPixels(output image.Rectangle) error {
+	if int64(output.Dx())*int64(output.Dy()) > videoMaxTotalPixels/int64(w.samples) {
+		return fmt.Errorf("MP4 canvas %dx%d over %d coded samples exceeds the %d cumulative-pixel limit; reduce --video-size, --scale, or --video-duration", output.Dx(), output.Dy(), w.samples, videoMaxTotalPixels)
+	}
+	return nil
+}
+
+// Count actual scene builds (including misses in the two-scene cache),
+// paints, and coded samples before assigning operation-wide budgets.
+func (p *videoTimeline) work(ctx context.Context) (videoWork, error) {
+	var w videoWork
 	var cache gifSceneCache
 	visit := func(index int) {
 		if !cache.touch(index) {
-			builds++
+			w.builds++
 		}
 	}
 	// Even a truncated export measures the full tour, so it retains the same
@@ -183,23 +191,26 @@ func (p *videoTimeline) work(ctx context.Context) (builds, paints int, err error
 	var active *d2animate.LayerLeg
 	for i := 0; i < p.frames; {
 		if err := ctx.Err(); err != nil {
-			return 0, 0, err
+			return videoWork{}, err
 		}
 		index, _, repeat, leg, _ := p.sample(i)
+		// The encoder stamps both endpoints of a static hold and one sample
+		// for a single-frame pose. The hold's interior is represented by time.
+		w.samples += min(repeat, 2)
 		if leg == nil {
 			visit(index)
-			paints++
+			w.paints++
 		} else {
 			if leg != active {
 				visit(p.exact[leg.From])
 				visit(p.exact[leg.To])
 			}
-			paints += 2
+			w.paints += 2
 		}
 		active = leg
 		i += repeat
 	}
-	return builds, paints, nil
+	return w, nil
 }
 
 // A video may perform up to 64 single-scene budgets of structural work over
@@ -211,7 +222,7 @@ func videoWorkDivisor(count int) int {
 
 // emit consumes opaque, fixed-size images synchronously. The backing pixels
 // are reused after it returns. No encoded or full-frame history is retained.
-func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMS int, layers gifLayerOptions, duration time.Duration, forceAppendix bool, emit func(image.Image, int) error) error {
+func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMS int, layers gifLayerOptions, duration time.Duration, forceAppendix bool, size videoSize, emit func(image.Image, int) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -221,11 +232,11 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	}
 	// The measurement and playback passes share the asset resolver and a
 	// two-entry cache of complete scenes, including intermediate camera legs.
-	builds, paints, err := p.work(ctx)
+	work, err := p.work(ctx)
 	if err != nil {
 		return err
 	}
-	buildDivisor := videoWorkDivisor(builds)
+	buildDivisor := videoWorkDivisor(work.builds)
 	// Leave at least one declared resource and one expanded use available to
 	// each SVG importer. Even the longest clip can visit at most two scenes
 	// per sampled timestamp, plus the bounded one-pass measurement.
@@ -247,11 +258,13 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	if err != nil {
 		return err
 	}
-	options := gifFrameOptions(0, videoWorkDivisor(paints))
+	options := gifFrameOptions(0, videoWorkDivisor(work.paints))
 	options.MaxPixels = videoMaxFramePixels
 	buildLimits := sceneOptionsForFrame(gifFrameOptions(0, buildDivisor))
 	buildLimits.omitAppendix = !forceAppendix
 	opts = rasterRenderOptions(opts)
+	authoredScale := *opts.Scale
+	opts.Scale = nil // First measure vector scenes in their authored coordinate system.
 	var cache gifSceneCache
 	load := func(index int) (*d2scene.Document, error) {
 		if err := ctx.Err(); err != nil {
@@ -274,31 +287,48 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	}
 	theme := d2themescatalog.Find(themeID(opts))
 	theme.ApplyOverrides(opts.ThemeOverrides)
-	var width, height int
+	boxes := make([]d2scene.Box, len(p.segments))
 	for i := range p.segments {
 		doc, err := load(i)
 		if err != nil {
 			return err
 		}
-		bounds, err := animationFrameBounds(doc, "MP4", videoMaxFramePixels)
-		if err != nil {
-			return err
-		}
+		boxes[i] = doc.ViewBox
 		p.segments[i].matte = videoBoardMatte(theme, p.segments[i].Diagram.Root.Fill)
-		group := p.segments[i].measure(bounds, doc, *opts.Scale)
-		width, height = max(width, group.Dx()), max(height, group.Dy())
 	}
-	// H.264 4:2:0 uses even dimensions. Padding the final row/column keeps
-	// labels at the authored scale.
-	width, height = width+width%2, height+height%2
-	pixels := int64(width) * int64(height)
-	if width > rasterMaxDimension || height > rasterMaxDimension || pixels <= 0 || pixels > videoMaxFramePixels {
-		return fmt.Errorf("MP4 canvas %dx%d exceeds the %d-pixel frame limit", width, height, videoMaxFramePixels)
+	canvas, output, err := p.frameSizes(boxes, authoredScale, size)
+	if err != nil {
+		return err
 	}
-	if pixels > videoMaxTotalPixels/int64(p.frames) {
-		return fmt.Errorf("MP4 canvas %dx%d over %d frames exceeds the %d cumulative-pixel limit", width, height, p.frames, videoMaxTotalPixels)
+	if err := work.checkPixels(output); err != nil {
+		return err
 	}
-	canvas := image.Rect(0, 0, width, height)
+	loadForPlayback := func(index int) (*d2scene.Document, error) {
+		doc, err := load(index)
+		if err != nil {
+			return nil, err
+		}
+		scaled := *doc
+		scaled.LogicalWidth = float64(p.segments[index].bounds.Dx())
+		scaled.LogicalHeight = float64(p.segments[index].bounds.Dy())
+		return &scaled, nil
+	}
+	// Rasterize each pose at delivery resolution. Only integer translation
+	// remains when placing it on the shared canvas or inside the letterbox.
+	margin := image.Pt((output.Dx()-canvas.Dx())/2, (output.Dy()-canvas.Dy())/2)
+	var letterboxed *image.RGBA
+	present := func(frame image.Image, origin image.Point, matte color.Color, repeat int) error {
+		origin = origin.Add(margin)
+		if origin == (image.Point{}) && frame.Bounds() == output {
+			return emit(frame, repeat)
+		}
+		if letterboxed == nil {
+			letterboxed = image.NewRGBA(output)
+		}
+		draw.Draw(letterboxed, output, image.NewUniform(matte), image.Point{}, draw.Src)
+		draw.Draw(letterboxed, frame.Bounds().Add(origin), frame, frame.Bounds().Min, draw.Src)
+		return emit(letterboxed, repeat)
+	}
 	var padded *image.RGBA
 	var workspace d2raster.RenderWorkspace
 	defer workspace.Reset()
@@ -318,11 +348,11 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 				if !haveFrom || !haveTo {
 					return fmt.Errorf("MP4 layer route leaves the selected boards")
 				}
-				a, err := load(from)
+				a, err := loadForPlayback(from)
 				if err != nil {
 					return err
 				}
-				b, err := load(to)
+				b, err := loadForPlayback(to)
 				if err != nil {
 					return err
 				}
@@ -332,30 +362,23 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 			}
 			cameraOptions := options
 			cameraOptions.Background = blendVideoMatte(fromMatte, toMatte, progress)
-			pixels, err := camera.render(ctx, session, cameraOptions, progress, 0)
-			if err != nil {
+			if padded == nil {
+				padded = image.NewRGBA(canvas)
+			}
+			if err := camera.renderInto(ctx, session, &workspace, cameraOptions, progress, 0, padded); err != nil {
 				return err
 			}
-			if err := emit(pixels, repeat); err != nil {
+			if err := present(padded, image.Point{}, cameraOptions.Background, repeat); err != nil {
 				return err
 			}
 		} else {
 			active, camera = nil, nil
-			doc, err := load(index)
+			doc, err := loadForPlayback(index)
 			if err != nil {
 				return err
 			}
 			err = workspace.Render(ctx, session, doc, options, func(frame *image.NRGBA) error {
-				origin := p.segments[index].offset(canvas)
-				if origin == (image.Point{}) && frame.Bounds() == canvas {
-					return emit(frame, repeat)
-				}
-				if padded == nil {
-					padded = image.NewRGBA(canvas)
-				}
-				draw.Draw(padded, canvas, image.NewUniform(p.segments[index].matte), image.Point{}, draw.Src)
-				draw.Draw(padded, frame.Bounds().Add(origin), frame, frame.Bounds().Min, draw.Src)
-				return emit(padded, repeat)
+				return present(frame, p.segments[index].offset(canvas), p.segments[index].matte, repeat)
 			})
 			if err != nil {
 				return err

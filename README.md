@@ -165,13 +165,23 @@ cuts to the destination. Clicking a board link in a standalone SVG pauses the
 tour for manual navigation.
 [Order fulfillment example](./docs/examples/order-fulfillment/order-fulfillment.svg) · [D2 source](./docs/examples/order-fulfillment/order-fulfillment.d2)
 
-To share the tour as a video, run `d2 tour.d2 tour.mp4`. The CLI plays the
-selected boards once and encodes a 30 fps H.264 video. MP4 export requires
-`ffmpeg` with the `libx264` encoder on your PATH. Use `--scale` to adjust the
-resolution. For a board with a continuously animated connection, use
-`d2 --video-duration=10s flow.d2 flow.mp4` to record ten seconds. On a
-multi-board tour this option trims or repeats playback. Durations round up to a
-whole video frame.
+To share a tour as an H.264 video, run `d2 tour.d2 tour.mp4`. The CLI plays
+the selected boards once. It samples motion at 30 fps and records holds using
+timestamps. MP4 export requires FFmpeg 5.1 or newer with the `libx264` encoder
+on your PATH.
+
+```sh
+d2 --video-size=1920x1080 --video-quality=medium tour.d2 tour.mp4
+d2 --video-duration=10s flow.d2 flow.mp4
+```
+
+`--video-size` fits and centers the diagram in an exact pixel canvas, including
+`3840x2160` for UHD or `1080x1920` for portrait. D2 draws text and shapes at
+the requested resolution. By default, the canvas follows the diagram dimensions
+and `--scale`. The quality options are `low`, `medium`, `high` (default), and
+`best`. Lower settings produce smaller files. Use `--video-duration` to record
+a continuously animated board or to trim or repeat a tour. Durations round up
+to the next 1/30 second.
 
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
 see each board and its timestamp in playback order, including intermediate frames
