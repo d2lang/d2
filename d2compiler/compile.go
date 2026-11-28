@@ -131,6 +131,13 @@ func compileIRContext(ctx context.Context, ast *d2ast.Map, m *d2ir.Map) (*d2grap
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Building each authored board's AST materializes any aliased subtrees.
+	// Bound those extra occurrences before traversing the multiboard IR.
+	if hasBoardFields(m) {
+		if err := d2ir.ReserveVariableExpansionAliases(ctx, m); err != nil {
+			return nil, err
+		}
+	}
 	c := &compiler{
 		err: &d2parser.ParseError{},
 		ctx: ctx,
@@ -163,10 +170,8 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 	if c.stopped() {
 		return g
 	}
-	// Graph compilation reads the IR. Nested boards still need an independent
-	// root for class lookup, and boards with children need a copy because the
-	// folder comparison below uses CopyBase, which also modifies its source.
-	if !ir.Root() || hasBoardFields(ir) {
+	// A nested board needs its own IR root for class lookup.
+	if !ir.Root() {
 		if err := d2ir.ReserveVariableExpansionCopy(c.ctx, ir); err != nil {
 			c.fatalErr = err
 			return g
@@ -223,18 +228,9 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 	if c.stopped() {
 		return g
 	}
-	if len(g.Layers) > 0 || len(g.Scenarios) > 0 || len(g.Steps) > 0 {
-		if err := d2ir.ReserveVariableExpansionCopy(c.ctx, ir); err != nil {
-			c.fatalErr = err
-			return g
-		}
-		if d2ir.ParentMap(ir).CopyBase(nil).Equal(ir.CopyBase(nil)) {
-			g.IsFolderOnly = true
-		}
-	}
-	if len(g.Objects) == 0 {
-		g.IsFolderOnly = true
-	}
+	// Authored board groups add no objects to their parent's graph.
+	// A quoted shape named "layers", "scenarios", or "steps" does.
+	g.IsFolderOnly = len(g.Objects) == 0
 	return g
 }
 

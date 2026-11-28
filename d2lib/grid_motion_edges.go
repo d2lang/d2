@@ -34,6 +34,7 @@ type gridEdgePair struct {
 func newGridMotionEdges(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.Graph, moving map[string]bool) *gridMotionEdges {
 	m := &gridMotionEdges{pairs: make(map[string]*gridEdgePair)}
 	graphs := [2]*d2graph.Graph{fromGraph, toGraph}
+	sampleIDs := gridOutgoingEdgeIDs(fromGraph, toGraph)
 	for i, board := range []*d2target.Diagram{from, to} {
 		if len(board.Connections) == 0 {
 			continue
@@ -58,13 +59,17 @@ func newGridMotionEdges(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.
 			if !moving[e.Src] && !moving[e.Dst] {
 				continue
 			}
-			pair := m.pairs[e.ID]
+			id := e.ID
+			if i == 0 && sampleIDs[id] != "" {
+				id = sampleIDs[id]
+			}
+			pair := m.pairs[id]
 			if pair == nil {
 				pair = &gridEdgePair{dstAnchor: e.Dst}
 				if lifelines[e.ID] {
 					pair.dstAnchor = e.Src
 				}
-				m.pairs[e.ID] = pair
+				m.pairs[id] = pair
 			}
 			// A custom layout can return an incomplete route. Let normal
 			// render-target validation report it on the authored endpoint.
@@ -89,11 +94,64 @@ func newGridMotionEdges(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.
 		}
 	}
 	for _, e := range from.Connections {
-		if pair := m.pairs[e.ID]; pair != nil && pair.before.edge != nil && pair.after.edge == nil {
+		id := e.ID
+		if sampleIDs[id] != "" {
+			id = sampleIDs[id]
+		}
+		if pair := m.pairs[id]; pair != nil && pair.before.edge != nil && pair.after.edge == nil {
+			if id != e.ID {
+				departing := *pair.before.edge
+				departing.ID = id
+				pair.before.edge = &departing
+			}
 			m.removed = append(m.removed, pair)
 		}
 	}
 	return m
+}
+
+// Independent scenarios can replace a wire entirely or renumber a parallel
+// wire that survives. Use destination IDs for survivors and free indices for
+// outgoing wires so a departure never takes on an arriving wire's icon stream.
+func gridOutgoingEdgeIDs(from, to *d2graph.Graph) map[string]string {
+	if from == nil || to == nil || len(from.Edges) == 0 || len(to.Edges) == 0 ||
+		to.Parent == nil || !slices.Contains(to.Parent.Scenarios, to) {
+		return nil
+	}
+	old, next := opacityEdgeIDs(from), opacityEdgeIDs(to)
+	var remap map[string]string
+	var occupied map[string]*d2graph.Edge
+	var offset int
+	for origin, id := range old {
+		target := next[origin]
+		if id == "" || id == target {
+			continue
+		}
+		if target == "" {
+			if occupied == nil {
+				occupied = make(map[string]*d2graph.Edge, len(to.Edges))
+				for _, e := range from.Edges {
+					offset = max(offset, e.Index+1)
+				}
+				for _, e := range to.Edges {
+					occupied[e.AbsID()] = e
+					offset = max(offset, e.Index+1)
+				}
+			}
+			e := occupied[id]
+			if e == nil {
+				continue
+			}
+			departing := *e
+			departing.Index += offset
+			target = departing.AbsID()
+		}
+		if remap == nil {
+			remap = make(map[string]string)
+		}
+		remap[id] = target
+	}
+	return remap
 }
 
 func gridEdgeShapeMap(shapes []d2target.Shape) map[string]*d2target.Shape {

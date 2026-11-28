@@ -165,7 +165,7 @@ const motionInputSchema = `{
     "animate_duration": {
       "type": "integer",
       "minimum": 0,
-      "description": "Step transition duration in milliseconds. Omit to use the source setting. Zero disables interpolation."
+      "description": "Transition duration in milliseconds for steps, scenarios, and linked-layer zooms. Omit to use the source setting. Zero disables interpolation."
     }
   }
 }`

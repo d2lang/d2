@@ -133,7 +133,13 @@ func appendStyles(changes []tweenChange, previous, classes *Map, style *Field, p
 
 func appendScenarioClassStyles(changes []tweenChange, previous, current, previousClasses, classes *Map, path []propertyPathPart) []tweenChange {
 	style := d2ast.FlatUnquotedString("style")
-	direct := current.lookupField(style).Map()
+	field := current.lookupField(style)
+	direct := field.Map()
+	if field != nil && direct == nil {
+		// Graph validation reports the invalid style. Sampled class
+		// properties cannot be overlaid on an authored scalar or array.
+		return changes
+	}
 	before := previous.lookupField(style).Map()
 	path = append(path, propertyPathPart{field: style})
 	for _, name := range []string{"fill", "stroke", "font-color", "opacity", "stroke-width", "stroke-dash", "border-radius", "font-size"} {

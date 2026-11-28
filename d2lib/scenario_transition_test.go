@@ -49,7 +49,7 @@ scenarios: {
 
 func TestScenarioStructuralAdditionAndRemoval(t *testing.T) {
 	source := scenarioTiming + `direction: right
-gateway -> queue: {icon.style.animated: 1/s}
+gateway -> queue
 scenarios: {
   spillover: {queue -> reserve}
   steady: {}
@@ -139,16 +139,20 @@ scenarios: {
 }
 
 func TestScenarioIconStreamOrigins(t *testing.T) {
-	const source = `a -> b: first {icon.style.animated: 1/s}
-a -> b: second {icon.style.animated: 2/s}
+	const source = `a -> b: first {icon.shape: square; icon.style.animated: 1/s}
+a -> b: second {icon.shape: diamond; icon.style.animated: 2/s}
 scenarios: {
   remove: {(a -> b)[0]: null}
   restore: {}
 }`
 	root, _ := compileGridMotionTest(t, scenarioTiming+source)
+	shapes := map[string]string{"first": "square", "second": "diamond"}
 	for i, want := range [][]string{{"(a -> b)[1]"}, {"", "(a -> b)[0]"}} {
 		for j, id := range want {
 			e := root.Scenarios[i].Connections[j]
+			if e.IconShape != shapes[e.Label] {
+				t.Errorf("%s: %s changed icon shape to %q", root.Scenarios[i].Name, e.Label, e.IconShape)
+			}
 			if prev := e.IconAnimation.PreviousID; prev == nil || *prev != id {
 				t.Errorf("%s %s predecessor %v, want %q", root.Scenarios[i].Name, e.Label, prev, id)
 			}
@@ -170,4 +174,87 @@ scenarios: {third: {a.style.fill: blue; b -> c}}`
 		t.Fatalf("got %d layouts, %d samples; want 2 layouts across 4 samples", calls, len(optimized.Scenarios[0].TweenFrames))
 	}
 	assertExactDiagramAndSVG(t, optimized, baseline)
+}
+
+func TestScenarioGridParallelEdgeDeparture(t *testing.T) {
+	root, _ := compileGridMotionTest(t, scenarioTiming+`grid-columns: 2
+a -> b: standard
+a -> b: priority
+scenarios: {
+  both: {}
+  priority: {grid-columns: 1; (a -> b)[0]: null}
+  restore: {}
+}`)
+	for i, next := range root.Scenarios[1:] {
+		if !next.GridMotion || len(next.TweenFrames) < 2 {
+			t.Fatalf("%s: expected grid reflow, got %d samples", next.Name, len(next.TweenFrames))
+		}
+		var partial bool
+		for j, frame := range next.TweenFrames {
+			labels := map[string]float64{}
+			ids := map[string]bool{}
+			for _, e := range frame.Connections {
+				if _, ok := labels[e.Label]; ok || ids[e.ID] {
+					t.Fatalf("%s, frame %d: duplicated connection %q (%s)", next.Name, j, e.Label, e.ID)
+				}
+				labels[e.Label], ids[e.ID] = e.Opacity, true
+			}
+			if labels["priority"] != 1 {
+				t.Fatalf("%s, frame %d: survivor opacity %g", next.Name, j, labels["priority"])
+			}
+			if j == 0 && labels["standard"] != float64(1-i) {
+				t.Fatalf("%s: wrong starting opacity %g for the changing edge", next.Name, labels["standard"])
+			}
+			partial = partial || labels["standard"] > 0 && labels["standard"] < 1
+		}
+		if !partial {
+			t.Errorf("%s: the changing edge did not fade", next.Name)
+		}
+	}
+}
+
+func TestScenarioGridReplacedEdgeUsesSeparateRouteAndIconStream(t *testing.T) {
+	for _, base := range []string{"", "a -> b: shared"} {
+		root, _ := compileGridMotionTest(t, scenarioTiming+`grid-columns: 2
+a; b
+`+base+`
+scenarios: {
+  normal: {a -> b: normal {icon.style.animated: 1/s}}
+  priority: {grid-columns: 1; a -> b: priority {icon.style.animated: 2/s}}
+}`)
+		to := root.Scenarios[1]
+		incoming := to.Connections[len(to.Connections)-1]
+		if !to.GridMotion || len(to.TweenFrames) < 2 || incoming.IconAnimation.PreviousID == nil || *incoming.IconAnimation.PreviousID != "" {
+			t.Fatal("expected an independent incoming icon stream during the grid reflow")
+		}
+		overlap := false
+		for i, frame := range to.TweenFrames {
+			var normal, priority float64
+			for _, e := range frame.Connections {
+				switch e.Label {
+				case "normal":
+					if e.ID == incoming.ID {
+						t.Fatalf("frame %d: outgoing edge reused the active incoming stream ID %s", i, e.ID)
+					}
+					normal = e.Opacity
+				case "priority":
+					if e.ID != incoming.ID {
+						t.Fatalf("frame %d: incoming edge lost its stream ID %s", i, e.ID)
+					}
+					priority = e.Opacity
+				case "shared":
+					if e.Opacity != 1 {
+						t.Fatalf("frame %d: shared edge faded to %g", i, e.Opacity)
+					}
+				}
+			}
+			if i == 0 && (normal != 1 || priority != 0) {
+				t.Fatalf("first frame started outgoing and incoming edges at %g, %g", normal, priority)
+			}
+			overlap = overlap || normal > 0 && normal < 1 && priority > 0 && priority < 1
+		}
+		if !overlap {
+			t.Fatal("the distinct grid connections did not cross-fade")
+		}
+	}
 }
