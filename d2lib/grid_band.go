@@ -17,7 +17,7 @@ const (
 // On insertion, make room before growing the cells. Removal plays the same
 // gesture backwards so the neighbors only close over a disappearing band.
 func (b gridBand) window(duration int) (start, end int) {
-	pop := min(220, (duration+1)/2)
+	pop := min(gridPopMS, (duration+1)/2)
 	if b == gridBandClose {
 		return 0, pop
 	}

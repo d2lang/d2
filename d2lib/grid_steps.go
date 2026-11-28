@@ -34,7 +34,7 @@ type boardTransitionPlan struct {
 
 // Compare successive drawable boards for ink changes after layout. Grid moves
 // are still determined by step inheritance, independently of playback order.
-func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *d2graph.Graph, duration, boardLimit int, sketch, structural bool) error {
+func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *d2graph.Graph, duration, boardLimit int, sketch, tala bool) error {
 	// Discover empty grid endpoints before walking playback order, since those
 	// boards gain a visible slot when cells enter or leave them.
 	stepPlans := make(map[*d2target.Diagram]boardTransitionPlan)
@@ -51,8 +51,8 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 			if motion, cost := planGridStep(prev, next, prevGraph, nextGraph); motion != nil {
 				prev.IsFolderOnly, next.IsFolderOnly = false, false
 				stepPlans[next] = boardTransitionPlan{motion: motion, cost: cost}
-			} else if structural && (!prev.IsFolderOnly || previousEmpty) && (!next.IsFolderOnly || emptyLeaf) {
-				p := planStructuralStep(prev, next, prevGraph, nextGraph, sketch)
+			} else if (!prev.IsFolderOnly || previousEmpty) && (!next.IsFolderOnly || emptyLeaf) {
+				p := planStructuralStep(prev, next, prevGraph, nextGraph, sketch, tala)
 				if emptyLeaf && (p.reveal != nil && p.reveal.departing || previousEmpty && sameBoardCanvas(prev, next)) {
 					p.emptyAfter = prev
 				}
@@ -86,33 +86,34 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 	return samplePlannedTransitions(ctx, root, duration, boardLimit, sketch, false, stepPlans)
 }
 
-func planStructuralStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph, sketch bool) boardTransitionPlan {
+func planStructuralStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2graph.Graph, sketch, tala bool) boardTransitionPlan {
 	var p boardTransitionPlan
 	// Tables and sequence diagrams can prove their own anchors from the
 	// rendered endpoints even when TALA did not continue the graph layout.
-	if !sketch {
+	if tala && !sketch {
 		p.sequence = planSequenceTrace(prev, next, prevGraph, nextGraph)
 	}
-	if p.sequence == nil && len(next.TweenFrames) == 0 {
+	if tala && p.sequence == nil && len(next.TweenFrames) == 0 {
 		p.sqlRows = planSQLRowReveal(prev, next)
 	}
-	deletion := len(prev.Shapes) > len(next.Shapes) || len(prev.Connections) > len(next.Connections)
-	if len(prev.Shapes) == 0 && len(next.Shapes) > 0 && len(next.TweenFrames) == 0 &&
-		!nextGraph.Root.IsGridDiagram() && !nextGraph.Root.IsSequenceDiagram() && sameBoardCanvas(prev, next) {
-		// With no surviving geometry to displace, ordinary leaves can enter
-		// in their authored positions on the previously cleared canvas.
-		p.reveal = planBoardReveal(prev, next, nextGraph).ordinaryLeaves(prev, next, nextGraph)
-	} else if deletion && len(next.TweenFrames) == 0 && p.sqlRows == nil && p.sequence == nil {
-		p.reveal = planBoardDeparture(prev, next, prevGraph)
-	} else if next.LayoutContinuity && len(next.TweenFrames) == 0 && p.sqlRows == nil && p.sequence == nil {
-		p.transfer = newBoardTransfer(prev, next, prevGraph, nextGraph)
-		if p.transfer == nil {
-			p.reveal = planBoardReveal(prev, next, nextGraph)
-			if !sketch {
-				p.outline = planBoardOutline(prev, next, prevGraph, nextGraph)
+	if len(next.TweenFrames) == 0 && p.sqlRows == nil && p.sequence == nil {
+		switch {
+		case len(prev.Shapes) > len(next.Shapes) || len(prev.Connections) > len(next.Connections):
+			p.reveal = planStableLeafChange(next, prev, prevGraph, true)
+		case tala && next.LayoutContinuity && len(prev.Shapes) > 0:
+			p.transfer = newBoardTransfer(prev, next, prevGraph, nextGraph)
+			if p.transfer == nil {
+				p.reveal = planBoardReveal(prev, next, nextGraph)
+				if !sketch {
+					p.outline = planBoardOutline(prev, next, prevGraph, nextGraph)
+				}
+				if p.outline != nil && p.outline.needsReveal && p.reveal == nil {
+					p.outline = nil
+				}
 			}
-			if p.outline != nil && p.outline.needsReveal && p.reveal == nil {
-				p.outline = nil
+		default:
+			if !nextGraph.Root.IsGridDiagram() && !nextGraph.Root.IsSequenceDiagram() {
+				p.reveal = planStableLeafChange(prev, next, nextGraph, false)
 			}
 		}
 	}

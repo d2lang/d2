@@ -119,13 +119,13 @@ steps: {expand: {a.width: 300; a -> b}}`)
 	next := board.Steps[0]
 	motion := newGridMotion(board, next, graph, graph.Steps[0])
 	frame := motion.sample(next, 250, 1000)
-	// At one quarter of the move, CSS ease-in-out covers 12.916% of the
-	// distance. The connection's independent smoothstep fade reaches 15.625%.
-	if w := shapeByID(t, frame, "a").Width; w != 126 {
-		t.Fatalf("expanding cell width at 250ms = %d, want 126", w)
+	// At one quarter of the move, cubic ease-in-out covers 6.25% of the
+	// distance. The new connection fades on the same step clock.
+	if w := shapeByID(t, frame, "a").Width; w != 113 {
+		t.Fatalf("expanding cell width at 250ms = %d, want 113", w)
 	}
-	if len(frame.Connections) != 1 || frame.Connections[0].Opacity != .15625 {
-		t.Fatalf("connection fade at 250ms = %+v, want opacity 0.15625", frame.Connections)
+	if len(frame.Connections) != 1 || frame.Connections[0].Opacity != .0625 {
+		t.Fatalf("connection fade at 250ms = %+v, want opacity 0.0625", frame.Connections)
 	}
 }
 

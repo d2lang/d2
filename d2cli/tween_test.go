@@ -212,7 +212,7 @@ steps.move.node.left: 200`
 		t.Fatal("missing node at the start of the animation")
 	}
 	for _, sample := range []struct{ centiseconds, distance int }{
-		{20, 0}, {24, 26}, {28, 100}, {32, 174}, {36, 200},
+		{20, 0}, {24, 12}, {28, 100}, {32, 188}, {36, 200},
 	} {
 		center := redIconCenter(animationFrameAt(t, data, sample.centiseconds))
 		if got := center - origin; got != sample.distance {

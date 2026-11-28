@@ -256,11 +256,13 @@ func (item *gridMotionItem) bubbleOrigin(n *gridNode, other map[string]*gridNode
 	}
 }
 
+const gridPopMS = 360
+
 // popWindows gives membership changes their own short gestures within the step.
 // A shuffle can take the full configured duration while a cell stays settled.
 func (m *gridMotion) popWindows(durationMS int) (enterStart, enterEnd, exitEnd int) {
 	if m.hasExit {
-		exitEnd = min(160, durationMS)
+		exitEnd = min(gridPopMS, durationMS)
 		if m.hasEnter {
 			exitEnd = min(exitEnd, (durationMS+1)/2)
 		}
@@ -274,7 +276,7 @@ func (m *gridMotion) popWindows(durationMS int) (enterStart, enterEnd, exitEnd i
 			// A direct replacement overlaps only the tail of the exit.
 			enterStart = 3 * exitEnd / 4
 		}
-		enterEnd = min(durationMS, enterStart+220)
+		enterEnd = min(durationMS, enterStart+gridPopMS)
 	}
 	return enterStart, enterEnd, exitEnd
 }
@@ -296,7 +298,7 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 	// A connection alone can enter or leave during a shuffle. In that case
 	// its fade follows the step clock alongside the moving endpoints.
 	enterScale, exitScale := 1., 1.
-	enterOpacity, exitOpacity := gridEase(layoutPhase), gridEase(1-fraction)
+	enterOpacity, exitOpacity := animation.EaseInOut(layoutPhase), animation.EaseInOut(1-fraction)
 	if m.hasEnter {
 		enterScale, enterOpacity = gridPop(gridPhase(elapsed, float64(enterStart), float64(enterEnd)))
 	}
@@ -376,7 +378,7 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 	}
 	result.Shapes = m.handoffs.apply(result.Shapes, elapsedMS, durationMS)
 	if m.handoffs != nil && visibility != nil {
-		t := gridEase(gridPhase(elapsed, 0, float64(min(gridHandoffMS, durationMS))))
+		t := animation.EaseInOut(gridPhase(elapsed, 0, float64(min(gridHandoffMS, durationMS))))
 		for _, pair := range m.handoffs.pairs {
 			visibility[pair.from.ID] = 1 - t
 			visibility[pair.to.ID] = t
@@ -449,12 +451,10 @@ func scaleMotionShape(s d2target.Shape, x, y, scale, opacity float64) d2target.S
 	return s
 }
 
-// Sample the same gesture forward for entry and backward for exit. Quadratic
-// ease-out settles at full size. Fade only near the small end so the change
-// in speed stays visible for most of the gesture.
+// Grow around the slot center on entry and retrace the gesture on exit.
+// Complete the fade halfway through growth so the final approach is visible.
 func gridPop(visible float64) (scale, opacity float64) {
-	remaining := 1 - visible
-	return 1 - .60*remaining*remaining, gridEase(min(1, visible/.36))
+	return .35 + .65*animation.EaseInOut(visible), animation.EaseInOut(min(1, 2*visible))
 }
 
 func gridLerpInt(a, b int, t float64) int {

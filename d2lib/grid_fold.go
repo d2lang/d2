@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
@@ -125,7 +126,7 @@ func (f *gridFold) caption(s *d2target.Shape, t float64) {
 
 func (d gridFoldDetail) sample(s d2target.Shape, fraction, travel float64) (d2target.Shape, float64) {
 	f := d.fold
-	visible := gridEase(gridPhase(f.progress(fraction), d.revealStart, d.revealStart+gridFoldFade))
+	visible := animation.EaseInOut(gridPhase(f.progress(fraction), d.revealStart, d.revealStart+gridFoldFade))
 	if visible == 0 {
 		return s, 0
 	}

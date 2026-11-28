@@ -166,8 +166,8 @@ steps: {move: {vars.n: 200; group.width: 200; group.child.top: -50}}
 		t.Fatalf("got %d samples including endpoint, want 5", len(frames))
 	}
 	for i, want := range []struct{ size, top, value string }{
-		{"100", "50", "100"}, {"113", "37", "125"}, {"150", "0", "150"},
-		{"187", "-37", "175"}, {"200", "-50", "200"},
+		{"100", "50", "100"}, {"106", "44", "125"}, {"150", "0", "150"},
+		{"194", "-44", "175"}, {"200", "-50", "200"},
 	} {
 		frame := frames[i]
 		child := tweenField(frame, "group", "child").Map()

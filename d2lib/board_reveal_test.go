@@ -11,7 +11,69 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
+	d2log "github.com/d2lang/d2/lib/log"
 )
+
+func TestDagreStableNodeArrivalAndRemoval(t *testing.T) {
+	const src = `vars: {d2-config: {animate-interval: 800ms; animate-duration: 400ms}}
+build: Build {width: 160; height: 80}
+steps: {
+  audit: {audit: Audit {shape: hexagon; width: 160; height: 80}}
+  remove: {audit: null}
+  prepend: {lint -> build}
+  undo: {lint: null}
+  clear: {build: null}
+  hold: {}
+  restore: {report: Report}
+}`
+	var calls int
+	d, _, err := Compile(d2log.WithDefault(t.Context()), src, dagreCompileOptions(&calls), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		step                *d2target.Diagram
+		early, late, fading int
+	}{
+		{d.Steps[0], 100, 300, 50},
+		{d.Steps[1], 300, 100, 350},
+	} {
+		at := func(ms int) d2target.Shape {
+			t.Helper()
+			i := slices.Index(tc.step.TweenFrameEndsMS, ms)
+			if i < 0 || i+1 >= len(tc.step.TweenFrames) {
+				t.Fatalf("%s missing sample at %d ms", tc.step.Name, ms)
+			}
+			f := tc.step.TweenFrames[i+1]
+			if !reflect.DeepEqual(shapeByID(t, f, "build"), shapeByID(t, d, "build")) {
+				t.Fatal("the persistent build stage changed during the transition")
+			}
+			return shapeByID(t, f, "audit")
+		}
+		// The 160px body grows from 32% size. A quarter of its clock
+		// covers 1/16 of the remaining distance, three quarters 15/16.
+		if early, late := at(tc.early).Width, at(tc.late).Width; early != 58 || late != 153 {
+			t.Fatalf("%s quarter widths = %d, %d; want 58, 153", tc.step.Name, early, late)
+		}
+		if alpha := at(tc.fading).Opacity; math.Abs(alpha-.23842) > .0001 {
+			t.Fatalf("%s opacity at %d ms = %v", tc.step.Name, tc.fading, alpha)
+		}
+	}
+	if shapeByID(t, d, "build").Pos == shapeByID(t, d.Steps[2], "build").Pos {
+		t.Fatal("fixture did not reposition the build stage")
+	}
+	for _, step := range d.Steps[2:4] {
+		if len(step.TweenFrames) != 0 {
+			t.Fatalf("%s animated a node on a different layout", step.Name)
+		}
+	}
+	clear, hold, restore := d.Steps[4], d.Steps[5], d.Steps[6]
+	if clear.IsFolderOnly || len(clear.TweenFrames) == 0 || len(clear.Shapes) != 0 ||
+		hold.IsFolderOnly || len(hold.TweenFrames) != 0 ||
+		len(restore.TweenFrames) == 0 || len(restore.TweenFrames[0].Shapes) != 0 {
+		t.Fatal("clearing, holding, and rebuilding must preserve the displayed empty canvas")
+	}
+}
 
 func TestTALABoardRevealAcrossSteps(t *testing.T) {
 	const src = `vars: {d2-config: {animate-interval: 900ms; animate-duration: 600ms}}
