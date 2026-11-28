@@ -167,11 +167,15 @@ Zero selects ordinary SVG export.
 Video exports and multiboard GIFs default to 1000ms per board. GIFs allow time for icon departures and derive a single-board loop from the animation.
 .Ns .
 .It Fl -animate-duration Ar 0
-Set the transition duration for changes to numeric properties, colors, and grid layouts between steps.
+Set the transition duration for changes to numeric properties, colors, and grid layouts across steps and scenarios.
 For linked layers, a positive duration zooms through the enclosing shape on entry or return.
 A move between sibling layers passes through their shared parent within the same duration.
 In a standalone SVG, following a board link pauses the automatic tour.
-Changes between steps can be authored directly or through variables.
+A scenario inherits its parent. During playback, it can animate from the parent
+or from the preceding visible sibling scenario. An intervening layer or nested
+board breaks that comparison. A tour of scenarios cuts back to the opening
+board when the loop repeats.
+Changes can be authored directly or through variables.
 Direct numeric changes include opacity, stroke-width, stroke-dash, border-radius, font-size, width, and height.
 Compatible gradients have the same kind, direction, and number of stops.
 Each stop interpolates its color and position.
@@ -179,13 +183,13 @@ In grids, cells with the same ID move to their new positions.
 New cells grow in and removed cells shrink away.
 D2 also animates complete row or column changes, replacements in a fixed slot,
 and cells that expand or collapse a nested grid.
-In TALA steps, connections can draw toward arriving nodes, containers can form
+In TALA steps and scenarios, connections can draw toward arriving nodes, containers can form
 around their contents, and services can move between containers.
 Appended SQL rows can drop into place and sequence messages can trace from sender to receiver.
 The flag takes milliseconds. The file also accepts durations, for example
 .Li "vars: {d2-config: {animate-interval: 800ms; animate-duration: 300ms}}" .
 All interpolated values change together for 300ms, then hold their values for the remaining 500ms.
-A longer transition extends the step to its duration.
+A longer transition extends the board to its duration.
 The duration defaults to zero, which disables interpolation, and accepts values up to ten minutes.
 The flag takes precedence over D2_ANIMATE_DURATION, which takes precedence over the file.
 Static exports show the authored values.

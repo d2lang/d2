@@ -142,7 +142,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate transitions into and out of linked layers and step changes to numeric properties, solid colors, compatible gradients, variables, grid layouts, and supported TALA structural edits (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
+	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "transition duration in milliseconds for linked-layer zooms and for step or scenario changes to numeric properties, solid colors, compatible gradients, variables, grid layouts, and supported TALA structural edits (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
 	if err != nil {
 		return err
 	}

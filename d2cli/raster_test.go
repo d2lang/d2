@@ -447,7 +447,7 @@ func TestGIFViewportsFollowIncomingTween(t *testing.T) {
 	base.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
 	next.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
 	next.LayoutContinuity = true
-	views := gifViewports(root, []*d2target.Diagram{root, base, next})
+	views := gifViewports(root, []*d2target.Diagram{root, base, next}, false)
 	if views[base] == nil || views[next] != views[base] || views[next.TweenFrames[0]] != views[base] ||
 		views[root] != nil || views[base.TweenFrames[0]] != nil {
 		t.Fatal("incoming samples must share the viewport only for the continuous transition")

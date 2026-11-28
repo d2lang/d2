@@ -139,3 +139,73 @@ steps: {change: {
 		}
 	}
 }
+
+func TestScenarioReturnsToClassStyle(t *testing.T) {
+	root, err := compileTween(t, `vars.d2-config: {animate-interval: 1s; animate-duration: 80ms}
+classes: {
+  rail: {width: 80; style: {fill: blue; stroke-width: 2}}
+  pulse: {style.stroke-width: 8}
+}
+a: {class: [rail]}
+b: {class: rail}
+a -> b: {class: pulse}
+scenarios: {
+  diversion: {a: {width: 100; style: {fill: red; stroke-width: 4}}; (a -> b)[0].style.stroke-width: 2}
+  limited: {a.class: [rail; pulse]}
+}`, d2ir.CompileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := tweenField(root, "scenarios", "limited").Map()
+	if len(b.TweenFrames) != 2 {
+		t.Fatalf("got %d frames", len(b.TweenFrames))
+	}
+	mid := b.TweenFrames[1]
+	for _, tc := range []struct {
+		board *d2ir.Map
+		path  []string
+		want  string
+	}{
+		{mid, []string{"a", "style", "fill"}, "#800080"},
+		{mid, []string{"a", "style", "stroke-width"}, "6"},
+		{mid, []string{"a", "width"}, "90"},
+		{mid.Edges[0].Map(), []string{"style", "stroke-width"}, "5"},
+	} {
+		if got := tweenText(t, tc.board, tc.path...); got != tc.want {
+			t.Errorf("%v = %s, want %s", tc.path, got, tc.want)
+		}
+	}
+	if tweenField(mid, "b", "style") != nil || tweenField(b, "a", "style") != nil ||
+		tweenText(t, mid, "classes", "rail", "style", "fill") != "blue" {
+		t.Fatal("instance overrides leaked onto another shape, the class, or the endpoint")
+	}
+}
+
+func TestStableScenarioStyleDuringClassAndVariableTween(t *testing.T) {
+	root, err := compileTween(t, `vars: {d2-config: {animate-interval: 200ms; animate-duration: 80ms}; heat: blue}
+classes.base.style.fill: blue
+fixed.class: base
+other.class: base
+bound.style.fill: ${heat}
+scenarios: {
+  alert: {vars.heat: red; classes.base.style.fill: red; fixed.style.fill: blue; bound.style.fill: blue}
+  normal: {}
+}`, d2ir.CompileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := tweenField(root, "scenarios", "normal").Map()
+	if len(b.TweenFrames) != 2 {
+		t.Fatalf("got %d samples", len(b.TweenFrames))
+	}
+	for _, f := range b.TweenFrames {
+		for _, id := range []string{"fixed", "bound"} {
+			if got := tweenText(t, f, id, "style", "fill"); got != "blue" {
+				t.Errorf("%s flashed %s during the return to normal", id, got)
+			}
+		}
+	}
+	if got := tweenText(t, b.TweenFrames[1], "classes", "base", "style", "fill"); got != "#800080" {
+		t.Errorf("shared class lost its transition: %s", got)
+	}
+}

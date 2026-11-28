@@ -815,7 +815,7 @@ func renderGIFWithSession(
 	if layers.duration > 0 {
 		navigation = d2animate.NewLayerNavigation(diagram, layers.boardPath)
 	}
-	viewports := gifViewports(diagram, boards)
+	viewports := gifViewports(diagram, boards, layers.duration > 0)
 	var timeline []gifSegment
 	totalFrames, extraPaints, filmMS := 0, 0, 0
 	var boardFrames []d2animate.Frame

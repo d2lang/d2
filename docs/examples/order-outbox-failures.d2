@@ -1,0 +1,80 @@
+# d2 order-outbox-failures.d2 order-outbox-failures.svg
+# Compare independent one-minute windows with the same starting state.
+vars: {
+  d2-config: {layout-engine: tala; animate-interval: 5s; animate-duration: 1s; animate-progress: false; pad: 32; scale: 0.8}
+  accepted: 120
+  rejected: 0
+  published: 120
+  fulfilled: 150
+  pending: 0
+  pending-share: 0%
+}
+style.fill: "#F7F8F4"
+classes: {
+  caption: {shape: text; style: {font-size: 17; font-color: "#425E60"}}
+  service: {
+    width: 222
+    height: 88
+    style: {fill: "#FFFFFF"; stroke: "#658981"; font-color: "#163D3C"; font-size: 20; bold: true; border-radius: 9}
+  }
+  command: {style: {stroke: "#275F76"; stroke-width: 3; italic: false}}
+  event: {style: {stroke: "#207661"; stroke-width: 3; italic: false}}
+  blocked: {style: {stroke: "#AD5A37"; stroke-width: 2; stroke-dash: 4; font-color: "#8B452D"; font-size: 15; italic: false}}
+}
+
+section: "ORDER PROCESSING   /   TRANSACTIONAL OUTBOX" {class: caption; left: 0; top: 0; style: {bold: true; font-color: "#1C6959"}}
+title: "Can checkout keep taking orders?" {shape: text; left: 0; top: 29; style: {font-size: 38; bold: true; font-color: "#173D3B"}}
+setup: "Each case gets 120 requests in one minute. The outbox starts empty, and Kafka has 30 unprocessed events." {class: caption; left: 0; top: 90; style.font-size: 19}
+mode: "Normal operation" {class: caption; left: 0; top: 142; style: {font-size: 23; bold: true; font-color: "#164D43"}}
+
+checkout: "Checkout client\n120 × POST /orders" {class: service; left: 0; top: 213}
+api: "Orders API\nCreate order" {class: service; left: 371; top: 213; style.fill: "#E2EEF2"; style.stroke: "#598393"}
+primary: "PostgreSQL primary\norders + event_outbox" {class: service; shape: cylinder; style: {fill: "#CEE4DE"; stroke: "#3D756C"}; left: 742; top: 201; height: 111; label.near: center-center}
+relay: "Outbox relay\n${published} events published" {class: service; left: 742; top: 404; label.near: center-center}
+kafka: "Kafka\norders.placed" {class: service; shape: queue; style: {fill: "#DCEDE2"; stroke: "#54816E"}; left: 371; top: 404; label.near: center-center}
+worker: "Fulfillment worker\n${fulfilled} orders processed" {class: service; left: 0; top: 404}
+
+checkout <-> api: "HTTP 201 × ${accepted}\nHTTP 503 × ${rejected}" {class: command}
+api -> primary: "commit both rows" {class: command}
+primary -> relay: "committed outbox rows" {class: event}
+relay -> kafka: "publish event" {class: event}
+kafka -> worker: "consume event" {class: event}
+
+ledger: "Fulfillment DB" {class: service; shape: cylinder; style: {fill: "#CEE4DE"; stroke: "#3D756C"}; left: 0; top: 553; height: 111; label.near: center-center}
+worker -> ledger: "upsert by order ID" {class: event}
+
+meter: "Unpublished outbox events after one minute" {class: caption; left: 371; top: 551; style: {font-size: 20; bold: true; font-color: "#173D3B"}}
+pending: "${pending} events / 120 checkout requests" {
+  left: 371
+  top: 595
+  width: 593
+  height: 56
+  style: {
+    fill: "linear-gradient(to right, #F1B780 ${pending-share}, #E8EDE7 ${pending-share})"
+    stroke: "#9EAFA3"
+    stroke-width: 1
+    font-color: "#263C36"
+    font-size: 20
+    bold: true
+    border-radius: 7
+  }
+}
+
+scenarios: {
+  broker-outage: {
+    # PostgreSQL still commits one order and one outbox event per request.
+    vars: {published: 0; fulfilled: 0; pending: 120; pending-share: 100%}
+    mode: "Kafka unavailable"
+    kafka.style: {fill: "#FBE3D5"; stroke: "#A84220"}
+    (relay -> kafka)[0]: "publish retries" {class: blocked}
+    (kafka -> worker)[0]: "no delivery" {class: blocked}
+  }
+  primary-outage: {
+    # New orders fail before commit. Fulfillment drains the 30 events already in Kafka.
+    vars: {accepted: 0; rejected: 120; published: 0; fulfilled: 30}
+    mode: "PostgreSQL primary unavailable"
+    primary.style: {fill: "#FBE3D5"; stroke: "#A84220"}
+    (api -> primary)[0]: "write fails" {class: blocked}
+    (primary -> relay)[0]: "no rows read" {class: blocked}
+  }
+}

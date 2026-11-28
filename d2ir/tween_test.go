@@ -393,8 +393,8 @@ layers: {sensor: @module.layers.panel}`, opts)
 }
 
 func TestTweenForwardVariableInSelectedImport(t *testing.T) {
-	opts := d2ir.CompileOptions{FS: fstest.MapFS{
-		"module.d2": {Data: []byte(`layers: {panel: {
+	const module = `layers: {panel: {
+  anchor
   vars.p: 0
   steps: {load: {
     vars.p: 4
@@ -402,23 +402,27 @@ func TestTweenForwardVariableInSelectedImport(t *testing.T) {
     markdown: |md [${p}](${url}) |
   }}
 }}
-vars: {url: "https://example.com/${path}"; path: runbook}`)},
-	}}
-	m, err := compileTween(t, `vars: {url: wrong; d2-config: {animate-interval: 1s; animate-duration: 80ms}}
+vars: {url: "https://example.com/${path}"; path: runbook}`
+	for _, group := range []string{"steps", "scenarios"} {
+		t.Run(group, func(t *testing.T) {
+			opts := d2ir.CompileOptions{FS: fstest.MapFS{"module.d2": {Data: []byte(strings.Replace(module, "steps:", group+":", 1))}}}
+			m, err := compileTween(t, `vars: {url: wrong; d2-config: {animate-interval: 1s; animate-duration: 80ms}}
 layers: {sensor: @module.layers.panel}`, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	step := tweenField(m, "layers", "sensor", "steps", "load").Map()
-	if len(step.TweenFrames) != 2 {
-		t.Fatalf("got %d frames", len(step.TweenFrames))
-	}
-	mid := step.TweenFrames[1]
-	if got := tweenText(t, mid, "plain"); got != "2 https://example.com/runbook" {
-		t.Errorf("plain midpoint = %q", got)
-	}
-	if got := tweenText(t, mid, "markdown"); got != "[2](https://example.com/runbook)" {
-		t.Errorf("Markdown midpoint = %q", got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			step := tweenField(m, "layers", "sensor", group, "load").Map()
+			if len(step.TweenFrames) != 2 {
+				t.Fatalf("got %d frames", len(step.TweenFrames))
+			}
+			mid := step.TweenFrames[1]
+			if got := tweenText(t, mid, "plain"); got != "2 https://example.com/runbook" {
+				t.Errorf("plain midpoint = %q", got)
+			}
+			if got := tweenText(t, mid, "markdown"); got != "[2](https://example.com/runbook)" {
+				t.Errorf("Markdown midpoint = %q", got)
+			}
+		})
 	}
 }
 
@@ -606,6 +610,102 @@ steps.one: {vars: {n: 2; card: {meter: "${n} ${x}"; note: |md ${n} ${x} | }}; pa
 		}
 		if got, want := tweenText(t, frame, "live"), []string{"2", "3", "4"}[i]; got != want {
 			t.Errorf("frame %d live = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestScenarioTweenComparisons(t *testing.T) {
+	const source = `vars: {
+  d2-config: {animate-interval: 1s; animate-duration: 80ms}
+  load: 20
+  report: "Load ${load}%"
+}
+meter: ${report} {style.fill: blue}
+scenarios: {
+  peak: {
+    vars.load: 80
+    meter.style.fill: red
+    overflow
+  }
+  ordinary: {}
+  quiet: {vars.load: 10}
+  same: {vars.load: 10}
+}
+steps: {later: {vars.load: 40}}
+`
+	root, err := compileTween(t, source, d2ir.CompileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		group, name, start, midpoint, end, color string
+	}{
+		{"scenarios", "peak", "20", "50", "80", "#800080"},
+		{"scenarios", "ordinary", "80", "50", "20", "#800080"},
+		{"scenarios", "quiet", "20", "15", "10", "blue"},
+		{"steps", "later", "20", "30", "40", "blue"},
+	} {
+		b := tweenField(root, tc.group, tc.name).Map()
+		if b.TweenDurationMS != 80 || len(b.TweenFrames) != 2 {
+			t.Fatalf("%s: got %d samples covering %d ms", tc.name, len(b.TweenFrames), b.TweenDurationMS)
+		}
+		for i, sample := range []*d2ir.Map{b.TweenFrames[0], b.TweenFrames[1], b} {
+			load := []string{tc.start, tc.midpoint, tc.end}[i]
+			if got := tweenText(t, sample, "meter"); got != "Load "+load+"%" {
+				t.Errorf("%s, sample %d: got %s, want load %s", tc.name, i, got, load)
+			}
+		}
+		if got := tweenText(t, b.TweenFrames[1], "meter", "style", "fill"); got != tc.color {
+			t.Errorf("%s midpoint fill = %s, want %s", tc.name, got, tc.color)
+		}
+	}
+	if tweenField(root, "scenarios", "ordinary", "overflow") != nil || len(tweenField(root, "scenarios", "same").Map().TweenFrames) != 0 {
+		t.Fatal("independent scenarios inherited a sibling's shape or replayed its tween")
+	}
+	for _, opts := range []d2ir.CompileOptions{{AnimateTweens: new(false)}, {AnimateDuration: new(int64(0))}} {
+		static, err := compileTween(t, source, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range tweenField(static, "scenarios").Map().Fields {
+			if f.Map().TweenDurationMS != 0 || len(f.Map().TweenFrames) != 0 {
+				t.Fatalf("disabled tween on scenario %s produced samples", f.Name)
+			}
+		}
+	}
+}
+
+func TestScenarioTweenFollowsVisibleBoards(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 1s; animate-duration: 80ms}; n: 0}
+meter: ${n}
+layers: {unrelated: {meter: elsewhere}}
+scenarios: {
+  first: {
+    vars.n: 10
+    scenarios.inner: {vars.n: 12}
+  }
+  after-inner: {vars.n: 20}
+  empty: {meter: null}
+  after-empty: {vars.n: 30}
+}`
+	root, err := compileTween(t, source, d2ir.CompileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"first", "after-inner", "empty"} {
+		if b := tweenField(root, "scenarios", name).Map(); len(b.TweenFrames) != 0 {
+			t.Errorf("%s should not animate across an unrelated or hidden board", name)
+		}
+	}
+	for _, tc := range []struct {
+		b   *d2ir.Map
+		mid string
+	}{
+		{tweenField(root, "scenarios", "first", "scenarios", "inner").Map(), "11"},
+		{tweenField(root, "scenarios", "after-empty").Map(), "25"},
+	} {
+		if len(tc.b.TweenFrames) != 2 || tweenText(t, tc.b.TweenFrames[1], "meter") != tc.mid {
+			t.Fatalf("expected transition through %s", tc.mid)
 		}
 	}
 }

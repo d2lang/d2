@@ -10,7 +10,7 @@ import (
 
 type opacityRange struct{ start, end float64 }
 
-type stepOpacity struct {
+type boardOpacity struct {
 	from          *d2target.Diagram
 	shapes, edges map[string]opacityRange
 }
@@ -18,7 +18,7 @@ type stepOpacity struct {
 // Opacity can be implicit, inherited through a class, or reset with null.
 // The exported endpoints already include the compiler's class and variable
 // resolution. Only supply paint that the existing IR samples do not carry.
-func planStepOpacity(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.Graph) *stepOpacity {
+func planBoardOpacity(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.Graph) *boardOpacity {
 	first := next
 	if len(next.TweenFrames) != 0 {
 		first = next.TweenFrames[0]
@@ -50,12 +50,13 @@ func planStepOpacity(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.G
 	if len(shapes) == 0 && len(edges) == 0 {
 		return nil
 	}
-	return &stepOpacity{from: prev, shapes: shapes, edges: edges}
+	return &boardOpacity{from: prev, shapes: shapes, edges: edges}
 }
 
 // Match moving icons by the same declarations as opacity tweens. Keep the
-// common case implicit in JSON and record only renumbered or replaced IDs.
-func matchStepIconStreams(oldGraph, nextGraph *d2graph.Graph, board *d2target.Diagram) {
+// common case implicit for steps. On scenarios an explicit predecessor also
+// indicates that the two alternatives play as a continuous transition.
+func matchBoardIconStreams(oldGraph, nextGraph *d2graph.Graph, board *d2target.Diagram, explicit bool) {
 	if !slices.ContainsFunc(board.Connections, func(e d2target.Connection) bool { return e.IconAnimation != nil }) {
 		return
 	}
@@ -74,7 +75,7 @@ func matchStepIconStreams(oldGraph, nextGraph *d2graph.Graph, board *d2target.Di
 			continue
 		}
 		old := previousByID[e.ID]
-		if old != e.ID && (old != "" || occupied[e.ID]) {
+		if explicit || old != e.ID && (old != "" || occupied[e.ID]) {
 			e.IconAnimation.PreviousID = &old
 		}
 	}
@@ -154,7 +155,7 @@ func missingOpacityTweens[T any](before, after, first []T, renamed map[string]st
 	return changes
 }
 
-func (o *stepOpacity) sample(base *d2target.Diagram, t float64) *d2target.Diagram {
+func (o *boardOpacity) sample(base *d2target.Diagram, t float64) *d2target.Diagram {
 	frame := *base
 	if len(o.shapes) != 0 {
 		frame.Shapes = slices.Clone(base.Shapes)

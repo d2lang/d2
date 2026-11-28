@@ -25,7 +25,7 @@ type CompileOptions struct {
 	UTF16Pos bool
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
-	// AnimateTweens controls sampling of step transitions. Nil follows
+	// AnimateTweens controls sampling of scenario and step transitions. Nil follows
 	// the root animate-interval. False compiles only the authored endpoints.
 	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
@@ -204,24 +204,44 @@ func cloneGraphDataValue(value interface{}) interface{} {
 }
 
 func compile(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts) (*d2target.Diagram, error) {
-	d, _, err := compileBoard(ctx, g, compileOpts, renderOpts, nil, nil, false)
+	d, _, err := compileBoard(ctx, g, compileOpts, renderOpts, boardLayoutBase{}, false)
 	return d, err
 }
 
-func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts, previous *d2graph.Graph, reuse *layoutGeometry, captureForCaller bool) (*d2target.Diagram, *layoutGeometry, error) {
+// Scenarios keep their parent's coordinate frame even as their paint moves
+// between alternatives. Steps can carry layout forward through their samples.
+type boardLayoutBase struct {
+	graph      *d2graph.Graph
+	geometry   *layoutGeometry
+	cumulative bool
+}
+
+func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOptions, renderOpts *d2svg.RenderOpts, base boardLayoutBase, captureForCaller bool) (*d2target.Diagram, *layoutGeometry, error) {
+	var adjust d2graph.LayoutContinuation
+	if compileOpts.Layout != nil {
+		adjust = compileOpts.LayoutContinuations[strings.ToLower(*compileOpts.Layout)]
+	}
+	// Without a continuation, identical layout inputs can reuse any sample's
+	// geometry. With one, a scenario's samples must all start at its parent.
+	reuseSamples := base.cumulative || adjust == nil
 	var frames []*d2target.Diagram
 	transitionContinuous := true
 	for _, sample := range g.TweenFrames {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		frame, geometry, err := compileBoard(ctx, sample, compileOpts, renderOpts, previous, reuse, true)
+		frame, geometry, err := compileBoard(ctx, sample, compileOpts, renderOpts, base, reuseSamples)
 		if err != nil {
 			return nil, nil, err
 		}
 		frames = append(frames, frame)
 		transitionContinuous = transitionContinuous && frame.LayoutContinuity
-		previous, reuse = sample, geometry
+		if base.cumulative {
+			base.graph = sample
+		}
+		if reuseSamples {
+			base.geometry = geometry
+		}
 	}
 
 	err := g.ApplyTheme(*renderOpts.ThemeID)
@@ -237,7 +257,7 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 			return nil, nil, err
 		}
 
-		needsGeometry := compileOpts.LayoutReuse && (reuse != nil || captureForCaller || len(g.Scenarios) > 0 || len(g.Steps) > 0)
+		needsGeometry := compileOpts.LayoutReuse && (base.geometry != nil || captureForCaller || len(g.Scenarios) > 0 || len(g.Steps) > 0)
 		var signature layoutInputSignature
 		reusable := false
 		if needsGeometry {
@@ -252,7 +272,7 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 		}
 		// A built-in layout may surface context cancellation at the start of
 		// every board. Do not let geometry replay bypass that error path.
-		reused := ctx.Err() == nil && reusable && compileOpts.LayoutReuse && reuse.apply(g, signature)
+		reused := ctx.Err() == nil && reusable && compileOpts.LayoutReuse && base.geometry.apply(g, signature)
 		if !reused {
 			coreLayout, err := getLayout(compileOpts)
 			if err != nil {
@@ -268,12 +288,10 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 				return nil, nil, err
 			}
 		}
-		if previous != nil && compileOpts.Layout != nil && len(compileOpts.LayoutContinuations) != 0 {
-			if adjust := compileOpts.LayoutContinuations[strings.ToLower(*compileOpts.Layout)]; adjust != nil {
-				continuity, err = adjust(ctx, previous, g)
-				if err != nil {
-					return nil, nil, err
-				}
+		if base.graph != nil && adjust != nil {
+			continuity, err = adjust(ctx, base.graph, g)
+			if err != nil {
+				return nil, nil, err
 			}
 		}
 		if reusable && (captureForCaller || len(g.Scenarios) > 0 || len(g.Steps) > 0) {
@@ -295,28 +313,29 @@ func compileBoard(ctx context.Context, g *d2graph.Graph, compileOpts *CompileOpt
 	for _, l := range g.Layers {
 		// Layers are independent boards rather than overlays of their parent, so
 		// retain their existing always-layout behavior.
-		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, nil, nil, false)
+		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, boardLayoutBase{}, false)
 		if err != nil {
 			return nil, nil, err
 		}
 		d.Layers = append(d.Layers, ld)
 	}
+	childBase := boardLayoutBase{graph: g, geometry: geometry}
 	for _, l := range g.Scenarios {
-		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, g, geometry, false)
+		ld, _, err := compileBoard(ctx, l, compileOpts, renderOpts, childBase, false)
 		if err != nil {
 			return nil, nil, err
 		}
 		d.Scenarios = append(d.Scenarios, ld)
 	}
-	previous, reuse = g, geometry
+	childBase.cumulative = true
 	for i, l := range g.Steps {
-		ld, stepGeometry, err := compileBoard(ctx, l, compileOpts, renderOpts, previous, reuse, i+1 < len(g.Steps))
+		ld, stepGeometry, err := compileBoard(ctx, l, compileOpts, renderOpts, childBase, i+1 < len(g.Steps))
 		if err != nil {
 			return nil, nil, err
 		}
-		matchStepIconStreams(previous, l, ld)
+		matchBoardIconStreams(childBase.graph, l, ld, false)
 		d.Steps = append(d.Steps, ld)
-		previous, reuse = l, stepGeometry
+		childBase.graph, childBase.geometry = l, stepGeometry
 	}
 	return d, geometry, nil
 }

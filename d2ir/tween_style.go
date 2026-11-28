@@ -12,23 +12,25 @@ import (
 // A sampled frame copies the destination board's fields and edge order. Use
 // names for fields because child boards are omitted from each frame.
 type propertyPathPart struct {
-	field d2ast.String
-	edge  int
+	field   d2ast.String
+	edge    int
+	inherit *d2ast.Substitution // Lexical fallback for a sample-local map variable.
 }
 
 type tweenChange struct {
 	path     []propertyPathPart
-	property d2ast.String
-	value    tweenValue
-	hold     *Field
+	property *Field
+	value    tweenValue // nil holds the resolved endpoint during the transition
 }
 
 func hasTweenMotion(changes []tweenChange) bool {
 	return slices.ContainsFunc(changes, func(change tweenChange) bool { return change.value != nil })
 }
 
-func (c *compiler) stepChanges(previous, board *Map) []tweenChange {
+func (c *compiler) boardChanges(previous, board *Map) []tweenChange {
 	var changes []tweenChange
+	scenario := NodeBoardKind(board) == BoardScenario
+	className := d2ast.FlatUnquotedString("class")
 	classKey := d2ast.FlatUnquotedString("classes")
 	previousClasses := previous.lookupField(classKey).Map()
 	classes := board.lookupField(classKey).Map()
@@ -37,8 +39,18 @@ func (c *compiler) stepChanges(previous, board *Map) []tweenChange {
 		if previous == nil || current == nil || c.stopped() {
 			return
 		}
+		if scenario {
+			changes = c.scenarioVariableFallbacks(changes, previous, current, path)
+		}
+		// A sibling scenario may drop an override simply by omitting it.
+		// If the destination uses a class, compare its resolved properties
+		// and put any needed overrides on the sampled instance only.
+		classFallback := scenario && classes != nil && current.lookupField(className) != nil
+		if classFallback {
+			changes = appendScenarioClassStyles(changes, previous, current, previousClasses, classes, path)
+		}
 		if current != board && ParentMap(current) != classes {
-			changes = appendDimensions(changes, previous, current, previousClasses, classes, path)
+			changes = appendDimensions(changes, previous, current, previousClasses, classes, path, classFallback)
 		}
 		for _, field := range current.Fields {
 			if c.stopped() {
@@ -114,12 +126,35 @@ func appendStyles(changes []tweenChange, previous, classes *Map, style *Field, p
 		if start == nil {
 			start = inheritedProperty(previous, classes, style.Name, property.Name)
 		}
-		changes = appendDirectChange(changes, path, start, property)
+		changes = appendDirectChange(changes, path, start, property, false)
 	}
 	return changes
 }
 
-func appendDimensions(changes []tweenChange, previous, current, previousClasses, classes *Map, path []propertyPathPart) []tweenChange {
+func appendScenarioClassStyles(changes []tweenChange, previous, current, previousClasses, classes *Map, path []propertyPathPart) []tweenChange {
+	style := d2ast.FlatUnquotedString("style")
+	direct := current.lookupField(style).Map()
+	before := previous.lookupField(style).Map()
+	path = append(path, propertyPathPart{field: style})
+	for _, name := range []string{"fill", "stroke", "font-color", "opacity", "stroke-width", "stroke-dash", "border-radius", "font-size"} {
+		key := d2ast.FlatUnquotedString(name)
+		if direct.lookupField(key) != nil {
+			continue // appendStyles handles the explicit property.
+		}
+		end := inheritedProperty(current, classes, style, key)
+		if end == nil {
+			continue
+		}
+		start := before.lookupField(key)
+		if start == nil {
+			start = inheritedProperty(previous, previousClasses, style, key)
+		}
+		changes = appendDirectChange(changes, path, start, end, true)
+	}
+	return changes
+}
+
+func appendDimensions(changes []tweenChange, previous, current, previousClasses, classes *Map, path []propertyPathPart, classFallback bool) []tweenChange {
 	owner, ok := current.Parent().(*Field)
 	if !ok || owner.Name == nil || makeFieldIndexKey(owner.Name).unquotedReserved {
 		return changes
@@ -127,6 +162,9 @@ func appendDimensions(changes []tweenChange, previous, current, previousClasses,
 	width := d2ast.FlatUnquotedString("width")
 	height := d2ast.FlatUnquotedString("height")
 	w, h := current.lookupField(width), current.lookupField(height)
+	if classFallback {
+		w, h = effectiveProperty(current, classes, width), effectiveProperty(current, classes, height)
+	}
 	if w == nil && h == nil {
 		return changes
 	}
@@ -145,15 +183,15 @@ func appendDimensions(changes []tweenChange, previous, current, previousClasses,
 			if endW != nil && endH != nil && (w == nil || h == nil || !equalDimensions(oldW, oldH)) {
 				for _, field := range []*Field{endW, endH} {
 					if field.Primary() != nil && field.Primary().binding != nil {
-						changes = append(changes, tweenChange{path: slices.Clone(path), property: field.Name, hold: field})
+						changes = append(changes, tweenChange{path: slices.Clone(path), property: field})
 					}
 				}
 				return changes
 			}
 		}
 	}
-	changes = appendDirectChange(changes, path, oldW, w)
-	return appendDirectChange(changes, path, oldH, h)
+	changes = appendDirectChange(changes, path, oldW, w, classFallback && current.lookupField(width) == nil)
+	return appendDirectChange(changes, path, oldH, h, classFallback && current.lookupField(height) == nil)
 }
 
 func equalDimensions(a, b *Field) bool {
@@ -161,7 +199,7 @@ func equalDimensions(a, b *Field) bool {
 		a.Primary().Value.ScalarString() == b.Primary().Value.ScalarString()
 }
 
-func appendDirectChange(changes []tweenChange, path []propertyPathPart, start, end *Field) []tweenChange {
+func appendDirectChange(changes []tweenChange, path []propertyPathPart, start, end *Field, fromClass bool) []tweenChange {
 	if start == nil || end == nil || start.Primary() == nil || end.Primary() == nil {
 		return changes
 	}
@@ -172,6 +210,11 @@ func appendDirectChange(changes []tweenChange, path []propertyPathPart, start, e
 	}
 	from, to := start.Primary().Value.ScalarString(), end.Primary().Value.ScalarString()
 	if from == to {
+		// A different class or variable binding can move while this
+		// instance has the same paint or dimensions at both endpoints.
+		if (fromClass || end.Primary().binding != nil) && start.LastPrimaryKey() != end.LastPrimaryKey() {
+			changes = append(changes, tweenChange{path: slices.Clone(path), property: end})
+		}
 		return changes
 	}
 	kind := strings.ToLower(end.Name.ScalarString())
@@ -207,7 +250,7 @@ func appendDirectChange(changes []tweenChange, path []propertyPathPart, start, e
 	default:
 		return changes
 	}
-	return append(changes, tweenChange{path: slices.Clone(path), property: end.Name, value: value})
+	return append(changes, tweenChange{path: slices.Clone(path), property: end, value: value})
 }
 
 // Interpolate the distance from the lower endpoint. Computing with absolute
@@ -270,26 +313,39 @@ func inheritedProperty(object, classes *Map, path ...d2ast.String) *Field {
 	return nil
 }
 
-func applyTweenChanges(frame *Map, changes []tweenChange, fraction float64) {
+func (c *compiler) applyTweenChanges(frame *Map, changes []tweenChange, fraction float64) {
 	for _, change := range changes {
 		m := frame
 		for _, part := range change.path {
 			if part.field == nil {
 				m = m.Edges[part.edge].Map()
 			} else {
-				m = m.lookupField(part.field).Map()
+				f := m.lookupField(part.field)
+				if f == nil {
+					f = &Field{parent: m, Name: part.field, References: ParentField(change.property).References}
+					if part.inherit != nil {
+						f.Primary_ = &Scalar{parent: f, Value: &d2ast.UnquotedString{Value: []d2ast.InterpolationBox{{Substitution: part.inherit}}}}
+					}
+					f.setComposite(&Map{parent: f})
+					if !c.reserveVariableCopy(change.property.Name, f) {
+						return
+					}
+					m.appendField(f)
+				}
+				m = f.Map()
 			}
 		}
-		target := m.lookupField(change.property)
-		if change.hold != nil {
-			if target == nil {
-				// The original dimension was supplied by a class. Override it
-				// on this shape only, as other shapes can still use that class.
-				target = &Field{parent: m, Name: change.property, References: change.hold.References}
-				target.Primary_ = &Scalar{parent: target}
-				m.appendField(target)
+		target := m.lookupField(change.property.Name)
+		if target == nil {
+			target = &Field{parent: m, Name: change.property.Name, References: change.property.References}
+			target.Primary_ = &Scalar{parent: target, Value: change.property.Primary().Value, order: change.property.Primary().order}
+			if !c.reserveVariableCopy(change.property.Name, target) {
+				return
 			}
-			target.Primary().Value = change.hold.Primary().Value
+			m.appendField(target)
+		}
+		if change.value == nil {
+			target.Primary().Value = change.property.Primary().Value
 		} else {
 			setTweenValue(target.Primary(), change.value, fraction)
 		}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/d2graph"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 )
 
@@ -21,6 +22,7 @@ probe: "" {left: ${x}; top: 0; width: 40; height: 40; style: {fill: red; stroke-
 steps: {wait: {}; travel: {vars: {x: 160}}; hold: {}}`
 	intervalOnly := strings.Replace(source, "; animate-duration: 360ms", "", 1)
 	base, _, _ := strings.Cut(intervalOnly, "steps:")
+	timedBase, _, _ := strings.Cut(source, "steps:")
 	replacement := base + `steps: {replace: {
   probe: null
   other: "" {left: 160; top: 0; width: 40; height: 40; style: {fill: red; stroke-width: 0}}
@@ -34,6 +36,7 @@ steps: {wait: {}; travel: {vars: {x: 160}}; hold: {}}`
 		travel, minChanges int
 	}{
 		{"tween and holds", source, 160, 2},
+		{"two scenario alternatives", timedBase + "scenarios: {near: {vars.x: 72}; far: {vars.x: 160}}", 160, 4},
 		{"instant step", intervalOnly, 160, 1},
 		{"inherited scenario", base + "scenarios: {travel: {probe.left: 160}}", 160, 1},
 		{"replace all pinned nodes", replacement, 160, 1},
@@ -164,5 +167,23 @@ steps: {append: {b.seconds: int}}`
 				t.Fatalf("missing expected artwork: anchor %v, layer %v, frames %d", original, layerSeen, len(anim.Image))
 			}
 		})
+	}
+}
+
+// A scenario can start a new coordinate system, then share it with its next
+// sibling. A layer in that sibling ends the comparison before the next scenario.
+func TestGIFScenarioCameraFollowsDrawableSibling(t *testing.T) {
+	root, first, second, child, third := simpleRasterDiagram(), simpleRasterDiagram(), simpleRasterDiagram(), simpleRasterDiagram(), simpleRasterDiagram()
+	empty := &d2target.Diagram{IsFolderOnly: true}
+	root.Scenarios = []*d2target.Diagram{first, empty, second, third}
+	second.Layers = []*d2target.Diagram{child}
+	second.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
+	second.LayoutContinuity = true
+	third.LayoutContinuity = true
+	boards := []*d2target.Diagram{root, first, second, child, third}
+	views := gifViewports(root, boards, true)
+	if views[first] == nil || views[first] != views[second] || views[first] != views[second.TweenFrames[0]] ||
+		views[root] != nil || views[empty] != nil || views[child] != nil || views[third] != nil {
+		t.Fatal("scenario incoming geometry must share only its drawable sibling's camera")
 	}
 }

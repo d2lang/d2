@@ -178,8 +178,8 @@ type Diagram struct {
 	// GridMotion keeps a common coordinate system for raster playback as cells reflow.
 	GridMotion bool `json:"gridMotion,omitempty"`
 	// LayoutContinuity means the board shares layout coordinates with its
-	// parent scenario base or the preceding step. Independent layers start
-	// their own coordinate system.
+	// layout predecessor. Animated scenarios can share coordinates with
+	// the preceding sibling. Independent layers start their own coordinate system.
 	LayoutContinuity bool `json:"layoutContinuity,omitempty"`
 	// Canvas is a box the board's bounds always include. An animation with
 	// annotations gives every board and frame the same canvas, so the picture
@@ -197,6 +197,34 @@ type Legend struct {
 // bounding boxes. Navigation only exposes the authored boards.
 func (d *Diagram) renderChildren() [4][]*Diagram {
 	return [4][]*Diagram{d.Layers, d.Scenarios, d.Steps, d.TweenFrames}
+}
+
+// ScenarioPredecessors identifies the parent or sibling on screen just before
+// each drawable scenario. A folder consumes no time, but one of its children
+// may interrupt the comparison.
+func (d *Diagram) ScenarioPredecessors() map[*Diagram]*Diagram {
+	bases := make(map[*Diagram]*Diagram)
+	var last, lastScenarioParent *Diagram
+	var visit func(board, scenarioParent *Diagram)
+	visit = func(board, scenarioParent *Diagram) {
+		if !board.IsFolderOnly {
+			if scenarioParent != nil && (last == scenarioParent || lastScenarioParent == scenarioParent) {
+				bases[board] = last
+			}
+			last, lastScenarioParent = board, scenarioParent
+		}
+		for _, layer := range board.Layers {
+			visit(layer, nil)
+		}
+		for _, scenario := range board.Scenarios {
+			visit(scenario, board)
+		}
+		for _, step := range board.Steps {
+			visit(step, nil)
+		}
+	}
+	visit(d, nil)
+	return bases
 }
 
 func (d *Diagram) GetBoard(boardPath []string) *Diagram {
@@ -1137,8 +1165,9 @@ type ConnectionIconAnimation struct {
 	// DurationMS sets the trip time of a single repeating icon. A positive duration
 	// is mutually exclusive with Rate. Zero uses the diagram's default travel speed.
 	DurationMS int64 `json:"durationMs,omitempty"`
-	// A parallel edge may be renumbered in an inherited step. An empty
-	// predecessor marks a replacement that reuses a deleted connection's ID.
+	// Identifies an incoming stream across a board transition. Steps omit
+	// an unchanged ID. Scenarios set it explicitly when continuing streams.
+	// An empty predecessor marks a new or replacement stream.
 	PreviousID *string `json:"previousID,omitempty"`
 }
 

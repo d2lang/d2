@@ -34,7 +34,7 @@ type CompileOptions struct {
 	UTF16Pos bool
 	// AnimateDuration overrides the root animate-duration, in milliseconds.
 	AnimateDuration *int64
-	// AnimateTweens controls sampling of step transitions. Nil follows
+	// AnimateTweens controls sampling of step and scenario transitions. Nil follows
 	// the root animate-interval. False compiles only the authored endpoints.
 	AnimateTweens *bool
 	// MaxVariableExpansion bounds work added by variable substitutions and the
@@ -379,20 +379,20 @@ func (c *compiler) compileBoardsField(g *d2graph.Graph, ir *d2ir.Map, fieldName 
 			g.Scenarios = append(g.Scenarios, g2)
 		case "steps":
 			g.Steps = append(g.Steps, g2)
-			g2.TweenDurationMS = m.TweenDurationMS
-			for _, sample := range m.TweenFrames {
-				if c.stopped() {
-					return
-				}
-				frame := d2graph.NewGraph()
-				frame.Parent, frame.Name = g2, g2.Name
-				frame.AST, frame.BaseAST = g2.AST, g2.BaseAST
-				c.compileBoard(frame, sample)
-				if f.Primary() != nil {
-					c.compileLabel(&frame.Root.Attributes, f)
-				}
-				g2.TweenFrames = append(g2.TweenFrames, frame)
+		}
+		g2.TweenDurationMS = m.TweenDurationMS
+		for _, sample := range m.TweenFrames {
+			if c.stopped() {
+				return
 			}
+			frame := d2graph.NewGraph()
+			frame.Parent, frame.Name = g2, g2.Name
+			frame.AST, frame.BaseAST = g2.AST, g2.BaseAST
+			c.compileBoard(frame, sample)
+			if f.Primary() != nil {
+				c.compileLabel(&frame.Root.Attributes, f)
+			}
+			g2.TweenFrames = append(g2.TweenFrames, frame)
 		}
 	}
 }

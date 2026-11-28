@@ -266,3 +266,25 @@ steps: {
 		t.Fatalf("expected the connection reveal in steps.show: %+v, %v", got, err)
 	}
 }
+
+func TestScenarioComparisonsInMotionLint(t *testing.T) {
+	d, g := compile(t, `a; b; c; d; e; f
+layers: {independent: {layer_object}}
+scenarios: {
+  dark: {*.style.fill: black}
+  light: {*.style.fill: white}
+}`, nil)
+	got, err := Motion(t.Context(), d, g, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var crowded []string
+	for _, finding := range got {
+		if finding.Code == "crowded-step" {
+			crowded = append(crowded, finding.Board)
+		}
+	}
+	if !slices.Equal(crowded, []string{"scenarios.light"}) {
+		t.Errorf("crowded boards = %v, want the adjacent scenario comparison", crowded)
+	}
+}
