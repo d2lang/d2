@@ -21,7 +21,7 @@ var svgEscaper = strings.NewReplacer(
 	`	`, "\u00a0\u00a0\u00a0\u00a0",
 )
 
-func styleToSVG(style *chroma.Style) map[chroma.TokenType]string {
+func styleToSVG(style *chroma.Style, overrideColor bool) map[chroma.TokenType]string {
 	converted := map[chroma.TokenType]string{}
 	// NOTE this is in the original source code, but it just makes unhighlightable code turn into the bg color
 	// Which I don't understand, and I get the results I want when I remove it.
@@ -33,6 +33,9 @@ func styleToSVG(style *chroma.Style) map[chroma.TokenType]string {
 		// }
 		if entry.IsZero() {
 			continue
+		}
+		if overrideColor {
+			entry.Colour = 0
 		}
 		converted[t] = svg.StyleEntryToSVG(entry)
 	}

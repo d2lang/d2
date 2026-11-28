@@ -127,7 +127,7 @@ func (b *builder) buildMarkdownLabel(
 		return root, nil
 	}
 
-	paints, err := b.markdownRolePaints(foreground)
+	paints, err := b.markdownRolePaints(foreground, width, height)
 	if err != nil {
 		return nil, fmt.Errorf("scene: %s Markdown paints: %w", object, err)
 	}
@@ -200,7 +200,7 @@ func (b *builder) markdownFontFamilies(fontName string) (d2fonts.FontFamily, d2f
 	return primary, mono
 }
 
-func (b *builder) markdownRolePaints(foreground string) (map[textmeasure.MarkdownColorRole]d2scene.Paint, error) {
+func (b *builder) markdownRolePaints(foreground string, width, height int) (map[textmeasure.MarkdownColorRole]d2scene.Paint, error) {
 	values := map[textmeasure.MarkdownColorRole]string{
 		textmeasure.MarkdownColorForeground:       foreground,
 		textmeasure.MarkdownColorForegroundStroke: foreground,
@@ -219,7 +219,7 @@ func (b *builder) markdownRolePaints(foreground string) (map[textmeasure.Markdow
 		if err != nil {
 			return nil, err
 		}
-		paints[role] = paint
+		paints[role] = labelGradient(paint, 0, 0, width, height)
 	}
 	return paints, nil
 }

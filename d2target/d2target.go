@@ -1092,6 +1092,9 @@ type Text struct {
 	Language   string `json:"language"`
 	Color      string `json:"color"`
 
+	// CodeFontColor selects an authored color over the syntax theme for code labels.
+	CodeFontColor bool `json:"codeFontColor,omitempty"`
+
 	Italic    bool `json:"italic"`
 	Bold      bool `json:"bold"`
 	Underline bool `json:"underline"`

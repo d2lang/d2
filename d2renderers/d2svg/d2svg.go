@@ -993,7 +993,7 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 				connection.Underline, connection.UnderlineProgress,
 			))
 		} else if connection.Language != "" {
-			if err := writeCode(writer, connection.Language, connection.Label, connection.FontSize, labelTL, nil, inlineTheme); err != nil {
+			if err := writeCode(writer, connection.Text, labelTL, nil, inlineTheme, markdown); err != nil {
 				return labelMask, err
 			}
 		} else {
@@ -1019,6 +1019,9 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 				fmt.Fprint(writer, svg.OpenElement("a", svg.HrefAttributes(connection.Link)...))
 			} else {
 				textEl.Fill = connection.GetFontColor()
+				if strings.Contains(connection.Label, "\n") {
+					textEl.Fill = markdown.labelPaint(writer, textEl.Fill, labelTL.X, labelTL.Y, connection.LabelWidth, connection.LabelHeight)
+				}
 			}
 
 			if connection.Link != "" {
@@ -1090,10 +1093,19 @@ func latexLabel(src string, tl *geo.Point, fontColor string, inlineTheme *d2them
 // writeCode writes syntax-highlighted code at tl, once for the light and once
 // for the dark code theme. A code shape (frame) also gets a background rect
 // and padding of half its font size.
-func writeCode(writer *objectWriter, language, code string, fontSize int, tl *geo.Point, frame *d2target.Shape, inlineTheme *d2themes.Theme) error {
-	lexer := lexers.Get(language)
+func writeCode(writer *objectWriter, text d2target.Text, tl *geo.Point, frame *d2target.Shape, inlineTheme *d2themes.Theme, markdown *markdownRenderer) error {
+	lexer := lexers.Get(text.Language)
 	if lexer == nil {
 		lexer = lexers.Fallback
+	}
+	textClass := "text-mono"
+	var fill string
+	if text.CodeFontColor {
+		paint := markdown.fillPaint(markdown.labelPaint(writer, text.Color, 0, 0, text.LabelWidth, text.LabelHeight))
+		if paint.Class != "" {
+			textClass += " " + paint.Class
+		}
+		fill = paint.Color
 	}
 	for _, isLight := range []bool{true, false} {
 		theme := codestyle.Light
@@ -1104,19 +1116,19 @@ func writeCode(writer *objectWriter, language, code string, fontSize int, tl *ge
 		if style == nil {
 			return errors.New(`code snippet style "github" not found`)
 		}
-		iterator, err := lexer.Tokenise(nil, code)
+		iterator, err := lexer.Tokenise(nil, text.Label)
 		if err != nil {
 			return err
 		}
 
-		svgStyles := styleToSVG(style)
+		svgStyles := styleToSVG(style, text.CodeFontColor)
 		class := "light-code"
 		if !isLight {
 			class = "dark-code"
 		}
 		var fontSizeStyle string
-		if fontSize != d2fonts.FONT_SIZE_M {
-			fontSizeStyle = fmt.Sprintf(` style="font-size:%v"`, fontSize)
+		if text.FontSize != d2fonts.FONT_SIZE_M {
+			fontSizeStyle = fmt.Sprintf(` style="font-size:%v"`, text.FontSize)
 		}
 		fmt.Fprintf(writer, `<g transform="translate(%s %s)" class="%s"%s>`,
 			svg.FormatFloat(tl.X), svg.FormatFloat(tl.Y), class, fontSizeStyle,
@@ -1141,7 +1153,11 @@ func writeCode(writer *objectWriter, language, code string, fontSize int, tl *ge
 
 		lineHeight := textmeasure.CODE_LINE_HEIGHT
 		for index, tokens := range chroma.SplitTokensIntoLines(iterator.Tokens()) {
-			fmt.Fprintf(writer, "<text class=\"text-mono\" x=\"0\" y=\"%sem\">", svg.FormatFloat(1+float64(index)*lineHeight))
+			attrs := []svg.Attribute{svg.Attr("class", textClass), svg.IntAttr("x", 0), svg.Attr("y", svg.FormatFloat(1+float64(index)*lineHeight)+"em")}
+			if fill != "" {
+				attrs = append(attrs, svg.Attr("fill", fill))
+			}
+			fmt.Fprint(writer, svg.OpenElement("text", attrs...))
 			for _, token := range tokens {
 				text := svgEscaper.Replace(token.String())
 				attr := styleAttr(svgStyles, token.Type)
@@ -1706,7 +1722,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 				targetShape.Underline, targetShape.UnderlineProgress,
 			))
 		} else if targetShape.Language != "" {
-			if err := writeCode(writer, targetShape.Language, targetShape.Label, targetShape.FontSize, box.TopLeft, &targetShape, inlineTheme); err != nil {
+			if err := writeCode(writer, targetShape.Text, box.TopLeft, &targetShape, inlineTheme, markdown); err != nil {
 				return labelMask, err
 			}
 		} else {
@@ -1724,6 +1740,9 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			// text is vertically positioned at its baseline which is at labelTL+FontSize
 			textEl.Y = labelTL.Y + float64(targetShape.FontSize)
 			textEl.Fill = targetShape.GetFontColor()
+			if strings.Contains(targetShape.Label, "\n") {
+				textEl.Fill = markdown.labelPaint(writer, textEl.Fill, labelTL.X, labelTL.Y, targetShape.LabelWidth, targetShape.LabelHeight)
+			}
 			textEl.ClassName = fontClass
 			textEl.Style = fmt.Sprintf("text-anchor:%s;font-size:%vpx", "middle", targetShape.FontSize)
 			writer.animatedUnderline(textEl, targetShape.Label, float64(targetShape.LabelHeight), targetShape.UnderlineProgress)
@@ -2351,6 +2370,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 
 	var labelMasks []string
 	markdown := newMarkdownRenderer(diagram.FontFamily, diagram.MonoFontFamily, inlineTheme)
+	markdown.defined = defined
 	for _, obj := range allObjects {
 		if err := ctx.Err(); err != nil {
 			return nil, err

@@ -2,6 +2,9 @@ package d2svg
 
 import (
 	"fmt"
+	"io"
+
+	"github.com/d2lang/d2/d2renderers/d2scene"
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
@@ -23,6 +26,7 @@ type markdownRenderer struct {
 	monoFontFamily *d2fonts.FontFamily
 	inlineTheme    *d2themes.Theme
 	corpus         strings.Builder
+	defined        map[string]struct{}
 }
 
 func newMarkdownRenderer(fontFamily, monoFontFamily *d2fonts.FontFamily, inlineTheme *d2themes.Theme) *markdownRenderer {
@@ -38,6 +42,7 @@ func newMarkdownRenderer(fontFamily, monoFontFamily *d2fonts.FontFamily, inlineT
 		fontFamily:     fontFamily,
 		monoFontFamily: monoFontFamily,
 		inlineTheme:    inlineTheme,
+		defined:        make(map[string]struct{}),
 	}
 }
 
@@ -97,6 +102,7 @@ func (r *markdownRenderer) render(
 		out.WriteString(backgroundEl.Render())
 	}
 
+	foreground = r.labelPaint(&out, foreground, 0, 0, width, height)
 	rolePaint := map[textmeasure.MarkdownColorRole]textmeasure.MarkdownSVGPaint{
 		textmeasure.MarkdownColorForeground:       r.fillPaint(foreground),
 		textmeasure.MarkdownColorForegroundStroke: r.strokePaint(foreground),
@@ -119,6 +125,15 @@ func (r *markdownRenderer) render(
 	}))
 	out.WriteString(`</svg>`)
 	return out.String()
+}
+
+func (r *markdownRenderer) labelPaint(writer io.Writer, paint string, x, y float64, width, height int) string {
+	if !color.IsGradient(paint) || width <= 0 || height <= 0 {
+		return paint
+	}
+	base, _ := color.ParseGradient(paint) // validated before rendering
+	defineGradient(writer, base, r.defined)
+	return projectedGradient(writer, r.defined, base, d2scene.Translate(x, y).Mul(d2scene.Scale(float64(width), float64(height))))
 }
 
 func (r *markdownRenderer) fillPaint(value string) textmeasure.MarkdownSVGPaint {

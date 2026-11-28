@@ -1019,6 +1019,9 @@ func (b *builder) buildShapeText(targetShape d2target.Shape) ([]*d2scene.Node, e
 		return nil, err
 	}
 	lines := strings.Split(targetShape.Label, "\n")
+	if len(lines) > 1 {
+		fill = labelGradient(fill, topLeft.X, topLeft.Y, targetShape.LabelWidth, targetShape.LabelHeight)
+	}
 	nodes := make([]*d2scene.Node, 0, len(lines)+1)
 	if targetShape.LabelFill != "" {
 		labelFill, err := b.paint(targetShape.LabelFill, fmt.Sprintf("shape %q label fill", targetShape.ID))

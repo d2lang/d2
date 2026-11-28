@@ -35,7 +35,6 @@ var rawSVGFormatAllowlist = map[string]int{
 	"d2renderers/d2svg/d2svg.go:\"<g transform=\\\"translate(%s %s)\\\">\"":                                                                                          1,
 	"d2renderers/d2svg/d2svg.go:\"<path d=\\\"M %s %s L %s %s S %s %s %s %s \"":                                                                                      1,
 	"d2renderers/d2svg/d2svg.go:\"<text class=\\\"text-bold\\\" x=\\\"%d\\\" y=\\\"%d\\\" style=\\\"font-size: %dpx;\\\">%s</text>\"":                                1,
-	"d2renderers/d2svg/d2svg.go:\"<text class=\\\"text-mono\\\" x=\\\"0\\\" y=\\\"%sem\\\">\"":                                                                       1,
 	"d2renderers/d2svg/d2svg.go:\"<text class=\\\"text\\\" x=\\\"%d\\\" y=\\\"%d\\\" style=\\\"font-size: %dpx;\\\">%s</text>\"":                                     1,
 	"d2renderers/d2svg/d2svg.go:\"<title>%s</title>\"":                                                                                                               1,
 	"d2renderers/d2svg/d2svg.go:\"<tspan %s>%s</tspan>\"":                                                                                                            1,
