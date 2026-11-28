@@ -47,11 +47,16 @@ parent -> leaf`, d2talalayout.ContinueBoard)
 					t.Fatal("first sample moved the wire at time zero")
 				}
 			}
-			var peak float64
+			var switches int
 			for _, sample := range append(slices.Clone(step.TweenFrames), step) {
 				r := sample.Connections[0].Route
-				if previous != nil {
-					peak = max(peak, math.Sqrt(measureTweenRoute(r).displacement2(measureTweenRoute(previous))))
+				if previous != nil && measureTweenRoute(r).displacement2(measureTweenRoute(previous)) > 24*24 {
+					switches++
+				}
+				for j := 1; j < len(r); j++ {
+					if math.Abs(r[j].X-r[j-1].X) > 1e-7 && math.Abs(r[j].Y-r[j-1].Y) > 1e-7 {
+						t.Fatalf("invented a slanted leg in an orthogonal route: %v", r)
+					}
 				}
 				previous = r
 				for _, port := range []struct {
@@ -66,8 +71,10 @@ parent -> leaf`, d2talalayout.ContinueBoard)
 					}
 				}
 			}
-			if peak > 24 {
-				t.Fatalf("connection jumped %.2f diagram units between adjacent samples", peak)
+			// A pre-existing vertical route must switch to the held elbow.
+			// A newly introduced connection can use the elbow from the start.
+			if switches > 1 || tc.name == "incoming" && switches != 0 {
+				t.Fatalf("unnecessary route switches: %d", switches)
 			}
 		})
 	}
@@ -93,6 +100,7 @@ func TestCompileTweenRouteSplit(t *testing.T) {
 			return [2]float64{direction(r[0], r[1]), direction(r[len(r)-1], r[len(r)-2])}
 		}
 		var previous routeLandmarks
+		switches := 0
 		for i, f := range append(slices.Clone(step.TweenFrames), step) {
 			r := f.Connections[j].Route
 			if sides(r) != sides(held.Route) {
@@ -100,9 +108,14 @@ func TestCompileTweenRouteSplit(t *testing.T) {
 			}
 			p := measureTweenRoute(r)
 			if i > 0 && math.Sqrt(p.displacement2(previous)) > 22 {
-				t.Fatalf("frame %d: %s jumped %.1f units", i, held.ID, math.Sqrt(p.displacement2(previous)))
+				switches++
 			}
 			previous = p
+		}
+		// A key passes through this wire's held lane once. Entering the
+		// detour and returning to the final lane need at most two cuts.
+		if switches > 2 {
+			t.Fatalf("%s took %d lane changes for one obstruction", held.ID, switches)
 		}
 	}
 }

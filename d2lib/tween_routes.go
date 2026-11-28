@@ -9,11 +9,11 @@ import (
 	"github.com/d2lang/d2/lib/geo"
 )
 
-// Cap geometry with expensive intersections and the number of alternatives
-// compared between neighboring samples. The native route is always retained.
+// Bound the geometry used in intersection checks.
 const (
-	maxTweenRoutePoints  = 128
-	maxTweenRouteChoices = 80
+	maxTweenRoutePoints     = 128
+	maxTweenDetourTemplates = 8  // Native samples to try per obstruction.
+	maxTweenFrameChoices    = 12 // Bounds the comparison with the next frame.
 )
 
 // Layout engines choose routes for individual graphs. Two equally good static
@@ -52,7 +52,10 @@ func (s tweenRouteSample) setRoute(route []*geo.Point) {
 		return
 	}
 	s.edge.BorderRadius = tweenRouteCornerRadius(s.edge, route, s.nodes)
-	s.edge.Route = route
+	s.edge.Route = make([]*geo.Point, len(route))
+	for i, p := range route {
+		s.edge.Route[i] = p.Copy()
+	}
 }
 
 func (f tweenRouteFrame) sample(c *d2target.Connection) (tweenRouteSample, bool) {
@@ -165,196 +168,135 @@ func stabilizeTweenRoutes(ctx context.Context, previous, board *d2target.Diagram
 	return ctx.Err()
 }
 
+// A choice carries one router-produced path along with its endpoints. Switching
+// templates is discrete: there is no intermediate geometry between two lanes.
 type tweenRouteChoice struct {
-	route      []*geo.Point
-	points     routeLandmarks
-	peak, cost float64
-	parent     int
+	route                         []*geo.Point
+	template                      int
+	switches, portChanges, parent int
+	faces                         [2]byte
+	deviation                     float64
 }
 
-func stabilizeTweenEdge(track []tweenRouteSample, prior tweenRouteSample, hasPrior, canProjectBack bool, budget *int) {
+func stabilizeTweenEdge(track []tweenRouteSample, prior tweenRouteSample, hasPrior, incoming bool, budget *int) {
 	last := len(track) - 1
-	choices := make([][]tweenRouteChoice, len(track))
-	lastSample := track[0]
-	prevPoints := measureTweenRoute(lastSample.edge.Route)
+	start := track[0]
 	if hasPrior {
-		lastSample, prevPoints = prior, measureTweenRoute(prior.edge.Route)
+		start = prior
 	}
-	nativePeak := 0.0
+	end := track[last]
+	if incoming {
+		start = end
+	}
+	// Leave stable native motion alone. A changing path between stationary
+	// endpoints merits a check even when its drift is small in every frame.
+	prev := start
 	unstable := false
-	for i, s := range track {
-		points := measureTweenRoute(s.edge.Route)
-		nativePeak = max(nativePeak, points.displacement2(prevPoints))
-		srcMotion := tweenNodeMotion(lastSample.nodes.src, s.nodes.src)
-		dstMotion := tweenNodeMotion(lastSample.nodes.dst, s.nodes.dst)
-		// A fast source can legitimately move most of a long wire. Its
-		// motion does not excuse an arrowhead teleporting on a fixed target.
-		jump := func(at int) float64 { return math.Hypot(points[at].X-prevPoints[at].X, points[at].Y-prevPoints[at].Y) }
-		if jump(0) > 4+1.5*srcMotion || jump(len(points)-1) > 4+1.5*dstMotion ||
-			points.displacement2(prevPoints) > math.Pow(4+1.5*max(srcMotion, dstMotion), 2) {
-			unstable = true
+	for _, s := range track {
+		if slices.EqualFunc(prev.edge.Route, s.edge.Route, (*geo.Point).Equals) {
+			prev = s
+			continue
 		}
-		choices[i] = []tweenRouteChoice{{route: s.edge.Route, points: points}}
-		lastSample, prevPoints = s, points
+		a, b := measureTweenRoute(prev.edge.Route), measureTweenRoute(s.edge.Route)
+		src := tweenNodeMotion(prev.nodes.src, s.nodes.src)
+		dst := tweenNodeMotion(prev.nodes.dst, s.nodes.dst)
+		n := len(a) - 1
+		if src == 0 && dst == 0 || math.Hypot(a[0].X-b[0].X, a[0].Y-b[0].Y) > 4+1.5*src ||
+			math.Hypot(a[n].X-b[n].X, a[n].Y-b[n].Y) > 4+1.5*dst || a.displacement2(b) > math.Pow(4+1.5*max(src, dst), 2) {
+			unstable = true
+			break
+		}
+		prev = s
 	}
 	if !unstable {
 		return
 	}
 
-	// Prefer one continuous correspondence between the authored layouts. A
-	// clear morph whose speed follows the boxes needs no alternative lanes.
-	start := track[0]
-	if hasPrior {
-		start = prior
-	}
-	if canProjectBack {
-		start = track[last]
-	}
-	direct := make([][]*geo.Point, last)
-	complete := true
-	for i := 0; i < last; i++ {
-		fraction := float64(i) / float64(last)
-		if canProjectBack {
-			fraction = 1
+	const startID, endID = -2, -1
+	choices := make([][]tweenRouteChoice, len(track))
+	// Zero means neither authored lane is clear at this sample.
+	heldChoices := make([]int, last)
+	pinnedFirst := false
+	for i, s := range track[:last] {
+		startClear := !incoming && addTweenRouteChoice(&choices[i], startID, start, s, budget)
+		if i == 0 && startClear && sameTweenOutline(start.nodes.src, s.nodes.src) && sameTweenOutline(start.nodes.dst, s.nodes.dst) {
+			pinnedFirst = true
+		} else {
+			addTweenRouteChoice(&choices[i], endID, end, s, budget)
 		}
-		direct[i] = tweenRouteCandidate(*start.edge, *track[last].edge, start.nodes, track[last].nodes, track[i].nodes, fraction)
-	}
-
-	add := func(i int, r []*geo.Point) bool {
-		if len(r) < 2 || len(r) > maxTweenRoutePoints {
-			return false
-		}
-		s := track[i]
-		for _, c := range choices[i] {
-			if slices.EqualFunc(r, c.route, (*geo.Point).Equals) {
-				return true
-			}
-		}
-		if len(choices[i]) >= maxTweenRouteChoices {
-			return false
-		}
-		// A candidate is compared with each choice in the two neighboring
-		// frames as well as against the ink in its own frame.
-		cost := len(r) * (1 + len(s.frame.Shapes) + len(s.frame.Connections))
-		if i > 0 {
-			cost += len(choices[i-1])
-		}
-		cost += len(choices[i+1])
-		if cost > *budget {
-			*budget = 0
-			return false
-		}
-		*budget -= cost
-		if !tweenRouteClear(s.frame, s.edge, r, s.nodes) {
-			return false
-		}
-		choices[i] = append(choices[i], tweenRouteChoice{route: r, points: measureTweenRoute(r)})
-		return true
-	}
-	prevPoints = measureTweenRoute(start.edge.Route)
-	lastSample = start
-	for i := 0; i <= last; i++ {
-		r := track[last].edge.Route
-		if i < last {
-			r = direct[i]
-			if !add(i, r) {
-				complete = false
-				continue
-			}
-		}
-		points := measureTweenRoute(r)
-		d := max(tweenNodeMotion(lastSample.nodes.src, track[i].nodes.src), tweenNodeMotion(lastSample.nodes.dst, track[i].nodes.dst))
-		if (i > 0 || hasPrior) && points.displacement2(prevPoints) > min(nativePeak, math.Pow(6+2*d, 2)) {
-			complete = false
-		}
-		prevPoints, lastSample = points, track[i]
-	}
-	if complete {
-		for i, r := range direct {
-			track[i].setRoute(r)
-		}
-		return
-	}
-	// A blocked port can often slide along the same face. Vary the
-	// neighboring frames too so the wire can move aside before contact.
-	for i, r := range direct {
-		if i == 0 && !canProjectBack {
-			continue
-		}
-		if len(r) == 0 {
-			r = track[i].edge.Route
-		}
-		for variant := range tweenRoutePortAlternates(r, track[i].nodes) {
-			if *budget <= 0 {
-				break
-			}
-			add(i, variant)
-		}
-	}
-
-	// Fit the whole transition first. Shorter spans offer genuine native
-	// detours when a moving obstacle makes the end-to-end route infeasible.
-	var span func(int, int)
-	span = func(lo, hi int) {
-		if hi-lo < 1 || *budget <= 0 {
+		if *budget <= 0 {
 			return
 		}
-		start := track[lo]
-		first := lo + 1
-		if lo == 0 && hasPrior {
-			start = prior
-			first = 0
-		}
-		for i := first; i < hi && *budget > 0; i++ {
-			s := track[i]
-			add(i, tweenRouteCandidate(*start.edge, *track[hi].edge, start.nodes, track[hi].nodes, s.nodes, float64(i-lo)/float64(hi-lo)))
-		}
-		if hi-lo > 2 {
-			mid := (lo + hi) / 2
-			span(lo, mid)
-			span(mid, hi)
-		}
+		heldChoices[i] = len(choices[i])
 	}
-	span(0, last)
 
-	if hasPrior && sameSlot(prior.nodes.src, track[0].nodes.src) && sameSlot(prior.nodes.dst, track[0].nodes.dst) {
-		// Time zero is the preceding held layout unless something newly
-		// present in this frame obstructs that route.
-		for j, c := range choices[0] {
-			if slices.EqualFunc(c.route, prior.edge.Route, (*geo.Point).Equals) {
-				choices[0] = choices[0][j : j+1]
-				break
+	// A moving obstacle sometimes blocks both held lanes. Sample native
+	// detours across the interval: later lanes may already be clear at entry.
+	// Allow them to continue on each side as long as their geometry is clear.
+	for i := 0; i < last; {
+		if heldChoices[i] > 0 {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < last && heldChoices[j] == 0 {
+			j++
+		}
+		project := func(k int) {
+			for _, dir := range []int{-1, 1} {
+				first := k
+				if dir < 0 {
+					first--
+				}
+				for f := first; f >= 0 && f < last && !(f == 0 && pinnedFirst); f += dir {
+					if len(choices[f]) >= maxTweenFrameChoices || !addTweenRouteChoice(&choices[f], k, track[k], track[f], budget) {
+						break
+					}
+				}
 			}
 		}
+		n := min(maxTweenDetourTemplates, j-i)
+		for k := 0; k < n; k++ {
+			project(i + k*(j-i-1)/max(1, n-1))
+		}
+		for k := i; k < j; k++ {
+			if len(choices[k]) == 0 {
+				project(k)
+			}
+		}
+		if *budget <= 0 {
+			return
+		}
+		i = j
 	}
-	chooseTweenRoutes(track, choices, prior, hasPrior)
+	choices[last] = []tweenRouteChoice{{route: end.edge.Route, template: endID, faces: tweenRouteFaces(end.edge.Route)}}
+
+	chooseTweenRoutes(track, choices)
 }
 
-// Minimize the largest jump, using cumulative motion to break ties. Every
-// native sample is feasible, even if no continuous route clears an obstacle.
-func chooseTweenRoutes(track []tweenRouteSample, choices [][]tweenRouteChoice, prior tweenRouteSample, hasPrior bool) {
+// Among paths with the fewest switches, prefer stable attachment sides, then
+// the switch timing that most closely follows the native intermediate layouts.
+func chooseTweenRoutes(track []tweenRouteSample, choices [][]tweenRouteChoice) {
 	last := len(track) - 1
-	var before routeLandmarks
-	if hasPrior {
-		before = measureTweenRoute(prior.edge.Route)
-	}
-	for i := range choices {
+	for i := 1; i < len(choices); i++ {
 		for j := range choices[i] {
 			c := &choices[i][j]
-			if i == 0 {
-				if hasPrior {
-					c.peak = c.points.displacement2(before)
-					c.cost = c.peak
+			cost := c.deviation
+			for k, p := range choices[i-1] {
+				changes := p.switches
+				if c.template != p.template {
+					changes++
 				}
-				continue
-			}
-			c.peak, c.cost = math.Inf(1), math.Inf(1)
-			for k := range choices[i-1] {
-				p := &choices[i-1][k]
-				jump := c.points.displacement2(p.points)
-				peak, cost := max(p.peak, jump), p.cost+jump
-				if peak < c.peak || (peak == c.peak && cost < c.cost) {
-					c.peak, c.cost, c.parent = peak, cost, k
+				ports := p.portChanges
+				for end, face := range c.faces {
+					if face != 0 && p.faces[end] != 0 && face != p.faces[end] {
+						ports++
+					}
+				}
+				d := p.deviation + cost
+				betterPorts := ports < c.portChanges || ports == c.portChanges && d < c.deviation
+				if k == 0 || changes < c.switches || changes == c.switches && betterPorts {
+					c.parent, c.switches, c.portChanges, c.deviation = k, changes, ports, d
 				}
 			}
 		}
@@ -365,4 +307,42 @@ func chooseTweenRoutes(track []tweenRouteSample, choices [][]tweenRouteChoice, p
 		track[i].setRoute(c.route)
 		selected = c.parent
 	}
+}
+
+func addTweenRouteChoice(choices *[]tweenRouteChoice, id int, from, s tweenRouteSample, budget *int) bool {
+	cost := len(from.edge.Route) * (1 + len(s.frame.Shapes) + len(s.frame.Connections))
+	if cost > *budget {
+		*budget = 0
+		return false
+	}
+	*budget -= cost
+	r := transportTweenRoute(from, s)
+	if r == nil || !tweenRouteClear(s.frame, s.edge, r, s.nodes) {
+		return false
+	}
+	deviation := measureTweenRoute(s.edge.Route).displacement2(measureTweenRoute(r))
+	*choices = append(*choices, tweenRouteChoice{route: r, template: id, faces: tweenRouteFaces(r), deviation: deviation})
+	return true
+}
+
+// Orthogonal approach directions distinguish which side of a node a wire
+// uses. Native oblique ports have no comparable cardinal direction.
+func tweenRouteFaces(r []*geo.Point) [2]byte {
+	side := func(a, b *geo.Point) byte {
+		switch {
+		case math.Abs(a.X-b.X) < 1e-7:
+			if b.Y < a.Y {
+				return 'T'
+			}
+			return 'B'
+		case math.Abs(a.Y-b.Y) < 1e-7:
+			if b.X < a.X {
+				return 'L'
+			}
+			return 'R'
+		}
+		return 0
+	}
+	n := len(r) - 1
+	return [2]byte{side(r[0], r[1]), side(r[n], r[n-1])}
 }
