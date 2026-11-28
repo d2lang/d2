@@ -463,7 +463,29 @@ func (i *svgImporter) parse(data []byte) (*svgElement, error) {
 			} else {
 				parent := stack[len(stack)-1]
 				element.parent = parent
-				parent.children = append(parent.children, element)
+				if isAnimationElement(parent.name) {
+					if name == "title" || name == "desc" {
+						// These leaves belong to a skipped animation, so validate
+						// them here instead of the subsequent scene-tree walk.
+						if err := i.compileElement(element); err != nil {
+							return nil, err
+						}
+					} else if name != "mpath" || parent.name != "animateMotion" {
+						return nil, i.errorf("animation element <%s> has unsupported child <%s>", parent.name, name)
+					}
+				}
+				if isDescription(parent.name) {
+					return nil, i.errorf("non-rendering element <%s> cannot contain child elements", parent.name)
+				}
+				// Raster export draws the authored base state. Animation is parsed
+				// and counted like other XML, but never contributes to the scene.
+				if isAnimationElement(name) {
+					if err := i.validateAnimation(element, parent); err != nil {
+						return nil, err
+					}
+				} else {
+					parent.children = append(parent.children, element)
+				}
 			}
 			stack = append(stack, element)
 		case xml.EndElement:
@@ -746,6 +768,9 @@ func (i *svgImporter) elementName(name xml.Name) (string, error) {
 			i.namespaceSet = true
 		} else if name.Space != i.elementNamespace {
 			return "", i.errorf("element <%s> mixes SVG and empty namespaces", displayXMLName(name.Local))
+		}
+		if isAnimationElement(name.Local) {
+			return name.Local, nil
 		}
 		switch name.Local {
 		case "svg", "g", "defs", "style", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "image", "text", "tspan", "use", "mask", "filter", "feGaussianBlur", "clipPath", "linearGradient", "radialGradient", "stop", "title", "desc", "metadata":

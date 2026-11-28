@@ -43,7 +43,49 @@ func isDescription(name string) bool {
 	return name == "title" || name == "desc" || name == "dc:title"
 }
 
+// Animation attributes are inert in a static import.
+var animationAttributes = map[string]struct{}{
+	"id": {}, "href": {}, "attributeName": {}, "attributeType": {}, "type": {},
+	"begin": {}, "dur": {}, "end": {}, "min": {}, "max": {}, "restart": {},
+	"repeatCount": {}, "repeatDur": {}, "fill": {}, "calcMode": {}, "values": {},
+	"keyTimes": {}, "keySplines": {}, "from": {}, "to": {}, "by": {},
+	"additive": {}, "accumulate": {}, "path": {}, "keyPoints": {}, "rotate": {},
+}
+
+func isAnimationElement(name string) bool {
+	switch name {
+	case "animate", "animateTransform", "animateMotion", "set", "mpath":
+		return true
+	}
+	return false
+}
+
+func (i *svgImporter) validateAnimation(element, parent *svgElement) error {
+	if element.name == "mpath" && parent.name != "animateMotion" {
+		return i.errorf("<mpath> must be a child of <animateMotion>")
+	}
+	for _, name := range element.attrOrder {
+		if _, ok := animationAttributes[name]; !ok || (element.name == "mpath" && name != "href" && name != "id") {
+			return i.errorf("element <%s> has unsupported attribute %q", element.name, displayXMLName(name))
+		}
+	}
+	if href, present := element.attrs["href"]; present || element.name == "mpath" {
+		id, local := strings.CutPrefix(href, "#")
+		valid, err := validSVGID(i.ctx, id)
+		if err != nil {
+			return err
+		}
+		if !local || !valid {
+			return i.errorf("element <%s> href must be one local #id reference", element.name)
+		}
+	}
+	return nil
+}
+
 func isNonRenderingElement(name string) bool {
+	if isAnimationElement(name) {
+		return true
+	}
 	switch name {
 	case "title", "desc", "dc:title", "metadata", "rdf:RDF", "cc:Work", "dc:format", "dc:type", "sodipodi:namedview":
 		return true

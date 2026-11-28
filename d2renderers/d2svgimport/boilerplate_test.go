@@ -24,6 +24,20 @@ func TestImportNodeAcceptsBoundedNonRenderingBoilerplate(t *testing.T) {
 	assertSolidColor(t, rect.Fill, color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xff})
 }
 
+func TestImportAnimatedIconUsesBaseState(t *testing.T) {
+	result := mustImport(t, `<svg width="10" height="10"><defs><path id="route" d="M0,0 L5,5"/></defs><rect width="10" height="10" fill="#123456">
+		<animate attributeName="width" values="10;5;10" dur="1s" repeatCount="indefinite"><title>Pulse</title><desc>Grow then shrink</desc></animate>
+		<animateTransform attributeName="transform" type="rotate" from="0" to="180" dur="2s"/>
+		<animateMotion dur="2s"><mpath href="#route"/></animateMotion>
+		<set attributeName="fill" to="red" begin="1s"/>
+	</rect></svg>`)
+	if result.Metrics.ParsedElements != 11 || result.Metrics.EmittedElements != 2 {
+		t.Fatalf("animation metrics = %+v", result.Metrics)
+	}
+	rect := result.Root.Children[0].Primitive.(d2scene.Rect)
+	assertSolidColor(t, rect.Fill, color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xff})
+}
+
 func TestImportNodeAcceptsCanonicalSVGDoctype(t *testing.T) {
 	result := mustImport(t, `<?xml version="1.0" encoding="utf-8"?>
 <!-- Generator: Adobe Illustrator -->
