@@ -10,13 +10,14 @@ type exportExtension string
 
 const GIF exportExtension = ".gif"
 const MP4 exportExtension = ".mp4"
+const WEBM exportExtension = ".webm"
 const PNG exportExtension = ".png"
 const PPTX exportExtension = ".pptx"
 const PDF exportExtension = ".pdf"
 const SVG exportExtension = ".svg"
 const TXT exportExtension = ".txt"
 
-var SUPPORTED_EXTENSIONS = []exportExtension{SVG, PNG, PDF, PPTX, GIF, MP4, TXT}
+var SUPPORTED_EXTENSIONS = []exportExtension{SVG, PNG, PDF, PPTX, GIF, MP4, WEBM, TXT}
 
 var STDOUT_FORMAT_MAP = map[string]exportExtension{
 	"png":   PNG,
@@ -27,9 +28,10 @@ var STDOUT_FORMAT_MAP = map[string]exportExtension{
 	"pptx":  PPTX,
 	"gif":   GIF,
 	"mp4":   MP4,
+	"webm":  WEBM,
 }
 
-var SUPPORTED_STDOUT_FORMATS = []string{"png", "svg", "ascii", "txt", "pdf", "pptx", "gif", "mp4"}
+var SUPPORTED_STDOUT_FORMATS = []string{"png", "svg", "ascii", "txt", "pdf", "pptx", "gif", "mp4", "webm"}
 
 func getOutputFormat(stdoutFormatFlag *string, outputPath string) (exportExtension, error) {
 	if stdoutFormatFlag != nil && *stdoutFormatFlag != "" {
@@ -54,7 +56,11 @@ func getExportExtension(outputPath string) exportExtension {
 }
 
 func (ex exportExtension) supportsAnimation() bool {
-	return ex == SVG || ex == GIF || ex == MP4
+	return ex == SVG || ex == GIF || ex.isVideo()
+}
+
+func (ex exportExtension) isVideo() bool {
+	return ex == MP4 || ex == WEBM
 }
 
 func (ex exportExtension) supportsDarkTheme() bool {

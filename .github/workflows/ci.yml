@@ -96,19 +96,20 @@ jobs:
           # Disable chat notifications from the shared CI helper.
           CI_MAKE_ROOT: "0"
           GITHUB_TOKEN: ${{ github.token }}
-      - name: Test MP4 playback and stdout cancellation
+      - name: Test video playback and stdout cancellation
         env:
-          D2_REQUIRE_MP4_TESTS: "1"
+          D2_REQUIRE_VIDEO_TESTS: "1"
         run: |
           set -euo pipefail
-          if ! command -v ffprobe >/dev/null || ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -F ' libx264 ' >/dev/null; then
+          encoders=$(ffmpeg -hide_banner -encoders 2>/dev/null || true)
+          if ! command -v ffprobe >/dev/null || [[ "$encoders" != *' libx264 '* || "$encoders" != *' libvpx-vp9 '* ]]; then
             sudo apt-get -o Acquire::Retries=3 update -qq
             sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends ffmpeg
             mkdir -p "$RUNNER_TEMP/d2-ffmpeg"
             ln -s /usr/bin/ffmpeg /usr/bin/ffprobe "$RUNNER_TEMP/d2-ffmpeg/"
             export PATH="$RUNNER_TEMP/d2-ffmpeg:$PATH"
           fi
-          go test -v -count=1 -run '^Test(MP4(Playback|BlockedStdout)|VideoTimedSamples)$' ./d2cli
+          go test -v -count=1 -run '^Test((MP4|WebM)Playback|MP4BlockedStdout|VideoTimedSamples)$' ./d2cli
       - name: Test the MCP server with the race detector
         run: go test -race ./d2cli/ -run TestMCP
       - name: Build without the MCP server
@@ -146,14 +147,14 @@ jobs:
         run: go test ./d2lsp/lspserver -count=1
       - name: Test native watch imports and rooted MCP file input
         run: go test -v -run '^Test(WatchResolvesImportsRelativeToEntryFile|MCP(DiagramPaths|UTF16Diagram|Root))$' ./d2cli
-      - name: Test MP4 playback and stdout cancellation on Windows
+      - name: Test video playback and stdout cancellation on Windows
         shell: pwsh
         env:
-          D2_REQUIRE_MP4_TESTS: "1"
+          D2_REQUIRE_VIDEO_TESTS: "1"
         run: |
+          $encoders = if (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue) { ffmpeg.exe -hide_banner -encoders 2>$null }
           $available = (Get-Command ffprobe.exe -ErrorAction SilentlyContinue) -and
-                       (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue) -and
-                       ((ffmpeg.exe -hide_banner -encoders 2>$null) -match ' libx264 ')
+                       ($encoders -match ' libx264 ') -and ($encoders -match ' libvpx-vp9 ')
           if (-not $available) {
             $build = "ffmpeg-9.1-essentials_build"
             $archive = Join-Path $env:RUNNER_TEMP "$build.7z"
@@ -167,7 +168,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Unable to extract FFmpeg tools" }
             $env:PATH = "$bin;$env:PATH"
           }
-          go test -v -count=1 -run '^Test(MP4(Playback|BlockedStdout)|VideoTimedSamples)$' ./d2cli
+          go test -v -count=1 -run '^Test((MP4|WebM)Playback|MP4BlockedStdout|VideoTimedSamples)$' ./d2cli
       - name: Render a diagram from outside its directory
         run: go test -v -run '^TestCLI_E2E$/^import_from_another_directory$' ./e2etests-cli
   wasm:

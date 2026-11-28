@@ -144,11 +144,11 @@ one, please see [./d2renderers/d2fonts](./d2renderers/d2fonts).
 
 ## Export file types
 
-D2 renders SVG, PNG, GIF, MP4, PDF, PowerPoint (`.pptx`), and text diagrams (`.txt`) without a browser.
+D2 renders SVG, PNG, GIF, MP4, WebM, PDF, PowerPoint (`.pptx`), and text diagrams (`.txt`) without a browser.
 For example, `d2 hello.d2 hello.txt` draws the diagram with Unicode characters.
 Use `--ascii-mode=standard` for plain ASCII. [Export guide](https://d2lang.com/tour/exports/)
 
-For animated SVG, GIF, and MP4, set `animate-interval` and `animate-duration` in
+For animated SVG, GIF, MP4, and WebM, set `animate-interval` and `animate-duration` in
 `vars.d2-config`. With TALA, newly appended SQL rows can drop into place
 while existing rows and connections stay anchored. Appending a sequence message can
 extend the activation bar and draw the arrow from sender to recipient.
@@ -194,14 +194,16 @@ every four seconds. An explicit loop must last at least the time between
 departures on each active stream. For a diagram with steps, this requirement
 applies to the full loop across the exported boards.
 
-To share a tour as an H.264 video, run `d2 tour.d2 tour.mp4`. The CLI plays
-the selected boards once. It samples motion at 30 fps and records holds using
-timestamps. MP4 export requires FFmpeg 5.1 or newer with the `libx264` encoder
-on your PATH.
+To export a VP9 WebM, run `d2 tour.d2 tour.webm`. For H.264 MP4, run
+`d2 tour.d2 tour.mp4`. Both play the selected boards once, sample motion at
+30 fps, and store still poses with timestamps. Install FFmpeg 5.1 or newer
+on your PATH with the encoder for your format (`libvpx-vp9` for WebM or
+`libx264` for MP4).
 
 ```sh
 d2 --video-size=1920x1080 --video-quality=medium tour.d2 tour.mp4
-d2 --video-duration=10s flow.d2 flow.mp4
+d2 --video-duration=10s flow.d2 flow.webm
+d2 --stdout-format=webm tour.d2 - > tour.webm
 ```
 
 `--video-size` fits and centers the diagram in an exact pixel canvas, including
@@ -213,8 +215,8 @@ a continuously animated board or to trim or repeat a tour. Durations round up
 to the next 1/30 second.
 
 A positive `animate-interval` shows a progress line along the bottom of an
-animated SVG, GIF, or MP4. Hide it with `vars.d2-config.animate-progress: false`
-or `--animate-progress=false`. GIF and MP4 exports that use their built-in
+animated SVG, GIF, MP4, or WebM. Hide it with `vars.d2-config.animate-progress: false`
+or `--animate-progress=false`. GIF and video exports that use their built-in
 interval show the line only if you pass `--animate-progress` or set
 `animate-progress: true` in the config.
 

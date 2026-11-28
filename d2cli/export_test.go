@@ -89,6 +89,17 @@ func TestOutputFormat(t *testing.T) {
 			supportsAnimation: true,
 		},
 		{
+			outputPath:        "/out.webm",
+			extension:         WEBM,
+			supportsAnimation: true,
+		},
+		{
+			stdoutFormatFlag:  "WebM",
+			outputPath:        "-",
+			extension:         WEBM,
+			supportsAnimation: true,
+		},
+		{
 			outputPath:                "/out.gif",
 			extension:                 GIF,
 			supportsDarkTheme:         false,
@@ -228,12 +239,13 @@ func TestVideoDurationUsage(t *testing.T) {
 		duration string
 		wantErr  string
 	}{
-		{"svg", "1s", "requires MP4 output"},
-		{"gif", "1s", "requires MP4 output"},
-		{"png", "1s", "requires MP4 output"},
+		{"svg", "1s", "requires MP4 or WebM output"},
+		{"gif", "1s", "requires MP4 or WebM output"},
+		{"png", "1s", "requires MP4 or WebM output"},
 		{"mp4", "0s", "must be positive"},
 		{"mp4", "-2s", "must be positive"},
 		{"mp4", "2", "--video-duration"},
+		{"webm", "-2s", "must be positive"},
 	} {
 		t.Run(tc.format+"_"+tc.duration, func(t *testing.T) {
 			data, err := imageCLI(t, t.TempDir(), "x", "--stdout-format="+tc.format, "--video-duration="+tc.duration, "-")
