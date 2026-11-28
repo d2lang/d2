@@ -1,5 +1,7 @@
 #### Features 🚀
 
+- shape: `cycle` lays a container's children out on a circle and routes their connections as arcs that start and stop on the shape borders
+
 #### Improvements 🧹
 
 - SVG exports use 28.4% fewer bytes across the 157 documentation diagrams, or 35.1% fewer with gzip. D2 embeds smaller bundled fonts and writes more compact stylesheets, code blocks, arrowhead references, textures, sketch paths, and LaTeX glyphs.
