@@ -197,9 +197,25 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		matte, linkedMatte = footerMatte(&transitions, diagramHash, footer, totalMS, renderOpts, rootDiagram, frames, len(links) > 0, slots)
 	}
 
-	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
+	var native []byte
+	needFrameClock := true
+	if len(offsets) == 0 {
+		var tracks []byte
+		native, tracks, needFrameClock = nativeMotion(frames, svgs, diagramHash, totalMS)
+		if native != nil {
+			transitions.Write(tracks)
+			svgs = [][]byte{native}
+		}
+	}
+	needFrameClock = native == nil || needFrameClock || strings.Contains(matte, "d2Transition-")
+	var defs, graphics []byte
+	if native == nil {
+		defs, svgs = shareStaticShapes(rootDiagram, svgs, diagramHash)
+	}
 	styleFrames := svgs
-	graphics, svgs := shareFrameGraphics(svgs, diagramHash)
+	if native == nil {
+		graphics, svgs = shareFrameGraphics(svgs, diagramHash)
+	}
 	var styleGraphics []byte
 	if len(defs) != 0 {
 		// The static shapes already introduce references, so font selection uses
@@ -223,7 +239,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	svgsStr := source.String()
 
 	hidden, visible := "{opacity:0", "{opacity:1"
-	if len(slots) == 0 && (!uniform || len(svgs) > 100) {
+	if len(slots) == 0 && (!uniform || len(durationsMS) > 100) {
 		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"
 	}
 	if strings.Contains(svgsStr, "<a ") || strings.Contains(svgsStr, "<title>") {
@@ -250,13 +266,18 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		if i+1 < len(frames) {
 			to = frames[i+1].start
 		}
-		writeFrameKeyframes(&transitions, "d2Transition", diagramHash, i, startMS, duration, totalMS, from, to, hidden, visible)
+		if needFrameClock {
+			writeFrameKeyframes(&transitions, "d2Transition", diagramHash, i, startMS, duration, totalMS, from, to, hidden, visible)
+		}
 		startMS += duration
 		if len(slots) > 0 && slots[i].count > 1 {
 			slot := slots[i]
 			writeFrameKeyframes(&transitions, "d2LayerStep", diagramHash, i, slot.startMS, frames[i].DurationMS, slot.totalMS, from, to, hidden, visible)
 		}
 		from = to
+	}
+	if native != nil && needFrameClock {
+		writeReducedMotionFrames(&transitions, diagramHash, frames, totalMS, hidden, visible)
 	}
 	if len(zooms) > 0 {
 		writePlaybackZooms(&transitions, diagramHash, durationsMS, totalMS, zoomMS, viewport, offsets, zooms)
@@ -290,6 +311,10 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	buf.Write(defs)
 	buf.Write(graphics)
 	for i, frame := range svgs {
+		if native != nil {
+			buf.Write(frame)
+			continue
+		}
 		if len(offsets) > 0 {
 			writeLayerFrame(buf, diagramHash, i, totalMS, slots, true, linkedMatte)
 			fmt.Fprintf(buf, `<g transform="translate(%d %d)">`, offsets[i].X, offsets[i].Y)

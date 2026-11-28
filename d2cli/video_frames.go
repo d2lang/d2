@@ -27,6 +27,7 @@ const (
 )
 
 type videoSegment struct {
+	translations map[string]d2scene.Track
 	d2animate.Frame
 	rasterPlacement
 	start, end  time.Duration
@@ -62,10 +63,9 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	}
 	p := &videoTimeline{exact: make(map[*d2target.Diagram]int), zoom: time.Duration(layers.duration) * time.Millisecond}
 	var boards []*d2target.Diagram
-	for i, f := range frames {
+	for _, f := range frames {
 		if !f.TweenSample {
 			boards = append(boards, f.Diagram)
-			p.exact[f.Diagram] = i
 		}
 	}
 	viewports := gifViewports(root, boards)
@@ -75,8 +75,8 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	}
 	// The finite tour finishes on its last board. A longer explicit clip
 	// repeats the tour and can follow the return portal into its next lap.
-	var boardIndex int
-	for i, f := range frames {
+	var boardIndex, firstTween int
+	for _, f := range frames {
 		s := videoSegment{Frame: f, start: p.period, movingUntil: rasterMovingUntil(f.Picture())}
 		if v := viewports[f.Diagram]; v != nil {
 			s.viewport = v
@@ -84,6 +84,18 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 			v.bounds = v.bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
 		}
 		if !f.TweenSample {
+			if len(p.segments) > firstTween && viewports[f.Diagram] != nil {
+				if tracks := d2animate.TranslationTracks(f.Diagram); tracks != nil {
+					incoming := &p.segments[firstTween]
+					incoming.end = s.start
+					incoming.DurationMS = f.ElapsedMS
+					incoming.movingUntil = incoming.end - incoming.start
+					incoming.translations = tracks
+					p.segments = p.segments[:firstTween+1]
+				}
+			}
+			p.exact[f.Diagram] = len(p.segments)
+			firstTween = len(p.segments) + 1
 			if nav != nil && boardIndex+1 < len(boards) {
 				next := boards[boardIndex+1]
 				if len(next.TweenFrames) == 0 {
@@ -96,13 +108,13 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 			s.DurationMS = max(s.DurationMS, layers.duration)
 		}
 		if int64(s.DurationMS) > (math.MaxInt64-int64(s.start))/int64(time.Millisecond) {
-			return nil, fmt.Errorf("video timeline duration overflows at segment %d", i)
+			return nil, fmt.Errorf("video timeline duration overflows at segment %d", len(p.segments))
 		}
 		s.end = s.start + time.Duration(s.DurationMS)*time.Millisecond
 		p.period = s.end
 		if offset := f.StartFraction(); offset != 0 {
 			s.start += offset
-			p.segments[i-1].end = s.start
+			p.segments[len(p.segments)-1].end = s.start
 		}
 		p.segments = append(p.segments, s)
 	}
@@ -325,6 +337,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 		}
 		s := &p.segments[index]
 		limits := buildLimits
+		limits.translations = s.translations
 		if s.viewport != nil {
 			limits.minimumBounds = &s.viewport.bounds
 		}

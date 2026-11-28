@@ -38,10 +38,12 @@ func TestGridMotionAttachedRouting(t *testing.T) {
 	m := newGridMotionEdges(before, after, nil, nil, map[string]bool{"a": true, "b": true})
 	a.Pos = d2target.Point{X: 100, Y: -60}
 	b.Pos = d2target.Point{X: 100, Y: 60}
+	a.MotionOffset = geo.NewPoint(.375, -.25)
+	b.MotionOffset = geo.NewPoint(.375, .25)
 	// The arc sends the two cells around different sides. The connection
 	// follows their vertical separation instead of collapsing at the center.
 	edges := m.sample(after.Connections, []d2target.Shape{a, b}, 0.5, 1, 1, nil)
-	if len(edges) != 1 || !edges[0].Route[0].Equals(geo.NewPoint(120, -20)) || !edges[0].Route[1].Equals(geo.NewPoint(120, 60)) {
+	if len(edges) != 1 || !edges[0].Route[0].Equals(geo.NewPoint(120.375, -20.25)) || !edges[0].Route[1].Equals(geo.NewPoint(120.375, 60.25)) {
 		t.Fatalf("sampled route = %+v", edges)
 	}
 	if err := d2target.ValidateRenderTarget(&d2target.Diagram{Shapes: []d2target.Shape{a, b}, Connections: edges}); err != nil {
@@ -64,12 +66,13 @@ a.id -> b.fk`)
 	edges := newGridMotionEdges(board, board, graph, graph, map[string]bool{"b": true})
 	shapes := slices.Clone(board.Shapes)
 	shapes[1].Pos.Y += 80
+	shapes[1].MotionOffset = geo.NewPoint(-.125, .375)
 	actual := edges.sample(board.Connections, shapes, .5, 1, 1, nil)
 	if len(actual) != 1 {
 		t.Fatalf("moving cell lost its row edge")
 	}
 	original, sampled := board.Connections[0].Route, actual[0].Route
-	want := geo.NewPoint(original[1].X, original[1].Y+80)
+	want := geo.NewPoint(original[1].X-.125, original[1].Y+80.375)
 	if !sampled[0].Equals(original[0]) || !sampled[1].Equals(want) {
 		t.Fatalf("row ports moved off their table rows: %v", sampled)
 	}

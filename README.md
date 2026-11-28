@@ -154,9 +154,11 @@ while existing rows and connections stay anchored. Appending a sequence message 
 extend the activation bar and draw the arrow from sender to recipient.
 [Animated TALA example](./docs/examples/tala-step-motion/dispatch.gif) · [D2 source](./docs/examples/tala-step-motion/dispatch.d2)
 
-Step tweens target 60 frames per second. D2 compiles up to 288 intermediate
-pictures per transition. Tweens longer than 4.8 seconds keep their duration
-with fewer samples per second. Large diagrams can also use fewer samples.
+Animated SVG can reuse a shape, its label, and its artwork across steps. When
+their geometry stays compatible, the browser interpolates movement and supported
+paint changes at display refresh. TALA preserves fractional positions between
+authored pins. MP4 and WebM sample motion at 60 fps. For changes that need
+separate pictures, D2 targets 60 samples per second, up to 288 per transition.
 GIF fits tween samples to its centisecond clock, using delays of at least
 20 ms wherever the authored timing allows.
 

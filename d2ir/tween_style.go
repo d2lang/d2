@@ -38,7 +38,7 @@ func (c *compiler) stepChanges(previous, board *Map) []tweenChange {
 			return
 		}
 		if current != board && ParentMap(current) != classes {
-			changes = appendDimensions(changes, previous, current, previousClasses, classes, path)
+			changes = appendGeometry(changes, previous, current, previousClasses, classes, path)
 		}
 		for _, field := range current.Fields {
 			if c.stopped() {
@@ -119,10 +119,16 @@ func appendStyles(changes []tweenChange, previous, classes *Map, style *Field, p
 	return changes
 }
 
-func appendDimensions(changes []tweenChange, previous, current, previousClasses, classes *Map, path []propertyPathPart) []tweenChange {
+func appendGeometry(changes []tweenChange, previous, current, previousClasses, classes *Map, path []propertyPathPart) []tweenChange {
 	owner, ok := current.Parent().(*Field)
 	if !ok || owner.Name == nil || makeFieldIndexKey(owner.Name).unquotedReserved {
 		return changes
+	}
+	for _, key := range []string{"left", "top"} {
+		name := d2ast.FlatUnquotedString(key)
+		if pin := current.lookupField(name); pin != nil {
+			changes = appendDirectChange(changes, path, effectiveProperty(previous, previousClasses, name), pin)
+		}
 	}
 	width := d2ast.FlatUnquotedString("width")
 	height := d2ast.FlatUnquotedString("height")
@@ -191,7 +197,7 @@ func appendDirectChange(changes []tweenChange, path []propertyPathPart, start, e
 		// Opacity is continuous even when authored simply as 0 and 1.
 		number.precision = -1
 		value = number
-	case "width", "height", "stroke-width", "stroke-dash", "border-radius", "font-size":
+	case "left", "top", "width", "height", "stroke-width", "stroke-dash", "border-radius", "font-size":
 		a, errA := strconv.Atoi(from)
 		b, errB := strconv.Atoi(to)
 		if errA != nil || errB != nil || a == b {

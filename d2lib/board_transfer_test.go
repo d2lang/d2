@@ -43,9 +43,10 @@ func TestBoardTransferKeepsTeamTogether(t *testing.T) {
 				t.Fatalf("team broke up at %.2f", progress)
 			}
 		}
+		offset := gridEdgeShapeMap(f.Shapes)[panel].RenderedPosition()
 		wire := continuityWire(t, f, panel+".ingest", panel+".index").Route
 		for i, p := range wire {
-			if math.Abs(p.X-oldWire[i].X-float64(shift.X)) > 1e-6 || math.Abs(p.Y-oldWire[i].Y-float64(shift.Y)) > 1e-6 {
+			if math.Abs(p.X-oldWire[i].X-(offset.X-float64(oldPanel.Min.X))) > 1e-6 || math.Abs(p.Y-oldWire[i].Y-(offset.Y-float64(oldPanel.Min.Y))) > 1e-6 {
 				t.Fatalf("internal wire detached at %.2f", progress)
 			}
 		}
@@ -60,8 +61,7 @@ func TestBoardTransferKeepsTeamTogether(t *testing.T) {
 	if !reflect.DeepEqual(diagramGeometryOf(prev), before) || !reflect.DeepEqual(diagramGeometryOf(next), after) {
 		t.Fatal("sampling mutated an authored endpoint")
 	}
-	// All the box dimensions are integer pixels. Start reconnecting on the
-	// first settled sample, without exposing the final route during travel.
+	// Reconnect only once even the fractional part of the motion has settled.
 	firstLanded, firstWire := 0, 0
 	for tick := 20; tick <= 100; tick++ {
 		f := m.sample(next, float64(tick)/100)
@@ -69,7 +69,7 @@ func TestBoardTransferKeepsTeamTogether(t *testing.T) {
 		landed := true
 		for _, target := range next.Shapes {
 			s := shapes[target.ID]
-			if s.Pos != target.Pos || s.Width != target.Width || s.Height != target.Height {
+			if s.RenderedPosition() != target.RenderedPosition() || s.Width != target.Width || s.Height != target.Height {
 				landed = false
 				break
 			}

@@ -244,6 +244,9 @@ func Layout(ctx context.Context, graph *d2graph.Graph, opts *Options) (err error
 	if err != nil {
 		return err
 	}
+	if placePinnedSample(graph, input) {
+		return applySeedResult(ctx, graph, seedResult{graph: input.graph, bindings: input.bindings})
+	}
 	// Logging and request metadata commonly wrap Background with values, leaving
 	// Done nil. Give the CPU-heavy engine phase a real cancellation channel so
 	// its hot work guards can poll that channel without repeatedly traversing

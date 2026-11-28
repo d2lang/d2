@@ -74,10 +74,10 @@ func newGridMotionEdges(from, to *d2target.Diagram, fromGraph, toGraph *d2graph.
 			layout := gridEdgeLayout{edge: e, src: shapes[e.Src], dst: shapes[pair.dstAnchor], srcRow: -1, dstRow: -1}
 			if row := rowEdges[e.ID]; row != nil {
 				if row.SrcTableColumnIndex != nil && layout.src != nil && layout.src.Height > 0 {
-					layout.srcRow = (e.Route[0].Y - float64(layout.src.Pos.Y)) / float64(layout.src.Height)
+					layout.srcRow = (e.Route[0].Y - layout.src.RenderedPosition().Y) / float64(layout.src.Height)
 				}
 				if row.DstTableColumnIndex != nil && layout.dst != nil && layout.dst.Height > 0 {
-					layout.dstRow = (e.Route[len(e.Route)-1].Y - float64(layout.dst.Pos.Y)) / float64(layout.dst.Height)
+					layout.dstRow = (e.Route[len(e.Route)-1].Y - layout.dst.RenderedPosition().Y) / float64(layout.dst.Height)
 				}
 			}
 			layout.straight = layout.hasStraightPorts()
@@ -207,17 +207,18 @@ func (l gridEdgeLayout) switchesRowFace(next gridEdgeLayout) bool {
 // shape follow its horizontal movement and resize, including its row ports.
 func (l gridEdgeLayout) rowGapTransform(src, dst *d2target.Shape) (mapX func(float64) float64, visible bool) {
 	left, right := l.src, l.dst
-	if left.Pos.X > right.Pos.X {
+	if left.RenderedPosition().X > right.RenderedPosition().X {
 		left, right, src, dst = right, left, dst, src
 	}
-	lo, hi := float64(left.Pos.X+left.Width), float64(right.Pos.X)
-	newLo, newHi := float64(src.Pos.X+src.Width), float64(dst.Pos.X)
+	lo, hi := left.RenderedPosition().X+float64(left.Width), right.RenderedPosition().X
+	a, b := src.RenderedPosition(), dst.RenderedPosition()
+	newLo, newHi := a.X+float64(src.Width), b.X
 	if lo >= hi || left.Width <= 0 || right.Width <= 0 {
 		return nil, true
 	}
 	if newLo >= newHi {
 		// A row-to-row detour through this gap is buried while the cells cross.
-		return nil, src.Pos.Y+src.Height <= dst.Pos.Y || dst.Pos.Y+dst.Height <= src.Pos.Y
+		return nil, a.Y+float64(src.Height) <= b.Y || b.Y+float64(dst.Height) <= a.Y
 	}
 	return func(x float64) float64 {
 		switch {
@@ -237,13 +238,15 @@ func straightGridPorts(src, dst *d2target.Shape, srcRow, dstRow float64) (start,
 	a, b := gridEdgeCenter(src), gridEdgeCenter(dst)
 	facing := b.X - a.X
 	if srcRow >= 0 {
-		a.X, a.Y = float64(src.Pos.X), float64(src.Pos.Y)+srcRow*float64(src.Height)
+		pos := src.RenderedPosition()
+		a.X, a.Y = pos.X, pos.Y+srcRow*float64(src.Height)
 		if facing > 0 {
 			a.X += float64(src.Width)
 		}
 	}
 	if dstRow >= 0 {
-		b.X, b.Y = float64(dst.Pos.X), float64(dst.Pos.Y)+dstRow*float64(dst.Height)
+		pos := dst.RenderedPosition()
+		b.X, b.Y = pos.X, pos.Y+dstRow*float64(dst.Height)
 		if facing < 0 {
 			b.X += float64(dst.Width)
 		}
@@ -268,23 +271,24 @@ func straightGridPorts(src, dst *d2target.Shape, srcRow, dstRow float64) (start,
 // While the horizontal projections overlap, a row port can still reach a
 // table in a different row through the clear strip between their boxes.
 func gridRowCrossingRoute(src, dst *d2target.Shape, srcRow, dstRow float64) []*geo.Point {
-	if srcRow < 0 && dstRow < 0 || src.Pos.X+src.Width < dst.Pos.X || dst.Pos.X+dst.Width < src.Pos.X {
+	a, b := src.RenderedPosition(), dst.RenderedPosition()
+	if srcRow < 0 && dstRow < 0 || a.X+float64(src.Width) < b.X || b.X+float64(dst.Width) < a.X {
 		return nil
 	}
-	gapTop := min(src.Pos.Y+src.Height, dst.Pos.Y+dst.Height)
-	gapBottom := max(src.Pos.Y, dst.Pos.Y)
+	gapTop := min(a.Y+float64(src.Height), b.Y+float64(dst.Height))
+	gapBottom := max(a.Y, b.Y)
 	if gapTop >= gapBottom {
 		return nil
 	}
-	midY := float64(gapTop+gapBottom) / 2
-	lead := min(12., float64(gapBottom-gapTop)/2)
+	midY := (gapTop + gapBottom) / 2
+	lead := min(12., (gapBottom-gapTop)/2)
 	leg := func(s *d2target.Shape, row, side float64) []*geo.Point {
 		c := gridEdgeCenter(s)
 		if row < 0 {
 			port := gridEdgeBorder(s, 0, midY-c.Y)
 			return []*geo.Point{port, geo.NewPoint(port.X, midY)}
 		}
-		port := geo.NewPoint(c.X+side*float64(s.Width)/2, float64(s.Pos.Y)+row*float64(s.Height))
+		port := geo.NewPoint(c.X+side*float64(s.Width)/2, s.RenderedPosition().Y+row*float64(s.Height))
 		x := port.X + side*lead
 		return []*geo.Point{port, geo.NewPoint(x, port.Y), geo.NewPoint(x, midY)}
 	}
@@ -301,7 +305,8 @@ func gridRowCrossingRoute(src, dst *d2target.Shape, srcRow, dstRow float64) []*g
 }
 
 func gridEdgeCenter(s *d2target.Shape) geo.Point {
-	return geo.Point{X: float64(s.Pos.X) + float64(s.Width)/2, Y: float64(s.Pos.Y) + float64(s.Height)/2}
+	p := s.RenderedPosition()
+	return geo.Point{X: p.X + float64(s.Width)/2, Y: p.Y + float64(s.Height)/2}
 }
 
 func gridEdgeBorder(s *d2target.Shape, dx, dy float64) *geo.Point {
@@ -314,7 +319,14 @@ func gridEdgeBorder(s *d2target.Shape, dx, dy float64) *geo.Point {
 	box := geo.NewBox(geo.NewPoint(float64(s.Pos.X), float64(s.Pos.Y)), float64(s.Width), float64(s.Height))
 	outline := shape.NewShape(d2target.DSL_SHAPE_TO_SHAPE_TYPE[s.Type], box)
 	// Start beyond the rectangular border even when the cell boxes overlap.
-	return shape.TraceToShapeBorder(outline, border, geo.NewPoint(c.X+dx*2*ratio, c.Y+dy*2*ratio))
+	far := geo.NewPoint(c.X+dx*2*ratio, c.Y+dy*2*ratio)
+	if offset := s.MotionOffset; offset != nil {
+		border.X, border.Y = border.X-offset.X, border.Y-offset.Y
+		far.X, far.Y = far.X-offset.X, far.Y-offset.Y
+		port := shape.TraceToShapeBorder(outline, border, far)
+		return geo.NewPoint(port.X+offset.X, port.Y+offset.Y)
+	}
+	return shape.TraceToShapeBorder(outline, border, far)
 }
 
 func (pair *gridEdgePair) sample(e *d2target.Connection, shapes map[string]*d2target.Shape, t float64) bool {
@@ -419,12 +431,13 @@ func (pair *gridEdgePair) route(e *d2target.Connection, src, dst *d2target.Shape
 
 func (l gridEdgeLayout) portShifts(src, dst *d2target.Shape) (geo.Point, geo.Point) {
 	shift := func(p *geo.Point, old, current *d2target.Shape) geo.Point {
-		dx, dy := float64(current.Pos.X-old.Pos.X), float64(current.Pos.Y-old.Pos.Y)
+		before, after := old.RenderedPosition(), current.RenderedPosition()
+		dx, dy := after.X-before.X, after.Y-before.Y
 		if old.Width > 0 {
-			dx += (p.X - float64(old.Pos.X)) * float64(current.Width-old.Width) / float64(old.Width)
+			dx += (p.X - before.X) * float64(current.Width-old.Width) / float64(old.Width)
 		}
 		if old.Height > 0 {
-			dy += (p.Y - float64(old.Pos.Y)) * float64(current.Height-old.Height) / float64(old.Height)
+			dy += (p.Y - before.Y) * float64(current.Height-old.Height) / float64(old.Height)
 		}
 		return geo.Point{X: dx, Y: dy}
 	}

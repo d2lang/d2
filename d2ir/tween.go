@@ -302,7 +302,9 @@ func setTweenValue(s *Scalar, value tweenValue, fraction float64) {
 	sample := value.at(fraction)
 	s.Value = d2ast.FlatUnquotedString(sample)
 	s.TweenOffset = 0
-	if number, ok := value.(tweenNumericValue); ok && number.precision >= 0 && number.unit == "" && fraction != 0 && fraction != 1 {
+	number, numeric := value.(tweenNumericValue)
+	s.NumericTween = numeric && number.unit == "" && number.from != number.to
+	if s.NumericTween && number.precision >= 0 && fraction != 0 && fraction != 1 {
 		// Labels preserve the authored precision. Continuous paint properties
 		// can recover the unrounded value, even through a variable alias.
 		exact := (1-fraction)*number.from + fraction*number.to

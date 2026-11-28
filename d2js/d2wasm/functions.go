@@ -710,12 +710,11 @@ func render(input RenderRequest) ([]byte, error) {
 		// An explicitly selected empty board still has its own background.
 		frames = []d2animate.Frame{{Diagram: diagram, DurationMS: animateInterval}}
 	}
-	boards := make([][]byte, len(frames))
-	for i, frame := range frames {
-		boards[i], err = renderSingleBoard(renderOpts, forceAppendix, ruler, frame.Picture())
-		if err != nil {
-			return nil, err
-		}
+	frames, boards, err := d2animate.RenderSVGFrames(diagram, resolvedPath, frames, *renderOpts, zoomMS, func(picture *d2target.Diagram) ([]byte, error) {
+		return renderSingleBoard(renderOpts, forceAppendix, ruler, picture)
+	})
+	if err != nil {
+		return nil, err
 	}
 	out, err := d2animate.WrapTimeline(diagram, resolvedPath, frames, boards, *renderOpts, zoomMS)
 	if err != nil {

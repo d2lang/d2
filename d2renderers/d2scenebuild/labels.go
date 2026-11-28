@@ -39,7 +39,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		}
 		hole := d2scene.NewNode(d2scene.Rect{Box: holeBox, Fill: black})
 		hole.ID = targetShape.ID + ":border-label-mask-hole"
-		holes = append(holes, hole)
+		holes = append(holes, b.placeMotionNode(hole, nil, &targetShape))
 	}
 
 	for _, connection := range b.diagram.Connections {

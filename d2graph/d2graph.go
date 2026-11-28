@@ -185,9 +185,11 @@ type RouteEdges func(context.Context, *Graph, []*Edge) error
 type Scalar struct {
 	Value  string     `json:"value"`
 	MapKey *d2ast.Key `json:"-"`
-	// TweenOffset retains subpixel paint for a sampled stroke width while
-	// keeping Value integral for geometry and layout.
+	// TweenOffset retains subpixel paint and pin positions while keeping Value
+	// integral for measurement and layout.
 	TweenOffset float64 `json:"tweenOffset,omitempty"`
+	// TweenedPin is also true when an interpolated pin lands on a whole pixel.
+	TweenedPin bool `json:"tweenedPin,omitempty"`
 }
 
 // TODO maybe rename to Shape
@@ -205,9 +207,11 @@ type Object struct {
 	Map        *d2ast.Map  `json:"-"`
 	References []Reference `json:"references,omitempty"`
 
-	*geo.Box      `json:"box,omitempty"`
-	LabelPosition *string `json:"labelPosition,omitempty"`
-	IconPosition  *string `json:"iconPosition,omitempty"`
+	*geo.Box `json:"box,omitempty"`
+	// MotionOffset is set by a layout that honored an interpolated pin.
+	MotionOffset  *geo.Point `json:"motionOffset,omitempty"`
+	LabelPosition *string    `json:"labelPosition,omitempty"`
+	IconPosition  *string    `json:"iconPosition,omitempty"`
 
 	ContentAspectRatio *float64 `json:"contentAspectRatio,omitempty"`
 	ELKLayerConstraint string   `json:"elkLayerConstraint,omitempty"`

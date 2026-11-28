@@ -25,11 +25,12 @@ type d2Patch struct {
 }
 
 type d2ObjectPatch struct {
-	object  *d2graph.Object
-	box     *geo.Box
-	topLeft *geo.Point
-	width   float64
-	height  float64
+	object       *d2graph.Object
+	box          *geo.Box
+	topLeft      *geo.Point
+	motionOffset *geo.Point
+	width        float64
+	height       float64
 
 	label *d2ObjectLabelPatch
 	icon  *string
@@ -119,6 +120,7 @@ func commitRoutePatch(ctx context.Context, patch d2Patch) error {
 func (patch d2Patch) apply() {
 	for _, update := range patch.objects {
 		update.box.TopLeft = update.topLeft
+		update.object.MotionOffset = update.motionOffset
 		update.box.Width = update.width
 		update.box.Height = update.height
 		if update.label != nil {
@@ -344,6 +346,15 @@ func buildObjectPatch(ctx context.Context, object *d2graph.Object, node *layoutg
 		topLeft: node.TopLeft.Copy(),
 		width:   node.Width,
 		height:  node.Height,
+	}
+	// A fixed leaf can render the numeric remainder after the integer router
+	// has placed it. Containers also position their children and may be laid
+	// out by a separate nested engine.
+	if object.Graph != nil && object.Graph.IsWholeLayout() && object.Parent == object.Graph.Root &&
+		len(object.ChildrenArray) == 0 && !object.IsGridDiagram() && !object.IsSequenceDiagram() &&
+		node.FixedTopLeft != nil && *node.TopLeft == *node.FixedTopLeft &&
+		object.Left != nil && object.Top != nil && (object.Left.TweenedPin || object.Top.TweenedPin) {
+		patch.motionOffset = geo.NewPoint(object.Left.TweenOffset, object.Top.TweenOffset)
 	}
 	if node.Label != nil {
 		patch.label = &d2ObjectLabelPatch{

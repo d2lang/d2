@@ -195,6 +195,8 @@ func (b *builder) finishShape(group *d2scene.Node, targetShape d2target.Shape) (
 		return nil, err
 	}
 	visualTarget := targetShape
+	// The enclosing scene group applies the shape's fractional placement.
+	visualTarget.MotionOffset = nil
 	visualTarget.Link = ""
 	visualTarget.PrettyLink = ""
 	visualTarget.Tooltip = ""

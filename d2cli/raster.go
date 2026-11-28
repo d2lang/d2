@@ -308,6 +308,7 @@ func bundledFontFallbackOptions(totalBoards int, next d2fonts.FallbackResolver) 
 }
 
 type sceneFrameOptions struct {
+	translations    map[string]d2scene.Track
 	omitAppendix    bool // Video and storyboard follow SVG; other native exports include appendix entries by default.
 	minimumBounds   *image.Rectangle
 	maxNodes        int
@@ -331,15 +332,16 @@ func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diag
 	board.Steps = nil
 	sketch := opts.Sketch != nil && *opts.Sketch
 	document, err := d2scenebuild.Build(ctx, &board, d2scenebuild.Options{
-		Pad:             opts.Pad,
-		MinimumBounds:   frameOpts.minimumBounds,
-		Scale:           opts.Scale,
-		Center:          opts.Center,
-		ThemeID:         opts.ThemeID,
-		ThemeOverrides:  opts.ThemeOverrides,
-		MaxNodes:        frameOpts.maxNodes,
-		MaxPathCommands: frameOpts.maxPathCommands,
-		Sketch:          sketch,
+		Pad:               opts.Pad,
+		MinimumBounds:     frameOpts.minimumBounds,
+		ShapeTranslations: frameOpts.translations,
+		Scale:             opts.Scale,
+		Center:            opts.Center,
+		ThemeID:           opts.ThemeID,
+		ThemeOverrides:    opts.ThemeOverrides,
+		MaxNodes:          frameOpts.maxNodes,
+		MaxPathCommands:   frameOpts.maxPathCommands,
+		Sketch:            sketch,
 		SketchBudget: d2scenebuild.SketchBudget{
 			MaxOperationSets: rasterMaxNodes,
 			MaxOperations:    rasterMaxPathCommands,
@@ -821,12 +823,24 @@ func renderGIFWithSession(
 	var timeline []gifSegment
 	totalFrames, extraPaints, filmMS := 0, 0, 0
 	var boardFrames []d2animate.Frame
+	sparseTranslation := false
 	for i, board := range boards {
 		var previous *d2target.Diagram
 		if i > 0 && viewports[boards[i-1]] == viewports[board] {
 			previous = boards[i-1]
 		}
 		boardFrames = gifBoardFrames(boardFrames, board, previous, intervalMs)
+		var tracks map[string]d2scene.Track
+		originalSamples := len(boardFrames) - 1
+		if originalSamples > 0 && !iconTimeline.Active(board) {
+			tracks = rasterTranslations(board, viewports[board])
+			if tracks != nil {
+				end := boardFrames[len(boardFrames)-1]
+				boardFrames = boardFrames[:2]
+				boardFrames[0] = d2animate.Frame{Diagram: board.TweenFrames[0], DurationMS: end.ElapsedMS, TweenSample: true}
+				boardFrames[1] = end
+			}
+		}
 		for _, segment := range boardFrames {
 			var route []d2animate.LayerLeg
 			if navigation != nil && !segment.TweenSample {
@@ -855,6 +869,10 @@ func renderGIFWithSession(
 				continue
 			}
 			count := 1
+			if segment.TweenSample && tracks != nil {
+				count = min(originalSamples, max(1, delay/2))
+				sparseTranslation = sparseTranslation || count < delay/2
+			}
 			if !segment.TweenSample {
 				count, err = xgif.AnimationFrameCount(segment.DurationMS)
 				if err != nil {
@@ -889,6 +907,9 @@ func renderGIFWithSession(
 				viewport.bounds = viewport.bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
 			}
 			scheduled := gifSegment{Frame: segment, count: count, rasterPlacement: rasterPlacement{viewport: viewport}, route: route, zoom: zoom}
+			if segment.TweenSample {
+				scheduled.translations = tracks
+			}
 			if iconTimeline.Active(board) {
 				scheduled.iconBoard = board
 			}
@@ -903,22 +924,9 @@ func renderGIFWithSession(
 		}
 	}
 	showProgress := opts.AnimateProgress != nil && *opts.AnimateProgress
-	if showProgress {
-		theme := d2themescatalog.Find(themeID(opts))
-		theme.ApplyOverrides(opts.ThemeOverrides)
-		for _, segment := range timeline {
-			matte := boardRasterMattes(theme, segment.Diagram.Root.Fill)
-			for range segment.count - len(segment.zoom) {
-				summary.mattes = append(summary.mattes, matte)
-			}
-			for _, sample := range segment.zoom {
-				leg := segment.route[sample.leg]
-				from, to := boardRasterMattes(theme, leg.From.Root.Fill), boardRasterMattes(theme, leg.To.Root.Fill)
-				summary.mattes = append(summary.mattes, from.blend(to, sample.progress))
-			}
-		}
-	}
+
 	hasZoom := extraPaints > 0
+	premeasure := hasZoom || sparseTranslation
 	buildCount := len(timeline)
 	var boardIndexByDiagram map[*d2target.Diagram]int
 	if hasZoom {
@@ -928,6 +936,8 @@ func renderGIFWithSession(
 				boardIndexByDiagram[segment.Diagram] = i
 			}
 		}
+	}
+	if premeasure {
 		buildCount = gifZoomSceneBuildCount(timeline, boardIndexByDiagram)
 	}
 	assetOptions, err := gifSceneAssetOptions(ctx, inputPath, cacheImages, buildCount)
@@ -957,7 +967,7 @@ func renderGIFWithSession(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if hasZoom && cache.touch(boardIndex) {
+		if premeasure && cache.touch(boardIndex) {
 			return cache.docs[0], nil
 		}
 		segment := &timeline[boardIndex]
@@ -974,11 +984,12 @@ func renderGIFWithSession(
 		}
 		// A stopped stream can still have icons that departed on an earlier board.
 		segment.movingUntil = math.MaxInt64
-		if segment.count > 1 && len(segment.zoom) == 0 {
+		if segment.count > 1 && len(segment.zoom) == 0 && segment.translations == nil {
 			segment.movingUntil = rasterMovingUntil(board)
 		}
 		frameOptions := gifFrameOptions(0, max(totalFrames+extraPaints, buildCount))
 		sceneOpts := sceneOptionsForFrame(frameOptions)
+		sceneOpts.translations = segment.translations
 		if segment.viewport != nil {
 			sceneOpts.minimumBounds = &segment.viewport.bounds
 		}
@@ -986,7 +997,7 @@ func renderGIFWithSession(
 		if err != nil {
 			return nil, fmt.Errorf("GIF board %d scene: %w", boardIndex, err)
 		}
-		if hasZoom {
+		if premeasure {
 			cache.docs[0] = document
 		}
 		return document, nil
@@ -1016,7 +1027,7 @@ func renderGIFWithSession(
 	}
 	// Camera poses use the final GIF canvas, including independent boards and
 	// the actual legend and appendix bounds. Measure these before the first zoom.
-	if hasZoom {
+	if premeasure {
 		for i := range timeline {
 			document, err := loadDocument(i)
 			if err != nil {
@@ -1026,8 +1037,30 @@ func renderGIFWithSession(
 				return summary, err
 			}
 		}
-		if int64(summary.maxWidth)*int64(summary.maxHeight) > gifMaxFramePixels {
+		if hasZoom && int64(summary.maxWidth)*int64(summary.maxHeight) > gifMaxFramePixels {
 			return summary, fmt.Errorf("GIF layer zoom canvas exceeds the %d-pixel frame limit", gifMaxFramePixels)
+		}
+	}
+	if sparseTranslation {
+		pixels := int64(summary.maxWidth) * int64(summary.maxHeight+summary.footerHeight)
+		capacity := int(min(int64(gifMaxFrames), gifMaxNormalizedPixels/pixels))
+		summary.delays = densifyGIFTranslations(timeline, summary.delays, capacity-totalFrames)
+		totalFrames = len(summary.delays)
+		summary.totalFrames = totalFrames
+	}
+	if showProgress {
+		theme := d2themescatalog.Find(themeID(opts))
+		theme.ApplyOverrides(opts.ThemeOverrides)
+		for _, segment := range timeline {
+			matte := boardRasterMattes(theme, segment.Diagram.Root.Fill)
+			for range segment.count - len(segment.zoom) {
+				summary.mattes = append(summary.mattes, matte)
+			}
+			for _, sample := range segment.zoom {
+				leg := segment.route[sample.leg]
+				from, to := boardRasterMattes(theme, leg.From.Root.Fill), boardRasterMattes(theme, leg.To.Root.Fill)
+				summary.mattes = append(summary.mattes, from.blend(to, sample.progress))
+			}
 		}
 	}
 	zoomCanvas := image.Rect(0, 0, summary.maxWidth, summary.maxHeight)
@@ -1050,7 +1083,7 @@ func renderGIFWithSession(
 		if err != nil {
 			return summary, err
 		}
-		if !hasZoom {
+		if !premeasure {
 			if err := measure(boardIndex, document); err != nil {
 				return summary, err
 			}
@@ -1092,7 +1125,7 @@ func renderGIFWithSession(
 				if extraPaints > 0 {
 					frameOptions = gifFrameOptions(frameOptions.Time, totalFrames+extraPaints)
 				}
-				if sampleGIFClock || segment.iconBoard != nil {
+				if sampleGIFClock || segment.iconBoard != nil || segment.translations != nil {
 					// Use the encoded GIF delays for both the hold and the layer zoom.
 					frameOptions.Time = time.Duration(elapsedMS) * time.Millisecond
 					elapsedMS += 10 * summary.delays[renderedFrameCount]

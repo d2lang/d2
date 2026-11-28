@@ -9,7 +9,7 @@
 
 #### Improvements 🧹
 
-- Step tweens now target 60 fps in animated SVG, MP4, and WebM. A one-second color change uses 60 samples, up from 25.
+- Step tweens now target 60 fps. Animated SVG reuses compatible artwork and lets the browser interpolate translations and supported paint changes at display refresh. TALA preserves subpixel movement between pins, including in native exports.
 - SVG exports use 28.4% fewer bytes across the 157 documentation diagrams, or 35.1% fewer with gzip. D2 embeds smaller bundled fonts and writes more compact stylesheets, code blocks, arrowhead references, textures, sketch paths, and LaTeX glyphs.
 - SVG appendices use precompressed WOFF2 fonts for ASCII footnotes and numbered markers while retaining their kerning, ligatures, and hinting.
 

@@ -814,6 +814,7 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 						node.Primary().markdown = value.markdown
 						node.Primary().globPattern = value.globPattern
 						node.Primary().TweenOffset = value.TweenOffset
+						node.Primary().NumericTween = value.NumericTween
 					} else {
 						s.Value[i].String = go2.Pointer(resolvedField.Primary().Value.ScalarString())
 						subbed = true
@@ -890,6 +891,7 @@ func (c *compiler) resolveSubstitutions(varsStack []*Map, node Node) (removedFie
 				s.Value[i].String = go2.Pointer(primary.Value.ScalarString())
 				if len(s.Value) == 1 {
 					node.Primary().TweenOffset = primary.TweenOffset
+					node.Primary().NumericTween = primary.NumericTween
 				}
 				subbed = true
 			}

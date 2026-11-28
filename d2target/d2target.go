@@ -545,82 +545,10 @@ func (diagram Diagram) InkBoundingBox() (topLeft, bottomRight Point) {
 	x2 := int(math.MinInt32)
 	y2 := int(math.MinInt32)
 
-	for _, targetShape := range diagram.Shapes {
-		stroke := StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
-		halfStroke := stroke/2 + stroke%2
-		x1 = go2.Min(x1, targetShape.Pos.X-halfStroke)
-		y1 = go2.Min(y1, targetShape.Pos.Y-halfStroke)
-		x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+halfStroke)
-		y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+halfStroke)
-
-		if targetShape.Type == ShapeC4Person {
-			headRadius := int(float64(targetShape.Width) * 0.22)
-			headCenterY := int(float64(targetShape.Height) * 0.18)
-			headTop := targetShape.Pos.Y + headCenterY - headRadius
-			y1 = go2.Min(y1, headTop-stroke)
-		}
-
-		if targetShape.Tooltip != "" || targetShape.Link != "" {
-			if targetShape.TooltipPosition != "" {
-				tooltipMinX, tooltipMinY, tooltipMaxX, tooltipMaxY := calculateTooltipBounds(targetShape, diagram.FontFamily, diagram.MonoFontFamily)
-				x1 = go2.Min(x1, tooltipMinX)
-				y1 = go2.Min(y1, tooltipMinY)
-				x2 = go2.Max(x2, tooltipMaxX)
-				y2 = go2.Max(y2, tooltipMaxY)
-			} else {
-				y1 = go2.Min(y1, targetShape.Pos.Y-stroke-16)
-				x2 = go2.Max(x2, targetShape.Pos.X+stroke+targetShape.Width+16)
-			}
-		}
-		if targetShape.Shadow {
-			y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+halfStroke+SHADOW_SIZE_Y)
-			x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+halfStroke+SHADOW_SIZE_X)
-		}
-
-		if targetShape.ThreeDee {
-			offsetY := THREE_DEE_OFFSET
-			if targetShape.Type == ShapeHexagon {
-				offsetY /= 2
-			}
-			y1 = go2.Min(y1, targetShape.Pos.Y-offsetY-stroke)
-			x2 = go2.Max(x2, targetShape.Pos.X+THREE_DEE_OFFSET+targetShape.Width+stroke)
-		}
-		if targetShape.Multiple {
-			y1 = go2.Min(y1, targetShape.Pos.Y-MULTIPLE_OFFSET-stroke)
-			x2 = go2.Max(x2, targetShape.Pos.X+MULTIPLE_OFFSET+targetShape.Width+stroke)
-		}
-
-		iconPosition := label.FromString(targetShape.IconPosition)
-		if targetShape.Icon != nil && targetShape.Type != ShapeImage && (iconPosition.IsOutside() || iconPosition.IsBorder()) {
-			box := geo.NewBox(geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)), float64(targetShape.Width), float64(targetShape.Height))
-			s := shape.NewShape(DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type], box)
-			if targetShape.Type == ShapeCloud && targetShape.ContentAspectRatio != nil {
-				s.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
-			}
-			icon := targetShape.IconBounds(s)
-			x1 = min(x1, int(math.Floor(icon.TopLeft.X)))
-			y1 = min(y1, int(math.Floor(icon.TopLeft.Y)))
-			x2 = max(x2, int(math.Ceil(icon.TopLeft.X+icon.Width)))
-			y2 = max(y2, int(math.Ceil(icon.TopLeft.Y+icon.Height)))
-		}
-
-		if targetShape.Label != "" {
-			position := label.FromString(targetShape.LabelPosition)
-			box := geo.NewBox(geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)), float64(targetShape.Width), float64(targetShape.Height))
-			if position.IsOutside() || position.IsBorder() {
-				box = targetShape.OuterLabelBox(box)
-			}
-			labelTL := targetShape.LabelTopLeft(position, box)
-			left, top := int(labelTL.X), int(labelTL.Y)
-			right, bottom := left+targetShape.LabelWidth, top+targetShape.LabelHeight
-			if position.IsBorder() {
-				left, top = int(math.Floor(labelTL.X)), int(math.Floor(labelTL.Y))
-				right = int(math.Ceil(labelTL.X + float64(targetShape.LabelWidth)))
-				bottom = int(math.Ceil(labelTL.Y + float64(targetShape.LabelHeight)))
-			}
-			x1, y1 = min(x1, left), min(y1, top)
-			x2, y2 = max(x2, right), max(y2, bottom)
-		}
+	for i := range diagram.Shapes {
+		left, top, right, bottom := diagram.shapeInkBounds(&diagram.Shapes[i])
+		x1, y1 = min(x1, left), min(y1, top)
+		x2, y2 = max(x2, right), max(y2, bottom)
 	}
 
 	for _, connection := range diagram.Connections {
@@ -679,6 +607,90 @@ func (diagram Diagram) InkBoundingBox() (topLeft, bottomRight Point) {
 	}
 
 	return Point{x1, y1}, Point{x2, y2}
+}
+
+// shapeInkBounds includes the complete painted group before enclosing it in
+// integer viewport coordinates. Only this shape moves with its translation.
+func (diagram *Diagram) shapeInkBounds(targetShape *Shape) (x1, y1, x2, y2 int) {
+	stroke := StrokeWidthExtent(targetShape.StrokeWidth, targetShape.StrokeWidthOffset)
+	halfStroke := stroke/2 + stroke%2
+	x1, y1 = targetShape.Pos.X-halfStroke, targetShape.Pos.Y-halfStroke
+	x2, y2 = targetShape.Pos.X+targetShape.Width+halfStroke, targetShape.Pos.Y+targetShape.Height+halfStroke
+	if targetShape.Type == ShapeC4Person {
+		headRadius := int(float64(targetShape.Width) * 0.22)
+		headCenterY := int(float64(targetShape.Height) * 0.18)
+		headTop := targetShape.Pos.Y + headCenterY - headRadius
+		y1 = go2.Min(y1, headTop-stroke)
+	}
+
+	if targetShape.Tooltip != "" || targetShape.Link != "" {
+		if targetShape.TooltipPosition != "" {
+			tooltipMinX, tooltipMinY, tooltipMaxX, tooltipMaxY := calculateTooltipBounds(*targetShape, diagram.FontFamily, diagram.MonoFontFamily)
+			x1 = go2.Min(x1, tooltipMinX)
+			y1 = go2.Min(y1, tooltipMinY)
+			x2 = go2.Max(x2, tooltipMaxX)
+			y2 = go2.Max(y2, tooltipMaxY)
+		} else {
+			y1 = go2.Min(y1, targetShape.Pos.Y-stroke-16)
+			x2 = go2.Max(x2, targetShape.Pos.X+stroke+targetShape.Width+16)
+		}
+	}
+	if targetShape.Shadow {
+		y2 = go2.Max(y2, targetShape.Pos.Y+targetShape.Height+halfStroke+SHADOW_SIZE_Y)
+		x2 = go2.Max(x2, targetShape.Pos.X+targetShape.Width+halfStroke+SHADOW_SIZE_X)
+	}
+
+	if targetShape.ThreeDee {
+		offsetY := THREE_DEE_OFFSET
+		if targetShape.Type == ShapeHexagon {
+			offsetY /= 2
+		}
+		y1 = go2.Min(y1, targetShape.Pos.Y-offsetY-stroke)
+		x2 = go2.Max(x2, targetShape.Pos.X+THREE_DEE_OFFSET+targetShape.Width+stroke)
+	}
+	if targetShape.Multiple {
+		y1 = go2.Min(y1, targetShape.Pos.Y-MULTIPLE_OFFSET-stroke)
+		x2 = go2.Max(x2, targetShape.Pos.X+MULTIPLE_OFFSET+targetShape.Width+stroke)
+	}
+
+	iconPosition := label.FromString(targetShape.IconPosition)
+	if targetShape.Icon != nil && targetShape.Type != ShapeImage && (iconPosition.IsOutside() || iconPosition.IsBorder()) {
+		box := geo.NewBox(geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)), float64(targetShape.Width), float64(targetShape.Height))
+		s := shape.NewShape(DSL_SHAPE_TO_SHAPE_TYPE[targetShape.Type], box)
+		if targetShape.Type == ShapeCloud && targetShape.ContentAspectRatio != nil {
+			s.SetInnerBoxAspectRatio(*targetShape.ContentAspectRatio)
+		}
+		icon := targetShape.IconBounds(s)
+		x1 = min(x1, int(math.Floor(icon.TopLeft.X)))
+		y1 = min(y1, int(math.Floor(icon.TopLeft.Y)))
+		x2 = max(x2, int(math.Ceil(icon.TopLeft.X+icon.Width)))
+		y2 = max(y2, int(math.Ceil(icon.TopLeft.Y+icon.Height)))
+	}
+
+	if targetShape.Label != "" {
+		position := label.FromString(targetShape.LabelPosition)
+		box := geo.NewBox(geo.NewPoint(float64(targetShape.Pos.X), float64(targetShape.Pos.Y)), float64(targetShape.Width), float64(targetShape.Height))
+		if position.IsOutside() || position.IsBorder() {
+			box = targetShape.OuterLabelBox(box)
+		}
+		labelTL := targetShape.LabelTopLeft(position, box)
+		left, top := int(labelTL.X), int(labelTL.Y)
+		right, bottom := left+targetShape.LabelWidth, top+targetShape.LabelHeight
+		if position.IsBorder() {
+			left, top = int(math.Floor(labelTL.X)), int(math.Floor(labelTL.Y))
+			right = int(math.Ceil(labelTL.X + float64(targetShape.LabelWidth)))
+			bottom = int(math.Ceil(labelTL.Y + float64(targetShape.LabelHeight)))
+		}
+		x1, y1 = min(x1, left), min(y1, top)
+		x2, y2 = max(x2, right), max(y2, bottom)
+	}
+	if p := targetShape.MotionOffset; p != nil {
+		x1 += int(math.Floor(p.X))
+		y1 += int(math.Floor(p.Y))
+		x2 += int(math.Ceil(p.X))
+		y2 += int(math.Ceil(p.Y))
+	}
+	return
 }
 
 func CalculateTooltipPosition(shapeX, shapeY, shapeWidth, shapeHeight float64, tooltipWidth, tooltipHeight int, position string) (x, y float64) {
@@ -903,6 +915,10 @@ type Shape struct {
 
 	Classes []string `json:"classes,omitempty"`
 
+	// MotionOffset preserves the fractional translation of a sampled shape. Pos
+	// remains the integer coordinate used by layout and static render targets.
+	// A non-nil zero denotes an integer sample on a continuous trajectory.
+	MotionOffset *geo.Point `json:"motionOffset,omitempty"`
 	// Only intermediate grid frames carry a viewport, caption anchor or LaTeX scale.
 	MotionScale        float64     `json:"motionScale,omitempty"`
 	MotionClip         *MotionClip `json:"motionClip,omitempty"`
@@ -971,6 +987,21 @@ type Shape struct {
 	PrimaryAccentColor   string `json:"primaryAccentColor,omitempty"`
 	SecondaryAccentColor string `json:"secondaryAccentColor,omitempty"`
 	NeutralAccentColor   string `json:"neutralAccentColor,omitempty"`
+}
+
+// RenderedPosition includes a moving shape's fractional translation in diagram coordinates.
+func (s *Shape) RenderedPosition() geo.Point {
+	p := geo.Point{X: float64(s.Pos.X), Y: float64(s.Pos.Y)}
+	if offset := s.MotionOffset; offset != nil {
+		p.X += offset.X
+		p.Y += offset.Y
+	}
+	return p
+}
+
+func (s *Shape) RenderedBox() *geo.Box {
+	p := s.RenderedPosition()
+	return geo.NewBox(&p, float64(s.Width), float64(s.Height))
 }
 
 // Geometry returns the same outline and inner content box used for rendering.

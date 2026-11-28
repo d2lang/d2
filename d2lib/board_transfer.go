@@ -4,7 +4,6 @@ import (
 	"math"
 	"reflect"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/d2lang/d2/d2graph"
@@ -22,7 +21,6 @@ type boardTransfer struct {
 	stays      map[string]*d2target.Connection // current ID -> old rigid wire
 	oldStays   map[string]bool
 	captionIDs map[string]string // shared host whose title changes sides
-	reconnect  float64           // first instant when all rounded geometry has landed
 }
 
 const transferDepart, transferArrive = .14, .84
@@ -96,7 +94,6 @@ func newBoardTransfer(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.
 		return nil
 	}
 	p.captionIDs = make(map[string]string)
-	maxTravel := 0.
 	for i := range next.Shapes {
 		b := &next.Shapes[i]
 		a := p.shapes[b.ID]
@@ -112,9 +109,6 @@ func newBoardTransfer(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.
 			return nil
 		}
 		p.shapes[b.ID] = a
-		maxTravel = max(maxTravel,
-			math.Abs(float64(b.Pos.X-a.Pos.X)), math.Abs(float64(b.Pos.Y-a.Pos.Y)),
-			math.Abs(float64(b.Width-a.Width)), math.Abs(float64(b.Height-a.Height)))
 		if a.LabelPosition != b.LabelPosition && b.Label != "" {
 			id := b.ID + ".__handoff_title"
 			for oldShapes[id] != nil || newShapes[id] != nil {
@@ -223,13 +217,6 @@ func newBoardTransfer(prev, next *d2target.Diagram, oldGraph, newGraph *d2graph.
 			return nil
 		}
 	}
-	// Bodies and their rigid wires round to whole-pixel displacements.
-	// Fade attachments back as soon as even the longest move rounds home.
-	const ticks = 1024
-	landed := sort.Search(ticks, func(i int) bool {
-		return (1-boardGlide(float64(i)/ticks))*maxTravel < .5
-	})
-	p.reconnect = transferDepart + (transferArrive-transferDepart)*float64(landed)/ticks
 	return p
 }
 
@@ -246,7 +233,7 @@ func transferWireCrosses(wire *d2target.Connection, dx, dy int, old, next *d2tar
 	if wire.IsCurve && (len(wire.Route)-1)%3 != 0 {
 		return true
 	}
-	// The wire, the obstacle's position, and its size round independently.
+	// Allow clearance for the rounded dimensions and the measured stroke widths.
 	pad := 1.5 + (wire.RenderedStrokeWidth()+old.RenderedStrokeWidth())/2
 	var last geo.Point
 	for cmd := range wire.PathCommands(&geo.Point{}, &geo.Point{}) {
@@ -341,7 +328,7 @@ func (p *boardTransfer) sample(base *d2target.Diagram, t float64) *d2target.Diag
 	// Give the body most of the clock. Its slower approach to the receiving
 	// host is shared by its outline, contents, and internal connectors.
 	travel := boardGlide(gridPhase(t, transferDepart, transferArrive))
-	attachmentOpacity := boardGlide(gridPhase(t, p.reconnect, 1))
+	attachmentOpacity := boardGlide(gridPhase(t, transferArrive, 1))
 	if t < transferDepart {
 		attachmentOpacity = 1 - boardGlide(t/transferDepart)
 	}
@@ -350,9 +337,14 @@ func (p *boardTransfer) sample(base *d2target.Diagram, t float64) *d2target.Diag
 			s := &frame.Shapes[i]
 			old := p.shapes[s.ID]
 
-			// Round the common displacement, so every member, even one on the
-			// opposite side of world zero, travels by the same pixel.
-			s.Pos = d2target.Point{X: old.Pos.X + int(math.Round(float64(s.Pos.X-old.Pos.X)*travel)), Y: old.Pos.Y + int(math.Round(float64(s.Pos.Y-old.Pos.Y)*travel))}
+			x, y := float64(s.Pos.X-old.Pos.X)*travel, float64(s.Pos.Y-old.Pos.Y)*travel
+			// Keep a common integer anchor for the subtree, even as it crosses zero.
+			dx, dy := math.Round(x), math.Round(y)
+			moving := s.Pos != old.Pos
+			s.Pos = d2target.Point{X: old.Pos.X + int(dx), Y: old.Pos.Y + int(dy)}
+			if moving && travel > 0 && travel < 1 {
+				s.MotionOffset = geo.NewPoint(x-dx, y-dy)
+			}
 			s.Width, s.Height = gridLerpInt(old.Width, s.Width, travel), gridLerpInt(old.Height, s.Height, travel)
 		}
 	}
@@ -384,8 +376,8 @@ func (p *boardTransfer) sample(base *d2target.Diagram, t float64) *d2target.Diag
 			}
 		} else if before := p.stays[e.ID]; before != nil {
 			if travel < 1 && (before.Route[0].X != e.Route[0].X || before.Route[0].Y != e.Route[0].Y) {
-				dx := math.Round((e.Route[0].X - before.Route[0].X) * travel)
-				dy := math.Round((e.Route[0].Y - before.Route[0].Y) * travel)
+				dx := (e.Route[0].X - before.Route[0].X) * travel
+				dy := (e.Route[0].Y - before.Route[0].Y) * travel
 				e.Route = make([]*geo.Point, len(before.Route))
 				for i, pt := range before.Route {
 					e.Route[i] = geo.NewPoint(pt.X+dx, pt.Y+dy)
