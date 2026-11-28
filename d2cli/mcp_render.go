@@ -77,7 +77,7 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in *rend
 		return mcpFailure(err.Error())
 	}
 	opts := d2svg.RenderOpts{ThemeID: in.Theme, Sketch: in.Sketch}
-	root, graph, layout, err := s.compileForRender(ctx, path, source, in.Layout, format, &opts, ruler)
+	root, graph, layout, err := s.compileForRender(ctx, path, source, in.Layout, format, &opts, ruler, nil)
 	if err != nil {
 		return mcpCompileFailure(err, "render")
 	}
@@ -171,7 +171,7 @@ func (s *mcpServer) render(ctx context.Context, _ *mcp.CallToolRequest, in *rend
 	return res, info, nil
 }
 
-func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, format string, render *d2svg.RenderOpts, ruler *textmeasure.Ruler) (*d2target.Diagram, *d2graph.Graph, string, error) {
+func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, format string, render *d2svg.RenderOpts, ruler *textmeasure.Ruler, motion *motionInput) (*d2target.Diagram, *d2graph.Graph, string, error) {
 	// The compiler resolves the layout from the argument, source (including
 	// imports), or default, in that order. Substitute ELK for text only after
 	// that decision so a source-selected TALA layout is honored.
@@ -185,8 +185,11 @@ func (s *mcpServer) compileForRender(ctx context.Context, path, source, layout, 
 		InputPath: path, FS: s.sources, Ruler: ruler,
 		LayoutResolver: func(name string) (d2graph.LayoutGraph, error) { return s.layouts(engine(name)) },
 		RouterResolver: func(name string) (d2graph.RouteEdges, error) { return s.routers(engine(name)) },
-		LayoutReuse:    true, AnimateTweens: new(false),
+		LayoutReuse:    true, AnimateTweens: new(motion != nil),
 		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
+	}
+	if motion != nil {
+		opts.AnimateDuration = motion.AnimateDuration
 	}
 	if layout != "" {
 		opts.Layout = &layout

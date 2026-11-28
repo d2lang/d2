@@ -139,6 +139,9 @@ func compileIRContext(ctx context.Context, ast *d2ast.Map, m *d2ir.Map) (*d2grap
 	g := d2graph.NewGraph()
 	g.AST = ast
 	g.BaseAST = ast
+	if ast != nil {
+		g.BoardRange = ast.Range
+	}
 	c.compileBoard(g, m)
 	if c.stopped() {
 		return nil, c.fatalErr
@@ -356,6 +359,7 @@ func (c *compiler) compileBoardsField(g *d2graph.Graph, ir *d2ir.Map, fieldName 
 		}
 		g2 := d2graph.NewGraph()
 		g2.Parent = g
+		g2.BoardRange = f.Name.GetRange()
 		g2.AST = m.AST().(*d2ast.Map)
 		if g.BaseAST != nil {
 			g2.BaseAST = findFieldAST(g.BaseAST, f)

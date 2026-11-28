@@ -25,7 +25,7 @@ import (
 )
 
 const mcpInstructions = `D2 turns text into diagrams: software architecture, sequence, entity-relationship and class diagrams. It is not for charts, Gantt charts or mind maps.
-Workflow: call guide once per conversation, write D2, call render, look at the image, fix and render again.
+Workflow: call guide once per conversation, write D2, call render, look at the image, fix and render again. For animated diagrams, use storyboard to see the timeline in one image and lint_motion to find pacing and continuity issues.
 Use plain identifiers for names and quoted strings for labels, for example api: "API gateway".
 Pass layout "tala" for architecture diagrams with nested containers.`
 
@@ -143,6 +143,8 @@ func newMCPServer(ctx context.Context, ms *xmain.State, cfg mcpConfig) (*mcp.Ser
 	mcp.AddTool(server, guideTool(), mcpHandler(s, "guide", s.guide))
 	mcp.AddTool(server, checkTool(), mcpHandler(s, "check", s.check))
 	mcp.AddTool(server, renderTool(cfg.ui), mcpHandler(s, "render", s.render))
+	mcp.AddTool(server, storyboardTool(), mcpHandler(s, "storyboard", s.storyboard))
+	mcp.AddTool(server, lintMotionTool(), mcpHandler(s, "lint_motion", s.lintMotion))
 	if cfg.ui {
 		addViewerResource(server)
 	}
@@ -150,6 +152,9 @@ func newMCPServer(ctx context.Context, ms *xmain.State, cfg mcpConfig) (*mcp.Ser
 }
 
 type mcpDiagnostic struct {
+	Code      string `json:"code,omitempty"`
+	Board     string `json:"board,omitempty"`
+	Object    string `json:"object,omitempty"`
 	File      string `json:"file,omitempty"`
 	Line      int    `json:"line"`
 	Column    int    `json:"column"`

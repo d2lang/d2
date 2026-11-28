@@ -8,6 +8,8 @@ D2 turns text into diagrams. It is built for software diagrams: architecture, se
 2. Call `render` and look at the image.
 3. If it failed, fix the reported lines and render again. If it rendered, check that nothing overlaps, that the text is readable, and that the flow reads in the direction you intended.
 
+For animated diagrams, call `storyboard` to see the boards in playback order, with a timestamp under each frame. Call `lint_motion` to find changes that are hard to follow. Edit the reported step and review the new storyboard.
+
 ## House style
 
 Follow these five rules and most mistakes cannot happen.

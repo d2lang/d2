@@ -60,18 +60,34 @@ func guideTool() *mcp.Tool {
 	}
 }
 
-const checkInputSchema = `{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "source": {
+const mcpSourceProperties = `    "source": {
       "type": "string",
       "description": "D2 source text. Pass exactly one of source and path."
     },
     "path": {
       "type": "string",
       "description": "Path to a .d2 file, absolute or relative to the server root. Available only when the server was started with --root. Pass exactly one of source and path."
+    }`
+
+const mcpDrawingProperties = `    "layout": {
+      "type": "string",
+      "enum": ["dagre", "elk", "tala"],
+      "description": "Layout engine. Omit to use the diagram's own setting, which defaults to dagre. Use tala for software architecture diagrams with containers."
     },
+    "theme": {
+      "type": "integer",
+      "description": "Theme ID. Omit to use the diagram's own setting. Call guide with topic reference for the list."
+    },
+    "sketch": {
+      "type": "boolean",
+      "description": "Hand-drawn look."
+    }`
+
+const checkInputSchema = `{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+` + mcpSourceProperties + `,
     "fmt": {
       "type": "boolean",
       "description": "Also return the canonically formatted source. Default false."
@@ -93,32 +109,13 @@ const renderInputSchema = `{
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "source": {
-      "type": "string",
-      "description": "D2 source text. Pass exactly one of source and path."
-    },
-    "path": {
-      "type": "string",
-      "description": "Path to a .d2 file, absolute or relative to the server root. Available only when the server was started with --root. Pass exactly one of source and path."
-    },
+` + mcpSourceProperties + `,
     "format": {
       "type": "string",
       "enum": ["png", "svg", "txt"],
       "description": "png (default) returns an image you can look at. txt returns a text drawing, the cheapest way to check structure. svg returns the full SVG source, which is large: ask for it only to save a file."
     },
-    "layout": {
-      "type": "string",
-      "enum": ["dagre", "elk", "tala"],
-      "description": "Layout engine. Omit to use the diagram's own setting, which defaults to dagre. Use tala for software architecture diagrams with containers."
-    },
-    "theme": {
-      "type": "integer",
-      "description": "Theme ID. Omit to use the diagram's own setting. Call guide with topic reference for the list."
-    },
-    "sketch": {
-      "type": "boolean",
-      "description": "Hand-drawn look."
-    },
+` + mcpDrawingProperties + `,
     "target": {
       "type": "string",
       "description": "Board to render, for example layers.api or scenarios.failover. Omit for the root board."
@@ -142,6 +139,55 @@ func renderTool(ui bool) *mcp.Tool {
 		tool.Meta = mcp.Meta{"ui": map[string]any{"resourceUri": mcpViewerURI}}
 	}
 	return tool
+}
+
+type motionInput struct {
+	Source          *string `json:"source,omitempty"`
+	Path            *string `json:"path,omitempty"`
+	Layout          string  `json:"layout,omitempty"`
+	Theme           *int64  `json:"theme,omitempty"`
+	Sketch          *bool   `json:"sketch,omitempty"`
+	AnimateInterval *int64  `json:"animate_interval,omitempty"`
+	AnimateDuration *int64  `json:"animate_duration,omitempty"`
+}
+
+const motionInputSchema = `{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+` + mcpSourceProperties + `,
+` + mcpDrawingProperties + `,
+    "animate_interval": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Minimum milliseconds per board. Omit to use the source setting. The default is 1000 ms."
+    },
+    "animate_duration": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Step transition duration in milliseconds. Omit to use the source setting. Zero disables interpolation."
+    }
+  }
+}`
+
+func storyboardTool() *mcp.Tool {
+	return &mcp.Tool{
+		Name:        "storyboard",
+		Title:       "Review a D2 animation",
+		Description: "Return one PNG contact sheet sampled from the animation timeline. Inspect the labeled frames in playback order. Frame metadata gives the board path and timestamp in milliseconds for each panel.",
+		InputSchema: mustSchema(motionInputSchema),
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: new(true)},
+	}
+}
+
+func lintMotionTool() *mcp.Tool {
+	return &mcp.Tool{
+		Name:        "lint_motion",
+		Title:       "Lint D2 motion",
+		Description: "Review the animation timeline for motion and readability issues. Returns advisory diagnostics with board paths, source positions, rule codes, and suggestions. Use storyboard to inspect the result after editing.",
+		InputSchema: mustSchema(motionInputSchema),
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: new(false)},
+	}
 }
 
 // The SDK lists tools alphabetically. Present the language guide first so

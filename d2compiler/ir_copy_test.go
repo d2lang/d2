@@ -246,6 +246,9 @@ func compileIRCopyOracle(ast *d2ast.Map, m *d2ir.Map) (*d2graph.Graph, error) {
 	g := d2graph.NewGraph()
 	g.AST = ast
 	g.BaseAST = ast
+	if ast != nil {
+		g.BoardRange = ast.Range
+	}
 	c.compileBoardCopyOracle(g, m)
 	if len(c.err.Errors) > 0 {
 		return nil, c.err
@@ -301,6 +304,7 @@ func (c *compiler) compileBoardsFieldCopyOracle(g *d2graph.Graph, ir *d2ir.Map, 
 		}
 		g2 := d2graph.NewGraph()
 		g2.Parent = g
+		g2.BoardRange = f.Name.GetRange()
 		g2.AST = m.AST().(*d2ast.Map)
 		if g.BaseAST != nil {
 			g2.BaseAST = findFieldAST(g.BaseAST, f)

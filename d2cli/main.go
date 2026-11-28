@@ -210,6 +210,8 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return err
 	}
 
+	motionFlag := ms.Opts.Flags.Bool("motion", false, "with lint, check the playback timeline for motion and readability problems")
+
 	populateLayoutOpts(ms)
 
 	err = ms.Opts.Flags.Parse(ms.Opts.Args)
@@ -236,8 +238,25 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		return xmain.UsageErrorf("failed to load specified fonts: %v", err)
 	}
 
-	if len(ms.Opts.Flags.Args()) > 0 {
-		switch ms.Opts.Flags.Arg(0) {
+	args := ms.Opts.Flags.Args()
+	review := ""
+	if *motionFlag && (len(args) == 0 || args[0] != "lint") {
+		return xmain.UsageErrorf("--motion is used with d2 lint")
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "storyboard", "lint":
+			review = args[0]
+			args, err = motionReviewArgs(review, args[1:], *motionFlag)
+			if err != nil {
+				return err
+			}
+			if *watchFlag || *targetFlag != "*" {
+				return xmain.UsageErrorf("d2 %s reviews the complete playback and does not take --watch or --target", review)
+			}
+			if review == "storyboard" && ms.Opts.Flags.Changed("scale") {
+				return xmain.UsageErrorf("storyboard fits each frame to a fixed-size panel; omit --scale")
+			}
 		case "layout":
 			return layoutCmd(ctx, ms)
 		case "themes":
@@ -275,22 +294,20 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	var inputPath string
 	var outputPath string
 
-	if len(ms.Opts.Flags.Args()) == 0 {
+	if len(args) == 0 {
 		if versionFlag != nil && *versionFlag {
 			fmt.Println(version.Version)
 			return nil
 		}
 		help(ms)
 		return nil
-	} else if len(ms.Opts.Flags.Args()) >= 3 {
+	} else if len(args) >= 3 {
 		return xmain.UsageErrorf("too many arguments passed")
 	}
 
-	if len(ms.Opts.Flags.Args()) >= 1 {
-		inputPath = ms.Opts.Flags.Arg(0)
-	}
-	if len(ms.Opts.Flags.Args()) >= 2 {
-		outputPath = ms.Opts.Flags.Arg(1)
+	inputPath = args[0]
+	if len(args) == 2 {
+		outputPath = args[1]
 	} else {
 		if inputPath == "-" {
 			outputPath = "-"
@@ -314,15 +331,22 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if outputPath != "-" && !ms.Opts.Flags.Changed("stdout-format") {
 		stdoutFormatFlag = nil
 	}
-	outputFormat, err := getOutputFormat(stdoutFormatFlag, outputPath)
-	if err != nil {
-		return xmain.UsageErrorf("%v", err)
+	outputFormat := PNG
+	if review == "" {
+		outputFormat, err = getOutputFormat(stdoutFormatFlag, outputPath)
+		if err != nil {
+			return xmain.UsageErrorf("%v", err)
+		}
+	} else if ms.Opts.Flags.Changed("stdout-format") && (review != "storyboard" || !strings.EqualFold(*stdoutFormatFlag, "png")) {
+		return xmain.UsageErrorf("--stdout-format does not apply to d2 %s", review)
 	}
 	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
 		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
 	}
-	if err := validateAnimateInterval(*animateIntervalFlag, outputFormat); err != nil {
-		return err
+	if review == "" {
+		if err := validateAnimateInterval(*animateIntervalFlag, outputFormat); err != nil {
+			return err
+		}
 	}
 	if outputPath != "-" {
 		outputPath = ms.AbsPath(outputPath)
@@ -401,6 +425,12 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		NoXMLTag:    noXMLTagFlag,
 		Salt:        saltFlag,
 		OmitVersion: omitVersionFlag,
+	}
+
+	if review != "" {
+		ctx, cancel := timelib.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		return runMotionReview(ctx, ms, review, inputPath, outputPath, layoutFlag, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, renderOpts)
 	}
 
 	if *watchFlag {
@@ -490,6 +520,39 @@ func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
 	return nil
 }
 
+func cliLayoutEngine(engine string, ext exportExtension) string {
+	// Text output substitutes ELK after the compiler resolves CLI, environment
+	// and source configuration, including imported configuration.
+	if ext == TXT && strings.EqualFold(engine, "dagre") {
+		return "elk"
+	}
+	return engine
+}
+
+func newCLICompileOptions(ctx context.Context, ms *xmain.State, fs fs.FS, inputPath string, layout *string, fontFamily, monoFontFamily *d2fonts.FontFamily, animateDurationFlag *int64, ext exportExtension) (*d2lib.CompileOptions, error) {
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		return nil, err
+	}
+
+	layoutResolver := LayoutResolver(ctx, ms)
+	routerResolver := RouterResolver(ctx, ms)
+	return &d2lib.CompileOptions{
+		Ruler:           ruler,
+		FontFamily:      fontFamily,
+		MonoFontFamily:  monoFontFamily,
+		InputPath:       inputPath,
+		LayoutResolver:  func(engine string) (d2graph.LayoutGraph, error) { return layoutResolver(cliLayoutEngine(engine, ext)) },
+		Layout:          layout,
+		RouterResolver:  func(engine string) (d2graph.RouteEdges, error) { return routerResolver(cliLayoutEngine(engine, ext)) },
+		FS:              fs,
+		LayoutReuse:     true,
+		AnimateDuration: animateDurationFlag,
+
+		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
+	}, nil
+}
+
 func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, watchURLPath *string) (_ []byte, written bool, _ error) {
 	wantPreview := watchURLPath != nil
 
@@ -499,35 +562,11 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		return nil, false, err
 	}
 
-	ruler, err := textmeasure.NewRuler()
+	opts, err := newCLICompileOptions(ctx, ms, fs, inputPath, layout, fontFamily, monoFontFamily, animateDurationFlag, ext)
 	if err != nil {
 		return nil, false, err
 	}
-
-	layoutResolver := LayoutResolver(ctx, ms)
-	routerResolver := RouterResolver(ctx, ms)
-	// Text output substitutes ELK for Dagre after the compiler resolves CLI,
-	// environment and source configuration (including imported configuration).
-	textLayout := func(engine string) string {
-		if ext == TXT && strings.EqualFold(engine, "dagre") {
-			return "elk"
-		}
-		return engine
-	}
-	opts := &d2lib.CompileOptions{
-		Ruler:           ruler,
-		FontFamily:      fontFamily,
-		MonoFontFamily:  monoFontFamily,
-		InputPath:       inputPath,
-		LayoutResolver:  func(engine string) (d2graph.LayoutGraph, error) { return layoutResolver(textLayout(engine)) },
-		Layout:          layout,
-		RouterResolver:  func(engine string) (d2graph.RouteEdges, error) { return routerResolver(textLayout(engine)) },
-		FS:              fs,
-		LayoutReuse:     true,
-		AnimateDuration: animateDurationFlag,
-
-		LayoutContinuations: map[string]d2graph.LayoutContinuation{"tala": d2talalayout.ContinueBoard},
-	}
+	ruler := opts.Ruler
 
 	// With no SVG interval override, compilation reads the interval from d2-config.
 	switch {
@@ -588,7 +627,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	renderOpts := *renderOptions
 	cancel()
 
-	engine := textLayout(*opts.Layout)
+	engine := cliLayoutEngine(*opts.Layout, ext)
 	if ext == GIF && strings.EqualFold(engine, "tala") {
 		markPinnedGIFBoards(rootDiagram, g)
 	}

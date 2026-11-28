@@ -154,6 +154,14 @@ while existing rows and connections stay anchored. Appending a sequence message 
 extend the activation bar and draw the arrow from sender to recipient.
 [Animated TALA example](./docs/examples/tala-step-motion/dispatch.gif) · [D2 source](./docs/examples/tala-step-motion/dispatch.d2)
 
+To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
+see each board and its timestamp in playback order, including intermediate frames
+from animated transitions. Run `d2 lint --motion film.d2` to find crowded
+transitions, short-lived labels, hidden caption targets, and possible shape ID
+replacements. The D2 MCP server exposes the same operations as `storyboard`
+and `lint_motion`, so a model can inspect the image, edit the source, and check
+the next render.
+
 ## Layout engines
 
 D2 bundles three layout engines. Select one with `--layout=dagre`, `--layout=elk`, or
