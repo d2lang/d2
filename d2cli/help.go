@@ -15,7 +15,7 @@ import (
 func help(ms *xmain.State) {
 	fmt.Fprintf(ms.Stdout, `%[1]s %[2]s
 Usage:
-  %[1]s [--watch=false] [--theme=0] file.d2 [file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt]
+  %[1]s [--watch=false] [--theme=0] file.d2 [file.svg | file.png | file.pdf | file.pptx | file.gif | file.mp4 | file.txt]
   %[1]s layout [name]
   %[1]s fmt [--check] [--diff] file.d2|file.md|- ...
   %[1]s play [--theme=0] [--sketch] file.d2
@@ -25,11 +25,12 @@ Usage:
   %[1]s lsp
   %[1]s mcp [--root dir]
 
-%[1]s compiles and renders file.d2 to file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt
+%[1]s compiles and renders file.d2 to file.svg | file.png | file.pdf | file.pptx | file.gif | file.mp4 | file.txt
 It defaults to file.svg if an output path is not provided.
 
 Use - to have d2 read from stdin or write to stdout.
 
+MP4 exports require FFmpeg with the libx264 encoder on PATH.
 PNG exports support up to 32768 pixels per dimension, subject to rendering resource limits.
 
 See man d2 for more detailed docs.

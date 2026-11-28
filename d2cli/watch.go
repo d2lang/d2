@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"image"
 	"io/fs"
 	"net"
 	"net/http"
@@ -49,6 +50,8 @@ type watcherOpts struct {
 	renderOpts      d2svg.RenderOpts
 	animateInterval *int64
 	animateDuration *int64
+	videoDuration   time.Duration
+	compileTimeout  time.Duration
 	host            string
 	port            string
 	inputPath       string
@@ -431,6 +434,32 @@ func (w *watcher) replaceWatchList(ctx context.Context, paths []string) error {
 	return nil
 }
 
+// The watch client displays a nested SVG for every raster format. Use the
+// video's first rendered frame so the preview shares its camera and assets.
+func withVideoWatchPreview(ctx context.Context, scale *float64, preview *[]byte, emit func(image.Image, int) error) func(image.Image, int) error {
+	return func(frame image.Image, repeats int) error {
+		if *preview == nil {
+			var encoder rasterPNGEncoder
+			data, err := encoder.encode(ctx, frame)
+			encoder.close()
+			if err != nil {
+				return err
+			}
+			width, height := frame.Bounds().Dx(), frame.Bounds().Dy()
+			displayWidth, displayHeight := float64(width), float64(height)
+			if scale != nil && *scale > 0 {
+				// The watch client reapplies the requested scale to these dimensions.
+				displayWidth /= *scale
+				displayHeight /= *scale
+			}
+			svg := fmt.Appendf(nil, `<svg xmlns="http://www.w3.org/2000/svg"><svg class="d2-svg" width="%g" height="%g" viewBox="0 0 %d %d"><image width="%d" height="%d" href="data:image/png;base64,`, displayWidth, displayHeight, width, height, width, height)
+			svg = base64.StdEncoding.AppendEncode(svg, data)
+			*preview = append(svg, `"/></svg></svg>`...)
+		}
+		return emit(frame, repeats)
+	}
+}
+
 func (w *watcher) compileLoop(ctx context.Context) error {
 	firstCompile := true
 	for {
@@ -452,7 +481,15 @@ func (w *watcher) compileLoop(ctx context.Context) error {
 		w.boardpathMu.Lock()
 		boardPath := w.boardPath
 		renderOpts := w.renderOpts
-		svg, _, err := compile(ctx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.inputPath, w.outputPath, nil, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, &boardPath)
+		compileCtx := ctx
+		var cancel context.CancelFunc
+		if w.compileTimeout > 0 {
+			compileCtx, cancel = context.WithTimeout(ctx, w.compileTimeout)
+		}
+		svg, _, err := compile(compileCtx, w.ms, &fs, w.layout, &renderOpts, w.fontFamily, w.monoFontFamily, w.animateInterval, w.animateDuration, w.videoDuration, w.inputPath, w.outputPath, nil, false, w.bundle, w.forceAppendix, w.outputFormat, w.asciiMode, &boardPath)
+		if cancel != nil {
+			cancel()
+		}
 		w.boardpathMu.Unlock()
 		errs := ""
 		if err != nil {

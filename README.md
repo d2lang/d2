@@ -144,11 +144,11 @@ one, please see [./d2renderers/d2fonts](./d2renderers/d2fonts).
 
 ## Export file types
 
-D2 renders SVG, PNG, GIF, PDF, PowerPoint (`.pptx`), and text diagrams (`.txt`) without a browser.
+D2 renders SVG, PNG, GIF, MP4, PDF, PowerPoint (`.pptx`), and text diagrams (`.txt`) without a browser.
 For example, `d2 hello.d2 hello.txt` draws the diagram with Unicode characters.
 Use `--ascii-mode=standard` for plain ASCII. [Export guide](https://d2lang.com/tour/exports/)
 
-For animated SVG and GIF, set `animate-interval` and `animate-duration` in
+For animated SVG, GIF, and MP4, set `animate-interval` and `animate-duration` in
 `vars.d2-config`. With TALA, newly appended SQL rows can drop into place
 while existing rows and connections stay anchored. Appending a sequence message can
 extend the activation bar and draw the arrow from sender to recipient.
@@ -164,6 +164,14 @@ uses one transition duration. If a link is missing along the route, playback
 cuts to the destination. Clicking a board link in a standalone SVG pauses the
 tour for manual navigation.
 [Order fulfillment example](./docs/examples/order-fulfillment/order-fulfillment.svg) · [D2 source](./docs/examples/order-fulfillment/order-fulfillment.d2)
+
+To share the tour as a video, run `d2 tour.d2 tour.mp4`. The CLI plays the
+selected boards once and encodes a 30 fps H.264 video. MP4 export requires
+`ffmpeg` with the `libx264` encoder on your PATH. Use `--scale` to adjust the
+resolution. For a board with a continuously animated connection, use
+`d2 --video-duration=10s flow.d2 flow.mp4` to record ten seconds. On a
+multi-board tour this option trims or repeats playback. Durations round up to a
+whole video frame.
 
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
 see each board and its timestamp in playback order, including intermediate frames

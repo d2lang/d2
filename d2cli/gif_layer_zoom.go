@@ -22,11 +22,10 @@ type gifLayerOptions struct {
 
 type gifSegment struct {
 	d2animate.Frame
-	count    int
-	viewport *gifViewport
-	bounds   image.Rectangle
-	route    []d2animate.LayerLeg
-	zoom     []gifZoomSample // Trailing samples rendered on the full canvas.
+	rasterPlacement
+	count int
+	route []d2animate.LayerLeg
+	zoom  []gifZoomSample // Trailing samples rendered on the full canvas.
 }
 
 type gifZoomSample struct {
@@ -84,8 +83,28 @@ func gifZoomSceneBuildCount(timeline []gifSegment, indices map[*d2target.Diagram
 	return count
 }
 
-// Related boards share a world origin. Center their entire group as a unit.
-func (s gifSegment) offset(canvas image.Rectangle) image.Point {
+type rasterPlacement struct {
+	viewport *gifViewport
+	bounds   image.Rectangle
+}
+
+// Related boards share a world origin. Include decorations outside the layout
+// bounds before centering each group on the final animation canvas.
+func (s *rasterPlacement) measure(bounds image.Rectangle, document *d2scene.Document, scale float64) image.Rectangle {
+	s.bounds = bounds
+	if v := s.viewport; v != nil {
+		offset := image.Pt(
+			int(math.Round((document.ViewBox.X-float64(v.bounds.Min.X))*scale)),
+			int(math.Round((document.ViewBox.Y-float64(v.bounds.Min.Y))*scale)),
+		)
+		s.bounds = bounds.Add(offset)
+		v.canvas = v.canvas.Union(s.bounds)
+		return v.canvas
+	}
+	return bounds
+}
+
+func (s rasterPlacement) offset(canvas image.Rectangle) image.Point {
 	group := s.bounds
 	if s.viewport != nil {
 		group = s.viewport.canvas
@@ -135,7 +154,11 @@ func newGIFLayerCamera(canvas image.Rectangle, zoom d2animate.LayerZoom, from *d
 
 func (c *gifLayerCamera) render(ctx context.Context, session *d2raster.RenderSession, options d2raster.FrameOptions, progress float64, arrivalTime time.Duration) (*image.RGBA, error) {
 	output := image.NewRGBA(c.canvas)
-	draw.Draw(output, c.canvas, image.White, image.Point{}, draw.Src)
+	matte := options.Background
+	if matte == nil {
+		matte = color.White
+	}
+	draw.Draw(output, c.canvas, image.NewUniform(matte), image.Point{}, draw.Src)
 	parent, child := c.zoom.Poses(c.canvas, progress)
 	for _, item := range []struct {
 		layer    gifLayer
