@@ -198,6 +198,29 @@ steps: {load: {bar.style: {
 	}
 }
 
+func TestAnimateDurationEasesPinnedMotion(t *testing.T) {
+	const source = `vars: {d2-config: {layout-engine: tala; animate-interval: 200ms; animate-duration: 160ms}}
+node: "" {left: 0; top: 0; width: 40; height: 40; style: {fill: red; stroke-width: 0}}
+steps.move.node.left: 200`
+	data, err := imageCLI(t, t.TempDir(), source, "--pad=4", "--stdout-format=gif", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The root holds for 200 ms, then the node moves 200 px in 160 ms.
+	origin := redIconCenter(animationFrameAt(t, data, 0))
+	if origin < 0 {
+		t.Fatal("missing node at the start of the animation")
+	}
+	for _, sample := range []struct{ centiseconds, distance int }{
+		{20, 0}, {24, 12}, {28, 100}, {32, 188}, {36, 200},
+	} {
+		center := redIconCenter(animationFrameAt(t, data, sample.centiseconds))
+		if got := center - origin; got != sample.distance {
+			t.Errorf("at %d ms node traveled %d px, want %d", sample.centiseconds*10, got, sample.distance)
+		}
+	}
+}
+
 func animationFrameAt(t *testing.T, data []byte, centiseconds int) *image.Paletted {
 	t.Helper()
 	animation, err := gif.DecodeAll(bytes.NewReader(data))

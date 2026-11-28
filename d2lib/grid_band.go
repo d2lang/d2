@@ -1,6 +1,10 @@
 package d2lib
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/d2lang/d2/lib/animation"
+)
 
 type gridBand uint8
 
@@ -13,7 +17,7 @@ const (
 // On insertion, make room before growing the cells. Removal plays the same
 // gesture backwards so the neighbors only close over a disappearing band.
 func (b gridBand) window(duration int) (start, end int) {
-	pop := min(220, (duration+1)/2)
+	pop := min(gridPopMS, (duration+1)/2)
 	if b == gridBandClose {
 		return 0, pop
 	}
@@ -27,7 +31,7 @@ func (b gridBand) sample(elapsed, duration int) (travel, scale, opacity float64)
 	start, end := gridBandOpen.window(duration)
 	// Overlap the end of the slide with the beginning of the pop.
 	settled := max(1, start+(end-start+3)/4)
-	travel = gridEase(gridPhase(float64(elapsed), 0, float64(settled)))
+	travel = animation.EaseInOut(gridPhase(float64(elapsed), 0, float64(settled)))
 	scale, opacity = gridPop(gridPhase(float64(elapsed), float64(start), float64(end)))
 	if b == gridBandClose {
 		travel = 1 - travel

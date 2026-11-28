@@ -42,6 +42,15 @@ steps: {
 	if unfold.folds["region"] == nil || fold.folds["region"] == nil {
 		t.Fatal("missing fold plan")
 	}
+	// Opening reserves 720ms for the shell, and closing retraces the same path.
+	// After a quarter of that phase, cubic ease-in-out covers 6.25% of its growth.
+	small, large := shapeByID(t, board, "region").Height, shapeByID(t, open, "region").Height
+	wantHeight := gridLerpInt(small, large, .0625)
+	for _, frame := range []*d2target.Diagram{unfold.sample(open, 180, 1000), fold.sample(closed, 820, 1000)} {
+		if got := shapeByID(t, frame, "region").Height; got != wantHeight {
+			t.Fatalf("partially open shell height = %d, want %d", got, wantHeight)
+		}
+	}
 	first := unfold.sample(open, 0, 1000)
 	last := fold.sample(closed, 1000, 1000)
 	if len(first.Shapes) != len(board.Shapes) || len(last.Shapes) != len(closed.Shapes) || len(last.Connections) != 0 {

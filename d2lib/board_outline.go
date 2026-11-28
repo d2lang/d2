@@ -8,6 +8,7 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
@@ -331,7 +332,7 @@ func (o *boardOutline) apply(frame *d2target.Diagram, progress float64) {
 		s.OutlineProgress = &traced
 		// The tint and title enter with the stroke while the child objects
 		// retain their own independent visibility.
-		s.Opacity *= boardGlide(gridPhase(phase, 0, .52))
+		s.Opacity *= animation.EaseInOut(gridPhase(phase, 0, .52))
 	}
 	if o.edges != nil && travel < 1 {
 		frame.Connections = o.edges.sample(frame.Connections, frame.Shapes, travel, 1, 0, nil)

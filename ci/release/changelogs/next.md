@@ -1,5 +1,6 @@
 #### Features 🚀
 
+- **Movement easing.** Animated nodes and containers use cubic ease-in-out when they move or resize. Grid rows and columns grow and fade into view on insertion, then shrink and fade on removal. Individual nodes also ease in and out when the surrounding diagram stays in place.
 - **Animation progress.** A positive `animate-interval` now shows elapsed playback time along the bottom of animated SVG, GIF, MP4, and WebM exports. Set `vars.d2-config.animate-progress: false` or pass `--animate-progress=false` to hide the line. Set `animate-progress-color` to override the theme's B1 stroke color.
 - **Video export.** Run `d2 tour.d2 tour.webm` for VP9 WebM or `d2 tour.d2 tour.mp4` for H.264 MP4. D2 samples motion at 30 fps and stores holds with their duration. Choose an exact resolution with `--video-size=1920x1080`, set `--video-quality` to `low`, `medium`, `high` (default), or `best`, and use `--video-duration=10s` for a fixed-length clip. Video export requires FFmpeg 5.1 or newer with libvpx-vp9 for WebM or libx264 for MP4.
 - **Layer zooms.** Animated SVG and GIF tours zoom through linked shapes as they enter or leave a layer. Moving between sibling layers passes through their shared parent. In a standalone SVG, readers can click a linked shape to explore the destination directly. D2.js supports the same SVG playback and navigation.
