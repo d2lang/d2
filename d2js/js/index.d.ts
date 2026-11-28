@@ -319,10 +319,16 @@ export interface Connection extends Text {
     /** Predecessor in the previous step when parallel connections are renumbered. */
     previousID?: string;
   } & (
-    /** Departures per second. Zero stops departures. An empty object loops one icon at the default speed. */
-    | { rate?: number; durationMs?: never }
-    /** One icon repeatedly crosses the connection in this many milliseconds. */
-    | { durationMs: number; rate?: never }
+    | {
+        /** Departures per second. Zero stops departures. An empty object loops one icon at the default speed. */
+        rate?: number;
+        durationMs?: never;
+      }
+    | {
+        /** One icon repeatedly crosses the connection in this many milliseconds. */
+        durationMs: number;
+        rate?: never;
+      }
   );
   iconPosition?: string;
   /** A mark and note drawn over the connection for this board. */

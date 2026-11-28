@@ -24,6 +24,7 @@ monitor -> replica: probe {
 }
 primary -> archive: retain logs {style.stroke: "#69796d"}
 replica -> reporting: query results {style.stroke: "#69796d"}
+
 steps: {
   maintenance: {
     (primary -> replica)[0]: Paused {icon.style.animated: 0/s}

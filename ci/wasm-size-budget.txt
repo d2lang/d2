@@ -9,13 +9,7 @@
 # worth the bytes, and say so in that change.
 # Linked-layer playback and SVG navigation raised the local Brotli measurement
 # from 3,679,419 to 3,690,963 bytes. Allow another 10,000 compressed bytes.
-# Animating connection icons and keeping them in flight across boards raised
-# the local Brotli measurement from 3,693,601 to 3,710,756 bytes.
-# Checking the selected loop during D2.js compilation and rendering raised
-# the raw measurement from 10,897,523 to 10,901,133 bytes.
-# Leave room for measuring moving icon clearance along curves and bends
-# in the renderer and in TALA's caption search.
-# Resolving endpoint strokes when a target is rendered and validating icon
-# placement increased the stripped module from 10,909,298 to 10,916,634 bytes.
-raw 10920000
+# Connection icon timing, cross-board playback and label clearance bring the
+# stripped module to 10,924,067 bytes (3,716,648 Brotli) with playback progress.
+raw 10930000
 brotli 3720000
