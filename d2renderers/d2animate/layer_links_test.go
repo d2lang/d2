@@ -47,6 +47,8 @@ func TestClickedLayerUsesItsOwnShape(t *testing.T) {
 		"#d2-layer-link-d2-test-1:target~#d2-frame-d2-test-0",
 		"#d2-layer-link-d2-test-1:target~#d2-frame-d2-test-1",
 		"animation-play-state:paused!important",
+		"animation:Aout var(--d2-click-time,1000ms) linear both}",
+		"animation:Ain var(--d2-click-time,1000ms) linear}",
 		"prefers-reduced-motion:reduce",
 	} {
 		if !strings.Contains(buf.String(), want) {

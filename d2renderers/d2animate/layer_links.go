@@ -296,7 +296,13 @@ func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slo
 				// Paint this ancestor only during transit, without starting its step clock.
 				writeCSS(buf, frame, "{opacity:1!important;--d2-link-visibility:initial!important}", frame, ">g{", hidden, ";animation:", hold, " ", duration, " step-end}")
 			}
-			writeCSS(buf, frame, ">g>g{animation:", camera, " ", duration, " linear both}")
+			fill := " both"
+			if pos == len(link.cameras)-1 {
+				// The destination arrives at its ordinary opacity and pose. Release the
+				// transform so the browser renders settled artwork on its native pixel grid.
+				fill = ""
+			}
+			writeCSS(buf, frame, ">g>g{animation:", camera, " ", duration, " linear", fill, "}")
 		}
 	}
 	writeCSS(buf, "@media(prefers-reduced-motion:reduce){", allFrames, "{--d2-click-time:0s}}")

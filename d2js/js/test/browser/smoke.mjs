@@ -355,7 +355,6 @@ async function checkLayerRoute(page) {
   await page.mouse.move(1, 1);
   const frames = page.locator("g[id^='d2-frame-']");
   const pictures = [];
-  let originalMarker;
   async function picture(ms) {
     await seek(page, ms);
     return boardScreenshot(page);
@@ -377,43 +376,14 @@ async function checkLayerRoute(page) {
     const actual = await picture(ms);
     const expected = pictures[board];
     // Chromium can round an antialiased pixel by one level as the camera settles.
-    if (actual.data.every((value, i) => Math.abs(value - expected.data[i]) <= 1)) return;
-    function differences(image) {
-      let count = 0, maximum = 0;
-      const bounds = [image.width, image.height, -1, -1], samples = [];
-      for (let i = 0; i < image.data.length; i += 4) {
-        const delta = Math.max(...[0, 1, 2, 3].map(k => Math.abs(image.data[i+k] - expected.data[i+k])));
-        if (delta <= 1) continue;
-        const x = (i/4) % image.width, y = Math.floor(i/4/image.width);
-        count++;
-        maximum = Math.max(maximum, delta);
-        bounds[0] = Math.min(bounds[0], x); bounds[1] = Math.min(bounds[1], y);
-        bounds[2] = Math.max(bounds[2], x); bounds[3] = Math.max(bounds[3], y);
-        if (samples.length < 8) samples.push([x, y, expected.data.toString("hex", i, i+3), image.data.toString("hex", i, i+3)]);
-      }
-      return { count, maximum, bounds, samples };
+    const mismatch = actual.data.findIndex((value, i) => Math.abs(value - expected.data[i]) > 1);
+    if (mismatch !== -1) {
+      const pixel = Math.floor(mismatch / 4);
+      const x = pixel % actual.width;
+      const y = Math.floor(pixel / actual.width);
+      const rgba = (image) => image.data.toString("hex", pixel * 4, pixel * 4 + 4);
+      assert.fail(`board ${board} at ${ms}ms, pixel (${x}, ${y}): expected #${rgba(expected)}, got #${rgba(actual)}`);
     }
-    const first = differences(actual);
-    const scene = await frames.evaluateAll((frames, samples) => {
-      const style = node => {
-        const s = getComputedStyle(node);
-        return [s.opacity, s.visibility, s.transform, s.clipPath];
-      };
-      return {
-        focus: document.activeElement?.outerHTML.slice(0, 150),
-        frames: frames.map(f => [f, f.firstElementChild, f.firstElementChild.firstElementChild].map(style)),
-        hits: samples.map(([x, y]) => document.elementsFromPoint(x, y).slice(0,4).map(e => [e.localName, e.getAttribute("class")])),
-      };
-    }, first.samples);
-    const after = differences(await picture(ms + 1));
-    await page.evaluate(() => document.activeElement?.blur?.());
-    const blurred = differences(await picture(ms));
-    let restoredMarker;
-    if (originalMarker) {
-      await frames.nth(3).locator("[marker-end]").first().evaluate((el, marker) => el.setAttribute("marker-end", marker), originalMarker);
-      restoredMarker = differences(await picture(ms));
-    }
-    assert.fail(`board ${board} at ${ms}ms: ${JSON.stringify({first, scene, after, blurred, restoredMarker})}`);
   }
   async function scales(ms, from, to) {
     await seek(page, ms);
@@ -421,6 +391,14 @@ async function checkLayerRoute(page) {
       (frames, pair) => pair.map((i) => frames[i].querySelector("text").getScreenCTM().a),
       [from, to]
     );
+  }
+  async function settledCamera(board) {
+    const state = await frames.nth(board).locator(":scope > g > g").evaluate((camera) => {
+      const s = getComputedStyle(camera);
+      const animated = camera.getAnimations().some((a) => a.effect.getComputedTiming().progress !== null);
+      return [s.transform, s.opacity, s.visibility, animated];
+    });
+    assert.deepEqual(state, ["none", "1", "visible", false], `camera released board ${board}`);
   }
   async function checkLeg(start, duration, from, to, inward, portalLabel) {
     // The scale changes early on exit and late on entry. The other phase pans.
@@ -460,7 +438,6 @@ async function checkLayerRoute(page) {
   // An arrowhead can be defined in another board that is currently hidden.
   const markerID = await frames.first().locator("marker").first().getAttribute("id");
   const arrow = frames.nth(3).locator("[marker-end]").first();
-  originalMarker = await arrow.getAttribute("marker-end");
   await arrow.evaluate((edge, id) => edge.setAttribute("marker-end", `url(#${id})`), markerID);
   await atBoard(6500, 3);
   await seek(page, 8500);
@@ -476,6 +453,7 @@ async function checkLayerRoute(page) {
   await atBoard(450, 0);
   await checkLeg(450, 450, 0, 3, true, "Shipping");
   await atBoard(900, 3);
+  await settledCamera(3);
   await atBoard(8500, 3);
   await accessibleBoard(3);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -486,6 +464,7 @@ async function checkLayerRoute(page) {
   await page.getByRole("link", { name: "Back to overview" }).press("Enter");
   await atBoard(0, 3);
   await atBoard(900, 0);
+  await settledCamera(0);
   await accessibleBoard(0);
 
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -498,6 +477,7 @@ async function checkLayerRoute(page) {
   await page.getByRole("link", { name: "Go to shipping" }).press("Enter");
   await accessibleBoard(3);
   assert.equal(await footerColor(page), "e3ebf2", "reduced motion immediately opens the transparent board");
+  await settledCamera(3);
   await page.getByRole("link", { name: "Back to overview" }).press("Enter");
   await accessibleBoard(0);
   assert.equal(await footerColor(page), "efe4d5", "reduced motion restores the overview background");
