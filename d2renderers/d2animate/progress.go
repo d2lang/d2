@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2svg"
@@ -74,7 +73,7 @@ func svgProgress(buf *bytes.Buffer, hash string, footer image.Rectangle, totalMS
 	}
 	if links {
 		// The global clock pauses while a visitor explores a linked board.
-		fmt.Fprintf(buf, "svg:has(>.d2-layer-link-%s:target)~%s{animation-play-state:paused!important}", hash, line)
+		fmt.Fprintf(buf, ".d2-layer-link-%s:target~%s{animation-play-state:paused!important}", hash, line)
 	}
 	fmt.Fprintf(buf, "@media(prefers-reduced-motion:reduce){%s{visibility:hidden}}", line)
 	return fmt.Sprintf(`<rect class="d2-progress-%s" x="0" y="%d" width="%d" height="%d" transform="scale(0 1)" pointer-events="none" aria-hidden="true" style="%sanimation:d2Progress-%s %dms linear infinite"/>`,
@@ -83,7 +82,7 @@ func svgProgress(buf *bytes.Buffer, hash string, footer image.Rectangle, totalMS
 
 // Match solid board backgrounds in the footer. Gradient and patterned boards
 // keep their artwork intact and use a solid base for the extra margin.
-func footerMatte(css *bytes.Buffer, hash string, footer image.Rectangle, totalMS int, opts d2svg.RenderOpts, root *d2target.Diagram, frames []Frame, links []layerLink, slots []layerSlot) string {
+func footerMatte(css *bytes.Buffer, hash string, footer image.Rectangle, totalMS int, opts d2svg.RenderOpts, root *d2target.Diagram, frames []Frame, links bool, slots []layerSlot) (string, bool) {
 	fill := root.Root.Fill
 	if len(frames) > 0 {
 		fill = frames[0].Diagram.Root.Fill
@@ -119,37 +118,30 @@ func footerMatte(css *bytes.Buffer, hash string, footer image.Rectangle, totalMS
 		matte.Fill = fill
 		return matte.Render()
 	}
-	var body strings.Builder
+	var body bytes.Buffer
+	linkedMatte := !uniform && links
 	if uniform {
 		body.WriteString(paint(fill))
 	} else {
-		// Share the artwork's visibility/crossfade clocks, without moving the margin.
-		for i, frame := range frames {
-			matte.Style = fmt.Sprintf("transform:none!important;animation:d2Transition-%s-%d %dms steps(1,end) infinite", hash, i, totalMS)
-			matte.ClassName = "d2-matte-" + strconv.Itoa(i)
-			if len(slots) > 0 && slots[i].count > 1 {
-				matte.ClassName += " d2-matte-slot-" + strconv.Itoa(slots[i].id)
-				matte.Style += ";" + slots[i].stepClock(hash, i)
-			}
-			body.WriteString(paint(frame.Diagram.Root.Fill))
+		if linkedMatte {
+			fmt.Fprintf(css, ".d2-footer-%s g{transform:none!important;pointer-events:none!important}", hash)
 		}
-		if len(links) != 0 {
-			fmt.Fprintf(css, "svg:has(>.d2-layer-link-%[1]s:target)~.d2-footer-%[1]s>rect{visibility:hidden;animation-play-state:paused!important}@media(prefers-reduced-motion:reduce){.d2-footer-%[1]s{--d2-click-time:0s}}", hash)
-			for _, link := range links {
-				selected := fmt.Sprintf("svg:has(>#%s:target)~.d2-footer-%s>", link.id, hash)
-				if len(link.legs) > 0 && slots[link.to].count > 1 {
-					// Match the linked layer's private step clock after its camera arrives.
-					slot := slots[link.to]
-					duration := "var(--d2-click-time," + strconv.Itoa(link.duration) + "ms)"
-					fmt.Fprintf(css, "%s.d2-matte-slot-%d{visibility:visible;animation:var(--d2-slot) calc(%s - %dms) infinite,var(--d2-intro,d2-hide-%s) %s step-end!important}%s.d2-matte-%d{--d2-intro:d2-hold-%s}", selected, slot.id, duration, slot.startMS, hash, duration, selected, link.to, link.id)
-				} else {
-					fmt.Fprintf(css, "%s.d2-matte-%d{visibility:visible;opacity:1!important;clip-path:none!important}", selected, link.to)
+		for i, frame := range frames {
+			if linkedMatte {
+				if rect := paint(frame.Diagram.Root.Fill); rect != "" {
+					writeLayerFrame(&body, hash, i, totalMS, slots, false, true)
+					body.WriteString(rect)
+					body.WriteString("</g></g></g>")
 				}
+			} else {
+				matte.ClassName = fmt.Sprintf("d2-matte-%d", i)
+				matte.Style = fmt.Sprintf("transform:none!important;animation:d2Transition-%s-%d %dms steps(1,end) infinite", hash, i, totalMS)
+				body.WriteString(paint(frame.Diagram.Root.Fill))
 			}
 		}
 	}
 	if body.Len() == 0 {
-		return ""
+		return "", false
 	}
-	return `<g class="` + hash + ` d2-footer-` + hash + `" aria-hidden="true" pointer-events="none">` + body.String() + `</g>`
+	return `<g class="` + hash + ` d2-footer-` + hash + `" aria-hidden="true" pointer-events="none">` + body.String() + `</g>`, linkedMatte
 }

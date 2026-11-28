@@ -27,7 +27,8 @@ func TestClickedLayerUsesItsOwnShape(t *testing.T) {
 	var buf bytes.Buffer
 	slots := []layerSlot{{&layerSequence{count: 1}, 0}, {&layerSequence{id: 1, count: 1}, 0}}
 	out, links := bindLayerLinks(frames, links, "d2-test")
-	writeLayerNavigation(&buf, "d2-test", links, slots)
+	writeLayerNavigation(&buf, "d2-test", links, slots, "", false)
+	writeLayerTargets(&buf, "d2-test", links)
 	got := string(out[0])
 	for _, want := range []string{
 		`href="#d2-layer-link-d2-test-0" xlink:href="#d2-layer-link-d2-test-0"><g class="YQ=="`,
@@ -178,7 +179,7 @@ func TestLinksWithoutCamerasSelectOnlyIncludedBoards(t *testing.T) {
 		t.Fatal("internal and external anchor destinations were not preserved")
 	}
 	hash, _ := root.HashID(nil)
-	if !bytes.Contains(out, []byte("svg:has(>.d2-layer-link-"+hash+":target)~.d2-progress-"+hash+"{animation-play-state:paused!important}")) {
+	if !bytes.Contains(out, []byte(".d2-layer-link-"+hash+":target~.d2-progress-"+hash+"{animation-play-state:paused!important}")) {
 		t.Fatal("manual board navigation must pause the global progress clock")
 	}
 }

@@ -175,17 +175,25 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		}
 	}
 	fmt.Fprintf(buf, ` preserveAspectRatio="%s meet" viewBox="0 0 %d %d"%s>`, align, canvasW, canvasH, dimensions)
+	frameSibling := ""
+	if showProgress && len(links) > 0 {
+		// The fragment precedes the artwork and footer so their clocks can use
+		// the same sibling selectors without requiring CSS ancestor selection.
+		writeLayerTargets(buf, diagramHash, links)
+		frameSibling = "*>"
+	}
 	// The nested SVG clips all camera and board paint to the original artwork viewport.
 	fmt.Fprintf(buf, `<svg class="d2-svg" width="%d" height="%d" viewBox="%d %d %d %d"%s>`, innerW, innerH, left, top, width, height, artAlign)
 	var transitions bytes.Buffer
 	var progress, matte string
+	var linkedMatte bool
 	if showProgress {
 		renderOpts.AnimateProgressColor = rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
 		progress, err = svgProgress(&transitions, diagramHash, footer, totalMS, renderOpts, len(links) > 0)
 		if err != nil {
 			return nil, err
 		}
-		matte = footerMatte(&transitions, diagramHash, footer, totalMS, renderOpts, rootDiagram, frames, links, slots)
+		matte, linkedMatte = footerMatte(&transitions, diagramHash, footer, totalMS, renderOpts, rootDiagram, frames, len(links) > 0, slots)
 	}
 
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
@@ -253,10 +261,13 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		return nil, err
 	}
 	if len(links) > 0 {
-		writeLayerNavigation(buf, diagramHash, links, slots)
+		writeLayerNavigation(buf, diagramHash, links, slots, frameSibling, linkedMatte)
+		if frameSibling == "" {
+			writeLayerTargets(buf, diagramHash, links)
+		}
 	}
 	if strings.Contains(svgsStr, `class="d2-icon-tour-clock"`) {
-		writeLayerIconClocks(buf, diagramHash, links, slots)
+		writeLayerIconClocks(buf, diagramHash, links, slots, frameSibling)
 	}
 
 	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"
@@ -264,7 +275,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	// Reserve room for the artwork and its timing attributes before copying
 	// multi-megabyte frames into the final output buffer.
 	attributeSize := len(stylePrefix) + len(strconv.Itoa(len(svgs))) + len(styleSuffix)
-	artworkSize := len(defs) + len(graphics) + len("</svg></svg>") + len(svgs)*attributeSize
+	artworkSize := len(defs) + len(graphics) + len(matte) + len(progress) + len("</svg></svg>") + len(svgs)*attributeSize
 	for _, frame := range svgs {
 		artworkSize += len(frame)
 	}
@@ -273,19 +284,8 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	buf.Write(graphics)
 	for i, frame := range svgs {
 		if len(offsets) > 0 {
-			fmt.Fprintf(buf, `<g id="d2-frame-%s-%d" class="d2-frame-%s`, diagramHash, i, diagramHash)
-			local := ""
-			if len(slots) > 0 {
-				slot := slots[i]
-				fmt.Fprintf(buf, " d2-layer-%s-%d", diagramHash, slot.id)
-				if slot.count > 1 {
-					local = slot.stepClock(diagramHash, i) + ";"
-				}
-			}
-			// Each wrapper owns a separate transform or clock: the global tour,
-			// the manually selected layer's steps, its camera and the placement.
-			fmt.Fprintf(buf, `" style="%sanimation: d2Transition-%s-%d %dms steps(1,end) infinite"><g><g><g transform="translate(%d %d)">`,
-				local, diagramHash, i, totalMS, offsets[i].X, offsets[i].Y)
+			writeLayerFrame(buf, diagramHash, i, totalMS, slots, true, linkedMatte)
+			fmt.Fprintf(buf, `<g transform="translate(%d %d)">`, offsets[i].X, offsets[i].Y)
 			buf.Write(frame)
 			buf.WriteString("</g></g></g></g>")
 			continue
@@ -306,6 +306,28 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	buf.WriteString("</svg>")
 
 	return buf.Bytes(), nil
+}
+
+// The three groups own the global clock, the manually selected layer's steps,
+// and its camera. A linked footer uses the same clocks without spatial transforms.
+func writeLayerFrame(buf *bytes.Buffer, hash string, i, totalMS int, slots []layerSlot, artwork, linkedMatte bool) {
+	buf.WriteString("<g")
+	if artwork {
+		fmt.Fprintf(buf, ` id="d2-frame-%s-%d"`, hash, i)
+	}
+	fmt.Fprintf(buf, ` class="d2-frame-%s`, hash)
+	if linkedMatte {
+		fmt.Fprintf(buf, " d2-frame-%s-%d", hash, i)
+	}
+	local := ""
+	if len(slots) > 0 {
+		slot := slots[i]
+		fmt.Fprintf(buf, " d2-layer-%s-%d", hash, slot.id)
+		if slot.count > 1 {
+			local = fmt.Sprintf("--d2-slot:d2LayerStep-%s-%d %dms steps(1,end);", hash, i, slot.totalMS)
+		}
+	}
+	fmt.Fprintf(buf, `" style="%sanimation: d2Transition-%s-%d %dms steps(1,end) infinite"><g><g>`, local, hash, i, totalMS)
 }
 
 // Switch whole frames on their authored boundary so shared artwork stays solid.

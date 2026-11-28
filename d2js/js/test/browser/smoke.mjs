@@ -294,6 +294,17 @@ async function checkLayerZoom(page) {
   assert.deepEqual(await visible(), [true, false], "reduced motion returns immediately");
 }
 
+async function footerColor(page) {
+  const point = await page.locator(progressSelector).evaluate((line) => {
+    const viewport = line.ownerSVGElement;
+    const point = new DOMPoint(2, line.y.baseVal.value - 4).matrixTransform(viewport.getScreenCTM());
+    return { x: Math.floor(point.x), y: Math.floor(point.y) };
+  });
+  const { data, width } = PNG.sync.read(await page.screenshot());
+  const pixel = 4 * (point.y * width + point.x);
+  return data.toString("hex", pixel, pixel + 3);
+}
+
 async function checkLayerSteps(page) {
   const links = page.locator("a");
   async function checkBoard(ms, label, color) {
@@ -308,14 +319,7 @@ async function checkLayerSteps(page) {
         .map((link) => link.querySelector("text").textContent)
     );
     assert.deepEqual(active, [label], `active board at ${ms}ms`);
-    const point = await page.locator(progressSelector).evaluate((line) => {
-      const viewport = line.ownerSVGElement;
-      const point = new DOMPoint(2, line.y.baseVal.value - 4).matrixTransform(viewport.getScreenCTM());
-      return { x: Math.floor(point.x), y: Math.floor(point.y) };
-    });
-    const { data, width } = PNG.sync.read(await page.screenshot());
-    const pixel = 4 * (point.y * width + point.x);
-    assert.equal(data.toString("hex", pixel, pixel + 3), color, `footer below ${label} at ${ms}ms`);
+    assert.equal(await footerColor(page), color, `footer below ${label} at ${ms}ms`);
   }
 
   for (const [ms, label, color] of [
@@ -329,14 +333,25 @@ async function checkLayerSteps(page) {
   }
   await seek(page, 3500);
   await page.getByRole("link", { name: "Enter from overview step" }).click();
+  await seek(page, 150);
+  assert.equal(await footerColor(page), "f0cfb0", "the camera pans across the source board first");
+  await seek(page, 280);
+  assert.ok(!["f0cfb0", "a0c0e0"].includes(await footerColor(page)), "footer crossfades on entry");
   await checkBoard(500, "Return to overview", "a0c0e0");
   await checkBoard(1800, "Return from detail step", "b0d0a0");
   await page.getByRole("link", { name: "Return from detail step" }).click();
+  await seek(page, 0);
+  assert.equal(await footerColor(page), "b0d0a0", "return starts with the selected step's color");
   await checkBoard(500, "Enter detail", "f0cfb0");
   await checkBoard(1800, "Enter from overview step", "f0cfb0");
 }
 
 async function checkLayerRoute(page) {
+  // Make the transparent shipping board visibly different from a white matte.
+  const setBackdrop = () => page.evaluate(() => {
+    document.documentElement.style.background = "#E3EBF2";
+  });
+  await setBackdrop();
   await page.mouse.move(1, 1);
   const frames = page.locator("g[id^='d2-frame-']");
   const pictures = [];
@@ -345,6 +360,7 @@ async function checkLayerRoute(page) {
     return (await boardScreenshot(page)).data;
   }
   for (const ms of [500, 2500, 4500, 6500]) pictures.push(await picture(ms));
+  assert.equal(await footerColor(page), "e3ebf2", "the shipping footer preserves transparency");
 
   async function accessibleBoard(board) {
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
@@ -438,14 +454,17 @@ async function checkLayerRoute(page) {
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(origin + "/layer-route.svg");
+  await setBackdrop();
   await atBoard(5400, 2);
   await atBoard(5999, 2);
   await atBoard(6000.1, 3);
   await seek(page, 2500);
   await page.getByRole("link", { name: "Go to shipping" }).press("Enter");
   await accessibleBoard(3);
+  assert.equal(await footerColor(page), "e3ebf2", "reduced motion immediately opens the transparent board");
   await page.getByRole("link", { name: "Back to overview" }).press("Enter");
   await accessibleBoard(0);
+  assert.equal(await footerColor(page), "efe4d5", "reduced motion restores the overview background");
   await page.goBack();
   await accessibleBoard(3);
   await page.goBack();
