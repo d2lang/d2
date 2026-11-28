@@ -153,7 +153,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if ms.Env.Getenv("D2_ANIMATE_PROGRESS") == "" {
 		ms.Opts.Flags.Lookup("animate-progress").DefValue = "on with a positive animate-interval"
 	}
-	animateProgressColor := ms.Opts.String("D2_ANIMATE_PROGRESS_COLOR", "animate-progress-color", "", "", "color of the playback progress line (an opaque named color, #RGB, or #RRGGBB). Defaults to the theme's B1 color. Also configurable through vars.d2-config.animate-progress-color.")
+	animateProgressColor := ms.Opts.String("D2_ANIMATE_PROGRESS_COLOR", "animate-progress-color", "", "", "color of the playback progress line (an opaque named color, #RGB, or #RRGGBB). Defaults to the inverse background color, with a black or white fallback for contrast. Also configurable through vars.d2-config.animate-progress-color.")
 	videoDuration := ms.Opts.Flags.Duration("video-duration", 0, "total video playback duration (e.g. 10s or 250ms). By default a video plays the board sequence once. A shorter duration cuts it, and a longer duration repeats it.")
 	videoSizeFlag := ms.Opts.Flags.String("video-size", "", "video canvas in pixels, e.g. 1920x1080. Fits and centers the diagram at this resolution.")
 	videoQualityFlag := ms.Opts.Flags.String("video-quality", "high", "video encoding quality: low, medium, high, or best.")

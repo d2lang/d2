@@ -49,7 +49,7 @@ func TestSVGProgressClock(t *testing.T) {
 	lightAccent, darkAccent := "#123456", "#abcdef"
 	opts := d2svg.RenderOpts{
 		Pad: new(int64), DarkThemeID: &d2themescatalog.DarkMauve.ID,
-		ThemeOverrides: &d2target.ThemeOverrides{B1: &lightAccent}, DarkThemeOverrides: &d2target.ThemeOverrides{B1: &darkAccent},
+		ThemeOverrides: &d2target.ThemeOverrides{N7: &lightAccent}, DarkThemeOverrides: &d2target.ThemeOverrides{N7: &darkAccent},
 	}
 	wrap := func() string {
 		t.Helper()
@@ -65,7 +65,7 @@ func TestSVGProgressClock(t *testing.T) {
 	for _, want := range []string{
 		"@keyframes d2Progress-" + hash + "{from{transform:scaleX(0)}to{transform:scaleX(1)}}",
 		line + "{fill:var(--d2-progress-light)}", "@media screen and (prefers-color-scheme:dark){" + line + "{fill:var(--d2-progress-dark)}}",
-		`style="--d2-progress-light:#123456;--d2-progress-dark:#abcdef;`,
+		`style="--d2-progress-light:#edcba9;--d2-progress-dark:#543210;`,
 		"@media(prefers-reduced-motion:reduce){" + line + "{visibility:hidden}}",
 		`x="0" y="32" width="60" height="2" transform="scale(0 1)" pointer-events="none" aria-hidden="true"`,
 		"1000ms linear infinite",
@@ -80,7 +80,7 @@ func TestSVGProgressClock(t *testing.T) {
 	// A second inline rendering of this diagram has the same selector. Its
 	// single-theme paint must survive the first rendering's dark media rule.
 	opts.DarkThemeID = nil
-	if !strings.Contains(wrap(), `style="fill:#123456;animation:d2Progress-`) {
+	if !strings.Contains(wrap(), `style="fill:#edcba9;animation:d2Progress-`) {
 		t.Fatal("single-theme line is missing its own fill")
 	}
 	opts.AnimateProgress = &off
@@ -154,7 +154,7 @@ func TestSVGProgressColor(t *testing.T) {
 	defaultAccent, darkAccent := "#701234", "#abcdef"
 	opts := d2svg.RenderOpts{
 		DarkThemeID: &d2themescatalog.DarkMauve.ID, ThemeOverrides: &d2target.ThemeOverrides{B1: &defaultAccent},
-		DarkThemeOverrides: &d2target.ThemeOverrides{B1: &darkAccent},
+		DarkThemeOverrides: &d2target.ThemeOverrides{N7: &darkAccent},
 	}
 	frames := [][]byte{[]byte(`<g></g>`)}
 	for _, tc := range []struct{ override, want string }{{"", "rebeccapurple"}, {"#aBC", "#aBC"}} {
@@ -219,11 +219,48 @@ func TestSVGProgressFooterRejectsHeightOverflow(t *testing.T) {
 	}
 }
 
-func TestProgressColorThemeFallback(t *testing.T) {
+func TestProgressInkFromFooter(t *testing.T) {
 	theme := d2themescatalog.DarkMauve
-	for _, paint := range []string{"", "Transparent", "currentColor", "#11000044", "bogus"} {
-		if got := ProgressColor(&theme.ID, &d2target.ThemeOverrides{B1: &paint}); got != theme.Colors.B1 {
-			t.Errorf("theme B1 %q resolved to %q, want %q", paint, got, theme.Colors.B1)
+	for _, tc := range []struct{ fill, want string }{
+		{"N7", "#e1e1d1"}, {"#808080", "#000000"}, {"#F2C36B", "#0d3c94"},
+		{"transparent", "#e1e1d1"}, {"none", "#e1e1d1"}, {"linear-gradient(to right, red, blue)", "#e1e1d1"},
+		{"rgba(255,255,255,0.8)", "#2d2d2a"},
+	} {
+		if got := progressInk(theme, footerFill(tc.fill), progressCanvas(theme)); got != tc.want {
+			t.Errorf("footer %s: want %s, got %s", tc.fill, tc.want, got)
 		}
+	}
+	for _, paint := range []string{"transparent", "currentColor", "#11000044", "bogus"} {
+		if got := ProgressColor(&theme.ID, &d2target.ThemeOverrides{N7: &paint}); got != "#000000" {
+			t.Errorf("unspecified canvas %s: %s", paint, got)
+		}
+	}
+	if color, err := ResolveProgressColor(nil, nil, "url(#x)"); err == nil || color != "" {
+		t.Errorf("invalid color returned %q and %v", color, err)
+	}
+}
+
+func TestProgressInkStepBoundaries(t *testing.T) {
+	root := d2target.NewDiagram()
+	var frames []Frame
+	var svgs [][]byte
+	for i, fill := range []string{"honeydew", "honeydew", "#808080", "moccasin"} {
+		d := d2target.NewDiagram()
+		d.Root.Fill = fill
+		frames = append(frames, Frame{Diagram: d, DurationMS: (i + 1) * 100})
+		svgs = append(svgs, []byte(`<g viewBox="0 0 100 50"></g>`))
+	}
+	opts := d2svg.RenderOpts{Pad: new(int64)}
+	out, err := WrapTimeline(root, nil, frames, svgs, opts, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "0%{fill:#0f000f}30%{fill:#000000}60%{fill:#001b4a}") || strings.Contains(string(out), "<filter") {
+		t.Fatal("expected discrete, coalesced fills on the actual playback boundaries")
+	}
+	opts.AnimateProgressColor = "rebeccapurple"
+	out, err = WrapTimeline(root, nil, frames, svgs, opts, 0)
+	if err != nil || !strings.Contains(string(out), `style="fill:rebeccapurple;animation:`) || strings.Contains(string(out), "d2Ink-") || strings.Contains(string(out), "<filter") {
+		t.Fatalf("explicit ink should bypass all automatic coloring, error %v", err)
 	}
 }

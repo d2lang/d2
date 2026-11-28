@@ -67,12 +67,12 @@ func (s *gifRenderSummary) splitProgressHolds(ctx context.Context, poses []*imag
 // Delays are GIF centiseconds. Their sum, including caption and camera holds,
 // is the playback clock, even when adjacent frames have very different delays.
 type gifProgressOverlay struct {
-	ink                                *image.Uniform
-	plan                               gifRenderSummary
-	poses                              []*image.Paletted
-	streamCanvas                       *image.Paletted
-	boardIndex, footerIndex, lastWidth int
-	index, elapsed, total              int
+	ink                                          rasterProgressInk
+	plan                                         gifRenderSummary
+	poses                                        []*image.Paletted
+	streamCanvas                                 *image.Paletted
+	boardIndex, footerIndex, inkIndex, lastWidth int
+	index, elapsed, total                        int
 }
 
 func (p *gifProgressOverlay) start(plan gifRenderSummary, poses []*image.Paletted) {
@@ -123,21 +123,26 @@ func (p *gifProgressOverlay) paint(ctx context.Context, frame *image.Paletted) e
 		if err := p.prepareCanvas(ctx, frame); err != nil {
 			return err
 		}
-		p.lastWidth = 0
+		p.lastWidth, p.inkIndex = 0, -1
 	}
+	footer := p.plan.mattes[p.index].footer
 	extent := animationProgressWidth(bounds.Dx(), p.elapsed, p.total, p.index == len(p.plan.delays)-1)
 	p.elapsed += p.plan.delays[p.index]
 	p.index++
 	if extent == p.lastWidth {
 		return nil
 	}
-	index, err := gifProgressColorIndex(ctx, frame, p.ink.C, p.boardIndex, p.footerIndex)
-	if err != nil {
-		return err
+	if p.inkIndex < 0 {
+		paint := p.ink(footer)
+		index, err := gifProgressColorIndex(ctx, frame, paint, p.boardIndex, p.footerIndex)
+		if err != nil {
+			return err
+		}
+		p.inkIndex = index
 	}
 	line := image.Rect(p.lastWidth, p.plan.maxHeight+d2animate.ProgressGap, extent, bounds.Max.Y)
 	p.lastWidth = extent
-	return fillGIFMargin(ctx, frame, line, uint8(index))
+	return fillGIFMargin(ctx, frame, line, uint8(p.inkIndex))
 }
 
 // Extend the board or camera matte across its footer and any margins. Keep

@@ -184,4 +184,7 @@ func TestLinksWithoutCamerasSelectOnlyIncludedBoards(t *testing.T) {
 	if !bytes.Contains(out, []byte(".d2-layer-link-"+hash+":target~.d2-progress-"+hash+"{animation-play-state:paused!important}")) {
 		t.Fatal("manual board navigation must pause the global progress clock")
 	}
+	if bytes.Contains(out, []byte("<filter")) || !bytes.Contains(out, []byte(`:target~.d2Ink-`)) {
+		t.Fatal("instant board links should select the destination's exact step ink")
+	}
 }

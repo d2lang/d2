@@ -235,7 +235,8 @@ stays fixed during camera moves. Its height is 1% of the shorter canvas dimensio
 rounded to the nearest pixel and limited to 2–6 pixels, or one pixel on a single-row canvas.
 The export leaves at least 8 pixels between the diagram's existing padding and the line.
 MP4 and WebM exports with `--video-size` fit both within the requested dimensions.
-The line uses the theme's B1 color (the usual solid stroke). To override it, set
+The line inverts the RGB color of its background. If the inverse has less than
+3:1 contrast, D2 uses whichever of black or white has higher contrast. To choose your own color, set
 `vars.d2-config.animate-progress-color: "#E35B42"` or pass
 `--animate-progress-color salmon`.
 Enabling it can increase raster export time and file size during long holds.

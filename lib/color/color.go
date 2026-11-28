@@ -26,6 +26,25 @@ func ParseRGBA(raw string) (color.NRGBA, bool) {
 	return color.NRGBA{R: r, G: g, B: b, A: a}, true
 }
 
+// InverseContrast returns the RGB inverse of an opaque background, or the
+// higher-contrast of black and white if the inverse falls below 3:1.
+func InverseContrast(bg color.RGBA) color.RGBA {
+	luminance := func(c color.RGBA) float64 {
+		srgb := colorful.Color{R: float64(c.R) / 255, G: float64(c.G) / 255, B: float64(c.B) / 255}
+		r, g, b := srgb.LinearRgb()
+		return 0.2126*r + 0.7152*g + 0.0722*b
+	}
+	inverse := color.RGBA{R: 255 - bg.R, G: 255 - bg.G, B: 255 - bg.B, A: 255}
+	background, ink := luminance(bg)+0.05, luminance(inverse)+0.05
+	if max(background, ink) >= 3*min(background, ink) {
+		return inverse
+	}
+	if background/0.05 >= 1.05/background {
+		return color.RGBA{A: 255}
+	}
+	return color.RGBA{R: 255, G: 255, B: 255, A: 255}
+}
+
 // InterpolateHex mixes sRGB channels with premultiplied alpha. Fading from transparent to a
 // color increases its opacity without darkening it along the way.
 func InterpolateHex(from, to color.NRGBA, fraction float64) string {

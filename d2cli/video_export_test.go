@@ -214,6 +214,10 @@ blank: "" {width: 112; height: 20; style: {fill: transparent; stroke-width: 0}}`
 	if got := color.RGBAModel.Convert(padded.Image[0].At(2, padded.Config.Height-6)); got != (color.RGBA{0x16, 0x30, 0x50, 255}) {
 		t.Fatalf("GIF gradient footer is %v", got)
 	}
+	last := padded.Image[len(padded.Image)-1]
+	if got := color.RGBAModel.Convert(last.At(2, padded.Config.Height-1)); got != (color.RGBA{0xe9, 0xcf, 0xaf, 255}) {
+		t.Fatalf("GIF progress over the N7 gradient footer is %v", got)
+	}
 	for y := 0; y < original.Config.Height; y++ {
 		for x := 0; x < original.Config.Width; x++ {
 			if color.RGBAModel.Convert(original.Image[0].At(x, y)) != color.RGBAModel.Convert(padded.Image[0].At(x, y)) {
@@ -227,8 +231,9 @@ blank: "" {width: 112; height: 20; style: {fill: transparent; stroke-width: 0}}`
 			ffmpeg, _ := videoTestTools(t, tc.encoder)
 			const w, h = 160, 120
 			decode := func(flag string) []byte {
-				cmd := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", "pipe:0", "-frames:v", "1", "-threads", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
-				cmd.Stdin = bytes.NewReader(export(t, tc.format, "--video-size=160x120", flag))
+				cmd := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", "pipe:0", "-vf", "reverse", "-frames:v", "1", "-threads", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+				// Inspect the final two-pixel accent at the highest codec quality.
+				cmd.Stdin = bytes.NewReader(export(t, tc.format, "--video-size=160x120", "--video-quality=best", flag))
 				pixels, err := cmd.Output()
 				if err != nil || len(pixels) != w*h*3 {
 					t.Fatalf("decode: %v (%d bytes)", err, len(pixels))
@@ -248,6 +253,7 @@ blank: "" {width: 112; height: 20; style: {fill: transparent; stroke-width: 0}}`
 			white := []byte{255, 255, 255}
 			check(before, 80, 114, white)
 			check(after, 80, 114, []byte{0x16, 0x30, 0x50})
+			check(after, 80, h-1, []byte{0xe9, 0xcf, 0xaf})
 			check(after, 80, 10, white)
 			check(after, 80, 100, white)
 			// This wide diagram fits above the footer without moving. Its partially
