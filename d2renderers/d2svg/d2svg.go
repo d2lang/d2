@@ -439,7 +439,7 @@ func renderLegendConnectionIcon(c d2target.Connection, x, y int, theme *d2themes
 	fmt.Fprintf(finalBuf, `<g transform="translate(%d, %d) scale(%s)">`,
 		x, y, svg.FormatFloat(1.0/sizeFactor))
 
-	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, connectionMasks{}, legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
+	_, err := drawConnection(&objectWriter{buf: buf}, legendHash, connectionEffects{}, legendConn, defined, idToShape, false, theme, newMarkdownRenderer(nil, nil, theme))
 	if err != nil {
 		return "", err
 	}
@@ -662,28 +662,6 @@ func arrowheadMarker(isTarget bool, id string, connection d2target.Connection, i
 		el.Render() + "</marker>"
 }
 
-func crossingMaskID(boardHash string, edge int) string {
-	return fmt.Sprintf("crossings-%s-%d", boardHash, edge)
-}
-
-// These masks affect only individual connection strokes. The existing mask
-// for labels remains on the paths inside, preserving its partial opacities.
-func writeCrossingMasks(buf *bytes.Buffer, boardHash string, crossings [][]d2target.ConnectionGap, left, top, width, height int) {
-	bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", width), svg.IntAttr("height", height)}
-	for i, gaps := range crossings {
-		if len(gaps) == 0 {
-			continue
-		}
-		attrs := []svg.Attribute{svg.Attr("id", crossingMaskID(boardHash, i)), svg.Attr("maskUnits", "userSpaceOnUse")}
-		buf.WriteString(svg.OpenElement("mask", append(attrs, bounds...)...))
-		buf.WriteString(svg.EmptyElement("rect", append(bounds, svg.Attr("fill", "white"))...))
-		for _, g := range gaps {
-			buf.WriteString(svg.EmptyElement("circle", svg.FloatAttr("cx", g.Center.X), svg.FloatAttr("cy", g.Center.Y), svg.FloatAttr("r", g.Radius), svg.Attr("fill", "black")))
-		}
-		buf.WriteString(svg.CloseElement("mask"))
-	}
-}
-
 // pathData serializes the same centerline used to find connection crossings.
 func pathData(connection d2target.Connection, srcAdj, dstAdj *geo.Point) string {
 	var path strings.Builder
@@ -731,6 +709,10 @@ func makeLabelMaskWithTransform(labelTL *geo.Point, width, height int, opacity f
 
 	return svg.EmptyElement("rect", svg.FloatAttr("x", x), svg.FloatAttr("y", y),
 		svg.IntAttr("width", width+4), svg.IntAttr("height", height), svg.Attr("fill", fill))
+}
+
+func hasBorderLabel(s d2target.Shape) bool {
+	return s.Label != "" && label.FromString(s.LabelPosition).IsBorder()
 }
 
 // border label mask is minimal, intending to only cover the portion of the border that passes through the label
@@ -798,12 +780,12 @@ func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
 		svg.Attr("viewBox", fmt.Sprintf("%d %d %d %d", c.X, c.Y, c.Width, c.Height)), svg.Attr("overflow", "hidden")))
 }
 
-type connectionMasks struct {
-	labelID    string
-	crossingID string
+type connectionEffects struct {
+	labelID  string
+	crossing crossingEffect
 }
 
-func drawConnection(writer *objectWriter, markerScope string, masks connectionMasks, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
+func drawConnection(writer *objectWriter, markerScope string, effects connectionEffects, connection d2target.Connection, defined map[string]struct{}, idToShape map[string]d2target.Shape, sketch bool, inlineTheme *d2themes.Theme, markdown *markdownRenderer) (labelMask string, _ error) {
 	if c := connection.MotionClip; c != nil {
 		openMotionViewport(writer, c)
 		defer writer.buf.WriteString("</svg>")
@@ -907,12 +889,16 @@ func drawConnection(writer *objectWriter, markerScope string, masks connectionMa
 		labelMask = ""
 	}
 	path := pathData(connection, srcAdj, dstAdj)
+	crossing := effects.crossing
 	var pathAttrs []svg.Attribute
-	if masks.labelID != "" {
-		pathAttrs = []svg.Attribute{svg.Attr("mask", svg.LocalIRI(svg.LiteralID(masks.labelID)))}
+	if effects.labelID != "" && !crossing.replacesEmptyMask {
+		pathAttrs = []svg.Attribute{svg.Attr("mask", svg.LocalIRI(svg.LiteralID(effects.labelID)))}
 	}
-	if masks.crossingID != "" {
-		fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(masks.crossingID)))))
+	wrapCrossing := crossing.id != "" && (sketch || (crossing.mask && !crossing.replacesEmptyMask))
+	if wrapCrossing {
+		fmt.Fprint(writer, svg.OpenElement("g", crossing.attribute()))
+	} else if crossing.id != "" {
+		pathAttrs = append(pathAttrs, crossing.attribute())
 	}
 
 	if sketch {
@@ -965,7 +951,7 @@ func drawConnection(writer *objectWriter, markerScope string, masks connectionMa
 		}
 	}
 
-	if masks.crossingID != "" {
+	if wrapCrossing {
 		fmt.Fprint(writer, svg.CloseElement("g"))
 	}
 
@@ -1460,7 +1446,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		multipleTL = tl.AddVector(multipleOffset)
 	}
 
-	borderLabelMask := targetShape.Label != "" && label.FromString(targetShape.LabelPosition).IsBorder()
+	borderLabelMask := hasBorderLabel(targetShape)
 	switch targetShape.Type {
 	case d2target.ShapeClass, d2target.ShapeSQLTable:
 		isClass := targetShape.Type == d2target.ShapeClass
@@ -2321,6 +2307,23 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	}
 	crossings := d2target.ConnectionCrossings(diagram.Connections, idToShape, sketch, strokeVisible)
 
+	left, top, w, h := dimensions(diagram, pad, tl, br)
+
+	if hasLegend(diagram) {
+		// The viewport also fits the legend without its bottom padding.
+		ruler, _ := textmeasure.NewRuler()
+		if ruler != nil {
+			legendHeight, maxLabelWidth, _ := measureLegend(diagram.Legend, ruler)
+			left, top, w, h = fitLegend(left, top, w, h, pad, tl, br, legendHeight+LEGEND_PADDING, maxLabelWidth)
+		}
+	}
+	if w < 0 || h < 0 {
+		return nil, invalidPaddingError(int64(pad))
+	}
+
+	viewport := crossingViewport{left, top, w, h}
+	effects := viewport.planCrossings(isolatedDiagramHash, crossings, diagram, opts.MasterID != "")
+
 	sortObjects(allObjects)
 
 	appendixItemBuf := &bytes.Buffer{}
@@ -2332,11 +2335,8 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 			return nil, err
 		}
 		if c, is := obj.(indexedConnection); is {
-			masks := connectionMasks{labelID: isolatedDiagramHash}
-			if len(crossings[c.index]) != 0 {
-				masks.crossingID = crossingMaskID(isolatedDiagramHash, c.index)
-			}
-			labelMask, err := drawConnection(writer, isolatedDiagramHash, masks, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
+			paint := connectionEffects{labelID: isolatedDiagramHash, crossing: effects[c.index]}
+			labelMask, err := drawConnection(writer, isolatedDiagramHash, paint, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
 			}
@@ -2374,21 +2374,8 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	}
 	writer.finish()
 
-	left, top, w, h := dimensions(diagram, pad, tl, br)
-
-	if hasLegend(diagram) {
-		// The viewport also fits the legend without its bottom padding.
-		ruler, _ := textmeasure.NewRuler()
-		if ruler != nil {
-			legendHeight, maxLabelWidth, _ := measureLegend(diagram.Legend, ruler)
-			left, top, w, h = fitLegend(left, top, w, h, pad, tl, br, legendHeight+LEGEND_PADDING, maxLabelWidth)
-		}
-	}
-	if w < 0 || h < 0 {
-		return nil, invalidPaddingError(int64(pad))
-	}
 	// Label masks contain only fixed-color geometry and contribute no font or palette classes.
-	// Connections reference the mask even without a label. A shape or a
+	// A connection can reference this mask even without a label. A shape or a
 	// legend can also reference it without a connection on the board.
 	if !UsesDefaultStylesheet() || len(diagram.Connections) != 0 || bytes.Contains(buf.Bytes(), []byte(svg.LocalIRI(svg.LiteralID(isolatedDiagramHash)))) {
 		bounds := []svg.Attribute{svg.IntAttr("x", left), svg.IntAttr("y", top), svg.IntAttr("width", w), svg.IntAttr("height", h)}
@@ -2401,7 +2388,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		buf.WriteString(svg.CloseElement("mask"))
 	}
 
-	writeCrossingMasks(buf, isolatedDiagramHash, crossings, left, top, w, h)
+	viewport.writeCrossings(buf, effects, crossings)
 
 	// Validate the theme before expanding the background, preserving error order.
 	var themeStylesheet string
