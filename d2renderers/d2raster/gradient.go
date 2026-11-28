@@ -449,7 +449,9 @@ func (gradient *preparedGradient) radialIsTangent() bool {
 func spreadParameter(value float64, spread d2scene.SpreadMethod) float64 {
 	switch spread {
 	case d2scene.SpreadPad:
-		return math.Max(0, math.Min(1, value))
+		// Stop interpolation pads with the terminal colors. Preserve values
+		// below zero so coincident stops at zero retain their left edge.
+		return value
 	case d2scene.SpreadReflect:
 		// math.Mod is comparatively expensive. Values in the nearest period
 		// are already their own remainder, so preserve the exact arithmetic
