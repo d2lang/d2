@@ -102,7 +102,7 @@ steps: {next: {swatch.style.fill: blue}}`
 	}
 
 	// A clip length requests an MP4, but its implicit 1000ms board interval
-	// should not turn on the bar. Sample the same spot across each export.
+	// should not turn on the bar. Sample the bottom two rows across each export.
 	implicitSource := strings.Replace(source, "animate-interval: 200ms; ", "", 1)
 	implicit, err := imageCLIWithEnv(t, dir, implicitSource, env, "--stdout-format=mp4", "--video-duration=100ms", "--video-size=320x180", "-")
 	if err != nil {
@@ -122,7 +122,7 @@ steps: {next: {swatch.style.fill: blue}}`
 			input = "pipe:0"
 		}
 		decode := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", input,
-			"-vf", "crop=2:2:2:ih-4,scale=1:1", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1")
+			"-vf", "crop=2:2:2:ih-2,scale=1:1", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1")
 		if tc.clip != nil {
 			decode.Stdin = bytes.NewReader(tc.clip)
 		}
@@ -131,7 +131,8 @@ steps: {next: {swatch.style.fill: blue}}`
 			t.Fatalf("%s: decode error %v (%d bytes)", tc.name, err, len(data))
 		}
 		last := data[len(data)-3:]
-		lime := last[0] < 20 && last[1] > 230 && last[2] < 20
+		// H.264 chroma subsampling can soften the edge of a two-pixel line.
+		lime := last[0] < 40 && last[1] > 220 && last[2] < 40
 		white := last[0] > 235 && last[1] > 235 && last[2] > 235
 		if tc.wantLime && !lime || !tc.wantLime && !white {
 			t.Fatalf("%s: final RGB is %v, want lime when enabled and the white letterbox when disabled", tc.name, last)
