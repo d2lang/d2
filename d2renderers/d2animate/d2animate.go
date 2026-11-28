@@ -218,6 +218,14 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if zoomMS > 0 && len(links) > 0 {
 		writeClickZooms(&transitions, links, diagramHash, viewport, offsets)
 	}
+	var progress string
+	if totalMS > 0 && !viewport.Empty() && rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress, true) {
+		renderOpts.AnimateProgressColor = rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
+		progress, err = svgProgress(&transitions, diagramHash, viewport, totalMS, renderOpts, len(links) > 0)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := d2svg.WriteAnimationStylesWithTransitions(buf, diagramHash, svgsStr, rootDiagram, renderOpts, transitions.Bytes()); err != nil {
 		return nil, err
 	}
@@ -269,6 +277,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 			buf.Write(after)
 		}
 	}
+	buf.WriteString(progress)
 	buf.WriteString("</svg></svg>")
 
 	return buf.Bytes(), nil

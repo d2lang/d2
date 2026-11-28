@@ -101,6 +101,9 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 		renderOpts = &d2svg.RenderOpts{}
 	}
 
+	if err := d2target.ValidateAnimateProgressColor(renderOpts.AnimateProgressColor); err != nil {
+		return nil, nil, fmt.Errorf("animateProgressColor: %w", err)
+	}
 	g, config, err := d2compiler.Compile(compileOpts.InputPath, strings.NewReader(input), &d2compiler.CompileOptions{
 		Context:              ctx,
 		UTF16Pos:             compileOpts.UTF16Pos,
@@ -361,6 +364,10 @@ func applyConfigs(config *d2target.Config, compileOpts *CompileOptions, renderOp
 	if renderOpts.Sketch == nil {
 		renderOpts.Sketch = config.Sketch
 	}
+	if renderOpts.AnimateProgress == nil {
+		renderOpts.AnimateProgress = config.AnimateProgress
+	}
+	renderOpts.AnimateProgressColor = config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
 	if renderOpts.Pad == nil {
 		renderOpts.Pad = config.Pad
 	}

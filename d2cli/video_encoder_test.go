@@ -148,7 +148,7 @@ func TestVideoTimedSamples(t *testing.T) {
 	}{
 		{"one tick", []int{1}, []int{1}},
 		{"one static minute", []int{1800}, []int{1799, 1}},
-		{"cuts and holds", []int{1800, 1, 1, 90, 1, 2, 300}, []int{1799, 1, 1, 1, 89, 1, 1, 1, 1, 299, 1}},
+		{"cuts and holds", []int{1800, 1, 1, 90, 1, 2, 300}, []int{1800, 1, 1, 90, 1, 2, 299, 1}},
 		{"constant frame rate", []int{1, 1, 1, 1, 1}, []int{1, 1, 1, 1, 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,7 +159,7 @@ func TestVideoTimedSamples(t *testing.T) {
 					for j := 0; j < len(frame.Pix); j += 4 {
 						frame.Pix[j], frame.Pix[j+3] = byte(i*39), 255
 					}
-					if err := emit(frame, hold); err != nil {
+					if err := emitVideoHold(frame, hold, i == len(tc.holds)-1, emit); err != nil {
 						return err
 					}
 				}

@@ -236,8 +236,10 @@ func renderGIFFramesWithSessionForTest(ctx context.Context, inputPath string, ca
 	summary, err := renderGIFWithSession(
 		ctx, inputPath, cacheImages, diagram, opts, intervalMs, gifLayerOptions{}, session, nil, wantPreview,
 		nil,
-		func(_ int, frame image.Image) error {
-			frames = append(frames, frame)
+		func(_ int, frame image.Image, repeats int) error {
+			for range repeats {
+				frames = append(frames, frame)
+			}
 			return nil
 		},
 	)
@@ -287,7 +289,10 @@ func TestRenderGIFWorkspaceFramesMatchOwnedFrames(t *testing.T) {
 	borrowedBounds := make([]image.Rectangle, 0, len(owned))
 	_, err = renderGIFWithSession(
 		context.Background(), "-", false, diagram, opts, 101, gifLayerOptions{}, session, &workspace, false, nil,
-		func(frameIndex int, candidate image.Image) error {
+		func(frameIndex int, candidate image.Image, repeats int) error {
+			if repeats != 1 {
+				return fmt.Errorf("animated frame %d unexpectedly repeated %d times", frameIndex, repeats)
+			}
 			frame, ok := candidate.(*image.NRGBA)
 			if !ok {
 				return fmt.Errorf("GIF frame %d type = %T, want *image.NRGBA", frameIndex, candidate)
@@ -653,8 +658,10 @@ func TestRenderGIFFramesReusesBoundedAssetSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	board := simpleRasterDiagramWithLabel()
+	board.Shapes[0].Animated = true
 	frames, _, err := renderGIFFramesWithSessionForTest(
-		context.Background(), "-", false, simpleRasterDiagramWithLabel(),
+		context.Background(), "-", false, board,
 		d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 101, session, false,
 	)
 	if err != nil {

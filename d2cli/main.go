@@ -146,6 +146,14 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
+	animateProgressFlag, err := ms.Opts.Bool("D2_ANIMATE_PROGRESS", "animate-progress", "", false, "show playback progress along the bottom of animated SVG, GIF, and MP4 exports. Also configurable through vars.d2-config.animate-progress.")
+	if err != nil {
+		return err
+	}
+	if ms.Env.Getenv("D2_ANIMATE_PROGRESS") == "" {
+		ms.Opts.Flags.Lookup("animate-progress").DefValue = "on with a positive animate-interval"
+	}
+	animateProgressColor := ms.Opts.String("D2_ANIMATE_PROGRESS_COLOR", "animate-progress-color", "", "", "color of the playback progress line (an opaque named color, #RGB, or #RRGGBB). Defaults to the theme's B1 color. Also configurable through vars.d2-config.animate-progress-color.")
 	videoDuration := ms.Opts.Flags.Duration("video-duration", 0, "total MP4 playback duration (e.g. 10s or 250ms). By default a video plays the board sequence once. A shorter duration cuts it, and a longer duration repeats it.")
 	videoSizeFlag := ms.Opts.Flags.String("video-size", "", "MP4 canvas in pixels, e.g. 1920x1080. Fits and centers the diagram at this resolution.")
 	videoQualityFlag := ms.Opts.Flags.String("video-quality", "high", "MP4 encoding quality: low, medium, high, or best.")
@@ -340,6 +348,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	} else if ms.Opts.Flags.Changed("stdout-format") && (review != "storyboard" || !strings.EqualFold(*stdoutFormatFlag, "png")) {
 		return xmain.UsageErrorf("--stdout-format does not apply to d2 %s", review)
 	}
+	if err := d2target.ValidateAnimateProgressColor(*animateProgressColor); err != nil {
+		return xmain.UsageErrorf("--animate-progress-color: %v", err)
+	}
 	video := videoOptions{duration: *videoDuration, quality: videoQuality(*videoQualityFlag)}
 	for _, name := range []string{"video-duration", "video-size", "video-quality"} {
 		if ms.Opts.Flags.Changed(name) && outputFormat != MP4 {
@@ -393,6 +404,9 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if !ms.Opts.Flags.Changed("animate-duration") && ms.Env.Getenv("D2_ANIMATE_DURATION") == "" {
 		animateDurationFlag = nil
 	}
+	if !ms.Opts.Flags.Changed("animate-progress") && ms.Env.Getenv("D2_ANIMATE_PROGRESS") == "" {
+		animateProgressFlag = nil
+	}
 	if !ms.Opts.Flags.Changed("force-appendix") && ms.Env.Getenv("D2_FORCE_APPENDIX") == "" {
 		forceAppendixFlag = nil
 	}
@@ -437,15 +451,17 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		}
 	}
 	renderOpts := d2svg.RenderOpts{
-		Pad:         padFlag,
-		Sketch:      sketchFlag,
-		Center:      centerFlag,
-		ThemeID:     themeFlag,
-		DarkThemeID: darkThemeFlag,
-		Scale:       scaleFlag,
-		NoXMLTag:    noXMLTagFlag,
-		Salt:        saltFlag,
-		OmitVersion: omitVersionFlag,
+		AnimateProgress:      animateProgressFlag,
+		AnimateProgressColor: *animateProgressColor,
+		Pad:                  padFlag,
+		Sketch:               sketchFlag,
+		Center:               centerFlag,
+		ThemeID:              themeFlag,
+		DarkThemeID:          darkThemeFlag,
+		Scale:                scaleFlag,
+		NoXMLTag:             noXMLTagFlag,
+		Salt:                 saltFlag,
+		OmitVersion:          omitVersionFlag,
 	}
 
 	timeout := time.Duration(*timeoutFlag) * time.Second
@@ -651,6 +667,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 			return nil, false, err
 		}
 	}
+	progress := rootDiagram.Config.ResolveAnimateProgress(renderOptions.AnimateProgress, animateInterval > 0)
 	if ext == MP4 && animateInterval == 0 {
 		animateInterval = 1000
 		ms.Log.Debug.Printf("%s export: defaulting animate-interval to 1000ms", ext)
@@ -666,6 +683,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		renderOptions.Scale = nil
 	}
 	renderOpts := *renderOptions
+	renderOpts.AnimateProgress = &progress
 	cancel()
 
 	engine := cliLayoutEngine(*opts.Layout, ext)

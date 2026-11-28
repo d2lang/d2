@@ -41,3 +41,58 @@ func TestAnimateIntervalConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestAnimateProgressConfig(t *testing.T) {
+	const source = `vars: {show: true; d2-config: {animate-progress: ${show}}}
+a
+steps: {next: {b}}`
+	_, config, err := d2compiler.Compile("progress.d2", strings.NewReader(source), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.ResolveAnimateProgress(nil, false) {
+		t.Fatal("progress should be enabled by the source")
+	}
+
+	for _, tc := range []struct {
+		source, diagnostic string
+	}{
+		{"vars.d2-config.animate-progress: sometimes", "expected a boolean"},
+		{"vars.d2-config.animate-progress: true {extra: 1}", "expected a boolean"},
+		{"vars.d2-config.animate-progress: [true]", "needs a value"},
+		{"layers: {sub: {vars.d2-config.animate-progress: true}}", "root vars.d2-config"},
+		{source + "\nsteps.next.vars.d2-config.animate-progress: false", "root vars.d2-config"},
+	} {
+		_, _, err := d2compiler.Compile("invalid.d2", strings.NewReader(tc.source), nil)
+		if err == nil || !strings.Contains(err.Error(), tc.diagnostic) || !strings.Contains(err.Error(), "animate-progress") {
+			t.Errorf("%s: expected %q diagnostic for animate-progress, got %v", tc.source, tc.diagnostic, err)
+		}
+	}
+}
+
+func TestAnimateProgressColorConfig(t *testing.T) {
+	const source = `vars: {accent: "#c60"; d2-config.animate-progress-color: ${accent}}
+a
+steps: {next: {b}}`
+	_, config, err := d2compiler.Compile("color.d2", strings.NewReader(source), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ResolveAnimateProgress(nil, false) || config.ResolveAnimateProgressColor("") != "#c60" || config.ResolveAnimateProgressColor("Red") != "Red" {
+		t.Fatalf("unexpected progress settings: %+v", config)
+	}
+
+	for _, paint := range []string{
+		`""`, "transparent", "currentColor", `"#1234"`, `"#123456ff"`, "unknown", "B1",
+		`"rgb(0, 0, 0)"`, `"linear-gradient(red, blue)"`, "red {extra: true}", "[red]",
+	} {
+		_, _, err := d2compiler.Compile("invalid.d2", strings.NewReader("vars.d2-config.animate-progress-color: "+paint), nil)
+		if err == nil || !strings.Contains(err.Error(), "animate-progress-color") {
+			t.Errorf("color %s: expected an animate-progress-color diagnostic, got %v", paint, err)
+		}
+	}
+	_, _, err = d2compiler.Compile("local.d2", strings.NewReader("layers: {child: {vars.d2-config.animate-progress-color: blue}}"), nil)
+	if err == nil || !strings.Contains(err.Error(), "root vars.d2-config") {
+		t.Fatalf("expected a root-config diagnostic, got %v", err)
+	}
+}

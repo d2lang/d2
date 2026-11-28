@@ -35,6 +35,19 @@ async function seek(page, ms) {
   }, ms);
 }
 
+const progressSelector = 'rect[class^="d2-progress-"]';
+
+// Compare all of the board artwork, including the pixels underneath the moving line.
+async function boardScreenshot(page) {
+  const line = page.locator(progressSelector);
+  await line.evaluate((rect) => rect.style.setProperty("visibility", "hidden"));
+  try {
+    return PNG.sync.read(await page.screenshot());
+  } finally {
+    await line.evaluate((rect) => rect.style.removeProperty("visibility"));
+  }
+}
+
 async function checkBoundary(page) {
   const pictures = new Map();
   for (const [ms, stage] of [
@@ -47,6 +60,20 @@ async function checkBoundary(page) {
     [2000, "before"],
   ]) {
     await seek(page, ms);
+    const progress = await page.locator(progressSelector).evaluate((line) => {
+      const viewport = line.ownerSVGElement;
+      return {
+        visible: getComputedStyle(line).visibility,
+        width: line.getBoundingClientRect().width,
+        total: viewport.viewBox.baseVal.width * viewport.getScreenCTM().a,
+      };
+    });
+    assert.equal(progress.visible, "visible", `progress hidden at ${ms}ms`);
+    const expected = progress.total * ((ms % 2000) / 2000);
+    assert.ok(
+      Math.abs(progress.width - expected) <= 1,
+      `progress at ${ms}ms: ${progress.width}px, expected ${expected}px`
+    );
     const hit = await page.evaluate((ms) => {
       const links = [...document.querySelectorAll("a")].filter(
         (a) => getComputedStyle(a).visibility === "visible"
@@ -60,7 +87,7 @@ async function checkBoundary(page) {
       return { href: document.elementFromPoint(x, y)?.closest("a")?.getAttribute("href"), x, y };
     }, ms);
     assert.equal(hit.href, "https://example.org/" + stage, `active actor link at ${ms}ms`);
-    const { data: pixels, width } = PNG.sync.read(await page.screenshot());
+    const { data: pixels, width } = await boardScreenshot(page);
     const offset = (width * hit.y + hit.x) * 4;
     assert.equal(
       pixels.toString("hex", offset, offset + 3),
@@ -234,6 +261,11 @@ async function checkLayerZoom(page) {
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(origin + "/layer-zoom.svg");
+  assert.equal(
+    await page.locator(progressSelector).evaluate((line) => getComputedStyle(line).visibility),
+    "hidden",
+    "reduced motion hides the moving progress line"
+  );
   const reducedScales = await scales(0);
   for (const [ms, expected] of [
     [2999, [true, false]],
@@ -291,7 +323,7 @@ async function checkLayerRoute(page) {
   const pictures = [];
   async function picture(ms) {
     await seek(page, ms);
-    return PNG.sync.read(await page.screenshot()).data;
+    return (await boardScreenshot(page)).data;
   }
   for (const ms of [500, 2500, 4500, 6500]) pictures.push(await picture(ms));
 

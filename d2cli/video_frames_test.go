@@ -28,7 +28,7 @@ func TestVideoStaticHoldAndStablePlacement(t *testing.T) {
 	var red []image.Rectangle
 	opts := d2svg.RenderOpts{Pad: new(int64)}
 	err := renderVideoFrames(t.Context(), "-", false, root, opts, 60_000, gifLayerOptions{}, 0, false, videoSize{}, func(im image.Image, repeats int) error {
-		if repeats != 1800 || im.Bounds().Dx()%2 != 0 || im.Bounds().Dy()%2 != 0 {
+		if want := []int{1800, 1799, 1}; len(red) >= len(want) || repeats != want[len(red)] || im.Bounds().Dx()%2 != 0 || im.Bounds().Dy()%2 != 0 {
 			t.Fatalf("frame repeated %d times with bounds %v", repeats, im.Bounds())
 		}
 		var box image.Rectangle
@@ -49,8 +49,8 @@ func TestVideoStaticHoldAndStablePlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(red) != 2 || red[0].Empty() || red[0] != red[1] {
-		t.Fatalf("expected two static runs with stationary red box, got %v", red)
+	if len(red) != 3 || red[0].Empty() || red[0] != red[1] || red[1] != red[2] {
+		t.Fatalf("expected stationary red box through the final tick, got %v", red)
 	}
 }
 
@@ -103,7 +103,7 @@ func TestVideoLayerCameraAndFinalHold(t *testing.T) {
 		count += repeats
 		if count == 12 {
 			c := color.NRGBAModel.Convert(im.At(size.X/2, size.Y/2)).(color.NRGBA)
-			if repeats != 6 || c.B != 255 || c.R != 0 {
+			if repeats != 1 || c.B != 255 || c.R != 0 {
 				t.Fatalf("final hold repeated %d times, center %v", repeats, c)
 			}
 		}
@@ -203,7 +203,7 @@ func TestVideoDenseTourBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests.Load() != 1 || frames != 3600 || runs != 607 {
+	if requests.Load() != 1 || frames != 3600 || runs != 608 {
 		t.Fatalf("got %d asset requests, %d frames in %d runs", requests.Load(), frames, runs)
 	}
 }
@@ -236,7 +236,7 @@ func TestVideoWorkUsesActualPaintsAndPreservesTrimFraming(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if work.builds != 2 || work.paints != calls || videoWorkDivisor(work.paints) != 1 {
+		if work.builds != 2 || work.samples != calls || work.paints != calls-1 || videoWorkDivisor(work.paints) != 1 {
 			t.Fatalf("unexpected work on %v clip: %+v for %d emitted runs", duration, work, calls)
 		}
 	}

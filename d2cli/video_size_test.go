@@ -52,8 +52,10 @@ func TestVideoSizeFitsWideSource(t *testing.T) {
 	root := simpleRasterDiagramWithSize(40000, 4000)
 	opts := d2svg.RenderOpts{Pad: new(int64)}
 	var region image.Rectangle
+	var ticks int
 	err := renderVideoFrames(t.Context(), "-", false, root, opts, 1000, gifLayerOptions{}, 0, false, videoSize{200, 100}, func(im image.Image, n int) error {
-		if im.Bounds().Size() != image.Pt(200, 100) || n != videoFPS {
+		ticks += n
+		if im.Bounds().Size() != image.Pt(200, 100) {
 			t.Fatalf("size %v, repeats %d", im.Bounds(), n)
 		}
 		for y := range im.Bounds().Dy() {
@@ -66,7 +68,7 @@ func TestVideoSizeFitsWideSource(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil || region != image.Rect(0, 40, 200, 60) {
+	if err != nil || region != image.Rect(0, 40, 200, 60) || ticks != videoFPS {
 		t.Fatalf("fitted red shape = %v, error %v", region, err)
 	}
 	err = renderVideoFrames(t.Context(), "-", false, root, opts, 1000, gifLayerOptions{}, 0, false, videoSize{}, func(im image.Image, n int) error {

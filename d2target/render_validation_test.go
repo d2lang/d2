@@ -225,3 +225,15 @@ func TestValidateRenderInk(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTargetProgressColor(t *testing.T) {
+	d := NewDiagram()
+	d.Config = &Config{AnimateProgressColor: "DarkOrange"}
+	if err := ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+	d.Config.AnimateProgressColor = "red;stroke:blue"
+	if err := ValidateRenderTarget(d); err == nil || !strings.Contains(err.Error(), "root.config.animateProgressColor") {
+		t.Fatalf("expected invalid serialized progress color diagnostic, got %v", err)
+	}
+}
