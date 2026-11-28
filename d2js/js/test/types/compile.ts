@@ -48,6 +48,7 @@ configured.then((response) => {
 
   const edge = response.diagram.connections[0];
   if (edge) {
+    edge.codeFontColor satisfies boolean | undefined;
     edge.iconShape satisfies "circle" | undefined;
     edge.iconAnimation?.rate satisfies number | undefined;
     edge.iconAnimation?.durationMs satisfies number | undefined;

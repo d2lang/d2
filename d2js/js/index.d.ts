@@ -274,6 +274,7 @@ export interface Text {
   fontFamily: string;
   language: string;
   color: string;
+  codeFontColor?: boolean;
   italic: boolean;
   bold: boolean;
   underline: boolean;

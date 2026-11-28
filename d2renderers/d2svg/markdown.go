@@ -3,11 +3,10 @@ package d2svg
 import (
 	"fmt"
 	"io"
-
-	"github.com/d2lang/d2/d2renderers/d2scene"
 	"strings"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/lib/color"
