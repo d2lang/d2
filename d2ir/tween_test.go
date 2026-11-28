@@ -88,6 +88,24 @@ steps: {
 	}
 }
 
+func TestTweenLabelCrossingZero(t *testing.T) {
+	const source = `
+vars: {n: -3; pct: -0.3%}
+x: "${n}, ${pct}"
+steps: {up: {vars: {n: 3; pct: 0.3%}}}
+`
+	m, err := compileTween(t, source, d2ir.CompileOptions{AnimateTweens: go2.Pointer(true), AnimateDuration: go2.Pointer(int64(1000))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames := tweenField(m, "steps", "up").Map().TweenFrames
+	for i, want := range map[int]string{10: "-1, -0.1%", 11: "0, 0.0%", 12: "0, 0.0%", 13: "0, 0.0%", 15: "1, 0.1%"} {
+		if got := tweenText(t, frames[i], "x"); got != want {
+			t.Errorf("frame %d label = %q, want %q", i, got, want)
+		}
+	}
+}
+
 func TestTweenContainerVariables(t *testing.T) {
 	const source = `
 vars: {p: 10}
