@@ -27,6 +27,14 @@ import (
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
+type warningHandlerKey struct{}
+
+// WithWarningHandler attaches a destination for non-fatal source diagnostics.
+// Compilations without a handler remain silent.
+func WithWarningHandler(ctx context.Context, handler func(d2ast.Error)) context.Context {
+	return context.WithValue(ctx, warningHandlerKey{}, handler)
+}
+
 type CompileOptions struct {
 	// Context stops parsing and compilation when canceled. A nil Context is treated as
 	// context.Background().
@@ -131,9 +139,11 @@ func compileIRContext(ctx context.Context, ast *d2ast.Map, m *d2ir.Map) (*d2grap
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	warn, _ := ctx.Value(warningHandlerKey{}).(func(d2ast.Error))
 	c := &compiler{
-		err: &d2parser.ParseError{},
-		ctx: ctx,
+		err:  &d2parser.ParseError{},
+		ctx:  ctx,
+		warn: warn,
 	}
 
 	g := d2graph.NewGraph()
@@ -455,6 +465,8 @@ func _findFieldAST(ast *d2ast.Map, path []d2ast.String) *d2ast.Map {
 
 type compiler struct {
 	err             *d2parser.ParseError
+	warn            func(d2ast.Error)
+	warnedLinks     map[d2ast.Range]bool
 	activeClassMaps map[*d2ir.Map]struct{}
 	classMapsByRoot map[*d2ir.Map]map[string]*d2ir.Map
 	// classNames are the classes being applied to the object now, outermost first.
@@ -1838,35 +1850,13 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 		if c.stopped() {
 			return
 		}
-		if obj.Link == nil {
-			continue
+		obj.Link = c.resolveBoardLink(g, obj.Link)
+	}
+	for _, edge := range g.Edges {
+		if c.stopped() {
+			return
 		}
-
-		linkKey, err := d2parser.ParseKey(obj.Link.Value)
-		if err != nil {
-			continue
-		}
-
-		u, err := url.Parse(htmlentity.Unescape(obj.Link.Value))
-		isRemote := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
-		if isRemote {
-			continue
-		}
-
-		if linkKey.Path[0].Unbox().ScalarString() != "root" {
-			obj.Link = nil
-			continue
-		}
-
-		if !hasBoard(g.RootBoard(), linkKey.IDA()) {
-			obj.Link = nil
-			continue
-		}
-
-		if slices.Equal(linkKey.StringIDA(), obj.Graph.IDA()) {
-			obj.Link = nil
-			continue
-		}
+		edge.Link = c.resolveBoardLink(g, edge.Link)
 	}
 	for _, group := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
 		for _, b := range group {
@@ -1876,6 +1866,58 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 			c.validateBoardLinks(b)
 		}
 	}
+}
+
+func (c *compiler) resolveBoardLink(g *d2graph.Graph, link *d2graph.Scalar) *d2graph.Scalar {
+	if link == nil {
+		return nil
+	}
+	key, err := d2parser.ParseKey(link.Value)
+	if err != nil {
+		return link
+	}
+	u, err := url.Parse(htmlentity.Unescape(link.Value))
+	if err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/")) {
+		return link
+	}
+	head := key.Path[0].Unbox().ScalarString()
+	if head != "root" && head != "_" && err == nil &&
+		(len(key.Path) > 1 || strings.Contains(u.Path, "/") || u.RawQuery != "" || u.Fragment != "") {
+		return link
+	}
+	root := g.RootBoard()
+	if head == "root" && hasBoard(root, key.IDA()) {
+		if slices.Equal(key.StringIDA(), g.IDA()) {
+			return nil
+		}
+		return link
+	}
+	if source := link.MapKey; source != nil {
+		// A URL may start with a board namespace, e.g. layers.html?download=1.
+		// A real board wins. Otherwise preserve the source-relative URL.
+		if scalar := source.Value.ScalarBox().Unbox(); scalar != nil {
+			value := scalar.ScalarString()
+			prefix, _, _ := strings.Cut(value, ".")
+			_, boardNamespace := d2ast.BoardKeywords[strings.ToLower(prefix)]
+			if (boardNamespace || prefix == "root") && strings.ContainsAny(value, "/?#") && !strings.ContainsAny(value, "\"'") {
+				u, err := url.Parse(htmlentity.Unescape(value))
+				if err == nil && !u.IsAbs() && u.Host == "" && !textmeasure.IsDangerousLink(value) {
+					copy := *link
+					copy.Value = value
+					return &copy
+				}
+			}
+		}
+		if c.warn != nil && !c.warnedLinks[source.Range] {
+			if c.warnedLinks == nil {
+				c.warnedLinks = make(map[d2ast.Range]bool)
+			}
+			c.warnedLinks[source.Range] = true
+			msg := fmt.Sprintf("board link %q has no matching board; use _.steps.name for a sibling step or ./name for a file", link.Value)
+			c.warn(d2ast.Error{Range: source.Range, Message: msg})
+		}
+	}
+	return nil
 }
 
 func hasBoard(root *d2graph.Graph, ida []d2ast.String) bool {

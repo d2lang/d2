@@ -24,6 +24,7 @@ import (
 	"github.com/d2lang/util-go/xmain"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
@@ -85,6 +86,7 @@ func privateNetworkEnvDefault(ms *xmain.State) (bool, error) {
 
 func Run(ctx context.Context, ms *xmain.State) (err error) {
 	ctx = log.WithDefault(ctx)
+	ctx = d2compiler.WithWarningHandler(ctx, func(w d2ast.Error) { ms.Log.Warn.Printf("%s: %s", w.Range, w.Message) })
 	// Protocol servers own stdin and stdout and parse their own flags.
 	if len(ms.Opts.Args) > 0 {
 		switch ms.Opts.Args[0] {

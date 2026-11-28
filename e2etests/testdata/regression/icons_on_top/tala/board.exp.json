@@ -22,7 +22,7 @@
         "x": 0,
         "y": 0
       },
-      "width": 127,
+      "width": 191,
       "height": 66,
       "opacity": 1,
       "strokeDash": 0,
@@ -36,7 +36,8 @@
       "multiple": false,
       "double-border": false,
       "tooltip": "",
-      "link": "",
+      "link": "example.com",
+      "prettyLink": "example.com",
       "icon": null,
       "iconPosition": "",
       "blend": false,
@@ -64,7 +65,7 @@
         "YELLOW"
       ],
       "pos": {
-        "x": 127,
+        "x": 191,
         "y": 0
       },
       "width": 80,
@@ -112,7 +113,7 @@
         "x": 0,
         "y": 66
       },
-      "width": 127,
+      "width": 191,
       "height": 66,
       "opacity": 1,
       "strokeDash": 0,
@@ -126,7 +127,8 @@
       "multiple": false,
       "double-border": false,
       "tooltip": "tooltip",
-      "link": "",
+      "link": "example.com",
+      "prettyLink": "example.com",
       "icon": null,
       "iconPosition": "",
       "blend": false,
@@ -154,7 +156,7 @@
         "GREEN"
       ],
       "pos": {
-        "x": 127,
+        "x": 191,
         "y": 66
       },
       "width": 80,

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	tassert "github.com/stretchr/testify/assert"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/d2lang/util-go/diff"
 	"github.com/d2lang/util-go/mapfs"
 
+	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2graph"
@@ -426,6 +428,38 @@ func TestCompilePreservesSafeOrdinaryLinks(t *testing.T) {
 			tassert.NoError(t, err)
 			tassert.NotNil(t, g)
 		})
+	}
+}
+
+func TestRelativeFileLinksAndMissingBoards(t *testing.T) {
+	fs := fstest.MapFS{"card.d2": {Data: []byte(`a.link: next.svg; b.link: docs/page.html`)}}
+	src := `...@card
+c.link: readme.md?raw=1
+query.link: "layers.html?download=1"
+file.link: layers.docs/page.html
+layers: {"reports/index": {target}}
+real.link: 'layers."reports/index"'
+x -> y: {link: steps.missingEdge}
+bad.link: steps.missing
+steps: {one: {}; two: {prev.link: _.steps.one; wrong.link: _.one}}`
+	var warnings []d2ast.Error
+	ctx := d2compiler.WithWarningHandler(t.Context(), func(w d2ast.Error) { warnings = append(warnings, w) })
+	g, _, err := d2compiler.Compile("main.d2", strings.NewReader(src), &d2compiler.CompileOptions{FS: fs, Context: ctx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"a": "next.svg", "b": "docs/page.html", "c": "readme.md?raw=1", "query": "layers.html?download=1", "file": "layers.docs/page.html", "prev": "root.steps.one"} {
+		obj, ok := g.Steps[1].Root.HasChild([]string{id})
+		if !ok || obj.Link == nil || obj.Link.Value != want {
+			t.Errorf("missing expected link %s = %q", id, want)
+		}
+	}
+	real, ok := g.Root.HasChild([]string{"real"})
+	if !ok || real.Link == nil || !strings.HasPrefix(real.Link.Value, "root.layers.") {
+		t.Fatal("quoted board name was treated as a relative URL")
+	}
+	if g.Edges[0].Link != nil || len(warnings) != 3 {
+		t.Fatalf("warnings = %v, want one per unresolved source link", warnings)
 	}
 }
 
