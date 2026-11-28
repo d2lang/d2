@@ -8,7 +8,7 @@ import (
 
 func TestDirectStyleColorTransitions(t *testing.T) {
 	const source = `
-vars: {d2-config: {animate-interval: 800ms; animate-duration: 80ms}}
+vars: {d2-config: {animate-interval: 800ms; animate-duration: 32ms}}
 style.fill: blue
 rack.node.style: {fill: blue; stroke: black; font-color: white}
 rack.node -> rack.peer: {style.stroke: blue}
@@ -57,7 +57,7 @@ steps: {
 func TestDirectStyleColorBoundaries(t *testing.T) {
 	const source = `
 vars: {
-  d2-config: {animate-interval: 1s; animate-duration: 80ms}
+  d2-config: {animate-interval: 1s; animate-duration: 32ms}
   digit: 1
   values: {style.fill: blue}
 }
@@ -111,7 +111,7 @@ steps: {change: {vars: {d2-config.data.style.fill: red}}}
 func TestStyleColorSwitchesPaletteBinding(t *testing.T) {
 	root, err := compileTween(t, `
 vars: {
-  d2-config: {animate-interval: 1s; animate-duration: 80ms}
+  d2-config: {animate-interval: 1s; animate-duration: 32ms}
   palette: {cool: blue; hot: red}
 }
 node.style.fill: ${palette.cool}

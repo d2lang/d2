@@ -47,7 +47,7 @@ func TestVideoLayerMatte(t *testing.T) {
 		frames += repeats
 		return nil
 	})
-	if err != nil || frames != 12 {
+	if err != nil || frames != 24 {
 		t.Fatalf("got %d frames, error %v", frames, err)
 	}
 }

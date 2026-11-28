@@ -165,30 +165,61 @@ func (c *compiler) compileTweens(root *Map, opts *CompileOptions) {
 	}
 }
 
-func (c *compiler) compileStepTweens(board *Map, duration int) {
-	for _, group := range []string{"layers", "scenarios", "steps"} {
-		children := board.getFieldIndexed(d2ast.FlatUnquotedString(group)).Map()
-		if children == nil {
-			continue
-		}
-		previous := board
-		for _, field := range children.Fields {
-			if c.stopped() || !c.err.Empty() {
-				return
-			}
-			child := field.Map()
-			if child == nil {
+func (c *compiler) compileStepTweens(root *Map, duration int) {
+	type step struct {
+		board   *Map
+		changes []tweenChange
+	}
+	var steps []step
+	authored := 1 // The root is also a render-target board.
+	var walk func(*Map)
+	walk = func(board *Map) {
+		for _, group := range []string{"layers", "scenarios", "steps"} {
+			children := board.getFieldIndexed(d2ast.FlatUnquotedString(group)).Map()
+			if children == nil {
 				continue
 			}
-			if group == "steps" {
-				changes := c.stepChanges(previous, child)
-				if hasTweenMotion(changes) {
-					c.sampleStep(child, changes, duration)
+			previous := board
+			for _, field := range children.Fields {
+				if c.stopped() || !c.err.Empty() {
+					return
 				}
-				previous = child
+				authored++
+				child := field.Map()
+				if child == nil {
+					continue
+				}
+				if group == "steps" {
+					changes := c.stepChanges(previous, child)
+					if hasTweenMotion(changes) {
+						steps = append(steps, step{child, changes})
+					}
+					previous = child
+				}
+				walk(child)
 			}
-			c.compileStepTweens(child, duration)
 		}
+	}
+	walk(root)
+	if len(steps) == 0 || c.stopped() || !c.err.Empty() {
+		return
+	}
+	available := d2target.MaxRenderTargetBoards - authored
+	if available < len(steps) {
+		c.errorf(steps[0].board.LastRef().AST(), "animation needs at least one sample per transition within the limit of %d total boards", d2target.MaxRenderTargetBoards)
+		return
+	}
+	// Later passes may animate structure or annotations on the remaining
+	// authored boards. Leave one slot per possible transition when it fits.
+	available -= min(available-len(steps), authored-1-len(steps))
+	wanted := d2target.TweenFrameCount(duration)
+	for i, step := range steps {
+		if c.stopped() || !c.err.Empty() {
+			return
+		}
+		count := min(wanted, available/(len(steps)-i))
+		c.sampleStep(step.board, step.changes, duration, count)
+		available -= count
 	}
 }
 
@@ -308,7 +339,7 @@ func tweenNumber(raw string) (number float64, unit string, precision int, valid 
 	return number, unit, precision, true
 }
 
-func (c *compiler) sampleStep(board *Map, changes []tweenChange, duration int) {
+func (c *compiler) sampleStep(board *Map, changes []tweenChange, duration, count int) {
 	// The parent step's samples never include its child boards.
 	view := *board
 	view.Fields = nil
@@ -318,9 +349,11 @@ func (c *compiler) sampleStep(board *Map, changes []tweenChange, duration int) {
 		}
 	}
 	outerVars := tweenVarScopes(ParentMap(board))
-	n := d2target.TweenFrameCount(duration)
-	for i := 0; i < n; i++ {
-		frame := c.sampleTween(&view, changes, outerVars, float64(i)/float64(n))
+	for i := range count {
+		if c.stopped() {
+			return
+		}
+		frame := c.sampleTween(&view, changes, outerVars, float64(i)/float64(count))
 		if frame == nil {
 			return
 		}

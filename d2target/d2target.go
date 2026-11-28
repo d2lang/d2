@@ -139,12 +139,15 @@ type ThemeOverrides struct {
 // Limits shared by D2 source compilation and callers supplying sampled targets.
 const (
 	MaxTweenDurationMS = 600_000
-	MaxTweenFrames     = 120
+	TweenFPS           = 60
+	// Keep the full sampling rate for transitions up to 4.8 seconds.
+	MaxTweenFrames = 288
 )
 
-// TweenFrameCount samples at 25 fps up to the per-transition frame limit.
+// TweenFrameCount rounds up so a positive transition always gets a sample.
 func TweenFrameCount(durationMS int) int {
-	return min(MaxTweenFrames, (durationMS+39)/40)
+	ms := min(max(durationMS, 0), MaxTweenDurationMS)
+	return min(MaxTweenFrames, (ms*TweenFPS+999)/1000)
 }
 
 type Diagram struct {
@@ -191,6 +194,15 @@ type Legend struct {
 	Label       string       `json:"label,omitempty"`
 	Shapes      []Shape      `json:"shapes,omitempty"`
 	Connections []Connection `json:"connections,omitempty"`
+}
+
+// TweenFrameEndMS returns the exclusive end of an existing sample on a
+// whole-millisecond clock. Uniform sample boundaries round down.
+func (d *Diagram) TweenFrameEndMS(i int) int {
+	if len(d.TweenFrameEndsMS) != 0 {
+		return d.TweenFrameEndsMS[i]
+	}
+	return int(int64(i+1) * int64(d.TweenDurationMS) / int64(len(d.TweenFrames)))
 }
 
 // renderChildren includes sampled frames for hashing, font subsetting and

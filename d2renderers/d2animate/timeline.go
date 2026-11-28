@@ -3,6 +3,7 @@ package d2animate
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/d2lang/d2/d2target"
 )
@@ -17,6 +18,18 @@ type Frame struct {
 	TweenSample bool
 	// ElapsedMS is the local time of a sampled frame within its step.
 	ElapsedMS int
+	start     frameStart
+}
+
+type frameStart struct {
+	fraction time.Duration
+	uniform  bool
+}
+
+// StartFraction restores the fraction of a millisecond omitted by ElapsedMS
+// for uniform tweens. Explicit millisecond boundaries have no remainder.
+func (f Frame) StartFraction() time.Duration {
+	return f.start.fraction
 }
 
 // Picture returns the artwork for this frame, including any render-time icon schedule.
@@ -194,17 +207,19 @@ func AppendBoardFrames(frames []Frame, board *d2target.Diagram, intervalMS int) 
 	slot := max(intervalMS, duration)
 	start := 0
 	for i, sample := range board.TweenFrames {
-		end := int(int64(i+1) * int64(duration) / int64(len(board.TweenFrames)))
-		if len(board.TweenFrameEndsMS) != 0 {
-			end = board.TweenFrameEndsMS[i]
-		}
+		end := board.TweenFrameEndMS(i)
 		if i == len(board.TweenFrames)-1 && end == slot {
 			// Without a hold, split the last sampling period between its
 			// interpolated value and the exact endpoint before the next board.
 			end = start + (end-start)/2
 		}
 		if end > start {
-			frames = append(frames, Frame{Diagram: sample, DurationMS: end - start, ElapsedMS: start, TweenSample: true})
+			frame := Frame{Diagram: sample, DurationMS: end - start, ElapsedMS: start, TweenSample: true}
+			if len(board.TweenFrameEndsMS) == 0 {
+				elapsed := time.Duration(duration) * time.Millisecond * time.Duration(i) / time.Duration(len(board.TweenFrames))
+				frame.start = frameStart{fraction: elapsed % time.Millisecond, uniform: true}
+			}
+			frames = append(frames, frame)
 		}
 		start = end
 	}

@@ -14,7 +14,7 @@ func TestTweenWholeGradient(t *testing.T) {
 	const to = "linear-gradient(to right, #f00 80%, rgb(255,0,0) 80%)"
 	const mid = "linear-gradient(to right, #800080 50%, #ff000080 50%)"
 	source := fmt.Sprintf(`vars: {
-  d2-config: {animate-duration: 80ms; animate-interval: 1s}
+  d2-config: {animate-duration: 32ms; animate-interval: 1s}
   paint: %q
   alias: ${paint}
 }
@@ -75,7 +75,7 @@ steps: {change: {vars: {paint: %q}}}`, tc.from, tc.to)
 }
 
 func TestTweenGradientUsesRenderedOffsets(t *testing.T) {
-	m, err := compileTween(t, `vars: {d2-config: {animate-duration: 80ms; animate-interval: 1s}}
+	m, err := compileTween(t, `vars: {d2-config: {animate-duration: 32ms; animate-interval: 1s}}
 meter.style.fill: "linear-gradient(blue 80%, blue, white 0.3)"
 steps: {change: {meter.style.fill: "linear-gradient(blue 0.2, blue, white 80%)"}}`, d2ir.CompileOptions{})
 	if err != nil {
@@ -101,7 +101,7 @@ steps: {change: {meter.style.fill: "linear-gradient(blue 0.2, blue, white 80%)"}
 }
 
 func TestTweenGradientWithSpacedColorFunctions(t *testing.T) {
-	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 120ms}}
+	const source = `vars: {d2-config: {animate-duration: 32ms; animate-interval: 120ms}}
 bar.style.fill: "linear-gradient(to right, rgb(90, 130, 210) 20%, white 20%)"
 steps: {loaded: {bar.style.fill: "linear-gradient(to right, rgba(90, 130, 210, 0.5) 80%, white 80%)"}}`
 	m, err := compileTween(t, source, d2ir.CompileOptions{})

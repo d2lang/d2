@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	videoFPS                  = 30
+	videoFPS                  = d2target.TweenFPS
 	videoMaxDuration          = time.Hour
 	videoMaxFramePixels int64 = 4096 * 2160
 	// Bound total coded pixels separately from peak raster and scene work.
@@ -100,6 +100,10 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 		}
 		s.end = s.start + time.Duration(s.DurationMS)*time.Millisecond
 		p.period = s.end
+		if offset := f.StartFraction(); offset != 0 {
+			s.start += offset
+			p.segments[i-1].end = s.start
+		}
 		p.segments = append(p.segments, s)
 	}
 	last := &p.segments[len(p.segments)-1]
@@ -137,7 +141,7 @@ func (p *videoTimeline) sample(index int) (segment int, local time.Duration, rep
 	}
 	segment = sort.Search(len(p.segments), func(i int) bool { return p.segments[i].end > inCycle })
 	s := &p.segments[segment]
-	local = time.Duration(s.ElapsedMS)*time.Millisecond + inCycle - s.start
+	local = time.Duration(s.ElapsedMS)*time.Millisecond + s.StartFraction() + inCycle - s.start
 	stop := s.end
 	if len(s.route) > 0 {
 		stop -= p.zoom

@@ -9,8 +9,22 @@ import (
 	d2log "github.com/d2lang/d2/lib/log"
 )
 
+// gridFrameAt requires an actual sample boundary, including for uniform clocks.
+func gridFrameAt(t *testing.T, step *d2target.Diagram, ms int) *d2target.Diagram {
+	t.Helper()
+	start := 0
+	for i, frame := range step.TweenFrames {
+		if start == ms {
+			return frame
+		}
+		start = step.TweenFrameEndMS(i)
+	}
+	t.Fatalf("missing grid sample at %dms", ms)
+	return nil
+}
+
 func TestGridStepTimingAndComposition(t *testing.T) {
-	const input = `vars: {d2-config: {animate-interval: 350ms; animate-duration: 240ms}}
+	const input = `vars: {d2-config: {animate-interval: 350ms; animate-duration: 300ms}}
 grid-columns: 2
 a: Alpha {style.fill: red}
 b: Beta
@@ -36,22 +50,14 @@ layers: {separate: {grid-columns: 1; a; b; steps: {expand: {c}}}}
 	opts := dagreCompileOptions(&calls)
 	d := compile(opts)
 	first, second := d.Steps[0], d.Steps[1]
-	if len(first.TweenFrames) < 6 || len(second.TweenFrames) < 6 || first.TweenDurationMS != 240 || !first.GridMotion || !second.GridMotion {
+	if len(first.TweenFrames) < d2target.TweenFrameCount(300) || len(second.TweenFrames) < d2target.TweenFrameCount(160) || first.TweenDurationMS != 300 || !first.GridMotion || !second.GridMotion {
 		t.Fatalf("grid changes did not share the configured clock")
 	}
-	midIndex := slices.Index(first.TweenFrameEndsMS, 120)
-	if midIndex < 0 {
-		t.Fatal("lost the original paint tween midpoint at 120ms")
-	}
-	mid := first.TweenFrames[midIndex+1]
+	mid := gridFrameAt(t, first, 150)
 	if got := shapeByID(t, mid, "a").Fill; got != "#800080" {
 		t.Fatalf("midpoint fill = %q", got)
 	}
-	lateIndex := slices.Index(first.TweenFrameEndsMS, 160)
-	if lateIndex < 0 {
-		t.Fatal("lost the original paint sample at 160ms")
-	}
-	if p := shapeByID(t, first.TweenFrames[lateIndex+1], "c").Opacity; p <= 0 || p >= 1 {
+	if p := shapeByID(t, gridFrameAt(t, first, 200), "c").Opacity; p <= 0 || p >= 1 {
 		t.Fatalf("incoming opacity = %v", p)
 	}
 	if got := shapeByID(t, second.TweenFrames[0], "c").Pos; got != shapeByID(t, first, "c").Pos {
@@ -113,11 +119,7 @@ a: {style.stroke-width: ${n}}
 steps: {grow: {vars: {n: 2}; b: {style.stroke-width: ${n}}}}
 `)
 	step := board.Steps[0]
-	index := slices.Index(step.TweenFrameEndsMS, 80)
-	if index < 0 {
-		t.Fatal("missing midpoint in grid step")
-	}
-	sample := step.TweenFrames[index+1]
+	sample := gridFrameAt(t, step, 80)
 	if got := shapeByID(t, sample, "a").RenderedStrokeWidth(); got != 1.5 {
 		t.Fatalf("existing cell has width %v, want 1.5", got)
 	}
@@ -164,6 +166,10 @@ steps: {
 }
 
 func TestGridSampleTimes(t *testing.T) {
+	move := gridMotion{moves: true}
+	if got := len(move.sampleBoundaries(1000, 0)) - 1; got != d2target.TweenFPS {
+		t.Fatalf("one second of grid movement has %d samples, want %d", got, d2target.TweenFPS)
+	}
 	for _, duration := range []int{1, 2, 13, 161, 1050, 4830, d2target.MaxTweenDurationMS} {
 		for _, paint := range []int{0, d2target.TweenFrameCount(duration)} {
 			for _, m := range []gridMotion{{moves: true}, {hasEnter: true}, {hasExit: true}, {hasEnter: true, hasExit: true}, {moves: true, hasEnter: true, hasExit: true}} {
@@ -223,7 +229,7 @@ steps: {add: {c}; remove: {c: null}}`
 		// The add includes a 240 ms paint tween. A pure removal returns
 		// control to the authored endpoint as soon as the 160 ms pop ends.
 		wantEnd := []int{240, 160}[i]
-		if end := step.TweenFrameEndsMS[len(step.TweenFrames)-1]; end != wantEnd || step.TweenDurationMS != 240 || !step.GridMotion {
+		if end := step.TweenFrameEndMS(len(step.TweenFrames) - 1); end != wantEnd || step.TweenDurationMS != 240 || !step.GridMotion {
 			t.Fatalf("%s: last sample ends at %d ms, duration %d ms, grid motion %t", step.Name, end, step.TweenDurationMS, step.GridMotion)
 		}
 		total += len(step.TweenFrames)

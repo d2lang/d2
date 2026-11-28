@@ -108,7 +108,7 @@ steps: {next: {swatch.style.fill: blue}}`
 	}
 	s := info.Streams[0]
 	frames, err := strconv.Atoi(s.Frames)
-	if err != nil || frames < 2 || frames >= 12 || info.Format.Duration != "0.400000" ||
+	if err != nil || frames < 2 || frames >= 24 || info.Format.Duration != "0.400000" ||
 		s.Codec != codec || s.Format != "yuv420p" || s.Width != 320 || s.Height != 180 ||
 		s.ColorSpace != "bt709" || s.Primaries != "bt709" || s.Transfer != "iec61966-2-1" || s.ColorRange != "tv" {
 		t.Fatalf("unexpected video metadata: %+v", info)
@@ -131,17 +131,25 @@ steps: {next: {swatch.style.fill: blue}}`
 
 	// Take the center pixel of the swatch in each decoded frame.
 	samples, err := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", output,
-		"-vf", "fps=30:start_time=0,crop=2:2,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1").Output()
+		"-vf", "fps=60:start_time=0,crop=2:2,scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(samples) != 12*3 {
-		t.Fatalf("decoded %d bytes, want 12 RGB pixels", len(samples))
+	if len(samples) != 24*3 {
+		t.Fatalf("decoded %d bytes, want 24 RGB pixels", len(samples))
 	}
 	pixel := func(frame int) []byte { return samples[3*frame : 3*frame+3] }
-	red, blend, blue := pixel(0), pixel(8), pixel(11)
+	red, blend, blue := pixel(0), pixel(16), pixel(23)
 	if red[0] < 220 || red[2] > 25 || blend[0] < 20 || blend[2] < 20 || blue[0] > 25 || blue[2] < 220 {
-		t.Fatalf("decoded colors at frames 0, 8, 11 = %v, %v, %v", red, blend, blue)
+		t.Fatalf("decoded colors at frames 0, 16, 23 = %v, %v, %v", red, blend, blue)
+	}
+
+	// All six 60 Hz steps of the 100 ms red-to-blue tween should survive
+	// composition, encoding, container timestamps, and decoding.
+	for i := 13; i <= 18; i++ {
+		if pixel(i)[2] <= pixel(i - 1)[2] {
+			t.Fatalf("decoded tween stalled at tick %d: %v then %v", i, pixel(i-1), pixel(i))
+		}
 	}
 
 	// A clip length requests a video, but its implicit 1000ms board interval

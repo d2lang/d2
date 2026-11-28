@@ -35,12 +35,12 @@ func TestVideoAutomaticCameraUsesEvenCanvas(t *testing.T) {
 }
 
 func TestVideoSizeValidation(t *testing.T) {
-	for _, valid := range []string{"48x48", "1920X1080", "1080x1920", "3840x2160", "4096x2048", "3584x2304"} {
+	for _, valid := range []string{"48x48", "1920X1080", "1080x1920", "3840x2160", "4096x2160", "4096x2048", "3584x2304"} {
 		if _, err := parseVideoSize(valid); err != nil {
 			t.Errorf("%s: %v", valid, err)
 		}
 	}
-	for _, invalid := range []string{"", "1920", "480p", "2x2", "1281x720", "4098x48", "48x2306", "4096x2160", "2160x3840", "2147483648x50"} {
+	for _, invalid := range []string{"", "1920", "480p", "2x2", "1281x720", "4098x48", "48x2306", "4096x2176", "2160x3840", "2147483648x50"} {
 		if _, err := parseVideoSize(invalid); err == nil {
 			t.Errorf("accepted invalid size %q", invalid)
 		}

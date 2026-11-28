@@ -242,7 +242,7 @@ steps: {drain: {vars: {charge: 0%}}}`
 }
 
 func TestRenderSketchAnimationAfterCompile(t *testing.T) {
-	const source = `vars: {d2-config: {animate-duration: 120ms; animate-interval: 200ms}}
+	const source = `vars: {d2-config: {animate-duration: 50ms; animate-interval: 200ms}}
 replica: Replica {style.fill: white}
 layers: {
   restore: {
@@ -297,7 +297,7 @@ layers: {
 }
 
 func TestRenderSVGAnimateDuration(t *testing.T) {
-	const source = `vars: {d2-config: {animate-duration: 80ms; animate-interval: 100ms}; charge: 100%}
+	const source = `vars: {d2-config: {animate-duration: 100ms; animate-interval: 100ms}; charge: 100%}
 bar: "${charge}"
 steps: {empty: {vars: {charge: 0%}}}`
 	for _, tc := range []struct {

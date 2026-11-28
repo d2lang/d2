@@ -640,7 +640,7 @@ func motionGIFFrames(frames []d2animate.Frame) []d2animate.Frame {
 // predecessor only when the two pictures use the same camera.
 func gifBoardFrames(scratch []d2animate.Frame, board, previous *d2target.Diagram, intervalMS int) []d2animate.Frame {
 	frames := d2animate.AppendBoardFrames(scratch[:0], board, intervalMS)
-	// The last sample can split its hold with the endpoint even at 25fps.
+	// Ignore the last sample, which can split its hold with the endpoint.
 	denseMotion := board.LayoutContinuity && len(frames) > 2 &&
 		slices.ContainsFunc(frames[:len(frames)-2], func(f d2animate.Frame) bool { return f.DurationMS < 20 })
 	if board.GridMotion || denseMotion {
@@ -656,17 +656,23 @@ func gifStepDelay(frame d2animate.Frame) int {
 	return xgif.StepDelay(time.Duration(frame.ElapsedMS)*time.Millisecond, time.Duration(frame.DurationMS)*time.Millisecond, frame.TweenSample)
 }
 
-// Paint samples normally last around 40ms, but a short authored endpoint
-// hold can quantize to a single centisecond. Keep the original boundaries
-// wherever two centiseconds fit on both sides.
+// Keep paint samples on the authored transition clock while making room for
+// the two-centisecond delays that GIF viewers reliably play.
 func paintGIFFrames(frames []d2animate.Frame, previous *d2target.Diagram) []d2animate.Frame {
 	if !slices.ContainsFunc(frames, func(f d2animate.Frame) bool { return gifStepDelay(f) == 1 }) {
 		return frames
 	}
 	end := frames[len(frames)-1]
 	slot := end.ElapsedMS + end.DurationMS
-	ticks := (slot + 9) / 10
+	// Only the first two ticks of the endpoint hold are available when
+	// fitting samples. A long hold must not stretch a dense paint tween.
+	ticks := min((slot+9)/10, end.ElapsedMS/10+2)
 	capacity := max(1, ticks/2)
+	if capacity > 2 && len(frames) > capacity {
+		// Select crowded samples on the GIF clock. This also preserves the
+		// stationary gaps of a board with a nonuniform paint schedule.
+		return motionGIFFrames(frames)
+	}
 	frames = slices.DeleteFunc(frames, func(f d2animate.Frame) bool { return gifStepDelay(f) == 0 })
 	if capacity == 1 {
 		end.ElapsedMS, end.DurationMS = 0, slot
@@ -678,13 +684,9 @@ func paintGIFFrames(frames []d2animate.Frame, previous *d2target.Diagram) []d2an
 		frames = frames[1:]
 	}
 	if len(frames) > capacity {
-		// A selected step may have no preceding picture. Keep both ends and
-		// the intermediate samples nearest evenly spaced indices.
-		for i := range capacity {
-			index := (i*(len(frames)-1) + (capacity-1)/2) / (capacity - 1)
-			frames[i] = frames[index]
-		}
-		frames = frames[:capacity]
+		// Only two pictures fit. Preserve the exact endpoint.
+		frames[1] = end
+		frames = frames[:2]
 	}
 	start := 0
 	for i := range frames {

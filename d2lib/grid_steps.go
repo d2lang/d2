@@ -176,12 +176,7 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 			if p.motion != nil || p.ink != nil || p.opacity != nil || p.from != nil {
 				p.board = board
 				count := len(board.TweenFrames)
-				if p.from != nil {
-					// Give a short arrival or landing enough distinct samples to
-					// show its acceleration. The existing per-board and total
-					// geometry limits still apply when many steps play together.
-					count = min(d2target.MaxTweenFrames, (60*duration+999)/1000)
-				} else if p.ink != nil || p.opacity != nil {
+				if p.from != nil || p.ink != nil || p.opacity != nil {
 					count = d2target.TweenFrameCount(duration)
 				}
 				if p.motion != nil {
@@ -413,7 +408,19 @@ func (p boardTransitionPlan) sample(ctx context.Context, duration int) error {
 		}
 	}
 	p.board.TweenFrames, p.board.TweenDurationMS, p.board.GridMotion = frames, duration, p.motion != nil || p.board.GridMotion
-	p.board.TweenFrameEndsMS = p.bounds[1:]
+	// Preserve explicit clocks and sparse grid events. Leave generated
+	// uniform times implicit so SVG and video can use sub-millisecond timing.
+	ends := p.bounds[1:]
+	if len(p.board.TweenFrameEndsMS) != 0 {
+		p.board.TweenFrameEndsMS = ends
+	} else {
+		for i, end := range ends {
+			if end != p.board.TweenFrameEndMS(i) {
+				p.board.TweenFrameEndsMS = ends
+				break
+			}
+		}
+	}
 	// A structural plan also proves the two authored boards share world
 	// coordinates. Keep that camera when a raster export fits its frames.
 	p.board.LayoutContinuity = p.board.LayoutContinuity || p.from != nil
@@ -434,7 +441,6 @@ func gridFrameElements(d *d2target.Diagram) int {
 // Sample quick membership changes about every display frame, even on long steps.
 // Reserve the remaining frame budget for full-step paint and position changes.
 func (m *gridMotion) sampleBoundaries(duration, paintCount int) []int {
-	const period = 17 // milliseconds, approximately 60 fps
 	enterStart, enterEnd, exitEnd := m.popWindows(duration)
 	endMS := duration
 	if !m.moves && paintCount == 0 {
@@ -463,13 +469,18 @@ func (m *gridMotion) sampleBoundaries(duration, paintCount int) []int {
 	}
 	xsort.Ordered(events)
 	events = slices.Compact(events)
+	// Boundaries use whole milliseconds, so a single 60 Hz interval can
+	// span 17 ms. Allow that rounding when subdividing existing intervals.
+	gapFrames := func(gap, extraMS int) int {
+		return 1 + (gap-1)*d2target.TweenFPS/(1000+extraMS*d2target.TweenFPS)
+	}
 	var times []int
 	for i, start := range events[:len(events)-1] {
 		end := events[i+1]
 		count := 1
 		for _, w := range windows {
 			if start >= w[0] && start < w[1] {
-				count = (end - start + period - 1) / period
+				count = gapFrames(end-start, 0)
 				break
 			}
 		}
@@ -494,23 +505,23 @@ func (m *gridMotion) sampleBoundaries(duration, paintCount int) []int {
 	// Subdivide the remaining gaps evenly. Increase spacing only when needed
 	// to stay within the existing per-transition limit.
 	anchors := append(times, duration)
-	frameCount := func(spacing int) int {
+	frameCount := func(extraMS int) int {
 		n := 0
 		for i, t := range times {
-			n += (anchors[i+1] - t + spacing - 1) / spacing
+			n += gapFrames(anchors[i+1]-t, extraMS)
 		}
 		return n
 	}
-	spacing := period
-	if frameCount(spacing) > d2target.MaxTweenFrames {
-		spacing += sort.Search(duration, func(extra int) bool {
-			return frameCount(period+extra) <= d2target.MaxTweenFrames
+	extraMS := 0
+	if frameCount(0) > d2target.MaxTweenFrames {
+		extraMS = sort.Search(duration, func(extra int) bool {
+			return frameCount(extra) <= d2target.MaxTweenFrames
 		})
 	}
-	samples := make([]int, 0, frameCount(spacing)+1)
+	samples := make([]int, 0, frameCount(extraMS)+1)
 	for i, start := range times {
 		gap := anchors[i+1] - start
-		n := (gap + spacing - 1) / spacing
+		n := gapFrames(gap, extraMS)
 		for j := 0; j < n; j++ {
 			samples = append(samples, start+j*gap/n)
 		}

@@ -11,7 +11,7 @@ import (
 )
 
 func TestInkFollowsPlaybackAcrossBoards(t *testing.T) {
-	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 64ms}}
 a: Stable {style.fill: white}
 b
 a -> b: Active
@@ -67,7 +67,7 @@ steps: {three: {a: Different {style.underline: true}}}
 }
 
 func TestPlainMarkdownStrikeRoundTrip(t *testing.T) {
-	const source = `vars: {d2-config: {animate-interval: 220ms; animate-duration: 160ms}}
+	const source = `vars: {d2-config: {animate-interval: 220ms; animate-duration: 64ms}}
 a: Retired API
 b: Version 1 active {shape: rectangle}
 c: Healthy
@@ -269,7 +269,7 @@ func TestPencilScheduleWithExistingFrames(t *testing.T) {
 }
 
 func TestSketchHoldUsesDisplayedBoard(t *testing.T) {
-	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 160ms}}
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 64ms}}
 a: Stable {style.fill: gray}
 layers: {blue: {a: Stable {style.fill: blue}}}
 steps: {stay-blue: {a.style.fill: blue}}
@@ -282,7 +282,7 @@ steps: {stay-blue: {a.style.fill: blue}}
 			t.Fatal(err)
 		}
 		if late {
-			if err := PrepareSketchTransitions(context.Background(), d, 160); err != nil {
+			if err := PrepareSketchTransitions(context.Background(), d, 64); err != nil {
 				t.Fatal(err)
 			}
 		}

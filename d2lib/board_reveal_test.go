@@ -86,7 +86,7 @@ func requireArrivalOverlap(t *testing.T, step *d2target.Diagram, wire d2target.C
 				break
 			}
 		}
-		ms := step.TweenFrameEndsMS[i]
+		ms := step.TweenFrameEndMS(i)
 		opacity := node.Opacity / final.Opacity
 		if gap > 8 && opacity > .02 {
 			t.Fatalf("%s at %dms: visible with %.2fpx of route left", id, ms, gap)

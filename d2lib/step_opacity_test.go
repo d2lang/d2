@@ -10,7 +10,7 @@ import (
 )
 
 func TestImplicitStepOpacity(t *testing.T) {
-	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 160ms}; alpha: 0.4}
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 64ms}; alpha: 0.4}
 classes: {
   bright: {style.opacity: 0.8}
   muted: {style.opacity: ${alpha}}

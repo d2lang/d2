@@ -11,15 +11,13 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2scene"
 )
 
-// Both video formats share a canvas budget chosen for portable playback.
-// Windows Media Foundation's H.264 decoder accepts 48x48 through 4096x2304
-// coded pixels and levels up to 5.1. At 30 fps the Level 5.1 macroblock rate
-// also limits large frames (in particular, 3840x2160 fits).
+// Both video formats use the H.264 Level 5.2 macroblock rate. This permits
+// 3840x2160 and 4096x2160 at 60 fps.
 const (
 	videoMinSide                 = 48
 	videoMaxWidth                = 4096
 	videoMaxHeight               = 2304
-	videoMaxMacroblocksPerSecond = 983040
+	videoMaxMacroblocksPerSecond = 2_073_600
 )
 
 type videoSize struct{ width, height int }
