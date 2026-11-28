@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -46,7 +47,6 @@ import (
 	"github.com/d2lang/d2/lib/pptx"
 	"github.com/d2lang/d2/lib/simplelog"
 	"github.com/d2lang/d2/lib/textmeasure"
-	timelib "github.com/d2lang/d2/lib/time"
 	"github.com/d2lang/d2/lib/version"
 )
 
@@ -118,7 +118,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	forceAppendixFlag, err := ms.Opts.Bool("D2_FORCE_APPENDIX", "force-appendix", "", false, "add a numbered appendix for tooltips and links to SVG exports and storyboard panels. Ordinary PNG exports include an appendix by default. Also configurable through vars.d2-config.force-appendix.")
+	forceAppendixFlag, err := ms.Opts.Bool("D2_FORCE_APPENDIX", "force-appendix", "", false, "add a numbered appendix for tooltips and links to SVG and MP4 exports and storyboard panels. Ordinary PNG exports include an appendix by default. Also configurable through vars.d2-config.force-appendix.")
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG or GIF. A positive interval loops through all exported boards, including linked layers, and packages multiple boards into one SVG. A single-board GIF derives its default loop from the animation. Other GIFs default to 1000ms per board and allow time for icon departures. Also configurable through vars.d2-config.animate-interval.")
+	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG, GIF, or MP4. A positive interval plays all exported boards, including linked layers, and packages multiple boards into one SVG. MP4 and multiboard GIFs default to 1000ms per board. GIFs allow time for icon departures and derive a single-board loop from the animation. Also configurable through vars.d2-config.animate-interval.")
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,10 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	timeoutFlag, err := ms.Opts.Int64("D2_TIMEOUT", "timeout", "", 120, "the maximum number of seconds that D2 runs for before timing out and exiting. When rendering a large diagram, it is recommended to increase this value")
+	videoDuration := ms.Opts.Flags.Duration("video-duration", 0, "total MP4 playback duration (e.g. 10s or 250ms). By default a video plays the board sequence once. A shorter duration cuts it, and a longer duration repeats it.")
+	videoSizeFlag := ms.Opts.Flags.String("video-size", "", "MP4 canvas in pixels, e.g. 1920x1080. Fits and centers the diagram at this resolution.")
+	videoQualityFlag := ms.Opts.Flags.String("video-quality", "high", "MP4 encoding quality: low, medium, high, or best.")
+	timeoutFlag, err := ms.Opts.Int64("D2_TIMEOUT", "timeout", "", 120, "the maximum number of seconds that D2 runs for before timing out and exiting. Set this option to apply a timeout to MP4 exports.")
 	if err != nil {
 		return err
 	}
@@ -159,7 +162,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	stdoutFormatFlag := ms.Opts.String("D2_STDOUT_FORMAT", "stdout-format", "", "", "output format when writing to stdout (svg, png, ascii, txt, pdf, pptx, gif). Usage: d2 input.d2 --stdout-format svg - > output.svg")
+	stdoutFormatFlag := ms.Opts.String("D2_STDOUT_FORMAT", "stdout-format", "", "", "output format when writing to stdout (svg, png, ascii, txt, pdf, pptx, gif, mp4). Usage: d2 input.d2 --stdout-format svg - > output.svg")
 	if err != nil {
 		return err
 	}
@@ -287,9 +290,6 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if *browserFlag != "" {
 		ms.Env.Setenv("BROWSER", *browserFlag)
 	}
-	if timeoutFlag != nil {
-		os.Setenv("D2_TIMEOUT", fmt.Sprintf("%d", *timeoutFlag))
-	}
 
 	var inputPath string
 	var outputPath string
@@ -339,6 +339,27 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		}
 	} else if ms.Opts.Flags.Changed("stdout-format") && (review != "storyboard" || !strings.EqualFold(*stdoutFormatFlag, "png")) {
 		return xmain.UsageErrorf("--stdout-format does not apply to d2 %s", review)
+	}
+	video := videoOptions{duration: *videoDuration, quality: videoQuality(*videoQualityFlag)}
+	for _, name := range []string{"video-duration", "video-size", "video-quality"} {
+		if ms.Opts.Flags.Changed(name) && outputFormat != MP4 {
+			return xmain.UsageErrorf("--%s requires MP4 output", name)
+		}
+	}
+	if ms.Opts.Flags.Changed("video-duration") && video.duration <= 0 {
+		return xmain.UsageErrorf("--video-duration must be positive")
+	}
+	if ms.Opts.Flags.Changed("video-size") {
+		video.size, err = parseVideoSize(*videoSizeFlag)
+		if err != nil {
+			return xmain.UsageErrorf("--video-size: %v", err)
+		}
+		if ms.Opts.Flags.Changed("scale") && *scaleFlag > 0 {
+			return xmain.UsageErrorf("--scale and --video-size both set the MP4 resolution; choose one")
+		}
+	}
+	if _, ok := video.quality.crf(); !ok || *videoQualityFlag == "" {
+		return xmain.UsageErrorf("--video-quality must be low, medium, high, or best")
 	}
 	if *animateDurationFlag < 0 || *animateDurationFlag > d2target.MaxTweenDurationMS {
 		return xmain.UsageErrorf("--animate-duration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS)
@@ -427,9 +448,21 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		OmitVersion: omitVersionFlag,
 	}
 
-	if review != "" {
-		ctx, cancel := timelib.WithTimeout(ctx, 2*time.Minute)
+	timeout := time.Duration(*timeoutFlag) * time.Second
+	if outputFormat == MP4 {
+		if !ms.Opts.Flags.Changed("timeout") && ms.Env.Getenv("D2_TIMEOUT") == "" {
+			timeout = 0
+		}
+	} else if *watchFlag {
+		// Other watch formats have historically compiled without a deadline.
+		timeout = 0
+	}
+	if !*watchFlag && timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
+	}
+	if review != "" {
 		return runMotionReview(ctx, ms, review, inputPath, outputPath, layoutFlag, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, forceAppendixFlag, renderOpts)
 	}
 
@@ -445,6 +478,8 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 			renderOpts:      renderOpts,
 			animateInterval: animateIntervalFlag,
 			animateDuration: animateDurationFlag,
+			video:           video,
+			compileTimeout:  timeout,
 			host:            *hostFlag,
 			port:            *portFlag,
 			inputPath:       inputPath,
@@ -482,10 +517,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 		boardPath = key.StringIDA()
 	}
 
-	ctx, cancel := timelib.WithTimeout(ctx, time.Minute*2)
-	defer cancel()
-
-	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, nil)
+	_, written, err := compile(ctx, ms, localFilesFromContext(ctx), layoutFlag, &renderOpts, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, video, inputPath, outputPath, boardPath, noChildren, *bundleFlag, forceAppendixFlag, outputFormat, *asciiModeFlag, nil)
 	if err != nil {
 		if written {
 			return fmt.Errorf("failed to fully compile (partial render written) %s: %w", ms.HumanPath(inputPath), err)
@@ -515,7 +547,7 @@ func validateAnimateInterval(animateInterval int64, ext exportExtension) error {
 		return xmain.UsageErrorf("animate-interval exceeds the supported range on this platform")
 	}
 	if animateInterval > 0 && !ext.supportsAnimation() {
-		return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG or GIF.\nYou provided: %s", ext)
+		return xmain.UsageErrorf("--animate-interval can only be used when exporting to SVG, GIF, or MP4.\nYou provided: %s", ext)
 	}
 	return nil
 }
@@ -553,7 +585,13 @@ func newCLICompileOptions(ctx context.Context, ms *xmain.State, fs fs.FS, inputP
 	}, nil
 }
 
-func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, watchURLPath *string) (_ []byte, written bool, _ error) {
+type videoOptions struct {
+	duration time.Duration
+	size     videoSize
+	quality  videoQuality
+}
+
+func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, renderOptions *d2svg.RenderOpts, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily, animateIntervalFlag, animateDurationFlag *int64, video videoOptions, inputPath, outputPath string, boardPath []string, noChildren, bundle bool, forceAppendixFlag *bool, ext exportExtension, asciiMode string, watchURLPath *string) (_ []byte, written bool, _ error) {
 	wantPreview := watchURLPath != nil
 
 	start := time.Now()
@@ -572,7 +610,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	switch {
 	case noChildren || !ext.supportsAnimation():
 		opts.AnimateTweens = go2.Pointer(false)
-	case ext == GIF:
+	case ext == GIF || ext == MP4:
 		opts.AnimateTweens = go2.Pointer(true)
 	case animateIntervalFlag != nil:
 		opts.AnimateTweens = go2.Pointer(*animateIntervalFlag > 0)
@@ -613,6 +651,10 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 			return nil, false, err
 		}
 	}
+	if ext == MP4 && animateInterval == 0 {
+		animateInterval = 1000
+		ms.Log.Debug.Printf("%s export: defaulting animate-interval to 1000ms", ext)
+	}
 	appendixOption := rootDiagram.Config.ResolveForceAppendix(forceAppendixFlag)
 	forceAppendix := appendixOption != nil && *appendixOption
 	// The CLI's automatic scale sentinel must survive source option resolution.
@@ -620,11 +662,14 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	if renderOptions.Scale != nil && !(*renderOptions.Scale > 0) {
 		renderOptions.Scale = nil
 	}
+	if ext == MP4 && video.size != (videoSize{}) {
+		renderOptions.Scale = nil
+	}
 	renderOpts := *renderOptions
 	cancel()
 
 	engine := cliLayoutEngine(*opts.Layout, ext)
-	if ext == GIF && strings.EqualFold(engine, "tala") {
+	if (ext == GIF || ext == MP4) && strings.EqualFold(engine, "tala") {
 		markPinnedGIFBoards(rootDiagram, g)
 	}
 	diagram, resolvedPath := rootDiagram.ResolveBoard(boardPath)
@@ -654,13 +699,28 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	}
 
 	switch ext {
-	case GIF:
+	case GIF, MP4:
 		layerDuration, err := d2animate.LayerDuration(rootDiagram)
 		if err != nil {
 			return nil, false, err
 		}
 		cacheImages := ms.Env.Getenv("IMG_CACHE") == "1"
-		out, previewSVG, err := renderGIF(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), wantPreview, gifLayerOptions{boardPath: resolvedPath, duration: layerDuration})
+		layers := gifLayerOptions{boardPath: resolvedPath, duration: layerDuration}
+		if ext == MP4 {
+			var preview []byte
+			written, err := writeVideoWithStatus(ctx, ms, outputPath, video.quality, func(emit func(image.Image, int) error) error {
+				if wantPreview {
+					emit = withVideoWatchPreview(ctx, renderOpts.Scale, &preview, emit)
+				}
+				return renderVideoFrames(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), layers, video.duration, forceAppendix, video.size, emit)
+			})
+			if err != nil {
+				return nil, written, err
+			}
+			ms.Log.Success.Printf("successfully compiled %s to %s in %s", ms.HumanPath(inputPath), ms.HumanPath(outputPath), time.Since(start))
+			return preview, written, nil
+		}
+		out, previewSVG, err := renderGIF(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), wantPreview, layers)
 		if err != nil {
 			return nil, false, err
 		}

@@ -33,6 +33,33 @@ func Timeline(root *d2target.Diagram, intervalMS int) ([]Frame, error) {
 	return SVGTimeline(root, nil, intervalMS, 0)
 }
 
+// SceneTimeline prepares board-local icon clocks for finite native playback.
+// A camera can revisit an exact board at time zero or extend its final hold.
+func SceneTimeline(root *d2target.Diagram, intervalMS, zoomMS int) ([]Frame, error) {
+	plan, err := planBoardFrames(root, intervalMS)
+	if err != nil {
+		return nil, err
+	}
+	if len(plan.frames) < 2 || len(plan.iconBoards) == 0 {
+		return plan.frames, nil
+	}
+	icons := newIconTimeline(root, intervalMS)
+	for _, span := range plan.iconBoards {
+		if !icons.Active(span.board) {
+			continue
+		}
+		for i := span.start; i < span.end; i++ {
+			frame := plan.frames[i]
+			if !frame.TweenSample && zoomMS > 0 {
+				frame.DurationMS = frame.ElapsedMS + max(frame.DurationMS, zoomMS)
+				frame.ElapsedMS = 0
+			}
+			plan.frames[i].picture = icons.ScenePicture(span.board, frame)
+		}
+	}
+	return plan.frames, nil
+}
+
 // SVGTimeline also accounts for the travel time of linked-layer zooms when
 // rendering a selected subtree of the document.
 func SVGTimeline(root *d2target.Diagram, boardPath []string, intervalMS, zoomMS int) ([]Frame, error) {
@@ -89,10 +116,7 @@ type svgFramePlan struct {
 	nav        *LayerNavigation
 }
 
-func planSVGFrames(root *d2target.Diagram, boardPath []string, intervalMS, zoomMS int) (*svgFramePlan, error) {
-	if zoomMS < 0 || zoomMS > d2target.MaxTweenDurationMS {
-		return nil, fmt.Errorf("invalid layer transition duration %dms", zoomMS)
-	}
+func planBoardFrames(root *d2target.Diagram, intervalMS int) (*svgFramePlan, error) {
 	if err := d2target.ValidateRenderTarget(root); err != nil {
 		return nil, err
 	}
@@ -119,8 +143,19 @@ func planSVGFrames(root *d2target.Diagram, boardPath []string, intervalMS, zoomM
 		}
 	}
 	walk(root)
+	return &p, nil
+}
+
+func planSVGFrames(root *d2target.Diagram, boardPath []string, intervalMS, zoomMS int) (*svgFramePlan, error) {
+	if zoomMS < 0 || zoomMS > d2target.MaxTweenDurationMS {
+		return nil, fmt.Errorf("invalid layer transition duration %dms", zoomMS)
+	}
+	p, err := planBoardFrames(root, intervalMS)
+	if err != nil {
+		return nil, err
+	}
 	if len(p.frames) < 2 || len(p.iconBoards) == 0 {
-		return &p, nil
+		return p, nil
 	}
 	p.nav = NewLayerNavigation(root, boardPath)
 	var zooms map[int][]frameLeg
@@ -143,7 +178,7 @@ func planSVGFrames(root *d2target.Diagram, boardPath []string, intervalMS, zoomM
 			return nil, err
 		}
 	}
-	return &p, nil
+	return p, nil
 }
 
 // AppendBoardFrames expands one validated, drawable board. Raster exporters

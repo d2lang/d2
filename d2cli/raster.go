@@ -307,7 +307,7 @@ func bundledFontFallbackOptions(totalBoards int, next d2fonts.FallbackResolver) 
 }
 
 type sceneFrameOptions struct {
-	omitAppendix    bool // storyboard follows SVG; other native exports include appendix entries by default.
+	omitAppendix    bool // Video and storyboard follow SVG; other native exports include appendix entries by default.
 	minimumBounds   *image.Rectangle
 	maxNodes        int
 	maxPathCommands int
@@ -826,7 +826,7 @@ func renderGIFWithSession(
 				tl, br := segment.Diagram.BoundingBox()
 				viewport.bounds = viewport.bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
 			}
-			scheduled := gifSegment{Frame: segment, count: count, viewport: viewport, route: route, zoom: zoom}
+			scheduled := gifSegment{Frame: segment, count: count, rasterPlacement: rasterPlacement{viewport: viewport}, route: route, zoom: zoom}
 			if iconTimeline.Active(board) {
 				scheduled.iconBoard = board
 			}
@@ -914,18 +914,7 @@ func renderGIFWithSession(
 		if err != nil {
 			return fmt.Errorf("GIF board %d: %w", boardIndex, err)
 		}
-		canvas := plannedBounds
-		frameBounds := plannedBounds
-		if v := segment.viewport; v != nil {
-			offset := image.Pt(
-				int(math.Round((document.ViewBox.X-float64(v.bounds.Min.X))*scale)),
-				int(math.Round((document.ViewBox.Y-float64(v.bounds.Min.Y))*scale)),
-			)
-			frameBounds = plannedBounds.Add(offset)
-			v.canvas = v.canvas.Union(frameBounds)
-			canvas = v.canvas
-		}
-		segment.bounds = frameBounds
+		canvas := segment.measure(plannedBounds, document, scale)
 		summary.maxWidth = max(summary.maxWidth, canvas.Dx())
 		summary.maxHeight = max(summary.maxHeight, canvas.Dy())
 		if err := validateGIFNormalizedFootprint(summary.maxWidth, summary.maxHeight, totalFrames); err != nil {
@@ -1086,21 +1075,25 @@ func renderGIFWithSession(
 }
 
 func gifDocumentFrameBounds(document *d2scene.Document) (image.Rectangle, error) {
+	return animationFrameBounds(document, "GIF", gifMaxFramePixels)
+}
+
+func animationFrameBounds(document *d2scene.Document, format string, maxPixels int64) (image.Rectangle, error) {
 	if document == nil {
-		return image.Rectangle{}, fmt.Errorf("GIF requires a scene document")
+		return image.Rectangle{}, fmt.Errorf("%s requires a scene document", format)
 	}
 	widthFloat, heightFloat := document.LogicalWidth, document.LogicalHeight
 	if math.IsNaN(widthFloat) || math.IsInf(widthFloat, 0) || widthFloat <= 0 ||
 		math.IsNaN(heightFloat) || math.IsInf(heightFloat, 0) || heightFloat <= 0 {
-		return image.Rectangle{}, fmt.Errorf("GIF scene has invalid logical dimensions")
+		return image.Rectangle{}, fmt.Errorf("%s scene has invalid logical dimensions", format)
 	}
 	widthCeil, heightCeil := math.Ceil(widthFloat), math.Ceil(heightFloat)
 	if widthCeil > rasterMaxDimension || heightCeil > rasterMaxDimension {
-		return image.Rectangle{}, fmt.Errorf("GIF scene dimensions %.0fx%.0f exceed the %d-pixel dimension limit", widthCeil, heightCeil, rasterMaxDimension)
+		return image.Rectangle{}, fmt.Errorf("%s scene dimensions %.0fx%.0f exceed the %d-pixel dimension limit", format, widthCeil, heightCeil, rasterMaxDimension)
 	}
 	width, height := int(widthCeil), int(heightCeil)
-	if int64(width) > gifMaxFramePixels/int64(height) {
-		return image.Rectangle{}, fmt.Errorf("GIF frame pixels exceed the %d-pixel limit", gifMaxFramePixels)
+	if int64(width) > maxPixels/int64(height) {
+		return image.Rectangle{}, fmt.Errorf("%s frame pixels exceed the %d-pixel limit", format, maxPixels)
 	}
 	return image.Rect(0, 0, width, height), nil
 }
@@ -1361,12 +1354,16 @@ func sceneAssetOptions(ctx context.Context, inputPath string, cacheImages bool) 
 }
 
 func gifSceneAssetOptions(ctx context.Context, inputPath string, cacheImages bool, boardCount int) (*d2scenebuild.AssetOptions, error) {
-	budget, err := divideSVGImportBudget(svgImportBudget(), boardCount)
+	return animationSceneAssetOptions(ctx, inputPath, cacheImages, boardCount, gifMaxFramePixels)
+}
+
+func animationSceneAssetOptions(ctx context.Context, inputPath string, cacheImages bool, workDivisor int, maxPixels int64) (*d2scenebuild.AssetOptions, error) {
+	budget, err := divideSVGImportBudget(svgImportBudget(), workDivisor)
 	if err != nil {
 		return nil, err
 	}
 	return newSceneAssetOptions(ctx, inputPath, cacheImages, assetSessionLimits{
-		maxDecodedPixels:          gifMaxFramePixels,
+		maxDecodedPixels:          maxPixels,
 		maxAssets:                 gifImageAssetMaxCount,
 		maxCumulativeEncodedBytes: gifImageEncodedBytes,
 		maxCumulativeDecodedBytes: gifImageDecodedBytes,

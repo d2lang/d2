@@ -10,7 +10,7 @@
 .Op Fl -theme Ar theme
 .Op Fl -salt Ar string
 .Ar file.d2
-.Op Ar file.svg | file.png | file.pdf | file.pptx | file.gif | file.txt
+.Op Ar file.svg | file.png | file.pdf | file.pptx | file.gif | file.mp4 | file.txt
 .Nm d2
 .Ar layout Op Ar name
 .Nm d2
@@ -51,6 +51,8 @@ to
 .Ar file.pptx
 |
 .Ar file.gif
+|
+.Ar file.mp4
 |
 .Ar file.txt
 .Ns .
@@ -153,13 +155,14 @@ Path to .ttf file to use for the monospace semibold font. If none provided, Sour
 Pixels padded around the rendered diagram
 .Ns .
 .It Fl -animate-interval Ar 0
-Set the time each board is displayed in an animated SVG or GIF. The flag takes milliseconds.
+Set the minimum time each board is displayed in an animated SVG, GIF, or MP4. The flag takes milliseconds.
 Set the same interval in D2 source with
 .Li "vars: {d2-config: {animate-interval: 800ms}}" .
-A positive interval loops through the exported boards, including linked layers.
+A positive interval plays the exported boards in order, including linked layers.
 The source value accepts integer milliseconds or a duration such as 1.5s.
 The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over the file.
-Zero selects ordinary SVG export or the default GIF interval of 1000ms.
+Zero selects ordinary SVG export.
+MP4 and multiboard GIFs default to 1000ms per board. GIFs allow time for icon departures and derive a single-board loop from the animation.
 .Ns .
 .It Fl -animate-duration Ar 0
 Set the transition duration for changes to numeric properties, colors, and grid layouts between steps.
@@ -185,6 +188,34 @@ The duration defaults to zero, which disables interpolation, and accepts values 
 The flag takes precedence over D2_ANIMATE_DURATION, which takes precedence over the file.
 Static exports show the authored values.
 .Ns .
+.It Fl -video-duration Ar duration
+Set the total length of an MP4 export, for example
+.Li --video-duration=10s .
+By default, MP4 plays the selected boards once.
+A shorter duration trims the tour and a longer duration repeats it.
+For a single board, independent effects animate throughout the clip.
+Motion is sampled at 30 frames per second.
+Still frames retain their playback duration.
+Durations round up to the next 1/30 second.
+Encoding requires
+.Cm ffmpeg
+version 5.1 or newer with the libx264 encoder on PATH.
+.It Fl -video-size Ar WIDTHxHEIGHT
+Render into an exact canvas, preserving the diagram's aspect ratio and centering it.
+For example, use 1920x1080, 3840x2160 or 1080x1920.
+The default uses the diagram dimensions and scale.
+An explicit video size overrides the diagram's scale.
+Choose either a video size or a positive
+.Fl -scale
+on the command line.
+Each dimension must be even and at least 48 pixels.
+For portable H.264 playback, the coded width is at most 4096 pixels and the
+height at most 2304, subject to the High Level 5.1 limit at 30 fps.
+.It Fl -video-quality Ar low|medium|high|best
+Select H.264 encoding quality.
+The default is high.
+Lower settings reduce file size.
+Higher settings preserve finer detail.
 .It Fl -browser Ar true
 Browser executable that watch opens. Setting to 0 opens no browser
 .Ns .
@@ -244,9 +275,9 @@ Allow remote image assets to access private, loopback, and link-local networks. 
 Allow the diagram to read local files: imports, and images bundled into or rendered in the output. Disable it to render untrusted diagrams
 .Ns .
 .It Fl -force-appendix Ar false
-Add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG, and to storyboard panels.
+Add a numbered appendix for tooltips and links to SVG and MP4 exports and to storyboard panels.
 Ordinary PNG exports include an appendix by default.
-Set the SVG preference in the diagram with
+Set this preference in the diagram with
 .Li "vars: {d2-config: {force-appendix: true}}" .
 An explicit flag or D2_FORCE_APPENDIX environment variable overrides the diagram.
 .Ns .
@@ -262,7 +293,8 @@ Print debug logs
 In watch mode, images used in icons are cached for subsequent compilations. This should be disabled if images might change
 .Ns .
 .It Fl -timeout Ar 120
-The maximum number of seconds that D2 runs for before timing out and exiting. When rendering a large diagram, it is recommended to increase this value
+Set the maximum render time in seconds.
+MP4 exports have no default timeout.
 .Ns .
 .It Fl -check Ar false
 With fmt, exit with status 1 if an input needs formatting.
@@ -279,7 +311,7 @@ Print usage information and exit
 Print version information and exit
 .Ns .
 .It Fl -stdout-format Ar string
-Set the output format when writing to stdout. Supported formats are: png, svg, ascii, txt, pdf, pptx, gif. Only used when output is set to stdout (-)
+Set the output format when writing to stdout. Supported formats are: png, svg, ascii, txt, pdf, pptx, gif, mp4. Only used when output is set to stdout (-)
 .Ns .
 .It Fl -no-xml-tag Ar false
 Omit XML tag (<?xml ...?>) from output SVG files. Useful when generating SVGs for direct HTML embedding

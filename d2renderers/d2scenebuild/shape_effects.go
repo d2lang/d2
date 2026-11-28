@@ -115,6 +115,9 @@ func ShortestAnimationPeriod(board *d2target.Diagram) time.Duration {
 		for i, path := range d.ConnectionIconRoutes() {
 			c := &d.Connections[i]
 			if c.Opacity > 0 {
+				if schedule := c.IconSchedule; schedule != nil && len(schedule.Carried) > 0 {
+					take(iconDuration(schedule.Transit))
+				}
 				if launch := path.LaunchPeriod(c.IconAnimation); !math.IsInf(launch, 1) && launch > 0 {
 					take(iconDuration(min(launch, path.Length()/d2target.IconMotionSpeed)))
 				}
