@@ -31,7 +31,9 @@ func (c Connection) ArrowheadAdjustmentsForWidths(srcWidth, dstWidth float64) (s
 		if v.Length() == 0 {
 			return geo.NewPoint(0, 0)
 		}
-		if c.MotionTip == tip {
+		// A short approach to the first or last corner can be shorter than
+		// the stroke inset. Leave some shaft on its authored side of the bend.
+		if c.MotionTip == tip || !c.IsCurve && len(c.Route) > 2 && distance > v.Length() {
 			distance = min(distance, v.Length()/2)
 		}
 		return v.Unit().Multiply(-distance).ToPoint()
@@ -64,11 +66,16 @@ func (c Connection) PathCommands(srcAdj, dstAdj *geo.Point) iter.Seq[ConnectionP
 			}
 			return
 		}
-		// Leave a forward tangent between the rounded bend and a trace's inset
-		// endpoint, including when two close bends share a cubic.
-		radiusAtTip := func(units float64, terminal bool, corner, tip *geo.Point) float64 {
+		// A rounded corner must stay between the two drawn endpoints, even
+		// when a resizing shape leaves a first or last run shorter than its
+		// corner radius. A moving trace tip also needs a forward tangent.
+		radiusAtTip := func(units float64, terminal bool, endpoint TraceEndpoint, corner, tip *geo.Point) float64 {
 			if terminal {
-				return min(units, geo.EuclideanDistance(corner.X, corner.Y, tip.X, tip.Y)/2)
+				length := geo.EuclideanDistance(corner.X, corner.Y, tip.X, tip.Y)
+				if c.MotionTip == endpoint {
+					length /= 2
+				}
+				return min(units, length)
 			}
 			return units
 		}
@@ -81,8 +88,8 @@ func (c Connection) PathCommands(srcAdj, dstAdj *geo.Point) iter.Seq[ConnectionP
 				continue
 			}
 			units := math.Min(c.BorderRadius, geo.EuclideanDistance(corner.X, corner.Y, next.X, next.Y)/2)
-			approach := prev.VectorTo(corner).Unit().Multiply(radiusAtTip(units, i == 1 && c.MotionTip == TraceSource, corner, &start)).ToPoint()
-			leave := corner.VectorTo(next).Unit().Multiply(radiusAtTip(units, i == last-1 && c.MotionTip == TraceDestination, corner, &end)).ToPoint()
+			approach := prev.VectorTo(corner).Unit().Multiply(radiusAtTip(units, i == 1, TraceSource, corner, &start)).ToPoint()
+			leave := corner.VectorTo(next).Unit().Multiply(radiusAtTip(units, i == last-1, TraceDestination, corner, &end)).ToPoint()
 			lineEnd := geo.Point{X: corner.X - approach.X, Y: corner.Y - approach.Y}
 			if !yield(ConnectionPathCommand{Kind: 'L', End: lineEnd}) {
 				return
@@ -93,7 +100,7 @@ func (c Connection) PathCommands(srcAdj, dstAdj *geo.Point) iter.Seq[ConnectionP
 					continue
 				}
 				i++
-				leave = next.VectorTo(route[i+1]).Unit().Multiply(radiusAtTip(units, i == last-1 && c.MotionTip == TraceDestination, next, &end)).ToPoint()
+				leave = next.VectorTo(route[i+1]).Unit().Multiply(radiusAtTip(units, i == last-1, TraceDestination, next, &end)).ToPoint()
 				if !yield(ConnectionPathCommand{Kind: 'C',
 					Control1: geo.Point{X: corner.X + approach.X, Y: corner.Y + approach.Y},
 					Control2: geo.Point{X: next.X - leave.X, Y: next.Y - leave.Y},
