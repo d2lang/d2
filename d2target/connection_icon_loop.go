@@ -8,6 +8,15 @@ import (
 	"github.com/d2lang/d2/lib/color"
 )
 
+func (d *Diagram) shapeStrokeWidths() map[string]float64 {
+	widths := make(map[string]float64, len(d.Shapes))
+	for i := range d.Shapes {
+		s := &d.Shapes[i]
+		widths[s.ID] = s.RenderedStrokeWidth()
+	}
+	return widths
+}
+
 // ConnectionIconRoutes yields motion paths in connection order, using the
 // stroke widths of this board's endpoints. Routes must already be laid out.
 func (d *Diagram) ConnectionIconRoutes() iter.Seq2[int, IconMotionPath] {
@@ -19,11 +28,7 @@ func (d *Diagram) ConnectionIconRoutes() iter.Seq2[int, IconMotionPath] {
 				continue
 			}
 			if widths == nil {
-				widths = make(map[string]float64, len(d.Shapes))
-				for j := range d.Shapes {
-					shape := &d.Shapes[j]
-					widths[shape.ID] = shape.RenderedStrokeWidth()
-				}
+				widths = d.shapeStrokeWidths()
 			}
 			if !yield(i, c.IconMotionPath(widths[c.Src], widths[c.Dst])) {
 				return

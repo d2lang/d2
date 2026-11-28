@@ -2214,6 +2214,7 @@ func validateRenderLinks(diagram *d2target.Diagram) error {
 // validated. Keeping this internal lets RenderMultiboard avoid repeatedly
 // walking every descendant subtree.
 func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *RenderOpts) ([]byte, error) {
+	diagram = diagram.WithIconLabelInsets()
 	if err := validateRenderPaints(diagram, opts); err != nil {
 		return nil, err
 	}

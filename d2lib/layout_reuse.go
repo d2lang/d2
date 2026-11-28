@@ -133,6 +133,9 @@ func (b *layoutSignatureBuilder) writeEdge(edge *d2graph.Edge) error {
 	footprint := icon.MovingIconFootprint()
 	b.writeInt(int(footprint))
 	if footprint != 0 && edge.Label.Value != "" {
+		srcWidth, dstWidth := edge.EndpointStrokeWidths()
+		b.writeFloat(srcWidth)
+		b.writeFloat(dstWidth)
 		b.writeOptionalScalar(edge.Style.BorderRadius)
 		b.writeOptionalScalar(edge.Style.StrokeWidth)
 		if edge.Style.StrokeWidth != nil {

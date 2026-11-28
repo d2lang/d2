@@ -398,7 +398,7 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 			if e.IconStyle.Animated != nil {
 				conn := d2exporter.ToConnection(e, g.Theme)
 				if footprint := conn.MovingIconFootprint(); footprint != 0 {
-					talaEdge.MovingIcon = labelgeom.MovingIconGeometry{Footprint: footprint, StrokeWidth: conn.RenderedStrokeWidth(), BorderRadius: conn.BorderRadius}
+					talaEdge.MovingIcon = labelgeom.MovingIconGeometry{Footprint: footprint, StrokeWidth: conn.RenderedStrokeWidth(), BorderRadius: conn.BorderRadius, Insets: conn.IconLabelInsets}
 				}
 			}
 			talaEdge.Label = &layoutgraph.Label{

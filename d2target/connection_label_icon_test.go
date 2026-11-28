@@ -90,3 +90,46 @@ func TestConnectionLabelRetainsInlineStaticAndAnchoredPositions(t *testing.T) {
 		t.Fatalf("moved an already positioned sampled caption: %v", got)
 	}
 }
+
+func TestOutsideCaptionClearsPaintedEndpoints(t *testing.T) {
+	for _, tc := range []struct {
+		name                               string
+		route                              geo.Route
+		pos                                label.Position
+		width, height, stroke, shapeStroke int
+		fraction                           float64
+		curve                              bool
+	}{
+		// The arrow's 30px inset extends beyond the last 19px leg.
+		{"short TALA elbow", geo.Route{{X: 129, Y: 278}, {X: 202, Y: 278}, {X: 202, Y: 259}}, label.OutsideBottomCenter, 47, 21, 15, 15, 0, false},
+		// Moving the endpoint also changes the interior of a cubic.
+		{"cubic", geo.Route{{X: 0, Y: 0}, {X: 50.5, Y: 75.5}, {X: 119, Y: 1}, {X: 182.5, Y: 55.5}}, label.UnlockedTop, 58, 25, 13, 8, .2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewDiagram()
+			d.Shapes = []Shape{{ID: "src", StrokeWidth: tc.shapeStroke}, {ID: "dst", StrokeWidth: tc.shapeStroke}}
+			c := BaseConnection()
+			c.Src, c.Dst, c.DstArrow = "src", "dst", DefaultArrowhead
+			c.Route, c.IsCurve, c.StrokeWidth = tc.route, tc.curve, tc.stroke
+			c.Label, c.LabelWidth, c.LabelHeight = "Data in", tc.width, tc.height
+			c.LabelPosition, c.LabelPercentage = tc.pos.String(), tc.fraction
+			c.Icon, c.IconAnimation = &url.URL{Path: "icon.svg"}, &ConnectionIconAnimation{}
+			d.Connections = []Connection{*c}
+			resolved := d.WithIconLabelInsets()
+			if d.Connections[0].IconLabelInsets != ([2]float64{}) {
+				t.Fatal("resolving geometry mutated the input board")
+			}
+			topLeft := resolved.Connections[0].GetLabelTopLeft()
+			x, y := math.Round(topLeft.X)-2, math.Round(topLeft.Y)
+			path := c.IconMotionPath(float64(tc.shapeStroke), float64(tc.shapeStroke))
+			for distance := 0.; distance <= path.Length(); distance += 0.25 {
+				pt := path.PointAt(distance)
+				dx := max(0., x-pt.X, pt.X-(x+float64(tc.width)+4))
+				dy := max(0., y-pt.Y, pt.Y-(y+float64(tc.height)))
+				if gap := max(dx, dy) - float64(c.IconSize())/2; gap < 3 {
+					t.Fatalf("moving image at %v clears the caption by only %.2f", pt, gap)
+				}
+			}
+		})
+	}
+}

@@ -214,6 +214,7 @@ func Build(ctx context.Context, diagram *d2target.Diagram, options Options) (*d2
 	if err := admitSceneWork(ctx, diagram, options); err != nil {
 		return nil, err
 	}
+	diagram = diagram.WithIconLabelInsets()
 
 	b := &builder{
 		ctx:            ctx,

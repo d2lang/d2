@@ -338,6 +338,27 @@ func (a *Attributes) ApplyTextTransform() {
 	}
 }
 
+// Arrowheads returns the markers at the authored source and destination.
+func (e *Edge) Arrowheads() (d2target.Arrowhead, d2target.Arrowhead) {
+	marker := func(enabled bool, attrs *Attributes) d2target.Arrowhead {
+		if !enabled {
+			return d2target.NoArrowhead
+		}
+		if attrs == nil {
+			return d2target.DefaultArrowhead
+		}
+		return attrs.ToArrowhead()
+	}
+	return marker(e.SrcArrow, e.SrcArrowhead), marker(e.DstArrow, e.DstArrowhead)
+}
+
+// EndpointStrokeWidths includes the subpixel width of tweened shapes.
+func (e *Edge) EndpointStrokeWidths() (float64, float64) {
+	src, srcOffset := e.Src.StrokeWidth()
+	dst, dstOffset := e.Dst.StrokeWidth()
+	return float64(src) + srcOffset, float64(dst) + dstOffset
+}
+
 func (a *Attributes) ToArrowhead() d2target.Arrowhead {
 	var filled *bool
 	if a.Style.Filled != nil {
@@ -672,6 +693,18 @@ func (obj *Object) GetFill() string {
 	}
 
 	return color.N7
+}
+
+// StrokeWidth gives the rendered whole and subpixel parts of a shape stroke.
+func (obj *Object) StrokeWidth() (int, float64) {
+	if stroke := obj.Style.StrokeWidth; stroke != nil {
+		width, _ := strconv.Atoi(stroke.Value)
+		return width, stroke.TweenOffset
+	}
+	if obj.IsSequenceDiagram() || obj.IsSequenceDiagramGroup() {
+		return 0, 0
+	}
+	return d2target.DEFAULT_SHAPE_STROKE_WIDTH, 0
 }
 
 func (obj *Object) GetStroke(dashGapSize interface{}) string {

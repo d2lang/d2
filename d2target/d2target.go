@@ -489,6 +489,7 @@ func (diagram Diagram) BoundingBox() (topLeft, bottomRight Point) {
 // InkBoundingBox bounds everything drawn on the board except its caption,
 // which is placed under this box.
 func (diagram Diagram) InkBoundingBox() (topLeft, bottomRight Point) {
+	diagram = *diagram.WithIconLabelInsets()
 	if len(diagram.Shapes) == 0 {
 		return Point{0, 0}, Point{0, 0}
 	}
@@ -1149,6 +1150,8 @@ type Connection struct {
 	IconBorderRadius float64                  `json:"iconBorderRadius,omitempty"`
 	IconShape        string                   `json:"iconShape,omitempty"`
 	IconAnimation    *ConnectionIconAnimation `json:"iconAnimation,omitempty"`
+	// IconLabelInsets is derived from the current board's endpoint stroke widths.
+	IconLabelInsets [2]float64 `json:"-"`
 	// IconPositions holds sampled centers. Nil leaves playback to the renderer.
 	IconPositions []geo.Point             `json:"-"`
 	IconSchedule  *ConnectionIconSchedule `json:"-"`

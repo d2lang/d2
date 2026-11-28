@@ -53,6 +53,10 @@ func loopLabelConnection(g *d2graph.Graph, edge *d2graph.Edge) *d2target.Connect
 	if edge.Style.StrokeWidth != nil {
 		c.StrokeWidth, _ = strconv.Atoi(edge.Style.StrokeWidth.Value)
 	}
+	if c.IconAnimation != nil && edge.Label.Value != "" {
+		c.SrcArrow, c.DstArrow = edge.Arrowheads()
+		c.IconLabelInsets = c.EndpointInsets(edge.EndpointStrokeWidths())
+	}
 	if g.Theme != nil && g.Theme.SpecialRules.NoCornerRadius {
 		c.BorderRadius = 0
 	}

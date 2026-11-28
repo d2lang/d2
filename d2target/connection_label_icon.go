@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"math"
 	"math/bits"
+	"slices"
 
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
@@ -70,9 +71,9 @@ func (icon MovingIconFootprint) LabelTopLeft(c *Connection, pos label.Position, 
 	// slide along the wire or farther out on the chosen side. For example, a
 	// caption above a horizontal run often needs to slide just past its elbow.
 	center := geo.Point{X: topLeft.X + width/2, Y: topLeft.Y + height/2}
-	var zero geo.Point
+	src, dst := c.arrowheadAdjustments(c.IconLabelInsets)
 	var path []geo.Point
-	for point := range c.iconMotionPoints(&zero, &zero) {
+	for point := range c.iconMotionPoints(src, dst) {
 		if charge != nil && !charge(1) {
 			return nil
 		}
@@ -99,6 +100,33 @@ func (icon MovingIconFootprint) LabelTopLeft(c *Connection, pos label.Position, 
 		topLeft.Y += direction.Y * distance
 	}
 	return topLeft
+}
+
+// WithIconLabelInsets resolves derived geometry for standalone render targets
+// and for frames whose endpoint strokes changed after layout. The original
+// board and its connections remain usable by concurrent renders.
+func (d *Diagram) WithIconLabelInsets() *Diagram {
+	result := d
+	var widths map[string]float64
+	for i := range d.Connections {
+		c := &d.Connections[i]
+		if c.IconAnimation == nil || c.Label == "" || len(c.Route) <= 2 || label.FromString(c.LabelPosition).IsOnEdge() {
+			continue
+		}
+		if widths == nil {
+			widths = d.shapeStrokeWidths()
+		}
+		insets := c.EndpointInsets(widths[c.Src], widths[c.Dst])
+		if c.IconLabelInsets != insets {
+			if result == d {
+				copy := *d
+				copy.Connections = slices.Clone(d.Connections)
+				result = &copy
+			}
+			result.Connections[i].IconLabelInsets = insets
+		}
+	}
+	return result
 }
 
 // Moving the caption along a ray gives one forbidden interval for each painted

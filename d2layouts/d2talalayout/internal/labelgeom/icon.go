@@ -17,9 +17,10 @@ type MovingIconGeometry struct {
 	Footprint    d2target.MovingIconFootprint `json:"footprint"`
 	StrokeWidth  float64                      `json:"strokeWidth"`
 	BorderRadius float64                      `json:"borderRadius"`
+	Insets       [2]float64                   `json:"insets,omitzero"`
 }
 
 func (icon MovingIconGeometry) LabelTopLeft(route geo.Route, curve bool, pos label.Position, fraction, width, height float64, charge func(int64) bool) *geo.Point {
-	c := &d2target.Connection{Route: route, IsCurve: curve, BorderRadius: icon.BorderRadius, StrokeWidthOffset: icon.StrokeWidth}
+	c := &d2target.Connection{Route: route, IsCurve: curve, BorderRadius: icon.BorderRadius, StrokeWidthOffset: icon.StrokeWidth, IconLabelInsets: icon.Insets}
 	return icon.Footprint.LabelTopLeft(c, pos, fraction, width, height, charge)
 }

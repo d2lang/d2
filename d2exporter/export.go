@@ -108,6 +108,9 @@ func toAnnotation(a *d2graph.Annotation, defaultShape string) *d2target.Annotati
 
 func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily) (*d2target.Diagram, error) {
 	diagram := d2target.NewDiagram()
+	if g.Root.Style.StrokeWidth != nil {
+		diagram.Root.StrokeWidth, diagram.Root.StrokeWidthOffset = g.Root.StrokeWidth()
+	}
 	applyStyles(&diagram.Root, g.Root)
 	if g.Root.Label.MapKey == nil {
 		diagram.Root.Label = g.Name
@@ -278,10 +281,6 @@ func applyStyles(shape *d2target.Shape, obj *d2graph.Object) {
 	if obj.Style.Stroke != nil {
 		shape.Stroke = obj.Style.Stroke.Value
 	}
-	if obj.Style.StrokeWidth != nil {
-		shape.StrokeWidth, _ = strconv.Atoi(obj.Style.StrokeWidth.Value)
-		shape.StrokeWidthOffset = obj.Style.StrokeWidth.TweenOffset
-	}
 	if obj.Style.Shadow != nil {
 		shape.Shadow, _ = strconv.ParseBool(obj.Style.Shadow.Value)
 	}
@@ -335,12 +334,8 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 	shape.Italic = text.IsItalic
 	shape.FontSize = text.FontSize
 
-	if obj.IsSequenceDiagram() {
-		shape.StrokeWidth = 0
-	}
-
+	shape.StrokeWidth, shape.StrokeWidthOffset = obj.StrokeWidth()
 	if obj.IsSequenceDiagramGroup() {
-		shape.StrokeWidth = 0
 		shape.Blend = true
 	}
 
@@ -456,12 +451,7 @@ func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 	connection.ZIndex = edge.ZIndex
 	text := edge.Text()
 
-	if edge.SrcArrow {
-		connection.SrcArrow = d2target.DefaultArrowhead
-		if edge.SrcArrowhead != nil {
-			connection.SrcArrow = edge.SrcArrowhead.ToArrowhead()
-		}
-	}
+	connection.SrcArrow, connection.DstArrow = edge.Arrowheads()
 	if edge.SrcArrowhead != nil {
 		if edge.SrcArrowhead.Label.Value != "" {
 			connection.SrcLabel = &d2target.Text{
@@ -472,12 +462,6 @@ func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 			if edge.SrcArrowhead.Style.FontColor != nil {
 				connection.SrcLabel.Color = edge.SrcArrowhead.Style.FontColor.Value
 			}
-		}
-	}
-	if edge.DstArrow {
-		connection.DstArrow = d2target.DefaultArrowhead
-		if edge.DstArrowhead != nil {
-			connection.DstArrow = edge.DstArrowhead.ToArrowhead()
 		}
 	}
 	if edge.DstArrowhead != nil {
@@ -594,5 +578,8 @@ func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 		}
 	}
 
+	if connection.IconAnimation != nil && edge.Label.Value != "" {
+		connection.IconLabelInsets = connection.EndpointInsets(edge.EndpointStrokeWidths())
+	}
 	return *connection
 }

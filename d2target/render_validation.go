@@ -129,6 +129,7 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 		}
 	}
 
+	diagram = diagram.WithIconLabelInsets()
 	for i, connection := range diagram.Connections {
 		connectionPath := fmt.Sprintf("%s.connections[%d]", path, i)
 		if err := validateRenderConnection(connection, connectionPath); err != nil {
