@@ -11,7 +11,10 @@ import (
 )
 
 // Raster formats draw in delivery pixels, after camera and canvas placement.
-const animationProgressHeight = 2
+func animationProgressStrip(bounds image.Rectangle) image.Rectangle {
+	bounds.Min.Y = max(bounds.Min.Y, bounds.Max.Y-d2animate.ProgressHeight)
+	return bounds
+}
 
 func animationProgressInk(opts d2svg.RenderOpts) *image.Uniform {
 	if opts.AnimateProgress == nil || !*opts.AnimateProgress {
@@ -51,8 +54,7 @@ func (p *videoProgressOverlay) emit(ctx context.Context, frame draw.Image, start
 		return emit(frame, repeats)
 	}
 	bounds := frame.Bounds()
-	strip := bounds
-	strip.Min.Y = max(strip.Min.Y, strip.Max.Y-animationProgressHeight)
+	strip := animationProgressStrip(bounds)
 	if p.strip == nil {
 		p.strip = image.NewRGBA(strip)
 	}

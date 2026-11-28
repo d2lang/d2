@@ -10,6 +10,9 @@ import (
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 )
 
+// ProgressHeight is the line height in SVG user units or raster output pixels.
+const ProgressHeight = 6
+
 // ProgressColor resolves the opaque B1 accent used by animation overlays.
 // A transparent diagram accent leaves the catalog's default line visible.
 func ProgressColor(themeID *int64, overrides *d2target.ThemeOverrides) string {

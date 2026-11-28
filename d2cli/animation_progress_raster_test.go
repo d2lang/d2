@@ -27,12 +27,12 @@ func progressRenderOpts() d2svg.RenderOpts {
 func checkProgressStrip(t *testing.T, frame image.Image, extent int) {
 	t.Helper()
 	bounds := frame.Bounds()
-	for y := bounds.Max.Y - 3; y < bounds.Max.Y; y++ {
+	for y := max(bounds.Min.Y, bounds.Max.Y-7); y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			got := color.RGBAModel.Convert(frame.At(x, y)) == testProgressInk
-			want := y >= bounds.Max.Y-2 && x < bounds.Min.X+extent
+			want := y >= bounds.Max.Y-6 && x < bounds.Min.X+extent
 			if got != want {
-				t.Fatalf("pixel (%d,%d) on %v is %v; expected a two-pixel progress line of width %d", x, y, bounds, frame.At(x, y), extent)
+				t.Fatalf("pixel (%d,%d) on %v is %v; expected a six-pixel progress line of width %d", x, y, bounds, frame.At(x, y), extent)
 			}
 		}
 	}
@@ -68,11 +68,12 @@ func TestVideoProgressUsesOutputClockAndLetterbox(t *testing.T) {
 func TestVideoProgressCancellationRestoresBorrowedCanvas(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	frame := image.NewRGBA(image.Rect(0, 0, 48, 48))
+	frame := image.NewRGBA(image.Rect(3, 7, 51, 11))
 	original := bytes.Clone(frame.Pix)
 	p := &videoProgressOverlay{ink: image.NewUniform(testProgressInk)}
 	calls := 0
-	err := p.emit(ctx, frame, 5, 50, 60, func(image.Image, int) error {
+	err := p.emit(ctx, frame, 5, 50, 60, func(im image.Image, _ int) error {
+		checkProgressStrip(t, im, 4)
 		calls++
 		cancel()
 		return nil
@@ -99,6 +100,7 @@ func TestGIFProgressUsesEncodedDelaysOnMixedCanvases(t *testing.T) {
 		{"caption", single, 101, (single.ReadingMS() + 9) / 10},
 		{"sparse tween", root, 100, 60},
 		{"single frame", simpleRasterDiagram(), 1, 1},
+		{"short canvas", simpleRasterDiagramWithSize(10, 3), 100, 10},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data, _, err := renderGIF(t.Context(), "-", false, tc.d, progressRenderOpts(), tc.ms, false, gifLayerOptions{})
@@ -108,6 +110,9 @@ func TestGIFProgressUsesEncodedDelaysOnMixedCanvases(t *testing.T) {
 			a, err := gif.DecodeAll(bytes.NewReader(data))
 			if err != nil {
 				t.Fatal(err)
+			}
+			if tc.name == "short canvas" && a.Config.Height != 3 {
+				t.Fatalf("short GIF canvas is %d pixels high, want 3", a.Config.Height)
 			}
 			elapsed := 0
 			for i, frame := range a.Image {
@@ -167,7 +172,7 @@ func TestGIFProgressReservesAccentOnFullGrayscalePalette(t *testing.T) {
 	for i := range palette {
 		palette[i] = color.Gray{Y: uint8(i)}
 	}
-	im := image.NewPaletted(image.Rect(0, 0, 256, 4), palette)
+	im := image.NewPaletted(image.Rect(0, 0, 256, 7), palette)
 	for i := range im.Pix {
 		im.Pix[i] = uint8(i)
 	}

@@ -34,7 +34,7 @@ func TestSVGProgressClock(t *testing.T) {
 		"@keyframes d2Progress-" + hash + "{from{width:0}to{width:100%}}",
 		line + "{fill:#123456}", "@media screen and (prefers-color-scheme:dark){" + line + "{fill:#abcdef}}",
 		"@media(prefers-reduced-motion:reduce){" + line + "{visibility:hidden}}",
-		`x="-14" y="16" width="0" height="2" pointer-events="none" aria-hidden="true"`,
+		`x="-14" y="12" width="0" height="6" pointer-events="none" aria-hidden="true"`,
 		"1000ms linear infinite",
 	} {
 		if !strings.Contains(active, want) {
@@ -47,6 +47,19 @@ func TestSVGProgressClock(t *testing.T) {
 	opts.AnimateProgress = &off
 	if strings.Contains(wrap(), "d2Progress-") {
 		t.Fatal("explicit false did not disable the source's progress line")
+	}
+}
+
+func TestSVGProgressFitsShortCanvas(t *testing.T) {
+	on := true
+	opts := d2svg.RenderOpts{Pad: new(int64), AnimateProgress: &on}
+	frame := []byte(`<g viewBox="0 0 12 3"></g>`)
+	out, err := Wrap(d2target.NewDiagram(), [][]byte{frame}, opts, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `x="0" y="0" width="0" height="3" pointer-events="none"`) {
+		t.Fatal("progress line should fit the three-unit viewport")
 	}
 }
 

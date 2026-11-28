@@ -272,7 +272,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	}
 	if progress {
 		// The line is in the common viewport, outside the moving camera.
-		h := min(2, height)
+		h := min(ProgressHeight, height)
 		fmt.Fprintf(buf, `<rect class="d2-progress-%s" x="%d" y="%d" width="0" height="%d" pointer-events="none" aria-hidden="true" style="animation:d2Progress-%s %dms linear infinite"/>`,
 			diagramHash, left, viewport.Max.Y-h, h, diagramHash, totalMS)
 	}

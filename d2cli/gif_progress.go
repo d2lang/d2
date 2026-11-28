@@ -39,7 +39,8 @@ func (p *gifProgressOverlay) paint(ctx context.Context, frame *image.Paletted) e
 	if err != nil {
 		return err
 	}
-	for y := max(bounds.Min.Y, bounds.Max.Y-animationProgressHeight); y < bounds.Max.Y; y++ {
+	strip := animationProgressStrip(bounds)
+	for y := strip.Min.Y; y < strip.Max.Y; y++ {
 		start := frame.PixOffset(bounds.Min.X, y)
 		for i := range extent {
 			frame.Pix[start+i] = uint8(index)
