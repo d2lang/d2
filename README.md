@@ -159,9 +159,10 @@ linked layers. Link a shape with `gateway.link: layers.gateway` and set
 `animate-duration` to zoom through that shape when playback enters the layer
 and pull back when it returns to the overview. Moving between linked siblings
 zooms out to their parent and then into the next layer. Across branches, the
-camera follows the links through the nearest common ancestor. These moves
-share one transition duration. Clicking a linked shape in a standalone SVG
-pauses the tour for manual navigation.
+camera follows the links through the nearest common ancestor. The whole move
+uses one transition duration. If a link is missing along the route, playback
+cuts to the destination. Clicking a board link in a standalone SVG pauses the
+tour for manual navigation.
 [Order fulfillment example](./docs/examples/order-fulfillment/order-fulfillment.svg) · [D2 source](./docs/examples/order-fulfillment/order-fulfillment.d2)
 
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to

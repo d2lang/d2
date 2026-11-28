@@ -40,6 +40,9 @@ func TestLayerZoomPlayback(t *testing.T) {
 			if !bytes.Contains(out, []byte(`href="#d2-layer-link-`)) {
 				t.Fatal("missing manual link during timed playback")
 			}
+			if tc.duration == 0 && bytes.Contains(out, []byte("@keyframes d2-click-")) {
+				t.Fatal("zero-duration navigation emitted unused camera keyframes")
+			}
 			if got := bytes.Contains(out, []byte("@media (prefers-reduced-motion:no-preference){@keyframes d2Transition-")); got != tc.transition {
 				t.Errorf("linked layers have camera keyframes = %v", got)
 			}

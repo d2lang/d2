@@ -43,22 +43,24 @@ type childBoard struct {
 // LayerNavigation resolves links between authored boards in a validated
 // export tree. Tween samples are artwork, never navigation destinations.
 type LayerNavigation struct {
-	root     *d2target.Diagram
-	path     []string
-	boards   map[*d2target.Diagram]layerBoard
-	children map[childBoard]*d2target.Diagram
-	focus    map[boardPair]*d2target.Shape
+	root       *d2target.Diagram
+	path       []string
+	boards     map[*d2target.Diagram]layerBoard
+	children   map[childBoard]*d2target.Diagram
+	focus      map[boardPair]*d2target.Shape
+	layerFocus map[boardPair]*d2target.Shape
 }
 
 // NewLayerNavigation indexes a selected subtree. boardPath is its absolute
 // D2 target path relative to root, e.g. ["layers", "api"].
 func NewLayerNavigation(root *d2target.Diagram, boardPath []string) *LayerNavigation {
 	nav := &LayerNavigation{
-		root:     root,
-		path:     boardPath,
-		boards:   make(map[*d2target.Diagram]layerBoard),
-		children: make(map[childBoard]*d2target.Diagram),
-		focus:    make(map[boardPair]*d2target.Shape),
+		root:       root,
+		path:       boardPath,
+		boards:     make(map[*d2target.Diagram]layerBoard),
+		children:   make(map[childBoard]*d2target.Diagram),
+		focus:      make(map[boardPair]*d2target.Shape),
+		layerFocus: make(map[boardPair]*d2target.Shape),
 	}
 	count := 0
 	var visit func(*d2target.Diagram, int, *d2target.Diagram, *d2target.Diagram)
@@ -94,10 +96,22 @@ func NewLayerNavigation(root *d2target.Diagram, boardPath []string) *LayerNaviga
 				// Studio uses the last matching shape when navigation wasn't
 				// initiated by clicking one particular shape.
 				nav.focus[boardPair{board, target}] = shape
+				nav.layerFocus[boardPair{board, nav.boards[target].layer}] = shape
 			}
 		}
 	}
 	return nav
+}
+
+// HasLayerPortal reports whether an authored shape can take the camera between
+// two drawable boards in this export tree.
+func (nav *LayerNavigation) HasLayerPortal() bool {
+	for pair := range nav.focus {
+		if _, ok := nav.Zoom(pair.from, pair.to); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // destination resolves a compiled absolute board link. Path components can
@@ -153,6 +167,11 @@ func (nav *LayerNavigation) Zoom(from, to *d2target.Diagram) (LayerZoom, bool) {
 		// A return link inherited by an inner step still exits through the
 		// enclosing board's shape that opens that layer.
 		shape = nav.focus[boardPair{from, b.layer}]
+	}
+	if shape == nil {
+		// A portal may open a particular step. Its other steps still return
+		// through that shape after the layer's local playback advances.
+		shape = nav.layerFocus[boardPair{from, b.layer}]
 	}
 	if a.depth == b.depth || nav.boards[a.layer].start > nav.boards[b.layer].start || nav.boards[b.layer].end > nav.boards[a.layer].end || shape == nil {
 		return LayerZoom{}, false

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/svg"
 )
@@ -120,4 +121,42 @@ func TestClickedSiblingUsesBothParentPortals(t *testing.T) {
 		return
 	}
 	t.Fatal("sibling shortcut missing")
+}
+
+func TestLinksWithoutCamerasSelectOnlyIncludedBoards(t *testing.T) {
+	root := d2target.NewDiagram()
+	step := &d2target.Diagram{Name: "two"}
+	root.Steps = []*d2target.Diagram{step}
+	root.Shapes = []d2target.Shape{
+		{ID: "jump", Link: "root.steps.two", Width: 30, Height: 30},
+		{ID: "self", Link: "root"},
+		{ID: "outside", Link: "root.layers.missing", Width: 30, Height: 30},
+		{ID: "url", Link: "https://example.com/", Width: 30, Height: 30},
+	}
+	frames := []Frame{{Diagram: root, DurationMS: 100}, {Diagram: step, DurationMS: 60}}
+	links := layerLinks(NewLayerNavigation(root, nil), frames, 40)
+	if len(links) != 2 || links[0].to != 1 || links[1].to != 0 || len(links[0].legs) != 0 || len(links[1].legs) != 0 {
+		t.Fatalf("unexpected jumps: %+v", links)
+	}
+	svgs := [][]byte{[]byte(`<g viewBox="-100 10 50 60"><a href="root.steps.two" xlink:href="root.steps.two"><g class="anVtcA=="><rect/></g></a><a href="https://example.com/" xlink:href="https://example.com/"><g class="dXJs"><rect/></g></a></g>`), []byte(`<g viewBox="300 400 50 60"/>`)}
+	opts := d2svg.RenderOpts{}
+	legacy, err := WrapTimed(root, svgs, opts, []int{100, 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := WrapTimeline(root, nil, frames, svgs, opts, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An instant jump doesn't recenter the viewport or create a private step clock.
+	header := func(svg []byte) string {
+		a := strings.Index(string(svg), `class="d2-svg"`)
+		return strings.SplitN(string(svg)[a:], ">", 2)[0]
+	}
+	if header(legacy) != header(out) || bytes.Contains(out, []byte("d2LayerStep-")) || !bytes.Contains(out, []byte("160ms steps(1,end) infinite")) {
+		t.Fatal("links without cameras changed automatic playback or the world viewport")
+	}
+	if !bytes.Contains(out, []byte(`href="#d2-layer-link-`)) || !bytes.Contains(out, []byte(`href="https://example.com/"`)) {
+		t.Fatal("internal and external anchor destinations were not preserved")
+	}
 }

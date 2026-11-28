@@ -67,14 +67,12 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	var nav *LayerNavigation
 	var links []layerLink
 	var zooms map[int][]frameLeg
-	if len(frames) >= 2 {
+	if len(frames) > 0 {
 		nav = NewLayerNavigation(rootDiagram, boardPath)
-		if len(nav.focus) > 0 {
-			if zoomMS > 0 {
-				zooms = playbackZooms(nav, frames)
-			}
-			svgs, links = bindLayerLinks(svgs, layerLinks(nav, frames, zoomMS), diagramHash)
+		if zoomMS > 0 && len(frames) > 1 && len(nav.focus) > 0 {
+			zooms = playbackZooms(nav, frames)
 		}
+		svgs, links = bindLayerLinks(svgs, layerLinks(nav, frames, zoomMS), diagramHash)
 	}
 	totalMS := 0
 	uniform := true
@@ -101,16 +99,26 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	var viewport image.Rectangle
 	var offsets []image.Point
 	var slots []layerSlot
-	if len(links) > 0 {
-		slots = layerSlots(nav, frames, links)
+	hasCamera := len(zooms) > 0
+	for _, link := range links {
+		if len(link.legs) > 0 {
+			slots = layerSlots(nav, frames, links)
+			hasCamera = true
+			break
+		}
 	}
-	if len(zooms) > 0 || len(links) > 0 {
+	if hasCamera {
 		var err error
 		viewport, offsets, err = layerViewport(nav, frames, svgs, pad)
 		if err != nil {
 			return nil, err
 		}
 	} else {
+		if len(links) > 0 {
+			// A plain board link only selects a frame. Preserve the ordinary
+			// coordinate system and bounds with identity placements.
+			offsets = make([]image.Point, len(frames))
+		}
 		tl, br := rootDiagram.NestedBoundingBox()
 		viewport = image.Rect(tl.X-pad, tl.Y-pad, br.X+pad, br.Y+pad)
 		// Rendered frames can extend beyond the diagram, for example when one
@@ -175,7 +183,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 
 	var transitions bytes.Buffer
 	hidden, visible := "{opacity:0", "{opacity:1"
-	if len(links) == 0 && (!uniform || len(svgs) > 100) {
+	if len(slots) == 0 && (!uniform || len(svgs) > 100) {
 		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"
 	}
 	if strings.Contains(svgsStr, "<a ") || strings.Contains(svgsStr, "<title>") {
@@ -185,6 +193,11 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 		fmt.Fprintf(&transitions, ".%s a{visibility:var(--d2-link-visibility,inherit)}", diagramHash)
 		hidden += ";pointer-events:none;--d2-link-visibility:hidden"
 		visible += ";pointer-events:inherit;--d2-link-visibility:initial"
+	}
+	if len(offsets) > 0 {
+		// Hide inactive layer content from the accessibility tree. A visible
+		// board may still reference a mask or arrowhead inside a hidden board.
+		fmt.Fprintf(&transitions, ".d2-frame-%[1]s>g>g>g{visibility:var(--d2-link-visibility,inherit)}.d2-frame-%[1]s :where(defs,mask,marker,clipPath,pattern){visibility:visible}", diagramHash)
 	}
 	hidden += "}"
 	visible += "}"
@@ -202,7 +215,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if len(zooms) > 0 {
 		writePlaybackZooms(&transitions, diagramHash, durationsMS, totalMS, zoomMS, viewport, offsets, zooms)
 	}
-	if len(links) > 0 {
+	if zoomMS > 0 && len(links) > 0 {
 		writeClickZooms(&transitions, links, diagramHash, viewport, offsets)
 	}
 	if err := d2svg.WriteAnimationStylesWithTransitions(buf, diagramHash, svgsStr, rootDiagram, renderOpts, transitions.Bytes()); err != nil {

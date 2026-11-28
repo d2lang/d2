@@ -17,7 +17,9 @@ func layerSlots(nav *LayerNavigation, frames []Frame, links []layerLink) []layer
 	sequences := make(map[*d2target.Diagram]*layerSequence)
 	initial := &layerSequence{}
 	for _, link := range links {
-		sequences[link.inner] = &layerSequence{}
+		if link.inner != nil {
+			sequences[link.inner] = &layerSequence{}
+		}
 	}
 
 	var assign func(*d2target.Diagram, *layerSequence)

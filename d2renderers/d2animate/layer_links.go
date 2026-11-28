@@ -41,25 +41,29 @@ func layerLinks(nav *LayerNavigation, frames []Frame, duration int) []layerLink 
 	for i, frame := range frames {
 		for j := range frame.Diagram.Shapes {
 			shape := &frame.Diagram.Shapes[j]
-			if shape.Link == "" || shape.Width <= 0 || shape.Height <= 0 {
+			if shape.Link == "" {
 				continue
 			}
 			board := nav.destination(shape.Link)
 			to, ok := destinations[board]
-			if !ok || board == nil || owners[i] == board {
+			if !ok || board == nil {
 				continue
 			}
 			legs := indexRoute(nav.Route(owners[i], board), destinations, i, to)
-			if len(legs) == 0 {
-				continue
-			}
 			if len(legs) == 1 && legs[0].zoom.Inward {
 				// Enter through the clicked shape, even when several shapes open this layer.
-				legs[0].zoom.Focus = shape
+				if shape.Width > 0 && shape.Height > 0 {
+					legs[0].zoom.Focus = shape
+				} else {
+					legs = nil
+				}
 			}
-			inner := nav.boards[owners[i]].layer
-			if legs[len(legs)-1].zoom.Inward {
-				inner = nav.boards[board].layer
+			var inner *d2target.Diagram
+			if len(legs) > 0 {
+				inner = nav.boards[owners[i]].layer
+				if legs[len(legs)-1].zoom.Inward {
+					inner = nav.boards[board].layer
+				}
 			}
 			links = append(links, layerLink{from: i, to: to, shapeID: shape.ID, href: shape.Link, duration: duration, legs: legs, inner: inner})
 		}
@@ -81,11 +85,15 @@ func writeClickZooms(css *bytes.Buffer, links []layerLink, hash string, viewport
 	type track struct {
 		arrival, departure camera
 		position, legs     int
+		origin             int
 	}
 	keyframes := make(map[track]string)
 	for i := range links {
 		link := &links[i]
 		legs := link.legs
+		if len(legs) == 0 {
+			continue
+		}
 		for j := range legs {
 			leg := &legs[j]
 			leg.zoom = placedZoom(leg.zoom, offsets, leg.from, leg.to)
@@ -93,6 +101,11 @@ func writeClickZooms(css *bytes.Buffer, links []layerLink, hash string, viewport
 		link.cameras = make([]string, len(legs)+1)
 		for pos := range link.cameras {
 			key := track{position: pos, legs: len(legs)}
+			if pos > 0 && pos < len(legs) {
+				// Consecutive clicks can traverse the same waypoint. Its animation
+				// must restart even if the two portal geometries are identical.
+				key.origin = link.from
+			}
 			if pos > 0 {
 				key.arrival = geometry(legs[pos-1].zoom)
 			}
@@ -105,7 +118,7 @@ func writeClickZooms(css *bytes.Buffer, links []layerLink, hash string, viewport
 				keyframes[key] = name
 				fmt.Fprintf(css, "@keyframes %s{", name)
 				if pos > 1 {
-					css.WriteString("0%{opacity:0}")
+					css.WriteString("0%{opacity:0;visibility:hidden}")
 				}
 				if pos > 0 {
 					z := legs[pos-1].zoom
@@ -116,7 +129,7 @@ func writeClickZooms(css *bytes.Buffer, links []layerLink, hash string, viewport
 					writeZoomSamples(css, z, viewport, z.Inward, float64(pos), 1, float64(len(legs)), false)
 				}
 				if pos+1 < len(legs) {
-					css.WriteString("100%{opacity:0}")
+					css.WriteString("100%{opacity:0;visibility:hidden}")
 				}
 				css.WriteByte('}')
 			}
@@ -227,7 +240,6 @@ func bindLayerLinks(frames [][]byte, links []layerLink, hash string) ([][]byte, 
 func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slots []layerSlot) {
 	marker := "d2-layer-link-" + hash
 	allFrames := "." + marker + ":target~.d2-frame-" + hash
-	hold := "d2-hold-" + hash
 	hide := "d2-hide-" + hash
 	buf.WriteString(`<style type="text/css"><![CDATA[`)
 	fmt.Fprintf(buf, "%s{animation-play-state:paused!important;opacity:0!important;transform:none!important;clip-path:none!important;pointer-events:none!important;--d2-link-visibility:hidden!important}", allFrames)
@@ -235,12 +247,22 @@ func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slo
 	// motion. The overrides stop at arrival and the local clock takes over.
 	const visible = "opacity:1;pointer-events:inherit;--d2-link-visibility:initial"
 	const hidden = "opacity:0;pointer-events:none;--d2-link-visibility:hidden"
-	fmt.Fprintf(buf, "@keyframes %s{from,to{opacity:1;pointer-events:none;--d2-link-visibility:initial}}@keyframes %s{from,to{%s}}", hold, hide, hidden)
+	fmt.Fprintf(buf, "@keyframes %s{from,to{%s}}", hide, hidden)
 
 	for _, link := range links {
 		id := link.id
 		from := fmt.Sprintf("#%s:target~#d2-frame-%s-%d", id, hash, link.from)
 		to := fmt.Sprintf("#%s:target~#d2-frame-%s-%d", id, hash, link.to)
+		if len(link.legs) == 0 {
+			// Intra-layer links and boards without a drawable portal jump to
+			// the authored endpoint. Clearing the fragment resumes playback.
+			fmt.Fprintf(buf, "%s{opacity:1!important;--d2-link-visibility:initial!important;pointer-events:inherit!important}", to)
+			continue
+		}
+		// CSS keeps an animation's elapsed time when its name survives a
+		// fragment change. Give each visit a fresh hold for its visible boards.
+		hold := "d2-hold-" + id
+		fmt.Fprintf(buf, "@keyframes %s{from,to{opacity:1;pointer-events:none;--d2-link-visibility:initial}}", hold)
 		group := fmt.Sprintf("#%s:target~.d2-layer-%s-%d", id, hash, slots[link.to].id)
 		duration := fmt.Sprintf("var(--d2-click-time,%dms)", link.duration)
 		fmt.Fprintf(buf, "%s,%s{opacity:1!important;--d2-link-visibility:initial!important;pointer-events:inherit!important}", from, group)

@@ -131,6 +131,10 @@ func writePlaybackZooms(buf *bytes.Buffer, hash string, durations []int, totalMS
 		buf.WriteString("100%" + ending + "}")
 	}
 	buf.WriteString("}")
+	// Firefox refreshes media-dependent keyframes on a live preference change
+	// when a timing property changes too. jump-end is equivalent to end and
+	// keeps every board on the same clock, including ordinary steps.
+	fmt.Fprintf(buf, "@media (prefers-reduced-motion:reduce){.d2-frame-%s{animation-timing-function:steps(1,jump-end)!important}}", hash)
 }
 
 func writeZoomSamples(buf *bytes.Buffer, zoom LayerZoom, viewport image.Rectangle, parent bool, start, duration, total float64, playback bool) {
@@ -170,10 +174,6 @@ func writeZoomSamples(buf *bytes.Buffer, zoom LayerZoom, viewport image.Rectangl
 		buf.WriteString("}")
 	}
 
-	if !playback {
-		return // Click navigation handles interaction on its own clock.
-	}
-
 	// Link visibility also controls the linked shape's paint. Switch the
 	// discrete interaction properties independently from the opacity curve.
 	const steps = 30
@@ -184,10 +184,17 @@ func writeZoomSamples(buf *bytes.Buffer, zoom LayerZoom, viewport image.Rectangl
 		next := i < steps && poseAt(float64(i+1)/steps).Opacity > 0
 		if i == 0 || i == steps || visible != previous || visible != next {
 			buf.WriteString(at(t))
-			if visible {
-				buf.WriteString("{pointer-events:inherit;--d2-link-visibility:initial}")
+			if playback {
+				if visible {
+					buf.WriteString("{pointer-events:inherit;--d2-link-visibility:initial}")
+				} else {
+					buf.WriteString("{pointer-events:none;--d2-link-visibility:hidden}")
+				}
+			} else if visible {
+				// The local step clock may hide this board after arrival.
+				buf.WriteString("{visibility:inherit}")
 			} else {
-				buf.WriteString("{pointer-events:none;--d2-link-visibility:hidden}")
+				buf.WriteString("{visibility:hidden}")
 			}
 		}
 		previous = visible

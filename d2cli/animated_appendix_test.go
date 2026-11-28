@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"image"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,24 +36,45 @@ scenarios: {
 			Value string  `xml:",chardata"`
 		} `xml:"text"`
 	}
+	type frame struct {
+		ViewBox    string  `xml:"viewBox,attr"`
+		Groups     []group `xml:"g"`
+		Background struct {
+			X      int `xml:"x,attr"`
+			Y      int `xml:"y,attr"`
+			Width  int `xml:"width,attr"`
+			Height int `xml:"height,attr"`
+		} `xml:"rect"`
+	}
 	var doc struct {
 		Width  int `xml:"width,attr"`
 		Height int `xml:"height,attr"`
 		Canvas struct {
 			ViewBox string `xml:"viewBox,attr"`
-			Frames  []struct {
-				ViewBox    string  `xml:"viewBox,attr"`
-				Groups     []group `xml:"g"`
-				Background struct {
-					X      int `xml:"x,attr"`
-					Y      int `xml:"y,attr"`
-					Width  int `xml:"width,attr"`
-					Height int `xml:"height,attr"`
-				} `xml:"rect"`
-			} `xml:"g"`
 		} `xml:"svg"`
 	}
 	require.NoError(t, xml.Unmarshal(out, &doc))
+	// A navigable board has camera and placement groups around its artwork.
+	// Locate the rendered frame by its viewBox in either SVG structure.
+	var frames []frame
+	decoder := xml.NewDecoder(bytes.NewReader(out))
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		if el, ok := token.(xml.StartElement); ok && el.Name.Local == "g" {
+			for _, attr := range el.Attr {
+				if attr.Name.Local == "viewBox" {
+					var f frame
+					require.NoError(t, decoder.DecodeElement(&f, &el))
+					frames = append(frames, f)
+					break
+				}
+			}
+		}
+	}
 	parseBox := func(viewBox string) image.Rectangle {
 		t.Helper()
 		var x, y, w, h int
@@ -65,8 +87,8 @@ scenarios: {
 	require.Equal(t, (canvas.Dx()+1)/2, doc.Width)
 	require.Equal(t, (canvas.Dy()+1)/2, doc.Height)
 	want := [][]string{nil, {"root"}, {tooltip, link}}
-	require.Len(t, doc.Canvas.Frames, len(want))
-	for i, frame := range doc.Canvas.Frames {
+	require.Len(t, frames, len(want))
+	for i, frame := range frames {
 		box := parseBox(frame.ViewBox)
 		require.True(t, box.In(canvas), "frame %d extends beyond the canvas", i)
 		bg := frame.Background
@@ -93,7 +115,7 @@ scenarios: {
 		require.Equal(t, numbers, badges, "frame %d diagram badges", i)
 		require.Equal(t, numbers, rowNumbers, "frame %d appendix numbers", i)
 	}
-	require.Greater(t, parseBox(doc.Canvas.Frames[2].ViewBox).Dx(), parseBox(doc.Canvas.Frames[1].ViewBox).Dx())
+	require.Greater(t, parseBox(frames[2].ViewBox).Dx(), parseBox(frames[1].ViewBox).Dx())
 }
 
 func TestLayerZoomPinnedSVGAppendix(t *testing.T) {

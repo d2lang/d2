@@ -109,3 +109,16 @@ func TestLayerRoutesRequireEveryEnclosingPortal(t *testing.T) {
 		t.Fatal("explicit direct portals take priority")
 	}
 }
+
+func TestLayerReturnAfterLandingOnSpecificStep(t *testing.T) {
+	first, second := &d2target.Diagram{Name: "first"}, &d2target.Diagram{Name: "second"}
+	detail := &d2target.Diagram{Name: "detail", Steps: []*d2target.Diagram{first, second}}
+	root := &d2target.Diagram{Shapes: []d2target.Shape{{ID: "open", Width: 30, Height: 30, Link: "root.layers.detail.steps.second"}}, Layers: []*d2target.Diagram{detail}}
+	nav := NewLayerNavigation(root, nil)
+	for _, source := range []*d2target.Diagram{detail, first, second} {
+		got, ok := nav.Zoom(source, root)
+		if !ok || got.Inward || got.Focus != &root.Shapes[0] {
+			t.Fatalf("return from %q lost the portal into its layer: %+v", source.Name, got)
+		}
+	}
+}

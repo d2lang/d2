@@ -240,6 +240,16 @@ async function checkLayerRoute(page) {
   }
   for (const ms of [500, 2500, 4500, 6500]) pictures.push(await picture(ms));
 
+  async function accessibleBoard(board) {
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    const snapshot = await page.locator("svg").first().ariaSnapshot();
+    const labels = [
+      "Catalog", "Go to shipping", "Product specifications", "Shipping queue", "Archived orders",
+    ];
+    for (const [i, label] of labels.entries()) {
+      assert.equal(snapshot.includes(label), i === board, `accessible label for board ${i}`);
+    }
+  }
   async function atBoard(ms, board) {
     const pixels = await picture(ms);
     // Chromium can round an antialiased pixel by one level as the camera settles.
@@ -277,12 +287,29 @@ async function checkLayerRoute(page) {
 
   // Product detail → catalog → overview → shipping, in one 900ms window.
   await atBoard(5099, 2);
+  await accessibleBoard(2);
   await checkLeg(5100, 300, 2, 1, false, "Product detail");
   await atBoard(5400, 1);
+  // Switching motion preferences mid-route preserves the tour's current time.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await accessibleBoard(2);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await accessibleBoard(1);
   await checkLeg(5400, 300, 1, 0, false, "Catalog");
   await atBoard(5700, 0);
   await checkLeg(5700, 300, 0, 3, true, "Shipping");
   await atBoard(6000, 3);
+
+  // An arrowhead can be defined in another board that is currently hidden.
+  const markerID = await frames.first().locator("marker").first().getAttribute("id");
+  const arrow = frames.nth(3).locator("[marker-end]").first();
+  await arrow.evaluate((edge, id) => edge.setAttribute("marker-end", `url(#${id})`), markerID);
+  await atBoard(6500, 3);
+  await seek(page, 8500);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await accessibleBoard(4);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await accessibleBoard(4);
 
   await seek(page, 2500);
   await page.getByText("Go to shipping", { exact: true }).click();
@@ -292,6 +319,16 @@ async function checkLayerRoute(page) {
   await checkLeg(450, 450, 0, 3, true, "Shipping");
   await atBoard(900, 3);
   await atBoard(8500, 3);
+  await accessibleBoard(3);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await accessibleBoard(3);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  // The return trip starts on the manually selected board.
+  await page.getByRole("link", { name: "Back to overview" }).press("Enter");
+  await atBoard(0, 3);
+  await atBoard(900, 0);
+  await accessibleBoard(0);
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(origin + "/layer-route.svg");
@@ -299,9 +336,16 @@ async function checkLayerRoute(page) {
   await atBoard(5999, 2);
   await atBoard(6000, 3);
   await seek(page, 2500);
-  await page.getByText("Go to shipping", { exact: true }).click();
-  await page.mouse.move(1, 1);
-  await atBoard(0, 3);
+  await page.getByRole("link", { name: "Go to shipping" }).press("Enter");
+  await accessibleBoard(3);
+  await page.getByRole("link", { name: "Back to overview" }).press("Enter");
+  await accessibleBoard(0);
+  await page.goBack();
+  await accessibleBoard(3);
+  await page.goBack();
+  await accessibleBoard(1);
+  await page.goForward();
+  await accessibleBoard(3);
   await page.emulateMedia({ reducedMotion: "no-preference" });
 }
 
