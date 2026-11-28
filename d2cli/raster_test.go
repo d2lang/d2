@@ -234,7 +234,7 @@ func renderGIFFramesForTest(ctx context.Context, inputPath string, cacheImages b
 func renderGIFFramesWithSessionForTest(ctx context.Context, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMs int, session *d2raster.RenderSession, wantPreview bool) ([]image.Image, []byte, error) {
 	frames := make([]image.Image, 0)
 	summary, err := renderGIFWithSession(
-		ctx, inputPath, cacheImages, diagram, opts, intervalMs, session, nil, wantPreview,
+		ctx, inputPath, cacheImages, diagram, opts, intervalMs, gifLayerOptions{}, session, nil, wantPreview,
 		nil,
 		func(_ int, frame image.Image) error {
 			frames = append(frames, frame)
@@ -286,7 +286,7 @@ func TestRenderGIFWorkspaceFramesMatchOwnedFrames(t *testing.T) {
 	borrowedPixels := make([][]byte, 0, len(owned))
 	borrowedBounds := make([]image.Rectangle, 0, len(owned))
 	_, err = renderGIFWithSession(
-		context.Background(), "-", false, diagram, opts, 101, session, &workspace, false, nil,
+		context.Background(), "-", false, diagram, opts, 101, gifLayerOptions{}, session, &workspace, false, nil,
 		func(frameIndex int, candidate image.Image) error {
 			frame, ok := candidate.(*image.NRGBA)
 			if !ok {
@@ -348,7 +348,7 @@ func TestRenderGIFSingleBoardWorkspaceMatchesOwnedEncoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := renderGIF(context.Background(), "-", false, diagram, opts, intervalMs, false)
+	got, _, err := renderGIF(context.Background(), "-", false, diagram, opts, intervalMs, false, gifLayerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestRenderGIFMultiBoardRetainsIndependentQuantizedFrames(t *testing.T) {
 
 	encoded, _, err := renderGIF(
 		context.Background(), "-", false, root,
-		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)}, 1, false,
+		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)}, 1, false, gifLayerOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -406,7 +406,7 @@ func TestGIFPreservesPositionsAcrossRelatedBoards(t *testing.T) {
 	root.Steps = []*d2target.Diagram{child, next, last}
 
 	data, _, err := renderGIF(t.Context(), "-", false, root,
-		d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 1, false)
+		d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 1, false, gifLayerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +470,7 @@ func TestRenderGIFShowsEndpointBeforeLoop(t *testing.T) {
 				sample.Shapes[0].Fill = "#ff0000"
 				step.TweenFrames = append(step.TweenFrames, sample)
 			}
-			data, _, err := renderGIF(context.Background(), "-", false, root, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, tc.interval, false)
+			data, _, err := renderGIF(context.Background(), "-", false, root, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, tc.interval, false, gifLayerOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -542,7 +542,7 @@ func TestRenderGIFDenseContinuitySamples(t *testing.T) {
 		sample.Shapes[0].Fill = "#ff0000"
 		step.TweenFrames = append(step.TweenFrames, sample)
 	}
-	data, _, err := renderGIF(t.Context(), "-", false, step, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 800, false)
+	data, _, err := renderGIF(t.Context(), "-", false, step, d2svg.RenderOpts{Pad: go2.Pointer(int64(0))}, 800, false, gifLayerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +570,7 @@ func TestRenderGIFSingleStepShorterThanTwoTicks(t *testing.T) {
 	step := simpleRasterDiagram()
 	step.TweenDurationMS = 18
 	step.TweenFrames = []*d2target.Diagram{simpleRasterDiagram()}
-	data, _, err := renderGIF(context.Background(), "-", false, step, d2svg.RenderOpts{}, 1, false)
+	data, _, err := renderGIF(context.Background(), "-", false, step, d2svg.RenderOpts{}, 1, false, gifLayerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,7 +753,7 @@ func TestRenderGIFPreservesExplicitScaleAndBoardOrder(t *testing.T) {
 	root.Steps = []*d2target.Diagram{step}
 	encoded, _, err := renderGIF(
 		context.Background(), "-", false, root,
-		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)}, 34, false,
+		d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)}, 34, false, gifLayerOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -829,7 +829,7 @@ func TestRenderGIFReturnsRootSVGForWatchPreview(t *testing.T) {
 		simpleRasterDiagram(),
 		d2svg.RenderOpts{Pad: go2.Pointer(int64(0))},
 		1,
-		true,
+		true, gifLayerOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1002,7 +1002,7 @@ func TestBundleGIFPreviewEmbedsLocalImages(t *testing.T) {
 	}
 	diagram := rasterImageDiagram(assetURL)
 	opts := d2svg.RenderOpts{Pad: go2.Pointer(int64(0)), Scale: go2.Pointer(1.0)}
-	_, rawPreview, err := renderGIF(context.Background(), inputPath, false, diagram, opts, 1, true)
+	_, rawPreview, err := renderGIF(context.Background(), inputPath, false, diagram, opts, 1, true, gifLayerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

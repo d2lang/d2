@@ -33,16 +33,60 @@ func Wrap(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderO
 
 // WrapTimed composes independently rendered SVG frames on a shared playback clock.
 func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.RenderOpts, durationsMS []int) ([]byte, error) {
+	return wrapFrames(rootDiagram, nil, nil, svgs, renderOpts, durationsMS, 0)
+}
+
+// WrapTimeline plays every frame in order, zooming through linked layers.
+// Activating a layer link pauses the tour to explore that layer and its steps.
+// boardPath identifies the selected subtree relative to the document root.
+func WrapTimeline(rootDiagram *d2target.Diagram, boardPath []string, frames []Frame, svgs [][]byte, renderOpts d2svg.RenderOpts, durationMS int) ([]byte, error) {
+	if durationMS < 0 || durationMS > d2target.MaxTweenDurationMS {
+		return nil, fmt.Errorf("invalid layer transition duration %dms", durationMS)
+	}
+	durations := make([]int, len(frames))
+	for i, frame := range frames {
+		if frame.Diagram == nil {
+			return nil, fmt.Errorf("animation frame %d has no diagram", i)
+		}
+		durations[i] = frame.DurationMS
+	}
+	return wrapFrames(rootDiagram, boardPath, frames, svgs, renderOpts, durations, durationMS)
+}
+
+func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Frame, svgs [][]byte, renderOpts d2svg.RenderOpts, durationsMS []int, zoomMS int) ([]byte, error) {
 	if err := d2target.ValidateRenderTarget(rootDiagram); err != nil {
 		return nil, err
 	}
 	if len(svgs) != len(durationsMS) {
 		return nil, fmt.Errorf("animation requires one duration per SVG frame")
 	}
+	diagramHash, err := rootDiagram.HashID(renderOpts.Salt)
+	if err != nil {
+		return nil, err
+	}
+	var nav *LayerNavigation
+	var links []layerLink
+	var zooms map[int][]frameLeg
+	if len(frames) >= 2 {
+		nav = NewLayerNavigation(rootDiagram, boardPath)
+		if len(nav.focus) > 0 {
+			if zoomMS > 0 {
+				zooms = playbackZooms(nav, frames)
+			}
+			svgs, links = bindLayerLinks(svgs, layerLinks(nav, frames, zoomMS), diagramHash)
+		}
+	}
 	totalMS := 0
 	uniform := true
-	for _, ms := range durationsMS {
-		if ms <= 0 || ms > math.MaxInt-totalMS {
+	for i, ms := range durationsMS {
+		if ms <= 0 {
+			return nil, fmt.Errorf("animation duration must be positive and fit in milliseconds")
+		}
+		if _, ok := zooms[i]; ok {
+			ms = max(ms, zoomMS)
+			durationsMS[i] = ms
+		}
+		if ms > math.MaxInt-totalMS {
 			return nil, fmt.Errorf("animation duration must be positive and fit in milliseconds")
 		}
 		totalMS += ms
@@ -54,13 +98,27 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	if renderOpts.Pad != nil {
 		pad = int(*renderOpts.Pad)
 	}
-	tl, br := rootDiagram.NestedBoundingBox()
-	viewport := image.Rect(tl.X-pad, tl.Y-pad, br.X+pad, br.Y+pad)
-	// Rendered frames can extend beyond the diagram, for example when one
-	// board has a forced appendix. All frames share the same viewport.
-	for _, svg := range svgs {
-		if frame, ok := svgframe.Read(svg); ok {
-			viewport = viewport.Union(frame.ViewBox)
+	var viewport image.Rectangle
+	var offsets []image.Point
+	var slots []layerSlot
+	if len(links) > 0 {
+		slots = layerSlots(nav, frames, links)
+	}
+	if len(zooms) > 0 || len(links) > 0 {
+		var err error
+		viewport, offsets, err = layerViewport(nav, frames, svgs, pad)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		tl, br := rootDiagram.NestedBoundingBox()
+		viewport = image.Rect(tl.X-pad, tl.Y-pad, br.X+pad, br.Y+pad)
+		// Rendered frames can extend beyond the diagram, for example when one
+		// board has a forced appendix. All frames share the same viewport.
+		for _, svg := range svgs {
+			if frame, ok := svgframe.Read(svg); ok {
+				viewport = viewport.Union(frame.ViewBox)
+			}
 		}
 	}
 	left, top := viewport.Min.X, viewport.Min.Y
@@ -91,11 +149,6 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 		width, height, left, top, width, height)
 	fmt.Fprint(buf, innerOpening)
 
-	diagramHash, err := rootDiagram.HashID(renderOpts.Salt)
-	if err != nil {
-		return nil, err
-	}
-
 	defs, svgs := shareStaticShapes(rootDiagram, svgs, diagramHash)
 	styleFrames := svgs
 	graphics, svgs := shareFrameGraphics(svgs, diagramHash)
@@ -121,9 +174,42 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	svgsStr := source.String()
 
 	var transitions bytes.Buffer
-	writeTransitions(&transitions, diagramHash, svgsStr, durationsMS, totalMS, uniform)
+	hidden, visible := "{opacity:0", "{opacity:1"
+	if len(links) == 0 && (!uniform || len(svgs) > 100) {
+		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"
+	}
+	if strings.Contains(svgsStr, "<a ") || strings.Contains(svgsStr, "<title>") {
+		// Transparent frames can intercept the pointer; even clipped anchors
+		// remain keyboard-focusable. Keep their paint servers available to
+		// other frames by changing visibility only on the links themselves.
+		fmt.Fprintf(&transitions, ".%s a{visibility:var(--d2-link-visibility,inherit)}", diagramHash)
+		hidden += ";pointer-events:none;--d2-link-visibility:hidden"
+		visible += ";pointer-events:inherit;--d2-link-visibility:initial"
+	}
+	hidden += "}"
+	visible += "}"
+	// Global playback runs until a fragment is selected. Each clickable
+	// layer also has a local clock for exploring its own authored steps.
+	startMS := 0
+	for i, duration := range durationsMS {
+		writeFrameKeyframes(&transitions, "d2Transition", diagramHash, i, startMS, duration, totalMS, hidden, visible)
+		startMS += duration
+		if len(slots) > 0 && slots[i].count > 1 {
+			slot := slots[i]
+			writeFrameKeyframes(&transitions, "d2LayerStep", diagramHash, i, slot.startMS, frames[i].DurationMS, slot.totalMS, hidden, visible)
+		}
+	}
+	if len(zooms) > 0 {
+		writePlaybackZooms(&transitions, diagramHash, durationsMS, totalMS, zoomMS, viewport, offsets, zooms)
+	}
+	if len(links) > 0 {
+		writeClickZooms(&transitions, links, diagramHash, viewport, offsets)
+	}
 	if err := d2svg.WriteAnimationStylesWithTransitions(buf, diagramHash, svgsStr, rootDiagram, renderOpts, transitions.Bytes()); err != nil {
 		return nil, err
+	}
+	if len(links) > 0 {
+		writeLayerNavigation(buf, diagramHash, links, slots)
 	}
 
 	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"
@@ -139,6 +225,24 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	buf.Write(defs)
 	buf.Write(graphics)
 	for i, frame := range svgs {
+		if len(offsets) > 0 {
+			fmt.Fprintf(buf, `<g id="d2-frame-%s-%d" class="d2-frame-%s`, diagramHash, i, diagramHash)
+			local := ""
+			if len(slots) > 0 {
+				slot := slots[i]
+				fmt.Fprintf(buf, " d2-layer-%s-%d", diagramHash, slot.id)
+				if slot.count > 1 {
+					local = fmt.Sprintf("--d2-slot:d2LayerStep-%s-%d %dms steps(1,end);", diagramHash, i, slot.totalMS)
+				}
+			}
+			// Each wrapper owns a separate transform or clock: the global tour,
+			// the manually selected layer's steps, its camera and the placement.
+			fmt.Fprintf(buf, `" style="%sanimation: d2Transition-%s-%d %dms steps(1,end) infinite"><g><g><g transform="translate(%d %d)">`,
+				local, diagramHash, i, totalMS, offsets[i].X, offsets[i].Y)
+			buf.Write(frame)
+			buf.WriteString("</g></g></g></g>")
+			continue
+		}
 		before, after, found := bytes.Cut(frame, []byte("<g"))
 		buf.Write(before)
 		if found {
@@ -154,36 +258,17 @@ func WrapTimed(rootDiagram *d2target.Diagram, svgs [][]byte, renderOpts d2svg.Re
 	return buf.Bytes(), nil
 }
 
-func writeTransitions(buf *bytes.Buffer, diagramHash, svgsStr string, durationsMS []int, totalMS int, uniform bool) {
-	hidden, visible := "{opacity:0", "{opacity:1"
-	if !uniform || len(durationsMS) > 100 {
-		hidden, visible = "{clip-path:inset(50%)", "{clip-path:none"
+// Switch whole frames on their authored boundary so shared artwork stays solid.
+func writeFrameKeyframes(buf *bytes.Buffer, name, hash string, frame, start, duration, total int, hidden, visible string) {
+	fmt.Fprintf(buf, "@keyframes %s-%s-%d{", name, hash, frame)
+	if start > 0 {
+		buf.WriteString("0%" + hidden)
 	}
-	if strings.Contains(svgsStr, "<a ") || strings.Contains(svgsStr, "<title>") {
-		// Transparent frames can intercept the pointer; even clipped anchors
-		// remain keyboard-focusable. Keep their paint servers available to
-		// other frames by changing visibility only on the links themselves.
-		fmt.Fprintf(buf, ".%s a{visibility:var(--d2-link-visibility,inherit)}", diagramHash)
-		hidden += ";pointer-events:none;--d2-link-visibility:hidden"
-		visible += ";pointer-events:inherit;--d2-link-visibility:initial"
+	buf.WriteString(percentage(100*float64(start)/float64(total), 9) + visible)
+	if end := start + duration; end < total {
+		buf.WriteString(percentage(100*float64(end)/float64(total), 9) + ",100%" + hidden)
+	} else {
+		buf.WriteString("100%" + visible)
 	}
-	hidden += "}"
-	visible += "}"
-	startMS := 0
-	for i, duration := range durationsMS {
-		// Switch whole frames on their authored boundary. Overlapping two
-		// partially transparent frames makes even identical artwork flash.
-		fmt.Fprintf(buf, "@keyframes d2Transition-%s-%d{", diagramHash, i)
-		if startMS > 0 {
-			buf.WriteString("0%" + hidden)
-		}
-		buf.WriteString(percentage(100*float64(startMS)/float64(totalMS), 9) + visible)
-		if endMS := startMS + duration; endMS < totalMS {
-			buf.WriteString(percentage(100*float64(endMS)/float64(totalMS), 9) + ",100%" + hidden)
-		} else {
-			buf.WriteString("100%" + visible)
-		}
-		buf.WriteString("}")
-		startMS += duration
-	}
+	buf.WriteString("}")
 }

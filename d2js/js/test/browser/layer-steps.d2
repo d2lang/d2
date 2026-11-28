@@ -1,0 +1,8 @@
+vars: {d2-config: {animate-interval: 1s; animate-duration: 300ms; pad: 8}}
+
+portal: Enter detail {link: layers.detail}
+layers.detail: {
+  back: Return to overview {link: root}
+  steps.next: {back.label: Return from detail step}
+}
+steps.next: {portal.label: Enter from overview step}

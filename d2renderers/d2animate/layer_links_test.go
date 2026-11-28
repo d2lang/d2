@@ -1,0 +1,123 @@
+package d2animate
+
+import (
+	"bytes"
+	"image"
+	"strings"
+	"testing"
+
+	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/svg"
+)
+
+func TestClickedLayerUsesItsOwnShape(t *testing.T) {
+	const href = "root.layers.\"a & b\""
+	anchor := svg.OpenElement("a", svg.HrefAttributes(href)...)
+	external := svg.OpenElement("a", svg.HrefAttributes("https://example.org/")...)
+	other := anchor + `<text>another link with the same href</text></a>`
+	one := anchor + `<g class="YQ=="><rect/></g></a>`
+	two := anchor + `<clipPath id="round"><rect/></clipPath><g class="Yg== animated-shape"><rect/></g></a>`
+	frame := []byte("<g>" + one + two + other + external + `<g class="YQ=="><rect/></g></a></g>`)
+	frames := [][]byte{frame, []byte(`<g/>`)}
+	links := []layerLink{
+		{from: 0, to: 1, shapeID: "a", href: href, legs: []frameLeg{{from: 0, to: 1}}, cameras: []string{"Aout", "Ain"}, duration: 1000},
+		{from: 0, to: 1, shapeID: "b", href: href, legs: []frameLeg{{from: 0, to: 1}}, cameras: []string{"Bout", "Bin"}, duration: 1000},
+	}
+	var buf bytes.Buffer
+	slots := []layerSlot{{&layerSequence{count: 1}, 0}, {&layerSequence{id: 1, count: 1}, 0}}
+	out, links := bindLayerLinks(frames, links, "d2-test")
+	writeLayerNavigation(&buf, "d2-test", links, slots)
+	got := string(out[0])
+	for _, want := range []string{
+		`href="#d2-layer-link-d2-test-0" xlink:href="#d2-layer-link-d2-test-0"><g class="YQ=="`,
+		`href="#d2-layer-link-d2-test-1" xlink:href="#d2-layer-link-d2-test-1"><clipPath`,
+		other, external,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing anchor %s", want)
+		}
+	}
+	if !bytes.Equal(frame, frames[0]) || !bytes.Contains(frames[0], []byte(one)) || !bytes.Equal(out[1], frames[1]) {
+		t.Fatal("navigation modified the input or an unrelated frame")
+	}
+	for _, want := range []string{
+		`id="d2-layer-link-d2-test-0"`,
+		"#d2-layer-link-d2-test-1:target~#d2-frame-d2-test-0",
+		"#d2-layer-link-d2-test-1:target~#d2-frame-d2-test-1",
+		"animation-play-state:paused!important",
+		"prefers-reduced-motion:reduce",
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("missing navigation state %q", want)
+		}
+	}
+}
+
+func TestLayerLinksUnchangedOnUnsupportedMarkup(t *testing.T) {
+	targets := map[shapeAnchor]int{{"root.layers.x", "YQ=="}: 0}
+	for _, input := range []string{
+		`<g><a href="root.layers.x" target="_blank"><g class="YQ=="/></a></g>`,
+		`<g><a href="root.layers.x" xlink:href="root.layers.x"><g class="YQ=="></a>`,
+	} {
+		if got := findLayerLinks([]byte(input), targets); len(got) != 0 {
+			t.Errorf("matched unexpected anchors: %v", got)
+		}
+	}
+}
+
+func TestClickRoutesReuseKeyframesAcrossTweenSamples(t *testing.T) {
+	child := &d2target.Diagram{Name: "inner"}
+	root := &d2target.Diagram{
+		Layers: []*d2target.Diagram{child},
+		Shapes: []d2target.Shape{{ID: "portal", Link: "root.layers.inner", Pos: d2target.NewPoint(5, 10), Width: 50, Height: 60}},
+	}
+	sample := &d2target.Diagram{Shapes: append([]d2target.Shape(nil), root.Shapes...)}
+	frames := []Frame{{Diagram: sample, TweenSample: true}, {Diagram: root}, {Diagram: child}}
+	var css bytes.Buffer
+	links := layerLinks(NewLayerNavigation(root, nil), frames, 1000)
+	writeClickZooms(&css, links, "d2-test", image.Rect(0, 0, 150, 150), nil)
+	if len(links) != 2 || links[0].from != 0 || links[1].from != 1 || links[0].to != 2 || links[1].to != 2 {
+		t.Fatalf("unexpected click routes: %+v", links)
+	}
+	if got := strings.Count(css.String(), "@keyframes "); got != 2 {
+		t.Errorf("emitted %d camera keyframes for one shared portal geometry, want 2", got)
+	}
+	sample.Shapes[0].Pos.X++
+	css.Reset()
+	writeClickZooms(&css, layerLinks(NewLayerNavigation(root, nil), frames, 1000), "d2-test", image.Rect(0, 0, 150, 150), nil)
+	if got := strings.Count(css.String(), "@keyframes "); got != 4 {
+		t.Errorf("emitted %d camera keyframes for two distinct portal positions, want 4", got)
+	}
+}
+
+func TestClickedSiblingUsesBothParentPortals(t *testing.T) {
+	left, right := &d2target.Diagram{Name: "left"}, &d2target.Diagram{Name: "right"}
+	toRight := "root.layers.right"
+	left.Shapes = []d2target.Shape{{ID: "shortcut", Link: toRight, Width: 15, Height: 20}}
+	root := &d2target.Diagram{
+		Layers: []*d2target.Diagram{left, right},
+		Shapes: []d2target.Shape{
+			{ID: "a", Link: "root.layers.left", Width: 40, Height: 35},
+			{ID: "b", Link: toRight, Width: 80, Height: 50},
+		},
+	}
+	nav := NewLayerNavigation(root, nil)
+	frames := []Frame{{Diagram: root}, {Diagram: left}, {Diagram: right}}
+	for _, link := range layerLinks(nav, frames, 900) {
+		if link.shapeID != "shortcut" {
+			continue
+		}
+		if len(link.legs) != 2 {
+			t.Fatalf("got %d legs for sibling shortcut", len(link.legs))
+		}
+		out, in := link.legs[0], link.legs[1]
+		if out.from != 1 || out.to != 0 || out.zoom.Inward || out.zoom.Focus != &root.Shapes[0] {
+			t.Fatalf("sibling visit must first exit through the left portal: %+v", out)
+		}
+		if in.from != 0 || in.to != 2 || !in.zoom.Inward || in.zoom.Focus != &root.Shapes[1] {
+			t.Fatalf("sibling visit must enter through the right portal: %+v", in)
+		}
+		return
+	}
+	t.Fatal("sibling shortcut missing")
+}

@@ -1,0 +1,26 @@
+vars: {
+  d2-config: {
+    # Cycle between the overview and the gateway layer.
+    animate-interval: 3s
+    animate-duration: 1s
+    pad: 36
+  }
+}
+
+direction: right
+client: Client
+gateway: API Gateway {link: layers.gateway}
+services: Services
+client -> gateway -> services
+
+layers: {
+  gateway: {
+    direction: right
+    auth: Authenticate
+    limit: Rate limit
+    route: Route request
+    auth -> limit -> route
+
+    overview: Back to overview {link: root}
+  }
+}

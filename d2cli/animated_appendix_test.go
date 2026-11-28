@@ -1,6 +1,7 @@
 package d2cli
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"image"
@@ -93,4 +94,22 @@ scenarios: {
 		require.Equal(t, numbers, rowNumbers, "frame %d appendix numbers", i)
 	}
 	require.Greater(t, parseBox(doc.Canvas.Frames[2].ViewBox).Dx(), parseBox(doc.Canvas.Frames[1].ViewBox).Dx())
+}
+
+func TestLayerZoomPinnedSVGAppendix(t *testing.T) {
+	const source = `vars: {d2-config: {layout-engine: tala; animate-interval: 1s; animate-duration: 500ms}}
+portal: Gateway {left: 500; top: 600; link: layers.inner}
+layers: {inner: {back: Back {left: 9000; top: 6400; link: root}}}`
+	out, err := imageCLI(t, t.TempDir(), source, "--force-appendix=true", "--stdout-format=svg", "-")
+	require.NoError(t, err)
+	var doc struct {
+		ViewBox string `xml:"viewBox,attr"`
+	}
+	require.NoError(t, xml.Unmarshal(out, &doc))
+	var x, y, w, h int
+	_, err = fmt.Sscan(doc.ViewBox, &x, &y, &w, &h)
+	require.NoError(t, err)
+	require.Less(t, w, 700, "rows pinned to world X=0 expand each layer by thousands of pixels")
+	require.Less(t, h, 700)
+	require.Equal(t, 2, bytes.Count(out, []byte(`<g class="appendix" transform="translate(`)))
 }

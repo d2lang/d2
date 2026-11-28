@@ -47,7 +47,7 @@ var BorderOffset = geo.NewVector(5, 5)
 
 type Config struct {
 	AnimateInterval    *int64          `json:"animateInterval,omitempty"` // Milliseconds per board.
-	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds to interpolate step values.
+	AnimateDuration    *int64          `json:"animateDuration,omitempty"` // Milliseconds for step transitions and linked layer zooms.
 	Scale              *float64        `json:"scale,omitempty"`
 	ForceAppendix      *bool           `json:"forceAppendix,omitempty"`
 	Sketch             *bool           `json:"sketch"`
@@ -165,62 +165,53 @@ func (d *Diagram) renderChildren() [4][]*Diagram {
 }
 
 func (d *Diagram) GetBoard(boardPath []string) *Diagram {
-	if len(boardPath) == 0 {
-		return d
-	}
+	board, _ := d.ResolveBoard(boardPath)
+	return board
+}
 
-	head := boardPath[0]
-
-	if len(boardPath) == 1 && d.Name == head {
-		return d
-	}
-
-	switch head {
-	case "layers":
-		if len(boardPath) < 2 {
-			return nil
+// ResolveBoard also returns the fully qualified path relative to d. A target
+// may omit board namespaces, while a compiled shape link always includes them.
+func (d *Diagram) ResolveBoard(path []string) (*Diagram, []string) {
+	var resolved []string
+	for len(path) > 0 && !(len(path) == 1 && d.Name == path[0]) {
+		var next *Diagram
+		var kind string
+		consumed := 1
+		switch path[0] {
+		case "layers", "scenarios", "steps":
+			if len(path) < 2 {
+				return nil, nil
+			}
+			next, kind = d.namedChild(path[0], path[1])
+			consumed = 2
 		}
-		for _, b := range d.Layers {
-			if b.Name == boardPath[1] {
-				return b.GetBoard(boardPath[2:])
+		if next == nil {
+			next, kind = d.namedChild("", path[0])
+			consumed = 1
+		}
+		if next == nil {
+			return nil, nil
+		}
+		resolved = append(resolved, kind, next.Name)
+		d, path = next, path[consumed:]
+	}
+	return d, resolved
+}
+
+func (d *Diagram) namedChild(kind, name string) (*Diagram, string) {
+	for _, group := range [...]struct {
+		kind   string
+		boards []*Diagram
+	}{{"layers", d.Layers}, {"scenarios", d.Scenarios}, {"steps", d.Steps}} {
+		if kind == "" || kind == group.kind {
+			for _, board := range group.boards {
+				if board.Name == name {
+					return board, group.kind
+				}
 			}
 		}
-	case "scenarios":
-		if len(boardPath) < 2 {
-			return nil
-		}
-		for _, b := range d.Scenarios {
-			if b.Name == boardPath[1] {
-				return b.GetBoard(boardPath[2:])
-			}
-		}
-	case "steps":
-		if len(boardPath) < 2 {
-			return nil
-		}
-		for _, b := range d.Steps {
-			if b.Name == boardPath[1] {
-				return b.GetBoard(boardPath[2:])
-			}
-		}
 	}
-
-	for _, b := range d.Layers {
-		if b.Name == head {
-			return b.GetBoard(boardPath[1:])
-		}
-	}
-	for _, b := range d.Scenarios {
-		if b.Name == head {
-			return b.GetBoard(boardPath[1:])
-		}
-	}
-	for _, b := range d.Steps {
-		if b.Name == head {
-			return b.GetBoard(boardPath[1:])
-		}
-	}
-	return nil
+	return nil, ""
 }
 
 func (diagram Diagram) Bytes() ([]byte, error) {

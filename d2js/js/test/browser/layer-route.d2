@@ -1,0 +1,25 @@
+vars: {d2-config: {animate-interval: 2s; animate-duration: 900ms; pad: 24}}
+
+direction: right
+catalog: Catalog {link: layers.catalog}
+shipping: Shipping {link: layers.shipping}
+catalog -> shipping
+
+layers: {
+  catalog: {
+    direction: right
+    product: Product detail {link: layers.product}
+    ship: Go to shipping {link: root.layers.shipping}
+    product -> ship
+    layers.product: {
+      item: Product specifications
+      back: Back to catalog {link: root.layers.catalog}
+      item -> back
+    }
+  }
+  shipping: {
+    queue: Shipping queue
+    back: Back to overview {link: root}
+    queue -> back
+  }
+}

@@ -154,6 +154,16 @@ while existing rows and connections stay anchored. Appending a sequence message 
 extend the activation bar and draw the arrow from sender to recipient.
 [Animated TALA example](./docs/examples/tala-step-motion/dispatch.gif) · [D2 source](./docs/examples/tala-step-motion/dispatch.d2)
 
+A positive `animate-interval` cycles through all exported boards, including
+linked layers. Link a shape with `gateway.link: layers.gateway` and set
+`animate-duration` to zoom through that shape when playback enters the layer
+and pull back when it returns to the overview. Moving between linked siblings
+zooms out to their parent and then into the next layer. Across branches, the
+camera follows the links through the nearest common ancestor. These moves
+share one transition duration. Clicking a linked shape in a standalone SVG
+pauses the tour for manual navigation.
+[Order fulfillment example](./docs/examples/order-fulfillment/order-fulfillment.svg) · [D2 source](./docs/examples/order-fulfillment/order-fulfillment.d2)
+
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
 see each board and its timestamp in playback order, including intermediate frames
 from animated transitions. Panels share the animated SVG’s coordinate system, so

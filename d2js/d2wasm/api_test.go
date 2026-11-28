@@ -515,3 +515,30 @@ func wasmJSONArgument(t *testing.T, value any) []js.Value {
 	}
 	return []js.Value{js.ValueOf(string(encoded))}
 }
+
+func TestLayerZoomInSelectedSubtree(t *testing.T) {
+	const source = `vars: {d2-config: {animate-interval: 2s; animate-duration: 1s}}
+layers: {
+  "west.coast": {
+    api.link: layers.api
+    layers.api: {auth}
+  }
+}`
+	compiled, err := Compile(wasmJSONArgument(t, CompileRequest{FS: map[string]string{"index": source}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagram := compiled.(CompileResponse).Diagram
+	target := `"west.coast".*`
+	out, err := Render(wasmJSONArgument(t, RenderRequest{Diagram: &diagram, Opts: &RenderOptions{Target: &target}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svg := string(out.([]byte))
+	if !strings.Contains(svg, `href="#d2-layer-link-`) {
+		t.Fatal("selected subtree is missing its clickable layer link")
+	}
+	if !strings.Contains(svg, "@keyframes d2Transition-") || !strings.Contains(svg, "4000ms") {
+		t.Fatal("selected subtree should cycle through both two-second boards")
+	}
+}

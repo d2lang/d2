@@ -32,7 +32,8 @@ runs:
         set -euo pipefail
         output=$(mktemp -d)
         go build -o "$output/d2" .
-        for fixture in playback departure; do
+        for fixture in playback departure layer-steps layer-route; do
           "$output/d2" "d2js/js/test/browser/$fixture.d2" "$output/$fixture.svg"
         done
+        "$output/d2" docs/examples/layer-zoom.d2 "$output/layer-zoom.svg"
         node d2js/js/test/browser/smoke.mjs native "$output"

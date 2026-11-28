@@ -156,13 +156,17 @@ Pixels padded around the rendered diagram
 Set the time each board is displayed in an animated SVG or GIF. The flag takes milliseconds.
 Set the same interval in D2 source with
 .Li "vars: {d2-config: {animate-interval: 800ms}}" .
+A positive interval loops through the exported boards, including linked layers.
 The source value accepts integer milliseconds or a duration such as 1.5s.
 The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over the file.
 Zero selects ordinary SVG export or the default GIF interval of 1000ms.
 .Ns .
 .It Fl -animate-duration Ar 0
 Set the transition duration for changes to numeric properties, colors, and grid layouts between steps.
-Changes can be authored directly or through variables.
+For linked layers, a positive duration zooms through the enclosing shape on entry or return.
+A move between sibling layers passes through their shared parent within the same duration.
+In a standalone SVG, following a board link pauses the automatic tour.
+Changes between steps can be authored directly or through variables.
 Direct numeric changes include opacity, stroke-width, stroke-dash, border-radius, font-size, width, and height.
 Compatible gradients have the same kind, direction, and number of stops.
 Each stop interpolates its color and position.

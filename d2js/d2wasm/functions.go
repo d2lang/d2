@@ -548,7 +548,7 @@ func render(input RenderRequest) ([]byte, error) {
 		}
 	}
 
-	diagram := input.Diagram.GetBoard(boardPath)
+	diagram, resolvedPath := input.Diagram.ResolveBoard(boardPath)
 	if diagram == nil {
 		return nil, &WASMError{Message: fmt.Sprintf("render target '%s' not found", strings.Join(boardPath, ".")), Code: 400}
 	}
@@ -637,15 +637,17 @@ func render(input RenderRequest) ([]byte, error) {
 		frames = []d2animate.Frame{{Diagram: diagram, DurationMS: animateInterval}}
 	}
 	boards := make([][]byte, len(frames))
-	durations := make([]int, len(frames))
+	zoomMS, err := d2animate.LayerDuration(input.Diagram)
+	if err != nil {
+		return nil, &WASMError{Message: err.Error(), Code: 400}
+	}
 	for i, frame := range frames {
 		boards[i], err = renderSingleBoard(renderOpts, forceAppendix, ruler, frame.Diagram)
 		if err != nil {
 			return nil, err
 		}
-		durations[i] = frame.DurationMS
 	}
-	out, err := d2animate.WrapTimed(diagram, boards, *renderOpts, durations)
+	out, err := d2animate.WrapTimeline(diagram, resolvedPath, frames, boards, *renderOpts, zoomMS)
 	if err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("animation failed: %s", err), Code: 500}
 	}
