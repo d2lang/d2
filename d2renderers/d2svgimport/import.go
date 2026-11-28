@@ -463,7 +463,20 @@ func (i *svgImporter) parse(data []byte) (*svgElement, error) {
 			} else {
 				parent := stack[len(stack)-1]
 				element.parent = parent
-				parent.children = append(parent.children, element)
+				if isAnimationElement(parent.name) {
+					return nil, i.errorf("animation element <%s> cannot contain child elements", parent.name)
+				}
+				// Raster export draws the authored base state. Animation is parsed
+				// and counted like other XML, but never contributes to the scene.
+				if !isAnimationElement(name) {
+					parent.children = append(parent.children, element)
+				} else {
+					for _, attr := range attributeOrder {
+						if _, ok := animationAttributes[attr]; !ok {
+							return nil, i.errorf("element <%s> has unsupported attribute %q", name, displayXMLName(attr))
+						}
+					}
+				}
 			}
 			stack = append(stack, element)
 		case xml.EndElement:
@@ -746,6 +759,9 @@ func (i *svgImporter) elementName(name xml.Name) (string, error) {
 			i.namespaceSet = true
 		} else if name.Space != i.elementNamespace {
 			return "", i.errorf("element <%s> mixes SVG and empty namespaces", displayXMLName(name.Local))
+		}
+		if isAnimationElement(name.Local) {
+			return name.Local, nil
 		}
 		switch name.Local {
 		case "svg", "g", "defs", "style", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "image", "text", "tspan", "use", "mask", "filter", "feGaussianBlur", "clipPath", "linearGradient", "radialGradient", "stop", "title", "desc", "metadata":

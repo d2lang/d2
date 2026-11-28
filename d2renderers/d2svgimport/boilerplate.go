@@ -43,7 +43,27 @@ func isDescription(name string) bool {
 	return name == "title" || name == "desc" || name == "dc:title"
 }
 
+// Animation attributes are inert in a static import.
+var animationAttributes = map[string]struct{}{
+	"id": {}, "href": {}, "attributeName": {}, "attributeType": {}, "type": {},
+	"begin": {}, "dur": {}, "end": {}, "min": {}, "max": {}, "restart": {},
+	"repeatCount": {}, "repeatDur": {}, "fill": {}, "calcMode": {}, "values": {},
+	"keyTimes": {}, "keySplines": {}, "from": {}, "to": {}, "by": {},
+	"additive": {}, "accumulate": {}, "path": {}, "keyPoints": {}, "rotate": {},
+}
+
+func isAnimationElement(name string) bool {
+	switch name {
+	case "animate", "animateTransform", "animateMotion", "set":
+		return true
+	}
+	return false
+}
+
 func isNonRenderingElement(name string) bool {
+	if isAnimationElement(name) {
+		return true
+	}
 	switch name {
 	case "title", "desc", "dc:title", "metadata", "rdf:RDF", "cc:Work", "dc:format", "dc:type", "sodipodi:namedview":
 		return true
