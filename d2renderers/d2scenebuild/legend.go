@@ -617,7 +617,7 @@ func (b *builder) buildLegendConnectionIcon(index int, connection d2target.Conne
 			b.connectionMask = connectionMask
 			b.idToShape = idToShape
 		}()
-		return b.buildConnection(target, nil)
+		return b.buildConnection(target, target, nil)
 	}()
 	if err != nil {
 		return nil, fmt.Errorf("scene: %s: %w", legendConnectionObject(index, connection.ID), err)

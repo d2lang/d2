@@ -20,6 +20,12 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 	holes := make([]*d2scene.Node, 0)
 
 	for _, targetShape := range b.diagram.Shapes {
+		if t := b.options.SequenceTimeMS; t != nil && targetShape.SequenceStep != 0 {
+			height := targetShape.SequenceHeightAt(*t)
+			if height <= 0 {
+				continue
+			}
+		}
 		if err := b.ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -88,7 +94,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		if p := connection.MotionLabel; p != nil {
 			hole.Opacity *= p.Opacity
 		}
-		b.applySequenceReveal(hole, connection.SequenceStep)
+		b.showOnSequenceArrival(hole, connection.SequenceStep)
 		holes = append(holes, hole)
 	}
 
@@ -120,7 +126,7 @@ func (b *builder) crossingMask(viewBox d2scene.Box, gaps []d2target.ConnectionGa
 			RadiusX: gap.Radius, RadiusY: gap.Radius,
 			Fill: d2scene.SolidPaint{Color: color.NRGBA{A: 255}},
 		})
-		b.applySequenceReveal(hole, gap.SequenceStep)
+		b.showOnSequenceArrival(hole, gap.SequenceStep)
 		root.Children = append(root.Children, hole)
 	}
 	return &d2scene.Mask{Type: d2scene.MaskLuminance, Root: root, Transform: d2scene.Identity()}

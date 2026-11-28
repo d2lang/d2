@@ -184,7 +184,7 @@ regions: "Regions" {
 
 ## Sequence diagrams
 
-The order of the lines is the order of the messages. Declare the actors first to fix their order from left to right. Set `animated: true` alongside `shape: sequence_diagram` to play the messages in order. This also works inside a named sequence diagram.
+The order of the lines is the order of the messages. Declare the actors first to fix their order from left to right. Set `animated: true` alongside `shape: sequence_diagram` to draw each message from sender to receiver. An edge group opens on its first event. Activation spans grow as calls progress, and actor notes appear in reading order. Named sequences on the same board play in parallel.
 
 ```d2
 shape: sequence_diagram

@@ -119,8 +119,13 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 	if err := validateRenderAnnotations(diagram.Root.Annotation, diagram.Root.LeavingAnnotation, path+".root", annotationOnBoard); err != nil {
 		return err
 	}
+	// A beat is either a message or a note. It must fit in the playback clock.
+	maxStep := min(len(diagram.Shapes)+len(diagram.Connections), math.MaxInt/SequenceMessageIntervalMS-1)
 	for i, targetShape := range diagram.Shapes {
 		shapePath := fmt.Sprintf("%s.shapes[%d]", path, i)
+		if err := validateSequenceShape(targetShape, shapePath, maxStep); err != nil {
+			return err
+		}
 		if err := validateRenderShape(targetShape, shapePath); err != nil {
 			return err
 		}
@@ -131,8 +136,8 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 
 	for i, connection := range diagram.Connections {
 		connectionPath := fmt.Sprintf("%s.connections[%d]", path, i)
-		if connection.SequenceStep < 0 || connection.SequenceStep > min(len(diagram.Connections), math.MaxInt/SequenceMessageIntervalMS-1) {
-			return invalidRenderField(connectionPath, "sequenceStep", connection.SequenceStep, "must be a valid message index on this board")
+		if connection.SequenceStep < 0 || connection.SequenceStep > maxStep {
+			return invalidRenderField(connectionPath, "sequenceStep", connection.SequenceStep, "must be a valid event index on this board")
 		}
 		if err := validateRenderConnection(connection, connectionPath); err != nil {
 			return err
@@ -156,6 +161,26 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 		}
 	}
 
+	return nil
+}
+
+func validateSequenceShape(s Shape, path string, maxStep int) error {
+	if s.SequenceStep < 0 || s.SequenceStep > maxStep || s.SequenceAtArrival && s.SequenceStep == 0 {
+		return invalidRenderField(path, "sequenceStep", s.SequenceStep, "must be a valid event index on this board")
+	}
+	if len(s.SequenceGrowth) == 0 {
+		return nil
+	}
+	if s.SequenceStep == 0 || s.SequenceGrowth[0].Step != s.SequenceStep || s.SequenceGrowth[len(s.SequenceGrowth)-1].Height != s.Height {
+		return invalidRenderField(path, "sequenceGrowth", s.ID, "must begin at the shape's first event and end at its full height")
+	}
+	var prev SequenceExtent
+	for _, at := range s.SequenceGrowth {
+		if at.Step <= prev.Step || at.Step > maxStep || at.Height <= prev.Height {
+			return invalidRenderField(path, "sequenceGrowth", at, "must have increasing event indices and heights")
+		}
+		prev = at
+	}
 	return nil
 }
 

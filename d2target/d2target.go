@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"math"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -109,7 +110,8 @@ const (
 
 const (
 	SequenceMessageIntervalMS = 1000
-	SequenceMessageRevealMS   = 250
+	SequenceMessageRevealMS   = 650
+	SequenceGrowthMS          = 250
 )
 
 // TweenFrameCount samples at 25 fps up to the per-transition frame limit.
@@ -167,6 +169,13 @@ type Legend struct {
 // board play in parallel, so the longest one sets the duration.
 func (d *Diagram) SequencePlaybackDurationMS() int {
 	last := 0
+	for i := range d.Shapes {
+		s := &d.Shapes[i]
+		last = max(last, s.SequenceStep)
+		if len(s.SequenceGrowth) > 0 {
+			last = max(last, s.SequenceGrowth[len(s.SequenceGrowth)-1].Step)
+		}
+	}
 	for i := range d.Connections {
 		last = max(last, d.Connections[i].SequenceStep)
 	}
@@ -879,7 +888,18 @@ type SketchFillTransition struct {
 	Progress float64 `json:"progress"`
 }
 
+// SequenceExtent records the visible height of a frame or activation when
+// a playback event has finished. Heights are measured from the shape's top.
+type SequenceExtent struct {
+	Step   int `json:"step"`
+	Height int `json:"height"`
+}
+
 type Shape struct {
+	SequenceStep      int              `json:"sequenceStep,omitempty"`
+	SequenceAtArrival bool             `json:"sequenceAtArrival,omitempty"`
+	SequenceGrowth    []SequenceExtent `json:"sequenceGrowth,omitempty"`
+
 	ID   string `json:"id"`
 	Type string `json:"type"`
 
@@ -953,6 +973,66 @@ type Shape struct {
 	PrimaryAccentColor   string `json:"primaryAccentColor,omitempty"`
 	SecondaryAccentColor string `json:"secondaryAccentColor,omitempty"`
 	NeutralAccentColor   string `json:"neutralAccentColor,omitempty"`
+}
+
+// SequenceStartMS is the first visible instant for this timed shape. The
+// initial frame shows participants and their lifelines before the first event.
+func (s *Shape) SequenceStartMS() int {
+	if s.SequenceStep == 0 {
+		return 0
+	}
+	start := (s.SequenceStep - 1) * SequenceMessageIntervalMS
+	if s.SequenceAtArrival {
+		start += SequenceMessageRevealMS
+	}
+	return max(1, start)
+}
+
+// SequenceShapeFrame is a height key on the standalone sequence clock.
+type SequenceShapeFrame struct {
+	TimeMS int
+	Height int
+}
+
+// SequenceKeyframes gives the linear growth segments, including their holds.
+// A one-shot reveal uses the shape's height directly.
+func (s *Shape) SequenceKeyframes() []SequenceShapeFrame {
+	if len(s.SequenceGrowth) == 0 {
+		return nil
+	}
+	height := s.SequenceGrowth[0].Height
+	frames := []SequenceShapeFrame{{TimeMS: s.SequenceStartMS(), Height: height}}
+	for _, extent := range s.SequenceGrowth[1:] {
+		begin := (extent.Step - 1) * SequenceMessageIntervalMS
+		frames = append(frames, SequenceShapeFrame{begin - SequenceGrowthMS, height}, SequenceShapeFrame{begin, extent.Height})
+		height = extent.Height
+	}
+	return frames
+}
+
+// SequenceHeightAt returns the progressive height on the standalone playback clock.
+func (s *Shape) SequenceHeightAt(elapsedMS int) float64 {
+	if s.SequenceStep == 0 {
+		return float64(s.Height)
+	}
+	if elapsedMS < s.SequenceStartMS() {
+		return 0
+	}
+	if len(s.SequenceGrowth) == 0 {
+		return float64(s.Height)
+	}
+	step := elapsedMS/SequenceMessageIntervalMS + 1
+	next := sort.Search(len(s.SequenceGrowth), func(i int) bool { return s.SequenceGrowth[i].Step > step })
+	height := s.SequenceGrowth[next-1].Height
+	if next == len(s.SequenceGrowth) {
+		return float64(height)
+	}
+	extent := s.SequenceGrowth[next]
+	start := (extent.Step-1)*SequenceMessageIntervalMS - SequenceGrowthMS
+	if elapsedMS <= start {
+		return float64(height)
+	}
+	return float64(height) + float64(extent.Height-height)*float64(elapsedMS-start)/SequenceGrowthMS
 }
 
 // Geometry returns the same outline and inner content box used for rendering.

@@ -155,6 +155,12 @@ export interface Legend {
 export type Shape = (Class | SQLTable | Text) & ShapeBase;
 
 export interface ShapeBase {
+  /** First event to show this sequence note, frame, or activation. */
+  sequenceStep?: number;
+  /** Its first appearance waits for the opening message to arrive. */
+  sequenceAtArrival?: boolean;
+  /** Visible heights from the top of the authored shape at successive events. */
+  sequenceGrowth?: { step: number; height: number }[];
   motionClip?: MotionClip;
   motionLabelTopLeft?: Point;
   /** Authored body bounds for an anchored label during a node entrance. */

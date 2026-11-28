@@ -145,27 +145,79 @@ async function checkSequence(page) {
         lifeline: state(line("#007777")),
         connections: ["#8000ff", "#d04600", "#147ac0"].map((color) => state(line(color))),
         labels: ["Request", "Validate", "Response"].map((name) => state(label(name))),
+        masks: [1, 2, 3].map((n) => state(document.querySelector(`mask [data-d2-sequence-step="${n}"] rect`))),
       };
     });
-    assert.deepEqual(paint.actors, ["shown", "shown"]);
-    assert.equal(paint.lifeline, "shown");
-    assert.deepEqual(paint.connections, expected, "sequence connections");
-    assert.deepEqual(paint.labels, expected, "sequence labels");
+    if (expected[0] === "shown") assert.deepEqual(paint.actors, ["shown", "shown"]);
+    if (expected[0] === "shown") assert.equal(paint.lifeline, "shown");
+    const shafts = expected.map((state) => state === "drawing" ? "shown" : state);
+    const arrived = expected.map((state) => state === "drawing" ? "hidden" : state);
+    assert.deepEqual(paint.connections, shafts, "sequence shafts");
+    assert.deepEqual(paint.labels, arrived, "sequence labels");
+    assert.deepEqual(paint.masks, arrived, "sequence label masks");
   }
 
   for (const [ms, expected] of [
     [0, ["hidden", "hidden", "hidden"]],
-    [125, ["fading", "hidden", "hidden"]],
-    [500, ["shown", "hidden", "hidden"]],
-    [1125, ["shown", "fading", "hidden"]],
-    [1500, ["shown", "shown", "hidden"]],
-    [2500, ["shown", "shown", "shown"]],
+    [325, ["drawing", "hidden", "hidden"]],
+    [649, ["drawing", "hidden", "hidden"]],
+    [700, ["shown", "hidden", "hidden"]],
+    [1325, ["shown", "drawing", "hidden"]],
+    [1700, ["shown", "shown", "hidden"]],
+    [2325, ["shown", "shown", "drawing"]],
+    [2700, ["shown", "shown", "shown"]],
     [3900, ["shown", "shown", "shown"]],
     [4000, ["hidden", "hidden", "hidden"]],
-    [4500, ["shown", "hidden", "hidden"]],
+    [4700, ["shown", "hidden", "hidden"]],
   ]) {
     await seek(page, ms);
     await checkPaint(expected);
+  }
+  // Sample painted pixels on both sides of the moving tip. On a self-call
+  // this follows the bends. The dashed reply travels along its path in reverse.
+  for (const [step, color] of [[1, "8000ff"], [2, "d04600"], [3, "147ac0"]]) {
+    for (const progress of [0.25, 0.5, 0.75]) {
+      await seek(page, (step - 1) * 1000 + 650 * progress);
+      const points = await page.evaluate(({ step, progress }) => {
+        const shaft = document.querySelector(`[data-d2-sequence-trace="${step}"]`);
+        const flight = document.querySelector(`[data-d2-sequence-flight="${step}"]`);
+        const matrix = document.querySelector(`[data-d2-sequence-shaft="${step}"]`).getScreenCTM();
+        const at = (fraction) => {
+          const p = shaft.getPointAtLength(shaft.getTotalLength() * (step === 3 ? 1 - fraction : fraction));
+          const { x, y } = new DOMPoint(p.x, p.y).matrixTransform(matrix);
+          return { x, y };
+        };
+        const tip = new DOMPoint().matrixTransform(flight.getScreenCTM());
+        const expected = at(progress);
+        if (Math.hypot(tip.x - expected.x, tip.y - expected.y) > 1) {
+          throw new Error("Arrowhead left its route at step " + step);
+        }
+        return { tip: expected, later: at(progress + 0.22) };
+      }, { step, progress });
+      const image = PNG.sync.read(await page.screenshot());
+      const shaft = page.locator(`[data-d2-sequence-shaft="${step}"]`);
+      await shaft.evaluate((el) => { el.style.opacity = "0"; });
+      const headOnly = PNG.sync.read(await page.screenshot());
+      await shaft.evaluate((el) => { el.style.removeProperty("opacity"); });
+      assert.ok(!image.data.equals(headOnly.data), `step ${step} drew no shaft at ${progress}`);
+      const rgb = color.match(/../g).map((v) => parseInt(v, 16));
+      function painted(image, { x, y }, radius) {
+        let count = 0;
+        const left = Math.max(0, Math.round(x) - radius);
+        const right = Math.min(image.width - 1, Math.round(x) + radius);
+        const top = Math.max(0, Math.round(y) - radius);
+        const bottom = Math.min(image.height - 1, Math.round(y) + radius);
+        for (let row = top; row <= bottom; row++) {
+          for (let col = left; col <= right; col++) {
+            const i = (row * image.width + col) * 4;
+            if (rgb.every((v, c) => Math.abs(image.data[i + c] - v) < 40)) count++;
+          }
+        }
+        return count;
+      }
+      assert.ok(painted(headOnly, points.tip, 5) > 4, `step ${step} tip at ${progress}`);
+      assert.equal(painted(image, points.later, 2), 0, `step ${step} leaked past its tip at ${progress}`);
+    }
   }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await checkPaint(["shown", "shown", "shown"]);

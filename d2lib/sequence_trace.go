@@ -18,8 +18,24 @@ import (
 func suspendSequencePlayback(root *d2target.Diagram) (restore func()) {
 	type rank struct{ index, step int }
 	saved := make(map[*d2target.Diagram][]rank)
+	type shapeState struct {
+		index, step int
+		arrival     bool
+		growth      []d2target.SequenceExtent
+	}
+	shapes := make(map[*d2target.Diagram][]shapeState)
 	var visit func(*d2target.Diagram, bool)
 	visit = func(board *d2target.Diagram, authored bool) {
+		for i := range board.Shapes {
+			s := &board.Shapes[i]
+			if s.SequenceStep == 0 {
+				continue
+			}
+			if authored {
+				shapes[board] = append(shapes[board], shapeState{i, s.SequenceStep, s.SequenceAtArrival, s.SequenceGrowth})
+			}
+			s.SequenceStep, s.SequenceAtArrival, s.SequenceGrowth = 0, false, nil
+		}
 		for i := range board.Connections {
 			c := &board.Connections[i]
 			if c.SequenceStep == 0 {
@@ -41,6 +57,13 @@ func suspendSequencePlayback(root *d2target.Diagram) (restore func()) {
 	}
 	visit(root, true)
 	return func() {
+		for board, states := range shapes {
+			board.Shapes = slices.Clone(board.Shapes)
+			for _, st := range states {
+				s := &board.Shapes[st.index]
+				s.SequenceStep, s.SequenceAtArrival, s.SequenceGrowth = st.step, st.arrival, st.growth
+			}
+		}
 		for board, ranks := range saved {
 			// Some sample frames share their authored board's slice.
 			board.Connections = slices.Clone(board.Connections)

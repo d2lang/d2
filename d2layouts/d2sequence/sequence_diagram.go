@@ -1,7 +1,6 @@
 package d2sequence
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -12,12 +11,12 @@ import (
 
 	"github.com/d2lang/util-go/go2"
 
+	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
-	"github.com/d2lang/d2/lib/xsort"
 )
 
 type sequenceDiagram struct {
@@ -44,46 +43,41 @@ type sequenceDiagram struct {
 	yStep          float64
 	maxActorHeight float64
 
-	verticalIndices map[string]int
+	verticalIndices map[string]d2ast.Position
 }
 
-func getObjEarliestLineNum(o *d2graph.Object) int {
-	min := int(math.MaxInt32)
+// Semicolons can put a note and several messages on the same source line.
+func firstObjectPosition(o *d2graph.Object) d2ast.Position {
+	first := d2ast.Position{Line: math.MaxInt, Column: math.MaxInt, Byte: -1}
 	for _, ref := range o.References {
-		if ref.MapKey == nil {
-			continue
+		if ref.MapKey != nil && !ref.Key.HasGlob() && ref.MapKey.Range.Start.Before(first) {
+			first = ref.MapKey.Range.Start
+			first.Byte = -1 // Compare line and column, including across source files.
 		}
-		if ref.Key.HasGlob() {
-			continue
-		}
-		min = go2.IntMin(min, ref.MapKey.Range.Start.Line)
 	}
-	return min
+	return first
 }
 
-func getEdgeEarliestLineNum(e *d2graph.Edge) int {
-	min := int(math.MaxInt32)
+func firstMessagePosition(e *d2graph.Edge) d2ast.Position {
+	first := d2ast.Position{Line: math.MaxInt, Column: math.MaxInt, Byte: -1}
 	for _, ref := range e.References {
-		if ref.MapKey == nil {
-			continue
+		if ref.MapKey != nil && ref.Edge != nil && !ref.Edge.Src.HasGlob() && !ref.Edge.Dst.HasGlob() && ref.Edge.Range.Start.Before(first) {
+			first = ref.Edge.Range.Start
+			first.Byte = -1
 		}
-		if ref.Edge.Src.HasGlob() || ref.Edge.Dst.HasGlob() {
-			continue
-		}
-		min = go2.IntMin(min, ref.MapKey.Range.Start.Line)
 	}
-	return min
+	return first
 }
 
 func newSequenceDiagram(objects []*d2graph.Object, messages []*d2graph.Edge) (*sequenceDiagram, error) {
 	var actors []*d2graph.Object
 	var groups []*d2graph.Object
 
-	xsort.Func(objects, func(a, b *d2graph.Object) int {
-		return cmp.Compare(getObjEarliestLineNum(a), getObjEarliestLineNum(b))
+	sort.SliceStable(objects, func(i, j int) bool {
+		return firstObjectPosition(objects[i]).Before(firstObjectPosition(objects[j]))
 	})
-	xsort.Func(messages, func(a, b *d2graph.Edge) int {
-		return cmp.Compare(getEdgeEarliestLineNum(a), getEdgeEarliestLineNum(b))
+	sort.SliceStable(messages, func(i, j int) bool {
+		return firstMessagePosition(messages[i]).Before(firstMessagePosition(messages[j]))
 	})
 
 	for _, obj := range objects {
@@ -122,7 +116,7 @@ func newSequenceDiagram(objects []*d2graph.Object, messages []*d2graph.Edge) (*s
 		actorXStep:      make([]float64, len(actors)-1),
 		yStep:           MIN_MESSAGE_DISTANCE,
 		maxActorHeight:  0.,
-		verticalIndices: make(map[string]int),
+		verticalIndices: make(map[string]d2ast.Position),
 	}
 
 	for rank, actor := range actors {
@@ -150,7 +144,7 @@ func newSequenceDiagram(objects []*d2graph.Object, messages []*d2graph.Edge) (*s
 			// spans are children of actors that have edges
 			// edge groups are children of actors with no edges and children edges
 			if child.IsSequenceDiagramNote() {
-				sd.verticalIndices[child.AbsID()] = getObjEarliestLineNum(child)
+				sd.verticalIndices[child.AbsID()] = firstObjectPosition(child)
 				child.Shape = d2graph.Scalar{Value: shape.PAGE_TYPE}
 				sd.notes = append(sd.notes, child)
 				sd.objectRank[child] = rank
@@ -180,7 +174,7 @@ func newSequenceDiagram(objects []*d2graph.Object, messages []*d2graph.Edge) (*s
 	}
 
 	for _, message := range sd.messages {
-		sd.verticalIndices[message.AbsID()] = getEdgeEarliestLineNum(message)
+		sd.verticalIndices[message.AbsID()] = firstMessagePosition(message)
 
 		// ensures that long labels, spanning over multiple actors, don't make for large gaps between actors
 		// by distributing the label length across the actors rank difference
@@ -510,7 +504,7 @@ func (sd *sequenceDiagram) placeNotes() {
 		y := sd.maxActorHeight + sd.yStep
 
 		for _, msg := range sd.messages {
-			if sd.verticalIndices[msg.AbsID()] < verticalIndex {
+			if sd.verticalIndices[msg.AbsID()].Before(verticalIndex) {
 				if isSelfOrSibling(msg) {
 					// For self/sibling messages, account for the full vertical space they occupy
 					y += sd.yStep + math.Max(float64(msg.LabelDimensions.Height), MIN_MESSAGE_DISTANCE)*1.5
@@ -520,7 +514,7 @@ func (sd *sequenceDiagram) placeNotes() {
 			}
 		}
 		for _, otherNote := range sd.notes {
-			if sd.verticalIndices[otherNote.AbsID()] < verticalIndex {
+			if sd.verticalIndices[otherNote.AbsID()].Before(verticalIndex) {
 				y += otherNote.Height + sd.yStep
 			}
 		}
@@ -614,7 +608,7 @@ func (sd *sequenceDiagram) routeMessages() error {
 		message.ZIndex = MESSAGE_Z_INDEX
 		noteOffset := 0.
 		for _, note := range sd.notes {
-			if sd.verticalIndices[note.AbsID()] < sd.verticalIndices[message.AbsID()] {
+			if sd.verticalIndices[note.AbsID()].Before(sd.verticalIndices[message.AbsID()]) {
 				noteOffset += note.Height + sd.yStep
 			}
 		}

@@ -4,9 +4,9 @@ import (
 	"context"
 	"image/color"
 	"testing"
-	"time"
 
 	"github.com/d2lang/d2/d2renderers/d2raster"
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 )
 
@@ -53,22 +53,39 @@ func TestSequenceCrossingAppearsWithItsMessage(t *testing.T) {
 	front.Route = []*geo.Point{{X: 50, Y: -20}, {X: 50, Y: 40}}
 	diagram.Connections = append(diagram.Connections, front)
 	pad := int64(5)
-	doc, err := Build(t.Context(), diagram, Options{Pad: &pad, SequencePlayback: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, ms := range []int{0, 1100, 1250} {
+	for _, ms := range []int{0, 1100, 1575, 1650} {
+		doc, err := Build(t.Context(), diagram, Options{Pad: &pad, SequenceTimeMS: &ms})
+		if err != nil {
+			t.Fatal(err)
+		}
 		options := shapeEffectFrameOptions()
-		options.Time = time.Duration(ms) * time.Millisecond
 		frame, err := d2raster.Render(t.Context(), doc, options)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Just beside the foreground stroke, the back wire fades from fully
-		// black to the white page as the crossing opens.
+		// The fixed crossing opens when the complete foreground message lands.
 		red := frame.NRGBAAt(48-int(doc.ViewBox.X), 10-int(doc.ViewBox.Y)).R
-		if ms == 0 && red != 0 || ms == 1100 && (red == 0 || red == 255) || ms == 1250 && red != 255 {
+		if ms < 1650 && red != 0 || ms == 1650 && red != 255 {
 			t.Fatalf("crossing background at %dms has red channel %d", ms, red)
+		}
+	}
+}
+
+func TestSequenceLabelAppearsOnArrival(t *testing.T) {
+	diagram := validDiagram()
+	c := &diagram.Connections[0]
+	c.SequenceStep = 1
+	c.Text = d2target.Text{Label: "reply", LabelWidth: 30, LabelHeight: 16, FontSize: 16, FontFamily: "default"}
+	c.LabelPosition = "INSIDE_MIDDLE_CENTER"
+	for _, ms := range []int{500, d2target.SequenceMessageRevealMS} {
+		doc, err := Build(t.Context(), diagram, Options{SequenceTimeMS: &ms})
+		if err != nil {
+			t.Fatal(err)
+		}
+		group := findSceneNode(t, doc.Root, c.ID)
+		label := findSceneNode(t, group, c.ID+":label:0")
+		if group.Opacity != 1 || (label.Opacity == 1) != (ms == d2target.SequenceMessageRevealMS) {
+			t.Fatalf("at %dms, wire opacity %g, label opacity %g", ms, group.Opacity, label.Opacity)
 		}
 	}
 }

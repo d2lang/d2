@@ -374,7 +374,7 @@ group: {
 }
 b -> a
 a -> a: finish`,
-			ranks: map[string]int{"request": 1, "hidden": 0, "answer": 2, "": 3, "finish": 4}, duration: 5000,
+			ranks: map[string]int{"request": 1, "hidden": 0, "answer": 3, "": 4, "finish": 5}, duration: 6000,
 		},
 		{
 			name: "nested",
@@ -425,5 +425,98 @@ outer.buy.a -> external: outside`,
 			}
 			tassert.NoError(t, d2target.ValidateRenderTarget(d))
 		})
+	}
+}
+
+func TestSequenceStructurePlayback(t *testing.T) {
+	d, err := compile(log.With(t.Context(), testlog.New(t)), `nested: {
+  shape: sequence_diagram
+  animated: true
+  customer; api; db
+  customer -> api: Connect
+  work: {
+    stage: {
+      customer -> api.job: Submit
+      api.job -> db.txn: Save
+      api.job."Stored"
+      api.job <- db.txn: Receipt
+    }
+    api.job -> api.job.log: Record
+  }
+  after: {customer."Done"; customer -> api: Close; api."Disconnected"}
+  closing: {inside: {customer."Goodbye"}}
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tassert.NoError(t, d2target.ValidateRenderTarget(d))
+	wantStep := map[string]int{
+		"work": 2, "work.stage": 2, "api.job": 2, "db.txn": 3, `api.job.Stored`: 4, "api.job.log": 6,
+		"after": 7, "customer.Done": 7, "api.Disconnected": 9, "closing": 10, "closing.inside": 10, "customer.Goodbye": 10,
+	}
+	for i := range d.Shapes {
+		s := &d.Shapes[i]
+		id := strings.TrimPrefix(s.ID, "nested.")
+		tassert.Equal(t, wantStep[id], s.SequenceStep, s.ID)
+		delete(wantStep, id)
+		switch id {
+		case "api.job", "api.job.log", "db.txn":
+			tassert.True(t, s.SequenceAtArrival, s.ID)
+		default:
+			tassert.False(t, s.SequenceAtArrival, s.ID)
+		}
+		if id == "work" || id == "work.stage" || id == "api.job" || id == "db.txn" {
+			if len(s.SequenceGrowth) < 2 {
+				t.Errorf("missing growing extent for %s: %+v", s.ID, s.SequenceGrowth)
+				continue
+			}
+			tassert.Less(t, s.SequenceGrowth[0].Height, s.Height)
+			tassert.Equal(t, s.Height, s.SequenceGrowth[len(s.SequenceGrowth)-1].Height)
+		}
+	}
+	tassert.Empty(t, wantStep)
+	shapes := make(map[string]*d2target.Shape)
+	for i := range d.Shapes {
+		shapes[d.Shapes[i].ID] = &d.Shapes[i]
+	}
+	for _, pair := range [][2]string{{"work", "work.stage"}, {"closing", "closing.inside"}, {"api.job", "api.job.log"}} {
+		parent, child := shapes["nested."+pair[0]], shapes["nested."+pair[1]]
+		for ms := 0; ms < d.SequencePlaybackDurationMS(); ms += 50 {
+			childHeight := child.SequenceHeightAt(ms)
+			if childHeight > 0 && float64(parent.Pos.Y)+parent.SequenceHeightAt(ms) < float64(child.Pos.Y)+childHeight {
+				t.Fatalf("%s extends beyond %s at %dms: %.1f > %.1f", child.ID, parent.ID, ms, float64(child.Pos.Y)+childHeight, float64(parent.Pos.Y)+parent.SequenceHeightAt(ms))
+			}
+		}
+	}
+	for _, c := range d.Connections {
+		tassert.Equal(t, map[string]int{"Connect": 1, "Submit": 2, "Save": 3, "Receipt": 5, "Record": 6, "Close": 8}[c.Label], c.SequenceStep, c.ID)
+	}
+	tassert.Equal(t, 11000, d.SequencePlaybackDurationMS())
+}
+
+func TestNoteOnlySequenceWithHiddenStructure(t *testing.T) {
+	d, err := compile(log.With(t.Context(), testlog.New(t)), `shape: sequence_diagram
+animated: true
+a; b
+hidden: {a.job -> b: Secret {style.opacity: 0}}
+notes: {a."First"; b."Second"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tassert.NoError(t, d2target.ValidateRenderTarget(d))
+	tassert.Equal(t, 3000, d.SequencePlaybackDurationMS())
+	for i := range d.Shapes {
+		s := &d.Shapes[i]
+		switch s.ID {
+		case "notes", "a.First":
+			tassert.Equal(t, 1, s.SequenceStep, s.ID)
+			tassert.Equal(t, 0., s.SequenceHeightAt(0))
+			tassert.Greater(t, s.SequenceHeightAt(1), 0.)
+		case "b.Second":
+			tassert.Equal(t, 2, s.SequenceStep, s.ID)
+		case "a.job", "hidden":
+			tassert.Equal(t, 2, s.SequenceStep, s.ID)
+			tassert.Equal(t, 1650, s.SequenceStartMS(), s.ID)
+		}
 	}
 }

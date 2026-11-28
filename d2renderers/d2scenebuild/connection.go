@@ -25,7 +25,7 @@ type connectionPathSegment struct {
 	command d2scene.PathCommand
 }
 
-func (b *builder) buildConnection(connection d2target.Connection, crossingMask *d2scene.Mask) (*d2scene.Node, error) {
+func (b *builder) buildConnection(connection, authored d2target.Connection, crossingMask *d2scene.Mask) (*d2scene.Node, error) {
 	strokePaint, err := b.paint(connection.Stroke, fmt.Sprintf("connection %q stroke", connection.ID))
 	if err != nil {
 		return nil, err
@@ -71,12 +71,12 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 	group.ID = connection.ID
 	group.Classes = append([]string(nil), connection.Classes...)
 	group.Opacity = connection.Opacity
-	b.applySequenceReveal(group, connection.SequenceStep)
-	icon, err := b.buildConnectionIcon(connection)
+	icon, err := b.buildConnectionIcon(authored)
 	if err != nil {
 		return nil, err
 	}
 	if icon != nil {
+		b.showOnSequenceArrival(icon, authored.SequenceStep)
 		group.Children = append(group.Children, icon)
 	}
 	var srcArrowNode, dstArrowNode *d2scene.Node
@@ -128,7 +128,7 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 	}
 	switch strokePaint.(type) {
 	case d2scene.LinearGradient, d2scene.RadialGradient:
-		box := connection.GradientBounds()
+		box := authored.GradientBounds()
 		transform := d2scene.Translate(box.TopLeft.X, box.TopLeft.Y).Mul(d2scene.Scale(box.Width, box.Height))
 		for _, node := range geometryChildren {
 			if err := applyConnectionGradient(node, transform); err != nil {
@@ -145,29 +145,22 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 		geometry.Children = geometryChildren
 		group.Children = append(group.Children, geometry)
 	}
-	labels, err := b.buildConnectionLabels(connection)
+	labels, err := b.buildConnectionLabels(authored)
 	if err != nil {
 		return nil, err
+	}
+	for _, label := range labels {
+		b.showOnSequenceArrival(label, authored.SequenceStep)
 	}
 	group.Children = append(group.Children, labels...)
 	return group, nil
 }
 
-// A message, its label cutout, and any crossing it opens share one reveal.
-// Keep the node's authored opacity as its endpoint, including translucent ink.
-func (b *builder) applySequenceReveal(node *d2scene.Node, step int) {
-	if !b.options.SequencePlayback || step <= 0 {
-		return
+// Show fixed message artwork once the arrow has reached its destination.
+func (b *builder) showOnSequenceArrival(node *d2scene.Node, step int) {
+	if t := b.options.SequenceTimeMS; t != nil && step > 0 && d2target.SequenceProgressAt(step, *t) < 1 {
+		node.Opacity = 0
 	}
-	node.Animations = append(node.Animations, d2scene.Track{
-		Property: d2scene.AnimateOpacity,
-		Delay:    time.Duration(step-1) * d2target.SequenceMessageIntervalMS * time.Millisecond,
-		Duration: d2target.SequenceMessageRevealMS * time.Millisecond,
-		Keyframes: []d2scene.Keyframe{
-			{Offset: 0, Value: d2scene.NumberValue(0)},
-			{Offset: 1, Value: d2scene.NumberValue(node.Opacity)},
-		},
-	})
 }
 
 // The shaft and markers all sample the same gradient in connection space.

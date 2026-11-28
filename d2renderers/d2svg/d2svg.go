@@ -784,6 +784,7 @@ func openMotionViewport(writer io.Writer, c *d2target.MotionClip) {
 
 type connectionEffects struct {
 	sequenceStep int
+	sequenceID   string
 	labelID      string
 	crossing     crossingEffect
 }
@@ -841,12 +842,16 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 	markerEnd := marker(connection.DstArrow, true, dstMarker)
 
 	// Shared marker definitions above must stay available even while their
-	// first message is hidden. Fade the paint inside its authored opacity.
-	if effects.sequenceStep > 0 {
-		writer.buf.WriteString(sequenceGroup(effects.sequenceStep))
+	// first message is hidden. The shaft starts at launch; its labels,
+	// masks and annotations appear together on arrival.
+	sequence := effects.sequenceStep > 0
+	if sequence {
+		writer.buf.WriteString(svg.OpenElement("g", svg.IntAttr("data-d2-sequence-step", effects.sequenceStep), svg.Attr("data-d2-sequence-message", "")))
 	}
-
 	if connection.Icon != nil {
+		if sequence {
+			writer.buf.WriteString(sequenceGroup(effects.sequenceStep))
+		}
 		iconPos := connection.GetIconPosition()
 		if iconPos != nil {
 			attributes := []svg.Attribute{
@@ -861,6 +866,10 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 			}
 			fmt.Fprint(writer, svg.EmptyElement("image", attributes...))
 		}
+	}
+
+	if sequence && connection.Icon != nil {
+		writer.buf.WriteString("</g>")
 	}
 
 	var labelTL, maskTL *geo.Point
@@ -910,6 +919,11 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 		pathAttrs = append(pathAttrs, crossing.attribute())
 	}
 
+	reverse := connection.SrcArrow != d2target.NoArrowhead && connection.DstArrow == d2target.NoArrowhead
+	if sequence {
+		openSequenceShaft(writer.buf, connection, path, effects.sequenceID+"-mask", reverse)
+	}
+	var activeHead, anchoredHead string
 	if sketch {
 		out, err := d2sketch.ConnectionWithAttributes(connection, path, pathAttrs)
 		if err != nil {
@@ -925,13 +939,43 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 			p, degrees := d2sketch.ArrowheadPlacement(connection, target, adjustment)
 			return gradient.paint(worldToEndpoint(p, degrees*math.Pi/180))
 		}
-		arrowPaths, err := d2sketch.ArrowheadsWithPaint(connection, srcAdj, dstAdj,
-			sketchPaint(connection.SrcArrow, false, srcAdj), sketchPaint(connection.DstArrow, true, dstAdj))
-		if err != nil {
-			return "", err
+		if sequence {
+			source, target := connection, connection
+			source.DstArrow, target.SrcArrow = d2target.NoArrowhead, d2target.NoArrowhead
+			sourcePaint, err := d2sketch.ArrowheadsWithPaint(source, srcAdj, dstAdj, sketchPaint(source.SrcArrow, false, srcAdj), "")
+			if err != nil {
+				return "", err
+			}
+			targetPaint, err := d2sketch.ArrowheadsWithPaint(target, srcAdj, dstAdj, "", sketchPaint(target.DstArrow, true, dstAdj))
+			if err != nil {
+				return "", err
+			}
+			activeHead, anchoredHead = targetPaint, sourcePaint
+			if reverse {
+				activeHead, anchoredHead = sourcePaint, ""
+			}
+		} else {
+			arrowPaths, err := d2sketch.ArrowheadsWithPaint(connection, srcAdj, dstAdj,
+				sketchPaint(connection.SrcArrow, false, srcAdj), sketchPaint(connection.DstArrow, true, dstAdj))
+			if err != nil {
+				return "", err
+			}
+			fmt.Fprint(writer, arrowPaths)
 		}
-		fmt.Fprint(writer, arrowPaths)
 	} else {
+		if sequence {
+			head := func(attributes []svg.Attribute) string {
+				if len(attributes) == 0 {
+					return ""
+				}
+				return svg.EmptyElement("path", append([]svg.Attribute{svg.Attr("d", path), svg.Attr("fill", "none"), svg.Attr("stroke", "none")}, attributes...)...)
+			}
+			activeHead, anchoredHead = head(markerEnd), head(markerStart)
+			if reverse {
+				activeHead, anchoredHead = anchoredHead, ""
+			}
+			markerStart, markerEnd = nil, nil
+		}
 		className := "connection"
 		if connection.Animated {
 			className += " animated-connection"
@@ -960,10 +1004,32 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 		}
 	}
 
+	if sequence {
+		writer.buf.WriteString("</g>")
+		var headMasks []svg.Attribute
+		if !sketch {
+			headMasks = pathAttrs
+		}
+		if anchoredHead != "" {
+			writer.buf.WriteString(svg.OpenElement("g", headMasks...))
+			writer.buf.WriteString(anchoredHead)
+			writer.buf.WriteString("</g>")
+		}
+		if activeHead != "" {
+			start, end := markerEndpoints(connection, srcAdj, dstAdj)
+			if reverse {
+				end = start
+			}
+			sequenceHead(writer.buf, effects.sequenceStep, effects.sequenceID+"-tip", path, activeHead, reverse, end, headMasks)
+		}
+	}
 	if wrapCrossing {
 		fmt.Fprint(writer, svg.CloseElement("g"))
 	}
 
+	if sequence {
+		writer.buf.WriteString(sequenceGroup(effects.sequenceStep))
+	}
 	if connection.Label != "" {
 		if p := connection.MotionLabel; p != nil {
 			fmt.Fprint(writer, svg.OpenElement("g", svg.FloatAttr("opacity", p.Opacity)))
@@ -1049,8 +1115,8 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 	if connection.DstLabel != nil && connection.DstLabel.Label != "" {
 		fmt.Fprint(writer, renderArrowheadLabel(connection, connection.DstLabel.Label, true, inlineTheme))
 	}
-	if effects.sequenceStep > 0 {
-		writer.buf.WriteString(svg.CloseElement("g"))
+	if sequence {
+		writer.buf.WriteString("</g></g>")
 		if labelMask != "" {
 			labelMask = sequenceGroup(effects.sequenceStep) + labelMask + svg.CloseElement("g")
 		}
@@ -2342,6 +2408,15 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	if opts.MasterID == "" && !opts.StaticSequence {
 		sequenceDuration = diagram.SequencePlaybackDurationMS()
 	}
+	var sequenceShapes map[string]int
+	if sequenceDuration > 0 {
+		sequenceShapes = make(map[string]int)
+		for i, s := range diagram.Shapes {
+			if s.SequenceStep > 0 {
+				sequenceShapes[s.ID] = i + 1
+			}
+		}
+	}
 	effects := viewport.planCrossings(isolatedDiagramHash, crossings, diagram, opts.MasterID != "", sequenceDuration > 0)
 
 	sortObjects(allObjects)
@@ -2356,8 +2431,9 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 		}
 		if c, is := obj.(indexedConnection); is {
 			paint := connectionEffects{labelID: isolatedDiagramHash, crossing: effects[c.index]}
-			if sequenceDuration > 0 {
+			if sequenceDuration > 0 && c.SequenceStep > 0 {
 				paint.sequenceStep = c.SequenceStep
+				paint.sequenceID = isolatedDiagramHash + "-seq-" + strconv.Itoa(c.index)
 			}
 			labelMask, err := drawConnection(writer, isolatedDiagramHash, paint, *c.Connection, defined, idToShape, sketch, inlineTheme, markdown)
 			if err != nil {
@@ -2367,10 +2443,29 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 				labelMasks = append(labelMasks, labelMask)
 			}
 		} else if s, is := obj.(d2target.Shape); is {
-			labelMask, err := drawShape(writer, appendixItemBuf, diagramHash, isolatedDiagramHash, s, sketch, inlineTheme, markdown)
+			appendix := appendixItemBuf
+			wrapper := ""
+			if index, timed := sequenceShapes[s.ID]; timed {
+				wrapper = svg.OpenElement("g", svg.IntAttr("data-d2-sequence-shape", index), svg.IntAttr("data-d2-sequence-start", s.SequenceStep))
+				writer.buf.WriteString(wrapper)
+				appendix = &bytes.Buffer{}
+			}
+			labelMask, err := drawShape(writer, appendix, diagramHash, isolatedDiagramHash, s, sketch, inlineTheme, markdown)
 			if err != nil {
 				return nil, err
-			} else if labelMask != "" {
+			}
+			if wrapper != "" {
+				writer.buf.WriteString(svg.CloseElement("g"))
+				if appendix.Len() != 0 {
+					appendixItemBuf.WriteString(wrapper)
+					appendixItemBuf.Write(appendix.Bytes())
+					appendixItemBuf.WriteString(svg.CloseElement("g"))
+				}
+				if labelMask != "" {
+					labelMask = wrapper + labelMask + svg.CloseElement("g")
+				}
+			}
+			if labelMask != "" {
 				labelMasks = append(labelMasks, labelMask)
 			}
 		} else {
@@ -2382,7 +2477,7 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	fmt.Fprint(writer, appendixItemBuf)
 
 	inkTL, inkBR := diagram.InkBoundingBox()
-	if err := drawAnnotations(writer, diagram, inkTL, inkBR, inlineTheme, markdown, sequenceDuration > 0); err != nil {
+	if err := drawAnnotations(writer, diagram, inkTL, inkBR, inlineTheme, markdown, sequenceDuration > 0, sequenceShapes); err != nil {
 		return nil, err
 	}
 	writer.finish()
@@ -2520,6 +2615,9 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 				upperBuf.WriteString(legacyStyleOpen)
 			}
 			writeSequencePlaybackCSS(upperBuf, diagramHash, sequenceDuration)
+			if len(sequenceShapes) > 0 {
+				writeSequenceShapeCSS(upperBuf, diagramHash, sequenceDuration, diagram.Shapes)
+			}
 			if !compact {
 				upperBuf.WriteString(legacyStyleClose)
 			}

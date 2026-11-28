@@ -148,14 +148,14 @@ steps: {replies: {
 }
 
 func TestExplicitSequenceStepsKeepTheirOwnTimeline(t *testing.T) {
-	// The last message moves from second to eighth on the standalone
+	// The last message moves from third to ninth on the standalone
 	// timeline. In early transition frames most of those edges don't exist.
-	source := "a -> b: Ask\n" + strings.Repeat("b -> a: Reply {style.opacity: 0}\n", 6) +
+	source := "a; b\na.Note\na -> b.job: Ask\n" + strings.Repeat("b -> a: Reply {style.opacity: 0}\n", 6) +
 		"a -> a: Finish\nsteps: {replies: {(b -> a)[*].style.opacity: 1}}"
 	plain, _ := compileContinuity(t, sequenceStepsConfig+source, d2talalayout.ContinueBoard)
 	animated, _ := compileContinuity(t, sequenceStepsConfig+"animated: true\n"+source, d2talalayout.ContinueBoard)
 	step := animated.Steps[0]
-	if animated.SequencePlaybackDurationMS() != 3000 || step.SequencePlaybackDurationMS() != 9000 {
+	if animated.SequencePlaybackDurationMS() != 4000 || step.SequencePlaybackDurationMS() != 10000 {
 		t.Fatal("the authored boards lost their standalone timelines")
 	}
 	if len(step.TweenFrames) == 0 || !reflect.DeepEqual(plain.Steps[0].TweenFrames, step.TweenFrames) {

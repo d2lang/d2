@@ -35,7 +35,7 @@ B -> A: Reply {style.stroke: "#048013"}
 	for _, delay := range g.Delay {
 		total += delay
 	}
-	if total != 300 || len(g.Image) > 18 {
+	if total != 300 || len(g.Image) > 30 {
 		t.Fatalf("two-message GIF has %dcs across %d frames, want 300cs with stationary holds", total, len(g.Image))
 	}
 	inks := func(frame image.Image) (red, green int) {
@@ -122,5 +122,53 @@ Client -> Server: Request {style.animated: true}
 				t.Fatalf("wire moved during extra hold = %v; GIF duration = %dcs, want %dms", changed, elapsed, wantMS)
 			}
 		})
+	}
+}
+
+// Distinct colors make the wire's traveled length and activation height
+// measurable in the encoded output independently of the labels.
+func TestSequenceGIFArrowTravelAndReceivingSpan(t *testing.T) {
+	const source = `shape: sequence_diagram
+animated: true
+A: Client
+B: Server
+A -> B.work: Begin {style.stroke: "#cc0011"}
+B.work.style.fill: "#cc11cc"
+B.work -> A: Update
+B.work -> A: Done`
+	data, err := imageCLI(t, t.TempDir(), source, "--pad=6", "--scale=.45", "--stdout-format=gif", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ink := func(cs int) (wire, activation image.Rectangle) {
+		frame := animationFrameAt(t, data, cs)
+		for y := frame.Rect.Min.Y; y < frame.Rect.Max.Y; y++ {
+			for x := frame.Rect.Min.X; x < frame.Rect.Max.X; x++ {
+				r, g, b, _ := frame.At(x, y).RGBA()
+				pixel := image.Rect(x, y, x+1, y+1)
+				switch {
+				case r > 33500 && r > g+21000 && r > b+21000:
+					wire = wire.Union(pixel)
+				case r > 33500 && b > 33500 && g < 24320 && r+16000 > b && b+16000 > r:
+					activation = activation.Union(pixel)
+				}
+			}
+		}
+		return wire, activation
+	}
+	empty, absent := ink(0)
+	short, waiting := ink(15)
+	mid, _ := ink(30)
+	full, arrived := ink(65)
+	_, growing := ink(85)
+	_, ready := ink(100)
+	if !empty.Empty() || !absent.Empty() || !waiting.Empty() || arrived.Empty() {
+		t.Fatalf("start wire %v, start/waiting/arrived span %v/%v/%v", empty, absent, waiting, arrived)
+	}
+	if short.Min.X != mid.Min.X || mid.Min.X != full.Min.X || short.Dx() >= mid.Dx() || mid.Dx() >= full.Dx() {
+		t.Fatalf("wire should extend right from a fixed sender: %v, %v, %v", short, mid, full)
+	}
+	if arrived.Min.Y != growing.Min.Y || growing.Min.Y != ready.Min.Y || arrived.Dy() >= growing.Dy() || growing.Dy() >= ready.Dy() {
+		t.Fatalf("span should grow down in advance of its next outgoing message: %v, %v, %v", arrived, growing, ready)
 	}
 }

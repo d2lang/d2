@@ -64,3 +64,44 @@ func TestSequencePlaybackPaintAndMasks(t *testing.T) {
 		})
 	}
 }
+
+func TestSequenceShapePlayback(t *testing.T) {
+	t.Parallel()
+	d := annotationDiagram()
+	span := &d.Shapes[0]
+	span.SequenceStep, span.SequenceAtArrival = 1, true
+	span.SequenceGrowth = []d2target.SequenceExtent{{Step: 1, Height: 20}, {Step: 2, Height: 60}}
+	span.Link, span.Tooltip = "https://example.com/span", "Activation"
+	d.Shapes[1].SequenceStep = 2
+
+	for _, tc := range []struct {
+		name string
+		opts *d2svg.RenderOpts
+		play bool
+	}{
+		{"screen", nil, true},
+		{"static", &d2svg.RenderOpts{StaticSequence: true}, false},
+		{"explicit board", &d2svg.RenderOpts{MasterID: "d2-master"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := d2svg.Render(d, tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			svg := string(out)
+			for _, want := range []string{
+				`data-d2-sequence-shape="1"`,
+				`data-d2-sequence-start="2"`,
+				`class="annotation" data-d2-sequence-complete="1"`,
+				"transform:scaleY(0.333333)",
+			} {
+				if strings.Contains(svg, want) != tc.play {
+					t.Errorf("playback = %v for %s", tc.play, want)
+				}
+			}
+			if !strings.Contains(svg, "https://example.com/span") {
+				t.Fatal("missing linked shape")
+			}
+		})
+	}
+}

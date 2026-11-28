@@ -72,12 +72,20 @@ var (
 // inside because their text and geometry form one unit.
 func (b *builder) appendShapeGeometry(group *d2scene.Node, targetShape d2target.Shape, children []*d2scene.Node) {
 	shadow := targetShape.Shadow && shapeSupportsShadow(targetShape.Type)
-	if !shadow && !targetShape.Blend {
+	scaleY := 1.
+	if t := b.options.SequenceTimeMS; t != nil && len(targetShape.SequenceGrowth) > 1 && targetShape.Height > 0 {
+		scaleY = targetShape.SequenceHeightAt(*t) / float64(targetShape.Height)
+	}
+	if !shadow && !targetShape.Blend && scaleY == 1 {
 		group.Children = append(group.Children, children...)
 		return
 	}
 	inner := d2scene.NewNode(nil)
 	inner.ID = targetShape.ID + ":shape"
+	if scaleY > 0 && scaleY < 1 {
+		top := float64(targetShape.Pos.Y)
+		inner.Transform = d2scene.Translate(0, top).Mul(d2scene.Scale(1, scaleY)).Mul(d2scene.Translate(0, -top))
+	}
 	inner.Children = append(inner.Children, children...)
 	if shadow {
 		// The visible static shadow is a sharp offset/flood composite.

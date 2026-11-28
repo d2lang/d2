@@ -24,7 +24,12 @@ func (b *builder) buildAnnotations() ([]*d2scene.Node, error) {
 		object := fmt.Sprintf("annotation of %q", mark.ID)
 		root := d2scene.NewNode(nil)
 		root.ID = mark.ID + ":annotation"
-		b.applySequenceReveal(root, mark.SequenceStep)
+		if t := b.options.SequenceTimeMS; t != nil {
+			if owner, ok := b.idToShape[mark.ID]; ok && owner.SequenceHeightAt(*t) < float64(owner.Height) {
+				root.Opacity = 0
+			}
+		}
+		b.showOnSequenceArrival(root, mark.SequenceStep)
 		lineCap := d2scene.CapRound
 		if mark.Flat {
 			lineCap = d2scene.CapButt

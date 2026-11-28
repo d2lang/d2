@@ -6,4 +6,4 @@ client: Client {style.stroke: "#007777"}
 api: API
 client -> api: Request {style.stroke: "#8000ff"}
 api -> api: Validate {style.stroke: "#d04600"}
-api -> client: Response {style.stroke: "#147ac0"}
+client <- api: Response {style.stroke: "#147ac0"; style.stroke-dash: 4}

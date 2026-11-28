@@ -209,3 +209,25 @@ func TestValidateRenderInk(t *testing.T) {
 		}
 	}
 }
+
+func TestSequenceShapeGrowth(t *testing.T) {
+	s := Shape{Height: 100, SequenceStep: 2, SequenceAtArrival: true, SequenceGrowth: []SequenceExtent{{2, 20}, {4, 80}, {5, 100}}}
+	want := []SequenceShapeFrame{{1650, 20}, {2750, 20}, {3000, 80}, {3750, 80}, {4000, 100}}
+	if !slices.Equal(s.SequenceKeyframes(), want) {
+		t.Fatalf("keyframes = %v, want %v", s.SequenceKeyframes(), want)
+	}
+	for _, tc := range []struct {
+		ms     int
+		height float64
+	}{{0, 0}, {1649, 0}, {1650, 20}, {2750, 20}, {2875, 50}, {3000, 80}, {3750, 80}, {3875, 90}, {4000, 100}, {6000, 100}} {
+		if got := s.SequenceHeightAt(tc.ms); got != tc.height {
+			t.Errorf("height at %dms = %g, want %g", tc.ms, got, tc.height)
+		}
+	}
+	for _, extents := range [][]SequenceExtent{{{1, 100}}, {{2, 100}, {2, 100}}, {{2, 20}, {7, 100}}, {{2, 110}, {3, 100}}, {{2, 90}}} {
+		s.SequenceGrowth = extents
+		if err := validateSequenceShape(s, "root.shapes[0]", 5); err == nil {
+			t.Fatalf("accepted invalid extents %v", extents)
+		}
+	}
+}

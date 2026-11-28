@@ -307,10 +307,10 @@ func bundledFontFallbackOptions(totalBoards int, next d2fonts.FallbackResolver) 
 }
 
 type sceneFrameOptions struct {
-	sequencePlayback bool
-	minimumBounds    *image.Rectangle
-	maxNodes         int
-	maxPathCommands  int
+	sequenceTimeMS  *int
+	minimumBounds   *image.Rectangle
+	maxNodes        int
+	maxPathCommands int
 }
 
 func sceneOptionsForFrame(options d2raster.FrameOptions) sceneFrameOptions {
@@ -330,16 +330,16 @@ func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diag
 	board.Steps = nil
 	sketch := opts.Sketch != nil && *opts.Sketch
 	document, err := d2scenebuild.Build(ctx, &board, d2scenebuild.Options{
-		Pad:              opts.Pad,
-		MinimumBounds:    frameOpts.minimumBounds,
-		SequencePlayback: frameOpts.sequencePlayback,
-		Scale:            opts.Scale,
-		Center:           opts.Center,
-		ThemeID:          opts.ThemeID,
-		ThemeOverrides:   opts.ThemeOverrides,
-		MaxNodes:         frameOpts.maxNodes,
-		MaxPathCommands:  frameOpts.maxPathCommands,
-		Sketch:           sketch,
+		Pad:             opts.Pad,
+		MinimumBounds:   frameOpts.minimumBounds,
+		SequenceTimeMS:  frameOpts.sequenceTimeMS,
+		Scale:           opts.Scale,
+		Center:          opts.Center,
+		ThemeID:         opts.ThemeID,
+		ThemeOverrides:  opts.ThemeOverrides,
+		MaxNodes:        frameOpts.maxNodes,
+		MaxPathCommands: frameOpts.maxPathCommands,
+		Sketch:          sketch,
 		SketchBudget: d2scenebuild.SketchBudget{
 			MaxOperationSets: rasterMaxNodes,
 			MaxOperations:    rasterMaxPathCommands,
@@ -723,13 +723,16 @@ func renderGIFWithSession(
 		return summary, err
 	}
 	sequencePlayback := diagram.HasStandaloneSequencePlayback()
-	var sequenceTimes []int
+	var geometryTimes, sequenceTimes []int
 	if sequencePlayback {
 		duration := diagram.SequencePlaybackDurationMS()
 		intervalMs = max(intervalMs, duration)
-		sequenceTimes, err = sequenceGIFSampleTimes(diagram, duration)
+		geometryTimes, err = sequenceGIFSampleTimes(diagram)
 		if err != nil {
 			return summary, err
+		}
+		if !independentlyAnimatedGIF(diagram) {
+			sequenceTimes = geometryTimes
 		}
 	}
 	type gifSegment struct {
@@ -789,16 +792,21 @@ func renderGIFWithSession(
 			totalFrames += count
 		}
 	}
-	assetOptions, err := gifSceneAssetOptions(ctx, inputPath, cacheImages, len(timeline))
+	sceneCount := len(timeline)
+	if sequencePlayback {
+		// Bound repeated layout and asset work over all possible geometry samples.
+		sceneCount = len(geometryTimes) + 1
+	}
+	assetOptions, err := gifSceneAssetOptions(ctx, inputPath, cacheImages, sceneCount)
 	if err != nil {
 		return summary, err
 	}
 	defer assetOptions.Resolver.CloseIdleConnections()
-	fontOptions, err := newFontFallbackOptions(len(timeline))
+	fontOptions, err := newFontFallbackOptions(sceneCount)
 	if err != nil {
 		return summary, err
 	}
-	linkBudget, err := gifLinkBudget(len(timeline))
+	linkBudget, err := gifLinkBudget(sceneCount)
 	if err != nil {
 		return summary, err
 	}
@@ -828,11 +836,13 @@ func renderGIFWithSession(
 		}
 		frameOptions := gifFrameOptions(0, totalFrames)
 		sceneOpts := sceneOptionsForFrame(frameOptions)
-		sceneOpts.sequencePlayback = sequencePlayback
 		if segment.viewport != nil {
 			sceneOpts.minimumBounds = &segment.viewport.bounds
 		}
-		document, err := buildSceneWithResourcesAndLinks(ctx, board, boardOpts, assetOptions, fontOptions, linkBudget, sceneOpts)
+		build := func() (*d2scene.Document, error) {
+			return buildSceneWithResourcesAndLinks(ctx, board, boardOpts, assetOptions, fontOptions, linkBudget, sceneOpts)
+		}
+		document, err := build()
 		if err != nil {
 			return summary, fmt.Errorf("GIF board %d scene: %w", boardIndex, err)
 		}
@@ -862,6 +872,8 @@ func renderGIFWithSession(
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}
 		}
+		var sample *d2scene.Document
+		lastSampleMS := -1
 		err = renderGIFBoardFrames(
 			ctx, 0, segment.count, totalFrames,
 			func(renderCtx context.Context, index int, _ time.Duration, frameOptions d2raster.FrameOptions, emit func(image.Image) error) error {
@@ -869,14 +881,34 @@ func renderGIFWithSession(
 					frameOptions.Time = time.Duration(sequenceTimes[index]) * time.Millisecond
 				}
 				frameOptions.Time += time.Duration(segment.ElapsedMS) * time.Millisecond
+				at := int(frameOptions.Time.Milliseconds())
+				frameDocument := document
+				if sequencePlayback && at < geometryTimes[len(geometryTimes)-1] {
+					// The camera and all label positions come from the complete board.
+					// Reuse settled geometry while independent animations keep running.
+					index, found := slices.BinarySearch(geometryTimes, at)
+					if !found {
+						index--
+					}
+					sampleMS := geometryTimes[index]
+					if sampleMS != lastSampleMS {
+						sceneOpts.sequenceTimeMS = &sampleMS
+						sample, err = build()
+						if err != nil {
+							return err
+						}
+						lastSampleMS = sampleMS
+					}
+					frameDocument = sample
+				}
 				if workspace == nil {
-					frame, renderErr := session.Render(renderCtx, document, frameOptions)
+					frame, renderErr := session.Render(renderCtx, frameDocument, frameOptions)
 					if renderErr != nil {
 						return renderErr
 					}
 					return emit(frame)
 				}
-				return workspace.Render(renderCtx, session, document, frameOptions, func(frame *image.NRGBA) error {
+				return workspace.Render(renderCtx, session, frameDocument, frameOptions, func(frame *image.NRGBA) error {
 					return emit(frame)
 				})
 			},
@@ -924,26 +956,60 @@ func renderGIFWithSession(
 	return summary, nil
 }
 
-// Sample the fade, then hold its endpoint until the next message. A separate
-// animated shape or dashed wire keeps the regular continuous GIF clock.
-func sequenceGIFSampleTimes(diagram *d2target.Diagram, duration int) ([]int, error) {
+// Independent motion keeps its normal 30fps clock even after sequence geometry has settled.
+func independentlyAnimatedGIF(diagram *d2target.Diagram) bool {
 	animatedShape := func(s d2target.Shape) bool { return s.Animated }
 	animatedWire := func(c d2target.Connection) bool { return c.Animated }
-	if slices.ContainsFunc(diagram.Shapes, animatedShape) || slices.ContainsFunc(diagram.Connections, animatedWire) ||
-		diagram.Legend != nil && (slices.ContainsFunc(diagram.Legend.Shapes, animatedShape) || slices.ContainsFunc(diagram.Legend.Connections, animatedWire)) {
-		return nil, nil
-	}
+	return slices.ContainsFunc(diagram.Shapes, animatedShape) || slices.ContainsFunc(diagram.Connections, animatedWire) ||
+		diagram.Legend != nil && (slices.ContainsFunc(diagram.Legend.Shapes, animatedShape) || slices.ContainsFunc(diagram.Legend.Connections, animatedWire))
+}
+
+// Sample flights and structural growth every 50ms. Identical times from
+// parallel sequences are shared; stationary holds need only one image.
+func sequenceGIFSampleTimes(diagram *d2target.Diagram) ([]int, error) {
 	const sampleMS = 50
-	var times []int
-	for start := 0; start < duration-d2target.SequenceMessageIntervalMS; start += d2target.SequenceMessageIntervalMS {
-		for elapsed := 0; elapsed < d2target.SequenceMessageRevealMS; elapsed += sampleMS {
-			times = append(times, start+elapsed)
+	keys := map[int]bool{0: true}
+	add := func(start, end int) {
+		// Preserve the opening still before a first-step note appears.
+		if start > 0 && start < 20 {
+			start = 20
 		}
-		times = append(times, start+d2target.SequenceMessageRevealMS)
-		if len(times) > gifMaxFrames {
+		end = max(start, end)
+		for ms := start; ms < end; ms += sampleMS {
+			keys[ms] = true
+		}
+		keys[end] = true
+	}
+	for _, c := range diagram.Connections {
+		if c.SequenceStep > 0 {
+			start := (c.SequenceStep - 1) * d2target.SequenceMessageIntervalMS
+			add(start, start+d2target.SequenceMessageRevealMS)
+			if len(keys) > gifMaxFrames {
+				return nil, fmt.Errorf("GIF animation exceeds the %d-frame limit", gifMaxFrames)
+			}
+		}
+	}
+	for i := range diagram.Shapes {
+		s := &diagram.Shapes[i]
+		if s.SequenceStep == 0 {
+			continue
+		}
+		add(s.SequenceStartMS(), s.SequenceStartMS())
+		frames := s.SequenceKeyframes()
+		for i := 1; i < len(frames); i++ {
+			if frames[i-1].Height != frames[i].Height {
+				add(frames[i-1].TimeMS, frames[i].TimeMS)
+			}
+		}
+		if len(keys) > gifMaxFrames {
 			return nil, fmt.Errorf("GIF animation exceeds the %d-frame limit", gifMaxFrames)
 		}
 	}
+	times := make([]int, 0, len(keys))
+	for ms := range keys {
+		times = append(times, ms)
+	}
+	slices.Sort(times)
 	return times, nil
 }
 

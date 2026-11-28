@@ -41,7 +41,7 @@ var mcpStyleDescriptions = map[string]string{
 	"multiple":       "`true` or `false`, shapes only",
 	"double-border":  "`true` or `false`, on squares, rectangles, circles, and ovals",
 	"3d":             "`true` or `false`, on squares, rectangles, and hexagons",
-	"animated":       "`true` or `false`. Animates shapes or connection dashes and plays messages in order on a sequence diagram",
+	"animated":       "`true` or `false`. Animates shapes or connection dashes and plays sequence diagrams in order, including messages, groups, spans and notes",
 	"filled":         "`true` or `false`, connections only",
 }
 
