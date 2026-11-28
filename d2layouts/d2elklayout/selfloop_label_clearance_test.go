@@ -241,3 +241,34 @@ func TestSelfLoopLabelCanMoveOneSibling(t *testing.T) {
 		})
 	}
 }
+
+func TestSelfLoopLabelIconGutter(t *testing.T) {
+	ruler, err := textmeasure.NewRuler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		properties string
+		iconSize   int
+	}{
+		{"icon: ./image.svg", 32},
+		{"icon.shape: circle", 10},
+		{"icon: ./image.svg; icon.style.animated: 3/s", 0},
+		{"icon.style.animated: true", 0},
+	} {
+		g := compileELKGoDiagram(t, ruler, "worker -> worker: retry {"+tc.properties+"}")
+		if err := DefaultLayout(t.Context(), g); err != nil {
+			t.Fatal(err)
+		}
+		c := loopLabelConnection(g, g.Edges[0])
+		box := loopLabelBounds(c)
+		gutter := c.GetLabelTopLeft().X - 2 - box.minX
+		want := float64(tc.iconSize)
+		if want != 0 {
+			want += d2target.CONNECTION_ICON_LABEL_GAP
+		}
+		if math.Abs(gutter-want) > 1e-8 {
+			t.Errorf("%s: icon gutter = %g, want %g", tc.properties, gutter, want)
+		}
+	}
+}

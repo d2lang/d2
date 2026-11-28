@@ -17,6 +17,7 @@ const fixtures = {
   "layer-steps": "layer-steps.d2",
   "layer-route": "layer-route.d2",
   "layer-zoom": "../../../../docs/examples/layer-zoom.d2",
+  "checkout-rollout": "../../../../docs/examples/connection-icons/checkout-rollout.d2",
 };
 const fixtureNames = Object.keys(fixtures);
 
@@ -34,6 +35,19 @@ async function seek(page, ms) {
   }, ms);
 }
 
+const progressSelector = 'rect[class^="d2-progress-"]';
+
+// Compare all of the board artwork, including the pixels underneath the moving line.
+async function boardScreenshot(page) {
+  const line = page.locator(progressSelector);
+  await line.evaluate((rect) => rect.style.setProperty("visibility", "hidden"));
+  try {
+    return PNG.sync.read(await page.screenshot());
+  } finally {
+    await line.evaluate((rect) => rect.style.removeProperty("visibility"));
+  }
+}
+
 async function checkBoundary(page) {
   const pictures = new Map();
   for (const [ms, stage] of [
@@ -46,6 +60,20 @@ async function checkBoundary(page) {
     [2000, "before"],
   ]) {
     await seek(page, ms);
+    const progress = await page.locator(progressSelector).evaluate((line) => {
+      const viewport = line.ownerSVGElement;
+      return {
+        visible: getComputedStyle(line).visibility,
+        width: line.getBoundingClientRect().width,
+        total: viewport.viewBox.baseVal.width * viewport.getScreenCTM().a,
+      };
+    });
+    assert.equal(progress.visible, "visible", `progress hidden at ${ms}ms`);
+    const expected = progress.total * ((ms % 2000) / 2000);
+    assert.ok(
+      Math.abs(progress.width - expected) <= 1,
+      `progress at ${ms}ms: ${progress.width}px, expected ${expected}px`
+    );
     const hit = await page.evaluate((ms) => {
       const links = [...document.querySelectorAll("a")].filter(
         (a) => getComputedStyle(a).visibility === "visible"
@@ -59,7 +87,7 @@ async function checkBoundary(page) {
       return { href: document.elementFromPoint(x, y)?.closest("a")?.getAttribute("href"), x, y };
     }, ms);
     assert.equal(hit.href, "https://example.org/" + stage, `active actor link at ${ms}ms`);
-    const { data: pixels, width } = PNG.sync.read(await page.screenshot());
+    const { data: pixels, width } = await boardScreenshot(page);
     const offset = (width * hit.y + hit.x) * 4;
     assert.equal(
       pixels.toString("hex", offset, offset + 3),
@@ -76,6 +104,60 @@ async function checkBoundary(page) {
     !pictures.get("before").equals(pictures.get("after")),
     "both boards painted identically"
   );
+}
+
+// An SVG motion-path URL can resolve at a different scale than its painted
+// connection in a zoomed document. Check both an inline diagram and the
+// gallery's iframe against the actual painted wires.
+async function checkConnectionIconPositions(page, svg, embedded) {
+  await page.goto(origin);
+  let frame = page.mainFrame();
+  if (embedded) {
+    await page.setContent('<body style="zoom:1.5"><iframe style="width:600px;height:190px;border:0"></iframe>');
+    await page.locator("iframe").evaluate((iframe, svg) => {
+      iframe.srcdoc = '<style>body{margin:0}body>svg{width:100%;display:block}</style>' + svg;
+    }, svg);
+    frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
+  } else {
+    await page.setContent('<style>body{zoom:1.5}body>svg{width:600px;display:block}</style>' + svg);
+  }
+  await frame.locator(".d2-moving-icons").first().waitFor({ state: "attached" });
+  // Paint a small magenta center in each real dot. A copy of the visible
+  // connection drawn over the centers should cover every one of them.
+  await frame.evaluate(() => {
+    for (const wire of document.querySelectorAll("path.connection")) {
+      const edge = wire.parentElement;
+      if (!edge.querySelector(".d2-moving-icons")) continue;
+      for (const dot of edge.querySelectorAll("defs circle")) {
+        dot.style.fill = "#ff00ff";
+        dot.setAttribute("r", "1.5");
+      }
+      const cover = document.createElementNS(wire.namespaceURI, "path");
+      cover.setAttribute("d", wire.getAttribute("d"));
+      cover.setAttribute("class", "test-wire-cover");
+      cover.setAttribute("style", "fill:none;stroke:black;stroke-width:5;display:none");
+      edge.append(cover);
+    }
+  });
+  const centerPixels = async () => {
+    const { data } = PNG.sync.read(await page.screenshot());
+    let count = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 210 && data[i + 1] < 70 && data[i + 2] > 210) count++;
+    }
+    return count;
+  };
+  for (const ms of [370, 6420, 9470]) {
+    await seek(frame, ms);
+    for (const covered of [false, true]) {
+      await frame.locator(".test-wire-cover").evaluateAll((paths, show) => {
+        for (const path of paths) path.style.display = show ? "inline" : "none";
+      }, covered);
+      const count = await centerPixels();
+      if (covered) assert.equal(count, 0, `icon centers off their wires at ${ms}ms`);
+      else assert.ok(count >= 8, `expected visible icon centers at ${ms}ms`);
+    }
+  }
 }
 
 // Compare each frame with the same frame after hiding one fixture paint. This
@@ -179,6 +261,11 @@ async function checkLayerZoom(page) {
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(origin + "/layer-zoom.svg");
+  assert.equal(
+    await page.locator(progressSelector).evaluate((line) => getComputedStyle(line).visibility),
+    "hidden",
+    "reduced motion hides the moving progress line"
+  );
   const reducedScales = await scales(0);
   for (const [ms, expected] of [
     [2999, [true, false]],
@@ -236,7 +323,7 @@ async function checkLayerRoute(page) {
   const pictures = [];
   async function picture(ms) {
     await seek(page, ms);
-    return PNG.sync.read(await page.screenshot()).data;
+    return (await boardScreenshot(page)).data;
   }
   for (const ms of [500, 2500, 4500, 6500]) pictures.push(await picture(ms));
 
@@ -416,5 +503,9 @@ for (const engine of [chromium, webkit]) {
     await checkLayerRoute(page);
     await page.goto(origin + "/layer-zoom.svg");
     await checkLayerZoom(page);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const checkoutSVG = assets.get("/checkout-rollout.svg").body.toString();
+    await checkConnectionIconPositions(page, checkoutSVG, true);
+    await checkConnectionIconPositions(page, checkoutSVG, false);
   });
 }

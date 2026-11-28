@@ -120,6 +120,33 @@ api -> db: "async" {
 }
 ```
 
+On a connection, `icon.style.animated: 2/s` launches two icons each second.
+Set `icon.style.animated: 200ms` to loop one icon with a fixed trip time of
+200 milliseconds, or use `true` to loop it at the default travel speed.
+A step can set the rate to `0/s`
+to let the stream drain. The default icon is a filled circle in the wire's
+color. Set `icon` to an image path to use your own artwork.
+Choose what one icon represents for your diagram, for example a batch of 100
+requests. D2 caps the displayed rate so a steady stream has at most 64 icons in flight.
+On a wire with a two-second trip, `32/s` and higher rates all show 32
+departures per second.
+
+For a single-board GIF, omit `animate-interval` to let D2 derive the loop
+from the animation. A stream at `0.25/s` needs a four-second loop. If you
+specify an interval, the full exported loop must cover at least one departure
+period for each positive rate and one full trip for each fixed duration.
+Individual steps can be shorter. If several
+streams have no common loop within the GIF frame limit, choose an explicit
+duration that covers the slowest stream. SVG can play continuously when even
+one departure period exceeds the GIF limit.
+
+```d2
+relay -> broker: OrderPlaced {
+  icon: ./envelope.svg
+  icon.style.animated: 2/s
+}
+```
+
 Reuse styles with classes:
 
 ```d2

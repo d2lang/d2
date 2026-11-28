@@ -161,7 +161,8 @@ Set the same interval in D2 source with
 A positive interval plays the exported boards in order, including linked layers.
 The source value accepts integer milliseconds or a duration such as 1.5s.
 The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over the file.
-Zero selects ordinary SVG export or the default GIF and MP4 interval of 1000ms.
+Zero selects ordinary SVG export.
+MP4 and multiboard GIFs default to 1000ms per board. GIFs allow time for icon departures and derive a single-board loop from the animation.
 .Ns .
 .It Fl -animate-duration Ar 0
 Set the transition duration for changes to numeric properties, colors, and grid layouts between steps.
@@ -187,6 +188,31 @@ The duration defaults to zero, which disables interpolation, and accepts values 
 The flag takes precedence over D2_ANIMATE_DURATION, which takes precedence over the file.
 Static exports show the authored values.
 .Ns .
+.It Fl -animate-progress
+Show elapsed playback time as a thin line at the bottom of an animated SVG, GIF, or MP4.
+The line uses the theme's B1 color and stays fixed during camera moves.
+Its height is six output pixels in GIF and MP4, and six diagram units in SVG.
+The line appears by default when the effective
+.Fl -animate-interval
+or source interval is positive.
+Set
+.Li --animate-progress=false
+to hide it.
+GIF and MP4 exports using their built-in interval show the line only when explicitly enabled.
+Set the default with
+.Ev D2_ANIMATE_PROGRESS
+or
+.Li vars.d2-config.animate-progress .
+The flag takes precedence over the environment, which takes precedence over the file.
+.It Fl -animate-progress-color Ar color
+Override the progress line's color in animated SVG, GIF, and MP4 exports.
+Use an opaque named color or a three- or six-digit hex color.
+The explicit color applies to both light and dark themes.
+Set the color with
+.Ev D2_ANIMATE_PROGRESS_COLOR
+or
+.Li vars.d2-config.animate-progress-color .
+The flag takes precedence over the environment, which takes precedence over the file.
 .It Fl -video-duration Ar duration
 Set the total length of an MP4 export, for example
 .Li --video-duration=10s .

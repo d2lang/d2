@@ -51,7 +51,7 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		ast, _ = d2parser.Parse("", strings.NewReader(getTextUntilPosition(text, line, column, utf16Pos)), parseOpts)
 	}
 
-	keyword := getKeywordContext(text, ast, line, column, utf16Pos)
+	keyword := getKeywordContext(text, ast, line, column, utf16Pos, "")
 	switch keyword {
 	case "style", "style.":
 		return getStyleCompletions(), nil
@@ -85,6 +85,32 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		return getLabelCompletions(), nil
 	case "icon", "icon:":
 		return getIconCompletions(), nil
+	case "connection.icon.":
+		return []CompletionItem{
+			{Label: "near", Kind: StyleCompletion, Detail: "static icon position", InsertText: "near: "},
+			{Label: "shape", Kind: StyleCompletion, Detail: "native icon", InsertText: "shape: "},
+			{Label: "style", Kind: StyleCompletion, Detail: "icon animation and border radius", InsertText: "style."},
+		}, nil
+	case "connection.icon.near:":
+		var items []CompletionItem
+		for _, pos := range d2ast.LabelPositionsArray {
+			if d2ast.LabelPositionsMapping[pos].IsEdgePosition() {
+				items = append(items, CompletionItem{Label: pos, Kind: KeywordCompletion, InsertText: pos})
+			}
+		}
+		return items, nil
+	case "connection.icon.shape:":
+		return []CompletionItem{{Label: d2target.ShapeCircle, Kind: ShapeCompletion, Detail: "filled dot", InsertText: d2target.ShapeCircle}}, nil
+	case "connection.icon.style.":
+		return []CompletionItem{
+			{Label: "animated", Kind: StyleCompletion, Detail: "loop or launch icons along the connection", InsertText: "animated: "},
+			{Label: "border-radius", Kind: StyleCompletion, Detail: "round image corners", InsertText: "border-radius: "},
+		}, nil
+	case "connection.icon.style.animated:":
+		return append(getBooleanCompletions(),
+			CompletionItem{Label: "2/s", Kind: KeywordCompletion, Detail: "launch two icons per second", InsertText: "2/s"},
+			CompletionItem{Label: "200ms", Kind: KeywordCompletion, Detail: "loop one icon every 200 milliseconds", InsertText: "200ms"},
+		), nil
 	case "icon.":
 		return getLabelCompletions(), nil
 	case "near", "near:":
@@ -123,7 +149,7 @@ func getTextUntilPosition(text string, line, column int, utf16Pos bool) string {
 	return result
 }
 
-func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos bool) string {
+func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos bool, edgeParent string) string {
 	if m == nil {
 		return ""
 	}
@@ -139,13 +165,16 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		}
 
 		var firstPart, lastPart string
+		edgeField := edgeParent
 		var key *d2ast.KeyPath
 		if len(n.MapKey.Edges) > 0 {
+			edgeField = "connection"
 			key = n.MapKey.EdgeKey
 		} else {
 			key = n.MapKey.Key
 		}
 		if key != nil && len(key.Path) > 0 {
+			edgeField = connectionIconKey(edgeField, key)
 			firstKey := key.Path[0].Unbox()
 			if firstKey.IsUnquoted() {
 				firstPart = firstKey.ScalarString()
@@ -162,6 +191,9 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 					}
 					end := lastKey.GetRange().End
 					if isHolderLast && line == end.Line && column == end.Column+1 && isAfterDot(lines[line], lineColumn) {
+						if edgeField == "connection.icon" || edgeField == "connection.icon.style" {
+							return edgeField + "."
+						}
 						return lastPart + "."
 					}
 				}
@@ -181,7 +213,7 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 
 		// Check nested map
 		if n.MapKey.Value.Map != nil && isPositionInMap(line, column, n.MapKey.Value.Map) {
-			if nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos); nested != "" {
+			if nested := getKeywordContext(text, n.MapKey.Value.Map, line, column, utf16Pos, edgeField); nested != "" {
 				holder, inHolder := firstPart, isHolder
 				if strings.EqualFold(lastPart, "annotation") {
 					// x.annotation: note {shape: } completes the annotation's
@@ -196,6 +228,9 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 					}
 				}
 				return nested
+			}
+			if edgeField == "connection.icon" || edgeField == "connection.icon.style" {
+				return edgeField + "."
 			}
 			return firstPart
 		}
@@ -223,6 +258,9 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		lineText := lines[keyRange.End.Line]
 
 		if isAfterColon(lineText, lineColumn) {
+			if edgeField == "connection.icon.near" || edgeField == "connection.icon.shape" || edgeField == "connection.icon.style.animated" {
+				return edgeField + ":"
+			}
 			if key != nil && len(key.Path) > 1 {
 				if isHolder && (firstPart == "source-arrowhead" || firstPart == "target-arrowhead") {
 					return firstPart + "." + lastPart + ":"
@@ -240,11 +278,31 @@ func getKeywordContext(text string, m *d2ast.Map, line, column int, utf16Pos boo
 		}
 
 		if isAfterDot(lineText, lineColumn) && isHolder {
+			if edgeField == "connection.icon" || edgeField == "connection.icon.style" {
+				return edgeField + "."
+			}
 			return firstPart
 		}
 	}
 
 	return ""
+}
+
+// Follow only the connection icon's property path. Shape maps and arrowhead
+// attributes use their own existing completion contexts.
+func connectionIconKey(parent string, key *d2ast.KeyPath) string {
+	if parent == "" {
+		return ""
+	}
+	for _, part := range key.Path {
+		switch path := parent + "." + d2ast.Keyword(part.Unbox()); path {
+		case "connection.icon", "connection.icon.style", "connection.icon.near", "connection.icon.shape", "connection.icon.style.animated":
+			parent = path
+		default:
+			return ""
+		}
+	}
+	return parent
 }
 
 func columnByteOffset(text string, column int, utf16Pos bool) int {

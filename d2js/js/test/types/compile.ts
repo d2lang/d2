@@ -20,6 +20,8 @@ const options: CompileOptions = {
   layout: "tala",
   sketch: false,
   animateDuration: 200,
+  animateProgress: true,
+  animateProgressColor: "#e53",
 };
 
 const defaults: Promise<CompileResponse> = d2.compile(source);
@@ -43,6 +45,40 @@ for (const layout of ["dagre", "elk", "tala"] as const) {
 configured.then((response) => {
   const renderOptions: RenderOptions = response.renderOptions;
   d2.render(response.diagram, renderOptions);
+
+  const edge = response.diagram.connections[0];
+  if (edge) {
+    edge.iconShape satisfies "circle" | undefined;
+    edge.iconAnimation?.rate satisfies number | undefined;
+    edge.iconAnimation?.durationMs satisfies number | undefined;
+    edge.iconAnimation?.previousID satisfies string | undefined;
+    edge.icon?.Path satisfies string | undefined;
+    const circle = {
+      ...edge,
+      icon: null,
+      iconShape: "circle" as const,
+      iconAnimation: { rate: 2 },
+    };
+    const image = {
+      ...edge,
+      icon: { Path: "letter.svg" },
+      iconShape: undefined,
+      iconAnimation: {},
+    };
+    d2.render({ ...response.diagram, connections: [circle] });
+    d2.render({ ...response.diagram, connections: [image] });
+    d2.render({
+      ...response.diagram,
+      connections: [{ ...circle, iconAnimation: { durationMs: 200 } }],
+    });
+    const mixed = { ...circle, iconAnimation: { rate: 2, durationMs: 200 } };
+    // @ts-expect-error Choose either a departure rate or a looping trip duration.
+    d2.render({ ...response.diagram, connections: [mixed] });
+  }
+  response.graph.edges[0]?.iconShape?.value satisfies string | undefined;
+  response.graph.edges[0]?.attributes?.iconStyle?.animated?.value satisfies
+    | string
+    | undefined;
 
   // @ts-expect-error The response exposes renderOptions, not options.
   response.options;

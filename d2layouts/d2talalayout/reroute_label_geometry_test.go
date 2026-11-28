@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/d2lang/d2/d2exporter"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2target"
@@ -221,6 +223,30 @@ func TestInvalidEdgeLabelPercentageIsRejectedAtomically(t *testing.T) {
 				*percentage = 0.5
 				before.assertUnchanged(t, graph)
 			})
+		}
+	}
+}
+
+func TestTALAMovingIconCaptionsMatchRenderer(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		graph, edge := newD2TransactionGraph(false)
+		edge.Route = geo.Route{{X: 403, Y: 188}, {X: 403, Y: 233}, {X: 548, Y: 233}}
+		edge.SrcArrow, edge.DstArrow = reverse, !reverse
+		edge.Label.Value = "Publish ref"
+		edge.LabelDimensions = d2target.TextDimensions{Width: 76, Height: 22}
+		edge.LabelPosition = new(label.UnlockedTop.String())
+		edge.LabelPercentage = new(.5)
+		edge.Icon = &url.URL{Path: "ref.svg"}
+		edge.IconStyle.Animated = &d2graph.Scalar{Value: "0/s"}
+		want := d2exporter.ToConnection(edge, graph.Theme)
+		graphForLayout := layoutgraph.NewGraph()
+		if _, err := translateGraph(t.Context(), graph, graphForLayout, true); err != nil {
+			t.Fatal(err)
+		}
+		actual := graphForLayout.Edges[0]
+		got := actual.LabelTopLeft(actual.Label.Position, actual.Label.Width, actual.Label.Height)
+		if !got.Equals(want.GetLabelTopLeft()) {
+			t.Fatalf("reversed=%v: routed caption %v differs from render position %v", reverse, got, want.GetLabelTopLeft())
 		}
 	}
 }

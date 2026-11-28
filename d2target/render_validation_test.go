@@ -6,7 +6,42 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/d2lang/d2/lib/geo"
 )
+
+func TestValidateConnectionIconAnimation(t *testing.T) {
+	c := *BaseConnection()
+	c.IconAnimation = &ConnectionIconAnimation{}
+	for _, rate := range []float64{math.Inf(1), math.NaN(), -1} {
+		c.IconAnimation.Rate = &rate
+		if err := validateRenderConnectionNumbers(c, "edge"); err == nil || !strings.Contains(err.Error(), "iconAnimation.rate") {
+			t.Errorf("rate %g: %v", rate, err)
+		}
+	}
+	c.IconAnimation.Rate = nil
+	for _, ms := range []int64{-1, math.MaxInt64} {
+		c.IconAnimation.DurationMS = ms
+		if err := validateRenderConnectionNumbers(c, "edge"); err == nil || !strings.Contains(err.Error(), "iconAnimation.durationMs") {
+			t.Errorf("duration %dms: %v", ms, err)
+		}
+	}
+	c.IconAnimation.DurationMS = 200
+	for _, rate := range []float64{0, 2} {
+		c.IconAnimation.Rate = &rate
+		if err := validateRenderConnectionNumbers(c, "edge"); err == nil || !strings.Contains(err.Error(), "either rate or durationMs") {
+			t.Errorf("accepted rate %g with a 200ms duration: %v", rate, err)
+		}
+	}
+	c.IconAnimation.Rate = nil
+	if c.IconSize() != 10 {
+		t.Fatal("moving icons without artwork must use the native dot")
+	}
+	c.IconPositions = make([]geo.Point, MaxMovingIconsPerConnection+1)
+	if err := validateRenderConnectionNumbers(c, "edge"); err == nil || !strings.Contains(err.Error(), "iconPositions") {
+		t.Errorf("too many sampled icons: %v", err)
+	}
+}
 
 func TestAnimatedStrokeBounds(t *testing.T) {
 	d := NewDiagram()
@@ -188,5 +223,17 @@ func TestValidateRenderInk(t *testing.T) {
 		if err := ValidateRenderTarget(&roundTrip); err == nil {
 			t.Error("invalid ink sample accepted")
 		}
+	}
+}
+
+func TestRenderTargetProgressColor(t *testing.T) {
+	d := NewDiagram()
+	d.Config = &Config{AnimateProgressColor: "DarkOrange"}
+	if err := ValidateRenderTarget(d); err != nil {
+		t.Fatal(err)
+	}
+	d.Config.AnimateProgressColor = "red;stroke:blue"
+	if err := ValidateRenderTarget(d); err == nil || !strings.Contains(err.Error(), "root.config.animateProgressColor") {
+		t.Fatalf("expected invalid serialized progress color diagnostic, got %v", err)
 	}
 }

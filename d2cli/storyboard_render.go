@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +42,9 @@ type storyboardFrameInfo struct {
 
 type storyboardSample struct {
 	storyboardFrameInfo
-	diagram    *d2target.Diagram
+	board      *d2target.Diagram // Authored board, used to find its viewport.
+	diagram    *d2target.Diagram // Sampled artwork, including the departing board during a zoom.
+	arrival    *d2target.Diagram // Arriving artwork at the start of its local clock.
 	group      *d2target.Diagram // Boards registered in the same world coordinate system.
 	filmBounds image.Rectangle   // Includes unsampled tween geometry in this group.
 	leg        d2animate.LayerLeg
@@ -58,7 +61,8 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 	if intervalMS <= 0 {
 		return nil, fmt.Errorf("storyboard requires a positive animation interval")
 	}
-	if err := d2target.ValidateRenderTarget(root); err != nil {
+	icons, err := d2animate.NewIconTimeline(root, intervalMS)
+	if err != nil {
 		return nil, err
 	}
 	var boards []*d2target.Diagram
@@ -161,16 +165,17 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 		add := func(diagram *d2target.Diagram, at int) *storyboardSample {
 			samples = append(samples, storyboardSample{
 				storyboardFrameInfo: storyboardFrameInfo{Board: names[b], TimeMS: startMS + int64(at)},
-				diagram:             diagram, group: groups[b], filmBounds: bounds[groups[b]],
+				board:               b, diagram: diagram, group: groups[b], filmBounds: bounds[groups[b]],
 			})
 			return &samples[len(samples)-1]
 		}
 		hold := endpoint.ElapsedMS + holdMS/2
+		holdSamples := []int{hold}
 		if extra > 0 && len(frames) > 1 {
 			at := min(b.TweenDurationMS/2, endpoint.ElapsedMS-1)
 			for _, frame := range frames {
 				if at < frame.ElapsedMS+frame.DurationMS {
-					add(frame.Diagram, at)
+					add(icons.Sample(b, frame.Diagram, at), at)
 					extra--
 					break
 				}
@@ -178,18 +183,37 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 		} else if extra > 0 && hold > 0 {
 			if period := d2scenebuild.ShortestAnimationPeriod(b); period > 0 {
 				first, second := storyboardEffectSamples(startMS, hold, period)
-				add(b, first)
-				hold = second
+				holdSamples = []int{first, second}
 				extra--
 			}
 		}
-		add(b, hold)
+		if at, ok := icons.MissingIconSample(b, endpoint.ElapsedMS, endpoint.ElapsedMS+holdMS, holdSamples); ok {
+			if len(holdSamples) == 1 && len(frames) == 1 && extra > 0 {
+				// A stopped stream can still drain, even without a repeating effect.
+				holdSamples = append(holdSamples, at)
+				extra--
+			} else {
+				holdSamples[len(holdSamples)-1] = at
+			}
+			slices.Sort(holdSamples)
+		}
+		for _, at := range holdSamples {
+			add(icons.Sample(b, b, at), at)
+		}
 		if extra > 0 && len(route) > 0 && zoomMS > 1 {
 			mid := zoomMS / 2
 			t := float64(mid) * float64(len(route)) / float64(zoomMS)
 			n := min(int(t), len(route)-1)
-			sample := add(b, duration-zoomMS+mid)
 			leg := route[n]
+			at := duration - zoomMS + mid
+			departureMS := 0
+			if n == 0 {
+				departureMS = at
+			}
+			// On later legs the camera passes through an intermediate board
+			// at its resting pose, as it does when rendering the GIF.
+			sample := add(icons.Sample(leg.From, leg.From, departureMS), at)
+			sample.arrival = icons.Sample(leg.To, leg.To, 0)
 			sample.leg, sample.progress = leg, t-float64(n)
 			// The middle of a sibling transition can show the common parent.
 			// Identify the visible artwork with an exact D2 board path.
@@ -280,7 +304,7 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 		if sample.leg.From != nil {
 			continue
 		}
-		boardGroups[sample.diagram] = sample.group
+		boardGroups[sample.board] = sample.group
 		renderOpts := gifFrameOptions(time.Duration(sample.TimeMS)*time.Millisecond, paintCount)
 		doc, err := build(sample.diagram)
 		if err != nil {
@@ -314,8 +338,8 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 	// Rasterize zoom poses directly on the bounded thumbnail canvas so a
 	// portal's outline and text stay sharp as they grow.
 	zoomCanvas := image.Rect(0, 0, max(1, int(math.Round(float64(canvas.Dx())*scale))), max(1, int(math.Round(float64(canvas.Dy())*scale))))
-	cameraBoard := func(board *d2target.Diagram) (*d2scene.Document, image.Point, error) {
-		doc, err := build(board)
+	cameraBoard := func(board, picture *d2target.Diagram) (*d2scene.Document, image.Point, error) {
+		doc, err := build(picture)
 		if err != nil {
 			return nil, image.Point{}, err
 		}
@@ -330,11 +354,11 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 			tiles[i].bounds = tiles[i].bounds.Add(offset(sample.group))
 			continue
 		}
-		from, fromOffset, err := cameraBoard(sample.leg.From)
+		from, fromOffset, err := cameraBoard(sample.leg.From, sample.diagram)
 		if err != nil {
 			return nil, nil, fmt.Errorf("storyboard %s at %dms: %w", sample.Board, sample.TimeMS, err)
 		}
-		to, toOffset, err := cameraBoard(sample.leg.To)
+		to, toOffset, err := cameraBoard(sample.leg.To, sample.arrival)
 		if err != nil {
 			return nil, nil, fmt.Errorf("storyboard %s at %dms: %w", sample.Board, sample.TimeMS, err)
 		}

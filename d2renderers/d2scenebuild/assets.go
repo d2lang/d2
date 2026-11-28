@@ -450,19 +450,17 @@ func (b *builder) buildShapeIcon(targetShape d2target.Shape, structured bool) (*
 	}, radius, false)
 }
 
-func (b *builder) buildConnectionIcon(connection d2target.Connection) (*d2scene.Node, error) {
-	if connection.Icon == nil {
-		return nil, nil
+// connectionIcon paints upright artwork in the supplied coordinate system.
+func (b *builder) connectionIcon(c d2target.Connection, id string, center geo.Point, fill d2scene.Paint) (*d2scene.Node, error) {
+	size := float64(c.IconSize())
+	if c.Icon == nil {
+		node := d2scene.NewNode(d2scene.Ellipse{Center: d2scene.Point{X: center.X, Y: center.Y}, RadiusX: size / 2, RadiusY: size / 2, Fill: fill})
+		node.ID = id
+		return node, nil
 	}
-	object := fmt.Sprintf("connection %q", connection.ID)
-	topLeft := connection.GetIconPosition()
-	if topLeft == nil {
-		return nil, invalidField(object, "iconPosition", connection.IconPosition, "does not resolve on the route")
-	}
-	return b.buildImageNode(object, connection.ID+":icon", connection.Icon.String(), d2scene.Box{
-		X: topLeft.X, Y: topLeft.Y,
-		Width: d2target.DEFAULT_ICON_SIZE, Height: d2target.DEFAULT_ICON_SIZE,
-	}, connection.IconBorderRadius, false)
+	return b.buildImageNode(fmt.Sprintf("connection %q", c.ID), id, c.Icon.String(), d2scene.Box{
+		X: center.X - size/2, Y: center.Y - size/2, Width: size, Height: size,
+	}, c.IconBorderRadius, false)
 }
 
 func boxClip(box d2scene.Box) *d2scene.Clip {

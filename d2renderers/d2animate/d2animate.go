@@ -218,11 +218,22 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if zoomMS > 0 && len(links) > 0 {
 		writeClickZooms(&transitions, links, diagramHash, viewport, offsets)
 	}
+	var progress string
+	if totalMS > 0 && !viewport.Empty() && rootDiagram.Config.ResolveAnimateProgress(renderOpts.AnimateProgress, true) {
+		renderOpts.AnimateProgressColor = rootDiagram.Config.ResolveAnimateProgressColor(renderOpts.AnimateProgressColor)
+		progress, err = svgProgress(&transitions, diagramHash, viewport, totalMS, renderOpts, len(links) > 0)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := d2svg.WriteAnimationStylesWithTransitions(buf, diagramHash, svgsStr, rootDiagram, renderOpts, transitions.Bytes()); err != nil {
 		return nil, err
 	}
 	if len(links) > 0 {
 		writeLayerNavigation(buf, diagramHash, links, slots)
+	}
+	if strings.Contains(svgsStr, `class="d2-icon-tour-clock"`) {
+		writeLayerIconClocks(buf, diagramHash, links, slots)
 	}
 
 	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"
@@ -266,6 +277,7 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 			buf.Write(after)
 		}
 	}
+	buf.WriteString(progress)
 	buf.WriteString("</svg></svg>")
 
 	return buf.Bytes(), nil

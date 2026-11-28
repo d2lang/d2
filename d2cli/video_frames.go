@@ -13,7 +13,6 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
-	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
@@ -30,10 +29,10 @@ const (
 type videoSegment struct {
 	d2animate.Frame
 	rasterPlacement
-	start, end time.Duration
-	route      []d2animate.LayerLeg
-	moving     bool
-	matte      color.RGBA
+	start, end  time.Duration
+	route       []d2animate.LayerLeg
+	movingUntil time.Duration // local board clock
+	matte       color.RGBA
 }
 
 type videoTimeline struct {
@@ -54,7 +53,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	if duration < 0 || duration > videoMaxDuration {
 		return nil, fmt.Errorf("MP4 duration must be between zero and %s", videoMaxDuration)
 	}
-	frames, err := d2animate.Timeline(root, intervalMS)
+	frames, err := d2animate.SceneTimeline(root, intervalMS, layers.duration)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +77,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	// repeats the tour and can follow the return portal into its next lap.
 	var boardIndex int
 	for i, f := range frames {
-		s := videoSegment{Frame: f, start: p.period, moving: d2scenebuild.ShortestAnimationPeriod(f.Diagram) > 0}
+		s := videoSegment{Frame: f, start: p.period, movingUntil: rasterMovingUntil(f.Picture())}
 		if v := viewports[f.Diagram]; v != nil {
 			s.viewport = v
 			tl, br := f.Diagram.BoundingBox()
@@ -151,7 +150,7 @@ func (p *videoTimeline) sample(index int) (segment int, local time.Duration, rep
 			return segment, local, 1, &s.route[n], phase - float64(n)
 		}
 	}
-	if s.moving {
+	if local < s.movingUntil {
 		return segment, local, 1, nil, 0
 	}
 	// Clamp to the requested duration before converting the boundary to
@@ -171,6 +170,14 @@ func (w videoWork) checkPixels(output image.Rectangle) error {
 		return fmt.Errorf("MP4 canvas %dx%d over %d coded samples exceeds the %d cumulative-pixel limit; reduce --video-size, --scale, or --video-duration", output.Dx(), output.Dy(), w.samples, videoMaxTotalPixels)
 	}
 	return nil
+}
+
+// Every native sample still receives the exact elapsed width. During static
+// holds, each extra step can cost one full coded picture. Preserve the native
+// work budget by gradually reducing only these optional bar updates.
+func (w videoWork) progressSteps(output image.Rectangle) int {
+	maxSamples := videoMaxTotalPixels / (int64(output.Dx()) * int64(output.Dy()))
+	return int(min(int64(output.Dx()), maxSamples-int64(w.samples)+1))
 }
 
 // Count actual scene builds (including misses in the two-scene cache),
@@ -194,9 +201,10 @@ func (p *videoTimeline) work(ctx context.Context) (videoWork, error) {
 			return videoWork{}, err
 		}
 		index, _, repeat, leg, _ := p.sample(i)
-		// The encoder stamps both endpoints of a static hold and one sample
-		// for a single-frame pose. The hold's interior is represented by time.
-		w.samples += min(repeat, 2)
+		w.samples++
+		if i+repeat == p.frames && repeat > 1 {
+			w.samples++ // The final hold has an explicit last tick.
+		}
 		if leg == nil {
 			visit(index)
 			w.paints++
@@ -220,12 +228,30 @@ func videoWorkDivisor(count int) int {
 	return max(1, (count+63)/64)
 }
 
+// Some FFmpeg versions discard the final packet duration. Separate the last
+// tick of the final hold while the renderer still has its pixels. Every other
+// hold gets its exact duration from the next pose's presentation timestamp.
+func emitVideoHold(frame image.Image, repeats int, final bool, emit func(image.Image, int) error) error {
+	if final && repeats > 1 {
+		if err := emit(frame, repeats-1); err != nil {
+			return err
+		}
+		repeats = 1
+	}
+	return emit(frame, repeats)
+}
+
 // emit consumes opaque, fixed-size images synchronously. The backing pixels
 // are reused after it returns. No encoded or full-frame history is retained.
 func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMS int, layers gifLayerOptions, duration time.Duration, forceAppendix bool, size videoSize, emit func(image.Image, int) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	ink, err := animationProgressInk(opts)
+	if err != nil {
+		return err
+	}
+	overlay := videoProgressOverlay{ink: ink}
 	p, err := planVideo(diagram, intervalMS, layers, duration)
 	if err != nil {
 		return err
@@ -278,7 +304,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 		if s.viewport != nil {
 			limits.minimumBounds = &s.viewport.bounds
 		}
-		doc, err := buildSceneWithResourcesAndLinks(ctx, s.Diagram, opts, assets, fonts, links, limits)
+		doc, err := buildSceneWithResourcesAndLinks(ctx, s.Picture(), opts, assets, fonts, links, limits)
 		if err != nil {
 			return nil, fmt.Errorf("MP4 segment %d: %w", index, err)
 		}
@@ -303,6 +329,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	if err := work.checkPixels(output); err != nil {
 		return err
 	}
+	overlay.steps = work.progressSteps(output)
 	loadForPlayback := func(index int) (*d2scene.Document, error) {
 		doc, err := load(index)
 		if err != nil {
@@ -317,17 +344,17 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	// remains when placing it on the shared canvas or inside the letterbox.
 	margin := image.Pt((output.Dx()-canvas.Dx())/2, (output.Dy()-canvas.Dy())/2)
 	var letterboxed *image.RGBA
-	present := func(frame image.Image, origin image.Point, matte color.Color, repeat int) error {
+	present := func(frame draw.Image, origin image.Point, matte color.Color, start, repeat int) error {
 		origin = origin.Add(margin)
 		if origin == (image.Point{}) && frame.Bounds() == output {
-			return emit(frame, repeat)
+			return overlay.emit(ctx, frame, start, repeat, p.frames, emit)
 		}
 		if letterboxed == nil {
 			letterboxed = image.NewRGBA(output)
 		}
 		draw.Draw(letterboxed, output, image.NewUniform(matte), image.Point{}, draw.Src)
 		draw.Draw(letterboxed, frame.Bounds().Add(origin), frame, frame.Bounds().Min, draw.Src)
-		return emit(letterboxed, repeat)
+		return overlay.emit(ctx, letterboxed, start, repeat, p.frames, emit)
 	}
 	var padded *image.RGBA
 	var workspace d2raster.RenderWorkspace
@@ -368,7 +395,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 			if err := camera.renderInto(ctx, session, &workspace, cameraOptions, progress, 0, padded); err != nil {
 				return err
 			}
-			if err := present(padded, image.Point{}, cameraOptions.Background, repeat); err != nil {
+			if err := present(padded, image.Point{}, cameraOptions.Background, i, repeat); err != nil {
 				return err
 			}
 		} else {
@@ -378,7 +405,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 				return err
 			}
 			err = workspace.Render(ctx, session, doc, options, func(frame *image.NRGBA) error {
-				return present(frame, p.segments[index].offset(canvas), p.segments[index].matte, repeat)
+				return present(frame, p.segments[index].offset(canvas), p.segments[index].matte, i, repeat)
 			})
 			if err != nil {
 				return err

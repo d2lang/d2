@@ -69,3 +69,42 @@ test("renderSVG propagates compile and render errors and rejects ASCII output", 
     /ASCII/
   );
 });
+
+test("connection icon rates use the duration of the selected animation", async (t) => {
+  const d2 = new D2();
+  t.after(() => d2.dispose());
+  const source = "a -> b: {icon.style.animated: 0.25/s}\nsteps.next: {(a -> b)[0].label: next}";
+  const short = { target: "*", animateInterval: 1000 };
+  const enough = { target: "*", animateInterval: 2000 };
+  await assert.rejects(d2.compile(source, short), /0\.25\/s/);
+  await assert.rejects(d2.renderSVG(source, short), /0\.25\/s/);
+  const compiled = await d2.compile(source, enough);
+  assert.equal(compiled.diagram.connections[0].iconShape, "circle");
+  assert.deepEqual(compiled.diagram.connections[0].iconAnimation, { rate: 0.25 });
+  assert.equal(compiled.graph.edges[0].attributes.iconStyle.animated.value, "0.25/s");
+  await assert.rejects(d2.render(compiled.diagram, short), /0\.25\/s/);
+  assert.match(await d2.render(compiled.diagram, enough), /d2-moving-icons/);
+
+  const standalone = "a -> b: {icon.style.animated: 0.25/s}";
+  assert.match(await d2.renderSVG(standalone, short), /animateMotion/);
+});
+
+test("connection icon trip durations survive compilation and select the loop period", async (t) => {
+  const d2 = new D2();
+  t.after(() => d2.dispose());
+  const loop = "a -> b: {icon.style.animated: 1500ms}";
+  const rate = "a -> b: {icon.style.animated: 2/s}";
+  const short = { target: "*", animateInterval: 500 };
+  const compiled = await d2.compile(loop);
+  assert.deepEqual(compiled.diagram.connections[0].iconAnimation, { durationMs: 1500 });
+  assert.match(await d2.render(compiled.diagram), /dur="1\.5s"/);
+  const steps = "\nsteps.next: {(a -> b)[0].label: next}";
+  await assert.rejects(d2.compile(loop + steps, short), /animation loop/);
+  await assert.rejects(d2.renderSVG(loop + steps, short), /animation loop/);
+  const stream = await d2.compile(rate + steps, short);
+  assert.deepEqual(stream.diagram.connections[0].iconAnimation, { rate: 2 });
+  assert.match(await d2.render(stream.diagram, short), /d2-moving-icons/);
+  await assert.rejects(d2.compile("a -> b: {icon.style.animated: 2/s in 200ms}"), /icon\.style\.animated/);
+  compiled.diagram.connections[0].iconAnimation.rate = 2;
+  await assert.rejects(d2.render(compiled.diagram), /iconAnimation/);
+});

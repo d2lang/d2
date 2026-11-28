@@ -71,11 +71,12 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 	group.ID = connection.ID
 	group.Classes = append([]string(nil), connection.Classes...)
 	group.Opacity = connection.Opacity
-	icon, err := b.buildConnectionIcon(connection)
-	if err != nil {
-		return nil, err
-	}
-	if icon != nil {
+	if pos := connection.GetIconPosition(); pos != nil {
+		radius := float64(connection.IconSize()) / 2
+		icon, err := b.connectionIcon(connection, connection.ID+":icon", geo.Point{X: pos.X + radius, Y: pos.Y + radius}, strokePaint)
+		if err != nil {
+			return nil, err
+		}
 		group.Children = append(group.Children, icon)
 	}
 	var srcArrowNode, dstArrowNode *d2scene.Node
@@ -135,14 +136,18 @@ func (b *builder) buildConnection(connection d2target.Connection, crossingMask *
 			}
 		}
 	}
-	if b.connectionMask == nil {
-		group.Children = append(group.Children, geometryChildren...)
-	} else {
-		geometry := d2scene.NewNode(nil)
+	geometry := group
+	if b.connectionMask != nil {
+		geometry = d2scene.NewNode(nil)
 		geometry.ID = connection.ID + ":geometry"
 		geometry.Mask = b.connectionMask
-		geometry.Children = geometryChildren
 		group.Children = append(group.Children, geometry)
+	}
+	geometry.Children = append(geometry.Children, geometryChildren...)
+	if connection.IconAnimation != nil {
+		if err := b.addMovingConnectionIcons(geometry, connection, strokePaint); err != nil {
+			return nil, err
+		}
 	}
 	labels, err := b.buildConnectionLabels(connection)
 	if err != nil {

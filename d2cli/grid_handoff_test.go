@@ -17,7 +17,7 @@ anchor -> a
 steps: {promote: {a: null; b: pg-09 {class: writer}; anchor -> b}}`
 	for _, format := range []string{"svg", "gif"} {
 		t.Run(format, func(t *testing.T) {
-			out, err := imageCLI(t, t.TempDir(), source, "--pad=4", "--stdout-format="+format, "-")
+			out, err := imageCLI(t, t.TempDir(), source, "--pad=8", "--stdout-format="+format, "-")
 			if err != nil {
 				t.Fatal(err)
 			}

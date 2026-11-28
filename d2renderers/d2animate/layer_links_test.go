@@ -156,7 +156,8 @@ func TestLinksWithoutCamerasSelectOnlyIncludedBoards(t *testing.T) {
 		t.Fatalf("unexpected jumps: %+v", links)
 	}
 	svgs := [][]byte{[]byte(`<g viewBox="-100 10 50 60"><a href="root.steps.two" xlink:href="root.steps.two"><g class="anVtcA=="><rect/></g></a><a href="https://example.com/" xlink:href="https://example.com/"><g class="dXJs"><rect/></g></a></g>`), []byte(`<g viewBox="300 400 50 60"/>`)}
-	opts := d2svg.RenderOpts{}
+	on := true
+	opts := d2svg.RenderOpts{AnimateProgress: &on}
 	legacy, err := WrapTimed(root, svgs, opts, []int{100, 60})
 	if err != nil {
 		t.Fatal(err)
@@ -175,5 +176,9 @@ func TestLinksWithoutCamerasSelectOnlyIncludedBoards(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte(`href="#d2-layer-link-`)) || !bytes.Contains(out, []byte(`href="https://example.com/"`)) {
 		t.Fatal("internal and external anchor destinations were not preserved")
+	}
+	hash, _ := root.HashID(nil)
+	if !bytes.Contains(out, []byte(".d2-layer-link-"+hash+":target~.d2-progress-"+hash+"{animation-play-state:paused!important}")) {
+		t.Fatal("manual board navigation must pause the global progress clock")
 	}
 }

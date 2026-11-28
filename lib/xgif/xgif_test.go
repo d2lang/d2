@@ -799,3 +799,36 @@ func sumDelays(delays []int) int {
 	}
 	return total
 }
+
+func TestOpaqueOverlayRetainsOnlyContiguousHeldPose(t *testing.T) {
+	// The black source moves between two placements. Mark the white margin.
+	// A hold accumulates marks, while a cut back starts from a clean canvas.
+	pose := image.NewPaletted(image.Rect(0, 0, 2, 1), color.Palette{color.Black})
+	offsets := []image.Point{{}, {}, {X: 2}, {}}
+	frames := []*image.Paletted{pose, pose, pose, pose}
+	mark := color.RGBA{R: 255, A: 255}
+	index := 0
+	encoded, err := AnimateTimedOpaquePalettedImagesWithOverlay(t.Context(), frames, 4, 1, offsets, []int{3, 3, 3, 3}, 4096,
+		func(_ context.Context, frame *image.Paletted) error {
+			got := color.RGBAModel.Convert(frame.At(3, 0))
+			if marked := got == mark; marked != (index == 1) {
+				t.Fatalf("frame %d inherited an unexpected paint: %v", index, got)
+			}
+			if index == 0 || index == 2 {
+				frame.Palette = append(frame.Palette, mark)
+				frame.SetColorIndex(3, 0, uint8(len(frame.Palette)-1))
+			}
+			index++
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	animation, err := gif.DecodeAll(bytes.NewReader(encoded))
+	if err != nil || len(animation.Image) != len(frames) {
+		t.Fatalf("encoded hold: %v", err)
+	}
+	if len(pose.Palette) != 1 || !bytes.Equal(pose.Pix, []byte{0, 0}) {
+		t.Fatal("overlay modified its source")
+	}
+}

@@ -30,13 +30,13 @@ func TestMP4Playback(t *testing.T) {
 	requireVideoTool(t, err == nil, "ffprobe unavailable")
 	encoders, err := exec.CommandContext(t.Context(), ffmpeg, "-encoders").Output()
 	requireVideoTool(t, err == nil && bytes.Contains(encoders, []byte(" libx264 ")), "FFmpeg with libx264 unavailable")
-	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 100ms; pad: 0}}
+	const source = `vars: {d2-config: {animate-interval: 200ms; animate-duration: 100ms; animate-progress-color: lime; theme-overrides: {B1: purple}; pad: 0}}
 swatch: "" {width: 47; height: 41; style: {stroke-width: 0; fill: red}}
 steps: {next: {swatch.style.fill: blue}}`
 	dir := t.TempDir()
 	env := []string{"PATH=" + os.Getenv("PATH")}
 	output := filepath.Join(dir, "video output", "two boards.mp4")
-	_, err = imageCLIWithEnv(t, dir, source, env, "--video-quality=high", "--video-size=320x180", output)
+	_, err = imageCLIWithEnv(t, dir, source, env, "--video-quality=high", "--video-size=320x180", "--animate-progress=false", output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +99,43 @@ steps: {next: {swatch.style.fill: blue}}`
 	red, blend, blue := pixel(0), pixel(8), pixel(11)
 	if red[0] < 220 || red[2] > 25 || blend[0] < 20 || blend[2] < 20 || blue[0] > 25 || blue[2] < 220 {
 		t.Fatalf("decoded colors at frames 0, 8, 11 = %v, %v, %v", red, blend, blue)
+	}
+
+	// A clip length requests an MP4, but its implicit 1000ms board interval
+	// should not turn on the bar. Sample the same spot across each export.
+	implicitSource := strings.Replace(source, "animate-interval: 200ms; ", "", 1)
+	implicit, err := imageCLIWithEnv(t, dir, implicitSource, env, "--stdout-format=mp4", "--video-duration=100ms", "--video-size=320x180", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		clip     []byte
+		wantLime bool
+	}{
+		{"disabled over authored interval", nil, false},
+		{"authored interval", clip, true},
+		{"implicit interval", implicit, false},
+	} {
+		input := output
+		if tc.clip != nil {
+			input = "pipe:0"
+		}
+		decode := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-i", input,
+			"-vf", "crop=2:2:2:ih-4,scale=1:1", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "pipe:1")
+		if tc.clip != nil {
+			decode.Stdin = bytes.NewReader(tc.clip)
+		}
+		data, err := decode.Output()
+		if err != nil || len(data) < 3 {
+			t.Fatalf("%s: decode error %v (%d bytes)", tc.name, err, len(data))
+		}
+		last := data[len(data)-3:]
+		lime := last[0] < 20 && last[1] > 230 && last[2] < 20
+		white := last[0] > 235 && last[1] > 235 && last[2] > 235
+		if tc.wantLime && !lime || !tc.wantLime && !white {
+			t.Fatalf("%s: final RGB is %v, want lime when enabled and the white letterbox when disabled", tc.name, last)
+		}
 	}
 }
 

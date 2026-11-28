@@ -89,6 +89,9 @@ func TestSourceAnimateInterval(t *testing.T) {
 				t.Fatal(err)
 			}
 			svg := string(out.([]byte))
+			if got := strings.Contains(svg, `class="d2-progress-`); got != (tc.want > 0) {
+				t.Fatalf("progress present = %t with %dms effective interval", got, tc.want)
+			}
 			if tc.want == 0 {
 				if strings.Contains(svg, "d2Transition-") {
 					t.Fatal("expected static SVG with an explicit zero interval")

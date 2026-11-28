@@ -22,11 +22,24 @@ func (c Connection) ArrowheadAdjustments(shapes map[string]Shape) (src, dst *geo
 
 // ArrowheadAdjustmentsForWidths uses the current stroke widths of the two endpoint shapes.
 func (c Connection) ArrowheadAdjustmentsForWidths(srcWidth, dstWidth float64) (src, dst *geo.Point) {
-	inset := func(start, end *geo.Point, arrow Arrowhead, shapeWidth float64, tip TraceEndpoint) *geo.Point {
-		distance := (c.RenderedStrokeWidth() + shapeWidth) / 2
-		if arrow != NoArrowhead {
-			distance += c.RenderedStrokeWidth()
-		}
+	return c.arrowheadAdjustments(c.EndpointInsets(srcWidth, dstWidth))
+}
+
+// EndpointInsets gives the two distances that trim the painted centerline.
+func (c *Connection) EndpointInsets(srcWidth, dstWidth float64) [2]float64 {
+	width := c.RenderedStrokeWidth()
+	src, dst := (width+srcWidth)/2, (width+dstWidth)/2
+	if c.SrcArrow != NoArrowhead {
+		src += width
+	}
+	if c.DstArrow != NoArrowhead {
+		dst += width
+	}
+	return [2]float64{src, dst}
+}
+
+func (c *Connection) arrowheadAdjustments(insets [2]float64) (src, dst *geo.Point) {
+	inset := func(start, end *geo.Point, distance float64, tip TraceEndpoint) *geo.Point {
 		v := start.VectorTo(end)
 		if v.Length() == 0 {
 			return geo.NewPoint(0, 0)
@@ -39,8 +52,8 @@ func (c Connection) ArrowheadAdjustmentsForWidths(srcWidth, dstWidth float64) (s
 		return v.Unit().Multiply(-distance).ToPoint()
 	}
 	last := len(c.Route) - 1
-	return inset(c.Route[1], c.Route[0], c.SrcArrow, srcWidth, TraceSource),
-		inset(c.Route[last-1], c.Route[last], c.DstArrow, dstWidth, TraceDestination)
+	return inset(c.Route[1], c.Route[0], insets[0], TraceSource),
+		inset(c.Route[last-1], c.Route[last], insets[1], TraceDestination)
 }
 
 // PathCommands walks the final routed path, including arrowhead insets and

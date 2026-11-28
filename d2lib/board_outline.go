@@ -163,7 +163,7 @@ func planBoardOutline(prev, next *d2target.Diagram, previousGraph, nextGraph *d2
 			return nil
 		}
 		if !slices.EqualFunc(old.Route, e.Route, func(a, b *geo.Point) bool { return a != nil && b != nil && *a == *b }) {
-			if len(plan.positions) == 0 || e.IsCurve || e.Icon != nil || e.Language != "" || slices.Contains(old.Route, nil) || slices.Contains(e.Route, nil) {
+			if len(plan.positions) == 0 || e.IsCurve || e.HasStaticIcon() || e.IconAnimation != nil || e.Language != "" || slices.Contains(old.Route, nil) || slices.Contains(e.Route, nil) {
 				return nil
 			}
 			pair := &gridEdgePair{

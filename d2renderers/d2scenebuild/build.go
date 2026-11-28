@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -213,6 +214,7 @@ func Build(ctx context.Context, diagram *d2target.Diagram, options Options) (*d2
 	if err := admitSceneWork(ctx, diagram, options); err != nil {
 		return nil, err
 	}
+	diagram = diagram.WithIconLabelInsets()
 
 	b := &builder{
 		ctx:            ctx,
@@ -417,6 +419,12 @@ func (b *builder) preflightConnection(connection d2target.Connection) error {
 		return err
 	}
 	object := fmt.Sprintf("connection %q", connection.ID)
+	if err := connection.ValidateIconMotion(object); err != nil {
+		return err
+	}
+	if schedule := connection.IconSchedule; schedule != nil && int64(schedule.FilmMS) > math.MaxInt64/int64(time.Millisecond) {
+		return invalidField(object, "iconSchedule.filmMS", schedule.FilmMS, "must fit the native playback clock")
+	}
 	if err := validateConnectionNumbers(object, connection); err != nil {
 		return err
 	}
@@ -482,17 +490,14 @@ func (b *builder) preflightConnection(connection d2target.Connection) error {
 			return invalidField(object, "labelDimensions", fmt.Sprintf("%dx%d", connection.LabelWidth, connection.LabelHeight), "must be positive for a connection with a label")
 		}
 	}
-	if connection.Icon != nil {
-		if connection.Label == "" && !label.FromString(connection.IconPosition).IsEdgePosition() {
-			return invalidField(object, "iconPosition", connection.IconPosition, "must identify a connection icon position")
-		}
+	if connection.HasStaticIcon() {
 		topLeft := connection.GetIconPosition()
 		if topLeft == nil || !finite(topLeft.X) || !finite(topLeft.Y) {
 			return invalidField(object, "iconPosition", connection.IconPosition, "must resolve to a finite point on the route")
 		}
-		if b.options.Assets == nil || b.options.Assets.Resolver == nil {
-			return unsupported(object, "icon asset without a configured resolver")
-		}
+	}
+	if connection.Icon != nil && (b.options.Assets == nil || b.options.Assets.Resolver == nil) {
+		return unsupported(object, "icon asset without a configured resolver")
 	}
 	for _, endpoint := range []struct {
 		name string

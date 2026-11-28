@@ -258,6 +258,9 @@ func validateLayoutResultMetadata(
 			!sameOptionalValue(input.ToTableColumnIndex, edge.ToTableColumnIndex) {
 			return fmt.Errorf("edge %d table column attachment metadata changed", edge.ID)
 		}
+		if input.MovingIcon != edge.MovingIcon {
+			return fmt.Errorf("edge %d moving icon geometry changed", edge.ID)
+		}
 		if input.KeepExplicit != edge.KeepExplicit {
 			return fmt.Errorf("edge %d explicit-connection metadata mismatch", edge.ID)
 		}

@@ -1,0 +1,26 @@
+direction: right
+vars.d2-config.pad: 26
+style.fill: "#fbfcf9"
+
+classes.service: {
+  width: 148
+  height: 60
+  style: {fill: "#ffffff"; stroke: "#91a298"; font-color: "#243c33"; font-size: 17; border-radius: 9}
+}
+
+client: Customer {class: service}
+api: Pricing API {class: service; style.fill: "#e4eee8"; style.stroke: "#6c8778"}
+cache: "Price cache\n200 ms" {class: service; height: 76; style.fill: "#d8eee5"; style.stroke: "#27775c"}
+db: "Catalog DB\n1.5 s" {class: service; shape: cylinder; width: 160; height: 100; label.near: center-center; style.fill: "#f8e5cf"; style.stroke: "#a5682d"}
+
+client -> api: {style.stroke: "#8a998f"}
+api -> cache: {
+  icon.shape: circle
+  icon.style.animated: 200ms
+  style.stroke: "#177350"
+}
+api -> db: {
+  icon.shape: circle
+  icon.style.animated: 1500ms
+  style.stroke: "#a36125"
+}

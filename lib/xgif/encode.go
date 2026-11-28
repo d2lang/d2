@@ -52,6 +52,15 @@ func AnimateTimedCenteredOpaquePalettedImages(ctx context.Context, images []*ima
 // AnimateTimedOpaquePalettedImages places each frame at its canvas offset,
 // padding uncovered pixels a row at a time. A nil offsets slice centers frames.
 func AnimateTimedOpaquePalettedImages(ctx context.Context, images []*image.Paletted, width, height int, offsets []image.Point, delays []int, maxBytes int64) ([]byte, error) {
+	return AnimateTimedOpaquePalettedImagesWithOverlay(ctx, images, width, height, offsets, delays, maxBytes, nil)
+}
+
+// AnimateTimedOpaquePalettedImagesWithOverlay paints on each normalized
+// opaque canvas immediately before encoding. It expands at most one frame at
+// a time and leaves input pixels and palettes untouched. Consecutive entries
+// with the same source and offset represent one held pose: the callback can
+// build on its previous overlay. It must not retain the borrowed canvas.
+func AnimateTimedOpaquePalettedImagesWithOverlay(ctx context.Context, images []*image.Paletted, width, height int, offsets []image.Point, delays []int, maxBytes int64, paint func(context.Context, *image.Paletted) error) ([]byte, error) {
 	ctx = nonNilContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -101,8 +110,34 @@ func AnimateTimedOpaquePalettedImages(ctx context.Context, images []*image.Palet
 		compressor: &compression.writer, blocks: &compression.blocks,
 	}
 	canvas := image.Rect(0, 0, width, height)
+	var canvasFrame *image.Paletted
 	for index, frame := range images {
-		if frame.Bounds() == canvas {
+		if paint != nil {
+			if index == 0 || frame != images[index-1] || offsets != nil && offsets[index] != offsets[index-1] {
+				var offset *image.Point
+				if offsets != nil {
+					offset = &offsets[index]
+				}
+				var err error
+				canvasFrame, err = normalizePalettedImage(ctx, frame, width, height, offset, true)
+				if err != nil {
+					return nil, fmt.Errorf("GIF frame %d normalization: %w", index, err)
+				}
+			}
+			if err := paint(ctx, canvasFrame); err != nil {
+				return nil, fmt.Errorf("GIF frame %d overlay: %w", index, err)
+			}
+			if canvasFrame.Bounds() != canvas {
+				return nil, fmt.Errorf("GIF frame %d overlay changed the canvas dimensions", index)
+			}
+			if err := validatePalettedImage(ctx, canvasFrame); err != nil {
+				return nil, fmt.Errorf("GIF frame %d overlay: %w", index, err)
+			}
+			if err := validateOpaqueGIFPalette(canvasFrame.Palette); err != nil {
+				return nil, fmt.Errorf("GIF frame %d overlay: %w", index, err)
+			}
+			encoder.appendFrame(canvasFrame, delays[index])
+		} else if frame.Bounds() == canvas {
 			logicalFrame := *frame
 			logicalFrame.Palette, _ = encoder.copyPaletteWithBackground(frame.Palette)
 			encoder.appendFrame(&logicalFrame, delays[index])

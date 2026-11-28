@@ -10,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labelgeom"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/routing"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2exporter"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/color"
@@ -345,7 +347,7 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		}
 		talaEdge := talaGraph.Connect(toNode[edgeSrc], toNode[edgeDst])
 		talaEdge.ReversedForLayout = reversed
-		talaEdge.KeepExplicit = e.Tooltip != nil || e.Link != nil || e.Icon != nil || len(e.Classes) > 0 ||
+		talaEdge.KeepExplicit = e.Tooltip != nil || e.Link != nil || e.HasIcon() || len(e.Classes) > 0 ||
 			e.SrcArrowhead != nil || e.DstArrowhead != nil || e.ZIndex != 0
 		if talaEdge.From.IsSequenceStep() && talaEdge.To.IsSequenceStep() && (unpaintedSteps[edgeSrc] || unpaintedSteps[edgeDst]) {
 			// The text or icon may be visible even when the connecting wedge is not.
@@ -393,6 +395,12 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		talaEdge.MinHeight = int(minHeight)
 
 		if e.Label.Value != "" {
+			if e.IconStyle.Animated != nil {
+				conn := d2exporter.ToConnection(e, g.Theme)
+				if footprint := conn.MovingIconFootprint(); footprint != 0 {
+					talaEdge.MovingIcon = labelgeom.MovingIconGeometry{Footprint: footprint, StrokeWidth: conn.RenderedStrokeWidth(), BorderRadius: conn.BorderRadius, Insets: conn.IconLabelInsets}
+				}
+			}
 			talaEdge.Label = &layoutgraph.Label{
 				Text:   e.Label.Value,
 				Width:  float64(e.LabelDimensions.Width),

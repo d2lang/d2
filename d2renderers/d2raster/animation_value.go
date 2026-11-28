@@ -25,6 +25,9 @@ func (p *preflight) animationValueAt(track d2scene.Track) (d2scene.AnimationValu
 	if track.Duration <= 0 {
 		return d2scene.AnimationValue{}, fmt.Errorf("d2scene: animation duration must be positive")
 	}
+	if track.Phase < 0 || track.Phase >= track.Duration {
+		return d2scene.AnimationValue{}, fmt.Errorf("d2scene: animation phase must be within its duration")
+	}
 	if len(track.Keyframes) == 0 {
 		return d2scene.AnimationValue{}, fmt.Errorf("d2scene: animation has no keyframes")
 	}
@@ -61,15 +64,23 @@ func (p *preflight) animationValueAt(track d2scene.Track) (d2scene.AnimationValu
 
 	first := track.Keyframes[0]
 	last := track.Keyframes[len(track.Keyframes)-1]
-	if p.options.Time <= track.Delay {
+	if p.options.Time < track.Delay || p.options.Time == track.Delay && track.Phase == 0 {
 		return first.Value, nil
 	}
 	local := p.options.Time - track.Delay
-	if !track.Repeat && local >= track.Duration {
-		return last.Value, nil
-	}
-	if track.Repeat {
+	if !track.Repeat {
+		if local >= track.Duration-track.Phase {
+			return last.Value, nil
+		}
+		local += track.Phase
+	} else {
 		local %= track.Duration
+		// Adding two valid durations may overflow before the modulo.
+		if local >= track.Duration-track.Phase {
+			local -= track.Duration - track.Phase
+		} else {
+			local += track.Phase
+		}
 	}
 	progress := float64(local) / float64(track.Duration)
 	if progress <= first.Offset {

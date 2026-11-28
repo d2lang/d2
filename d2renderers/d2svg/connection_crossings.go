@@ -53,7 +53,7 @@ func (v crossingViewport) planCrossings(boardID string, crossings [][]d2target.C
 	// Each crossing effect covers exactly the board. Keep a separate label
 	// mask only if a caption, icon or border label could cut the shaft.
 	emptyMask := defaultStyles && !slices.ContainsFunc(diagram.Shapes, hasBorderLabel) &&
-		!slices.ContainsFunc(diagram.Connections, func(c d2target.Connection) bool { return c.Label != "" || c.Icon != nil })
+		!slices.ContainsFunc(diagram.Connections, func(c d2target.Connection) bool { return c.Label != "" || c.HasStaticIcon() })
 
 	effects := make(map[int]crossingEffect)
 	for i, gaps := range crossings {
