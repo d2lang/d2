@@ -87,7 +87,7 @@ func validBoardGeometry(g *d2graph.Graph, allowConstantNear bool) bool {
 		return false
 	}
 	for _, n := range g.Objects {
-		if seen[n] != 1 || n == r || n.Top != nil || n.Left != nil || n.NearKey != nil && !(allowConstantNear && n.Parent == r && n.Graph == g && n.IsConstantNear()) ||
+		if seen[n] != 1 || n == r || n.Top != nil || n.Left != nil || n.NearKey != nil && !(allowConstantNear && len(n.NearKey.Path) > 0 && n.Parent == r && n.Graph == g && n.IsConstantNear()) ||
 			n.IsGridDiagram() || n.IsSequenceDiagram() || n.Box == nil || !boardLeafPoint(n.TopLeft) ||
 			!boardLeafDimension(n.Width) || !boardLeafDimension(n.Height) {
 			return false

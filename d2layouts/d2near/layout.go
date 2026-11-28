@@ -118,7 +118,11 @@ func moveGroup(root *d2graph.Object, bounds *d2graph.Graph, objects []*d2graph.O
 	x, y := place(root, bounds)
 	dx, dy := x-root.TopLeft.X, y-root.TopLeft.Y
 	for _, obj := range objects {
-		obj.TopLeft = geo.NewPoint(obj.TopLeft.X+dx, obj.TopLeft.Y+dy)
+		if obj == root {
+			obj.TopLeft = geo.NewPoint(x, y)
+		} else {
+			obj.TopLeft = geo.NewPoint(obj.TopLeft.X+dx, obj.TopLeft.Y+dy)
+		}
 	}
 	for _, e := range edges {
 		for _, p := range e.Route {

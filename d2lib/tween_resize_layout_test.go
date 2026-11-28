@@ -90,11 +90,72 @@ steps.repeat.vars.wide: 520`
 }
 
 func TestResizeLayoutHonorsOtherLayoutConstraints(t *testing.T) {
-	for _, constraint := range []string{"a.left: 50\na.top: 40", "group: {grid-columns: 2; l; r}", "c.near: a"} {
+	for _, constraint := range []string{"a.left: 50\na.top: 40", "group: {grid-columns: 2; l; r}", "c.near: a", "c.near: top-center\na -> c", "a.style.3d: true", "a.style.multiple: true"} {
 		src := "vars: {d2-config: {animate-interval: 400ms; animate-duration: 180ms}; wide: 100}\na: {width: ${wide}}\na -> b\nc\n" + constraint + "\nsteps.grow.vars.wide: 220"
 		d, graph := compileContinuity(t, src, d2talalayout.ContinueBoard)
 		if len(d.Steps[0].TweenFrames) == 0 || graph.Steps[0].ResizeLayoutOrigin != nil {
 			t.Fatalf("resize placement took over %q", constraint)
 		}
+	}
+}
+
+func TestResizeLayoutMovesCornerKeyWithItsWires(t *testing.T) {
+	const source = `vars: {
+  d2-config: {animate-interval: 1400ms; animate-duration: 320ms}
+  depth: 90
+}
+direction: down
+title: Pipeline {near: top-center; shape: text}
+ingest: "Source data" {
+  validate: "Check"
+  queue: "Queue" {height: ${depth}}
+  validate -> queue: "validated data"
+}
+transform: "Batch processing" {
+  split: "Partitions"
+  reduce: "Combiner"
+  split -> reduce
+}
+archive: "Warehouse" {live: Hot; cold: Cold; live -> cold}
+ingest.queue -> transform.split: "pending batches"
+transform.reduce -> archive.live: "checkpoint"
+legend: "Transport" {
+  near: bottom-right
+  in: Inbound
+  out: Outbound
+  in -> out
+}
+steps.expand.vars.depth: 390
+steps.collapse.vars.depth: 90`
+	board, _ := compileContinuity(t, source, d2talalayout.ContinueBoard)
+	key := shapeByID(t, board, "legend")
+	var wire *d2target.Connection
+	for i := range board.Connections {
+		if board.Connections[i].Src == "legend.in" {
+			wire = &board.Connections[i]
+			break
+		}
+	}
+	if wire == nil {
+		t.Fatal("corner key has no internal connection")
+	}
+	for _, step := range board.Steps {
+		for _, frame := range append(append([]*d2target.Diagram(nil), step.TweenFrames...), step) {
+			legend := shapeByID(t, frame, key.ID)
+			moved := indexTweenRoutes(frame).edges[wire.ID]
+			if moved == nil || len(moved.Route) != len(wire.Route) {
+				t.Fatal("moving the corner key changed its internal route")
+			}
+			for j, point := range moved.Route {
+				if point.X-wire.Route[j].X != float64(legend.Pos.X-key.Pos.X) ||
+					point.Y-wire.Route[j].Y != float64(legend.Pos.Y-key.Pos.Y) {
+					t.Fatalf("corner key left an internal connection behind at %v", point)
+				}
+			}
+		}
+	}
+	if shapeByID(t, board.Steps[0], key.ID).Pos.Y <= key.Pos.Y ||
+		shapeByID(t, board.Steps[1], key.ID).Pos != key.Pos {
+		t.Fatal("corner key did not follow the height change and return")
 	}
 }

@@ -110,7 +110,9 @@ func (s *LoopInspection) CollectObstructedRoutes(before *LoopInspection, edges, 
 			}
 			switch item.part {
 			case edgeRoute, edgeText, sourceText, targetText:
-				edges[item.id] = true
+				if edges != nil {
+					edges[item.id] = true
+				}
 			}
 		}
 	}

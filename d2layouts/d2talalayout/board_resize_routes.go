@@ -7,9 +7,11 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/labeling"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/layoutgraph"
+	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/limits"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/quality"
 	"github.com/d2lang/d2/d2layouts/d2talalayout/internal/routing"
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/shape"
 )
 
@@ -44,7 +46,8 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 		n := nodes[bindings.objectIDs[o]]
 		old := oldNodes[n.ID]
 		b := plan[o]
-		if old == nil || b == nil || !boardLeafPoint(b.TopLeft) || !boardLeafDimension(b.Width) || !boardLeafDimension(b.Height) {
+		if old == nil || b == nil || !boardLeafPoint(b.TopLeft) || !boardLeafDimension(b.Width) || !boardLeafDimension(b.Height) ||
+			b.TopLeft.X+b.Width > limits.MaxGraphSize || b.TopLeft.Y+b.Height > limits.MaxGraphSize {
 			return false
 		}
 		n.Box = *b.Copy()
@@ -67,8 +70,15 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 		if old == nil || len(old.Points) < 2 {
 			return false
 		}
+		original := oldD2[*e.D2ID]
+		if original == nil {
+			return false
+		}
 		if e.Label != nil && old.Label != nil {
 			e.Label.Position, e.LabelPercentage = old.Label.Position, old.LabelPercentage
+			if original.Attributes.LabelPosition != nil {
+				e.Label.FixPosition()
+			}
 		}
 		if route := resizeBoardWire(old, e); route != nil {
 			e.Points = route
@@ -89,9 +99,8 @@ func routeResizeBoard(ctx context.Context, previous, current *d2graph.Graph, pla
 			return false
 		}
 		candidate, err := quality.InspectLoopClearance(ctx, trial)
-		collisions := make(map[layoutgraph.EntityID]bool)
 		obscuredLabels := make(map[layoutgraph.EntityID]bool)
-		if err != nil || !candidate.CollectObstructedRoutes(baseline, collisions, obscuredLabels) {
+		if err != nil || !candidate.CollectObstructedRoutes(baseline, nil, obscuredLabels) {
 			return false
 		}
 		if len(obscuredLabels) != 0 {
@@ -291,7 +300,7 @@ func resizeBoardCoveredElbow(n *layoutgraph.Node, tip, other, oldTip, bend, oldO
 // a transverse run and put the caption on the opposite side of the drawing.
 // Keep its original side and longitudinal position on the parallel approach.
 func resizeBoardLabel(old, edge *layoutgraph.Edge) bool {
-	if old.Label == nil || edge.Label == nil || !old.Label.Position.IsUnlocked() || len(old.Points) != 2 || len(edge.Points) != 4 {
+	if old.Label == nil || edge.Label == nil || edge.Label.PositionFixed() || len(old.Points) != 2 || len(edge.Points) != 4 {
 		return false
 	}
 	// The two approach runs divide the old straight line in the same
@@ -301,7 +310,28 @@ func resizeBoardLabel(old, edge *layoutgraph.Edge) bool {
 	first := math.Hypot(p[1].X-p[0].X, p[1].Y-p[0].Y)
 	cross := math.Hypot(p[2].X-p[1].X, p[2].Y-p[1].Y)
 	last := math.Hypot(p[3].X-p[2].X, p[3].Y-p[2].Y)
-	along := (first + last) * old.LabelPercentage
+	position, fraction := old.Label.Position, old.LabelPercentage
+	switch position {
+	case label.OutsideTopLeft, label.InsideMiddleLeft, label.OutsideBottomLeft:
+		fraction = label.LEFT_LABEL_POSITION
+	case label.OutsideTopCenter, label.InsideMiddleCenter, label.OutsideBottomCenter:
+		fraction = label.CENTER_LABEL_POSITION
+	case label.OutsideTopRight, label.InsideMiddleRight, label.OutsideBottomRight:
+		fraction = label.RIGHT_LABEL_POSITION
+	}
+	switch position {
+	case label.OutsideTopLeft, label.OutsideTopCenter, label.OutsideTopRight:
+		position = label.UnlockedTop
+	case label.InsideMiddleLeft, label.InsideMiddleCenter, label.InsideMiddleRight:
+		position = label.UnlockedMiddle
+	case label.OutsideBottomLeft, label.OutsideBottomCenter, label.OutsideBottomRight:
+		position = label.UnlockedBottom
+	}
+	if !position.IsUnlocked() {
+		return false
+	}
+	edge.Label.Position = position
+	along := (first + last) * fraction
 	if along > first {
 		along += cross
 	}
