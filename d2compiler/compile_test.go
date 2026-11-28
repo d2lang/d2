@@ -14,6 +14,7 @@ import (
 	"github.com/d2lang/util-go/diff"
 	"github.com/d2lang/util-go/mapfs"
 
+	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2graph"
@@ -441,7 +442,9 @@ real.link: 'layers."reports/index"'
 x -> y: {link: steps.missingEdge}
 bad.link: steps.missing
 steps: {one: {}; two: {prev.link: _.steps.one; wrong.link: _.one}}`
-	g, _, err := d2compiler.Compile("main.d2", strings.NewReader(src), &d2compiler.CompileOptions{FS: fs})
+	var warnings []d2ast.Error
+	ctx := d2compiler.WithWarningHandler(t.Context(), func(w d2ast.Error) { warnings = append(warnings, w) })
+	g, _, err := d2compiler.Compile("main.d2", strings.NewReader(src), &d2compiler.CompileOptions{FS: fs, Context: ctx})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,8 +458,8 @@ steps: {one: {}; two: {prev.link: _.steps.one; wrong.link: _.one}}`
 	if !ok || real.Link == nil || !strings.HasPrefix(real.Link.Value, "root.layers.") {
 		t.Fatal("quoted board name was treated as a relative URL")
 	}
-	if g.Edges[0].Link != nil || len(g.Warnings) != 3 {
-		t.Fatalf("warnings = %v, want one per unresolved source link", g.Warnings)
+	if g.Edges[0].Link != nil || len(warnings) != 3 {
+		t.Fatalf("warnings = %v, want one per unresolved source link", warnings)
 	}
 }
 

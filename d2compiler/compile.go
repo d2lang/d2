@@ -27,6 +27,14 @@ import (
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
+type warningHandlerKey struct{}
+
+// WithWarningHandler attaches a destination for non-fatal source diagnostics.
+// Compilations without a handler remain silent.
+func WithWarningHandler(ctx context.Context, handler func(d2ast.Error)) context.Context {
+	return context.WithValue(ctx, warningHandlerKey{}, handler)
+}
+
 type CompileOptions struct {
 	// Context stops parsing and compilation when canceled. A nil Context is treated as
 	// context.Background().
@@ -131,9 +139,11 @@ func compileIRContext(ctx context.Context, ast *d2ast.Map, m *d2ir.Map) (*d2grap
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	warn, _ := ctx.Value(warningHandlerKey{}).(func(d2ast.Error))
 	c := &compiler{
-		err: &d2parser.ParseError{},
-		ctx: ctx,
+		err:  &d2parser.ParseError{},
+		ctx:  ctx,
+		warn: warn,
 	}
 
 	g := d2graph.NewGraph()
@@ -455,6 +465,7 @@ func _findFieldAST(ast *d2ast.Map, path []d2ast.String) *d2ast.Map {
 
 type compiler struct {
 	err             *d2parser.ParseError
+	warn            func(d2ast.Error)
 	warnedLinks     map[d2ast.Range]bool
 	activeClassMaps map[*d2ir.Map]struct{}
 	classMapsByRoot map[*d2ir.Map]map[string]*d2ir.Map
@@ -1897,13 +1908,13 @@ func (c *compiler) resolveBoardLink(g *d2graph.Graph, link *d2graph.Scalar) *d2g
 				}
 			}
 		}
-		if !c.warnedLinks[source.Range] {
+		if c.warn != nil && !c.warnedLinks[source.Range] {
 			if c.warnedLinks == nil {
 				c.warnedLinks = make(map[d2ast.Range]bool)
 			}
 			c.warnedLinks[source.Range] = true
 			msg := fmt.Sprintf("board link %q has no matching board; use _.steps.name for a sibling step or ./name for a file", link.Value)
-			root.Warnings = append(root.Warnings, d2ast.Error{Range: source.Range, Message: msg})
+			c.warn(d2ast.Error{Range: source.Range, Message: msg})
 		}
 	}
 	return nil
