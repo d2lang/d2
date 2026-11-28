@@ -15,5 +15,7 @@
 # the raw measurement from 10,897,523 to 10,901,133 bytes.
 # Leave room for measuring moving icon clearance along curves and bends
 # in the renderer and in TALA's caption search.
-raw 10915000
+# Resolving endpoint strokes when a target is rendered and validating icon
+# placement increased the stripped module from 10,909,298 to 10,916,634 bytes.
+raw 10920000
 brotli 3720000
