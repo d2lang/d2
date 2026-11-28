@@ -10,6 +10,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2scene"
 )
 
+// Both video formats share a canvas budget chosen for portable playback.
 // Windows Media Foundation's H.264 decoder accepts 48x48 through 4096x2304
 // coded pixels and levels up to 5.1. At 30 fps the Level 5.1 macroblock rate
 // also limits large frames (in particular, 3840x2160 fits).
@@ -41,11 +42,11 @@ func (s videoSize) validate() error {
 		return fmt.Errorf("%dx%d is invalid: dimensions must be even and at least %d pixels", s.width, s.height, videoMinSide)
 	}
 	if s.width > videoMaxWidth || s.height > videoMaxHeight {
-		return fmt.Errorf("%dx%d exceeds the H.264 decoder limits of %d pixels wide and %d high", s.width, s.height, videoMaxWidth, videoMaxHeight)
+		return fmt.Errorf("%dx%d exceeds the video export limits of %d pixels wide and %d high", s.width, s.height, videoMaxWidth, videoMaxHeight)
 	}
 	blocks := ((s.width + 15) / 16) * ((s.height + 15) / 16)
 	if blocks*videoFPS > videoMaxMacroblocksPerSecond {
-		return fmt.Errorf("%dx%d at %d fps exceeds H.264 Level 5.1; try 3840x2160", s.width, s.height, videoFPS)
+		return fmt.Errorf("%dx%d at %d fps exceeds the video export limit; try 3840x2160", s.width, s.height, videoFPS)
 	}
 	return nil
 }
@@ -79,7 +80,7 @@ func (p *videoTimeline) frameSizes(boxes []d2scene.Box, scale float64, requested
 		scale = min(float64(requested.width)/width, float64(requested.height)/height)
 	}
 	if !(scale > 0) || math.IsInf(scale, 0) {
-		return content, output, fmt.Errorf("invalid MP4 scale %g", scale)
+		return content, output, fmt.Errorf("invalid video scale %g", scale)
 	}
 
 	// Only the final canvas must be even. Independent width/height rounding
@@ -91,7 +92,7 @@ func (p *videoTimeline) frameSizes(boxes []d2scene.Box, scale float64, requested
 		w, h = min(w, float64(requested.width)), min(h, float64(requested.height))
 	}
 	if !(w > 0 && h > 0) || w > videoMaxWidth || h > videoMaxHeight {
-		return content, output, fmt.Errorf("MP4 canvas %.0fx%.0f exceeds the H.264 decoder limits of %dx%d; use --video-size=1920x1080 or reduce --scale", w, h, videoMaxWidth, videoMaxHeight)
+		return content, output, fmt.Errorf("video canvas %.0fx%.0f exceeds the video export limits of %dx%d; use --video-size=1920x1080 or reduce --scale", w, h, videoMaxWidth, videoMaxHeight)
 	}
 	content = image.Rect(0, 0, int(w), int(h))
 	if requested == (videoSize{}) {
@@ -101,7 +102,7 @@ func (p *videoTimeline) frameSizes(boxes []d2scene.Box, scale float64, requested
 		content.Max.Y += content.Dy() % 2
 		requested = videoSize{max(videoMinSide, content.Dx()), max(videoMinSide, content.Dy())}
 		if err := requested.validate(); err != nil {
-			return content, output, fmt.Errorf("MP4 canvas: %w; use --video-size=1920x1080 or reduce --scale", err)
+			return content, output, fmt.Errorf("video canvas: %w; use --video-size=1920x1080 or reduce --scale", err)
 		}
 	}
 	output = requested.rect()
