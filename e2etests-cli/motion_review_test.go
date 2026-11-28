@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/d2lang/util-go/xmain"
 	"github.com/d2lang/util-go/xos"
-	"github.com/stretchr/testify/require"
 )
 
 func TestMotionReviewCLI(t *testing.T) {
