@@ -717,7 +717,13 @@ func renderGIFWithSession(
 	if len(boards) == 0 {
 		return summary, fmt.Errorf("GIF animation requires at least one renderable board")
 	}
-	if err := d2target.ValidateRenderTarget(diagram); err != nil {
+	var iconTimeline *d2animate.IconTimeline
+	if len(boards) > 1 || len(boards[0].TweenFrames) > 0 {
+		iconTimeline, err = d2animate.NewIconTimeline(diagram, intervalMs)
+	} else {
+		err = d2target.ValidateRenderTarget(diagram)
+	}
+	if err != nil {
 		return summary, err
 	}
 	var navigation *d2animate.LayerNavigation
@@ -783,7 +789,11 @@ func renderGIFWithSession(
 				tl, br := segment.Diagram.BoundingBox()
 				viewport.bounds = viewport.bounds.Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
 			}
-			timeline = append(timeline, gifSegment{Frame: segment, count: count, viewport: viewport, route: route, zoom: zoom})
+			scheduled := gifSegment{Frame: segment, count: count, viewport: viewport, route: route, zoom: zoom}
+			if iconTimeline.Active(board) {
+				scheduled.iconBoard = board
+			}
+			timeline = append(timeline, scheduled)
 			extraPaints += len(zoom)
 			totalFrames += count
 		}
@@ -832,6 +842,16 @@ func renderGIFWithSession(
 		}
 		segment := timeline[boardIndex]
 		board := segment.Diagram
+		if segment.iconBoard != nil {
+			frame := segment.Frame
+			if hasZoom && !frame.TweenSample {
+				// The camera may also revisit this endpoint as an intermediate
+				// board at time zero, before its own tween normally finishes.
+				frame.DurationMS += frame.ElapsedMS
+				frame.ElapsedMS = 0
+			}
+			board = iconTimeline.ScenePicture(segment.iconBoard, frame)
+		}
 		frameOptions := gifFrameOptions(0, max(totalFrames+extraPaints, buildCount))
 		sceneOpts := sceneOptionsForFrame(frameOptions)
 		if segment.viewport != nil {
@@ -931,13 +951,20 @@ func renderGIFWithSession(
 		var camera *gifLayerCamera
 		activeLeg := -1
 		expectedBounds := plannedBounds
+		elapsedMS := segment.ElapsedMS
 		err = renderGIFBoardFrames(
 			ctx, 0, segment.count, totalFrames,
 			func(renderCtx context.Context, frameIndex int, _ time.Duration, frameOptions d2raster.FrameOptions, emit func(image.Image) error) error {
 				if extraPaints > 0 {
 					frameOptions = gifFrameOptions(frameOptions.Time, totalFrames+extraPaints)
 				}
-				frameOptions.Time += time.Duration(segment.ElapsedMS) * time.Millisecond
+				if segment.iconBoard != nil {
+					// Use the encoded GIF delays for both the hold and the layer zoom.
+					frameOptions.Time = time.Duration(elapsedMS) * time.Millisecond
+					elapsedMS += 10 * summary.delays[renderedFrameCount]
+				} else {
+					frameOptions.Time += time.Duration(segment.ElapsedMS) * time.Millisecond
+				}
 				if index := frameIndex - (segment.count - len(segment.zoom)); index >= 0 {
 					expectedBounds = zoomCanvas
 					sample := segment.zoom[index]

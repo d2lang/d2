@@ -1,0 +1,36 @@
+direction: right
+vars.d2-config: {animate-interval: 4s; pad: 22}
+style.fill: "#f7f8f4"
+
+classes.service: {
+  width: 164
+  height: 64
+  style: {fill: "#fff"; stroke: "#86958c"; border-radius: 9; font-size: 16}
+}
+primary: "Primary database" {shape: cylinder; class: service; height: 102}
+replica: "Reporting replica" {shape: cylinder; class: service; height: 102; style.fill: "#d9ebe0"}
+monitor: "Health monitor" {class: service}
+archive: "WAL archive" {class: service}
+reporting: "Finance dashboards" {class: service}
+
+primary -> replica: WAL batches {
+  style.stroke: "#267050"
+  icon.shape: circle
+  icon.style.animated: 3/s
+}
+monitor -> replica: probe {
+  style.stroke: "#795889"
+  icon.style.animated: true
+}
+primary -> archive: retain logs {style.stroke: "#69796d"}
+replica -> reporting: query results {style.stroke: "#69796d"}
+steps: {
+  maintenance: {
+    (primary -> replica)[0]: Paused {icon.style.animated: 0/s}
+    (replica -> reporting)[0]: last snapshot
+  }
+  resume: {
+    (primary -> replica)[0]: Catching up {icon.style.animated: 6/s}
+    (replica -> reporting)[0]: query results
+  }
+}

@@ -769,7 +769,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 			if err != nil {
 				return nil, false, err
 			}
-			timeline, err := d2animate.Timeline(diagram, int(animateInterval))
+			timeline, err := d2animate.SVGTimeline(diagram, resolvedPath, int(animateInterval), layerDuration)
 			if err != nil {
 				return nil, false, err
 			}
@@ -785,7 +785,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 				if err := ctx.Err(); err != nil {
 					return nil, false, err
 				}
-				svg, _, err := _renderWithPNGEncoder(ctx, ms, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, frame.Diagram, ext, asciiMode, wantPreview, nil)
+				svg, _, err := _renderWithPNGEncoder(ctx, ms, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, frame.Picture(), ext, asciiMode, wantPreview, nil)
 				if err != nil {
 					return nil, false, err
 				}

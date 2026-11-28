@@ -3,6 +3,7 @@ package d2scenebuild
 import (
 	"fmt"
 	"image/color"
+	"math"
 	"time"
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
@@ -68,7 +69,8 @@ var (
 )
 
 // ShortestAnimationPeriod returns the shortest visible repeating effect on an
-// authored board. Each dash moves by one pattern length ten times per track
+// authored board. For a sparse icon stream use the shorter travel window, so
+// both sampled phases can show the icon before it lands. Each dash moves by one pattern length ten times per track
 // cycle, so its appearance repeats sooner than the complete offset track.
 func ShortestAnimationPeriod(board *d2target.Diagram) time.Duration {
 	var period time.Duration
@@ -79,8 +81,25 @@ func ShortestAnimationPeriod(board *d2target.Diagram) time.Duration {
 				break
 			}
 		}
+		var widths map[string]float64
 		for i := range connections {
 			c := &connections[i]
+			if c.IconAnimation != nil && c.Opacity > 0 && len(c.Route) >= 2 {
+				if widths == nil {
+					widths = make(map[string]float64, len(shapes))
+					for i := range shapes {
+						widths[shapes[i].ID] = shapes[i].RenderedStrokeWidth()
+					}
+				}
+				path := c.IconMotionPath(widths[c.Src], widths[c.Dst])
+				launch := path.LaunchPeriod(c.IconAnimation)
+				if !math.IsInf(launch, 1) && launch > 0 {
+					p := iconDuration(min(launch, path.Length()/d2target.IconMotionSpeed))
+					if period == 0 || p < period {
+						period = p
+					}
+				}
+			}
 			if !c.Animated || c.Opacity <= 0 || c.RenderedStrokeWidth() <= 0 {
 				continue
 			}

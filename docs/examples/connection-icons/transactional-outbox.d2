@@ -1,0 +1,27 @@
+direction: right
+vars.d2-config.pad: 22
+style.fill: "#f7f8f4"
+
+classes.service: {
+  width: 148
+  height: 62
+  style: {fill: "#fff"; stroke: "#86958c"; border-radius: 9; font-size: 16}
+}
+outbox: "Postgres\noutbox rows" {class: service; shape: cylinder; height: 104}
+relay: "Outbox relay" {class: service}
+broker: "Order events\nmessage broker" {class: service; style.fill: "#f8e3cb"}
+fulfillment: "Fulfillment\nconsumer" {class: service; style.fill: "#d9ebe0"}
+audit: "Audit archive" {class: service}
+
+outbox -> relay: poll rows {style.stroke: "#69796d"}
+relay -> broker: OrderPlaced {
+  icon: ./envelope.svg
+  icon.style.animated: 2/s
+  style.stroke: "#a45120"
+}
+broker -> fulfillment: process {
+  icon: ./envelope.svg
+  icon.style.animated: 2/s
+  style.stroke: "#267050"
+}
+broker -> audit: archive {style.stroke: "#69796d"}

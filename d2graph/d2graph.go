@@ -1342,7 +1342,8 @@ func (obj *Object) IsConstantNear() bool {
 }
 
 type Edge struct {
-	Index int `json:"index"`
+	IconShape *Scalar `json:"iconShape,omitempty"`
+	Index     int     `json:"index"`
 
 	SrcTableColumnIndex *int `json:"srcTableColumnIndex,omitempty"`
 	DstTableColumnIndex *int `json:"dstTableColumnIndex,omitempty"`

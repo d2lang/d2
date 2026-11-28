@@ -224,6 +224,9 @@ func wrapFrames(rootDiagram *d2target.Diagram, boardPath []string, frames []Fram
 	if len(links) > 0 {
 		writeLayerNavigation(buf, diagramHash, links, slots)
 	}
+	if strings.Contains(svgsStr, `class="d2-icon-tour-clock"`) {
+		writeLayerIconClocks(buf, diagramHash, links, slots)
+	}
 
 	stylePrefix := ` style="animation: d2Transition-` + diagramHash + "-"
 	styleSuffix := " " + strconv.Itoa(totalMS) + `ms steps(1,end) infinite"`

@@ -25,8 +25,10 @@ type gifSegment struct {
 	count    int
 	viewport *gifViewport
 	bounds   image.Rectangle
-	route    []d2animate.LayerLeg
-	zoom     []gifZoomSample // Trailing samples rendered on the full canvas.
+	// Owning board for an icon stream that can span several step or tween pictures.
+	iconBoard *d2target.Diagram
+	route     []d2animate.LayerLeg
+	zoom      []gifZoomSample // Trailing samples rendered on the full canvas.
 }
 
 type gifZoomSample struct {

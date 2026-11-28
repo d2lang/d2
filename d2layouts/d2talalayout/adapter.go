@@ -345,7 +345,7 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 		}
 		talaEdge := talaGraph.Connect(toNode[edgeSrc], toNode[edgeDst])
 		talaEdge.ReversedForLayout = reversed
-		talaEdge.KeepExplicit = e.Tooltip != nil || e.Link != nil || e.Icon != nil || len(e.Classes) > 0 ||
+		talaEdge.KeepExplicit = e.Tooltip != nil || e.Link != nil || e.HasIcon() || len(e.Classes) > 0 ||
 			e.SrcArrowhead != nil || e.DstArrowhead != nil || e.ZIndex != 0
 		if talaEdge.From.IsSequenceStep() && talaEdge.To.IsSequenceStep() && (unpaintedSteps[edgeSrc] || unpaintedSteps[edgeDst]) {
 			// The text or icon may be visible even when the connecting wedge is not.

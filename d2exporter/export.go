@@ -8,7 +8,6 @@ import (
 
 	"github.com/d2lang/util-go/go2"
 
-	"github.com/d2lang/d2/d2ast"
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2parser"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
@@ -16,7 +15,6 @@ import (
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
-	"github.com/d2lang/d2/lib/label"
 )
 
 // defaultAnnotationMark is the mark a person would reach for when the author
@@ -535,18 +533,7 @@ func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 		connection.Tooltip = edge.Tooltip.Value
 	}
 	connection.Annotation = toAnnotation(edge.Annotation, d2target.AnnotationTrace)
-	if edge.Icon != nil {
-		connection.Icon = edge.Icon
-		if edge.IconPosition != nil {
-			connection.IconPosition = (d2ast.LabelPositionsMapping[edge.IconPosition.Value]).String()
-		} else {
-			connection.IconPosition = label.InsideMiddleCenter.String()
-		}
-	}
-
-	if edge.IconStyle.BorderRadius != nil {
-		connection.IconBorderRadius, _ = strconv.ParseFloat(edge.IconStyle.BorderRadius.Value, 64)
-	}
+	edge.ExportIcon(connection)
 
 	if edge.Style.Italic != nil {
 		connection.Italic, _ = strconv.ParseBool(edge.Style.Italic.Value)

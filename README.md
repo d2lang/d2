@@ -165,6 +165,13 @@ cuts to the destination. Clicking a board link in a standalone SVG pauses the
 tour for manual navigation.
 [Order fulfillment example](./docs/examples/order-fulfillment/order-fulfillment.svg) · [D2 source](./docs/examples/order-fulfillment/order-fulfillment.d2)
 
+Give a connection a stream of icons with `icon.style.animated`. For example,
+`gateway -> canary: {icon.style.animated: 0.5/s}` sends one dot every two
+seconds. Higher rates put more dots on the wire at the same travel speed.
+Set the rate to `0/s` in a later step to let the last dots arrive, or use
+`true` for one continuously looping icon. Supply an image with `icon` to send
+your own artwork. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
+
 To review an animation, run `d2 storyboard film.d2 board.png`. Open the PNG to
 see each board and its timestamp in playback order, including intermediate frames
 from animated transitions. Panels share the animated SVG’s coordinate system, so

@@ -280,6 +280,10 @@ func validateRenderConnection(connection Connection, path string) error {
 	if connection.IsCurve && (len(connection.Route)-1)%3 != 0 {
 		return fmt.Errorf("render target %s.route must contain 1+3n points for a cubic connection", path)
 	}
+	routeExtent := connection.RenderedStrokeWidth()
+	if connection.IconAnimation != nil {
+		routeExtent = max(routeExtent, float64(connection.IconSize()))
+	}
 	for i, point := range connection.Route {
 		if point == nil {
 			return fmt.Errorf("render target %s.route[%d] is nil", path, i)
@@ -288,10 +292,10 @@ func validateRenderConnection(connection Connection, path string) error {
 			return fmt.Errorf("render target %s.route[%d] must contain finite coordinates", path, i)
 		}
 		pointPath := fmt.Sprintf("%s.route[%d]", path, i)
-		if err := validateRenderRouteCoordinate(pointPath, "x", point.X, connection.RenderedStrokeWidth()); err != nil {
+		if err := validateRenderRouteCoordinate(pointPath, "x", point.X, routeExtent); err != nil {
 			return err
 		}
-		if err := validateRenderRouteCoordinate(pointPath, "y", point.Y, connection.RenderedStrokeWidth()); err != nil {
+		if err := validateRenderRouteCoordinate(pointPath, "y", point.Y, routeExtent); err != nil {
 			return err
 		}
 		if i > 0 {
@@ -482,6 +486,9 @@ func validateRenderConnectionNumbers(connection Connection, path string) error {
 	if !finiteRenderNumber(connection.BorderRadius) || connection.BorderRadius < 0 {
 		return invalidRenderField(path, "borderRadius", connection.BorderRadius, "must be finite and non-negative")
 	}
+	if err := connection.ValidateIconMotion(path); err != nil {
+		return err
+	}
 	if !finiteRenderNumber(connection.IconBorderRadius) || connection.IconBorderRadius < 0 {
 		return invalidRenderField(path, "iconBorderRadius", connection.IconBorderRadius, "must be finite and non-negative")
 	}
@@ -507,6 +514,29 @@ func validateRenderConnectionNumbers(connection Connection, path string) error {
 func validateRenderOpacity(path string, opacity float64) error {
 	if !finiteRenderNumber(opacity) || opacity < 0 || opacity > 1 {
 		return invalidRenderField(path, "opacity", opacity, "must be finite and within [0,1]")
+	}
+	return nil
+}
+
+// ValidateIconMotion checks retained artwork and the bounded particles used
+// by SVG, the native scene builder, and callers constructing targets directly.
+func (connection *Connection) ValidateIconMotion(path string) error {
+	if connection.IconShape != "" && (connection.IconShape != ShapeCircle || connection.Icon != nil) {
+		return invalidRenderField(path, "iconShape", connection.IconShape, "must be a circle with no image URL")
+	}
+	if a := connection.IconAnimation; a != nil && a.Rate != nil && (!finiteRenderNumber(*a.Rate) || *a.Rate < 0) {
+		return invalidRenderField(path, "iconAnimation.rate", *a.Rate, "must be finite and non-negative")
+	}
+	if s := connection.IconSchedule; s != nil && (!s.valid() || connection.IconAnimation == nil || connection.IconPositions != nil) {
+		return invalidRenderField(path, "iconSchedule", "invalid", "requires a bounded schedule on a moving connection icon")
+	}
+	if len(connection.IconPositions) > MaxMovingIconsPerConnection {
+		return invalidRenderField(path, "iconPositions", len(connection.IconPositions), "exceeds the maximum simultaneous icon count")
+	}
+	for i, p := range connection.IconPositions {
+		if !finiteRenderNumber(p.X) || !finiteRenderNumber(p.Y) {
+			return fmt.Errorf("render target %s.iconPositions[%d] must contain finite coordinates", path, i)
+		}
 	}
 	return nil
 }

@@ -625,7 +625,11 @@ func render(input RenderRequest) ([]byte, error) {
 		return nil, &WASMError{Message: fmt.Sprintf("cannot process animate interval: %s", err.Error()), Code: 500}
 	}
 	renderOpts.MasterID = masterID
-	frames, err := d2animate.Timeline(diagram, animateInterval)
+	zoomMS, err := d2animate.LayerDuration(input.Diagram)
+	if err != nil {
+		return nil, &WASMError{Message: err.Error(), Code: 400}
+	}
+	frames, err := d2animate.SVGTimeline(diagram, resolvedPath, animateInterval, zoomMS)
 	if err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid timeline: %s", err), Code: 400}
 	}
@@ -637,12 +641,8 @@ func render(input RenderRequest) ([]byte, error) {
 		frames = []d2animate.Frame{{Diagram: diagram, DurationMS: animateInterval}}
 	}
 	boards := make([][]byte, len(frames))
-	zoomMS, err := d2animate.LayerDuration(input.Diagram)
-	if err != nil {
-		return nil, &WASMError{Message: err.Error(), Code: 400}
-	}
 	for i, frame := range frames {
-		boards[i], err = renderSingleBoard(renderOpts, forceAppendix, ruler, frame.Diagram)
+		boards[i], err = renderSingleBoard(renderOpts, forceAppendix, ruler, frame.Picture())
 		if err != nil {
 			return nil, err
 		}

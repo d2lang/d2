@@ -798,6 +798,7 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 	}
 	writer.openGroup(classes, opacityStyle)
 	srcAdj, dstAdj := connection.ArrowheadAdjustments(idToShape)
+	iconFill := connection.Stroke
 	var gradient *connectionGradient
 	var srcMarker, dstMarker d2scene.Matrix
 	if color.IsGradient(connection.Stroke) {
@@ -807,6 +808,7 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 			return "", err
 		}
 		connection.Stroke = gradient.paint(d2scene.Identity())
+		iconFill = svg.LocalIRI(svg.LiteralID(gradient.base.ID))
 		if !sketch {
 			srcMarker, dstMarker = markerEndpoints(connection, srcAdj, dstAdj)
 		}
@@ -837,25 +839,13 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 	markerStart := marker(connection.SrcArrow, false, srcMarker)
 	markerEnd := marker(connection.DstArrow, true, dstMarker)
 
-	if connection.Icon != nil {
-		iconPos := connection.GetIconPosition()
-		if iconPos != nil {
-			attributes := []svg.Attribute{
-				svg.Attr("href", connection.Icon.String()),
-				svg.FloatAttr("x", iconPos.X),
-				svg.FloatAttr("y", iconPos.Y),
-				svg.IntAttr("width", d2target.DEFAULT_ICON_SIZE),
-				svg.IntAttr("height", d2target.DEFAULT_ICON_SIZE),
-			}
-			if connection.IconBorderRadius != 0 {
-				attributes = append(attributes, svg.Attr("clip-path", "inset(0 round "+svg.FormatFloat(connection.IconBorderRadius)+"px)"))
-			}
-			fmt.Fprint(writer, svg.EmptyElement("image", attributes...))
-		}
+	if pos := connection.GetIconPosition(); pos != nil {
+		size := float64(connection.IconSize())
+		drawConnectionIcon(writer, connection, geo.Point{X: pos.X + size/2, Y: pos.Y + size/2}, iconFill, inlineTheme)
 	}
 
 	var labelTL, maskTL *geo.Point
-	maskWidth, maskHeight := d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE
+	maskWidth, maskHeight := connection.IconSize(), connection.IconSize()
 	maskPosition := connection.IconPosition
 	if connection.Label != "" {
 		labelTL = connection.GetLabelTopLeft()
@@ -865,9 +855,9 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 		maskTL = labelTL.Copy()
 		maskWidth, maskHeight = connection.LabelWidth, connection.LabelHeight
 		maskPosition = connection.LabelPosition
-		if connection.Icon != nil {
-			maskWidth += d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE
-			maskTL.X -= float64(d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE)
+		if connection.HasStaticIcon() {
+			maskWidth += d2target.CONNECTION_ICON_LABEL_GAP + connection.IconSize()
+			maskTL.X -= float64(d2target.CONNECTION_ICON_LABEL_GAP + connection.IconSize())
 		}
 	} else if iconPos := connection.GetIconPosition(); iconPos != nil {
 		maskTL = &geo.Point{X: iconPos.X, Y: iconPos.Y}
@@ -953,6 +943,18 @@ func drawConnection(writer *objectWriter, markerScope string, effects connection
 
 	if wrapCrossing {
 		fmt.Fprint(writer, svg.CloseElement("g"))
+	}
+
+	if connection.IconAnimation != nil {
+		// Keep moving artwork behind labels on this wire and neighboring wires.
+		// The mask stays in board coordinates while each icon follows its path.
+		if effects.labelID != "" {
+			fmt.Fprint(writer, svg.OpenElement("g", svg.Attr("mask", svg.LocalIRI(svg.LiteralID(effects.labelID)))))
+		}
+		drawMovingConnectionIcons(writer, markerScope, connection, idToShape, iconFill, inlineTheme)
+		if effects.labelID != "" {
+			fmt.Fprint(writer, svg.CloseElement("g"))
+		}
 	}
 
 	if connection.Label != "" {
@@ -2094,6 +2096,14 @@ func writeFontCSS(buf *bytes.Buffer, diagramHash, source string, fontFamily *d2f
 	.%s .animated-connection {
 		animation: none !important;
 	}
+}
+`, diagramHash))
+
+	appendRule("d2-moving-icons", fmt.Sprintf(`
+.%[1]s .d2-still-icon { display: none; }
+@media (prefers-reduced-motion: reduce) {
+	.%[1]s .d2-moving-icons { display: none; }
+	.%[1]s .d2-still-icon { display: inline; }
 }
 `, diagramHash))
 

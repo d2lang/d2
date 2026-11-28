@@ -1,6 +1,8 @@
 package d2lsp
 
 import (
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -565,5 +567,35 @@ func TestGetValueCompletions(t *testing.T) {
 				t.Errorf("completion.InsertText = %v, want empty string", got[0].InsertText)
 			}
 		})
+	}
+}
+
+func TestConnectionIconCompletions(t *testing.T) {
+	for _, tc := range []struct {
+		source, want, absent string
+	}{
+		{"a -> b: {icon.|}", "shape", "fill"},
+		{"a -> b: {icon: { | }}", "shape", "fill"},
+		{"(a -> b)[0].icon.style.|", "animated", "fill"},
+		{"a -> b: {icon.shape: |}", "circle", "rectangle"},
+		{"a -> b: {icon.style.animated: |}", "2/s", "circle"},
+		{"a -> b: {icon: {style: {animated: |}}}", "2/s", "circle"},
+		{"(a -> b)[0].icon.style.animated: |", "2/s", "circle"},
+		{"a -> b: {style.animated: |}", "true", "2/s"},
+		{"a: {icon: {style: {animated: |}}}", "true", "2/s"},
+	} {
+		at := strings.IndexByte(tc.source, '|')
+		src := strings.Replace(tc.source, "|", "", 1)
+		items, err := GetCompletionItems(src, 0, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		labels := make([]string, 0, len(items))
+		for _, item := range items {
+			labels = append(labels, item.Label)
+		}
+		if !slices.Contains(labels, tc.want) || slices.Contains(labels, tc.absent) {
+			t.Errorf("%q: got %v, want %q and exclude %q", tc.source, labels, tc.want, tc.absent)
+		}
 	}
 }

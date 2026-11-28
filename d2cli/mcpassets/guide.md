@@ -120,6 +120,21 @@ api -> db: "async" {
 }
 ```
 
+On a connection, `icon.style.animated: 2/s` launches two icons each second.
+Use `true` for one icon repeating its trip. A step can set the rate to `0/s`
+to let the stream drain. The default icon is a filled circle in the wire's
+color. Set `icon` to an image path to use your own artwork.
+Choose what one icon represents for your diagram, for example a batch of 100
+requests. When more than 64 icons would be traveling on one connection at
+once, D2 shows a regularly spaced subset.
+
+```d2
+relay -> broker: OrderPlaced {
+  icon: ./envelope.svg
+  icon.style.animated: 2/s
+}
+```
+
 Reuse styles with classes:
 
 ```d2
