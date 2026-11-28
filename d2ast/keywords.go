@@ -72,6 +72,7 @@ var StyleKeywords = map[string]struct{}{
 	"stroke-width":  {},
 	"stroke-dash":   {},
 	"border-radius": {},
+	"animated":      {},
 
 	// Only for text
 	"font":           {},
@@ -91,8 +92,7 @@ var StyleKeywords = map[string]struct{}{
 	"3d": {},
 
 	// Only for edges
-	"animated": {},
-	"filled":   {},
+	"filled": {},
 }
 
 // TODO maybe autofmt should allow other values, and transform them to conform

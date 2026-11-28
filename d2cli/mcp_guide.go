@@ -41,7 +41,7 @@ var mcpStyleDescriptions = map[string]string{
 	"multiple":       "`true` or `false`, shapes only",
 	"double-border":  "`true` or `false`, on squares, rectangles, circles, and ovals",
 	"3d":             "`true` or `false`, on squares, rectangles, and hexagons",
-	"animated":       "`true` or `false`, connections only",
+	"animated":       "`true` or `false`. Makes a shape float or animates the dashes on a connection",
 	"filled":         "`true` or `false`, connections only",
 }
 

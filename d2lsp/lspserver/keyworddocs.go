@@ -52,6 +52,6 @@ var keywordDocs = map[string]keywordDoc{
 	"multiple":             {"style", "Draws the shape as a stack. `true` or `false`. Shapes only."},
 	"double-border":        {"style", "`true` or `false`. Rectangles and ovals."},
 	"3d":                   {"style", "`true` or `false`. Rectangles and squares."},
-	"animated":             {"style", "On a connection, `style.animated: true` animates the dashes. Use `icon.style.animated: true` to loop one icon, `2/s` to launch two per second, `0/s` to stop launching, or `200ms` to loop one icon every 200 milliseconds."},
+	"animated":             {"style", "`style.animated: true` makes a shape float or animates the dashes on a connection. Use `icon.style.animated: true` to loop one icon, `2/s` to launch two per second, `0/s` to stop launching, or `200ms` to loop one icon every 200 milliseconds."},
 	"filled":               {"style", "Fills the arrowhead. `true` or `false`. Arrowheads only."},
 }
