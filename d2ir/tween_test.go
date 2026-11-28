@@ -333,6 +333,18 @@ func TestTweenDurationPrecedenceAndScope(t *testing.T) {
 	}
 }
 
+func TestAnimateIntervalScope(t *testing.T) {
+	for _, board := range []string{"steps", "scenarios", "layers"} {
+		for _, root := range []string{"", "vars.d2-config.animate-interval: 1s\n"} {
+			src := root + board + ".one.vars.d2-config.animate-interval: 3s"
+			_, err := compileTween(t, src, d2ir.CompileOptions{})
+			if err == nil || !strings.Contains(err.Error(), `"animate-interval" can only be set in the diagram's root vars.d2-config`) {
+				t.Errorf("%s: expected a root-only interval error, got %v", src, err)
+			}
+		}
+	}
+}
+
 func TestTweenImportedConfig(t *testing.T) {
 	opts := d2ir.CompileOptions{FS: fstest.MapFS{
 		"config.d2": {Data: []byte(`vars: {ms: 80ms; d2-config: {animate-interval: 1s; animate-duration: ${ms}}}`)},

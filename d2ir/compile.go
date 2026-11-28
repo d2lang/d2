@@ -520,7 +520,8 @@ func (c *compiler) validateConfigs(configs *Field) {
 		}
 
 		name := f.Name.ScalarString()
-		if name == "animate-progress" || name == "animate-progress-color" || name == "animate-duration" {
+		switch name {
+		case "animate-interval", "animate-duration", "animate-progress", "animate-progress-color":
 			board := ParentMap(ParentMap(configs))
 			if !board.Root() {
 				global := RootMap(board).getFieldIndexed(d2ast.FlatUnquotedString("vars"), configs.Name, f.Name)
