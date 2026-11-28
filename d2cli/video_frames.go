@@ -173,6 +173,14 @@ func (w videoWork) checkPixels(output image.Rectangle) error {
 	return nil
 }
 
+// Every native sample still receives the exact elapsed width. During static
+// holds, each extra step can cost one full coded picture. Preserve the native
+// work budget by gradually reducing only these optional bar updates.
+func (w videoWork) progressSteps(output image.Rectangle) int {
+	maxSamples := videoMaxTotalPixels / (int64(output.Dx()) * int64(output.Dy()))
+	return int(min(int64(output.Dx()), maxSamples-int64(w.samples)+1))
+}
+
 // Count actual scene builds (including misses in the two-scene cache),
 // paints, and coded samples before assigning operation-wide budgets.
 func (p *videoTimeline) work(ctx context.Context) (videoWork, error) {
@@ -194,9 +202,10 @@ func (p *videoTimeline) work(ctx context.Context) (videoWork, error) {
 			return videoWork{}, err
 		}
 		index, _, repeat, leg, _ := p.sample(i)
-		// The encoder stamps both endpoints of a static hold and one sample
-		// for a single-frame pose. The hold's interior is represented by time.
-		w.samples += min(repeat, 2)
+		w.samples++
+		if i+repeat == p.frames && repeat > 1 {
+			w.samples++ // The final hold has an explicit last tick.
+		}
 		if leg == nil {
 			visit(index)
 			w.paints++
@@ -220,12 +229,30 @@ func videoWorkDivisor(count int) int {
 	return max(1, (count+63)/64)
 }
 
+// Some FFmpeg versions discard the final packet duration. Separate the last
+// tick of the final hold while the renderer still has its pixels. Every other
+// hold gets its exact duration from the next pose's presentation timestamp.
+func emitVideoHold(frame image.Image, repeats int, final bool, emit func(image.Image, int) error) error {
+	if final && repeats > 1 {
+		if err := emit(frame, repeats-1); err != nil {
+			return err
+		}
+		repeats = 1
+	}
+	return emit(frame, repeats)
+}
+
 // emit consumes opaque, fixed-size images synchronously. The backing pixels
 // are reused after it returns. No encoded or full-frame history is retained.
 func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, diagram *d2target.Diagram, opts d2svg.RenderOpts, intervalMS int, layers gifLayerOptions, duration time.Duration, forceAppendix bool, size videoSize, emit func(image.Image, int) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	ink, err := animationProgressInk(opts)
+	if err != nil {
+		return err
+	}
+	overlay := videoProgressOverlay{ink: ink}
 	p, err := planVideo(diagram, intervalMS, layers, duration)
 	if err != nil {
 		return err
@@ -303,6 +330,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	if err := work.checkPixels(output); err != nil {
 		return err
 	}
+	overlay.steps = work.progressSteps(output)
 	loadForPlayback := func(index int) (*d2scene.Document, error) {
 		doc, err := load(index)
 		if err != nil {
@@ -317,17 +345,17 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 	// remains when placing it on the shared canvas or inside the letterbox.
 	margin := image.Pt((output.Dx()-canvas.Dx())/2, (output.Dy()-canvas.Dy())/2)
 	var letterboxed *image.RGBA
-	present := func(frame image.Image, origin image.Point, matte color.Color, repeat int) error {
+	present := func(frame draw.Image, origin image.Point, matte color.Color, start, repeat int) error {
 		origin = origin.Add(margin)
 		if origin == (image.Point{}) && frame.Bounds() == output {
-			return emit(frame, repeat)
+			return overlay.emit(ctx, frame, start, repeat, p.frames, emit)
 		}
 		if letterboxed == nil {
 			letterboxed = image.NewRGBA(output)
 		}
 		draw.Draw(letterboxed, output, image.NewUniform(matte), image.Point{}, draw.Src)
 		draw.Draw(letterboxed, frame.Bounds().Add(origin), frame, frame.Bounds().Min, draw.Src)
-		return emit(letterboxed, repeat)
+		return overlay.emit(ctx, letterboxed, start, repeat, p.frames, emit)
 	}
 	var padded *image.RGBA
 	var workspace d2raster.RenderWorkspace
@@ -368,7 +396,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 			if err := camera.renderInto(ctx, session, &workspace, cameraOptions, progress, 0, padded); err != nil {
 				return err
 			}
-			if err := present(padded, image.Point{}, cameraOptions.Background, repeat); err != nil {
+			if err := present(padded, image.Point{}, cameraOptions.Background, i, repeat); err != nil {
 				return err
 			}
 		} else {
@@ -378,7 +406,7 @@ func renderVideoFrames(ctx context.Context, inputPath string, cacheImages bool, 
 				return err
 			}
 			err = workspace.Render(ctx, session, doc, options, func(frame *image.NRGBA) error {
-				return present(frame, p.segments[index].offset(canvas), p.segments[index].matte, repeat)
+				return present(frame, p.segments[index].offset(canvas), p.segments[index].matte, i, repeat)
 			})
 			if err != nil {
 				return err

@@ -127,7 +127,7 @@ steps: {append: {b.seconds: int}}`
 		hasLayer             bool
 	}{{"grid with independent layer and final hold", grid, "*", true}, {"selected SQL transition", schema, "steps.append.*", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			data, err := imageCLI(t, t.TempDir(), tc.source, "--target="+tc.target, "--pad=4", "--stdout-format=gif", "-")
+			data, err := imageCLI(t, t.TempDir(), tc.source, "--target="+tc.target, "--pad=8", "--stdout-format=gif", "-")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -31,7 +31,7 @@ steps: {expand: {warm: "" {width: 60; height: 48; style: {fill: blue; stroke-wid
 
 func checkGridGIFStationaryCell(t *testing.T, source string) {
 	t.Helper()
-	out, err := imageCLI(t, t.TempDir(), source, "--pad=4", "--stdout-format=gif", "-")
+	out, err := imageCLI(t, t.TempDir(), source, "--pad=8", "--stdout-format=gif", "-")
 	if err != nil {
 		t.Fatal(err)
 	}

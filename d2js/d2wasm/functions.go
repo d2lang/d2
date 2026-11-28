@@ -266,6 +266,9 @@ func parseCompileRequest(args []js.Value) (*CompileRequest, error) {
 	if input.Opts == nil {
 		input.Opts = &CompileOptions{}
 	}
+	if err := validateProgressColor(input.Opts.AnimateProgressColor); err != nil {
+		return nil, err
+	}
 	if err := validateAnimateInterval(input.Opts.AnimateInterval); err != nil {
 		return nil, err
 	}
@@ -273,6 +276,13 @@ func parseCompileRequest(args []js.Value) (*CompileRequest, error) {
 		return nil, &WASMError{Message: fmt.Sprintf("animateDuration must be between 0 and %d milliseconds", d2target.MaxTweenDurationMS), Code: 400}
 	}
 	return &input, nil
+}
+
+func validateProgressColor(paint string) error {
+	if err := d2target.ValidateAnimateProgressColor(paint); err != nil {
+		return &WASMError{Message: "animateProgressColor: " + err.Error(), Code: 400}
+	}
+	return nil
 }
 
 func validateAnimateInterval(interval *int64) error {
@@ -348,7 +358,10 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		}
 	}
 
-	renderOpts := &d2svg.RenderOpts{}
+	renderOpts := &d2svg.RenderOpts{
+		AnimateProgress:      input.Opts.AnimateProgress,
+		AnimateProgressColor: input.Opts.AnimateProgressColor,
+	}
 	if input.Opts != nil && input.Opts.Sketch != nil {
 		renderOpts.Sketch = input.Opts.Sketch
 	}
@@ -390,21 +403,23 @@ func (input *CompileRequest) compile(animateTweens *bool) (*CompileResponse, err
 		Diagram:   *diagram,
 		Graph:     *g,
 		RenderOptions: RenderOptions{
-			ThemeID:            renderOpts.ThemeID,
-			DarkThemeID:        renderOpts.DarkThemeID,
-			ThemeOverrides:     renderOpts.ThemeOverrides,
-			DarkThemeOverrides: renderOpts.DarkThemeOverrides,
-			Sketch:             renderOpts.Sketch,
-			Pad:                renderOpts.Pad,
-			Center:             renderOpts.Center,
-			Scale:              renderOpts.Scale,
-			ForceAppendix:      diagram.Config.ResolveForceAppendix(input.Opts.ForceAppendix),
-			Target:             input.Opts.Target,
-			AnimateInterval:    diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval),
-			Salt:               input.Opts.Salt,
-			NoXMLTag:           input.Opts.NoXMLTag,
-			ASCII:              input.Opts.ASCII,
-			ASCIIMode:          input.Opts.ASCIIMode,
+			ThemeID:              renderOpts.ThemeID,
+			DarkThemeID:          renderOpts.DarkThemeID,
+			ThemeOverrides:       renderOpts.ThemeOverrides,
+			DarkThemeOverrides:   renderOpts.DarkThemeOverrides,
+			Sketch:               renderOpts.Sketch,
+			Pad:                  renderOpts.Pad,
+			Center:               renderOpts.Center,
+			Scale:                renderOpts.Scale,
+			ForceAppendix:        diagram.Config.ResolveForceAppendix(input.Opts.ForceAppendix),
+			Target:               input.Opts.Target,
+			AnimateInterval:      diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval),
+			AnimateProgress:      renderOpts.AnimateProgress,
+			AnimateProgressColor: renderOpts.AnimateProgressColor,
+			Salt:                 input.Opts.Salt,
+			NoXMLTag:             input.Opts.NoXMLTag,
+			ASCII:                input.Opts.ASCII,
+			ASCIIMode:            input.Opts.ASCIIMode,
 		},
 	}, nil
 }
@@ -506,6 +521,9 @@ func render(input RenderRequest) ([]byte, error) {
 	if input.Opts == nil {
 		input.Opts = &RenderOptions{}
 	}
+	if err := validateProgressColor(input.Opts.AnimateProgressColor); err != nil {
+		return nil, err
+	}
 	animateInterval := 0
 	if interval := input.Diagram.Config.ResolveAnimateInterval(input.Opts.AnimateInterval); interval != nil {
 		if err := validateAnimateInterval(interval); err != nil {
@@ -564,16 +582,18 @@ func render(input RenderRequest) ([]byte, error) {
 	}
 
 	renderOpts := &d2svg.RenderOpts{
-		Scale:              scale,
-		Salt:               input.Opts.Salt,
-		Sketch:             input.Opts.Sketch,
-		Pad:                input.Opts.Pad,
-		Center:             input.Opts.Center,
-		ThemeID:            input.Opts.ThemeID,
-		DarkThemeID:        input.Opts.DarkThemeID,
-		ThemeOverrides:     input.Opts.ThemeOverrides,
-		DarkThemeOverrides: input.Opts.DarkThemeOverrides,
-		NoXMLTag:           input.Opts.NoXMLTag,
+		AnimateProgress:      go2.Pointer(input.Diagram.Config.ResolveAnimateProgress(input.Opts.AnimateProgress, animateInterval > 0)),
+		AnimateProgressColor: input.Diagram.Config.ResolveAnimateProgressColor(input.Opts.AnimateProgressColor),
+		Scale:                scale,
+		Salt:                 input.Opts.Salt,
+		Sketch:               input.Opts.Sketch,
+		Pad:                  input.Opts.Pad,
+		Center:               input.Opts.Center,
+		ThemeID:              input.Opts.ThemeID,
+		DarkThemeID:          input.Opts.DarkThemeID,
+		ThemeOverrides:       input.Opts.ThemeOverrides,
+		DarkThemeOverrides:   input.Opts.DarkThemeOverrides,
+		NoXMLTag:             input.Opts.NoXMLTag,
 	}
 
 	if input.Opts.ASCII != nil && *input.Opts.ASCII {

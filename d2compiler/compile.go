@@ -1948,6 +1948,15 @@ func compileConfig(ir *d2ir.Map) (*d2target.Config, error) {
 
 	config := &d2target.Config{}
 
+	f = configMap.GetField(d2ast.FlatUnquotedString("animate-progress-color"))
+	if f != nil {
+		config.AnimateProgressColor = f.Primary().Value.ScalarString()
+	}
+	f = configMap.GetField(d2ast.FlatUnquotedString("animate-progress"))
+	if f != nil {
+		val, _ := strconv.ParseBool(f.Primary().Value.ScalarString())
+		config.AnimateProgress = &val
+	}
 	f = configMap.GetField(d2ast.FlatUnquotedString("animate-duration"))
 	if f != nil {
 		val, _ := d2ir.ParseAnimateInterval(f.Primary().Value.ScalarString())

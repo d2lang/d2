@@ -106,7 +106,7 @@ gateway.link: layers.gateway
 layers.gateway: {auth -> route}`
 	render := func(flag string) []byte {
 		t.Helper()
-		args := []string{"--scale=.3", "--pad=12", "--stdout-format=gif"}
+		args := []string{"--scale=.3", "--pad=12", "--animate-progress=false", "--stdout-format=gif"}
 		if flag != "" {
 			args = append(args, flag)
 		}
