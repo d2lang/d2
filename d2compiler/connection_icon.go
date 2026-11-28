@@ -2,6 +2,7 @@ package d2compiler
 
 import (
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/d2lang/d2/d2ast"
@@ -48,12 +49,16 @@ func (c *compiler) compileIcon(attrs *d2graph.Attributes, edge *d2graph.Edge, f 
 				c.errorf(fieldErrorNode(child), "connection icon cannot specify both an image URL and a shape")
 				continue
 			}
-			if child.Primary() == nil || child.Composite != nil || !strings.EqualFold(child.Primary().Value.ScalarString(), d2target.ShapeCircle) {
-				c.errorf(fieldErrorNode(child), "connection icon.shape must be circle")
+			var shape string
+			if child.Primary() != nil && child.Composite == nil {
+				shape = strings.ToLower(child.Primary().Value.ScalarString())
+			}
+			if !slices.Contains(d2target.ConnectionIconShapes, shape) {
+				c.errorf(fieldErrorNode(child), "connection icon.shape must be one of %s", strings.Join(d2target.ConnectionIconShapes, ", "))
 				continue
 			}
 			attrs.Icon = nil
-			edge.IconShape = &d2graph.Scalar{Value: d2target.ShapeCircle, MapKey: child.LastPrimaryKey()}
+			edge.IconShape = &d2graph.Scalar{Value: shape, MapKey: child.LastPrimaryKey()}
 		case "style":
 			if child.Map() == nil || len(child.Map().Fields) == 0 {
 				c.errorf(fieldErrorNode(child), "icon.style requires a map of styles")

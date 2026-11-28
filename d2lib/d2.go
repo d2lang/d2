@@ -139,8 +139,8 @@ func compileInput(ctx context.Context, input string, compileOpts *CompileOptions
 		// them. Plan the diagram's own transitions without them, then draw them.
 		annotations := liftAnnotations(d)
 		if duration > 0 {
-			structural := compileOpts.Layout != nil && strings.EqualFold(*compileOpts.Layout, "tala")
-			if err := sampleBoardTransitions(ctx, d, g, duration, d2target.MaxRenderTargetBoards, *renderOpts.Sketch, structural); err != nil {
+			tala := compileOpts.Layout != nil && strings.EqualFold(*compileOpts.Layout, "tala")
+			if err := sampleBoardTransitions(ctx, d, g, duration, d2target.MaxRenderTargetBoards, *renderOpts.Sketch, tala); err != nil {
 				return nil, nil, err
 			}
 		}

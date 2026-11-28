@@ -103,24 +103,26 @@ steps: {edit: {
 	// An independently added child uses the ordinary pop clock but follows
 	// the position of its parent, which is sliding on the band clock.
 	motion := newGridMotion(board, board.Steps[0], g, g.Steps[0])
-	sample := motion.sample(board.Steps[0], 670, 900)
+	sample := motion.sample(board.Steps[0], 1360, 2000)
 	parent, child := shapeByID(t, sample, "rack.c"), shapeByID(t, sample, "rack.c.extra")
 	destParent, destChild := next["rack.c"].shape, next["rack.c.extra"].shape
-	if child.Width != destChild.Width || child.Opacity != destChild.Opacity ||
+	if parent.Pos == destParent.Pos || child.Width != destChild.Width || child.Opacity != destChild.Opacity ||
 		child.Pos.Y-parent.Pos.Y != destChild.Pos.Y-destParent.Pos.Y {
 		t.Fatalf("child failed to follow parent after its own pop settled: frame %v/%v, endpoint %v/%v", child.Pos, parent.Pos, destChild.Pos, destParent.Pos)
 	}
 }
 
 func TestGridBandStages(t *testing.T) {
-	const duration = 640
+	const duration = 900
 	start, _ := gridBandOpen.window(duration)
-	shift, _, alpha := gridBandOpen.sample(start/2, duration)
-	if shift <= 0 || shift >= 1 || alpha != 0 {
-		t.Fatalf("expected opening gap, got travel=%v alpha=%v", shift, alpha)
+	// The slide settles at 630ms. At a third of the travel time only the neighboring
+	// cells have moved; the new band has not started its pop.
+	shift, _, alpha := gridBandOpen.sample(210, duration)
+	if math.Abs(shift-4./27) > 1e-6 || alpha != 0 {
+		t.Fatalf("expected eased opening gap, got travel=%v alpha=%v", shift, alpha)
 	}
-	shift, scale, alpha := gridBandOpen.sample(start+(duration-start)*3/4, duration)
-	if shift != 1 || scale <= 0 || scale >= 1 || alpha != 1 {
+	shift, scale, alpha := gridBandOpen.sample(start+(duration-start)/4, duration)
+	if shift != 1 || math.Abs(scale-.390625) > 1e-12 || alpha != .5 {
 		t.Fatalf("expected band settling after neighbors arrived, got travel=%v scale=%v alpha=%v", shift, scale, alpha)
 	}
 	for ms := 0; ms <= duration; ms++ {
@@ -162,7 +164,7 @@ steps: {edit: {
 		motion          *gridMotion
 		base            *d2target.Diagram
 		hidden, visible int
-	}{{newGridMotion(board, full, g, fullGraph), full, 650, 700}, {newGridMotion(full, board, fullGraph, g), board, 250, 200}} {
+	}{{newGridMotion(board, full, g, fullGraph), full, 540, 630}, {newGridMotion(full, board, fullGraph, g), board, 360, 270}} {
 		if c.motion.bands["x"] == gridBandNone {
 			t.Fatal("connected stripe undetected")
 		}

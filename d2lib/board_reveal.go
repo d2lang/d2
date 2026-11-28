@@ -9,6 +9,7 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 )
@@ -65,17 +66,16 @@ func revealTweenGeometryMatches(next *d2target.Diagram) bool {
 	return true
 }
 
-// Every survivor must keep its paint, geometry and stacking order throughout
-// a departure. This also proves that both boards use the same coordinates.
-func planBoardDeparture(prev, next *d2target.Diagram, g *d2graph.Graph) *boardReveal {
-	if len(prev.Shapes) > 256 || len(prev.Connections) > 256 ||
-		len(next.Shapes) >= len(prev.Shapes) && len(next.Connections) >= len(prev.Connections) ||
-		!sameBoardCanvas(prev, next) || !unchangedSurvivors(prev.Shapes, next.Shapes) ||
-		!unchangedSurvivors(prev.Connections, next.Connections) {
+// Without layout continuity, animate a pure insertion or removal only when
+// every survivor keeps its paint, geometry and stacking order.
+func planStableLeafChange(short, full *d2target.Diagram, g *d2graph.Graph, departing bool) *boardReveal {
+	if len(full.Shapes) > 256 || len(full.Connections) > 256 ||
+		len(short.Shapes) >= len(full.Shapes) && len(short.Connections) >= len(full.Connections) ||
+		!sameBoardCanvas(short, full) || !unchangedSurvivors(full.Shapes, short.Shapes) ||
+		!unchangedSurvivors(full.Connections, short.Connections) {
 		return nil
 	}
-	m := buildBoardReveal(next, prev, g, true)
-	return m.ordinaryLeaves(next, prev, g)
+	return buildBoardReveal(short, full, g, departing).ordinaryLeaves(short, full, g)
 }
 
 // Each visibly changed body needs its own animation. Containers, sequence
@@ -247,7 +247,7 @@ func buildBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph, departing 
 		}
 	}
 	// Only grow past the authored box after reserving the extra space.
-	// Large edits still get the damped arrival within the ordinary footprint.
+	// Large edits still ease in within the ordinary footprint.
 	if !departing && len(next.Shapes) <= 40 && len(next.Connections) <= 48 {
 		for _, n := range g.Objects {
 			id := n.AbsID()
@@ -370,7 +370,7 @@ func (b boardBirth) progress(now float64) float64 {
 	}
 	// At contact the body is already opening, even when a short route or a
 	// sparse sample schedule puts the first visible wire and node on one frame.
-	const atContact = .24
+	const atContact = 1.0 / 3
 	if now < b.start {
 		return 0
 	}
@@ -409,18 +409,18 @@ func (w *boardTrace) travel(t float64) float64 {
 }
 
 // A short scale rebound around the arrival port is limited to five pixels.
-// With a tight footprint use a critically damped approach, settling from below.
+// Without clearance, ease up to the authored footprint. Departures retrace
+// that same curve toward the port.
 func (b boardBirth) pop(t float64) (scale, opacity float64) {
-	alpha := gridEase(min(1, t/.32))
+	alpha := animation.EaseInOut(t / .32)
 	if b.rebound == 0 {
-		r := 1 - t
-		return 1 - .68*r*r*(1+7*t)*math.Exp(-5*t), alpha
+		return .32 + .68*animation.EaseInOut(t), alpha
 	}
 	const peak = .59
 	if t < peak {
-		return .32 + (.68+b.rebound)*boardStroke(t/peak), alpha
+		return .32 + (.68+b.rebound)*animation.EaseInOut(t/peak), alpha
 	}
-	return 1 + b.rebound*(1-gridEase((t-peak)/(1-peak))), alpha
+	return 1 + b.rebound*(1-animation.EaseInOut((t-peak)/(1-peak))), alpha
 }
 
 func (m *boardReveal) popClearance(n *d2graph.Object, d *d2target.Diagram, g *d2graph.Graph, shapes map[string]*d2target.Shape, arrival *d2target.Connection, b boardBirth) float64 {

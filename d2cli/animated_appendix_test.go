@@ -51,7 +51,12 @@ scenarios: {
 		Height int `xml:"height,attr"`
 		Canvas struct {
 			ViewBox string `xml:"viewBox,attr"`
+			Height  int    `xml:"height,attr"`
 		} `xml:"svg"`
+		Progress struct {
+			Y      int `xml:"y,attr"`
+			Height int `xml:"height,attr"`
+		} `xml:"rect"`
 	}
 	require.NoError(t, xml.Unmarshal(out, &doc))
 	// A navigable board has camera and placement groups around its artwork.
@@ -85,7 +90,9 @@ scenarios: {
 
 	canvas := parseBox(doc.Canvas.ViewBox)
 	require.Equal(t, (canvas.Dx()+1)/2, doc.Width)
-	require.Equal(t, (canvas.Dy()+1)/2, doc.Height)
+	require.Equal(t, (canvas.Dy()+1)/2, doc.Canvas.Height)
+	require.Equal(t, doc.Canvas.Height+8, doc.Progress.Y)
+	require.Equal(t, doc.Progress.Y+doc.Progress.Height, doc.Height)
 	want := [][]string{nil, {"root"}, {tooltip, link}}
 	require.Len(t, frames, len(want))
 	for i, frame := range frames {

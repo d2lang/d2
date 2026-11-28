@@ -11,7 +11,7 @@ import (
 	"github.com/d2lang/d2/lib/xsort"
 )
 
-const connectionCircleSize = 10
+const connectionIconShapeSize = 10
 
 // MovingIconFootprint describes the artwork that a primary caption must clear.
 // A stopped stream keeps its footprint while its last icons finish traveling.
@@ -21,16 +21,44 @@ const (
 	noMovingIcon MovingIconFootprint = iota
 	movingCircle
 	movingImage
+	movingPolygon
+	movingTallPolygon
 )
 
 func (c *Connection) MovingIconFootprint() MovingIconFootprint {
 	if c.IconAnimation == nil {
 		return noMovingIcon
 	}
+	return c.iconFootprint()
+}
+
+func (c *Connection) iconFootprint() MovingIconFootprint {
 	if c.Icon != nil {
 		return movingImage
 	}
-	return movingCircle
+	switch c.IconShape {
+	case ConnectionIconTriangle, ShapeDiamond:
+		return movingTallPolygon
+	case ShapeSquare:
+		return movingPolygon
+	case ShapeCircle:
+		return movingCircle
+	}
+	if c.IconAnimation != nil {
+		return movingCircle
+	}
+	return noMovingIcon
+}
+
+func (icon MovingIconFootprint) size() int {
+	switch icon {
+	case movingCircle, movingPolygon:
+		return connectionIconShapeSize
+	case movingTallPolygon:
+		return connectionTallIconSize
+	default:
+		return DEFAULT_ICON_SIZE
+	}
 }
 
 // LabelTopLeft measures a candidate caption at the same position for layout and
@@ -51,12 +79,15 @@ func (icon MovingIconFootprint) LabelTopLeft(c *Connection, pos label.Position, 
 	// The primary wire sets the side and minimum normal clearance. The text
 	// mask extends two units past either end of the measured caption.
 	cx, cy := topLeft.X+width/2, topLeft.Y+height/2
+	halfIcon := float64(icon.size()) / 2
 	extent := func(x, y float64) float64 {
-		radius := float64(connectionCircleSize) / 2
-		if icon == movingImage {
-			radius = float64(DEFAULT_ICON_SIZE) / 2 * (math.Abs(x) + math.Abs(y))
+		x, y = math.Abs(x), math.Abs(y)
+		radius := halfIcon
+		if icon != movingCircle {
+			// Images and polygons stay upright inside their reserved square.
+			radius *= x + y
 		}
-		return (width/2+2)*math.Abs(x) + height/2*math.Abs(y) + max(radius, c.RenderedStrokeWidth()/2) + label.PADDING
+		return (width/2+2)*x + height/2*y + max(radius, c.RenderedStrokeWidth()/2) + label.PADDING
 	}
 	normalGap := extent(nx, ny) - ((cx-a.X)*nx + (cy-a.Y)*ny)
 	if normalGap > 0 {

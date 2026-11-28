@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2scene"
 )
 
@@ -53,10 +54,17 @@ func (s videoSize) validate() error {
 
 func (s videoSize) rect() image.Rectangle { return image.Rect(0, 0, s.width, s.height) }
 
+type videoFraming struct {
+	camera, output        image.Rectangle
+	margin                image.Point
+	artHeight, lineHeight int
+}
+
 // Measure the complete tour in D2 coordinates before choosing pixel sizes.
 // This permits fitting a large source without allocating a source-size image,
 // and gives trimmed clips the same scale and camera as an untrimmed export.
-func (p *videoTimeline) frameSizes(boxes []d2scene.Box, scale float64, requested videoSize) (content, output image.Rectangle, err error) {
+func (p *videoTimeline) frameSizes(boxes []d2scene.Box, scale float64, requested videoSize, progress bool) (videoFraming, error) {
+	var lineHeight int
 	groups := make(map[*gifViewport]d2scene.Bounds)
 	var width, height float64
 	for i, box := range boxes {
@@ -73,39 +81,57 @@ func (p *videoTimeline) frameSizes(boxes []d2scene.Box, scale float64, requested
 		}
 		width, height = max(width, w), max(height, h)
 	}
-	if requested != (videoSize{}) {
+	natural := requested == (videoSize{})
+	artHeight := requested.height
+	if !natural {
 		if err := requested.validate(); err != nil {
-			return content, output, err
+			return videoFraming{}, err
 		}
-		scale = min(float64(requested.width)/width, float64(requested.height)/height)
+		if progress {
+			lineHeight = d2animate.ProgressLineHeight(requested.width, requested.height)
+			artHeight -= d2animate.ProgressGap + lineHeight
+		}
+		scale = min(float64(requested.width)/width, float64(artHeight)/height)
 	}
 	if !(scale > 0) || math.IsInf(scale, 0) {
-		return content, output, fmt.Errorf("invalid video scale %g", scale)
+		return videoFraming{}, fmt.Errorf("invalid video scale %g", scale)
 	}
 
 	// Only the final canvas must be even. Independent width/height rounding
 	// of the output cannot stretch the vectors inside it.
 	w, h := math.Ceil(width*scale), math.Ceil(height*scale)
-	if requested != (videoSize{}) {
+	if !natural {
 		// Division and multiplication can overshoot the requested integer by
 		// a fraction of an ulp when that side exactly fills the output.
-		w, h = min(w, float64(requested.width)), min(h, float64(requested.height))
+		w, h = min(w, float64(requested.width)), min(h, float64(artHeight))
 	}
 	if !(w > 0 && h > 0) || w > videoMaxWidth || h > videoMaxHeight {
-		return content, output, fmt.Errorf("video canvas %.0fx%.0f exceeds the video export limits of %dx%d; use --video-size=1920x1080 or reduce --scale", w, h, videoMaxWidth, videoMaxHeight)
+		return videoFraming{}, fmt.Errorf("video canvas %.0fx%.0f exceeds the video export limits of %dx%d; use --video-size=1920x1080 or reduce --scale", w, h, videoMaxWidth, videoMaxHeight)
 	}
-	content = image.Rect(0, 0, int(w), int(h))
-	if requested == (videoSize{}) {
+	content := image.Rect(0, 0, int(w), int(h))
+	if natural {
 		// Automatic video has always framed the camera on the even canvas.
 		// Rounding after the zoom shifts its center and changes every pose.
 		content.Max.X += content.Dx() % 2
 		content.Max.Y += content.Dy() % 2
 		requested = videoSize{max(videoMinSide, content.Dx()), max(videoMinSide, content.Dy())}
+		artHeight = requested.height
+		if progress {
+			lineHeight = d2animate.ProgressLineHeight(requested.width, requested.height)
+			requested.height += d2animate.ProgressGap + lineHeight
+			requested.height += requested.height % 2 // Both video encoders use 4:2:0.
+		}
 		if err := requested.validate(); err != nil {
-			return content, output, fmt.Errorf("video canvas: %w; use --video-size=1920x1080 or reduce --scale", err)
+			return videoFraming{}, fmt.Errorf("video canvas: %w; use --video-size=1920x1080 or reduce --scale", err)
 		}
 	}
-	output = requested.rect()
+	output := requested.rect()
+	margin := image.Pt((output.Dx()-content.Dx())/2, (artHeight-content.Dy())/2)
+	if !natural {
+		// Preserve the original centering if its lower letterbox fits the
+		// entire footer. Otherwise use the remaining space above the line.
+		margin.Y = min((output.Dy()-content.Dy())/2, artHeight-content.Dy())
+	}
 
 	for i, box := range boxes {
 		s := &p.segments[i]
@@ -122,5 +148,5 @@ func (p *videoTimeline) frameSizes(boxes []d2scene.Box, scale float64, requested
 			s.bounds = s.bounds.Add(image.Pt(x, y))
 		}
 	}
-	return content, output, nil
+	return videoFraming{camera: content, output: output, margin: margin, artHeight: artHeight, lineHeight: lineHeight}, nil
 }

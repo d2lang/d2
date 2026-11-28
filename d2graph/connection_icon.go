@@ -64,7 +64,7 @@ func (e *Edge) ExportIcon(connection *d2target.Connection) {
 		connection.IconShape = e.IconShape.Value
 	}
 	connection.IconAnimation = e.iconAnimation()
-	if connection.IconAnimation != nil && connection.Icon == nil {
+	if connection.IconAnimation != nil && connection.Icon == nil && connection.IconShape == "" {
 		connection.IconShape = d2target.ShapeCircle
 	}
 	if connection.Icon != nil || connection.IconShape != "" {

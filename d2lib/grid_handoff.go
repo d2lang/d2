@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 	"github.com/d2lang/d2/lib/label"
 )
 
@@ -137,7 +138,7 @@ func (h *gridHandoffs) apply(shapes []d2target.Shape, elapsedMS, durationMS int)
 	if h == nil {
 		return shapes
 	}
-	t := gridEase(gridPhase(float64(elapsedMS), 0, float64(min(gridHandoffMS, durationMS))))
+	t := gridPhase(float64(elapsedMS), 0, float64(min(gridHandoffMS, durationMS)))
 	result := make([]d2target.Shape, 0, len(shapes)+3*len(h.pairs))
 	seen := make(map[*gridHandoff]bool, len(h.pairs))
 	for _, s := range shapes {
@@ -180,13 +181,14 @@ func (p *gridHandoff) sample(shapes []d2target.Shape, t float64) []d2target.Shap
 	// The suffixes pass one another vertically. Keep the travel within the
 	// authored slot, including the glyphs' ascenders and descenders.
 	travel := max(0, min(float64(shell.LabelHeight), float64(shell.Height-shell.LabelHeight)/2))
-	out := 1 - gridEase(gridPhase(t, .18, .70))
-	in := gridEase(gridPhase(t, .30, .82))
+	position := animation.EaseInOut(t)
+	out := 1 - animation.EaseInOut(gridPhase(t, .18, .70))
+	in := animation.EaseInOut(gridPhase(t, .30, .82))
 	if out > 0 {
-		shapes = append(shapes, handoffText(p.from, p.textIDs[1], p.prefix, len(p.from.Label), -travel*t, out))
+		shapes = append(shapes, handoffText(p.from, p.textIDs[1], p.prefix, len(p.from.Label), -travel*position, out))
 	}
 	if in > 0 {
-		shapes = append(shapes, handoffText(p.to, p.textIDs[2], p.prefix, len(p.to.Label), travel*(1-t), in))
+		shapes = append(shapes, handoffText(p.to, p.textIDs[2], p.prefix, len(p.to.Label), travel*(1-position), in))
 	}
 	return shapes
 }

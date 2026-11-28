@@ -8,7 +8,7 @@ type keywordDoc struct {
 var keywordDocs = map[string]keywordDoc{
 	"label":                {"attribute", "Text shown on the shape or connection. Also holds `label.near` to position it."},
 	"shape":                {"attribute", "What the node looks like, such as `cylinder`, `person`, `queue`, `sql_table`, `class` or `sequence_diagram`. Default `rectangle`."},
-	"icon":                 {"attribute", "URL or local path of an image on a shape or connection. Use `icon.near` to position it. A connection also accepts `icon.shape: circle` and `icon.style.animated` to send icons along its route."},
+	"icon":                 {"attribute", "URL or local path of an image on a shape or connection. Use `icon.near` to position it. On a connection, `icon.shape` accepts `circle`, `square`, `triangle`, or `diamond`. Use `icon.style.animated` to send icons along its route."},
 	"style":                {"attribute", "Holds style keywords such as `fill`, `stroke`, `opacity` and `font-size`."},
 	"class":                {"attribute", "Name of a class from `classes` to apply, or an array of names."},
 	"classes":              {"board", "Map of reusable sets of attributes. Apply one with `class`."},

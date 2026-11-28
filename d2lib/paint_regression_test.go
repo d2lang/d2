@@ -10,14 +10,21 @@ import (
 )
 
 func TestVariableOpacityKeepsPaintPrecision(t *testing.T) {
-	for _, values := range [][]string{{"0", "1"}, {"0.0", "1.0"}} {
-		t.Run(values[1], func(t *testing.T) {
+	for _, tc := range []struct {
+		start, end, firstLabel string
+		opacities              [5]float64
+	}{
+		{"0", "1", "Phase 0", [5]float64{0, .0625, .5, .9375, 1}},
+		{"0.0", "1.0", "Phase 0.2", [5]float64{0, .0625, .5, .9375, 1}},
+		{"0.1", "0.6", "Phase 0.2", [5]float64{.1, .225, .35, .475, .6}},
+	} {
+		t.Run(tc.start+" to "+tc.end, func(t *testing.T) {
 			input := fmt.Sprintf(`vars: {d2-config: {animate-duration: 160ms; animate-interval: 200ms}; phase: %s; alpha: ${phase}}
 classes: {dim: {style.opacity: "${alpha}"}}
 a: "Phase ${phase}" {class: dim}
 b.style.opacity: ${phase}
 a -> b: {style.opacity: ${alpha}}
-steps: {on: {vars: {phase: %s}}; off: {vars: {phase: %s}}}`, values[0], values[1], values[0])
+steps: {on: {vars: {phase: %s}}; off: {vars: {phase: %s}}}`, tc.start, tc.end, tc.start)
 			calls := 0
 			d, _, err := Compile(log.WithDefault(context.Background()), input, dagreCompileOptions(&calls), nil)
 			if err != nil {
@@ -28,22 +35,16 @@ steps: {on: {vars: {phase: %s}}; off: {vars: {phase: %s}}}`, values[0], values[1
 					t.Fatalf("step %d has %d samples", i, len(step.TweenFrames))
 				}
 				for j, f := range step.TweenFrames {
-					want := float64(j) / 4
+					want := tc.opacities[j]
 					if i == 1 {
-						want = 1 - want
+						want = tc.opacities[4-j]
 					}
 					a, b := shapeByID(t, f, "a"), shapeByID(t, f, "b")
 					if a.Opacity != want || b.Opacity != want || f.Connections[0].Opacity != want {
 						t.Fatalf("step %d sample %d: opacity of class, shape and edge = %g, %g, %g, want %g", i, j, a.Opacity, b.Opacity, f.Connections[0].Opacity, want)
 					}
-					if j == 1 && i == 0 {
-						label := "Phase 0"
-						if values[1] == "1.0" {
-							label = "Phase 0.2"
-						}
-						if a.Label != label {
-							t.Fatalf("counter label = %q, want %q", a.Label, label)
-						}
+					if j == 1 && i == 0 && a.Label != tc.firstLabel {
+						t.Fatalf("counter label = %q, want %q", a.Label, tc.firstLabel)
 					}
 				}
 			}

@@ -13,12 +13,21 @@ func ScaledDimensions(width, height int, scale *float64) (string, error) {
 	if scale == nil {
 		return "", nil
 	}
-	w, h := math.Ceil(*scale*float64(width)), math.Ceil(*scale*float64(height))
-	limit := -float64(math.MinInt)
-	if !(*scale > 0 && w >= 0 && w < limit && h >= 0 && h < limit) {
-		return "", fmt.Errorf("SVG scale %g produces invalid dimensions", *scale)
+	w, h, err := ScaledSize(width, height, *scale)
+	if err != nil {
+		return "", err
 	}
-	return RenderAttributes(IntAttr("width", int(w)), IntAttr("height", int(h))), nil
+	return RenderAttributes(IntAttr("width", w), IntAttr("height", h)), nil
+}
+
+// ScaledSize gives the outer SVG's pixel dimensions at an explicit export scale.
+func ScaledSize(width, height int, scale float64) (int, int, error) {
+	w, h := math.Ceil(scale*float64(width)), math.Ceil(scale*float64(height))
+	limit := -float64(math.MinInt)
+	if !(scale > 0 && w >= 0 && w < limit && h >= 0 && h < limit) {
+		return 0, 0, fmt.Errorf("SVG scale %g produces invalid dimensions", scale)
+	}
+	return int(w), int(h), nil
 }
 
 // FormatFloat serializes an SVG coordinate with the same six decimal places
