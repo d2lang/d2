@@ -355,9 +355,10 @@ async function checkLayerRoute(page) {
   await page.mouse.move(1, 1);
   const frames = page.locator("g[id^='d2-frame-']");
   const pictures = [];
+  let originalMarker;
   async function picture(ms) {
     await seek(page, ms);
-    return (await boardScreenshot(page)).data;
+    return boardScreenshot(page);
   }
   for (const ms of [500, 2500, 4500, 6500]) pictures.push(await picture(ms));
   assert.equal(await footerColor(page), "e3ebf2", "the shipping footer preserves transparency");
@@ -373,12 +374,46 @@ async function checkLayerRoute(page) {
     }
   }
   async function atBoard(ms, board) {
-    const pixels = await picture(ms);
+    const actual = await picture(ms);
+    const expected = pictures[board];
     // Chromium can round an antialiased pixel by one level as the camera settles.
-    assert.ok(
-      pixels.every((value, i) => Math.abs(value - pictures[board][i]) <= 1),
-      `board ${board} at ${ms}ms`
-    );
+    if (actual.data.every((value, i) => Math.abs(value - expected.data[i]) <= 1)) return;
+    function differences(image) {
+      let count = 0, maximum = 0;
+      const bounds = [image.width, image.height, -1, -1], samples = [];
+      for (let i = 0; i < image.data.length; i += 4) {
+        const delta = Math.max(...[0, 1, 2, 3].map(k => Math.abs(image.data[i+k] - expected.data[i+k])));
+        if (delta <= 1) continue;
+        const x = (i/4) % image.width, y = Math.floor(i/4/image.width);
+        count++;
+        maximum = Math.max(maximum, delta);
+        bounds[0] = Math.min(bounds[0], x); bounds[1] = Math.min(bounds[1], y);
+        bounds[2] = Math.max(bounds[2], x); bounds[3] = Math.max(bounds[3], y);
+        if (samples.length < 8) samples.push([x, y, expected.data.toString("hex", i, i+3), image.data.toString("hex", i, i+3)]);
+      }
+      return { count, maximum, bounds, samples };
+    }
+    const first = differences(actual);
+    const scene = await frames.evaluateAll((frames, samples) => {
+      const style = node => {
+        const s = getComputedStyle(node);
+        return [s.opacity, s.visibility, s.transform, s.clipPath];
+      };
+      return {
+        focus: document.activeElement?.outerHTML.slice(0, 150),
+        frames: frames.map(f => [f, f.firstElementChild, f.firstElementChild.firstElementChild].map(style)),
+        hits: samples.map(([x, y]) => document.elementsFromPoint(x, y).slice(0,4).map(e => [e.localName, e.getAttribute("class")])),
+      };
+    }, first.samples);
+    const after = differences(await picture(ms + 1));
+    await page.evaluate(() => document.activeElement?.blur?.());
+    const blurred = differences(await picture(ms));
+    let restoredMarker;
+    if (originalMarker) {
+      await frames.nth(3).locator("[marker-end]").first().evaluate((el, marker) => el.setAttribute("marker-end", marker), originalMarker);
+      restoredMarker = differences(await picture(ms));
+    }
+    assert.fail(`board ${board} at ${ms}ms: ${JSON.stringify({first, scene, after, blurred, restoredMarker})}`);
   }
   async function scales(ms, from, to) {
     await seek(page, ms);
@@ -425,6 +460,7 @@ async function checkLayerRoute(page) {
   // An arrowhead can be defined in another board that is currently hidden.
   const markerID = await frames.first().locator("marker").first().getAttribute("id");
   const arrow = frames.nth(3).locator("[marker-end]").first();
+  originalMarker = await arrow.getAttribute("marker-end");
   await arrow.evaluate((edge, id) => edge.setAttribute("marker-end", `url(#${id})`), markerID);
   await atBoard(6500, 3);
   await seek(page, 8500);
