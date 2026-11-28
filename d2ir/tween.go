@@ -264,7 +264,11 @@ func (v tweenNumericValue) at(fraction float64) string {
 		return v.end
 	}
 	number := (1-fraction)*v.from + fraction*v.to
-	return strconv.FormatFloat(number, 'f', v.precision, 64) + v.unit
+	sample := strconv.FormatFloat(number, 'f', v.precision, 64)
+	if strings.HasPrefix(sample, "-0") && strings.Trim(sample[1:], "0.") == "" {
+		sample = sample[1:]
+	}
+	return sample + v.unit
 }
 
 func setTweenValue(s *Scalar, value tweenValue, fraction float64) {
