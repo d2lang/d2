@@ -39,6 +39,7 @@ type appendixItem struct {
 }
 
 type appendixLayout struct {
+	rowX        int // Row origin when the board is pinned away from world X=0.
 	topLeft     d2target.Point
 	bottomRight d2target.Point
 	maxWidth    int
@@ -225,7 +226,14 @@ func (layout *appendixLayout) expandViewBox(left, top, width, height int) (int, 
 	}
 	maxPlatform := int64(^uint(0) >> 1)
 	minPlatform := -maxPlatform - 1
-	requiredWidth, ok := checkedSub(int64(layout.maxWidth), int64(left), minPlatform, maxPlatform)
+	if left > 0 || left < -width {
+		layout.rowX = layout.topLeft.X
+	}
+	right, ok := checkedAppendixInt(int64(layout.maxWidth), layout.rowX)
+	if !ok {
+		return 0, 0, 0, 0, fmt.Errorf("scene: appendix right edge exceeds the platform integer domain")
+	}
+	requiredWidth, ok := checkedSub(int64(right), int64(left), minPlatform, maxPlatform)
 	if ok {
 		requiredWidth, ok = checkedAdd(requiredWidth, appendixPadSides*2, minPlatform, maxPlatform)
 	}
@@ -384,7 +392,7 @@ func (b *builder) buildAppendix(layout *appendixLayout) (*d2scene.Node, error) {
 	if !ok {
 		return nil, fmt.Errorf("scene: appendix separator left edge exceeds the platform integer domain")
 	}
-	separatorRight, ok := checkedAppendixInt(int64(maxInt(layout.maxWidth, layout.bottomRight.X)), appendixPadSides)
+	separatorRight, ok := checkedAppendixInt(int64(maxInt(layout.rowX+layout.maxWidth, layout.bottomRight.X)), appendixPadSides)
 	if !ok {
 		return nil, fmt.Errorf("scene: appendix separator right edge exceeds the platform integer domain")
 	}
@@ -402,6 +410,7 @@ func (b *builder) buildAppendix(layout *appendixLayout) (*d2scene.Node, error) {
 			return nil, err
 		}
 		rowNode := d2scene.NewNode(nil)
+		rowNode.Transform = d2scene.Translate(float64(layout.rowX), 0)
 		rowNode.ID = fmt.Sprintf("appendix:row:%d", row.number)
 		icon, err := b.buildNumberedAppendixIcon(rowNode.ID+":icon", row.number, d2scene.Point{X: appendixIconRadius, Y: float64(row.y)})
 		if err != nil {

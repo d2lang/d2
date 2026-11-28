@@ -72,7 +72,7 @@ export interface RenderOptions {
   forceAppendix?: boolean;
   /** Board to render (default: root). Use '*' for all boards or 'layers.x.*' for a board and its children. Multi-board SVG requires a positive animation interval. */
   target?: string;
-  /** Minimum milliseconds to display each board in an animated SVG. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
+  /** Minimum milliseconds per board in a multiboard SVG. A positive interval loops through all exported boards, including linked layers. Overrides vars.d2-config.animate-interval. Set to 0 to disable animation. */
   animateInterval?: number;
   /** Add a salt value to ensure the output uses unique IDs. This is useful when generating multiple identical diagrams to be included in the same HTML doc, so that duplicate IDs do not cause invalid HTML. The salt value is a string that will be appended to IDs in the output. */
   salt?: string;
@@ -85,7 +85,7 @@ export interface RenderOptions {
 }
 
 export interface CompileOptions extends RenderOptions {
-  /** Transition duration in milliseconds (0–600000, default 0). Animates numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps. Underlines, Markdown strikethroughs, and sketch fill shading can also animate between boards. Overrides vars.d2-config.animate-duration at compile time. */
+  /** Transition duration in milliseconds (0–600000, default 0). Animates transitions into and out of linked layers during playback or direct navigation, and changes to numeric properties, solid colors, compatible gradients, variables, and grid layouts between steps. Underlines, Markdown strikethroughs, and sketch fill shading can also animate between boards. Overrides vars.d2-config.animate-duration at compile time. */
   animateDuration?: number;
   /** Layout engine to use [default: 'dagre'] */
   layout?: "dagre" | "elk" | "tala";

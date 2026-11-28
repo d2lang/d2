@@ -19,7 +19,6 @@ import (
 // extending this allowlist.
 var rawSVGFormatAllowlist = map[string]int{
 	"d2renderers/d2svg/appendix/appendix.go:\"<circle cx=\\\"%d\\\" cy=\\\"%d\\\" r=\\\"%d\\\" fill=\\\"white\\\" stroke=\\\"#DEE1EB\\\" />\"":                       1,
-	"d2renderers/d2svg/appendix/appendix.go:\"<g class=\\\"appendix\\\" x=\\\"%d\\\" y=\\\"%d\\\" width=\\\"%d\\\" height=\\\"100%%\\\">%s</g>\\n\"":                 1,
 	"d2renderers/d2svg/appendix/appendix.go:\"<g transform=\\\"translate(%d %d)\\\" class=\\\"appendix-icon\\\">%s</g>\"":                                            1,
 	"d2renderers/d2svg/appendix/appendix.go:\"<text class=\\\"text-bold\\\" x=\\\"%d\\\" y=\\\"%d\\\" style=\\\"font-size: %dpx;text-anchor:middle;\\\">%d</text>\"": 1,
 	"d2renderers/d2svg/appendix/appendix.go:\"<text class=\\\"text\\\" x=\\\"%d\\\" y=\\\"%d\\\" style=\\\"font-size: %dpx;\\\">%s</text>\"":                         1,

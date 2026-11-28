@@ -7,5 +7,7 @@
 # TinyGo release binary differ a little from the local ones. Tighten it to CI's
 # printed sizes plus about 1% once known. Raise it only for a change that is
 # worth the bytes, and say so in that change.
+# Linked-layer playback and SVG navigation raised the local Brotli measurement
+# from 3,679,419 to 3,690,963 bytes. Allow another 10,000 compressed bytes.
 raw 10900000
-brotli 3690000
+brotli 3700000

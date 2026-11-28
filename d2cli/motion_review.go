@@ -97,12 +97,13 @@ func runMotionReview(ctx context.Context, ms *xmain.State, command, inputPath, o
 	if err != nil {
 		return err
 	}
-	assets, err := gifSceneAssetOptions(ctx, inputPath, ms.Env.Getenv("IMG_CACHE") == "1", len(plan))
+	paintCount := storyboardSceneCount(plan)
+	assets, err := gifSceneAssetOptions(ctx, inputPath, ms.Env.Getenv("IMG_CACHE") == "1", paintCount)
 	if err != nil {
 		return err
 	}
 	defer assets.Resolver.CloseIdleConnections()
-	fonts, err := newFontFallbackOptions(len(plan))
+	fonts, err := newFontFallbackOptions(paintCount)
 	if err != nil {
 		return err
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/d2lang/d2/d2format"
 	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
@@ -41,7 +42,10 @@ type storyboardFrameInfo struct {
 type storyboardSample struct {
 	storyboardFrameInfo
 	diagram    *d2target.Diagram
-	filmBounds image.Rectangle // all authored boards and tween frames in world coordinates
+	group      *d2target.Diagram // Boards registered in the same world coordinate system.
+	filmBounds image.Rectangle   // Includes unsampled tween geometry in this group.
+	leg        d2animate.LayerLeg
+	progress   float64
 }
 
 // planStoryboard seeks D2's native animation schedule. Every authored board
@@ -58,9 +62,10 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 		return nil, err
 	}
 	var boards []*d2target.Diagram
-	var names []string
-	var visit func(*d2target.Diagram, []string) error
-	visit = func(b *d2target.Diagram, path []string) error {
+	names := make(map[*d2target.Diagram]string)
+	groups := make(map[*d2target.Diagram]*d2target.Diagram)
+	var visit func(*d2target.Diagram, []string, *d2target.Diagram) error
+	visit = func(b *d2target.Diagram, path []string, layer *d2target.Diagram) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -74,31 +79,65 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 			} else if b.Name != "" {
 				name = d2format.Format(d2ast.MakeKeyPath([]string{b.Name}))
 			}
+			groups[b] = layer
 			boards = append(boards, b)
-			names = append(names, name)
+			names[b] = name
 		}
 		for _, group := range []struct {
 			kind     string
 			children []*d2target.Diagram
 		}{{"layers", b.Layers}, {"scenarios", b.Scenarios}, {"steps", b.Steps}} {
 			for _, child := range group.children {
-				if err := visit(child, append(path, group.kind, child.Name)); err != nil {
+				childLayer := layer
+				if group.kind == "layers" {
+					childLayer = child
+				}
+				if err := visit(child, append(path, group.kind, child.Name), childLayer); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	if err := visit(root, nil); err != nil {
+	if err := visit(root, nil, root); err != nil {
 		return nil, err
 	}
 	if len(boards) == 0 {
 		return nil, fmt.Errorf("storyboard requires at least one renderable board")
 	}
-	// The animated SVG places every board on the same world-space canvas,
-	// including geometry in transitions that this sheet does not sample.
-	tl, br := root.NestedBoundingBox()
-	filmBounds := image.Rect(tl.X, tl.Y, br.X, br.Y)
+	zoomMS, err := d2animate.LayerDuration(root)
+	if err != nil {
+		return nil, err
+	}
+	nav := d2animate.NewLayerNavigation(root, nil)
+	routes := make([][]d2animate.LayerLeg, len(boards))
+	// A layer portal gives each layer its own centered coordinate system.
+	// Within a layer, retain world positions from every step and tween.
+	bounds := make(map[*d2target.Diagram]image.Rectangle)
+	if nav.HasLayerPortal() {
+		for i, board := range boards {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			next := boards[(i+1)%len(boards)]
+			if zoomMS > 0 && len(next.TweenFrames) == 0 {
+				routes[i] = nav.Route(board, next)
+			}
+			group := groups[board]
+			include := func(d *d2target.Diagram) {
+				tl, br := d.BoundingBox()
+				bounds[group] = bounds[group].Union(image.Rect(tl.X, tl.Y, br.X, br.Y))
+			}
+			include(board)
+			for _, tween := range board.TweenFrames {
+				include(tween)
+			}
+		}
+	} else {
+		tl, br := root.NestedBoundingBox()
+		bounds[nil] = image.Rect(tl.X, tl.Y, br.X, br.Y)
+		clear(groups)
+	}
 	var startMS int64
 	var samples []storyboardSample
 	extra := storyboardMaxFrames - len(boards)
@@ -109,17 +148,24 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 		}
 		frames = d2animate.AppendBoardFrames(frames[:0], b, intervalMS)
 		endpoint := frames[len(frames)-1]
+		holdMS := endpoint.DurationMS
+		route := routes[i]
+		if len(route) > 0 {
+			endpoint.DurationMS = max(holdMS, zoomMS)
+			holdMS = endpoint.DurationMS - zoomMS
+		}
 		duration := endpoint.ElapsedMS + endpoint.DurationMS
 		if int64(duration) > math.MaxInt64/int64(time.Millisecond)-startMS {
 			return nil, fmt.Errorf("storyboard duration exceeds the supported time range")
 		}
-		add := func(diagram *d2target.Diagram, at int) {
+		add := func(diagram *d2target.Diagram, at int) *storyboardSample {
 			samples = append(samples, storyboardSample{
-				storyboardFrameInfo: storyboardFrameInfo{Board: names[i], TimeMS: startMS + int64(at)},
-				diagram:             diagram, filmBounds: filmBounds,
+				storyboardFrameInfo: storyboardFrameInfo{Board: names[b], TimeMS: startMS + int64(at)},
+				diagram:             diagram, group: groups[b], filmBounds: bounds[groups[b]],
 			})
+			return &samples[len(samples)-1]
 		}
-		hold := endpoint.ElapsedMS + endpoint.DurationMS/2
+		hold := endpoint.ElapsedMS + holdMS/2
 		if extra > 0 && len(frames) > 1 {
 			at := min(b.TweenDurationMS/2, endpoint.ElapsedMS-1)
 			for _, frame := range frames {
@@ -138,6 +184,26 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 			}
 		}
 		add(b, hold)
+		if extra > 0 && len(route) > 0 && zoomMS > 1 {
+			mid := zoomMS / 2
+			t := float64(mid) * float64(len(route)) / float64(zoomMS)
+			n := min(int(t), len(route)-1)
+			sample := add(b, duration-zoomMS+mid)
+			leg := route[n]
+			sample.leg, sample.progress = leg, t-float64(n)
+			// The middle of a sibling transition can show the common parent.
+			// Identify the visible artwork with an exact D2 board path.
+			parent, child := leg.Zoom.Poses(sample.filmBounds, sample.progress)
+			departure, arrival := parent.Opacity, child.Opacity
+			if !leg.Zoom.Inward {
+				departure, arrival = arrival, departure
+			}
+			sample.Board = names[leg.From]
+			if arrival > departure {
+				sample.Board = names[leg.To]
+			}
+			extra--
+		}
 		startMS += int64(duration)
 	}
 	return samples, nil
@@ -166,8 +232,18 @@ func storyboardEffectSamples(startMS int64, holdMS int, period time.Duration) (i
 	return min(last-1, int(start.Round(time.Millisecond).Milliseconds())), last
 }
 
+func storyboardSceneCount(plan []storyboardSample) int {
+	count := len(plan)
+	for _, sample := range plan {
+		if sample.leg.From != nil {
+			count++
+		}
+	}
+	return count
+}
+
 type storyboardTile struct {
-	pixels *image.NRGBA
+	pixels image.Image
 	bounds image.Rectangle // world bounds within the shared playback viewport
 }
 
@@ -179,7 +255,8 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 	if err != nil {
 		return nil, nil, err
 	}
-	links, err := gifLinkBudget(len(plan))
+	paintCount := storyboardSceneCount(plan)
+	links, err := gifLinkBudget(paintCount)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -189,15 +266,23 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 	if opts.Pad != nil {
 		pad = int(*opts.Pad)
 	}
-	canvas := plan[0].filmBounds.Inset(-pad)
+	groups := make(map[*d2target.Diagram]image.Rectangle)
+	boardGroups := make(map[*d2target.Diagram]*d2target.Diagram)
+	build := func(diagram *d2target.Diagram) (*d2scene.Document, error) {
+		sceneOpts := sceneOptionsForFrame(gifFrameOptions(0, paintCount))
+		sceneOpts.omitAppendix = forceAppendix == nil || !*forceAppendix
+		return buildSceneWithResourcesAndLinks(ctx, diagram, opts, assets, fonts, links, sceneOpts)
+	}
 	for i, sample := range plan {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		renderOpts := gifFrameOptions(time.Duration(sample.TimeMS)*time.Millisecond, len(plan))
-		sceneOpts := sceneOptionsForFrame(renderOpts)
-		sceneOpts.omitAppendix = forceAppendix == nil || !*forceAppendix
-		doc, err := buildSceneWithResourcesAndLinks(ctx, sample.diagram, opts, assets, fonts, links, sceneOpts)
+		if sample.leg.From != nil {
+			continue
+		}
+		boardGroups[sample.diagram] = sample.group
+		renderOpts := gifFrameOptions(time.Duration(sample.TimeMS)*time.Millisecond, paintCount)
+		doc, err := build(sample.diagram)
 		if err != nil {
 			return nil, nil, fmt.Errorf("storyboard %s at %dms: %w", sample.Board, sample.TimeMS, err)
 		}
@@ -215,7 +300,54 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 		x, y := int(doc.ViewBox.X), int(doc.ViewBox.Y)
 		bounds := image.Rect(x, y, x+int(doc.LogicalWidth), y+int(doc.LogicalHeight))
 		tiles[i] = storyboardTile{pixels, bounds}
-		canvas = canvas.Union(bounds)
+		groups[sample.group] = groups[sample.group].Union(sample.filmBounds.Inset(-pad)).Union(bounds)
+	}
+	var canvas image.Rectangle
+	for _, group := range groups {
+		canvas = canvas.Union(image.Rect(0, 0, group.Dx(), group.Dy()))
+	}
+	offset := func(group *d2target.Diagram) image.Point {
+		box := groups[group]
+		return image.Pt((canvas.Dx()-box.Dx())/2, (canvas.Dy()-box.Dy())/2).Sub(box.Min)
+	}
+	scale := storyboardScale(float64(canvas.Dx()), float64(canvas.Dy()))
+	// Rasterize zoom poses directly on the bounded thumbnail canvas so a
+	// portal's outline and text stay sharp as they grow.
+	zoomCanvas := image.Rect(0, 0, max(1, int(math.Round(float64(canvas.Dx())*scale))), max(1, int(math.Round(float64(canvas.Dy())*scale))))
+	cameraBoard := func(board *d2target.Diagram) (*d2scene.Document, image.Point, error) {
+		doc, err := build(board)
+		if err != nil {
+			return nil, image.Point{}, err
+		}
+		shift := offset(boardGroups[board])
+		at := image.Pt(int(math.Round((doc.ViewBox.X+float64(shift.X))*scale)), int(math.Round((doc.ViewBox.Y+float64(shift.Y))*scale)))
+		doc.LogicalWidth *= scale
+		doc.LogicalHeight *= scale
+		return doc, at, nil
+	}
+	for i, sample := range plan {
+		if sample.leg.From == nil {
+			tiles[i].bounds = tiles[i].bounds.Add(offset(sample.group))
+			continue
+		}
+		from, fromOffset, err := cameraBoard(sample.leg.From)
+		if err != nil {
+			return nil, nil, fmt.Errorf("storyboard %s at %dms: %w", sample.Board, sample.TimeMS, err)
+		}
+		to, toOffset, err := cameraBoard(sample.leg.To)
+		if err != nil {
+			return nil, nil, fmt.Errorf("storyboard %s at %dms: %w", sample.Board, sample.TimeMS, err)
+		}
+		camera := newGIFLayerCamera(zoomCanvas, sample.leg.Zoom, from, fromOffset, to, toOffset)
+		renderOpts := gifFrameOptions(time.Duration(sample.TimeMS)*time.Millisecond, paintCount)
+		pixels, err := camera.render(ctx, session, renderOpts, sample.progress, renderOpts.Time)
+		if err != nil {
+			return nil, nil, fmt.Errorf("storyboard %s at %dms: %w", sample.Board, sample.TimeMS, err)
+		}
+		if err := validateRenderSession("storyboard", session); err != nil {
+			return nil, nil, err
+		}
+		tiles[i] = storyboardTile{pixels, canvas}
 	}
 	faceData := d2fonts.FontFaces.Get(d2fonts.SourceSansPro.Font(0, d2fonts.FONT_STYLE_REGULAR))
 	captionFont, err := opentype.Parse(faceData)
@@ -233,7 +365,6 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 	sheet := image.NewNRGBA(image.Rect(0, 0, storyboardGap+cols*(storyboardWidth+storyboardGap), storyboardGap+rows*(storyboardHeight+storyboardCaption+storyboardGap)))
 	background := image.NewUniform(color.NRGBA{R: 235, G: 237, B: 240, A: 255})
 	draw.Draw(sheet, sheet.Bounds(), background, image.Point{}, draw.Src)
-	scale := storyboardScale(float64(canvas.Dx()), float64(canvas.Dy()))
 	info := make([]storyboardFrameInfo, len(plan))
 	for i, sample := range plan {
 		if err := ctx.Err(); err != nil {
@@ -242,10 +373,9 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 		tile := tiles[i]
 		origin := image.Pt(storyboardGap+(i%cols)*(storyboardWidth+storyboardGap), storyboardGap+(i/cols)*(storyboardHeight+storyboardCaption+storyboardGap))
 		draw.Draw(sheet, image.Rect(0, 0, storyboardWidth, storyboardHeight+storyboardCaption).Add(origin), image.White, image.Point{}, draw.Src)
-		// Preserve world positions as well as size. A pin in one layer must
-		// appear at the same pixel coordinate as that pin in another layer.
-		left := (storyboardWidth-scale*float64(canvas.Dx()))/2 + scale*float64(tile.bounds.Min.X-canvas.Min.X)
-		top := (storyboardHeight-scale*float64(canvas.Dy()))/2 + scale*float64(tile.bounds.Min.Y-canvas.Min.Y)
+		// Place the tile in its playback viewport, letterboxed inside the panel.
+		left := (storyboardWidth-scale*float64(canvas.Dx()))/2 + scale*float64(tile.bounds.Min.X)
+		top := (storyboardHeight-scale*float64(canvas.Dy()))/2 + scale*float64(tile.bounds.Min.Y)
 		x, y := int(math.Round(left)), int(math.Round(top))
 		right := int(math.Round(left + scale*float64(tile.bounds.Dx())))
 		bottom := int(math.Round(top + scale*float64(tile.bounds.Dy())))

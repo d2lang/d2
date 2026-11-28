@@ -138,11 +138,11 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG or GIF. A positive interval packages multiple boards into one SVG. GIF exports default to 1000ms. Also configurable through vars.d2-config.animate-interval.")
+	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG or GIF. A positive interval loops through all exported boards, including linked layers, and packages multiple boards into one SVG. GIF exports default to 1000ms. Also configurable through vars.d2-config.animate-interval.")
 	if err != nil {
 		return err
 	}
-	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate step changes to numeric properties, solid colors, compatible gradients, variables, grid layouts, and supported TALA structural edits (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
+	animateDurationFlag, err := ms.Opts.Int64("D2_ANIMATE_DURATION", "animate-duration", "", 0, "milliseconds to animate transitions into and out of linked layers and step changes to numeric properties, solid colors, compatible gradients, variables, grid layouts, and supported TALA structural edits (0 disables interpolation). Also configurable through vars.d2-config.animate-duration.")
 	if err != nil {
 		return err
 	}
@@ -631,7 +631,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	if ext == GIF && strings.EqualFold(engine, "tala") {
 		markPinnedGIFBoards(rootDiagram, g)
 	}
-	diagram := rootDiagram.GetBoard(boardPath)
+	diagram, resolvedPath := rootDiagram.ResolveBoard(boardPath)
 	if diagram == nil {
 		return nil, false, fmt.Errorf(`render target "%s" not found`, strings.Join(boardPath, "."))
 	}
@@ -659,8 +659,12 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 
 	switch ext {
 	case GIF:
+		layerDuration, err := d2animate.LayerDuration(rootDiagram)
+		if err != nil {
+			return nil, false, err
+		}
 		cacheImages := ms.Env.Getenv("IMG_CACHE") == "1"
-		out, previewSVG, err := renderGIF(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), wantPreview)
+		out, previewSVG, err := renderGIF(ctx, inputPath, cacheImages, diagram, renderOpts, int(animateInterval), wantPreview, gifLayerOptions{boardPath: resolvedPath, duration: layerDuration})
 		if err != nil {
 			return nil, false, err
 		}
@@ -761,6 +765,10 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 	default:
 		compileDur := time.Since(start)
 		if animateInterval > 0 {
+			layerDuration, err := d2animate.LayerDuration(rootDiagram)
+			if err != nil {
+				return nil, false, err
+			}
 			timeline, err := d2animate.Timeline(diagram, int(animateInterval))
 			if err != nil {
 				return nil, false, err
@@ -773,7 +781,6 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 				timeline = append(timeline, d2animate.Frame{Diagram: diagram, DurationMS: int(animateInterval)})
 			}
 			svgs := make([][]byte, 0, len(timeline))
-			durations := make([]int, 0, len(timeline))
 			for _, frame := range timeline {
 				if err := ctx.Err(); err != nil {
 					return nil, false, err
@@ -783,9 +790,8 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 					return nil, false, err
 				}
 				svgs = append(svgs, svg)
-				durations = append(durations, frame.DurationMS)
 			}
-			out, err := d2animate.WrapTimed(diagram, svgs, renderOpts, durations)
+			out, err := d2animate.WrapTimeline(diagram, resolvedPath, timeline, svgs, renderOpts, layerDuration)
 			if err != nil {
 				return nil, false, err
 			}

@@ -97,7 +97,13 @@ func appendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ru
 		br.Y = max(br.Y, frame.ViewBox.Max.Y-PAD_TOP)
 	}
 
-	appendix, w, h := generateAppendix(diagram, ruler, tl, br)
+	// Rows historically start at world X=0. If an independent board is
+	// pinned wholly outside that column, keep its footnotes with the board.
+	rowX := 0
+	if isFrame && (frame.ViewBox.Min.X > 0 || frame.ViewBox.Max.X < 0) {
+		rowX = tl.X
+	}
+	appendix, w, h := generateAppendix(diagram, ruler, tl, br, rowX)
 
 	if h == 0 {
 		return in, nil
@@ -106,7 +112,7 @@ func appendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ru
 	separatorEl := d2themes.NewThemableElement("line", nil)
 	separatorEl.X1 = float64(tl.X - PAD_SIDES)
 	separatorEl.Y1 = float64(br.Y + PAD_TOP)
-	separatorEl.X2 = float64(go2.IntMax(w, br.X) + PAD_SIDES)
+	separatorEl.X2 = float64(go2.IntMax(rowX+w, br.X) + PAD_SIDES)
 	separatorEl.Y2 = float64(br.Y + PAD_TOP)
 	separatorEl.Stroke = color.B2 // same as --color-border-muted in markdown
 	appendix = separatorEl.Render() + appendix
@@ -117,7 +123,7 @@ func appendWithError(diagram *d2target.Diagram, renderOpts *d2svg.RenderOpts, ru
 	if isFrame {
 		diagramHash = frame.MasterID
 		var ok bool
-		svg, ok = appendToFrame(svg, appendix, frame.ViewBox, tl, br, w, h)
+		svg, ok = appendToFrame(svg, appendix, frame.ViewBox, tl, br, rowX, w, h)
 		if !ok {
 			return in, nil
 		}
@@ -313,9 +319,9 @@ func numberIcons(diagram *d2target.Diagram, diagramHash, svg string) string {
 var frameBackground = regexp.MustCompile(`^<g [^>]*>(?:<rect [^>]*/>)*`)
 var frameDimension = regexp.MustCompile(` (x|width|height)="(-?[0-9]+)"`)
 
-func appendToFrame(svg, appendix string, box image.Rectangle, tl, br d2target.Point, w, h int) (string, bool) {
-	left := min(box.Min.X, 0, tl.X-PAD_SIDES)
-	right := max(box.Max.X, w+PAD_SIDES*2, br.X+PAD_SIDES)
+func appendToFrame(svg, appendix string, box image.Rectangle, tl, br d2target.Point, rowX, w, h int) (string, bool) {
+	left := min(box.Min.X, rowX, tl.X-PAD_SIDES)
+	right := max(box.Max.X, rowX+w+PAD_SIDES*2, br.X+PAD_SIDES)
 	bottom := br.Y + 2*PAD_TOP + h
 	width, height := right-left, bottom-box.Min.Y
 	prefix := frameBackground.FindString(svg)
@@ -341,7 +347,7 @@ func appendToFrame(svg, appendix string, box image.Rectangle, tl, br d2target.Po
 	return resized + svg[len(prefix):end] + appendix + svg[end:], true
 }
 
-func generateAppendix(diagram *d2target.Diagram, ruler *textmeasure.Ruler, tl, br d2target.Point) (string, int, int) {
+func generateAppendix(diagram *d2target.Diagram, ruler *textmeasure.Ruler, tl, br d2target.Point, rowX int) (string, int, int) {
 	maxWidth, totalHeight := 0, 0
 
 	var lines []string
@@ -365,8 +371,13 @@ func generateAppendix(diagram *d2target.Diagram, ruler *textmeasure.Ruler, tl, b
 	}
 	totalHeight += SPACER
 
-	return fmt.Sprintf(`<g class="appendix" x="%d" y="%d" width="%d" height="100%%">%s</g>
-`, tl.X, br.Y, (br.X - tl.X), strings.Join(lines, "\n")), maxWidth, totalHeight
+	attrs := []svglib.Attribute{svglib.Attr("class", "appendix")}
+	if rowX != 0 {
+		attrs = append(attrs, svglib.Attr("transform", fmt.Sprintf("translate(%d 0)", rowX)))
+	}
+	attrs = append(attrs, svglib.IntAttr("x", tl.X), svglib.IntAttr("y", br.Y),
+		svglib.IntAttr("width", br.X-tl.X), svglib.Attr("height", "100%"))
+	return svglib.OpenElement("g", attrs...) + strings.Join(lines, "\n") + "</g>\n", maxWidth, totalHeight
 }
 
 func generateNumberedIcon(i, x, y int) string {

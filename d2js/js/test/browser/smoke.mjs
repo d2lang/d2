@@ -11,14 +11,20 @@ assert.ok(
   "usage: node smoke.mjs packed|native INPUT_DIR"
 );
 const origin = "http://localhost:4173";
-const fixtureNames = ["playback", "departure"];
+const fixtures = {
+  playback: "playback.d2",
+  departure: "departure.d2",
+  "layer-steps": "layer-steps.d2",
+  "layer-route": "layer-route.d2",
+  "layer-zoom": "../../../../docs/examples/layer-zoom.d2",
+};
+const fixtureNames = Object.keys(fixtures);
 
 // Set the actual CSS animation clocks. Waiting for paint after a seek avoids
 // depending on when the worker, fonts or CI runner finished loading.
 async function seek(page, ms) {
   await page.evaluate(async (ms) => {
     const animations = document.getAnimations();
-    if (!animations.length) throw new Error("SVG has no playback animations");
     for (const animation of animations) {
       animation.pause();
       animation.currentTime = ms;
@@ -126,8 +132,225 @@ async function checkDeparture(page) {
   }
 }
 
+async function checkLayerZoom(page) {
+  const links = page.locator("a[href^='#']");
+  async function scales(ms) {
+    await seek(page, ms);
+    return links.evaluateAll((links) => links.map((link) => link.getScreenCTM().a));
+  }
+  async function visible() {
+    return links.evaluateAll((links) =>
+      links.map((link) => getComputedStyle(link).visibility === "visible")
+    );
+  }
+
+  assert.ok(
+    await page.evaluate(() =>
+      document.getAnimations().some((clock) => clock.playState === "running")
+    ),
+    "the positive interval starts playback without a click"
+  );
+  await seek(page, 500);
+  assert.deepEqual(await visible(), [true, false], "playback starts on the overview");
+  const entering = await scales(2800);
+  const closer = await scales(2950);
+  assert.ok(closer.every((scale, i) => scale > entering[i]), "autoplay zooms into the layer");
+  await seek(page, 3500);
+  assert.deepEqual(await visible(), [false, true], "playback reaches the inner board");
+  const leaving = await scales(5100);
+  const farther = await scales(5250);
+  assert.ok(farther.every((scale, i) => scale < leaving[i]), "autoplay zooms out on wraparound");
+  await seek(page, 6000);
+  assert.deepEqual(await visible(), [true, false], "the next loop starts on the overview");
+
+  await links.first().click();
+  const clickEntering = await scales(800);
+  const clickCloser = await scales(950);
+  assert.ok(clickCloser.every((scale, i) => scale > clickEntering[i]), "clicking zooms in");
+  await seek(page, 12500);
+  assert.deepEqual(await visible(), [false, true], "manual selection holds the inner board");
+
+  await links.last().click();
+  const clickLeaving = await scales(100);
+  const clickFarther = await scales(250);
+  assert.ok(clickFarther.every((scale, i) => scale < clickLeaving[i]), "clicking back zooms out");
+  await seek(page, 9500);
+  assert.deepEqual(await visible(), [true, false], "back link restores the overview");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(origin + "/layer-zoom.svg");
+  const reducedScales = await scales(0);
+  for (const [ms, expected] of [
+    [2999, [true, false]],
+    [3000, [false, true]],
+    [5999, [false, true]],
+    [6000, [true, false]],
+  ]) {
+    assert.deepEqual(await scales(ms), reducedScales, "reduced motion keeps both boards still");
+    assert.deepEqual(await visible(), expected, "reduced motion cuts at the interval boundary");
+  }
+  await links.first().click();
+  await seek(page, 0);
+  assert.deepEqual(await visible(), [false, true], "reduced motion enters the layer immediately");
+  await links.last().click();
+  await seek(page, 0);
+  assert.deepEqual(await visible(), [true, false], "reduced motion returns immediately");
+}
+
+async function checkLayerSteps(page) {
+  const links = page.locator("a");
+  async function active(ms) {
+    await seek(page, ms);
+    return links.evaluateAll((links) =>
+      links
+        .filter((link) => {
+          const r = link.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return hit?.closest("a") === link;
+        })
+        .map((link) => link.querySelector("text").textContent)
+    );
+  }
+
+  for (const [ms, label] of [
+    [500, "Enter detail"],
+    [1500, "Return to overview"],
+    [2500, "Return from detail step"],
+    [3500, "Enter from overview step"],
+    [4500, "Enter detail"],
+  ]) {
+    assert.deepEqual(await active(ms), [label], `automatic board at ${ms}ms`);
+  }
+  await seek(page, 3500);
+  await links.filter({ hasText: "Enter from overview step" }).click();
+  assert.deepEqual(await active(500), ["Return to overview"]);
+  assert.deepEqual(await active(1800), ["Return from detail step"]);
+  await links.filter({ hasText: "Return from detail step" }).click();
+  assert.deepEqual(await active(500), ["Enter detail"]);
+  assert.deepEqual(await active(1800), ["Enter from overview step"]);
+}
+
+async function checkLayerRoute(page) {
+  await page.mouse.move(1, 1);
+  const frames = page.locator("g[id^='d2-frame-']");
+  const pictures = [];
+  async function picture(ms) {
+    await seek(page, ms);
+    return PNG.sync.read(await page.screenshot()).data;
+  }
+  for (const ms of [500, 2500, 4500, 6500]) pictures.push(await picture(ms));
+
+  async function accessibleBoard(board) {
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    const snapshot = await page.locator("svg").first().ariaSnapshot();
+    const labels = [
+      "Catalog", "Go to shipping", "Product specifications", "Shipping queue", "Archived orders",
+    ];
+    for (const [i, label] of labels.entries()) {
+      assert.equal(snapshot.includes(label), i === board, `accessible label for board ${i}`);
+    }
+  }
+  async function atBoard(ms, board) {
+    const pixels = await picture(ms);
+    // Chromium can round an antialiased pixel by one level as the camera settles.
+    assert.ok(
+      pixels.every((value, i) => Math.abs(value - pictures[board][i]) <= 1),
+      `board ${board} at ${ms}ms`
+    );
+  }
+  async function scales(ms, from, to) {
+    await seek(page, ms);
+    return frames.evaluateAll(
+      (frames, pair) => pair.map((i) => frames[i].querySelector("text").getScreenCTM().a),
+      [from, to]
+    );
+  }
+  async function checkLeg(start, duration, from, to, inward, portalLabel) {
+    // The scale changes early on exit and late on entry. The other phase pans.
+    const a = await scales(start + duration * (inward ? 0.8 : 0.1), from, to);
+    const b = await scales(start + duration * (inward ? 0.95 : 0.25), from, to);
+    assert.ok(
+      b.every((scale, i) => (inward ? scale > a[i] : scale < a[i])),
+      `zoom ${inward ? "in" : "out"} from board ${from} to ${to}`
+    );
+    const parent = frames.nth(inward ? from : to);
+    const distance = await parent.locator("a").filter({ hasText: portalLabel }).evaluate((link) => {
+      const svg = document.documentElement;
+      const view = svg.viewBox.baseVal;
+      const center = new DOMPoint(view.x + view.width / 2, view.y + view.height / 2);
+      const screen = center.matrixTransform(svg.getScreenCTM());
+      const rect = link.querySelector(".shape rect").getBoundingClientRect();
+      return Math.hypot(rect.x + rect.width / 2 - screen.x, rect.y + rect.height / 2 - screen.y);
+    });
+    assert.ok(distance < 1, `camera centers the enclosing board's ${portalLabel} portal`);
+  }
+
+  // Product detail → catalog → overview → shipping, in one 900ms window.
+  await atBoard(5099, 2);
+  await accessibleBoard(2);
+  await checkLeg(5100, 300, 2, 1, false, "Product detail");
+  await atBoard(5400, 1);
+  // Switching motion preferences mid-route preserves the tour's current time.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await accessibleBoard(2);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await accessibleBoard(1);
+  await checkLeg(5400, 300, 1, 0, false, "Catalog");
+  await atBoard(5700, 0);
+  await checkLeg(5700, 300, 0, 3, true, "Shipping");
+  await atBoard(6000, 3);
+
+  // An arrowhead can be defined in another board that is currently hidden.
+  const markerID = await frames.first().locator("marker").first().getAttribute("id");
+  const arrow = frames.nth(3).locator("[marker-end]").first();
+  await arrow.evaluate((edge, id) => edge.setAttribute("marker-end", `url(#${id})`), markerID);
+  await atBoard(6500, 3);
+  await seek(page, 8500);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await accessibleBoard(4);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await accessibleBoard(4);
+
+  await seek(page, 2500);
+  await page.getByText("Go to shipping", { exact: true }).click();
+  await page.mouse.move(1, 1);
+  await checkLeg(0, 450, 1, 0, false, "Catalog");
+  await atBoard(450, 0);
+  await checkLeg(450, 450, 0, 3, true, "Shipping");
+  await atBoard(900, 3);
+  await atBoard(8500, 3);
+  await accessibleBoard(3);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await accessibleBoard(3);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  // The return trip starts on the manually selected board.
+  await page.getByRole("link", { name: "Back to overview" }).press("Enter");
+  await atBoard(0, 3);
+  await atBoard(900, 0);
+  await accessibleBoard(0);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(origin + "/layer-route.svg");
+  await atBoard(5400, 2);
+  await atBoard(5999, 2);
+  await atBoard(6000.1, 3);
+  await seek(page, 2500);
+  await page.getByRole("link", { name: "Go to shipping" }).press("Enter");
+  await accessibleBoard(3);
+  await page.getByRole("link", { name: "Back to overview" }).press("Enter");
+  await accessibleBoard(0);
+  await page.goBack();
+  await accessibleBoard(3);
+  await page.goBack();
+  await accessibleBoard(1);
+  await page.goForward();
+  await accessibleBoard(3);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+}
+
 for (const engine of [chromium, webkit]) {
-  test(engine.name() + " " + mode + " step playback", { timeout: 120_000 }, async (t) => {
+  test(engine.name() + " " + mode + " board playback", { timeout: 120_000 }, async (t) => {
     const browser = await engine.launch();
     t.after(() => browser.close());
     const page = await browser.newPage({
@@ -153,7 +376,7 @@ for (const engine of [chromium, webkit]) {
         body: await readFile(path.join(inputDir, entry)),
       });
       const sources = await Promise.all(
-        fixtureNames.map((name) => readFile(path.join(import.meta.dirname, name + ".d2"), "utf8"))
+        Object.values(fixtures).map((file) => readFile(path.join(import.meta.dirname, file), "utf8"))
       );
       await page.goto(origin);
       const workerStarted = page.waitForEvent("worker", { timeout: 30_000 });
@@ -187,5 +410,11 @@ for (const engine of [chromium, webkit]) {
     await checkBoundary(page);
     await page.goto(origin + "/departure.svg");
     await checkDeparture(page);
+    await page.goto(origin + "/layer-steps.svg");
+    await checkLayerSteps(page);
+    await page.goto(origin + "/layer-route.svg");
+    await checkLayerRoute(page);
+    await page.goto(origin + "/layer-zoom.svg");
+    await checkLayerZoom(page);
   });
 }

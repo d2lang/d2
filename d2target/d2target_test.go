@@ -3,11 +3,38 @@ package d2target
 import (
 	"bytes"
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
+
+func TestResolveBoardKeepsTargetPrecedence(t *testing.T) {
+	step := &Diagram{Name: "ship.us"}
+	layer := &Diagram{Name: "orders", Steps: []*Diagram{step}}
+	scenario := &Diagram{Name: "orders"}
+	root := &Diagram{Name: "root", Layers: []*Diagram{layer}, Scenarios: []*Diagram{scenario}}
+
+	for _, tc := range []struct {
+		path, qualified []string
+		want            *Diagram
+	}{
+		{nil, nil, root},
+		{[]string{"root"}, nil, root},
+		{[]string{"orders"}, []string{"layers", "orders"}, layer},
+		{[]string{"scenarios", "orders"}, []string{"scenarios", "orders"}, scenario},
+		{[]string{"orders", "ship.us"}, []string{"layers", "orders", "steps", "ship.us"}, step},
+		{[]string{"layers", "orders", "ship.us", "ship.us"}, []string{"layers", "orders", "steps", "ship.us"}, step},
+		{[]string{"steps", "orders"}, nil, nil},
+		{[]string{"layers"}, nil, nil},
+	} {
+		got, path := root.ResolveBoard(tc.path)
+		if got != tc.want || !slices.Equal(path, tc.qualified) {
+			t.Errorf("ResolveBoard(%q) = (%p, %q), want (%p, %q)", tc.path, got, path, tc.want, tc.qualified)
+		}
+	}
+}
 
 func TestCalculateTooltipBoundsUsesDiagramFonts(t *testing.T) {
 	fontFamily := d2fonts.HandDrawn

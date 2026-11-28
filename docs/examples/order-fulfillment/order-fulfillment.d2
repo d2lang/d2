@@ -1,0 +1,142 @@
+# d2 order-fulfillment.d2 order-fulfillment.svg
+vars: {
+  d2-config: {
+    layout-engine: tala
+    animate-interval: 8s
+    animate-duration: 1100ms
+    pad: 42
+    theme-overrides: {B1: "#607B7D"; B2: "#607B7D"; B6: "#FFFFFF"; N1: "#193844"; N2: "#435C68"}
+  }
+}
+classes: {
+  card: {width: 238; height: 78; style: {border-radius: 9; font-size: 20; bold: true}}
+  portal: {style: {fill: "#086861"; stroke: "#005550"; font-color: white}}
+  store: {style.fill: "#E4EBF6"}
+  event: {style.fill: "#DDF2E7"}
+  exception: {style.fill: "#FFF0D9"}
+  back: {width: 195; height: 38; style: {fill: "#DDF2E7"; border-radius: 16}}
+  heading: {shape: text; style: {font-size: 42; bold: true}}
+  deck: {shape: text; style.font-size: 21}
+  crumb: {shape: text; style: {font-size: 18; bold: true; font-color: "#176A60"}}
+}
+
+style.fill: "#F8FAF7"
+path: "COMMERCE  /  ORDER #1842" {class: crumb; left: 0; top: 0}
+title: "From checkout to carrier scan" {class: heading; left: 0; top: 32}
+summary: "Two C17 camp lanterns for $84. Oakland is closer to the customer, but the carton ships from Reno." {class: deck; left: 0; top: 109}
+
+checkout: "Web checkout" {class: card; left: 0; top: 213}
+accept: "Order acceptance" {class: [card; portal]; left: 305; top: 213; link: layers.acceptance}
+allocate: "Stock allocation" {class: [card; portal]; left: 610; top: 213; link: layers.allocation}
+warehouse: "Warehouse dispatch" {class: [card; portal]; left: 915; top: 213; link: layers.dispatch}
+payments: "Payment gateway" {class: [card; store]; left: 305; top: 439}
+inventory: "Inventory ledger" {class: [card; store]; left: 610; top: 439}
+shipped: "Shipment tracking" {class: [card; event]; left: 915; top: 439}
+
+checkout -> accept
+accept -> allocate
+allocate -> warehouse
+accept -> payments: "authorize $84"
+allocate -> inventory: "reserve 2 units"
+warehouse -> shipped: "carrier handoff"
+
+layers: {
+  acceptance: {
+    style.fill: "#F8FAF7"
+    path: "ORDER #1842  /  CHECKOUT" {class: crumb; left: 0; top: 0}
+    title: "Accept the order once" {class: heading; left: 0; top: 32}
+    summary: "A browser retry must return the original order. Allocation starts only after the order is durable." {class: deck; left: 0; top: 109}
+    parent: "← Overview" {class: back; left: 943; top: 2; link: root}
+
+    request: "POST /orders" {class: card; left: 0; top: 213}
+    key: "Claim checkout key" {class: card; left: 305; top: 213}
+    auth: "Authorize $84" {class: card; left: 610; top: 213}
+    commit: "Commit order\n+ outbox row" {class: [card; store]; left: 915; top: 213}
+    existing: "Return original\norder ID" {class: [card; event]; left: 305; top: 439}
+    declined: "Decline checkout" {class: [card; exception]; left: 610; top: 439}
+    publish: "Publish\nOrderAccepted" {class: [card; portal]; left: 915; top: 439; link: root.layers.allocation}
+
+    request -> key
+    key -> auth
+    auth -> commit
+    key -> existing: "completed retry"
+    auth -> declined: "declined" {style: {stroke: "#A56B2C"; stroke-dash: 4}}
+    commit -> publish: "outbox relay"
+  }
+  allocation: {
+    style.fill: "#F8FAF7"
+    path: "ORDER #1842  /  INVENTORY" {class: crumb; left: 0; top: 0}
+    title: "Choose a warehouse" {class: heading; left: 0; top: 32}
+    summary: "Oakland ranks first on transit time. A live reservation decides whether it can actually ship." {class: deck; left: 0; top: 109}
+    parent: "← Overview" {class: back; left: 943; top: 2; link: root}
+
+    accepted: "OrderAccepted" {class: [card; event]; left: 0; top: 213}
+    rank: "Rank candidate sites" {class: card; left: 305; top: 213}
+    reserve: "Reserve 2 × C17" {class: [card; portal]; left: 610; top: 213; link: layers.reservation}
+    release: "Release pick task" {class: [card; event]; left: 915; top: 213}
+    backorder: "Backorder queue" {class: [card; exception]; left: 0; top: 439}
+    candidates: "Availability feed\n+ transit estimates" {class: [card; store]; left: 305; top: 439}
+    retry: "Try next candidate" {class: [card; exception]; left: 610; top: 439}
+    site: "Reno fulfillment\ncenter" {class: card; left: 915; top: 439}
+
+    accepted -> rank
+    rank -> reserve
+    reserve -> release
+    candidates -> rank: "rank inputs"
+    rank -> backorder: "no eligible site" {style: {stroke: "#A56B2C"; stroke-dash: 4}}
+    reserve -> retry: "stock changed" {style: {stroke: "#A56B2C"; stroke-dash: 4}}
+    retry -> rank: {style: {stroke: "#A56B2C"; stroke-dash: 4}}
+    release -> site: "2 units held"
+
+    layers: {
+      reservation: {
+        style.fill: "#F8FAF7"
+        path: "ORDER #1842  /  INVENTORY  /  RESERVATION" {class: crumb; left: 0; top: 0}
+        title: "Two orders, one stock row" {class: heading; left: 0; top: 32}
+        summary: "The availability feed is a snapshot. The ledger checks the current quantity and records a hold in one transaction." {class: deck; left: 0; top: 109}
+        parent: "← Stock allocation" {class: back; left: 943; top: 2; link: root.layers.allocation}
+
+        oak: "Try Oakland\nfeed reports 2" {class: card; left: 0; top: 213}
+        rival: "Another order\nreserves 1" {class: card; left: 305; top: 213}
+        predicate: "Hold 2 only if\navailable ≥ 2" {class: [card; store]; left: 610; top: 213}
+        miss: "0 rows updated\nOakland has 1" {class: [card; exception]; left: 915; top: 213}
+        confirmed: "Release Reno pick" {class: [card; portal]; left: 0; top: 439; link: root.layers.dispatch}
+        record: "Commit hold\norder #1842 · qty 2" {class: [card; store]; left: 305; top: 439}
+        won: "1 row updated\nReno: 4 → 2" {class: [card; event]; left: 610; top: 439}
+        reno: "Retry at Reno\nrequest 2" {class: card; left: 915; top: 439}
+
+        oak -> rival
+        rival -> predicate
+        predicate -> miss
+        miss -> reno: "next ranked site" {style: {stroke: "#A56B2C"; stroke-dash: 4}}
+        reno -> won
+        won -> record
+        record -> confirmed
+      }
+    }
+  }
+  dispatch: {
+    style.fill: "#F8FAF7"
+    path: "ORDER #1842  /  DISPATCH" {class: crumb; left: 0; top: 0}
+    title: "Ship from Reno" {class: heading; left: 0; top: 32}
+    summary: "A printed label is reversible. The first carrier scan triggers capture and the customer’s tracking update." {class: deck; left: 0; top: 109}
+    parent: "← Overview" {class: back; left: 943; top: 2; link: root}
+
+    task: "Reno pick task" {class: [card; event]; left: 0; top: 213}
+    scan: "Scan 2 × C17" {class: card; left: 305; top: 213}
+    pack: "Pack and weigh" {class: card; left: 610; top: 213}
+    waybill: "Print carrier label" {class: card; left: 915; top: 213}
+    capture: "Capture $84" {class: [card; event]; left: 0; top: 439}
+    tracking: "Notify customer" {class: [card; event]; left: 305; top: 439}
+    outbox: "Publish\nShipmentAccepted" {class: [card; store]; left: 610; top: 439}
+    handoff: "First carrier scan" {class: card; left: 915; top: 439}
+
+    task -> scan
+    scan -> pack
+    pack -> waybill
+    waybill -> handoff: "physical handoff"
+    handoff -> outbox
+    outbox -> tracking
+    outbox -> capture
+  }
+}

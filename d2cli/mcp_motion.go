@@ -69,13 +69,14 @@ func (s *mcpServer) storyboard(ctx context.Context, _ *mcp.CallToolRequest, in *
 	if err != nil {
 		return mcpFailure(err.Error())
 	}
-	assets, err := gifSceneAssetOptions(ctx, film.path, false, len(plan))
+	paintCount := storyboardSceneCount(plan)
+	assets, err := gifSceneAssetOptions(ctx, film.path, false, paintCount)
 	if err != nil {
 		return mcpFailure(err.Error())
 	}
 	defer assets.Resolver.CloseIdleConnections()
 	// Like render, resolve glyphs only from fonts that ship with D2.
-	fonts, err := bundledFontFallbackOptions(len(plan), nil)
+	fonts, err := bundledFontFallbackOptions(paintCount, nil)
 	if err != nil {
 		return mcpFailure(err.Error())
 	}
