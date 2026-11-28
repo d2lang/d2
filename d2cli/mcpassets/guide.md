@@ -132,7 +132,10 @@ departures per second.
 For a single-board GIF, omit `animate-interval` to let D2 derive the loop
 from the animation. A stream at `0.25/s` needs a four-second loop. If you
 specify an interval, the full exported loop must cover at least one departure
-period for each positive rate. Individual steps can be shorter.
+period for each positive rate. Individual steps can be shorter. If several
+streams have no common loop within the GIF frame limit, choose an explicit
+duration that covers the slowest stream. SVG can play continuously when even
+one departure period exceeds the GIF limit.
 
 ```d2
 relay -> broker: OrderPlaced {
