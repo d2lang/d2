@@ -9,7 +9,7 @@ import (
 // The authored board's CSS clock pauses while an internal fragment is selected.
 // Keep icon departures on that same clock. When a layer includes steps, its
 // private sequence restarts on entry with the same delay as the step visibility.
-func writeLayerIconClocks(buf *bytes.Buffer, hash string, links []layerLink, slots []layerSlot) {
+func writeLayerIconClocks(buf *bytes.Buffer, hash string, links []layerLink, slots []layerSlot, frameSibling string) {
 	buf.WriteString(`<style><![CDATA[
 @property --d2-icon-tour-phase{syntax:"<number>";inherits:true;initial-value:0}
 @property --d2-icon-layer-phase{syntax:"<number>";inherits:true;initial-value:0}
@@ -23,12 +23,12 @@ func writeLayerIconClocks(buf *bytes.Buffer, hash string, links []layerLink, slo
 .d2-icon-trips>g{--d2-icon-age:calc(var(--d2-icon-t) - var(--d2-icon-origin));--d2-icon-phase:var(--d2-icon-age);offset-path:var(--d2-icon-route);offset-anchor:0px 0px;offset-position:0px 0px;offset-rotate:0deg;offset-distance:calc(var(--d2-icon-phase) / var(--d2-icon-transit) * 100%);opacity:calc(var(--d2-icon-alive,1) * clamp(0,var(--d2-icon-age) * 1000000 + 1,1) * clamp(0,(var(--d2-icon-transit) - var(--d2-icon-phase)) * 1000000,1))}
 @supports(offset-path:shape(from 0px 0px,line to 1px 1px) view-box){.d2-icon-trips>g{offset-path:var(--d2-icon-shape)}}
 `)
-	fmt.Fprintf(buf, `.d2-layer-link-%s:target~.d2-frame-%s{--d2-icon-tour-play:paused}`, hash, hash)
+	fmt.Fprintf(buf, `.d2-layer-link-%s:target~%s.d2-frame-%s{--d2-icon-tour-play:paused}`, hash, frameSibling, hash)
 	for i, s := range slots {
 		fmt.Fprintf(buf, `#d2-frame-%s-%d{--d2-icon-layer-duration:%g;--d2-icon-layer-start:%g}`, hash, i, float64(s.totalMS)/1000, float64(s.startMS)/1000)
 	}
 	for _, link := range links {
-		selectTarget := "#" + link.id + ":target~"
+		selectTarget := "#" + link.id + ":target~" + frameSibling
 		if len(link.legs) == 0 || slots[link.to].count == 1 {
 			delay := link.duration
 			if len(link.legs) == 0 {

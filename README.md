@@ -222,8 +222,11 @@ interval show the line only if you pass `--animate-progress` or set
 `animate-progress: true` in the config.
 
 The line fills from left to right over the playback time, including holds, and
-stays fixed during camera moves. It uses the theme's B1 color (the usual solid
-stroke). To color the bar independently, set
+stays fixed during camera moves. Its height is 1% of the shorter canvas dimension,
+rounded to the nearest pixel and limited to 2–6 pixels, or one pixel on a single-row canvas.
+The export leaves at least 8 pixels between the diagram's existing padding and the line.
+MP4 and WebM exports with `--video-size` fit both within the requested dimensions.
+The line uses the theme's B1 color (the usual solid stroke). To override it, set
 `vars.d2-config.animate-progress-color: "#E35B42"` or pass
 `--animate-progress-color salmon`.
 Enabling it can increase raster export time and file size during long holds.
