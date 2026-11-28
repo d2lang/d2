@@ -18,6 +18,7 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
+	libcolor "github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/imageasset"
 	"github.com/d2lang/d2/lib/label"
@@ -592,18 +593,18 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 		return nil, err
 	}
 
-	rootFill, err := b.paint(b.diagram.Root.Fill, "root fill")
-	if err != nil {
-		return nil, err
-	}
-	rootStroke, err := b.stroke(b.diagram.Root.Stroke, b.diagram.Root.RenderedStrokeWidth(), b.diagram.Root.StrokeDash, d2scene.CapButt, d2scene.JoinMiter, "root stroke")
-	if err != nil {
-		return nil, err
-	}
 	strokePadding := int(math.Ceil(b.diagram.Root.RenderedStrokeWidth() / 2))
 	backgroundLeft, backgroundTop, backgroundWidth, backgroundHeight, ok := expandDimensions(left, top, width, height, strokePadding)
 	if !ok {
 		return nil, invalidPaddingError(pad)
+	}
+	rootFill, err := b.paint(libcolor.GradientForBox(b.diagram.Root.Fill, float64(backgroundWidth), float64(backgroundHeight)), "root fill")
+	if err != nil {
+		return nil, err
+	}
+	rootStroke, err := b.stroke(libcolor.GradientForBox(b.diagram.Root.Stroke, float64(backgroundWidth), float64(backgroundHeight)), b.diagram.Root.RenderedStrokeWidth(), b.diagram.Root.StrokeDash, d2scene.CapButt, d2scene.JoinMiter, "root stroke")
+	if err != nil {
+		return nil, err
 	}
 	left, top, width, height, ok = expandDimensions(backgroundLeft, backgroundTop, backgroundWidth, backgroundHeight, strokePadding)
 	if !ok || width < 0 || height < 0 {
@@ -853,6 +854,7 @@ type diagramObject struct {
 }
 
 func (b *builder) buildShape(targetShape d2target.Shape) (*d2scene.Node, error) {
+	targetShape.ResolveGradientAngles()
 	fillValue, strokeValue := d2themes.ShapeTheme(targetShape)
 	fill, err := b.paint(fillValue, fmt.Sprintf("shape %q fill", targetShape.ID))
 	if err != nil {

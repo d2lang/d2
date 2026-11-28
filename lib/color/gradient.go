@@ -248,6 +248,35 @@ func LinearGradientVector(direction string) (x1, y1, x2, y2 float64, err error) 
 	return 0, 0, 0, 1, err
 }
 
+// GradientForBox expresses a CSS angle in SVG object-bounding-box coordinates.
+// In pixels the color varies along (sin θ, -cos θ). In the unit box those
+// two coefficients are scaled by width and height. The converted spelling
+// also gives differently proportioned paint boxes distinct SVG resources.
+func GradientForBox(paint string, width, height float64) string {
+	if width == height || width <= 0 || height <= 0 {
+		return paint
+	}
+	params, ok := strings.CutPrefix(paint, "linear-gradient(")
+	if !ok {
+		return paint
+	}
+	direction, stops, ok := strings.Cut(params, ",")
+	if !ok {
+		return paint
+	}
+	angle, ok := strings.CutSuffix(strings.TrimSpace(direction), "deg")
+	if !ok {
+		return paint
+	}
+	degrees, err := strconv.ParseFloat(strings.TrimSpace(angle), 64)
+	if err != nil || math.IsNaN(degrees) || math.IsInf(degrees, 0) || math.Mod(degrees, 90) == 0 {
+		return paint
+	}
+	sin, cos := math.Sincos(math.Mod(degrees, 360) * (math.Pi / 180))
+	unitDegrees := math.Atan2(width*sin, height*cos) * (180 / math.Pi)
+	return "linear-gradient(" + strconv.FormatFloat(unitDegrees, 'g', -1, 64) + "deg," + stops
+}
+
 func parseLinearGradientDirection(direction string) (x1, y1, x2, y2 string) {
 	ax, ay, bx, by, err := LinearGradientVector(direction)
 	precision := 0

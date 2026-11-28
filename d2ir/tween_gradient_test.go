@@ -52,6 +52,7 @@ func TestTweenGradientCompatibility(t *testing.T) {
 		{"radial geometry", "radial-gradient(circle, blue)", "radial-gradient(ellipse, red)", true},
 		{"kind", "radial-gradient(blue)", "linear-gradient(red)", false},
 		{"direction", "linear-gradient(to left, blue)", "linear-gradient(to right, red)", false},
+		{"size-dependent diagonal", "linear-gradient(45deg, blue)", "linear-gradient(to top right, red)", false},
 		{"right angle", "linear-gradient(90deg, blue)", "linear-gradient(to right, red)", true},
 		{"stop count", "linear-gradient(blue, white)", "linear-gradient(red)", false},
 		{"invalid color", "linear-gradient(currentColor, blue)", "linear-gradient(red, blue)", false},

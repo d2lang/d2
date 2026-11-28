@@ -112,6 +112,11 @@ func sameGradientGeometry(from, to d2color.Gradient) bool {
 	// unchanged (e.g. the implicit downward gradient and "to bottom").
 	vx, vy := bx-ax, by-ay
 	const epsilon = 1e-12
+	// A numeric diagonal and a corner keyword coincide only in a square.
+	// The target paint box is not known until layout.
+	if math.Abs(vx*vy) > epsilon && strings.HasSuffix(from.Direction, "deg") != strings.HasSuffix(to.Direction, "deg") {
+		return false
+	}
 	return math.Abs(vx-(dx-cx)) < epsilon && math.Abs(vy-(dy-cy)) < epsilon &&
 		math.Abs(vx*(ax-cx)+vy*(ay-cy)) < epsilon
 }

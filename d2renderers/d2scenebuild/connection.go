@@ -26,6 +26,7 @@ type connectionPathSegment struct {
 }
 
 func (b *builder) buildConnection(connection d2target.Connection, crossingMask *d2scene.Mask) (*d2scene.Node, error) {
+	connection.ResolveGradientAngles()
 	strokePaint, err := b.paint(connection.Stroke, fmt.Sprintf("connection %q stroke", connection.ID))
 	if err != nil {
 		return nil, err

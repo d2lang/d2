@@ -986,6 +986,26 @@ func (s *Shape) LabelTopLeft(position label.Position, box *geo.Box) *geo.Point {
 	return position.GetPointOnBox(box, label.PADDING, float64(s.LabelWidth), float64(s.LabelHeight))
 }
 
+// ResolveGradientAngles applies the paint box for each CSS degree angle.
+// Renderers call it on their local shape before creating paint resources.
+func (s *Shape) ResolveGradientAngles() {
+	w, h := float64(s.Width), float64(s.Height)
+	s.Fill, s.Stroke = color.GradientForBox(s.Fill, w, h), color.GradientForBox(s.Stroke, w, h)
+	lw, lh := float64(s.LabelWidth), float64(s.LabelHeight)
+	s.Color, s.LabelFill = color.GradientForBox(s.Color, lw, lh), color.GradientForBox(s.LabelFill, lw, lh)
+}
+
+// ResolveGradientAngles uses the route box shared by the shaft and markers,
+// and the label box for foreground and background text paints.
+func (c *Connection) ResolveGradientAngles() {
+	if strings.HasPrefix(c.Stroke, "linear-gradient(") && strings.Contains(c.Stroke, "deg") {
+		box := c.GradientBounds()
+		c.Stroke = color.GradientForBox(c.Stroke, box.Width, box.Height)
+	}
+	lw, lh := float64(c.LabelWidth), float64(c.LabelHeight)
+	c.Color, c.Fill = color.GradientForBox(c.Color, lw, lh), color.GradientForBox(c.Fill, lw, lh)
+}
+
 func (s Shape) RenderedStrokeWidth() float64 {
 	return float64(s.StrokeWidth) + s.StrokeWidthOffset
 }
