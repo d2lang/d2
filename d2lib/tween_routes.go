@@ -140,33 +140,33 @@ func stabilizeTweenRoutes(ctx context.Context, previous, board *d2target.Diagram
 	if previous != nil {
 		prev = indexTweenRoutes(previous)
 	}
-	for i := range board.Connections {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		c := &board.Connections[i]
-		track := make([]tweenRouteSample, 0, len(frames))
-		for _, f := range frames {
-			s, ok := f.sample(c)
-			if !ok || (len(track) > 0 && (s.nodes.src.Type != track[0].nodes.src.Type || s.nodes.dst.Type != track[0].nodes.dst.Type)) {
+	// TALA plans a sibling reorder as complete, obstacle-checked lanes,
+	// including parallel wires. Preserve that plan all the way to painting.
+	if !reorder {
+		for i := range board.Connections {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			c := &board.Connections[i]
+			track := make([]tweenRouteSample, 0, len(frames))
+			for _, f := range frames {
+				s, ok := f.sample(c)
+				if !ok || (len(track) > 0 && (s.nodes.src.Type != track[0].nodes.src.Type || s.nodes.dst.Type != track[0].nodes.dst.Type)) {
+					break
+				}
+				track = append(track, s)
+			}
+			if len(track) != len(frames) {
+				continue
+			}
+			prior, hasPrior := prev.sample(c)
+			// With interrupted playback the first numeric sample defines the
+			// start, regardless of what was on the screen before this step.
+			canProjectBack := previous != nil && !hasPrior && prev.edges[c.ID] == nil
+			stabilizeTweenEdge(track, prior, hasPrior, canProjectBack, budget)
+			if *budget <= 0 {
 				break
 			}
-			track = append(track, s)
-		}
-		if len(track) != len(frames) {
-			continue
-		}
-		prior, hasPrior := prev.sample(c)
-		// With interrupted playback the first numeric sample defines the
-		// start, regardless of what was on the screen before this step.
-		canProjectBack := previous != nil && !hasPrior && prev.edges[c.ID] == nil
-		if reorder {
-			refineResizeWire(track, budget)
-		} else {
-			stabilizeTweenEdge(track, prior, hasPrior, canProjectBack, budget)
-		}
-		if *budget <= 0 {
-			break
 		}
 	}
 	// Keep moving terminal bends inside their shortening approaches. The
@@ -374,58 +374,4 @@ func tweenRouteFaces(r []*geo.Point) [2]byte {
 	}
 	n := len(r) - 1
 	return [2]byte{side(r[0], r[1]), side(r[n], r[n-1])}
-}
-
-// A reorder can close and reopen a lane within a few samples. Keep the native
-// track as a complete option; also try attaching nearby lanes to this frame's
-// endpoints. Each alternative passes the same painted-obstacle check as a held
-// route. The first and final poses are fixed.
-func refineResizeWire(track []tweenRouteSample, budget *int) {
-	last := len(track) - 1
-	type option struct {
-		route     []*geo.Point
-		landmarks routeLandmarks
-	}
-	choices := make([][]option, len(track))
-	var unsettled bool
-	for i, e := range track {
-		p := measureTweenRoute(e.edge.Route)
-		choices[i] = []option{{route: e.edge.Route, landmarks: p}}
-		if i > 0 {
-			old := track[i-1]
-			threshold := 8 + 1.5*max(tweenNodeMotion(old.nodes.src, e.nodes.src), tweenNodeMotion(old.nodes.dst, e.nodes.dst))
-			if p.displacement2(choices[i-1][0].landmarks) > threshold*threshold {
-				unsettled = true
-			}
-		}
-	}
-	if !unsettled {
-		return
-	}
-	for i := 1; i < last; i++ {
-		s := track[i]
-		// Nearby lanes often allow a single bad sample to keep either neighbor's
-		// routing. Both held lanes remain options throughout a longer excursion.
-		for _, j := range []int{0, last, i - 1, i + 1, max(0, i-2), min(last, i+2)} {
-			from := track[j]
-			cost := len(from.edge.Route) * (1 + len(s.frame.Shapes) + len(s.frame.Connections))
-			if cost > *budget {
-				*budget = 0
-				return
-			}
-			*budget -= cost
-			r := transportTweenRoute(from, s)
-			if r == nil {
-				continue
-			}
-			if slices.ContainsFunc(choices[i], func(v option) bool { return slices.EqualFunc(v.route, r, (*geo.Point).Equals) }) || !tweenRouteClear(s.frame, s.edge, r, s.nodes) {
-				continue
-			}
-			choices[i] = append(choices[i], option{route: r, landmarks: measureTweenRoute(r)})
-		}
-	}
-	selected := chooseTweenTrack(choices, func(a, b option) float64 { return a.landmarks.displacement2(b.landmarks) }, func(i int) float64 { return track[i].edge.Opacity }, .03)
-	for i := 1; i < last; i++ {
-		track[i].setRoute(choices[i][selected[i]].route)
-	}
 }

@@ -166,7 +166,7 @@ func chooseEdgeCaptionTrack(track []*d2target.Connection, frames []tweenCaptionF
 			return cmp.Compare(captionDistance2(a.point, native.point), captionDistance2(b.point, native.point))
 		})
 	}
-	selected := chooseTweenTrack(choices, func(a, b edgeCaptionChoice) float64 { return captionDistance2(a.point, b.point) }, func(i int) float64 { return track[i].Opacity }, .1)
+	selected := chooseCaptionAnchors(choices, track)
 	for i := 1; i < n-1; i++ {
 		c := choices[i][selected[i]]
 		track[i].LabelPosition, track[i].LabelPercentage = c.anchor.position, c.anchor.fraction
@@ -229,4 +229,34 @@ func edgeCaptionSides(e *d2target.Connection) []label.Position {
 		return []label.Position{label.UnlockedMiddle}
 	}
 	return []label.Position{label.UnlockedTop, label.UnlockedBottom}
+}
+
+// Select one already-clear pose for each sample. Charge squared distance at
+// the visibility shared by adjacent poses. A hidden caption's change of anchor
+// costs nothing. The ordinary pose is always first, wins ties, and receives a
+// modest preference so small improvements do not churn native geometry.
+// Both held samples have exactly one choice.
+func chooseCaptionAnchors(choices [][]edgeCaptionChoice, track []*d2target.Connection) []int {
+	parents := make([][]int, len(choices))
+	previous := []float64{0}
+	for i := 1; i < len(choices); i++ {
+		visible := min(track[i-1].Opacity, track[i].Opacity)
+		current := make([]float64, len(choices[i]))
+		parents[i] = make([]int, len(current))
+		for j, c := range choices[i] {
+			best := math.Inf(1)
+			for k, p := range choices[i-1] {
+				if cost := previous[k] + visible*captionDistance2(c.point, p.point); cost < best {
+					best, parents[i][j] = cost, k
+				}
+			}
+			current[j] = best + .1*track[i].Opacity*captionDistance2(c.point, choices[i][0].point)
+		}
+		previous = current
+	}
+	path := make([]int, len(choices))
+	for i := len(path) - 1; i > 0; i-- {
+		path[i-1] = parents[i][path[i]]
+	}
+	return path
 }
