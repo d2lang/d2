@@ -205,13 +205,13 @@ gateway -> worker
 `
 	for _, edit := range []string{"worker: null; gateway.tooltip: changed", "worker: null; gateway: Different", "worker: null; logger"} {
 		d, g := compileContinuity(t, root+"steps: {change: {"+edit+"}}", d2talalayout.ContinueBoard)
-		if planBoardDeparture(d, d.Steps[0], g) != nil {
+		if planStableLeafChange(d.Steps[0], d, g, true) != nil {
 			t.Fatalf("unrelated edit was treated as pure removal: %q", edit)
 		}
 	}
 	const panel = "anchor\npanel: {worker; logger}\nsteps: {remove: {panel: null}}"
 	d, g := compileContinuity(t, panel, d2talalayout.ContinueBoard)
-	if planBoardDeparture(d, d.Steps[0], g) != nil {
+	if planStableLeafChange(d.Steps[0], d, g, true) != nil {
 		t.Fatal("removing a whole container left an unanimated panel around its departing leaves")
 	}
 }

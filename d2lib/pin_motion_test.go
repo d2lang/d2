@@ -7,6 +7,7 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
+	"github.com/d2lang/d2/lib/animation"
 	d2log "github.com/d2lang/d2/lib/log"
 )
 
@@ -25,7 +26,8 @@ func TestCompileFractionalPins(t *testing.T) {
 	for i, frame := range step.TweenFrames {
 		a, b := shapeByID(t, frame, "a"), shapeByID(t, frame, "b")
 		pa, pb := a.RenderedPosition(), b.RenderedPosition()
-		if a.MotionOffset == nil || b.MotionOffset == nil || math.Abs(pa.X-(10+float64(i)/2)) > 1e-9 || pa.Y != 20 || pb.X != 210 || math.Abs(pb.Y-(20+float64(i)/2)) > 1e-9 {
+		distance := 3 * animation.EaseInOut(float64(i)/6)
+		if a.MotionOffset == nil || b.MotionOffset == nil || math.Abs(pa.X-(10+distance)) > 1e-9 || pa.Y != 20 || pb.X != 210 || math.Abs(pb.Y-(20+distance)) > 1e-9 {
 			t.Fatalf("frame %d: variable and direct pin positions %v %+v, %v %+v", i, pa, a.MotionOffset, pb, b.MotionOffset)
 		}
 		// The router returns a point on the integer layout at each end. Both

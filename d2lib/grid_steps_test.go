@@ -222,14 +222,13 @@ steps: {add: {c}; remove: {c: null}}`
 		t.Fatal(err)
 	}
 	total := 0
-	for i, step := range board.Steps {
+	for _, step := range board.Steps {
 		if n := len(step.TweenFrames); n < 2 || n > 5 {
 			t.Fatalf("unbalanced grid samples: %d", n)
 		}
 		// The add includes a 240 ms paint tween. A pure removal returns
-		// control to the authored endpoint as soon as the 160 ms pop ends.
-		wantEnd := []int{240, 160}[i]
-		if end := step.TweenFrameEndMS(len(step.TweenFrames) - 1); end != wantEnd || step.TweenDurationMS != 240 || !step.GridMotion {
+		// control to the authored endpoint when its 240 ms removal ends.
+		if end := step.TweenFrameEndMS(len(step.TweenFrames) - 1); end != 240 || step.TweenDurationMS != 240 || !step.GridMotion {
 			t.Fatalf("%s: last sample ends at %d ms, duration %d ms, grid motion %t", step.Name, end, step.TweenDurationMS, step.GridMotion)
 		}
 		total += len(step.TweenFrames)

@@ -172,13 +172,15 @@ For linked layers, a positive duration zooms through the enclosing shape on entr
 A move between sibling layers passes through their shared parent within the same duration.
 In a standalone SVG, following a board link pauses the automatic tour.
 Changes between steps can be authored directly or through variables.
-Direct numeric changes include opacity, stroke-width, stroke-dash, border-radius, font-size, width, and height.
+Direct numeric changes include opacity, stroke-width, stroke-dash, border-radius, font-size, left, top, width, and height.
+Pinned positions, shape dimensions, grid moves, and fades to or from zero opacity use cubic ease-in-out.
 Compatible gradients have the same kind, direction, and number of stops.
 Each stop interpolates its color and position.
 In grids, cells with the same ID move to their new positions.
-New cells grow in and removed cells shrink away.
+New cells ease into view as they grow. Removed cells ease out as they shrink.
 D2 also animates complete row or column changes, replacements in a fixed slot,
 and cells that expand or collapse a nested grid.
+Individual nodes can also grow in or shrink away when surviving shapes and connections keep their positions and appearance.
 In TALA steps, connections can draw toward arriving nodes, containers can form
 around their contents, and services can move between containers.
 Appended SQL rows can drop into place and sequence messages can trace from sender to receiver.
