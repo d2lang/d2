@@ -164,7 +164,10 @@ layers: {
 		}
 		at := 0
 		for i, frame := range animation.Image {
-			if want, ok := wantPaint[at]; ok {
+			for sample, want := range wantPaint {
+				if sample < at || sample >= at+animation.Delay[i] {
+					continue
+				}
 				count := 0
 				for _, pixel := range frame.Pix {
 					// Quantization can shift a solid fill by a few channel levels.
@@ -174,9 +177,9 @@ layers: {
 					}
 				}
 				if count < 500 {
-					t.Fatalf("complete=%t: found %d pixels of board color %v at %dcs", complete, count, want, at)
+					t.Fatalf("complete=%t: found %d pixels of board color %v at %dcs", complete, count, want, sample)
 				}
-				delete(wantPaint, at)
+				delete(wantPaint, sample)
 			}
 			at += animation.Delay[i]
 		}

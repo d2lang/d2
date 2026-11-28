@@ -22,7 +22,8 @@ func (s *gifRenderSummary) splitProgressHolds(ctx context.Context, poses []*imag
 	}
 	pixels := int64(s.maxWidth) * int64(s.maxHeight+s.footerHeight)
 	limit := min(int64(gifMaxFrames), gifMaxNormalizedPixels/pixels)
-	extra := min(wanted, limit-int64(len(poses)))
+	// A progress strip can advance by at most one new position per pixel.
+	extra := min(wanted, int64(s.maxWidth), limit-int64(len(poses)))
 	if extra <= 0 {
 		return poses, nil
 	}

@@ -767,12 +767,10 @@ func renderGIFWithSession(
 	if automatic {
 		intervalMs = defaultGIFBoardMS
 	}
-	framesPerBoard, err := xgif.AnimationFrameCount(intervalMs)
-	if err != nil {
-		return summary, err
-	}
-	if framesPerBoard > gifMaxFrames {
-		return summary, fmt.Errorf("GIF requires %d frames per board, exceeding the %d-frame limit", framesPerBoard, gifMaxFrames)
+	// GIF stores each delay in an unsigned 16-bit centisecond field. Even
+	// a completely still board cannot represent a longer interval in budget.
+	if intervalMs < 1 || intervalMs > gifMaxFrames*math.MaxUint16*10 {
+		return summary, fmt.Errorf("GIF board interval %dms is outside the supported range", intervalMs)
 	}
 	boards, err := collectGIFBoards(ctx, diagram, gifMaxFrames)
 	if err != nil {
@@ -791,6 +789,9 @@ func renderGIFWithSession(
 		return summary, err
 	}
 	steadyBoard := len(boards) == 1 && len(boards[0].TweenFrames) == 0
+	// The streaming encoder uses the original 30fps schedule. Static poses use
+	// the timed encoder so optional progress can spend only its spare slots.
+	streamingBoard := steadyBoard && rasterMovingUntil(boards[0]) != 0
 	sampleGIFClock := steadyBoard && (automatic || slices.ContainsFunc(boards[0].Connections, func(c d2target.Connection) bool {
 		return c.IconAnimation != nil
 	}))
@@ -847,6 +848,9 @@ func renderGIFWithSession(
 					segment.DurationMS = max(segment.DurationMS, int(missingMS))
 				}
 			}
+			if segment.DurationMS > math.MaxInt-filmMS {
+				return summary, fmt.Errorf("GIF playback duration exceeds the supported range")
+			}
 			filmMS += segment.DurationMS
 			delay := gifStepDelay(segment)
 			if delay == 0 {
@@ -854,9 +858,15 @@ func renderGIFWithSession(
 			}
 			count := 1
 			if !segment.TweenSample {
-				count, err = xgif.AnimationFrameCount(segment.DurationMS)
-				if err != nil {
-					return summary, err
+				if len(route) == 0 && !iconTimeline.Active(board) && rasterMovingUntil(segment.Diagram) == 0 {
+					// Still holds need another picture only when their delay no
+					// longer fits in one GIF graphic control extension.
+					count = 1 + (delay-1)/math.MaxUint16
+				} else {
+					count, err = xgif.AnimationFrameCount(segment.DurationMS)
+					if err != nil {
+						return summary, err
+					}
 				}
 			}
 			if len(board.TweenFrames) > 0 || board.GridMotion {
@@ -1064,7 +1074,7 @@ func renderGIFWithSession(
 		if needsPreview {
 			summary.previewSVG = sourceSVG
 		}
-		if plan != nil && steadyBoard {
+		if plan != nil && streamingBoard {
 			if err := plan(summary, segment.DurationMS, plannedBounds); err != nil {
 				return summary, fmt.Errorf("GIF board %d: %w", boardIndex, err)
 			}

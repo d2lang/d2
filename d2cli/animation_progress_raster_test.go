@@ -7,7 +7,6 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -276,21 +275,28 @@ func TestGIFProgressFooterPreservesBoardPlacementAndMatte(t *testing.T) {
 		original, padded := render(false), render(true)
 		// The short side of the original canvas rounds to two pixels. The
 		// footer itself would put the canvas over the three-pixel threshold.
-		if padded.Config.Width != original.Config.Width || padded.Config.Height != original.Config.Height+8+2 ||
-			!slices.Equal(original.Delay, padded.Delay) {
+		if padded.Config.Width != original.Config.Width || padded.Config.Height != original.Config.Height+8+2 {
 			t.Fatalf("multi=%t: changed playback or canvas: %v/%v vs %v/%v", multi, original.Config, original.Delay, padded.Config, padded.Delay)
 		}
-		for _, i := range []int{0, len(padded.Image) - 1} {
+		// Compare the pictures at their playback times: the progress strip
+		// splits a static board's single delay into several visible updates.
+		at := 0
+		for i, frame := range padded.Image {
+			board := at / 10 // Each authored board holds for 100ms.
+			end := at + padded.Delay[i]
+			if board >= len(original.Image) || original.Delay[board] != 10 || end > (board+1)*10 {
+				t.Fatalf("multi=%t: frame %d crossed the board boundary: %d..%dcs", multi, i, at, end)
+			}
+			at = end
 			red := color.RGBA{255, 0, 0, 255}
 			bg := color.RGBA{0x10, 0x20, 0x30, 255}
-			if multi && i != 0 {
+			if multi && board != 0 {
 				bg = color.RGBA{0x23, 0x1f, 0x40, 255}
 			}
-			frame := padded.Image[i]
 			for y := 0; y < original.Config.Height+8; y++ {
 				for x := 0; x < frame.Rect.Dx(); x++ {
 					want := bg
-					if y < original.Config.Height && color.RGBAModel.Convert(original.Image[i].At(x, y)) == red {
+					if y < original.Config.Height && color.RGBAModel.Convert(original.Image[board].At(x, y)) == red {
 						want = red
 					}
 					if got := color.RGBAModel.Convert(frame.At(x, y)); got != want {
@@ -298,6 +304,9 @@ func TestGIFProgressFooterPreservesBoardPlacementAndMatte(t *testing.T) {
 					}
 				}
 			}
+		}
+		if at != 10*len(original.Image) {
+			t.Fatalf("multi=%t: timed footer plays for %dcs", multi, at)
 		}
 	}
 }
@@ -347,7 +356,6 @@ func TestGIFProgressPreservesCaptionReadingTime(t *testing.T) {
 	board := simpleRasterDiagram()
 	board.Root.Annotation = &d2target.Annotation{Label: "Pause for this caption."}
 	opts := progressRenderOpts()
-	var delays []int
 	for _, enabled := range []bool{false, true} {
 		opts.AnimateProgress = &enabled
 		data, _, err := renderGIF(t.Context(), "-", false, board, opts, 101, false, gifLayerOptions{})
@@ -365,10 +373,9 @@ func TestGIFProgressPreservesCaptionReadingTime(t *testing.T) {
 		if want := (board.ReadingMS() + 9) / 10; total != want {
 			t.Fatalf("progress %t: caption plays for %dcs, want %dcs", enabled, total, want)
 		}
-		if delays != nil && !slices.Equal(delays, animation.Delay) {
-			t.Fatalf("toggling the progress line changed caption frame delays")
+		if enabled == (len(animation.Delay) == 1) {
+			t.Fatalf("progress %t: caption used %d pictures", enabled, len(animation.Delay))
 		}
-		delays = animation.Delay
 	}
 }
 
