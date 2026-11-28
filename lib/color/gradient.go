@@ -234,8 +234,13 @@ func LinearGradientVector(direction string) (x1, y1, x2, y2 float64, err error) 
 		if err != nil || math.IsNaN(degrees) || math.IsInf(degrees, 0) {
 			return 0, 0, 0, 1, fmt.Errorf("invalid linear-gradient angle %q", direction)
 		}
-		radians := (90 - degrees) * (math.Pi / 180)
-		return .5, .5, .5 + .5*math.Cos(radians), .5 + .5*math.Sin(radians), nil
+		// CSS measures clockwise from upward. Project the bounding box onto
+		// that axis to place the end stops at opposite corners' projections.
+		radians := math.Mod(degrees, 360) * (math.Pi / 180)
+		dx, cos := math.Sincos(radians)
+		dy := -cos
+		halfLength := (math.Abs(dx) + math.Abs(dy)) / 2
+		return .5 - dx*halfLength, .5 - dy*halfLength, .5 + dx*halfLength, .5 + dy*halfLength, nil
 	}
 	if direction != "" {
 		err = fmt.Errorf("unsupported linear-gradient direction %q", direction)

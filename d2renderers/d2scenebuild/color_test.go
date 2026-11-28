@@ -60,7 +60,9 @@ func TestGradientPaintGeometry(t *testing.T) {
 		{name: "default", raw: "linear-gradient(red, blue)", start: d2scene.Point{}, end: d2scene.Point{Y: 1}},
 		{name: "right", raw: "linear-gradient(to right, red, blue)", start: d2scene.Point{Y: .5}, end: d2scene.Point{X: 1, Y: .5}},
 		{name: "top right", raw: "linear-gradient(to top right, red, blue)", start: d2scene.Point{Y: 1}, end: d2scene.Point{X: 1}},
-		{name: "angle", raw: "linear-gradient(45deg, red, blue)", start: d2scene.Point{X: .5, Y: .5}, end: d2scene.Point{X: .5 + math.Sqrt(.5)/2, Y: .5 + math.Sqrt(.5)/2}},
+		{name: "upward angle", raw: "linear-gradient(0deg, red, blue)", start: d2scene.Point{X: .5, Y: 1}, end: d2scene.Point{X: .5}},
+		{name: "diagonal angle", raw: "linear-gradient(45deg, red, blue)", start: d2scene.Point{Y: 1}, end: d2scene.Point{X: 1}},
+		{name: "negative angle", raw: "linear-gradient(-90deg, red, blue)", start: d2scene.Point{X: 1, Y: .5}, end: d2scene.Point{Y: .5}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
