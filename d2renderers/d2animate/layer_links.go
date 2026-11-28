@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/xml"
-	"fmt"
 	"image"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/d2lang/d2/d2target"
@@ -114,9 +114,9 @@ func writeClickZooms(css *bytes.Buffer, links []layerLink, hash string, viewport
 			}
 			name, ok := keyframes[key]
 			if !ok {
-				name = fmt.Sprintf("d2-click-%s-%d", hash, len(keyframes))
+				name = "d2-click-" + hash + "-" + strconv.Itoa(len(keyframes))
 				keyframes[key] = name
-				fmt.Fprintf(css, "@keyframes %s{", name)
+				css.WriteString("@keyframes " + name + "{")
 				if pos > 1 {
 					css.WriteString("0%{opacity:0;visibility:hidden}")
 				}
@@ -139,71 +139,78 @@ func writeClickZooms(css *bytes.Buffer, links []layerLink, hash string, viewport
 }
 
 type shapeAnchor struct {
-	href, class string
+	open, class string // Exact D2 anchor markup and the enclosed shape's class.
 }
 
 type linkSpan struct {
 	start, end, route int
 }
 
-// Match only the anchor enclosing this shape, preserving other anchors in
-// rich text, icons and connections even if they share the same href.
+// Visit group wrappers, skipping rich text, icon SVGs and other embedded trees
+// as opaque XML. Only a canonical anchor enclosing its own shape is rewritten.
 func findLayerLinks(frame []byte, targets map[shapeAnchor]int) []linkSpan {
-	type anchor struct {
-		depth, start, end int
-		href              string
-	}
-	var candidate anchor
 	var matches []linkSpan
+	var anchorStart, anchorEnd, anchorDepth int
 	depth := 0
 	d := xml.NewDecoder(bytes.NewReader(frame))
 	for {
 		start := int(d.InputOffset())
-		t, err := d.Token()
+		token, err := d.Token()
 		if err == io.EOF {
-			break
+			return matches
 		}
 		if err != nil {
 			return nil
 		}
-		switch t := t.(type) {
+		switch el := token.(type) {
 		case xml.StartElement:
-			depth++
-			if t.Name.Local == "a" && candidate.depth == 0 {
-				candidate = anchor{depth, start, int(d.InputOffset()), attrValue(t, "href")}
-			} else if candidate.depth != 0 && depth == candidate.depth+1 && t.Name.Local == "g" {
-				class, _, _ := strings.Cut(attrValue(t, "class"), " ")
-				route, ok := targets[shapeAnchor{candidate.href, class}]
-				// Only D2's own canonical anchor has these exact attributes. Leave
-				// arbitrary inline SVG and author-specified navigation alone.
-				if ok && string(frame[candidate.start:candidate.end]) == svg.OpenElement("a", svg.HrefAttributes(candidate.href)...) {
-					matches = append(matches, linkSpan{candidate.start, candidate.end, route})
+			isSVG := el.Name.Space == "" || el.Name.Space == "http://www.w3.org/2000/svg"
+			switch {
+			case isSVG && el.Name.Local == "a" && anchorDepth == 0:
+				anchorStart, anchorEnd, anchorDepth = start, int(d.InputOffset()), depth+1
+			case isSVG && el.Name.Local == "g" && anchorDepth > 0 && depth == anchorDepth:
+				if anchorEnd > 0 {
+					class, _, _ := strings.Cut(attrValue(el, "class"), " ")
+					if route, ok := targets[shapeAnchor{string(frame[anchorStart:anchorEnd]), class}]; ok {
+						matches = append(matches, linkSpan{anchorStart, anchorEnd, route})
+					}
+					anchorEnd = 0
 				}
-				candidate = anchor{}
+				if err := d.Skip(); err != nil {
+					return nil
+				}
+				continue
+			case isSVG && el.Name.Local == "g", isSVG && depth == 0 && el.Name.Local == "svg":
+				// A public caller can wrap native artwork in additional groups.
+			default:
+				if err := d.Skip(); err != nil {
+					return nil
+				}
+				continue
 			}
+			depth++
 		case xml.EndElement:
-			if candidate.depth == depth {
-				candidate = anchor{}
+			if depth == anchorDepth {
+				anchorDepth = 0
 			}
 			depth--
 		}
 	}
-	return matches
 }
 
 // Only create click routes for anchors present in the rendered fragment.
+// layerLinks emits sources in frame order, so each frame needs one lookup.
 func bindLayerLinks(frames [][]byte, links []layerLink, hash string) ([][]byte, []layerLink) {
-	targets := make(map[int]map[shapeAnchor]int)
-	for i, link := range links {
-		class := base64.URLEncoding.EncodeToString([]byte(svg.EscapeText(link.shapeID)))
-		if targets[link.from] == nil {
-			targets[link.from] = make(map[shapeAnchor]int)
-		}
-		targets[link.from][shapeAnchor{link.href, class}] = i
-	}
 	var updated [][]byte
-	for i, anchors := range targets {
-		spans := findLayerLinks(frames[i], anchors)
+	for i := 0; i < len(links); {
+		frame := links[i].from
+		targets := make(map[shapeAnchor]int)
+		for ; i < len(links) && links[i].from == frame; i++ {
+			link := &links[i]
+			class := base64.URLEncoding.EncodeToString([]byte(svg.EscapeText(link.shapeID)))
+			targets[shapeAnchor{svg.OpenElement("a", svg.HrefAttributes(link.href)...), class}] = i
+		}
+		spans := findLayerLinks(frames[frame], targets)
 		if len(spans) == 0 {
 			continue
 		}
@@ -214,13 +221,13 @@ func bindLayerLinks(frames [][]byte, links []layerLink, hash string) ([][]byte, 
 		pos := 0
 		for _, span := range spans {
 			link := &links[span.route]
-			link.id = fmt.Sprintf("d2-layer-link-%s-%d", hash, span.route)
-			out.Write(frames[i][pos:span.start])
+			link.id = "d2-layer-link-" + hash + "-" + strconv.Itoa(span.route)
+			out.Write(frames[frame][pos:span.start])
 			out.WriteString(svg.OpenElement("a", svg.HrefAttributes("#"+link.id)...))
 			pos = span.end
 		}
-		out.Write(frames[i][pos:])
-		updated[i] = out.Bytes()
+		out.Write(frames[frame][pos:])
+		updated[frame] = out.Bytes()
 	}
 	if updated == nil {
 		return frames, nil
@@ -242,53 +249,62 @@ func writeLayerNavigation(buf *bytes.Buffer, hash string, links []layerLink, slo
 	allFrames := "." + marker + ":target~.d2-frame-" + hash
 	hide := "d2-hide-" + hash
 	buf.WriteString(`<style type="text/css"><![CDATA[`)
-	fmt.Fprintf(buf, "%s{animation-play-state:paused!important;opacity:0!important;transform:none!important;clip-path:none!important;pointer-events:none!important;--d2-link-visibility:hidden!important}", allFrames)
+	writeCSS(buf, allFrames, "{animation-play-state:paused!important;opacity:0!important;transform:none!important;clip-path:none!important;pointer-events:none!important;--d2-link-visibility:hidden!important}")
 	// Override the local step clock while the two clicked boards are in
 	// motion. The overrides stop at arrival and the local clock takes over.
 	const visible = "opacity:1;pointer-events:inherit;--d2-link-visibility:initial"
 	const hidden = "opacity:0;pointer-events:none;--d2-link-visibility:hidden"
-	fmt.Fprintf(buf, "@keyframes %s{from,to{%s}}", hide, hidden)
+	writeCSS(buf, "@keyframes ", hide, "{from,to{", hidden, "}}")
 
 	for _, link := range links {
 		id := link.id
-		from := fmt.Sprintf("#%s:target~#d2-frame-%s-%d", id, hash, link.from)
-		to := fmt.Sprintf("#%s:target~#d2-frame-%s-%d", id, hash, link.to)
+		selected := "#" + id + ":target~"
+		frameSelector := selected + "#d2-frame-" + hash + "-"
+		from := frameSelector + strconv.Itoa(link.from)
+		to := frameSelector + strconv.Itoa(link.to)
 		if len(link.legs) == 0 {
 			// Intra-layer links and boards without a drawable portal jump to
 			// the authored endpoint. Clearing the fragment resumes playback.
-			fmt.Fprintf(buf, "%s{opacity:1!important;--d2-link-visibility:initial!important;pointer-events:inherit!important}", to)
+			writeCSS(buf, to, "{opacity:1!important;--d2-link-visibility:initial!important;pointer-events:inherit!important}")
 			continue
 		}
 		// CSS keeps an animation's elapsed time when its name survives a
 		// fragment change. Give each visit a fresh hold for its visible boards.
 		hold := "d2-hold-" + id
-		fmt.Fprintf(buf, "@keyframes %s{from,to{opacity:1;pointer-events:none;--d2-link-visibility:initial}}", hold)
-		group := fmt.Sprintf("#%s:target~.d2-layer-%s-%d", id, hash, slots[link.to].id)
-		duration := fmt.Sprintf("var(--d2-click-time,%dms)", link.duration)
-		fmt.Fprintf(buf, "%s,%s{opacity:1!important;--d2-link-visibility:initial!important;pointer-events:inherit!important}", from, group)
+		writeCSS(buf, "@keyframes ", hold, "{from,to{opacity:1;pointer-events:none;--d2-link-visibility:initial}}")
+		group := selected + ".d2-layer-" + hash + "-" + strconv.Itoa(slots[link.to].id)
+		duration := "var(--d2-click-time," + strconv.Itoa(link.duration) + "ms)"
+		writeCSS(buf, from, ",", group, "{opacity:1!important;--d2-link-visibility:initial!important;pointer-events:inherit!important}")
 		// Source shows only while the click camera is running.
-		fmt.Fprintf(buf, "%s>g{%s;animation:%s %s step-end}", from, hidden, hold, duration)
+		writeCSS(buf, from, ">g{", hidden, ";animation:", hold, " ", duration, " step-end}")
 		if slot := slots[link.to]; slot.count > 1 {
-			fmt.Fprintf(buf, "%s>g{animation:var(--d2-slot) calc(%s - %dms) infinite,var(--d2-intro,%s) %s step-end}", group, duration, slot.startMS, hide, duration)
-			fmt.Fprintf(buf, "%s>g{--d2-intro:%s}", to, hold)
+			writeCSS(buf, group, ">g{animation:var(--d2-slot) calc(", duration, " - ", strconv.Itoa(slot.startMS), "ms) infinite,var(--d2-intro,", hide, ") ", duration, " step-end}")
+			writeCSS(buf, to, ">g{--d2-intro:", hold, "}")
 		} else {
-			fmt.Fprintf(buf, "%s>g{%s;animation:%s %s step-end}", to, visible, hold, duration)
+			writeCSS(buf, to, ">g{", visible, ";animation:", hold, " ", duration, " step-end}")
 		}
 		for pos, camera := range link.cameras {
 			frame := from
 			if pos > 0 {
-				frame = fmt.Sprintf("#%s:target~#d2-frame-%s-%d", id, hash, link.legs[pos-1].to)
+				frame = frameSelector + strconv.Itoa(link.legs[pos-1].to)
 			}
 			if pos > 0 && pos < len(link.legs) {
 				// Paint this ancestor only during transit, without starting its step clock.
-				fmt.Fprintf(buf, "%s{opacity:1!important;--d2-link-visibility:initial!important}%s>g{%s;animation:%s %s step-end}", frame, frame, hidden, hold, duration)
+				writeCSS(buf, frame, "{opacity:1!important;--d2-link-visibility:initial!important}", frame, ">g{", hidden, ";animation:", hold, " ", duration, " step-end}")
 			}
-			fmt.Fprintf(buf, "%s>g>g{animation:%s %s linear both}", frame, camera, duration)
+			writeCSS(buf, frame, ">g>g{animation:", camera, " ", duration, " linear both}")
 		}
 	}
-	fmt.Fprintf(buf, "@media(prefers-reduced-motion:reduce){%s{--d2-click-time:0s}}", allFrames)
+	writeCSS(buf, "@media(prefers-reduced-motion:reduce){", allFrames, "{--d2-click-time:0s}}")
 	buf.WriteString(`]]></style>`)
 	for _, link := range links {
-		fmt.Fprintf(buf, `<g id="%s" class="%s"/>`, link.id, marker)
+		writeCSS(buf, `<g id="`, link.id, `" class="`, marker, `"/>`)
+	}
+}
+
+// Append CSS literals and selectors directly to the output in order.
+func writeCSS(buf *bytes.Buffer, parts ...string) {
+	for _, part := range parts {
+		buf.WriteString(part)
 	}
 }

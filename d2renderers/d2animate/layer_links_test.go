@@ -55,14 +55,31 @@ func TestClickedLayerUsesItsOwnShape(t *testing.T) {
 }
 
 func TestLayerLinksUnchangedOnUnsupportedMarkup(t *testing.T) {
-	targets := map[shapeAnchor]int{{"root.layers.x", "YQ=="}: 0}
+	open := svg.OpenElement("a", svg.HrefAttributes("root.layers.x")...)
+	targets := map[shapeAnchor]int{{open, "YQ=="}: 0}
+	decoy := open + `<g class="YQ=="><rect/></g></a>`
 	for _, input := range []string{
+		"<g><svg>" + decoy + "</svg></g>",
+		"<g><foreignObject><svg>" + decoy + "</svg></foreignObject></g>",
+		"<g><defs>" + decoy + "</defs></g>",
+		"<g><!--" + decoy + "--></g>",
+		"<g><![CDATA[" + decoy + "]]></g>",
 		`<g><a href="root.layers.x" target="_blank"><g class="YQ=="/></a></g>`,
 		`<g><a href="root.layers.x" xlink:href="root.layers.x"><g class="YQ=="></a>`,
 	} {
 		if got := findLayerLinks([]byte(input), targets); len(got) != 0 {
 			t.Errorf("matched unexpected anchors: %v", got)
 		}
+	}
+}
+
+func TestLayerLinksInCustomGroupWrappers(t *testing.T) {
+	const href = "root.layers.x"
+	open := svg.OpenElement("a", svg.HrefAttributes(href)...)
+	frame := []byte(`<svg><g transform="scale(2)"><g>` + open + `<clipPath><g/></clipPath><g class="YQ=="></g><g class="YQ=="/></a></g></g></svg>`)
+	matches := findLayerLinks(frame, map[shapeAnchor]int{{open, "YQ=="}: 1})
+	if len(matches) != 1 || matches[0].route != 1 || string(frame[matches[0].start:matches[0].end]) != open {
+		t.Fatalf("custom group wrapper lost its native shape anchor: %v", matches)
 	}
 }
 
