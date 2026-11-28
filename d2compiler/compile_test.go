@@ -434,19 +434,28 @@ func TestRelativeFileLinksAndMissingBoards(t *testing.T) {
 	fs := fstest.MapFS{"card.d2": {Data: []byte(`a.link: next.svg; b.link: docs/page.html`)}}
 	src := `...@card
 c.link: readme.md?raw=1
+query.link: "layers.html?download=1"
+file.link: layers.docs/page.html
+layers: {"reports/index": {target}}
+real.link: 'layers."reports/index"'
+x -> y: {link: steps.missingEdge}
 bad.link: steps.missing
 steps: {one: {}; two: {prev.link: _.steps.one; wrong.link: _.one}}`
 	g, _, err := d2compiler.Compile("main.d2", strings.NewReader(src), &d2compiler.CompileOptions{FS: fs})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[string]string{"a": "next.svg", "b": "docs/page.html", "c": "readme.md?raw=1", "prev": "root.steps.one"} {
+	for id, want := range map[string]string{"a": "next.svg", "b": "docs/page.html", "c": "readme.md?raw=1", "query": "layers.html?download=1", "file": "layers.docs/page.html", "prev": "root.steps.one"} {
 		obj, ok := g.Steps[1].Root.HasChild([]string{id})
 		if !ok || obj.Link == nil || obj.Link.Value != want {
 			t.Errorf("missing expected link %s = %q", id, want)
 		}
 	}
-	if len(g.Warnings) != 2 {
+	real, ok := g.Root.HasChild([]string{"real"})
+	if !ok || real.Link == nil || !strings.HasPrefix(real.Link.Value, "root.layers.") {
+		t.Fatal("quoted board name was treated as a relative URL")
+	}
+	if g.Edges[0].Link != nil || len(g.Warnings) != 3 {
 		t.Fatalf("warnings = %v, want one per unresolved source link", g.Warnings)
 	}
 }

@@ -1839,45 +1839,13 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 		if c.stopped() {
 			return
 		}
-		if obj.Link == nil {
-			continue
+		obj.Link = c.resolveBoardLink(g, obj.Link)
+	}
+	for _, edge := range g.Edges {
+		if c.stopped() {
+			return
 		}
-
-		linkKey, err := d2parser.ParseKey(obj.Link.Value)
-		if err != nil {
-			continue
-		}
-
-		u, err := url.Parse(htmlentity.Unescape(obj.Link.Value))
-		isRemote := err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/"))
-		if isRemote {
-			continue
-		}
-
-		head := linkKey.Path[0].Unbox().ScalarString()
-		if head != "root" && head != "_" && err == nil &&
-			(len(linkKey.Path) > 1 || strings.Contains(u.Path, "/") || u.RawQuery != "" || u.Fragment != "") {
-			// Unlike board references, relative file URLs keep their authored path.
-			continue
-		}
-		if head != "root" || !hasBoard(g.RootBoard(), linkKey.IDA()) {
-			if key := obj.Link.MapKey; key != nil && !c.warnedLinks[key.Range] {
-				if c.warnedLinks == nil {
-					c.warnedLinks = make(map[d2ast.Range]bool)
-				}
-				c.warnedLinks[key.Range] = true
-				msg := fmt.Sprintf("board link %q has no matching board; use _.steps.name for a sibling step or ./name for a file", obj.Link.Value)
-				root := g.RootBoard()
-				root.Warnings = append(root.Warnings, d2ast.Error{Range: key.Range, Message: msg})
-			}
-			obj.Link = nil
-			continue
-		}
-
-		if slices.Equal(linkKey.StringIDA(), obj.Graph.IDA()) {
-			obj.Link = nil
-			continue
-		}
+		edge.Link = c.resolveBoardLink(g, edge.Link)
 	}
 	for _, group := range [][]*d2graph.Graph{g.Layers, g.Scenarios, g.Steps, g.TweenFrames} {
 		for _, b := range group {
@@ -1887,6 +1855,58 @@ func (c *compiler) validateBoardLinks(g *d2graph.Graph) {
 			c.validateBoardLinks(b)
 		}
 	}
+}
+
+func (c *compiler) resolveBoardLink(g *d2graph.Graph, link *d2graph.Scalar) *d2graph.Scalar {
+	if link == nil {
+		return nil
+	}
+	key, err := d2parser.ParseKey(link.Value)
+	if err != nil {
+		return link
+	}
+	u, err := url.Parse(htmlentity.Unescape(link.Value))
+	if err == nil && (u.Scheme != "" || strings.HasPrefix(u.Path, "/")) {
+		return link
+	}
+	head := key.Path[0].Unbox().ScalarString()
+	if head != "root" && head != "_" && err == nil &&
+		(len(key.Path) > 1 || strings.Contains(u.Path, "/") || u.RawQuery != "" || u.Fragment != "") {
+		return link
+	}
+	root := g.RootBoard()
+	if head == "root" && hasBoard(root, key.IDA()) {
+		if slices.Equal(key.StringIDA(), g.IDA()) {
+			return nil
+		}
+		return link
+	}
+	if source := link.MapKey; source != nil {
+		// A URL may start with a board namespace, e.g. layers.html?download=1.
+		// A real board wins. Otherwise preserve the source-relative URL.
+		if scalar := source.Value.ScalarBox().Unbox(); scalar != nil {
+			value := scalar.ScalarString()
+			prefix, _, _ := strings.Cut(value, ".")
+			_, boardNamespace := d2ast.BoardKeywords[strings.ToLower(prefix)]
+			if (boardNamespace || prefix == "root") && strings.ContainsAny(value, "/?#") && !strings.ContainsAny(value, "\"'") {
+				u, err := url.Parse(htmlentity.Unescape(value))
+				if err == nil && !u.IsAbs() && u.Host == "" && !textmeasure.IsDangerousLink(value) {
+					copy := *link
+					copy.Value = value
+					return &copy
+				}
+			}
+		}
+		if !c.warnedLinks[source.Range] {
+			if c.warnedLinks == nil {
+				c.warnedLinks = make(map[d2ast.Range]bool)
+			}
+			c.warnedLinks[source.Range] = true
+			msg := fmt.Sprintf("board link %q has no matching board; use _.steps.name for a sibling step or ./name for a file", link.Value)
+			root.Warnings = append(root.Warnings, d2ast.Error{Range: source.Range, Message: msg})
+		}
+	}
+	return nil
 }
 
 func hasBoard(root *d2graph.Graph, ida []d2ast.String) bool {
