@@ -67,7 +67,6 @@ func tweenRouteClear(frame *d2target.Diagram, edge *d2target.Connection, route [
 		}
 		self := s.ID == edge.Src || s.ID == edge.Dst
 		ancestor := strings.HasPrefix(edge.Src, s.ID+".") || strings.HasPrefix(edge.Dst, s.ID+".")
-		body := image.Rect(s.Pos.X, s.Pos.Y, s.Pos.X+s.Width, s.Pos.Y+s.Height)
 		if !ancestor {
 			// Boundary contact is required at each port. Interior crossings after
 			// departure or before arrival still obscure the endpoint.
@@ -82,14 +81,7 @@ func tweenRouteClear(frame *d2target.Diagram, edge *d2target.Connection, route [
 					port = 1
 				}
 			}
-			body = body.Inset(-pad)
-			if !self && (s.ThreeDee || s.Multiple || s.Shadow || s.Type == d2target.ShapeC4Person || s.Tooltip != "" || s.Link != "") {
-				// Stacked sheets, tilted faces and decorations extend beyond the
-				// layout rectangle. Consult the renderer only for these shapes.
-				one := d2target.Diagram{Shapes: frame.Shapes[i : i+1], FontFamily: frame.FontFamily, MonoFontFamily: frame.MonoFontFamily}
-				lo, hi := one.InkBoundingBox()
-				body = body.Union(image.Rect(lo.X, lo.Y, hi.X, hi.Y))
-			}
+			body := tweenShapeBody(frame, i, pad, !self)
 			if !clearWithPort(tweenRouteClip(body, s.MotionClip), port) {
 				return false
 			}
@@ -97,23 +89,13 @@ func tweenRouteClear(frame *d2target.Diagram, edge *d2target.Connection, route [
 		if s.Label != "" {
 			pos := label.FromString(s.LabelPosition)
 			if self || ancestor || pos.IsOutside() || pos.IsBorder() || s.MotionLabelTopLeft != nil {
-				outline := s.Geometry()
-				box := outline.GetInnerBox()
-				if pos.IsOutside() || pos.IsBorder() {
-					box = s.OuterLabelBox(outline.GetBox())
-				} else if pos == label.Unset && s.Language == "markdown" {
-					pos = label.InsideMiddleCenter
-				}
-				if !clearBox(tweenRouteClip(tweenRouteTextBox(s.LabelTopLeft(pos, box), s.LabelWidth, s.LabelHeight), s.MotionClip)) {
+				if !clearBox(tweenRouteClip(tweenCaptionBox(s, pos), s.MotionClip)) {
 					return false
 				}
 			}
 		}
-		if s.Icon != nil && s.Type != d2target.ShapeImage {
-			icon := s.IconBounds(s.Geometry())
-			if !clearBox(tweenRouteClip(tweenRouteTextBox(icon.TopLeft, int(math.Ceil(icon.Width)), int(math.Ceil(icon.Height))), s.MotionClip)) {
-				return false
-			}
+		if !clearBox(tweenRouteClip(tweenShapeIconBox(s), s.MotionClip)) {
+			return false
 		}
 	}
 	// A reroute can move its caption or icon onto an otherwise clear wire.
@@ -167,6 +149,26 @@ func tweenRouteClear(frame *d2target.Diagram, edge *d2target.Connection, route [
 		}
 	}
 	return true
+}
+
+func tweenShapeBody(frame *d2target.Diagram, i, pad int, decorations bool) image.Rectangle {
+	s := &frame.Shapes[i]
+	body := image.Rect(s.Pos.X, s.Pos.Y, s.Pos.X+s.Width, s.Pos.Y+s.Height).Inset(-pad)
+	if decorations && (s.ThreeDee || s.Multiple || s.Shadow || s.Type == d2target.ShapeC4Person || s.Tooltip != "" || s.Link != "") {
+		// Stacked sheets, tilted faces and decorations extend beyond the layout rectangle.
+		one := d2target.Diagram{Shapes: frame.Shapes[i : i+1], FontFamily: frame.FontFamily, MonoFontFamily: frame.MonoFontFamily}
+		lo, hi := one.InkBoundingBox()
+		body = body.Union(image.Rect(lo.X, lo.Y, hi.X, hi.Y))
+	}
+	return body
+}
+
+func tweenShapeIconBox(s *d2target.Shape) image.Rectangle {
+	if s.Icon == nil || s.Type == d2target.ShapeImage {
+		return image.Rectangle{}
+	}
+	icon := s.IconBounds(s.Geometry())
+	return tweenRouteTextBox(icon.TopLeft, int(math.Ceil(icon.Width)), int(math.Ceil(icon.Height)))
 }
 
 func tweenRouteClip(r image.Rectangle, clip *d2target.MotionClip) image.Rectangle {

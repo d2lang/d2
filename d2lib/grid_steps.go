@@ -19,6 +19,7 @@ const maxBoardSampleElements = 1_000_000
 type boardTransitionPlan struct {
 	board      *d2target.Diagram
 	tweenFrom  *d2target.Diagram // Authored predecessor of a numeric tween.
+	tweenGraph *d2graph.Graph    // Preserves which caption anchors were set in D2 source.
 	emptyAfter *d2target.Diagram // An explicitly emptied step is drawable after this board.
 	motion     *gridMotion
 	ink        *boardInk
@@ -70,7 +71,7 @@ func sampleBoardTransitions(ctx context.Context, root *d2target.Diagram, graph *
 				}
 			}
 			if len(next.TweenFrames) > 0 {
-				p.tweenFrom = prev
+				p.tweenFrom, p.tweenGraph = prev, nextGraph
 				stepPlans[next] = p
 			}
 			prev, prevGraph = next, nextGraph
@@ -154,7 +155,7 @@ func PrepareSketchTransitions(ctx context.Context, root *d2target.Diagram, durat
 func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, duration, boardLimit int, sketch, pencilOnly bool, stepPlans map[*d2target.Diagram]boardTransitionPlan) error {
 	var plans []boardTransitionPlan
 	available := boardLimit
-	routeBudget := maxBoardSampleElements
+	routeBudget, captionBudget := maxBoardSampleElements, maxBoardSampleElements
 	var previous *d2target.Diagram
 	var walk func(*d2target.Diagram) error
 	walk = func(board *d2target.Diagram) error {
@@ -176,6 +177,9 @@ func samplePlannedTransitions(ctx context.Context, root *d2target.Diagram, durat
 					from = nil
 				}
 				if err := stabilizeTweenRoutes(ctx, from, board, &routeBudget); err != nil {
+					return err
+				}
+				if err := stabilizeTweenCaptions(ctx, from, board, p.tweenGraph, &captionBudget); err != nil {
 					return err
 				}
 			}
