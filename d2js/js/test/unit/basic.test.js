@@ -208,7 +208,10 @@ container.child -> outside
     expect(svg).toContain("</svg>");
     expect(result.renderOptions.animateProgress).toBe(true);
     expect(svg).toContain('class="d2-progress-');
-    const disabled = await d2.render(result.diagram, { ...result.renderOptions, animateProgress: false });
+    const disabled = await d2.render(result.diagram, {
+      ...result.renderOptions,
+      animateProgress: false,
+    });
     expect(disabled).not.toContain("d2-progress-");
     await d2.dispose();
   }, 20000);
