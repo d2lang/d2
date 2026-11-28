@@ -330,25 +330,7 @@ func TestVideoFinishesInFlightIcons(t *testing.T) {
 	var centers []int
 	opts := d2svg.RenderOpts{Pad: new(int64)}
 	err := renderVideoFrames(t.Context(), "-", false, root, opts, 200, gifLayerOptions{}, 0, false, videoSize{}, func(frame image.Image, repeats int) error {
-		var sum, columns int
-		for x := frame.Bounds().Min.X; x < frame.Bounds().Max.X; x++ {
-			var red int
-			for y := frame.Bounds().Min.Y; y < frame.Bounds().Max.Y; y++ {
-				r, g, _, _ := frame.At(x, y).RGBA()
-				if r > 0xe000 && g < 0x2000 {
-					red++
-				}
-			}
-			// The wire itself is only two pixels thick.
-			if red >= 6 {
-				sum += x
-				columns++
-			}
-		}
-		center := -1
-		if columns > 0 {
-			center = sum / columns
-		}
+		center := redIconCenter(frame)
 		for range repeats {
 			centers = append(centers, center)
 		}
@@ -360,4 +342,26 @@ func TestVideoFinishesInFlightIcons(t *testing.T) {
 	if len(centers) != 12 || centers[0] < 0 || centers[6] <= centers[5] || centers[7] <= centers[6] || centers[11] != -1 {
 		t.Fatalf("expected the dot to travel across the stop boundary and land, got x centers %v", centers)
 	}
+}
+
+func redIconCenter(frame image.Image) int {
+	var sum, columns int
+	for x := frame.Bounds().Min.X; x < frame.Bounds().Max.X; x++ {
+		var red int
+		for y := frame.Bounds().Min.Y; y < frame.Bounds().Max.Y; y++ {
+			r, g, _, _ := frame.At(x, y).RGBA()
+			if r > 0xe000 && g < 0x2000 {
+				red++
+			}
+		}
+		// The wire itself is only two pixels thick.
+		if red >= 6 {
+			sum += x
+			columns++
+		}
+	}
+	if columns == 0 {
+		return -1
+	}
+	return sum / columns
 }

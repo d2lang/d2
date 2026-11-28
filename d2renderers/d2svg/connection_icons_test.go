@@ -2,6 +2,7 @@ package d2svg_test
 
 import (
 	"encoding/xml"
+	"math"
 	"net/url"
 	"strings"
 	"testing"
@@ -74,6 +75,34 @@ func TestScheduledIconPathUsesWireCoordinates(t *testing.T) {
 	if !strings.Contains(style, "--d2-icon-shape:shape(from -63px 30px,line to 115px 30px) view-box") ||
 		!strings.Contains(style, "--d2-icon-route:path('M-63 30L115 30')") {
 		t.Fatalf("scheduled motion must use the wire coordinates directly: %s", style)
+	}
+}
+
+func TestPinnedIconScheduleOnReducedMotion(t *testing.T) {
+	c := *d2target.BaseConnection()
+	c.ID, c.Stroke = "stream", "#f00"
+	c.Route = []*geo.Point{{X: 0, Y: 0}, {X: 180, Y: 0}}
+	c.IconAnimation = &d2target.ConnectionIconAnimation{}
+	c.IconSchedule = &d2target.ConnectionIconSchedule{FixedLayer: true, DurationMS: 500, FilmMS: 500, Transit: 1}
+	for _, tc := range []struct {
+		name          string
+		period, first float64
+		carried       []d2target.ConnectionIconTrip
+		wantFallback  int
+	}{
+		{"stopped before opening", math.Inf(1), math.Inf(1), nil, 0},
+		{"draining a previous launch", math.Inf(1), math.Inf(1), []d2target.ConnectionIconTrip{{Transit: 1, Progress: .5}}, 1},
+		{"first launch after the board hold", 2, 1, nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c.IconSchedule.Period, c.IconSchedule.First, c.IconSchedule.Carried = tc.period, tc.first, tc.carried
+			d := d2target.NewDiagram()
+			d.Connections = []d2target.Connection{c}
+			doc := renderCrossingSVG(t, d, nil)
+			if got := doc.Find(".d2-still-icon").Length(); got != tc.wantFallback {
+				t.Fatalf("got %d reduced-motion icons, want %d", got, tc.wantFallback)
+			}
+		})
 	}
 }
 

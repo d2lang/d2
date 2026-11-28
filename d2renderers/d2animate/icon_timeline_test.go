@@ -395,3 +395,34 @@ func TestTimedStreamHandoffKeepsCarriedIconsAtCapacity(t *testing.T) {
 		}
 	}
 }
+
+func TestSlowIconRateKeepsDeparturePhase(t *testing.T) {
+	root, step := iconTestBoard(0.000000001), iconTestBoard(0.000000001)
+	root.Steps = []*d2target.Diagram{step}
+	timeline, err := NewIconTimeline(root, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := timeline.ScenePicture(step, Frame{Diagram: step, DurationMS: 10}).Connections[0].IconSchedule
+	if len(s.Carried) != 1 || math.Abs(s.First-(s.Period-.01)) > 1e-6 {
+		t.Fatalf("10ms after the initial launch, the next departure should be almost a full period away: %+v", s)
+	}
+}
+
+func TestFullIconStreamWaitsForSlotAfterStop(t *testing.T) {
+	root, stop, resume := iconTestBoard(100), iconTestBoard(0), iconTestBoard(100)
+	for _, b := range []*d2target.Diagram{root, stop, resume} {
+		wire := &b.Connections[0]
+		insets := wire.EndpointInsets(b.Shapes[0].RenderedStrokeWidth(), b.Shapes[1].RenderedStrokeWidth())
+		wire.Route[1].X = wire.Route[0].X + .64*d2target.IconMotionSpeed + insets[0] + insets[1]
+	}
+	root.Steps = []*d2target.Diagram{stop, resume}
+	timeline, err := NewIconTimeline(root, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := timeline.ScenePicture(resume, Frame{Diagram: resume, DurationMS: 1}).Connections[0].IconSchedule
+	if len(s.Carried) != d2target.MaxMovingIconsPerConnection || math.Abs(s.First-.008) > 1e-10 {
+		t.Fatalf("the full wire should wait for its first arrival in 8ms: carried=%d, first=%g", len(s.Carried), s.First)
+	}
+}

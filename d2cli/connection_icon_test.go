@@ -158,8 +158,10 @@ func TestLayerZoomCarriesConnectionIcons(t *testing.T) {
 	}
 	var gifFrames []image.Image
 	summary, err := renderGIFWithSession(t.Context(), "-", false, root, opts, 100, gifLayerOptions{duration: 400}, session, nil, false, nil,
-		func(_ int, f image.Image) error {
-			gifFrames = append(gifFrames, f)
+		func(_ int, f image.Image, repeats int) error {
+			for range repeats {
+				gifFrames = append(gifFrames, f)
+			}
 			return nil
 		})
 	if err != nil {

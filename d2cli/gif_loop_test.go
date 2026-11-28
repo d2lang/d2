@@ -64,6 +64,50 @@ func TestGIFIconLoopTiming(t *testing.T) {
 	}
 }
 
+func TestGIFDrainsMovingIconsDuringStaticHold(t *testing.T) {
+	root, stop := animatedConnectionRasterDiagram(), animatedConnectionRasterDiagram()
+	root.Steps = []*d2target.Diagram{stop}
+	for _, board := range []*d2target.Diagram{root, stop} {
+		c := &board.Connections[0]
+		c.Animated, c.Stroke = false, "#ff0000"
+	}
+	root.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{DurationMS: 300}
+	stop.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{Rate: new(0.)}
+	for _, progress := range []bool{false, true} {
+		opts := progressRenderOpts()
+		opts.AnimateProgress = &progress
+		data, _, err := renderGIF(t.Context(), "-", false, root, opts, 200, false, gifLayerOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		animation, err := gif.DecodeAll(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		previous, elapsed, moving, landed := -1, 0, 0, false
+		for i, frame := range animation.Image {
+			if elapsed >= 20 {
+				x := redIconCenter(frame)
+				if elapsed < 30 {
+					if x <= previous {
+						t.Fatalf("progress %v: icon stopped at x=%d after %dcs", progress, x, elapsed)
+					}
+					moving++
+				} else if x != -1 {
+					t.Fatalf("progress %v: icon still visible at x=%d after %dcs", progress, x, elapsed)
+				} else {
+					landed = true
+				}
+				previous = x
+			}
+			elapsed += animation.Delay[i]
+		}
+		if moving < 2 || !landed {
+			t.Fatalf("progress %v: got %d moving samples after the stop and landed=%v", progress, moving, landed)
+		}
+	}
+}
+
 func TestGIFAutoLoopUsesRouteAndPaintPeriods(t *testing.T) {
 	board := animatedConnectionRasterDiagram()
 	wire := &board.Connections[0]

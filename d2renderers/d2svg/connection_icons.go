@@ -37,14 +37,14 @@ func drawMovingConnectionIcons(w *objectWriter, scope string, c d2target.Connect
 	if c.IconPositions != nil && len(c.IconPositions) == 0 {
 		return
 	}
-	path := c.IconMotionPath(shapes[c.Src].RenderedStrokeWidth(), shapes[c.Dst].RenderedStrokeWidth())
-	period := path.LaunchPeriod(c.IconAnimation)
-	if c.IconSchedule != nil {
-		if !c.IconSchedule.FixedLayer && len(c.IconSchedule.Carried) == 0 && c.IconSchedule.First >= float64(c.IconSchedule.DurationMS)/1000 {
+	if s := c.IconSchedule; s != nil {
+		if len(s.Carried) == 0 && (math.IsInf(s.Period, 1) || !s.FixedLayer && s.First >= float64(s.DurationMS)/1000) {
 			return
 		}
-		scope += "-t" + strconv.Itoa(c.IconSchedule.StartMS)
+		scope += "-t" + strconv.Itoa(s.StartMS)
 	}
+	path := c.IconMotionPath(shapes[c.Src].RenderedStrokeWidth(), shapes[c.Dst].RenderedStrokeWidth())
+	period := path.LaunchPeriod(c.IconAnimation)
 	if path.Length() <= 0 || c.IconSchedule == nil && c.IconPositions == nil && (math.IsInf(period, 1) || !(period > 0)) {
 		return
 	}

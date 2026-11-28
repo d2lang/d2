@@ -112,7 +112,7 @@ a -> b: {class: art; icon.style.border-radius: 15; icon.style.animated: 2/s}`
 }
 
 func TestInvalidConnectionIconCadence(t *testing.T) {
-	for _, value := range []string{"-1/s", "2", "1/ms", "1/ns", "1e9/s", "NaN/s", "Inf/s", "1.2.3/s", "1_/s", "./s", "[2/s]", "{foo: 3}", "2/s {foo: 3}", strings.Repeat("9", 400) + "/s"} {
+	for _, value := range []string{"-1/s", "2", "1/ms", "1/ns", "1e9/s", "NaN/s", "Inf/s", "1.2.3/s", "1_/s", "./s", "[2/s]", "{foo: 3}", "2/s {foo: 3}", strings.Repeat("9", 400) + "/s", "." + strings.Repeat("0", 400) + "1/s"} {
 		src := "a -> b: {icon.style.animated: " + value + "}"
 		if _, _, err := d2compiler.Compile("source.d2", strings.NewReader(src), nil); err == nil {
 			t.Errorf("compiled invalid icon cadence %q", value)

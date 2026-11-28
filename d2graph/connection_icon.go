@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -13,8 +12,6 @@ import (
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/label"
 )
-
-var iconRateNumber = regexp.MustCompile(`^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$`)
 
 // ParseConnectionIconAnimation interprets the edge icon's animated style.
 // Other uses of style.animated retain their existing boolean grammar.
@@ -26,9 +23,11 @@ func ParseConnectionIconAnimation(value string) (*d2target.ConnectionIconAnimati
 		return &d2target.ConnectionIconAnimation{}, nil
 	}
 	value = strings.TrimSpace(value)
-	if number, ok := strings.CutSuffix(value, "/s"); ok && iconRateNumber.MatchString(number) {
+	if number, ok := strings.CutSuffix(value, "/s"); ok && strings.TrimLeft(number, "0123456789.") == "" {
 		rate, err := strconv.ParseFloat(number, 64)
-		if err == nil {
+		// ParseFloat rounds sufficiently small positive numbers to zero without
+		// an error. Only an authored zero should stop an existing stream.
+		if err == nil && (rate != 0 || strings.TrimLeft(number, "0.") == "") {
 			return &d2target.ConnectionIconAnimation{Rate: &rate}, nil
 		}
 	}

@@ -118,7 +118,7 @@ func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, con
 			if !math.IsInf(s.period, 1) && !math.IsInf(old.period, 1) {
 				s.first = old.nextLaunch(prev.duration) / old.period * s.period
 			}
-			s.finishTimedFlights()
+			s.admitDepartures()
 		} else if !continuing {
 			// The opening board shows the stream already running.
 			transit := path.TransitDuration(s.animation)
@@ -136,18 +136,14 @@ func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, con
 	return b
 }
 
-// Preserve explicitly timed flights while a step takes over its predecessor's
-// stream. Only the initial launches can crowd the wire: thereafter new copies
+// Only the initial departures can crowd the wire: thereafter new copies
 // replace their own arrivals and the number of carried copies only decreases.
-func (s *iconStream) finishTimedFlights() {
+func (s *iconStream) admitDepartures() {
 	if math.IsInf(s.period, 1) {
 		return
 	}
-	if s.animation.DurationMS == 0 && !slices.ContainsFunc(s.carried, func(f iconFlight) bool { return f.launched.DurationMS > 0 }) {
-		return
-	}
 	if s.animation.Rate == nil {
-		// A single timed loop starts immediately on an empty wire, or as
+		// A single icon starts immediately on an empty wire, or as
 		// soon as the last outstanding icon completes its trip.
 		s.first = 0
 		for _, f := range s.carried {
@@ -155,8 +151,6 @@ func (s *iconStream) finishTimedFlights() {
 		}
 		return
 	}
-	// A rate-based stream can fill the available slots while a single
-	// icon launched on an earlier timed loop is still traveling.
 	free := d2target.MaxMovingIconsPerConnection - len(s.carried)
 	slots := min(d2target.MaxMovingIconsPerConnection, int(math.Ceil(s.path.TransitDuration(s.animation)/s.period)))
 	if slots <= free {
@@ -173,6 +167,9 @@ func (s *iconStream) finishTimedFlights() {
 	}
 }
 
+// Board boundaries can accumulate a fraction of a nanosecond of rounding.
+const iconTimeEpsilon = 1e-10 // seconds
+
 // flights returns the live copies without iterating departures outside the
 // visible travel window. A closed right boundary includes a launch at t itself.
 func (s *iconStream) flights(t float64, includeBoundary bool) []iconFlight {
@@ -180,31 +177,28 @@ func (s *iconStream) flights(t float64, includeBoundary bool) []iconFlight {
 		return nil
 	}
 	var out []iconFlight
-	// Millisecond board boundaries can accumulate a fraction of a nanosecond
-	// of rounding as a trip crosses several steps.
-	const epsilon = 1e-10
 	for _, f := range s.carried {
-		if t+epsilon < f.remaining(s.path) {
+		if t+iconTimeEpsilon < f.remaining(s.path) {
 			f.progress += t / s.path.TransitDuration(f.launched)
 			out = append(out, f)
 		}
 	}
-	if math.IsInf(s.period, 1) || t+epsilon < s.first {
+	if math.IsInf(s.period, 1) || t+iconTimeEpsilon < s.first {
 		return out
 	}
 	since := max(0, t-s.first)
 	lastAge := math.Mod(since, s.period)
 	// Round grid-aligned departures consistently at decimal millisecond boundaries.
-	if s.period-lastAge < epsilon {
+	if s.period-lastAge < iconTimeEpsilon {
 		lastAge = 0
 	}
-	if !includeBoundary && lastAge < epsilon {
+	if !includeBoundary && lastAge < iconTimeEpsilon {
 		lastAge = s.period
 	}
 	transit := s.path.TransitDuration(s.animation)
 	for n := 0; n < d2target.MaxMovingIconsPerConnection; n++ {
 		age := lastAge + float64(n)*s.period
-		if age > since+epsilon || age >= transit {
+		if age > since+iconTimeEpsilon || age >= transit {
 			break
 		}
 		out = append(out, iconFlight{progress: age / transit, launched: s.animation})
@@ -303,8 +297,11 @@ func (s *iconStream) nextLaunch(at float64) float64 {
 	if at <= s.first {
 		return s.first - at
 	}
-	phase := (at - s.first) / s.period
-	return math.Max(0, (math.Ceil(phase-1e-10)-phase)*s.period)
+	age := math.Mod(at-s.first, s.period)
+	if age < iconTimeEpsilon || s.period-age < iconTimeEpsilon {
+		return 0
+	}
+	return s.period - age
 }
 
 // ScenePicture gives a fixed native scene its carried icons and launch clock.
