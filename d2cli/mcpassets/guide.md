@@ -124,8 +124,9 @@ On a connection, `icon.style.animated: 2/s` launches two icons each second.
 Set `icon.style.animated: 200ms` to loop one icon with a fixed trip time of
 200 milliseconds, or use `true` to loop it at the default travel speed.
 A step can set the rate to `0/s`
-to let the stream drain. The default icon is a filled circle in the wire's
-color. Set `icon` to an image path to use your own artwork.
+to let the stream drain. Set `icon.shape` to `circle` (the default), `square`,
+`triangle`, or `diamond`. Each uses the wire's stroke color. Set `icon` to an
+image path to use your own artwork.
 Choose what one icon represents for your diagram, for example a batch of 100
 requests. D2 caps the displayed rate so a steady stream has at most 64 icons in flight.
 On a wire with a two-second trip, `32/s` and higher rates all show 32
