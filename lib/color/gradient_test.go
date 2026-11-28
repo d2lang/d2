@@ -3,9 +3,36 @@ package color
 import (
 	"encoding/xml"
 	"io"
+	"math"
 	"strings"
 	"testing"
 )
+
+func TestGradientAngleInNonSquareBox(t *testing.T) {
+	for _, size := range [][2]float64{{300, 100}, {100, 300}, {100, 100}} {
+		w, h := size[0], size[1]
+		g, err := ParseGradient(GradientForBox("linear-gradient(45deg, red, blue)", w, h))
+		if err != nil {
+			t.Fatal(err)
+		}
+		x1, y1, x2, y2, err := LinearGradientVector(g.Direction)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Evaluate the same normalized SVG gradient in device pixels. A
+		// 45-degree line has equal and opposite horizontal and vertical rates.
+		dx, dy := x2-x1, y2-y1
+		at := func(x, y float64) float64 {
+			return ((x/w-x1)*dx + (y/h-y1)*dy) / (dx*dx + dy*dy)
+		}
+		for _, pixel := range [][2]float64{{0, h}, {w, 0}, {w / 2, h / 2}, {w/2 + 10, h/2 + 10}} {
+			want := (pixel[0] + h - pixel[1]) / (w + h)
+			if got := at(pixel[0], pixel[1]); math.Abs(got-want) > 1e-12 {
+				t.Errorf("box %v at %v = %g, want %g", size, pixel, got, want)
+			}
+		}
+	}
+}
 
 func TestOneStopGradientToSVG(t *testing.T) {
 	tests := []string{
