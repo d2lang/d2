@@ -334,7 +334,7 @@ async function checkLayerRoute(page) {
   await page.goto(origin + "/layer-route.svg");
   await atBoard(5400, 2);
   await atBoard(5999, 2);
-  await atBoard(6000, 3);
+  await atBoard(6000.1, 3);
   await seek(page, 2500);
   await page.getByRole("link", { name: "Go to shipping" }).press("Enter");
   await accessibleBoard(3);
