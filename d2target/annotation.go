@@ -3,6 +3,7 @@ package d2target
 import (
 	"hash/fnv"
 	"math"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -373,6 +374,9 @@ func (diagram *Diagram) annotationMarks(cut bool) []AnnotationMark {
 			default:
 				m.Width = c.RenderedStrokeWidth() + annotationTraceExtraWidth
 				m.Opacity = AnnotationTraceOpacity
+				if c.SrcArrow != NoArrowhead && c.DstArrow == NoArrowhead {
+					slices.Reverse(route)
+				}
 				m.Strokes = [][]geo.Point{route}
 				anchor = geo.NewBox(geo.NewPoint(mid.X-m.Width/2, mid.Y-m.Width/2), m.Width, m.Width)
 			}

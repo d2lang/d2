@@ -178,6 +178,26 @@ func TestAnnotationNoteHoldsStillWhileDrawn(t *testing.T) {
 	}
 }
 
+func TestPartialTraceFollowsArrow(t *testing.T) {
+	for _, tc := range []struct {
+		src, dst   Arrowhead
+		start, mid float64
+	}{
+		{NoArrowhead, ArrowArrowhead, 100, 200},
+		{ArrowArrowhead, NoArrowhead, 300, 200},
+		{ArrowArrowhead, ArrowArrowhead, 100, 200},
+		{NoArrowhead, NoArrowhead, 100, 200},
+	} {
+		conn := straight("edge", 100, 30, 300, 30, &Annotation{Shape: AnnotationTrace, Drawn: &[2]float64{0, 0.5}})
+		conn.SrcArrow, conn.DstArrow = tc.src, tc.dst
+		d := Diagram{Connections: []Connection{conn}}
+		stroke := d.AnnotationMarks()[0].Strokes[0]
+		if stroke[0].X != tc.start || stroke[len(stroke)-1].X != tc.mid {
+			t.Errorf("trace with %s/%s arrowheads = %v", tc.src, tc.dst, stroke)
+		}
+	}
+}
+
 func TestAnnotationOnConnection(t *testing.T) {
 	trace := &Annotation{Shape: AnnotationTrace, Label: "2 ms", LabelWidth: 30, LabelHeight: 20}
 	d := &Diagram{
