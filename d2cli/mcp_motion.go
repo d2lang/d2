@@ -85,7 +85,7 @@ func (s *mcpServer) storyboard(ctx context.Context, _ *mcp.CallToolRequest, in *
 			missingImage = err
 		}
 	}
-	data, frames, err := renderStoryboard(ctx, plan, film.opts, assets, fonts)
+	data, frames, err := renderStoryboard(ctx, plan, film.opts, film.diagram.Config.ResolveForceAppendix(nil), assets, fonts)
 	if err != nil {
 		return mcpFailure(err.Error())
 	}

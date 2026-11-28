@@ -54,6 +54,19 @@ func TestMotionReviewCLI(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, bytes.Equal(named, data), "the timestamp labels should change")
 
+	// SVG appends numbered tooltip notes only when requested. The
+	// storyboard should show the same frame content in all three cases.
+	const tooltip = "service: {tooltip: A note below the frame}"
+	svgDefault, err := run(nil, tooltip, "storyboard", "-", "-")
+	require.NoError(t, err)
+	withNotes := "vars.d2-config.force-appendix: true\n" + tooltip
+	sourceOn, err := run(nil, withNotes, "storyboard", "-", "-")
+	require.NoError(t, err)
+	require.False(t, bytes.Equal(svgDefault, sourceOn))
+	flagOff, err := run(nil, withNotes, "storyboard", "--force-appendix=false", "-", "-")
+	require.NoError(t, err)
+	require.Equal(t, svgDefault, flagOff)
+
 	for _, args := range [][]string{
 		{"lint", "film.d2"}, {"lint", "--motion", "film.d2", "extra"},
 		{"storyboard"}, {"storyboard", "film.d2", "film.d2"},

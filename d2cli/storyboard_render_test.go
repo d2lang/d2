@@ -31,7 +31,7 @@ func TestStoryboardSeeksNativeTimeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, got, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
+	data, got, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestStoryboardIndependentAnimation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
+			data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -173,7 +173,7 @@ func TestStoryboardPreservesPinnedMotion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
+	data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestStoryboardBoundsIncludeUnsampledTween(t *testing.T) {
 	if len(plan) != 3 || plan[1].diagram != next.TweenFrames[1] {
 		t.Fatalf("unexpected transition sample: %+v", plan)
 	}
-	data, _, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
+	data, _, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestStoryboardUsesAbsoluteEffectClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
+	data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

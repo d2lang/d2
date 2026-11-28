@@ -171,7 +171,7 @@ type storyboardTile struct {
 	bounds image.Rectangle // world bounds within the shared playback viewport
 }
 
-func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.RenderOpts, assets *d2scenebuild.AssetOptions, fonts *d2scenebuild.FontFallbackOptions) ([]byte, []storyboardFrameInfo, error) {
+func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.RenderOpts, forceAppendix *bool, assets *d2scenebuild.AssetOptions, fonts *d2scenebuild.FontFallbackOptions) ([]byte, []storyboardFrameInfo, error) {
 	if len(plan) == 0 || len(plan) > storyboardMaxFrames {
 		return nil, nil, fmt.Errorf("invalid storyboard frame count %d", len(plan))
 	}
@@ -196,6 +196,7 @@ func renderStoryboard(ctx context.Context, plan []storyboardSample, opts d2svg.R
 		}
 		renderOpts := gifFrameOptions(time.Duration(sample.TimeMS)*time.Millisecond, len(plan))
 		sceneOpts := sceneOptionsForFrame(renderOpts)
+		sceneOpts.omitAppendix = forceAppendix == nil || !*forceAppendix
 		doc, err := buildSceneWithResourcesAndLinks(ctx, sample.diagram, opts, assets, fonts, links, sceneOpts)
 		if err != nil {
 			return nil, nil, fmt.Errorf("storyboard %s at %dms: %w", sample.Board, sample.TimeMS, err)

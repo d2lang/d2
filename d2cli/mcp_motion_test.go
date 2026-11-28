@@ -56,6 +56,20 @@ func TestMCPStoryboard(t *testing.T) {
 	}
 }
 
+func TestMCPStoryboardUsesSourceAppendix(t *testing.T) {
+	session := newTestMCP(t, mcpConfig{})
+	render := func(source string) []byte {
+		t.Helper()
+		r := callMCP(t, session, "storyboard", map[string]any{"source": source})
+		requireMCPMotionSuccess(t, r)
+		return r.Content[0].(*mcp.ImageContent).Data
+	}
+	const board = "service: {tooltip: A note below the frame}"
+	plain := render(board)
+	require.Equal(t, plain, render("vars.d2-config.force-appendix: false\n"+board))
+	require.False(t, bytes.Equal(plain, render("vars.d2-config.force-appendix: true\n"+board)))
+}
+
 func TestMCPStoryboardTransportSize(t *testing.T) {
 	// The raw PNG would fit on one line, but base64 plus the protocol
 	// metadata pushes it beyond the client's default stdio read limit.

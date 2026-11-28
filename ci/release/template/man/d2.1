@@ -240,8 +240,8 @@ Allow remote image assets to access private, loopback, and link-local networks. 
 Allow the diagram to read local files: imports, and images bundled into or rendered in the output. Disable it to render untrusted diagrams
 .Ns .
 .It Fl -force-appendix Ar false
-Add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG.
-PNG exports include an appendix by default.
+Add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG, and to storyboard panels.
+Ordinary PNG exports include an appendix by default.
 Set the SVG preference in the diagram with
 .Li "vars: {d2-config: {force-appendix: true}}" .
 An explicit flag or D2_FORCE_APPENDIX environment variable overrides the diagram.

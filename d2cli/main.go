@@ -118,7 +118,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	forceAppendixFlag, err := ms.Opts.Bool("D2_FORCE_APPENDIX", "force-appendix", "", false, "add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG. PNG exports include an appendix by default. Also configurable through vars.d2-config.force-appendix.")
+	forceAppendixFlag, err := ms.Opts.Bool("D2_FORCE_APPENDIX", "force-appendix", "", false, "add a numbered appendix for tooltips and links to SVG exports and storyboard panels. Ordinary PNG exports include an appendix by default. Also configurable through vars.d2-config.force-appendix.")
 	if err != nil {
 		return err
 	}
@@ -430,7 +430,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if review != "" {
 		ctx, cancel := timelib.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
-		return runMotionReview(ctx, ms, review, inputPath, outputPath, layoutFlag, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, renderOpts)
+		return runMotionReview(ctx, ms, review, inputPath, outputPath, layoutFlag, fontFamily, monoFontFamily, animateIntervalFlag, animateDurationFlag, forceAppendixFlag, renderOpts)
 	}
 
 	if *watchFlag {

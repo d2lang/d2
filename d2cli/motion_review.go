@@ -52,7 +52,7 @@ func motionReviewInterval(config *d2target.Config, override *int64) (int, error)
 	return int(*interval), nil
 }
 
-func runMotionReview(ctx context.Context, ms *xmain.State, command, inputPath, outputPath string, layout *string, fontFamily, monoFontFamily *d2fonts.FontFamily, intervalFlag, durationFlag *int64, renderOpts d2svg.RenderOpts) error {
+func runMotionReview(ctx context.Context, ms *xmain.State, command, inputPath, outputPath string, layout *string, fontFamily, monoFontFamily *d2fonts.FontFamily, intervalFlag, durationFlag *int64, forceAppendixFlag *bool, renderOpts d2svg.RenderOpts) error {
 	input, err := ms.ReadPath(inputPath)
 	if err != nil {
 		return err
@@ -106,7 +106,7 @@ func runMotionReview(ctx context.Context, ms *xmain.State, command, inputPath, o
 	if err != nil {
 		return err
 	}
-	data, _, err := renderStoryboard(ctx, plan, renderOpts, assets, fonts)
+	data, _, err := renderStoryboard(ctx, plan, renderOpts, diagram.Config.ResolveForceAppendix(forceAppendixFlag), assets, fonts)
 	if err != nil {
 		return err
 	}
