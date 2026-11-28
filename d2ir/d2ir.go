@@ -529,6 +529,28 @@ func (m *Map) CopyBase(newParent Node) *Map {
 	// fields to layers, scenarios, steps at the end of the source map. Preserve
 	// that observable ordering without reporting a structural mutation: the
 	// field set is unchanged, and compile generations are for glob membership.
+	base, boards := m.baseCopyView()
+	for _, board := range boards {
+		if board != nil {
+			m.deleteEdgesForReferences(board.References, nil)
+		}
+	}
+	base.Edges = m.Edges
+	copy := base.Copy(newParent).(*Map)
+	m.Fields = append(m.Fields[:0], base.Fields...)
+	for _, board := range boards {
+		if board != nil {
+			m.Fields = append(m.Fields, board)
+		}
+	}
+	m.fieldIndex = nil
+	m.fieldIndexSize = 0
+	return copy
+}
+
+// baseCopyView selects the fields inherited by a board. Keeping the child
+// boards out of this view makes expansion accounting match the actual copy.
+func (m *Map) baseCopyView() (Map, [3]*Field) {
 	baseFields := make([]*Field, 0, len(m.Fields))
 	var layers, scenarios, steps *Field
 	for _, field := range m.Fields {
@@ -547,23 +569,9 @@ func (m *Map) CopyBase(newParent Node) *Map {
 		}
 		baseFields = append(baseFields, field)
 	}
-	for _, board := range []*Field{layers, scenarios, steps} {
-		if board != nil {
-			m.deleteEdgesForReferences(board.References, nil)
-		}
-	}
 	base := *m
 	base.Fields = baseFields
-	copy := base.Copy(newParent).(*Map)
-	m.Fields = append(m.Fields[:0], baseFields...)
-	for _, board := range []*Field{layers, scenarios, steps} {
-		if board != nil {
-			m.Fields = append(m.Fields, board)
-		}
-	}
-	m.fieldIndex = nil
-	m.fieldIndexSize = 0
-	return copy
+	return base, [3]*Field{layers, scenarios, steps}
 }
 
 func (m *Map) deleteEdgesForReferences(refs []*FieldReference, cutoff *fieldOrder) {

@@ -168,7 +168,7 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 	// folder comparison below uses CopyBase, which also modifies its source.
 	if !ir.Root() || hasBoardFields(ir) {
 		if err := d2ir.ReserveVariableExpansionCopy(c.ctx, ir); err != nil {
-			c.fatalErr = err
+			c.fatalErr = fmt.Errorf("%s: copying board content: %w", g.BoardRange, err)
 			return g
 		}
 		ir = ir.Copy(nil).(*d2ir.Map)
@@ -224,8 +224,8 @@ func (c *compiler) compileBoard(g *d2graph.Graph, ir *d2ir.Map) *d2graph.Graph {
 		return g
 	}
 	if len(g.Layers) > 0 || len(g.Scenarios) > 0 || len(g.Steps) > 0 {
-		if err := d2ir.ReserveVariableExpansionCopy(c.ctx, ir); err != nil {
-			c.fatalErr = err
+		if err := d2ir.ReserveBoardBaseCopy(c.ctx, ir); err != nil {
+			c.fatalErr = fmt.Errorf("%s: copying board content: %w", g.BoardRange, err)
 			return g
 		}
 		if d2ir.ParentMap(ir).CopyBase(nil).Equal(ir.CopyBase(nil)) {

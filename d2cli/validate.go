@@ -1,10 +1,11 @@
 package d2cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
-	"github.com/d2lang/d2/d2lib"
+	"github.com/d2lang/d2/d2compiler"
 	"github.com/d2lang/util-go/xdefer"
 	"github.com/d2lang/util-go/xmain"
 )
@@ -27,7 +28,7 @@ func validateCmd(ctx context.Context, ms *xmain.State) (err error) {
 		return err
 	}
 
-	_, err = d2lib.Parse(ctx, string(input), nil)
+	_, _, err = d2compiler.Compile(inputPath, bytes.NewReader(input), &d2compiler.CompileOptions{Context: ctx, FS: localFilesFromContext(ctx)})
 	if err != nil {
 		return err
 	}
@@ -36,6 +37,6 @@ func validateCmd(ctx context.Context, ms *xmain.State) (err error) {
 		inputPath = "Input"
 	}
 
-	fmt.Printf("Success! [%s] is valid D2.\n", inputPath)
+	fmt.Fprintf(ms.Stdout, "Success! [%s] is valid D2.\n", inputPath)
 	return nil
 }

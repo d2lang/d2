@@ -108,6 +108,18 @@ func (c *compiler) reserveVariableCopy(n d2ast.Node, root Node) bool {
 	return c.handleVariableExpansionWalkError(err)
 }
 
+// Board inheritance uses the compilation-wide expansion budget. Identify
+// the board declaration if copying its inherited content exhausts it.
+func (c *compiler) reserveBoardCopy(source d2ast.Node, m *Map) bool {
+	err := walkVariableExpansion(c.ctx, m, nil, c.variableExpansion.reserve)
+	if _, limited := err.(*variableExpansionLimitError); limited {
+		c.expansionErr = fmt.Errorf("copying board content: %w", err)
+		c.errorf(source, "%v", c.expansionErr)
+		c.halted = true
+	}
+	return c.handleVariableExpansionWalkError(err)
+}
+
 func (c *compiler) reserveVariableASTCopy(source d2ast.Node, root *d2ast.Map) bool {
 	ok := true
 	d2ast.Walk(root, func(node d2ast.Node) bool {
@@ -186,6 +198,19 @@ func ReserveVariableExpansionCopy(ctx context.Context, m *Map) error {
 	}
 	budget := ensureVariableExpansionBudget(m)
 	return walkVariableExpansion(ctx, m, nil, budget.reserve)
+}
+
+// ReserveBoardBaseCopy charges the inherited content, excluding nested boards
+// which CopyBase omits. Edges removed by CopyBase are conservatively counted.
+func ReserveBoardBaseCopy(ctx context.Context, m *Map) error {
+	if m == nil {
+		return fmt.Errorf("cannot reserve a board base copy for a nil IR map")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	base, _ := m.baseCopyView()
+	return walkVariableExpansion(ctx, &base, nil, ensureVariableExpansionBudget(m).reserve)
 }
 
 // walkVariableExpansion walks logical occurrences rather than unique pointers.
