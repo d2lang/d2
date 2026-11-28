@@ -30,10 +30,10 @@ const (
 type videoSegment struct {
 	d2animate.Frame
 	rasterPlacement
-	start, end time.Duration
-	route      []d2animate.LayerLeg
-	moving     bool
-	matte      color.RGBA
+	start, end  time.Duration
+	route       []d2animate.LayerLeg
+	movingUntil time.Duration // local board clock
+	matte       color.RGBA
 }
 
 type videoTimeline struct {
@@ -78,7 +78,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	// repeats the tour and can follow the return portal into its next lap.
 	var boardIndex int
 	for i, f := range frames {
-		s := videoSegment{Frame: f, start: p.period, moving: d2scenebuild.ShortestAnimationPeriod(f.Picture()) > 0}
+		s := videoSegment{Frame: f, start: p.period, movingUntil: videoMovingUntil(f.Picture())}
 		if v := viewports[f.Diagram]; v != nil {
 			s.viewport = v
 			tl, br := f.Diagram.BoundingBox()
@@ -128,6 +128,37 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	return p, nil
 }
 
+// Pulses, dashes and repeating departures run for the entire picture. A
+// stopped stream only changes until its last carried icon reaches the target.
+func videoMovingUntil(board *d2target.Diagram) time.Duration {
+	for range d2scenebuild.PaintAnimationPeriods(board) {
+		return math.MaxInt64
+	}
+	var endMS float64
+	for i, path := range board.ConnectionIconRoutes() {
+		c := &board.Connections[i]
+		if !c.HasVisibleIconStream() {
+			continue
+		}
+		s := c.IconSchedule
+		if s == nil {
+			if !math.IsInf(path.LaunchPeriod(c.IconAnimation), 1) {
+				return math.MaxInt64
+			}
+			continue
+		}
+		if !math.IsInf(s.Period, 1) && s.First < float64(s.DurationMS)/1000 {
+			return math.MaxInt64
+		}
+		for _, traveled := range s.Carried {
+			endMS = max(endMS, float64(s.StartMS)+(1-traveled)*s.Transit*1000)
+		}
+	}
+	// Round up so the frame held through the remainder already shows the
+	// empty wire. The sampled clip is bounded even on a longer authored hold.
+	return time.Duration(min(math.Ceil(endMS), float64(math.MaxInt64/int64(time.Millisecond)))) * time.Millisecond
+}
+
 // Return a scene, its local animation time, and the number of identical
 // output frames. Only static poses can run through to the next boundary.
 func (p *videoTimeline) sample(index int) (segment int, local time.Duration, repeats int, leg *d2animate.LayerLeg, progress float64) {
@@ -151,7 +182,7 @@ func (p *videoTimeline) sample(index int) (segment int, local time.Duration, rep
 			return segment, local, 1, &s.route[n], phase - float64(n)
 		}
 	}
-	if s.moving {
+	if local < s.movingUntil {
 		return segment, local, 1, nil, 0
 	}
 	// Clamp to the requested duration before converting the boundary to

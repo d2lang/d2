@@ -278,6 +278,44 @@ func TestVideoLong4KBudget(t *testing.T) {
 	}
 }
 
+func TestVideoCompactsDrainedIconStream(t *testing.T) {
+	root, stop := animatedConnectionRasterDiagram(), animatedConnectionRasterDiagram()
+	root.Steps = []*d2target.Diagram{stop}
+	for _, b := range []*d2target.Diagram{root, stop} {
+		b.Connections[0].Animated = false
+	}
+	root.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{Rate: new(10.)}
+	stop.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{Rate: new(0.)}
+	plan, err := planVideo(root, 30_000, gifLayerOptions{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []time.Duration{20 * time.Second, 30 * time.Second} {
+		if _, _, repeats, _, _ := plan.sample(videoFrameCount(at)); repeats != 1 {
+			t.Fatalf("at %s, holding %d frames while an icon is moving", at, repeats)
+		}
+	}
+	// By 32s every carried icon has landed. The remaining 28s can be held.
+	if _, _, repeats, _, _ := plan.sample(videoFrameCount(32 * time.Second)); repeats != 28*videoFPS {
+		t.Fatalf("drained interval spans %d frames, want %d", repeats, 28*videoFPS)
+	}
+	stop.Connections[0].Animated = true
+	plan, err = planVideo(root, 30_000, gifLayerOptions{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, repeats, _, _ := plan.sample(videoFrameCount(32 * time.Second)); repeats != 1 {
+		t.Fatal("holding the drained stream stopped the animated wire")
+	}
+	legendWire := stop.Connections[0]
+	legendWire.Label = "Traffic"
+	stop.Connections[0].Animated = false
+	stop.Legend = &d2target.Legend{Connections: []d2target.Connection{legendWire}}
+	if videoMovingUntil(stop) < time.Hour {
+		t.Fatal("the legend's moving dashes should keep the hold animated")
+	}
+}
+
 func TestVideoFinishesInFlightIcons(t *testing.T) {
 	root, drain := animatedConnectionRasterDiagram(), animatedConnectionRasterDiagram()
 	root.Steps = []*d2target.Diagram{drain}
