@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 
@@ -354,5 +355,29 @@ func TestLabelPlacementDescendantAllowsExactMaximumDepth(t *testing.T) {
 	}
 	if isDescendant {
 		t.Fatal("unrelated node reported as an ancestor")
+	}
+}
+
+func TestMovingIconCaptionChargesActualCurveWork(t *testing.T) {
+	edge := &layoutgraph.Edge{Points: geo.Route{{X: 403, Y: 188}, {X: 403, Y: 233}, {X: 548, Y: 233}}, LabelPercentage: .5}
+	c := d2target.Connection{IconAnimation: &d2target.ConnectionIconAnimation{}}
+	edge.MovingIcon.Footprint = c.MovingIconFootprint()
+	edge.MovingIcon.BorderRadius = 10
+	guard, err := newLabelPlacementWorkGuard(t.Context(), "icon caption", 256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := edgeLabelTopLeft(edge, label.UnlockedTop, 76, 22, guard); err != nil {
+		t.Fatalf("a single rounded elbow exhausted the work limit: %v", err)
+	}
+	if guard.used <= int64(2*len(edge.Points)) {
+		t.Fatal("the flattened path was never charged")
+	}
+	limited, err := newLabelPlacementWorkGuard(t.Context(), "icon caption", guard.used-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if point, err := edgeLabelTopLeft(edge, label.UnlockedTop, 76, 22, limited); err == nil || point != nil {
+		t.Fatalf("expected exhaustion before returning a caption, got %v, %v", point, err)
 	}
 }

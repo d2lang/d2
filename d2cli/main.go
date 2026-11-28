@@ -138,7 +138,7 @@ func Run(ctx context.Context, ms *xmain.State) (err error) {
 	if err != nil {
 		return err
 	}
-	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG, GIF, or MP4. A positive interval plays all exported boards, including linked layers, and packages multiple boards into one SVG. GIF and MP4 exports default to 1000ms. Also configurable through vars.d2-config.animate-interval.")
+	animateIntervalFlag, err := ms.Opts.Int64("D2_ANIMATE_INTERVAL", "animate-interval", "", 0, "minimum milliseconds per board in an animated SVG, GIF, or MP4. A positive interval plays all exported boards, including linked layers, and packages multiple boards into one SVG. MP4 and multiboard GIFs default to 1000ms per board. GIFs allow time for icon departures and derive a single-board loop from the animation. Also configurable through vars.d2-config.animate-interval.")
 	if err != nil {
 		return err
 	}
@@ -668,7 +668,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		}
 	}
 	progress := rootDiagram.Config.ResolveAnimateProgress(renderOptions.AnimateProgress, animateInterval > 0)
-	if (ext == GIF || ext == MP4) && animateInterval == 0 {
+	if ext == MP4 && animateInterval == 0 {
 		animateInterval = 1000
 		ms.Log.Debug.Printf("%s export: defaulting animate-interval to 1000ms", ext)
 	}
@@ -700,7 +700,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 		diagram.Steps = nil
 	}
 
-	if animateInterval > 0 {
+	if animateInterval > 0 || ext == GIF {
 		masterID, err := diagram.HashID(renderOpts.Salt)
 		if err != nil {
 			return nil, false, err
@@ -843,7 +843,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 			if err != nil {
 				return nil, false, err
 			}
-			timeline, err := d2animate.Timeline(diagram, int(animateInterval))
+			timeline, err := d2animate.SVGTimeline(diagram, resolvedPath, int(animateInterval), layerDuration)
 			if err != nil {
 				return nil, false, err
 			}
@@ -859,7 +859,7 @@ func compile(ctx context.Context, ms *xmain.State, fs fs.FS, layout *string, ren
 				if err := ctx.Err(); err != nil {
 					return nil, false, err
 				}
-				svg, _, err := _renderWithPNGEncoder(ctx, ms, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, frame.Diagram, ext, asciiMode, wantPreview, nil)
+				svg, _, err := _renderWithPNGEncoder(ctx, ms, renderOpts, inputPath, outputPath, bundle, forceAppendix, ruler, frame.Picture(), ext, asciiMode, wantPreview, nil)
 				if err != nil {
 					return nil, false, err
 				}

@@ -161,7 +161,8 @@ Set the same interval in D2 source with
 A positive interval plays the exported boards in order, including linked layers.
 The source value accepts integer milliseconds or a duration such as 1.5s.
 The flag takes precedence over D2_ANIMATE_INTERVAL, which takes precedence over the file.
-Zero selects ordinary SVG export or the default GIF and MP4 interval of 1000ms.
+Zero selects ordinary SVG export.
+MP4 and multiboard GIFs default to 1000ms per board. GIFs allow time for icon departures and derive a single-board loop from the animation.
 .Ns .
 .It Fl -animate-duration Ar 0
 Set the transition duration for changes to numeric properties, colors, and grid layouts between steps.

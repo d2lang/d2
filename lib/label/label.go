@@ -665,7 +665,7 @@ func (labelPosition Position) GetPointOnRoute(route geo.Route, strokeWidth, labe
 		return geo.NewPoint(basePoint.X+normalX*offsetX, basePoint.Y+normalY*offsetY)
 	}
 
-	var labelCenter *geo.Point
+	var labelCenter, basePoint *geo.Point
 	switch labelPosition {
 	case InsideMiddleLeft:
 		labelCenter, index = route.GetPointAtDistance(leftPosition)
@@ -675,32 +675,32 @@ func (labelPosition Position) GetPointOnRoute(route geo.Route, strokeWidth, labe
 		labelCenter, index = route.GetPointAtDistance(rightPosition)
 
 	case OutsideTopLeft:
-		basePoint, index := route.GetPointAtDistance(leftPosition)
+		basePoint, index = route.GetPointAtDistance(leftPosition)
 		labelCenter = getOffsetLabelPosition(basePoint, route[index], route[index+1], true)
 	case OutsideTopCenter:
-		basePoint, index := route.GetPointAtDistance(centerPosition)
+		basePoint, index = route.GetPointAtDistance(centerPosition)
 		labelCenter = getOffsetLabelPosition(basePoint, route[index], route[index+1], true)
 	case OutsideTopRight:
-		basePoint, index := route.GetPointAtDistance(rightPosition)
+		basePoint, index = route.GetPointAtDistance(rightPosition)
 		labelCenter = getOffsetLabelPosition(basePoint, route[index], route[index+1], true)
 
 	case OutsideBottomLeft:
-		basePoint, index := route.GetPointAtDistance(leftPosition)
+		basePoint, index = route.GetPointAtDistance(leftPosition)
 		labelCenter = getOffsetLabelPosition(basePoint, route[index], route[index+1], false)
 	case OutsideBottomCenter:
-		basePoint, index := route.GetPointAtDistance(centerPosition)
+		basePoint, index = route.GetPointAtDistance(centerPosition)
 		labelCenter = getOffsetLabelPosition(basePoint, route[index], route[index+1], false)
 	case OutsideBottomRight:
-		basePoint, index := route.GetPointAtDistance(rightPosition)
+		basePoint, index = route.GetPointAtDistance(rightPosition)
 		labelCenter = getOffsetLabelPosition(basePoint, route[index], route[index+1], false)
 
 	case UnlockedTop:
-		basePoint, index := route.GetPointAtDistance(unlockedPosition)
+		basePoint, index = route.GetPointAtDistance(unlockedPosition)
 		labelCenter = getOffsetLabelPosition(basePoint, route[index], route[index+1], true)
 	case UnlockedMiddle:
 		labelCenter, index = route.GetPointAtDistance(unlockedPosition)
 	case UnlockedBottom:
-		basePoint, index := route.GetPointAtDistance(unlockedPosition)
+		basePoint, index = route.GetPointAtDistance(unlockedPosition)
 		labelCenter = getOffsetLabelPosition(basePoint, route[index], route[index+1], false)
 	default:
 		return nil, -1

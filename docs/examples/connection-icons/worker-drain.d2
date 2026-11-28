@@ -1,0 +1,30 @@
+direction: right
+vars.d2-config: {pad: 24; animate-interval: 3s}
+style.fill: "#fbfcf9"
+
+classes.station: {
+  width: 150
+  height: 64
+  style: {fill: "#ffffff"; stroke: "#92a098"; font-color: "#27392e"; font-size: 17; border-radius: 9}
+}
+
+inbox: Job queue {class: station; shape: cylinder; height: 86; label.near: center-center}
+worker: "Image worker\naccepting jobs" {class: station; width: 168; height: 76; style.fill: "#d8eee5"; style.stroke: "#348067"}
+lease: Lease service {class: station}
+store: Photo library {class: station}
+
+inbox -> worker: {
+  icon.shape: circle
+  icon.style.animated: 2/s
+  style.stroke: "#177350"
+}
+inbox -> lease: {style.stroke: "#89978d"}
+lease -> worker: {style.stroke: "#89978d"}
+worker -> store: {style.stroke: "#89978d"}
+
+steps.maintenance: {
+  (inbox -> worker)[0].icon.style.animated: 0/s
+  worker.label: "Image worker\ndraining"
+  worker.style.fill: "#f7e6d0"
+  worker.style.stroke: "#ae7438"
+}

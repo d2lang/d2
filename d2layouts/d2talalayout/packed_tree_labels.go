@@ -63,7 +63,13 @@ func packedTreeCaptionBoxes(g *layoutgraph.Graph) (endpoints, other []geo.Box, o
 				slices.Reverse(route)
 			}
 			w, h := math.Trunc(l.Width), math.Trunc(l.Height)
-			p, _ := pos.GetPointOnRoute(route, conn.RenderedStrokeWidth(), float64(float32(pct)), w, h)
+			pct = float64(float32(pct))
+			var p *geo.Point
+			if e.MovingIcon.Footprint != 0 {
+				p = e.MovingIcon.LabelTopLeft(route, false, pos, pct, w, h, nil)
+			} else {
+				p, _ = pos.GetPointOnRoute(route, conn.RenderedStrokeWidth(), pct, w, h)
+			}
 			other = append(other, *geo.NewBox(p, w, h))
 		}
 	}

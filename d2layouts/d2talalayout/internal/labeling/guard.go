@@ -485,7 +485,14 @@ func edgeLabelTopLeft(edge *layoutgraph.Edge, position label.Position, width, he
 			return nil, err
 		}
 	}
-	point := edge.LabelTopLeft(position, width, height)
+	var workErr error
+	point := edge.LabelTopLeftWithWork(position, width, height, func(units int64) bool {
+		workErr = guard.add(units)
+		return workErr == nil
+	})
+	if workErr != nil {
+		return nil, workErr
+	}
 	if err := guard.check(); err != nil {
 		return nil, err
 	}

@@ -46,7 +46,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 		if err := b.ctx.Err(); err != nil {
 			return nil, err
 		}
-		if connection.Opacity == 0 || connection.Label == "" && connection.Icon == nil {
+		if connection.Opacity == 0 || connection.Label == "" && !connection.HasStaticIcon() {
 			continue
 		}
 		var holeBox d2scene.Box
@@ -58,9 +58,9 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 			}
 			x := math.Round(topLeft.X) - 2
 			width := connection.LabelWidth + 4
-			if connection.Icon != nil {
-				x -= d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE
-				width += d2target.CONNECTION_ICON_LABEL_GAP + d2target.DEFAULT_ICON_SIZE
+			if connection.HasStaticIcon() {
+				x -= float64(d2target.CONNECTION_ICON_LABEL_GAP + connection.IconSize())
+				width += d2target.CONNECTION_ICON_LABEL_GAP + connection.IconSize()
 			}
 			holeBox = d2scene.Box{
 				X: x, Y: math.Round(topLeft.Y),
@@ -74,7 +74,7 @@ func (b *builder) buildConnectionMask(viewBox d2scene.Box) (*d2scene.Mask, error
 			}
 			holeBox = d2scene.Box{
 				X: topLeft.X - 2, Y: topLeft.Y,
-				Width: d2target.DEFAULT_ICON_SIZE + 4, Height: d2target.DEFAULT_ICON_SIZE,
+				Width: float64(connection.IconSize() + 4), Height: float64(connection.IconSize()),
 			}
 		}
 		hole := d2scene.NewNode(d2scene.Rect{

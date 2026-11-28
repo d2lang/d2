@@ -165,6 +165,35 @@ cuts to the destination. Clicking a board link in a standalone SVG pauses the
 tour for manual navigation.
 [Order fulfillment example](./docs/examples/order-fulfillment/order-fulfillment.svg) · [D2 source](./docs/examples/order-fulfillment/order-fulfillment.d2)
 
+Give a connection a stream of icons with `icon.style.animated`. For example,
+`gateway -> canary: {icon.style.animated: 0.5/s}` sends one dot every two
+seconds. Higher rates put more dots on the wire at the same travel speed,
+up to 64 icons in flight for a steady stream. On a wire that takes one second
+to cross, rates above `64/s` display as `64/s`.
+Set the rate to `0/s` in a later step to let the last dots arrive, or use
+`true` for one continuously looping icon. Supply an image with `icon` to send
+your own artwork. Labels beside a connection leave room for the icon as it
+passes. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
+
+To loop one icon with a fixed trip time, give the duration in whole
+milliseconds. The icon departs again as soon as it arrives. Each trip keeps
+its duration across layout engines, even when the wire changes length.
+
+```d2
+gateway -> cache: {icon.style.animated: 200ms}
+gateway -> database: {icon.style.animated: 1500ms}
+```
+
+The cache icon makes five trips per second. The database icon takes a second
+and a half per trip. On a rate-based connection such as `2/s`, D2 launches
+icons at the requested rate and the wire length determines their trip time.
+[Cache latency](./docs/examples/connection-icons/cache-latency.d2) · [Encoder loop](./docs/examples/connection-icons/encoder-loop.d2) · [Worker drain](./docs/examples/connection-icons/worker-drain.d2)
+
+A single-board GIF with `icon.style.animated: 0.25/s` automatically loops
+every four seconds. An explicit loop must last at least the time between
+departures on each active stream. For a diagram with steps, this requirement
+applies to the full loop across the exported boards.
+
 To share a tour as an H.264 video, run `d2 tour.d2 tour.mp4`. The CLI plays
 the selected boards once. It samples motion at 30 fps and records holds using
 timestamps. MP4 export requires FFmpeg 5.1 or newer with the `libx264` encoder

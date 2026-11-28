@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
@@ -86,6 +88,30 @@ func TestOutsideIconBoundsFollowShapeType(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConnectionIconBounds(t *testing.T) {
+	c := BaseConnection()
+	c.Route = []*geo.Point{{X: 100, Y: 100}, {X: 200, Y: 100}}
+	c.IconPosition = label.InsideMiddleCenter.String()
+	c.IconShape = ShapeCircle
+	d := Diagram{Shapes: []Shape{{Pos: Point{150, 100}, Width: 1, Height: 1}}}
+	check := func(tl, br Point) {
+		t.Helper()
+		d.Connections = []Connection{*c}
+		gotTL, gotBR := d.BoundingBox()
+		if gotTL != tl || gotBR != br {
+			t.Fatalf("icon bounds = %v ... %v, want %v ... %v", gotTL, gotBR, tl, br)
+		}
+	}
+	check(Point{99, 95}, Point{201, 105})
+	c.IconAnimation = &ConnectionIconAnimation{}
+	check(Point{95, 95}, Point{205, 105})
+	c.IconShape = ""
+	c.Icon = &url.URL{Path: "image.png"}
+	check(Point{84, 84}, Point{216, 116})
+	c.IconAnimation = nil
+	check(Point{99, 84}, Point{201, 116})
 }
 
 func TestHashIDStableAcrossURLFieldOrder(t *testing.T) {

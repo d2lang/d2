@@ -220,6 +220,9 @@ func Compile(args []js.Value) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := result.validateRequestedIconLoop(); err != nil {
+		return nil, err
+	}
 	result.FS[result.InputPath] = d2format.Format(result.Graph.AST)
 	if fonts := input.Opts.customFonts(); fonts != nil {
 		return struct {
@@ -228,6 +231,55 @@ func Compile(args []js.Value) (interface{}, error) {
 		}{result, compiledDiagram{result.Diagram, fonts}}, nil
 	}
 	return *result, nil
+}
+
+// A two-phase compile can be reused by a static render or a different target.
+// Only an explicit subtree target and interval select an SVG playback loop here.
+func (result *CompileResponse) validateRequestedIconLoop() error {
+	opts := result.RenderOptions
+	if opts.AnimateInterval == nil || *opts.AnimateInterval <= 0 || opts.Target == nil ||
+		(*opts.Target != "*" && !strings.HasSuffix(*opts.Target, ".*")) || (opts.ASCII != nil && *opts.ASCII) {
+		return nil
+	}
+	if !hasExplicitIconPeriod(&result.Diagram) {
+		return nil
+	}
+	if err := validateAnimateInterval(opts.AnimateInterval); err != nil {
+		return err
+	}
+	path, _, err := parseRenderTarget(opts.Target)
+	if err != nil {
+		return err
+	}
+	board, resolved := result.Diagram.ResolveBoard(path)
+	if board == nil {
+		return &WASMError{Message: fmt.Sprintf("render target '%s' not found", strings.Join(path, ".")), Code: 400}
+	}
+	zoom, err := d2animate.LayerDuration(&result.Diagram)
+	if err == nil {
+		err = d2animate.ValidateSVGIconLoop(board, resolved, int(*opts.AnimateInterval), zoom)
+	}
+	if err != nil {
+		return &WASMError{Message: fmt.Sprintf("invalid timeline: %s", err), Code: 400}
+	}
+	return nil
+}
+
+func hasExplicitIconPeriod(board *d2target.Diagram) bool {
+	for i := range board.Connections {
+		c := &board.Connections[i]
+		if c.Opacity != 0 && c.IconAnimation.HasExplicitPeriod() {
+			return true
+		}
+	}
+	for _, group := range [][]*d2target.Diagram{board.Layers, board.Scenarios, board.Steps} {
+		for _, child := range group {
+			if hasExplicitIconPeriod(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func RenderSVG(args []js.Value) (interface{}, error) {
@@ -505,6 +557,21 @@ func Render(args []js.Value) (interface{}, error) {
 	return render(RenderRequest{Diagram: &input.Diagram.Diagram, Opts: input.Opts, fonts: input.Diagram.CustomFonts})
 }
 
+func parseRenderTarget(target *string) (boardPath []string, noChildren bool, err error) {
+	if target == nil || *target == "" {
+		return nil, true, nil
+	}
+	if *target == "*" {
+		return nil, false, nil
+	}
+	name, subtree := strings.CutSuffix(*target, ".*")
+	key, err := d2parser.ParseKey(name)
+	if err != nil {
+		return nil, false, &WASMError{Message: fmt.Sprintf("target '%s' not recognized", name), Code: 400}
+	}
+	return key.StringIDA(), !subtree, nil
+}
+
 func render(input RenderRequest) ([]byte, error) {
 	if input.Diagram == nil {
 		return nil, &WASMError{Message: "missing 'diagram' field in input JSON", Code: 400}
@@ -541,29 +608,12 @@ func render(input RenderRequest) ([]byte, error) {
 		scale = nil
 	}
 
-	var boardPath []string
-	noChildren := true
-
-	if input.Opts.Target != nil {
-		switch *input.Opts.Target {
-		case "*":
-			noChildren = false
-		case "":
-		default:
-			target := *input.Opts.Target
-			if strings.HasSuffix(target, ".*") {
-				target = target[:len(target)-2]
-				noChildren = false
-			}
-			key, err := d2parser.ParseKey(target)
-			if err != nil {
-				return nil, &WASMError{Message: fmt.Sprintf("target '%s' not recognized", target), Code: 400}
-			}
-			boardPath = key.StringIDA()
-		}
-		if !noChildren && animateInterval <= 0 {
-			return nil, &WASMError{Message: fmt.Sprintf("target '%s' only supported for animated SVGs", *input.Opts.Target), Code: 500}
-		}
+	boardPath, noChildren, err := parseRenderTarget(input.Opts.Target)
+	if err != nil {
+		return nil, err
+	}
+	if !noChildren && animateInterval <= 0 {
+		return nil, &WASMError{Message: fmt.Sprintf("target '%s' only supported for animated SVGs", *input.Opts.Target), Code: 500}
 	}
 
 	diagram, resolvedPath := input.Diagram.ResolveBoard(boardPath)
@@ -645,7 +695,11 @@ func render(input RenderRequest) ([]byte, error) {
 		return nil, &WASMError{Message: fmt.Sprintf("cannot process animate interval: %s", err.Error()), Code: 500}
 	}
 	renderOpts.MasterID = masterID
-	frames, err := d2animate.Timeline(diagram, animateInterval)
+	zoomMS, err := d2animate.LayerDuration(input.Diagram)
+	if err != nil {
+		return nil, &WASMError{Message: err.Error(), Code: 400}
+	}
+	frames, err := d2animate.SVGTimeline(diagram, resolvedPath, animateInterval, zoomMS)
 	if err != nil {
 		return nil, &WASMError{Message: fmt.Sprintf("invalid timeline: %s", err), Code: 400}
 	}
@@ -657,12 +711,8 @@ func render(input RenderRequest) ([]byte, error) {
 		frames = []d2animate.Frame{{Diagram: diagram, DurationMS: animateInterval}}
 	}
 	boards := make([][]byte, len(frames))
-	zoomMS, err := d2animate.LayerDuration(input.Diagram)
-	if err != nil {
-		return nil, &WASMError{Message: err.Error(), Code: 400}
-	}
 	for i, frame := range frames {
-		boards[i], err = renderSingleBoard(renderOpts, forceAppendix, ruler, frame.Diagram)
+		boards[i], err = renderSingleBoard(renderOpts, forceAppendix, ruler, frame.Picture())
 		if err != nil {
 			return nil, err
 		}
