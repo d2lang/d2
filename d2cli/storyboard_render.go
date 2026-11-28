@@ -7,7 +7,6 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -137,10 +136,14 @@ func planStoryboard(ctx context.Context, root *d2target.Diagram, intervalMS int)
 					break
 				}
 			}
-		} else if extra > 0 && hold > 0 && (slices.ContainsFunc(b.Shapes, func(s d2target.Shape) bool { return s.Animated }) ||
-			slices.ContainsFunc(b.Connections, func(c d2target.Connection) bool { return c.Animated })) {
-			add(b, 0)
-			extra--
+		} else if extra > 0 && hold > 0 {
+			if period := d2scenebuild.ShortestAnimationPeriod(b); period > 0 {
+				// Seek at most halfway through the shortest effect's cycle.
+				// Sampling at a board midpoint can land exactly back at phase 0.
+				hold = int(min(int64(hold), max(int64(1), period.Milliseconds()/2)))
+				add(b, 0)
+				extra--
+			}
 		}
 		add(b, hold)
 		startMS += int64(duration)

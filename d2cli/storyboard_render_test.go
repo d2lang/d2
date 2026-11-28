@@ -75,32 +75,48 @@ func TestStoryboardSeeksNativeTimeline(t *testing.T) {
 }
 
 func TestStoryboardIndependentAnimation(t *testing.T) {
-	board := animatedConnectionRasterDiagram()
-	plan, err := planStoryboard(t.Context(), board, 600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(info) != 2 || info[0].TimeMS != 0 || info[1].TimeMS != 300 {
-		t.Fatalf("animation samples = %+v", info)
-	}
-	img, err := png.Decode(bytes.NewReader(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Exclude both caption strips. An export that always passed zero to the
-	// underlying rasterizer would paint the same dash phase twice.
-	for y := storyboardGap; y < storyboardGap+storyboardHeight; y++ {
-		for x := storyboardGap; x < storyboardGap+storyboardWidth; x++ {
-			if img.At(x, y) != img.At(x+storyboardWidth+storyboardGap, y) {
-				return
+	shape := simpleRasterDiagram()
+	shape.Shapes[0].Animated = true
+	edge := animatedConnectionRasterDiagram()
+	edge.Connections[0].StrokeWidth = 1 // The visible dash pattern repeats every 250ms.
+	for _, tc := range []struct {
+		name     string
+		board    *d2target.Diagram
+		interval int
+		secondMS int64
+	}{
+		{"shape", shape, 2000, 500},
+		{"connection", edge, 1000, 125},
+		{"short board", edge, 100, 50},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := planStoryboard(t.Context(), tc.board, tc.interval)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
+			data, info, err := renderStoryboard(t.Context(), plan, d2svg.RenderOpts{Pad: new(int64(0))}, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(info) != 2 || info[0].TimeMS != 0 || info[1].TimeMS != tc.secondMS {
+				t.Fatalf("animation samples = %+v", info)
+			}
+			img, err := png.Decode(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Compare only the picture. Different timestamp labels don't prove
+			// that we showed a different phase of the shape or dash animation.
+			for y := storyboardGap; y < storyboardGap+storyboardHeight; y++ {
+				for x := storyboardGap; x < storyboardGap+storyboardWidth; x++ {
+					if img.At(x, y) != img.At(x+storyboardWidth+storyboardGap, y) {
+						return
+					}
+				}
+			}
+			t.Fatal("the two seek times painted the same picture")
+		})
 	}
-	t.Fatal("the two seek times painted the same connection pixels")
 }
 
 func TestStoryboardFolderPathsAndReadingHolds(t *testing.T) {

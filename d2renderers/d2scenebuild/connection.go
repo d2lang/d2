@@ -221,6 +221,8 @@ func validateAnimatedConnection(object string, connection d2target.Connection) e
 	return nil
 }
 
+const dashPeriodsPerCycle = 10
+
 func animatedConnectionTiming(connection d2target.Connection) (float64, time.Duration, error) {
 	strokeDash := connection.StrokeDash
 	if strokeDash == 0 {
@@ -231,9 +233,9 @@ func animatedConnectionTiming(connection d2target.Connection) (float64, time.Dur
 	if !finite(period) || period < 0 {
 		return 0, 0, fmt.Errorf("must produce a finite non-negative dash period")
 	}
-	direction := -10.0
+	direction := -float64(dashPeriodsPerCycle)
 	if connection.SrcArrow != d2target.NoArrowhead && connection.DstArrow == d2target.NoArrowhead {
-		direction = 10
+		direction = dashPeriodsPerCycle
 	}
 	baseOffset := direction * period
 	if !finite(baseOffset) {

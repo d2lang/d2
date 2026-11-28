@@ -77,7 +77,7 @@ func Motion(ctx context.Context, diagram *d2target.Diagram, graph *d2graph.Graph
 			first = shapeIndex(b.base.Diagram)
 			previous = first
 		}
-		sources := labelSources(b, first)
+		sources := labelSources(b)
 		starts := map[string]int{}
 		seenCue := map[string]bool{}
 		frames := d2animate.AppendBoardFrames(nil, b.Diagram, intervalMS)
@@ -210,7 +210,9 @@ func findStarts(before, after map[string]*d2target.Shape, ms int, starts map[str
 		old := before[id]
 		was, now := visible(old), visible(s)
 		if was != now || was && (old.Pos != s.Pos || old.Width != s.Width || old.Height != s.Height ||
-			old.Opacity != s.Opacity || old.Fill != s.Fill || old.Stroke != s.Stroke || old.Label != s.Label || old.Animated != s.Animated) {
+			old.Opacity != s.Opacity || old.Fill != s.Fill || old.Stroke != s.Stroke || old.Animated != s.Animated ||
+			old.RenderedStrokeWidth() != s.RenderedStrokeWidth() || old.StrokeDash != s.StrokeDash || old.BorderRadius != s.BorderRadius ||
+			old.Label != s.Label || s.Label != "" && (old.FontSize != s.FontSize || old.Color != s.Color)) {
 			starts[id] = ms
 		}
 	}

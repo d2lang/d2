@@ -2,6 +2,7 @@ package d2lint
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"slices"
 	"strings"
@@ -222,5 +223,46 @@ steps: {
 	got, err := Motion(t.Context(), d, g, 2000)
 	if err != nil || len(got) != 1 || got[0].Code != "hidden-cue" || got[0].Board != "steps.read" || got[0].Line != 5 {
 		t.Fatalf("only the fade-out should obscure the cue: %+v, %v", got, err)
+	}
+}
+
+func TestCrowdedStyleTweens(t *testing.T) {
+	for _, tc := range []struct{ style, from, to string }{
+		{"stroke-width", "2", "9"},
+		{"stroke-dash", "0", "8"},
+		{"border-radius", "0", "16"},
+		{"font-size", "14", "24"},
+		{"font-color", "red", "blue"},
+	} {
+		t.Run(tc.style, func(t *testing.T) {
+			source := fmt.Sprintf(`vars.d2-config: {animate-interval: 2s; animate-duration: 400ms}
+grid-columns: 6
+a; b; c; d; e; f
+*.width: 100
+*.height: 80
+*.style.%[1]s: %[2]s
+steps: {
+  change: {*.style.%[1]s: %[3]s}
+}`, tc.style, tc.from, tc.to)
+			d, g := compile(t, source, nil)
+			got, err := Motion(t.Context(), d, g, 2000)
+			if err != nil || len(got) != 1 || got[0].Code != "crowded-step" || !strings.HasPrefix(got[0].Message, "6 objects") {
+				t.Fatalf("expected six simultaneous %s changes: %+v, %v", tc.style, got, err)
+			}
+		})
+	}
+}
+
+func TestFlashedConnectionLabelPointsToReveal(t *testing.T) {
+	d, g := compile(t, `a -> b: cached {style.opacity: 0}
+steps: {
+  show: {
+    (a -> b)[0].style.opacity: 1
+  }
+  hide: {(a -> b)[0].style.opacity: 0}
+}`, nil)
+	got, err := Motion(t.Context(), d, g, 200)
+	if err != nil || len(got) != 1 || got[0].Code != "short-label" || got[0].Board != "steps.show" || got[0].Line != 4 || got[0].Column != 5 {
+		t.Fatalf("expected the connection reveal in steps.show: %+v, %v", got, err)
 	}
 }

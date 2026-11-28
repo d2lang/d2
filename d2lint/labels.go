@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/d2lang/d2/d2ast"
+	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
 )
 
@@ -19,7 +20,7 @@ type authoredLabel struct {
 	key      *d2ast.Key
 }
 
-func labelSources(b *board, before map[string]*d2target.Shape) map[labelID]authoredLabel {
+func labelSources(b *board) map[labelID]authoredLabel {
 	labels := map[labelID]authoredLabel{}
 	for i := range b.Shapes {
 		s := &b.Shapes[i]
@@ -33,27 +34,42 @@ func labelSources(b *board, before map[string]*d2target.Shape) map[labelID]autho
 			labels[labelID{id: c.ID, edge: true}] = authoredLabel{text: c.Label, markdown: c.Language == "markdown"}
 		}
 	}
-	for _, o := range b.graph.Objects {
-		id := labelID{id: o.AbsID()}
-		if l, ok := labels[id]; ok {
-			l.key = o.Label.MapKey
-			// When an existing label is flashed by changing opacity, point to
-			// the reveal in this step, not the original label declaration.
-			if old := before[id.id]; old != nil && old.Label == l.text && !visible(old) {
-				l.key = nil
-				if o.Style.Opacity != nil {
-					l.key = o.Style.Opacity.MapKey
-				}
+	// A previously hidden label can flash even if its text never changes.
+	// Point to the opacity change that revealed it in this step.
+	hidden := map[labelID]string{}
+	if b.base != nil {
+		for i := range b.base.Shapes {
+			s := &b.base.Shapes[i]
+			if s.Label != "" && !visible(s) {
+				hidden[labelID{id: s.ID}] = s.Label
 			}
-			labels[id] = l
+		}
+		for i := range b.base.Connections {
+			c := &b.base.Connections[i]
+			if c.Label != "" && !edgeLabelVisible(c) {
+				hidden[labelID{id: c.ID, edge: true}] = c.Label
+			}
 		}
 	}
-	for _, e := range b.graph.Edges {
-		id := labelID{id: e.AbsID(), edge: true}
-		if l, ok := labels[id]; ok {
-			l.key = e.Label.MapKey
-			labels[id] = l
+	locate := func(id labelID, a *d2graph.Attributes) {
+		l, ok := labels[id]
+		if !ok {
+			return
 		}
+		l.key = a.Label.MapKey
+		if hidden[id] == l.text {
+			l.key = nil
+			if a.Style.Opacity != nil {
+				l.key = a.Style.Opacity.MapKey
+			}
+		}
+		labels[id] = l
+	}
+	for _, o := range b.graph.Objects {
+		locate(labelID{id: o.AbsID()}, &o.Attributes)
+	}
+	for _, e := range b.graph.Edges {
+		locate(labelID{id: e.AbsID(), edge: true}, &e.Attributes)
 	}
 	return labels
 }
@@ -102,7 +118,7 @@ func (l *labelTracker) observe(b *board, d *d2target.Diagram, authored map[label
 	}
 	for i := range d.Connections {
 		c := &d.Connections[i]
-		if c.Opacity > 0 && (c.MotionLabel == nil || c.MotionLabel.Opacity > 0) {
+		if edgeLabelVisible(c) {
 			see(labelID{id: c.ID, edge: true}, c.Label)
 		}
 	}
@@ -118,6 +134,10 @@ func (l *labelTracker) observe(b *board, d *d2target.Diagram, authored map[label
 		}
 		delete(l.active, k)
 	}
+}
+
+func edgeLabelVisible(c *d2target.Connection) bool {
+	return c.Opacity > 0 && (c.MotionLabel == nil || c.MotionLabel.Opacity > 0)
 }
 
 func (l *labelTracker) finish(t int64, findings *[]Diagnostic) {
