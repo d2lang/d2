@@ -307,6 +307,7 @@ func bundledFontFallbackOptions(totalBoards int, next d2fonts.FallbackResolver) 
 }
 
 type sceneFrameOptions struct {
+	omitAppendix    bool // storyboard follows SVG; other native exports include appendix entries by default.
 	minimumBounds   *image.Rectangle
 	maxNodes        int
 	maxPathCommands int
@@ -346,7 +347,7 @@ func buildSceneWithResourcesAndLinks(ctx context.Context, diagram *d2target.Diag
 		Assets:     assetOptions,
 		Fonts:      fontOptions,
 		LinkBudget: linkBudget,
-		Appendix:   true,
+		Appendix:   !frameOpts.omitAppendix,
 	})
 	if err != nil {
 		return nil, err

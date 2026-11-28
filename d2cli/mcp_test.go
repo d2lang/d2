@@ -73,9 +73,9 @@ func TestMCPListTools(t *testing.T) {
 		require.Nil(t, tool.Meta)
 		require.True(t, tool.Annotations.ReadOnlyHint)
 		require.True(t, tool.Annotations.IdempotentHint)
-		require.Equal(t, tool.Name == "render", *tool.Annotations.OpenWorldHint)
+		require.Equal(t, tool.Name == "render" || tool.Name == "storyboard", *tool.Annotations.OpenWorldHint)
 	}
-	require.Equal(t, []string{"guide", "check", "render"}, names)
+	require.Equal(t, []string{"guide", "check", "lint_motion", "render", "storyboard"}, names)
 	resources, err := s.ListResources(t.Context(), nil)
 	require.NoError(t, err)
 	require.Empty(t, resources.Resources)

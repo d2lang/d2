@@ -67,6 +67,37 @@ var (
 	}
 )
 
+// ShortestAnimationPeriod returns the shortest visible repeating effect on an
+// authored board. Each dash moves by one pattern length ten times per track
+// cycle, so its appearance repeats sooner than the complete offset track.
+func ShortestAnimationPeriod(board *d2target.Diagram) time.Duration {
+	var period time.Duration
+	consider := func(shapes []d2target.Shape, connections []d2target.Connection) {
+		for i := range shapes {
+			if shapes[i].Animated && shapes[i].Opacity > 0 && (period == 0 || animatedShapeDuration < period) {
+				period = animatedShapeDuration
+				break
+			}
+		}
+		for i := range connections {
+			c := &connections[i]
+			if !c.Animated || c.Opacity <= 0 || c.RenderedStrokeWidth() <= 0 {
+				continue
+			}
+			_, duration, err := animatedConnectionTiming(*c)
+			dashPeriod := duration / dashPeriodsPerCycle
+			if err == nil && dashPeriod > 0 && (period == 0 || dashPeriod < period) {
+				period = dashPeriod
+			}
+		}
+	}
+	consider(board.Shapes, board.Connections)
+	if board.Legend != nil {
+		consider(board.Legend.Shapes, board.Legend.Connections)
+	}
+	return period
+}
+
 // appendShapeGeometry nests shape geometry so static shadow and blend do not
 // affect sibling icons or ordinary labels. Structured shapes remain wholly
 // inside because their text and geometry form one unit.

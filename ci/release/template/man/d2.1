@@ -23,6 +23,13 @@
 .Nm d2
 .Ar validate Ar file.d2
 .Nm d2
+.Cm storyboard
+.Ar file.d2
+.Op Ar board.png
+.Nm d2
+.Cm lint Fl -motion
+.Ar file.d2
+.Nm d2
 .Ar lsp
 .Op Fl -stdio
 .Nm d2
@@ -233,8 +240,8 @@ Allow remote image assets to access private, loopback, and link-local networks. 
 Allow the diagram to read local files: imports, and images bundled into or rendered in the output. Disable it to render untrusted diagrams
 .Ns .
 .It Fl -force-appendix Ar false
-Add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG.
-PNG exports include an appendix by default.
+Add a numbered appendix for tooltips and links to SVG exports, including each frame of an animated SVG, and to storyboard panels.
+Ordinary PNG exports include an appendix by default.
 Set the SVG preference in the diagram with
 .Li "vars: {d2-config: {force-appendix: true}}" .
 An explicit flag or D2_FORCE_APPENDIX environment variable overrides the diagram.
@@ -299,11 +306,24 @@ Pass - to read D2 from stdin and always print the formatted source on success.
 Opens the file in playground, an online web viewer (https://play.d2lang.com)
 .It Ar validate Ar file.d2
 Validates file.d2
+.It Cm storyboard Ar file.d2 Op Ar board.png
+Render one PNG contact sheet with board names and playback timestamps.
+The sheet includes every drawable board and uses remaining panels for intermediate motion.
+All panels use a shared viewport, as in animated SVG playback.
+The sheet holds up to 64 panels and fits frames to a fixed panel size regardless of the source export scale.
+It uses the diagram's animation timing and accepts the same layout and timing overrides as GIF export.
+The default interval is 1000 milliseconds.
+The default output for film.d2 is film.storyboard.png.
+Pass - to read source or write the PNG on standard output.
+.It Cm lint Fl -motion Ar file.d2
+Check the playback timeline for crowded transitions, short-lived labels, hidden caption targets, and possible shape ID replacements.
+Print findings with file, line, column, board, and rule.
+The command exits with status 1 when it finds a warning and 0 when the input passes.
 .It Ar lsp Op Fl -stdio
 Runs the D2 language server on standard input and output for editors.
 .It Cm mcp
 Run a Model Context Protocol server on standard input and standard output.
-AI clients can read the D2 language guide, check diagrams for errors, and render PNG, SVG or text.
+AI clients can read the D2 language guide, check diagrams for errors, render PNG, SVG or text, and review animations with the storyboard and lint_motion tools.
 The server denies local file access by default.
 Use
 .Fl -root Ar dir

@@ -79,7 +79,7 @@ func TestMCPTranscript(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
 	}
-	require.Equal(t, []string{"guide", "check", "render"}, names)
+	require.Equal(t, []string{"guide", "check", "lint_motion", "render", "storyboard"}, names)
 }
 
 func TestMCPDiscover(t *testing.T) {
@@ -113,9 +113,9 @@ func TestMCPEnvironment(t *testing.T) {
 	require.Equal(t, &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, init.Capabilities)
 	var tools mcp.ListToolsResult
 	require.NoError(t, json.Unmarshal(replies[2], &tools))
-	require.Len(t, tools.Tools, 3)
-	require.Equal(t, "render", tools.Tools[2].Name)
-	require.Nil(t, tools.Tools[2].Meta)
+	require.Len(t, tools.Tools, 5)
+	require.Equal(t, "render", tools.Tools[3].Name)
+	require.Nil(t, tools.Tools[3].Meta)
 	var result struct {
 		StructuredContent struct {
 			OK     bool

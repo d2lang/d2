@@ -4,6 +4,7 @@ import (
 	"hash/fnv"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/d2lang/d2/lib/geo"
 )
@@ -1045,11 +1046,6 @@ func simplify(pts []geo.Point) []geo.Point {
 // long as its sentence. Subtitles are paced at about 17 characters a second;
 // the constant gives the eye time to find each new piece of text.
 func (diagram *Diagram) ReadingMS() int {
-	const (
-		settleMS  = 700
-		perCharMS = 58
-		maxMS     = 20_000
-	)
 	chars := 0
 	if a := diagram.Root.Annotation; a != nil {
 		chars += readableLength(a.Label)
@@ -1064,10 +1060,23 @@ func (diagram *Diagram) ReadingMS() int {
 			chars += readableLength(a.Label)
 		}
 	}
+	return readingMS(chars)
+}
+
+// LabelReadingMS applies the animation's reading pace to a single label.
+func LabelReadingMS(text string, markdown bool) int {
+	if markdown {
+		return readingMS(readableLength(text))
+	}
+	return readingMS(utf8.RuneCountInString(text))
+}
+
+func readingMS(chars int) int {
+	const settleMS, perCharMS, maxMS = 700, 58, 20_000
 	if chars == 0 {
 		return 0
 	}
-	return min(maxMS, settleMS+perCharMS*chars)
+	return min(maxMS, settleMS+perCharMS*min(chars, maxMS/perCharMS))
 }
 
 // readableLength counts the characters a reader sees, leaving out Markdown

@@ -14,7 +14,7 @@ func TestMCPViewer(t *testing.T) {
 	s := newTestMCP(t, mcpConfig{ui: true})
 	list, err := s.ListTools(t.Context(), nil)
 	require.NoError(t, err)
-	require.Equal(t, map[string]any{"resourceUri": "ui://d2/viewer"}, list.Tools[2].Meta["ui"])
+	require.Equal(t, map[string]any{"resourceUri": "ui://d2/viewer"}, list.Tools[3].Meta["ui"])
 	resources, err := s.ListResources(t.Context(), nil)
 	require.NoError(t, err)
 	require.Len(t, resources.Resources, 1)

@@ -41,6 +41,8 @@ type Graph struct {
 	FS     fs.FS  `json:"-"`
 	Parent *Graph `json:"-"`
 	Name   string `json:"name"`
+	// BoardRange locates the board declaration in source, including dotted keys and imports.
+	BoardRange d2ast.Range `json:"-"`
 	// IsFolderOnly indicates a board or scenario itself makes no modifications from its
 	// base. Folder only boards do not have a render and are used purely for organizing
 	// the board tree.
