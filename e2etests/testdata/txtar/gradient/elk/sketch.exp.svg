@@ -14,7 +14,7 @@
 <stop offset="50.00%" stop-color="green" />
 <stop offset="75.00%" stop-color="cyan" />
 <stop offset="100.00%" stop-color="blue" />
-</radialGradient></defs><defs><linearGradient id="grad-867086f31fcac752507fbbbe0405e35050a4704e" x1="50.00%" y1="50.00%" x2="85.36%" y2="85.36%">
+</radialGradient></defs><defs><linearGradient id="grad-867086f31fcac752507fbbbe0405e35050a4704e" x1="0.00%" y1="100.00%" x2="100.00%" y2="0.00%">
 <stop offset="0%" stop-color="rgba(255,0,0,0.5)" />
 <stop offset="100%" stop-color="rgba(0,0,255,0.5)" />
 </linearGradient></defs><defs><linearGradient id="grad-6a6578853b2dd58addb4313cedbcddecb53a2df1" x1="0%" y1="50%" x2="100%" y2="50%">
