@@ -454,7 +454,17 @@ func (b *builder) buildShapeIcon(targetShape d2target.Shape, structured bool) (*
 func (b *builder) connectionIcon(c d2target.Connection, id string, center geo.Point, fill d2scene.Paint) (*d2scene.Node, error) {
 	size := float64(c.IconSize())
 	if c.Icon == nil {
-		node := d2scene.NewNode(d2scene.Ellipse{Center: d2scene.Point{X: center.X, Y: center.Y}, RadiusX: size / 2, RadiusY: size / 2, Fill: fill})
+		var artwork d2scene.Primitive
+		if vertices := c.IconPolygon(center); len(vertices) != 0 {
+			points := make([]d2scene.Point, len(vertices))
+			for i, vertex := range vertices {
+				points[i] = d2scene.Point(vertex)
+			}
+			artwork = polygonPath(points, fill, nil)
+		} else {
+			artwork = d2scene.Ellipse{Center: d2scene.Point(center), RadiusX: size / 2, RadiusY: size / 2, Fill: fill}
+		}
+		node := d2scene.NewNode(artwork)
 		node.ID = id
 		return node, nil
 	}

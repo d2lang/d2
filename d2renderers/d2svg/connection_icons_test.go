@@ -78,6 +78,34 @@ func TestScheduledIconPathUsesWireCoordinates(t *testing.T) {
 	}
 }
 
+func TestConnectionIconPolygonSVG(t *testing.T) {
+	for _, tc := range []struct{ shape, points string }{
+		{d2target.ShapeSquare, "-5,-5 5,-5 5,5 -5,5"},
+		{d2target.ConnectionIconTriangle, "0,-8 7,4 -7,4"},
+		{d2target.ShapeDiamond, "0,-8 6,0 0,8 -6,0"},
+	} {
+		t.Run(tc.shape, func(t *testing.T) {
+			c := d2target.BaseConnection()
+			c.ID, c.Stroke, c.IconShape = "stream", "linear-gradient(to right, red, blue)", tc.shape
+			c.Route = []*geo.Point{{X: 20, Y: 10}, {X: 80, Y: 10}}
+			c.IconAnimation = &d2target.ConnectionIconAnimation{DurationMS: 200}
+			d := d2target.NewDiagram()
+			d.Connections = []d2target.Connection{*c}
+			doc := renderCrossingSVG(t, d, nil)
+			polygon := doc.Find("defs > g > polygon")
+			if polygon.Length() != 1 || polygon.AttrOr("points", "") != tc.points || !strings.HasPrefix(polygon.AttrOr("fill", ""), "url(#") {
+				t.Fatalf("expected one %s filled with the connection gradient", tc.shape)
+			}
+			href := "#" + polygon.Parent().AttrOr("id", "")
+			for _, selector := range []string{".d2-moving-icons use", ".d2-still-icon use"} {
+				if doc.Find(selector).AttrOr("href", "") != href {
+					t.Fatalf("%s does not use the %s", selector, tc.shape)
+				}
+			}
+		})
+	}
+}
+
 func TestPinnedIconScheduleOnReducedMotion(t *testing.T) {
 	c := *d2target.BaseConnection()
 	c.ID, c.Stroke = "stream", "#f00"
