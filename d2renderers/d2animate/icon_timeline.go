@@ -140,25 +140,31 @@ func makeIconBoard(board *d2target.Diagram, intervalMS int, prev *iconBoard, con
 // stream. Only the initial launches can crowd the wire: thereafter new copies
 // replace their own arrivals and the number of carried copies only decreases.
 func (s *iconStream) finishTimedFlights() {
-	if len(s.carried) == 0 || math.IsInf(s.period, 1) {
-		return
-	}
-	free := d2target.MaxMovingIconsPerConnection - len(s.carried)
-	slots := min(d2target.MaxMovingIconsPerConnection, int(math.Ceil(s.path.TransitDuration(s.animation)/s.period)))
-	if s.animation.Rate != nil && slots <= free {
+	if math.IsInf(s.period, 1) {
 		return
 	}
 	if s.animation.DurationMS == 0 && !slices.ContainsFunc(s.carried, func(f iconFlight) bool { return f.launched.DurationMS > 0 }) {
 		return
 	}
+	if s.animation.Rate == nil {
+		// A single timed loop starts immediately on an empty wire, or as
+		// soon as the last outstanding icon completes its trip.
+		s.first = 0
+		for _, f := range s.carried {
+			s.first = max(s.first, f.remaining(s.path))
+		}
+		return
+	}
+	// A rate-based stream can fill the available slots while a single
+	// icon launched on an earlier timed loop is still traveling.
+	free := d2target.MaxMovingIconsPerConnection - len(s.carried)
+	slots := min(d2target.MaxMovingIconsPerConnection, int(math.Ceil(s.path.TransitDuration(s.animation)/s.period)))
+	if slots <= free {
+		return
+	}
 	arrivals := make([]float64, len(s.carried))
 	for i, f := range s.carried {
 		arrivals[i] = f.remaining(s.path)
-	}
-	if s.animation.Rate == nil {
-		// A single timed loop restarts when the last outstanding icon arrives.
-		s.first = slices.Max(arrivals)
-		return
 	}
 	xsort.Ordered(arrivals)
 	for slot := free; slot < slots; slot++ {

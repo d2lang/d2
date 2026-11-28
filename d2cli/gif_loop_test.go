@@ -21,8 +21,7 @@ func TestGIFIconLoopTiming(t *testing.T) {
 	}{
 		{"sparse stream", quarter, "", 4000},
 		{"one timed icon", "a -> b: {icon.style.animated: 200ms}", "", 200},
-		{"short trip with independent departures", "a -> b: {icon.style.animated: 2/s in 200ms}", "", 500},
-		{"overlapping trips repeat at departure interval", "a -> b: {icon.style.animated: 2/s in 1.5s}", "500", 500},
+		{"separate timed and rate-based connections", "a -> b: {icon.style.animated: 200ms}\na -> c: {icon.style.animated: 2/s}", "", 1000},
 		{"empty legend entries", "a -> b: {icon.style.animated: 2/s}\nvars.d2-legend: {invisible: \"\" {style.animated: true}}", "", 500},
 		{"different rates", quarter + "\nc -> d: {icon.style.animated: 0.6/s}", "", 20000},
 		{"exact authored period", quarter, "4000", 4000},

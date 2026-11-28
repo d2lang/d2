@@ -71,9 +71,6 @@ func ValidateIconLoopDuration(board *Diagram, loopMS int) error {
 			value := fmt.Sprintf("%dms", c.IconAnimation.DurationMS)
 			if c.IconAnimation.Rate != nil {
 				value = fmt.Sprintf("%g/s", *c.IconAnimation.Rate)
-				if c.IconAnimation.DurationMS > 0 {
-					value += fmt.Sprintf(" in %dms", c.IconAnimation.DurationMS)
-				}
 			}
 			return fmt.Errorf("connection %q with icon.style.animated %s needs an animation loop of at least %gs (got %gs)", c.ID, value, period, loop)
 		}

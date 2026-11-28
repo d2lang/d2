@@ -110,7 +110,6 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		return append(getBooleanCompletions(),
 			CompletionItem{Label: "2/s", Kind: KeywordCompletion, Detail: "launch two icons per second", InsertText: "2/s"},
 			CompletionItem{Label: "200ms", Kind: KeywordCompletion, Detail: "loop one icon every 200 milliseconds", InsertText: "200ms"},
-			CompletionItem{Label: "2/s in 200ms", Kind: KeywordCompletion, Detail: "launch two icons per second with a 200 millisecond trip", InsertText: "2/s in 200ms"},
 		), nil
 	case "icon.":
 		return getLabelCompletions(), nil

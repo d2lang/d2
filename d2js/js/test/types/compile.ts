@@ -51,10 +51,13 @@ configured.then((response) => {
     edge.iconAnimation?.durationMs satisfies number | undefined;
     edge.iconAnimation?.previousID satisfies string | undefined;
     edge.icon?.Path satisfies string | undefined;
-    const circle = { ...edge, icon: null, iconShape: "circle" as const, iconAnimation: { rate: 2, durationMs: 200 } };
+    const circle = { ...edge, icon: null, iconShape: "circle" as const, iconAnimation: { rate: 2 } };
     const image = { ...edge, icon: { Path: "letter.svg" }, iconShape: undefined, iconAnimation: {} };
     d2.render({ ...response.diagram, connections: [circle] });
     d2.render({ ...response.diagram, connections: [image] });
+    d2.render({ ...response.diagram, connections: [{ ...circle, iconAnimation: { durationMs: 200 } }] });
+    // @ts-expect-error Choose either a departure rate or a looping trip duration.
+    d2.render({ ...response.diagram, connections: [{ ...circle, iconAnimation: { rate: 2, durationMs: 200 } }] });
   }
   response.graph.edges[0]?.iconShape?.value satisfies string | undefined;
   response.graph.edges[0]?.attributes?.iconStyle?.animated?.value satisfies string | undefined;

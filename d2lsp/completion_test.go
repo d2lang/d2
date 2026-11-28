@@ -582,7 +582,7 @@ func TestConnectionIconCompletions(t *testing.T) {
 		{"(a -> b)[0].icon: {near: |}", "center-center", "(object ID)"},
 		{"a -> b: {icon.style.animated: |}", "2/s", "circle"},
 		{"a -> b: {icon: {style: {animated: |}}}", "200ms", "circle"},
-		{"(a -> b)[0].icon.style.animated: |", "2/s in 200ms", "circle"},
+		{"(a -> b)[0].icon.style.animated: |", "2/s", "2/s in 200ms"},
 		{"a -> b: {style.animated: |}", "true", "2/s"},
 		{"a: {icon: {style: {animated: |}}}", "true", "2/s"},
 	} {

@@ -197,7 +197,7 @@ func TestConnectionScheduledSceneMatchesSampledFrames(t *testing.T) {
 		durations [3]int64
 	}{
 		{"default speed", [3]int64{}},
-		{"changed trip duration and drain", [3]int64{550, 125, 0}},
+		{"switch from rate to timed loop, then drain", [3]int64{0, 550, 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) { checkConnectionScheduledFrames(t, tc.durations) })
 	}
@@ -212,7 +212,11 @@ func checkConnectionScheduledFrames(t *testing.T, durations [3]int64) {
 	for i, board := range []*d2target.Diagram{root, step, stop} {
 		c := &board.Connections[0]
 		c.IconShape, c.Stroke = d2target.ShapeCircle, "#bc3415"
-		c.IconAnimation = &d2target.ConnectionIconAnimation{Rate: floatPointer([]float64{5, 11, 0}[i]), DurationMS: durations[i]}
+		if durations[i] > 0 {
+			c.IconAnimation = &d2target.ConnectionIconAnimation{DurationMS: durations[i]}
+		} else {
+			c.IconAnimation = &d2target.ConnectionIconAnimation{Rate: floatPointer([]float64{5, 11, 0}[i])}
+		}
 	}
 	tl, err := d2animate.NewIconTimeline(root, 310)
 	if err != nil {
@@ -245,7 +249,7 @@ func checkConnectionScheduledFrames(t *testing.T, durations [3]int64) {
 					t.Fatal(err)
 				}
 				if !bytes.Equal(got.Pix, want.Pix) {
-					t.Fatalf("rate %.2f, segment %d, sample %d differs", *board.Connections[0].IconAnimation.Rate, start, at)
+					t.Fatalf("segment %d, sample %d differs", start, at)
 				}
 			}
 		}

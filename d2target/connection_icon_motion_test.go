@@ -39,21 +39,14 @@ func TestConnectionIconDepartureRateCeiling(t *testing.T) {
 func TestTimedIconDepartures(t *testing.T) {
 	for _, length := range []float64{90, 900} {
 		path := IconMotionPath{Distances: []float64{0, length}}
-		for _, tc := range []struct {
-			animation ConnectionIconAnimation
-			period    float64
-		}{
-			{ConnectionIconAnimation{DurationMS: 200}, .2},
-			{ConnectionIconAnimation{Rate: new(2.), DurationMS: 200}, .5},
-			{ConnectionIconAnimation{Rate: new(2.), DurationMS: 1500}, .5},
-			{ConnectionIconAnimation{Rate: new(1000.), DurationMS: 1500}, 1.5 / MaxMovingIconsPerConnection},
-			{ConnectionIconAnimation{Rate: new(0.), DurationMS: 200}, math.Inf(1)},
-		} {
-			if got := path.LaunchPeriod(&tc.animation); got != tc.period {
-				t.Errorf("length %g, %+v: period %g, want %g", length, tc.animation, got, tc.period)
+		for _, ms := range []int64{200, 1500} {
+			animation := &ConnectionIconAnimation{DurationMS: ms}
+			want := float64(ms) / 1000
+			if got := path.TransitDuration(animation); got != want {
+				t.Errorf("%dms on a %g-unit wire: transit %gs, want %gs", ms, length, got, want)
 			}
-			if got := path.TransitDuration(&tc.animation); got != float64(tc.animation.DurationMS)/1000 {
-				t.Errorf("length %g, %+v: transit %gs", length, tc.animation, got)
+			if got := path.LaunchPeriod(animation); got != want {
+				t.Errorf("%dms on a %g-unit wire: departure interval %gs, want %gs", ms, length, got, want)
 			}
 		}
 	}

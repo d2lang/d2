@@ -536,6 +536,9 @@ func (connection *Connection) ValidateIconMotion(path string) error {
 		if a.DurationMS < 0 || a.DurationMS > math.MaxInt64/int64(time.Millisecond) {
 			return invalidRenderField(path, "iconAnimation.durationMs", a.DurationMS, "must be a non-negative representable duration in milliseconds")
 		}
+		if a.Rate != nil && a.DurationMS > 0 {
+			return fmt.Errorf("render target %s.iconAnimation: specify either rate or durationMs", path)
+		}
 	}
 	if s := connection.IconSchedule; s != nil && (!s.valid() || connection.IconAnimation == nil || connection.IconPositions != nil) {
 		return invalidRenderField(path, "iconSchedule", "invalid", "requires a bounded schedule on a moving connection icon")

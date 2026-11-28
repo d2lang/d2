@@ -1099,7 +1099,8 @@ const (
 // zero stops new emissions while icons already in flight finish their trips.
 type ConnectionIconAnimation struct {
 	Rate *float64 `json:"rate,omitempty"`
-	// DurationMS is the time for one trip. Zero uses the diagram's default travel speed.
+	// DurationMS sets the trip time of a single repeating icon. A positive duration
+	// is mutually exclusive with Rate. Zero uses the diagram's default travel speed.
 	DurationMS int64 `json:"durationMs,omitempty"`
 	// A parallel edge may be renumbered in an inherited step. An empty
 	// predecessor marks a replacement that reuses a deleted connection's ID.

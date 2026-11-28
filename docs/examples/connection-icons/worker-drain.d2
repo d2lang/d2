@@ -10,13 +10,16 @@ classes.station: {
 
 inbox: Job queue {class: station; shape: cylinder; height: 86; label.near: center-center}
 worker: "Image worker\naccepting jobs" {class: station; width: 168; height: 76; style.fill: "#d8eee5"; style.stroke: "#348067"}
+lease: Lease service {class: station}
 store: Photo library {class: station}
 
 inbox -> worker: {
   icon.shape: circle
-  icon.style.animated: 2/s in 1.5s
+  icon.style.animated: 2/s
   style.stroke: "#177350"
 }
+inbox -> lease: {style.stroke: "#89978d"}
+lease -> worker: {style.stroke: "#89978d"}
 worker -> store: {style.stroke: "#89978d"}
 
 steps.maintenance: {

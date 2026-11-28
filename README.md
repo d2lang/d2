@@ -175,18 +175,18 @@ Set the rate to `0/s` in a later step to let the last dots arrive, or use
 your own artwork. Labels beside a connection leave room for the icon as it
 passes. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
 
-Set a trip duration to control when each icon arrives, even if a different
-layout engine draws a longer wire. `icon.style.animated: 200ms` loops one icon
-every 200 milliseconds. A rate and duration can also be combined on the same connection.
+To loop one icon with a fixed trip time, give the duration in whole
+milliseconds. The icon departs again as soon as it arrives. Each trip keeps
+its duration across layout engines, even when the wire changes length.
 
 ```d2
-gateway -> cache: {icon.style.animated: 2/s in 200ms}
-gateway -> database: {icon.style.animated: 2/s in 1.5s}
+gateway -> cache: {icon.style.animated: 200ms}
+gateway -> database: {icon.style.animated: 1500ms}
 ```
 
-Both wires launch every half second. The cache wire clears between departures,
-while three requests overlap on the database wire. A duration change in a step
-applies to new departures. Icons already in flight finish their timed trips.
+The cache icon makes five trips per second. The database icon takes a second
+and a half per trip. On a rate-based connection such as `2/s`, D2 launches
+icons at the requested rate and the wire length determines their trip time.
 [Cache latency](./docs/examples/connection-icons/cache-latency.d2) · [Encoder loop](./docs/examples/connection-icons/encoder-loop.d2) · [Worker drain](./docs/examples/connection-icons/worker-drain.d2)
 
 A single-board GIF with `icon.style.animated: 0.25/s` automatically loops

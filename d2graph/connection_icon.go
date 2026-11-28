@@ -2,6 +2,8 @@ package d2graph
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,38 +25,24 @@ func ParseConnectionIconAnimation(value string) (*d2target.ConnectionIconAnimati
 		}
 		return &d2target.ConnectionIconAnimation{}, nil
 	}
-	fields := strings.Fields(value)
-	var rateValue, tripValue string
-	switch {
-	case len(fields) == 1:
-		if strings.HasSuffix(fields[0], "/s") {
-			rateValue = fields[0]
-		} else {
-			tripValue = fields[0]
-		}
-	case len(fields) == 3 && fields[1] == "in":
-		rateValue, tripValue = fields[0], fields[2]
-	default:
-		return nil, errors.New("connection icon.style.animated expects true, false, a rate (2/s), a trip duration (200ms), or both (2/s in 200ms)")
-	}
-
-	animation := &d2target.ConnectionIconAnimation{}
-	if rateValue != "" {
-		number, ok := strings.CutSuffix(rateValue, "/s")
+	value = strings.TrimSpace(value)
+	if number, ok := strings.CutSuffix(value, "/s"); ok && iconRateNumber.MatchString(number) {
 		rate, err := strconv.ParseFloat(number, 64)
-		if !ok || !iconRateNumber.MatchString(number) || err != nil {
-			return nil, errors.New("connection icon.style.animated requires a non-negative decimal departure rate such as 2/s")
+		if err == nil {
+			return &d2target.ConnectionIconAnimation{Rate: &rate}, nil
 		}
-		animation.Rate = &rate
 	}
-	if tripValue != "" {
-		duration, err := time.ParseDuration(tripValue)
-		if err != nil || duration <= 0 || duration%time.Millisecond != 0 {
-			return nil, errors.New("connection icon.style.animated requires a positive trip duration in whole milliseconds, such as 200ms or 1.5s")
+	if number, ok := strings.CutSuffix(value, "ms"); ok {
+		const maxMS = math.MaxInt64 / int64(time.Millisecond)
+		ms, err := strconv.ParseUint(number, 10, 64)
+		if errors.Is(err, strconv.ErrRange) || err == nil && (ms == 0 || ms > uint64(maxMS)) {
+			return nil, fmt.Errorf("connection icon.style.animated trip duration must be between 1ms and %dms", maxMS)
 		}
-		animation.DurationMS = duration.Milliseconds()
+		if err == nil {
+			return &d2target.ConnectionIconAnimation{DurationMS: int64(ms)}, nil
+		}
 	}
-	return animation, nil
+	return nil, errors.New("connection icon.style.animated expects true, false, a non-negative rate such as 2/s, or a positive whole-millisecond duration such as 200ms")
 }
 
 // HasIcon includes native artwork and the default dot of an animated stream.

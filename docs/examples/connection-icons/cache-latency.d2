@@ -16,11 +16,11 @@ db: "Catalog DB\n1.5 s" {class: service; shape: cylinder; width: 160; height: 10
 client -> api: {style.stroke: "#8a998f"}
 api -> cache: {
   icon.shape: circle
-  icon.style.animated: 2/s in 200ms
+  icon.style.animated: 200ms
   style.stroke: "#177350"
 }
 api -> db: {
   icon.shape: circle
-  icon.style.animated: 2/s in 1.5s
+  icon.style.animated: 1500ms
   style.stroke: "#a36125"
 }
