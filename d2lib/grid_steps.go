@@ -115,6 +115,12 @@ func planStructuralStep(prev, next *d2target.Diagram, prevGraph, nextGraph *d2gr
 				p.outline = nil
 			}
 		}
+	} else if next.LayoutContinuity && len(next.TweenFrames) > 0 && p.sequence == nil {
+		// The value sampler already carries the per-frame paint. A reveal can
+		// draw over it when every sample uses the geometry of its endpoint.
+		if reveal := planBoardReveal(prev, next, nextGraph); reveal != nil && revealTweenGeometryMatches(next) {
+			p.reveal = reveal
+		}
 	}
 	if p.reveal != nil || p.outline != nil || p.transfer != nil || p.sqlRows != nil || p.sequence != nil {
 		p.from = prev

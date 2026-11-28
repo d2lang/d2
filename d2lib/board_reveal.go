@@ -44,6 +44,27 @@ func planBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph) *boardRevea
 	return buildBoardReveal(prev, next, g, false)
 }
 
+func revealTweenGeometryMatches(next *d2target.Diagram) bool {
+	for _, frame := range next.TweenFrames {
+		if len(frame.Shapes) != len(next.Shapes) || len(frame.Connections) != len(next.Connections) {
+			return false
+		}
+		for i := range frame.Shapes {
+			a, b := &frame.Shapes[i], &next.Shapes[i]
+			if a.ID != b.ID || a.Type != b.Type || !sameSlot(a, b) || a.LabelWidth != b.LabelWidth || a.LabelHeight != b.LabelHeight {
+				return false
+			}
+		}
+		for i := range frame.Connections {
+			a, b := &frame.Connections[i], &next.Connections[i]
+			if a.ID != b.ID || a.IsCurve != b.IsCurve || !slices.EqualFunc(a.Route, b.Route, func(p, q *geo.Point) bool { return p != nil && q != nil && *p == *q }) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Every survivor must keep its paint, geometry and stacking order throughout
 // a departure. This also proves that both boards use the same coordinates.
 func planBoardDeparture(prev, next *d2target.Diagram, g *d2graph.Graph) *boardReveal {
