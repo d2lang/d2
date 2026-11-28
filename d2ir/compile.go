@@ -1237,6 +1237,9 @@ func (c *compiler) overlay(base *Map, f *Field) {
 	// Certain fields should never carry forward.
 	// If you give your scenario a label, you don't want all steps in a scenario to be labeled the same.
 	base.DeleteField("label")
+	// An annotation points at something for the length of its own board. The
+	// next step starts without the marks and caption of the one before it.
+	base.deleteAnnotations()
 	if !c.reserveVariableCopy(source, f.Map()) {
 		return
 	}
@@ -2183,7 +2186,7 @@ func (evaluation *globFilter) ampersandFilter(refctx *RefContext) bool {
 			return matchesFilterValue(d2ast.FlatUnquotedString("1"), filter)
 		case "stroke-width":
 			return matchesFilterValue(d2ast.FlatUnquotedString("2"), filter)
-		case "icon", "tooltip", "link":
+		case "icon", "tooltip", "link", "annotation":
 			return matchesFilterValue(d2ast.FlatUnquotedString(""), filter)
 		case "shadow", "multiple", "3d", "animated", "filled":
 			return matchesFilterValue(d2ast.FlatUnquotedString("false"), filter)

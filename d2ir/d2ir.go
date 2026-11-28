@@ -1778,6 +1778,41 @@ func (m *Map) DeleteField(ida ...string) *Field {
 	return nil
 }
 
+// deleteAnnotations removes the annotation of the board and of every object
+// and connection on it. Classes and variables keep theirs: those are
+// declarations, and they apply again wherever they are used.
+func givenByGlob(f *Field) bool {
+	for _, ref := range f.References {
+		if !ref.DueToGlob() {
+			return false
+		}
+	}
+	return len(f.References) > 0
+}
+
+func (m *Map) deleteAnnotations() {
+	for i := len(m.Fields) - 1; i >= 0; i-- {
+		f := m.Fields[i]
+		switch d2ast.Keyword(f.Name) {
+		case "annotation":
+			// An annotation that a glob gave the shape is a standing rule,
+			// like one a class carries: it holds on every board.
+			if !givenByGlob(f) {
+				m.deleteFieldAt(i)
+			}
+		case "":
+			if child := f.Map(); child != nil {
+				child.deleteAnnotations()
+			}
+		}
+	}
+	for _, e := range m.Edges {
+		if child := e.Map(); child != nil {
+			child.deleteAnnotations()
+		}
+	}
+}
+
 func (m *Map) deleteField(f *Field) {
 	if i := slices.Index(m.Fields, f); i >= 0 {
 		m.deleteFieldAt(i)
@@ -2479,6 +2514,11 @@ func checkEdgeKeyword(kp *d2ast.KeyPath, path []d2ast.String) error {
 	var n d2ast.Node = kp
 	if k := len(kp.Path) - len(path) + ij; k >= 0 {
 		n = kp.Path[k].Unbox()
+	}
+	if d2ast.Keyword(path[ij]) == "annotation" {
+		// The name was an ordinary one before it became a keyword, so an
+		// existing diagram can have a shape called annotation in an edge.
+		return d2parser.Errorf(n, `reserved keywords are prohibited in edges. If "annotation" is the name of a shape here, quote it`)
 	}
 	return d2parser.Errorf(n, "reserved keywords are prohibited in edges")
 }

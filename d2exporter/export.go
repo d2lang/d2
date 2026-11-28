@@ -19,6 +19,95 @@ import (
 	"github.com/d2lang/d2/lib/label"
 )
 
+// defaultAnnotationMark is the mark a person would reach for when the author
+// names none: a brace to gather a container, a line under bare text, and a
+// ring around anything else.
+func defaultAnnotationMark(obj *d2graph.Object) string {
+	if obj.IsContainer() {
+		return d2target.AnnotationBrace
+	}
+	if strings.EqualFold(obj.Shape.Value, d2target.ShapeText) {
+		return d2target.AnnotationUnderline
+	}
+	return d2target.AnnotationCircle
+}
+
+// groupLassos joins the shapes that were given a lasso by one declaration,
+// which is what a class or a glob does for every shape it applies to. The
+// first of them carries the annotation and names the others; one loop is
+// drawn round them all. A lasso declared on a shape itself holds that shape.
+// It returns the IDs of every shape a lasso holds.
+func groupLassos(g *d2graph.Graph, diagram *d2target.Diagram) (held map[string]struct{}) {
+	owners := make(map[string]*d2target.Annotation)
+	for i, obj := range g.Objects {
+		a := obj.Annotation
+		mark := diagram.Shapes[i].Annotation
+		if a == nil || mark == nil || mark.Shape != d2target.AnnotationLasso {
+			continue
+		}
+		if held == nil {
+			held = make(map[string]struct{})
+		}
+		held[diagram.Shapes[i].ID] = struct{}{}
+		if a.Group == "" {
+			continue
+		}
+		owner, ok := owners[a.Group]
+		if !ok {
+			owners[a.Group] = mark
+			continue
+		}
+		owner.Members = append(owner.Members, diagram.Shapes[i].ID)
+		// The loop has one note and one pen. Each comes from the first of its
+		// shapes to set one.
+		if owner.Label == "" {
+			owner.Label, owner.LabelWidth, owner.LabelHeight = mark.Label, mark.LabelWidth, mark.LabelHeight
+		}
+		if owner.Stroke == "" {
+			owner.Stroke = mark.Stroke
+		}
+		if owner.FontColor == "" {
+			owner.FontColor = mark.FontColor
+		}
+		if owner.Position == "" {
+			owner.Position = mark.Position
+		}
+		diagram.Shapes[i].Annotation = nil
+	}
+	return held
+}
+
+// toAnnotation resolves an annotation for rendering. defaultShape is the mark
+// used when the author named none; a caption has no mark.
+func toAnnotation(a *d2graph.Annotation, defaultShape string) *d2target.Annotation {
+	if a == nil {
+		return nil
+	}
+	out := &d2target.Annotation{
+		Label:       a.Markdown(),
+		LabelWidth:  a.LabelDimensions.Width,
+		LabelHeight: a.LabelDimensions.Height,
+		Shape:       defaultShape,
+		Cues:        a.Cues,
+	}
+	if a.Shape != nil {
+		out.Shape = a.Shape.Value
+	}
+	if a.Position != nil {
+		out.Position = a.Position.Value
+	}
+	if a.Stroke != nil {
+		out.Stroke = a.Stroke.Value
+	}
+	if a.FontColor != nil {
+		out.FontColor = a.FontColor.Value
+	}
+	if out.Label == "" && out.Shape == "" {
+		return nil
+	}
+	return out
+}
+
 func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamily, monoFontFamily *d2fonts.FontFamily) (*d2target.Diagram, error) {
 	diagram := d2target.NewDiagram()
 	applyStyles(&diagram.Root, g.Root)
@@ -29,6 +118,7 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 	}
 	diagram.Name = g.Name
 	diagram.IsFolderOnly = g.IsFolderOnly
+	diagram.Root.Annotation = toAnnotation(g.Root.Annotation, "")
 	if fontFamily == nil {
 		fontFamily = go2.Pointer(d2fonts.SourceSansPro)
 	}
@@ -45,6 +135,29 @@ func Export(ctx context.Context, g *d2graph.Graph, fontFamily *d2fonts.FontFamil
 	diagram.Shapes = make([]d2target.Shape, len(g.Objects))
 	for i, obj := range g.Objects {
 		diagram.Shapes[i] = toShape(obj, g)
+	}
+
+	lassoed := groupLassos(g, diagram)
+
+	// A caption that links to an object points at it, even when nothing else
+	// on the board annotates that object. The caption draws that mark, so it
+	// is drawn in the caption's pen.
+	if caption := g.Root.Annotation; caption != nil {
+		pen := ""
+		if caption.Stroke != nil {
+			pen = caption.Stroke.Value
+		}
+		for _, id := range caption.Cues {
+			for i, obj := range g.Objects {
+				// A shape in a lasso is already marked, whichever shape carries the loop.
+				if _, held := lassoed[id]; held {
+					continue
+				}
+				if diagram.Shapes[i].Annotation == nil && obj.AbsID() == id {
+					diagram.Shapes[i].Annotation = &d2target.Annotation{Shape: defaultAnnotationMark(obj), Stroke: pen}
+				}
+			}
+		}
 	}
 
 	diagram.Connections = make([]d2target.Connection, len(g.Edges))
@@ -277,6 +390,7 @@ func toShape(obj *d2graph.Object, g *d2graph.Graph) d2target.Shape {
 	if obj.TooltipPosition != nil {
 		shape.TooltipPosition = obj.TooltipPosition.Value
 	}
+	shape.Annotation = toAnnotation(obj.Annotation, defaultAnnotationMark(obj))
 	if obj.Style.Animated != nil {
 		shape.Animated, _ = strconv.ParseBool(obj.Style.Animated.Value)
 	}
@@ -420,6 +534,7 @@ func ToConnection(edge *d2graph.Edge, theme *d2themes.Theme) d2target.Connection
 	if edge.Tooltip != nil {
 		connection.Tooltip = edge.Tooltip.Value
 	}
+	connection.Annotation = toAnnotation(edge.Annotation, d2target.AnnotationTrace)
 	if edge.Icon != nil {
 		connection.Icon = edge.Icon
 		if edge.IconPosition != nil {

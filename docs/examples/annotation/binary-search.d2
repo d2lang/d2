@@ -1,0 +1,58 @@
+# d2 binary-search.d2 binary-search.svg
+vars: {
+  d2-config: {
+    theme-id: 200
+    animate-interval: 1600ms
+    animate-duration: 900ms
+    pad: 40
+  }
+  # One pen for the whole board: spread it into each annotation.
+  pen: {style.stroke: "#FFD43B"}
+}
+grid-rows: 1
+grid-gap: 10
+
+classes.cell: {
+  width: 62
+  height: 62
+  style: {font-size: 24; bold: true; border-radius: 6}
+}
+n0: 2 {class: cell}
+n1: 5 {class: cell}
+n2: 8 {class: cell}
+n3: 12 {class: cell}
+n4: 16 {class: cell}
+n5: 23 {class: cell}
+n6: 38 {class: cell}
+n7: 56 {class: cell}
+n8: 72 {class: cell}
+n9: 91 {class: cell}
+
+steps: {
+  middle: {
+    annotation: |md Looking for **23**. Start in the [middle](n4). |
+    n4.annotation: 16 is too small {...${pen}}
+  }
+  right: {
+    annotation: |md So is everything to its left. Half the list is gone. |
+    n0.style.opacity: 0.25
+    n1.style.opacity: 0.25
+    n2.style.opacity: 0.25
+    n3.style.opacity: 0.25
+    n4.style.opacity: 0.25
+  }
+  again: {
+    annotation: |md Take the [middle](n7) of what is left. |
+    n7.annotation: 56 is too big {...${pen}}
+  }
+  left: {
+    annotation: |md Now the right side goes too. |
+    n7.style.opacity: 0.25
+    n8.style.opacity: 0.25
+    n9.style.opacity: 0.25
+  }
+  found: {
+    annotation: |md Two candidates left. The [first](n5) is the one. |
+    n5.annotation: found in 3 looks {shape: box; ...${pen}}
+  }
+}

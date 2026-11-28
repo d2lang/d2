@@ -2079,6 +2079,56 @@ x -> y
 `,
 		},
 		{
+			name: "annotations",
+			script: `direction: right
+
+client: Client
+api: API
+cache: Cache
+db: Database {
+  primary: {shape: cylinder}
+  replica: {shape: cylinder}
+  primary -> replica
+}
+client -> api
+api -> cache
+api -> db.primary
+
+api.annotation: circle, the default
+cache.annotation: box {shape: box}
+db.annotation: brace, the default for a container
+db.primary.annotation.shape: underline
+client.annotation: cross {shape: cross; near: bottom-center}
+(api -> cache)[0].annotation: trace, the default for a connection
+(api -> db.primary)[0].annotation: {shape: cross; style.stroke: "#1971C2"}
+
+annotation: |md Every mark sits on top of the layout. **Nothing moved** to make [room](api). |
+`,
+		},
+		{
+			name: "annotation_marks",
+			script: `direction: right
+
+classes: {
+  unit: {
+    annotation: one lasso for a class {shape: lasso}
+  }
+}
+web: Web
+api: API {class: unit}
+worker: Worker {class: unit}
+db: orders-db {shape: cylinder}
+web -> api: 40 ms
+api -> worker
+api -> db
+
+db.annotation: highlight {shape: highlight}
+web.annotation: arrow {shape: arrow; style.font-color: "#1971C2"}
+(web -> api)[0].annotation.shape: highlight
+(api -> db)[0].annotation: an arrow to a connection {shape: arrow; near: bottom-center}
+`,
+		},
+		{
 			name: "links",
 			script: `x: { link: https://d2lang.com }
 			y: { link: https://terrastruct.com; tooltip: Gee, I feel kind of LIGHT in the head now,\nknowing I can't make my satellite dish PAYMENTS! }

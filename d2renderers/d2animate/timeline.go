@@ -45,6 +45,9 @@ func Timeline(root *d2target.Diagram, intervalMS int) ([]Frame, error) {
 // AppendBoardFrames expands one validated, drawable board. Raster exporters
 // impose their own traversal limits before expanding its samples.
 func AppendBoardFrames(frames []Frame, board *d2target.Diagram, intervalMS int) []Frame {
+	// The interval is a floor. A board with a caption or notes is held for as
+	// long as they take to read.
+	intervalMS = max(intervalMS, board.ReadingMS())
 	if len(board.TweenFrames) == 0 {
 		return append(frames, Frame{Diagram: board, DurationMS: intervalMS})
 	}

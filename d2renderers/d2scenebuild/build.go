@@ -749,6 +749,11 @@ func (b *builder) buildDocument() (*d2scene.Document, error) {
 	// Paint positioned tooltips and appendix badges above every ordinary object,
 	// preserving sorted shape order and each shape's tooltip-before-link order.
 	root.Children = append(root.Children, metadataNodes...)
+	annotations, err := b.buildAnnotations()
+	if err != nil {
+		return nil, err
+	}
+	root.Children = append(root.Children, annotations...)
 	legendNode, err := b.buildLegend(legendLayout)
 	if err != nil {
 		return nil, err

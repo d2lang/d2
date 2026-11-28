@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
+	"github.com/d2lang/d2/lib/color"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/svg"
 )
@@ -93,6 +94,9 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 	if diagram.TweenDurationMS > MaxTweenDurationMS || diagram.TweenDurationMS < len(diagram.TweenFrames) || (len(diagram.TweenFrames) == 0 && diagram.TweenDurationMS != 0) {
 		return fmt.Errorf("render target %s has inconsistent tween duration %dms for %d frames", path, diagram.TweenDurationMS, len(diagram.TweenFrames))
 	}
+	if c := diagram.Canvas; c != nil && (c.Width <= 0 || c.Height <= 0) {
+		return invalidRenderField(path, "canvas", c, "must have positive dimensions")
+	}
 	if times := diagram.TweenFrameEndsMS; len(times) > 0 {
 		if len(times) != len(diagram.TweenFrames) {
 			return fmt.Errorf("render target %s requires one end time per tween frame", path)
@@ -112,14 +116,25 @@ func validateRenderBoard(diagram *Diagram, path string) error {
 	if err := validateRenderShapeNumbers(diagram.Root, path+".root"); err != nil {
 		return err
 	}
+	if err := validateRenderAnnotations(diagram.Root.Annotation, diagram.Root.LeavingAnnotation, path+".root", annotationOnBoard); err != nil {
+		return err
+	}
 	for i, targetShape := range diagram.Shapes {
-		if err := validateRenderShape(targetShape, fmt.Sprintf("%s.shapes[%d]", path, i)); err != nil {
+		shapePath := fmt.Sprintf("%s.shapes[%d]", path, i)
+		if err := validateRenderShape(targetShape, shapePath); err != nil {
+			return err
+		}
+		if err := validateRenderAnnotations(targetShape.Annotation, targetShape.LeavingAnnotation, shapePath, annotationOnShape); err != nil {
 			return err
 		}
 	}
 
 	for i, connection := range diagram.Connections {
-		if err := validateRenderConnection(connection, fmt.Sprintf("%s.connections[%d]", path, i)); err != nil {
+		connectionPath := fmt.Sprintf("%s.connections[%d]", path, i)
+		if err := validateRenderConnection(connection, connectionPath); err != nil {
+			return err
+		}
+		if err := validateRenderAnnotations(connection.Annotation, connection.LeavingAnnotation, connectionPath, annotationOnConnection); err != nil {
 			return err
 		}
 	}
@@ -173,6 +188,70 @@ func validateRenderLegendConnection(connection Connection, path string) error {
 		return err
 	}
 	return validateRenderArrowhead(connection.DstArrow, path+".dstArrow")
+}
+
+type annotationTarget uint8
+
+const (
+	annotationOnBoard annotationTarget = iota
+	annotationOnShape
+	annotationOnConnection
+)
+
+func validateRenderAnnotations(current, leaving *Annotation, path string, target annotationTarget) error {
+	if err := validateRenderAnnotation(current, path+".annotation", target); err != nil {
+		return err
+	}
+	return validateRenderAnnotation(leaving, path+".leavingAnnotation", target)
+}
+
+// A mark must be one its target can carry, and a sampled frame must show a
+// forward-running part of it.
+func validateRenderAnnotation(a *Annotation, path string, target annotationTarget) error {
+	if a == nil {
+		return nil
+	}
+	valid := false
+	switch target {
+	case annotationOnBoard:
+		valid = a.Shape == ""
+	case annotationOnShape:
+		switch a.Shape {
+		case AnnotationCircle, AnnotationBox, AnnotationUnderline, AnnotationBrace, AnnotationCross,
+			AnnotationHighlight, AnnotationArrow, AnnotationLasso:
+			valid = true
+		}
+	case annotationOnConnection:
+		switch a.Shape {
+		case AnnotationTrace, AnnotationCross, AnnotationHighlight, AnnotationArrow:
+			valid = true
+		}
+	}
+	if !valid {
+		return invalidRenderField(path, "shape", a.Shape, "is not a mark this target can carry")
+	}
+	// A pen is one color. A gradient or a paint server has no place in a stroke
+	// that both renderers draw point by point.
+	for field, paint := range map[string]string{"stroke": a.Stroke, "fontColor": a.FontColor} {
+		if paint != "" && !color.IsThemeColor(paint) && (color.IsGradient(paint) || !color.ValidColor(paint)) {
+			return invalidRenderField(path, field, paint, "must be a named color or a hex code")
+		}
+	}
+	if len(a.Members) > 0 && (target != annotationOnShape || a.Shape != AnnotationLasso) {
+		return invalidRenderField(path, "members", a.Members, "belong to a lasso on a shape")
+	}
+	switch a.Position {
+	case "", "top-center", "center-left", "center-right", "bottom-center":
+	default:
+		return invalidRenderField(path, "position", a.Position, "must be a side of the target")
+	}
+	if a.LabelWidth < 0 || a.LabelHeight < 0 {
+		return invalidRenderField(path, "labelWidth", a.LabelWidth, "and labelHeight must be non-negative")
+	}
+	if d := a.Drawn; d != nil && !(d[0] >= 0 && d[0] <= d[1] && d[1] <= 1) {
+		return invalidRenderField(path, "drawn", *d, "must be an ordered pair of fractions within [0,1]")
+	}
+	return nil
 }
 
 func validateRenderShape(targetShape Shape, path string) error {

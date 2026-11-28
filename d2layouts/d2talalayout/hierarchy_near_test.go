@@ -14,9 +14,9 @@ import (
 func TestHierarchyNearFollowsRequestedRank(t *testing.T) {
 	const chain = "a -> b -> c -> d\na -> d\n"
 	for _, tc := range []struct{ name, header, graph, note, targetPrefix string }{
-		{"root", "shape: hierarchy\ndirection: down\n", chain, "annotation", ""},
-		{"nested hierarchy", "", "P: {shape: hierarchy\n" + chain + "}\n", "annotation", "P."},
-		{"sibling containers", "", "P: {shape: hierarchy\n" + chain + "}\n", "Q.annotation", "P."},
+		{"root", "shape: hierarchy\ndirection: down\n", chain, "callout", ""},
+		{"nested hierarchy", "", "P: {shape: hierarchy\n" + chain + "}\n", "callout", "P."},
+		{"sibling containers", "", "P: {shape: hierarchy\n" + chain + "}\n", "Q.callout", "P."},
 	} {
 		for _, target := range []string{"a", "b", "c", "d"} {
 			for _, noteFirst := range []bool{false, true} {
@@ -44,7 +44,7 @@ func TestHierarchyNearFollowsRequestedRank(t *testing.T) {
 					for _, obj := range g.Objects {
 						objects[obj.ID] = obj
 					}
-					annotation := objects["annotation"]
+					annotation := objects["callout"]
 					if p := objects["P"]; p != nil {
 						obstacle := annotation
 						if q := objects["Q"]; q != nil {

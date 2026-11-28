@@ -2358,6 +2358,12 @@ func renderValidated(ctx context.Context, diagram *d2target.Diagram, opts *Rende
 	// add all appendix items afterwards so they are always on top
 	fmt.Fprint(writer, appendixItemBuf)
 
+	inkTL, inkBR := diagram.InkBoundingBox()
+	if err := drawAnnotations(writer, diagram, inkTL, inkBR, inlineTheme, markdown); err != nil {
+		return nil, err
+	}
+	writer.finish()
+
 	if hasLegend(diagram) {
 		legendBuf := &bytes.Buffer{}
 		err := RenderLegend(legendBuf, diagram, diagramHash, inlineTheme)

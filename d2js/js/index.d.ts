@@ -143,6 +143,8 @@ export interface Diagram {
   gridMotion?: boolean;
   layoutContinuity?: boolean;
   tweenDurationMS?: number;
+  /** A box the board's bounds always include. Shared by the boards of an annotated animation. */
+  canvas?: { x: number; y: number; width: number; height: number };
 }
 
 export interface Legend {
@@ -195,6 +197,10 @@ export interface ShapeBase {
   blend: boolean;
   contentAspectRatio?: number /* float64 */;
   labelPosition?: string;
+  /** A mark and note drawn over the shape for this board. On a diagram's root, its caption. */
+  annotation?: Annotation;
+  /** The previous board's annotation while a sampled frame erases it. */
+  leavingAnnotation?: Annotation;
   zIndex: number /* int */;
   level: number /* int */;
   /**
@@ -289,7 +295,43 @@ export interface Connection extends Text {
   tooltip: string;
   icon?: string /* url.URL */;
   iconPosition?: string;
+  /** A mark and note drawn over the connection for this board. */
+  annotation?: Annotation;
+  /** The previous board's annotation while a sampled frame erases it. */
+  leavingAnnotation?: Annotation;
   zIndex: number /* int */;
+}
+
+export type AnnotationShape =
+  | "circle"
+  | "box"
+  | "underline"
+  | "brace"
+  | "cross"
+  | "trace"
+  | "highlight"
+  | "arrow"
+  | "lasso";
+
+export interface Annotation {
+  /** Markdown. */
+  label?: string;
+  labelWidth?: number /* int */;
+  labelHeight?: number /* int */;
+  /** Absent on a board's caption. */
+  shape?: AnnotationShape;
+  position?: "top-center" | "center-left" | "center-right" | "bottom-center";
+  stroke?: string;
+  /** Color of the text alone. Absent, the text is written in the pen. */
+  fontColor?: string;
+  /** IDs of the other shapes a lasso holds. */
+  members?: string[];
+  /** IDs of the shapes a caption names, in reading order. */
+  cues?: string[];
+  /** Top center of a caption that an animation has pinned. */
+  anchor?: { x: number; y: number };
+  /** The visible part of the mark on a sampled frame, as fractions of its length. */
+  drawn?: [number, number];
 }
 
 export type Arrowhead =
@@ -363,6 +405,18 @@ export interface Attributes {
   icon?: string /* url.URL */;
   tooltip?: Scalar;
   link?: Scalar;
+  annotation?: {
+    label: Scalar;
+    labelDimensions: TextDimensions;
+    shape?: Scalar;
+    position?: Scalar;
+    stroke?: Scalar;
+    fontColor?: Scalar;
+    /** The class or glob that gave the shape a lasso. */
+    group?: string;
+    cues?: string[];
+    text?: string;
+  };
   width?: Scalar;
   height?: Scalar;
   top?: Scalar;

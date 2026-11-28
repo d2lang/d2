@@ -249,6 +249,9 @@ type Attributes struct {
 	IconStyle Style    `json:"iconStyle"`
 	Tooltip   *Scalar  `json:"tooltip,omitempty"`
 	Link      *Scalar  `json:"link,omitempty"`
+	// Annotation is drawn over the object for the length of its board. On a
+	// board's root it is the board's caption.
+	Annotation *Annotation `json:"annotation,omitempty"`
 
 	WidthAttr  *Scalar `json:"width,omitempty"`
 	HeightAttr *Scalar `json:"height,omitempty"`
@@ -281,6 +284,37 @@ type Attributes struct {
 	// These names are attached to the rendered elements in SVG
 	// so that users can target them however they like outside of D2
 	Classes []string `json:"classes,omitempty"`
+}
+
+// Annotation is a mark and a short Markdown note that point at one object or
+// connection. It takes no part in layout.
+type Annotation struct {
+	Label           Scalar                  `json:"label"`
+	LabelDimensions d2target.TextDimensions `json:"labelDimensions"`
+	// Shape is the mark. Unset, the renderer picks one that suits the target.
+	Shape *Scalar `json:"shape,omitempty"`
+	// Position is the side of the target the note sits on. Unset, the renderer
+	// picks the side with the most room.
+	Position *Scalar `json:"position,omitempty"`
+	Stroke   *Scalar `json:"stroke,omitempty"`
+	// FontColor colors the text alone. Unset, the text is written in the pen.
+	FontColor *Scalar `json:"fontColor,omitempty"`
+	// Group names the class or glob that gave the shape a lasso. Shapes with
+	// the same group share one loop. Empty, the lasso holds this shape alone.
+	Group string `json:"group,omitempty"`
+	// Cues are the objects a board's caption links to, by absolute ID, in the
+	// order the caption names them. Text is that caption as painted, with each
+	// cue link replaced by emphasis.
+	Cues []string `json:"cues,omitempty"`
+	Text string   `json:"text,omitempty"`
+}
+
+// Markdown returns the text the annotation paints.
+func (a *Annotation) Markdown() string {
+	if a.Text != "" {
+		return a.Text
+	}
+	return a.Label.Value
 }
 
 // ApplyTextTransform will alter the `Label.Value` of the current object based
@@ -1689,6 +1723,8 @@ func (g *Graph) SetDimensions(mtexts []*d2target.MText, ruler *textmeasure.Ruler
 		fontFamily = &tmp
 	}
 
+	g.setAnnotationDimensions(mtexts, ruler, fontFamily, monoFontFamily)
+
 	for _, obj := range g.Objects {
 		obj.Box = &geo.Box{}
 
@@ -1906,7 +1942,18 @@ func (g *Graph) Texts() []*d2target.MText {
 			}
 		}
 	}
+	if a := g.Root.Annotation; a != nil && a.Markdown() != "" {
+		texts = appendTextDedup(texts, a.MText(d2target.CaptionFontSize))
+	}
+	for _, obj := range g.Objects {
+		if a := obj.Annotation; a != nil && a.Markdown() != "" {
+			texts = appendTextDedup(texts, a.MText(d2target.AnnotationFontSize))
+		}
+	}
 	for _, edge := range g.Edges {
+		if a := edge.Annotation; a != nil && a.Markdown() != "" {
+			texts = appendTextDedup(texts, a.MText(d2target.AnnotationFontSize))
+		}
 		if edge.Label.Value != "" {
 			edge.ApplyTextTransform()
 			text := edge.Text()
