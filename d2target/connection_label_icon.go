@@ -22,19 +22,43 @@ const (
 	movingCircle
 	movingImage
 	movingPolygon
+	movingTallPolygon
 )
 
 func (c *Connection) MovingIconFootprint() MovingIconFootprint {
 	if c.IconAnimation == nil {
 		return noMovingIcon
 	}
+	return c.iconFootprint()
+}
+
+func (c *Connection) iconFootprint() MovingIconFootprint {
 	if c.Icon != nil {
 		return movingImage
 	}
-	if c.IconShape != "" && c.IconShape != ShapeCircle {
+	switch c.IconShape {
+	case ConnectionIconTriangle, ShapeDiamond:
+		return movingTallPolygon
+	case ShapeSquare:
 		return movingPolygon
+	case ShapeCircle:
+		return movingCircle
 	}
-	return movingCircle
+	if c.IconAnimation != nil {
+		return movingCircle
+	}
+	return noMovingIcon
+}
+
+func (icon MovingIconFootprint) size() int {
+	switch icon {
+	case movingCircle, movingPolygon:
+		return connectionIconShapeSize
+	case movingTallPolygon:
+		return connectionTallIconSize
+	default:
+		return DEFAULT_ICON_SIZE
+	}
 }
 
 // LabelTopLeft measures a candidate caption at the same position for layout and
@@ -55,15 +79,13 @@ func (icon MovingIconFootprint) LabelTopLeft(c *Connection, pos label.Position, 
 	// The primary wire sets the side and minimum normal clearance. The text
 	// mask extends two units past either end of the measured caption.
 	cx, cy := topLeft.X+width/2, topLeft.Y+height/2
+	halfIcon := float64(icon.size()) / 2
 	extent := func(x, y float64) float64 {
 		x, y = math.Abs(x), math.Abs(y)
-		radius := float64(connectionIconShapeSize) / 2
-		switch icon {
-		case movingPolygon:
-			// All native polygons stay upright inside the same square.
+		radius := halfIcon
+		if icon != movingCircle {
+			// Images and polygons stay upright inside their reserved square.
 			radius *= x + y
-		case movingImage:
-			radius = float64(DEFAULT_ICON_SIZE) / 2 * (x + y)
 		}
 		return (width/2+2)*x + height/2*y + max(radius, c.RenderedStrokeWidth()/2) + label.PADDING
 	}

@@ -102,6 +102,33 @@ func TestConnectionLabelRetainsInlineStaticAndAnchoredPositions(t *testing.T) {
 	}
 }
 
+func TestConnectionIconReservationContainsArtwork(t *testing.T) {
+	for _, tc := range []struct {
+		shape string
+		size  int
+	}{
+		{ShapeSquare, 10}, {ConnectionIconTriangle, 16}, {ShapeDiamond, 16},
+	} {
+		c := BaseConnection()
+		c.IconShape = tc.shape
+		center := geo.Point{X: 35, Y: 47}
+		for _, animation := range []*ConnectionIconAnimation{nil, {DurationMS: 200}} {
+			c.IconAnimation = animation
+			if size := c.IconSize(); size != tc.size {
+				t.Fatalf("%s reserved %d units, want %d", tc.shape, size, tc.size)
+			}
+			if footprint := c.MovingIconFootprint(); animation != nil && footprint.size() != tc.size {
+				t.Fatalf("%s reserved %d units for a moving caption, want %d", tc.shape, footprint.size(), tc.size)
+			}
+			for _, vertex := range c.IconPolygon(center) {
+				if max(math.Abs(vertex.X-center.X), math.Abs(vertex.Y-center.Y)) > float64(tc.size)/2 {
+					t.Fatalf("%s vertex %v exceeds its %d-unit reservation at %v", tc.shape, vertex, tc.size, center)
+				}
+			}
+		}
+	}
+}
+
 func TestOutsideCaptionClearsPaintedEndpoints(t *testing.T) {
 	for _, tc := range []struct {
 		name                               string

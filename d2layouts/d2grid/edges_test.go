@@ -14,7 +14,8 @@ func TestRouteBoundsIncludeConnectionIcon(t *testing.T) {
 		bounds  [4]float64
 	}{
 		{"icon.shape: square", [4]float64{0, -5, 100, 5}},
-		{"icon.shape: triangle; icon.style.animated: 2/s", [4]float64{-5, -5, 105, 5}},
+		{"icon.shape: triangle", [4]float64{0, -8, 100, 8}},
+		{"icon.shape: diamond; icon.style.animated: 2/s", [4]float64{-8, -8, 108, 8}},
 	} {
 		g, _, err := d2compiler.Compile("grid.d2", strings.NewReader("a -- b: {"+tc.artwork+"}"), nil)
 		if err != nil {

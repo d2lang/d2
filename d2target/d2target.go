@@ -1212,10 +1212,7 @@ func (c *Connection) HasStaticIcon() bool {
 }
 
 func (c *Connection) IconSize() int {
-	if c.Icon == nil && (c.IconShape != "" || c.IconAnimation != nil) {
-		return connectionIconShapeSize
-	}
-	return DEFAULT_ICON_SIZE
+	return c.iconFootprint().size()
 }
 
 func (c *Connection) GetIconPosition() *geo.Point {

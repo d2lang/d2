@@ -67,16 +67,17 @@ func TestConnectionIconStreamSamples(t *testing.T) {
 	}
 }
 
-func TestConnectionIconPolygonPixels(t *testing.T) {
+func TestConnectionIconShapePixels(t *testing.T) {
 	// Both the static icon and the midpoint of a 200ms trip are centered at
-	// (50,10). Sample away from the wire to distinguish all three silhouettes.
+	// (50,10). Sample away from the wire to distinguish all four silhouettes.
 	for _, tc := range []struct {
-		shape                 string
-		upperLeft, lowerRight bool
+		shape                                     string
+		upperLeft, lowerRight, upperTip, lowerTip bool
 	}{
-		{d2target.ShapeSquare, true, true},
-		{d2target.ConnectionIconTriangle, false, true},
-		{d2target.ShapeDiamond, false, false},
+		{d2target.ShapeCircle, false, false, false, false},
+		{d2target.ShapeSquare, true, true, false, false},
+		{d2target.ConnectionIconTriangle, false, true, true, false},
+		{d2target.ShapeDiamond, false, false, true, true},
 	} {
 		for _, mode := range []string{"static", "moving"} {
 			t.Run(tc.shape+"/"+mode, func(t *testing.T) {
@@ -99,11 +100,25 @@ func TestConnectionIconPolygonPixels(t *testing.T) {
 				for _, sample := range []struct {
 					x, y   int
 					filled bool
-				}{{46, 6, tc.upperLeft}, {53, 13, tc.lowerRight}, {50, 7, true}} {
+				}{{45, 5, tc.upperLeft}, {54, 13, tc.lowerRight}, {50, 4, tc.upperTip}, {50, 15, tc.lowerTip}, {50, 7, true}} {
 					pixel := img.NRGBAAt(sample.x-int(doc.ViewBox.X), sample.y-int(doc.ViewBox.Y))
 					if pixel.R != 255 || (sample.filled && pixel.G > 25) || (!sample.filled && pixel.G < 230) {
 						t.Errorf("at (%d,%d) got %v, want red fill: %t", sample.x, sample.y, pixel, sample.filled)
 					}
+				}
+				// Weight each pixel by its red coverage, including antialiased edges.
+				// A triangle centered on its bounding box would hang below the wire.
+				var ink, moment float64
+				for y := 1; y < 19; y++ {
+					for x := 40; x < 60; x++ {
+						pixel := img.NRGBAAt(x-int(doc.ViewBox.X), y-int(doc.ViewBox.Y))
+						weight := float64(pixel.R) - float64(pixel.G)
+						ink += weight
+						moment += weight * (float64(y) + 0.5 - 10)
+					}
+				}
+				if ink == 0 || math.Abs(moment/ink) > 0.25 {
+					t.Errorf("ink centroid is %g pixels from the wire", moment/ink)
 				}
 			})
 		}

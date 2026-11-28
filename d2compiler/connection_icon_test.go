@@ -78,7 +78,7 @@ steps.stop: {(a -> b)[0].icon.style.animated: false}`, strings.ToUpper(shape))
 			for _, board := range []*d2graph.Graph{g, g.Steps[0], g.Steps[1]} {
 				icon := d2exporter.ToConnection(board.Edges[0], nil)
 				moving := board == g.Steps[0]
-				if icon.Icon != nil || icon.IconShape != shape || icon.IconSize() != 10 ||
+				if icon.Icon != nil || icon.IconShape != shape ||
 					icon.HasStaticIcon() == moving || (icon.IconAnimation != nil) != moving {
 					t.Errorf("board %q: expected %s icon (moving=%v), got %+v", board.Name, shape, moving, icon)
 				}

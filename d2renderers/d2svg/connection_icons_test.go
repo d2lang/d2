@@ -81,8 +81,8 @@ func TestScheduledIconPathUsesWireCoordinates(t *testing.T) {
 func TestConnectionIconPolygonSVG(t *testing.T) {
 	for _, tc := range []struct{ shape, points string }{
 		{d2target.ShapeSquare, "-5,-5 5,-5 5,5 -5,5"},
-		{d2target.ConnectionIconTriangle, "0,-5 5,5 -5,5"},
-		{d2target.ShapeDiamond, "0,-5 5,0 0,5 -5,0"},
+		{d2target.ConnectionIconTriangle, "0,-8 7,4 -7,4"},
+		{d2target.ShapeDiamond, "0,-8 6,0 0,8 -6,0"},
 	} {
 		t.Run(tc.shape, func(t *testing.T) {
 			c := d2target.BaseConnection()

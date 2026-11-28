@@ -425,8 +425,8 @@ steps: {
 }`
 	optimized, calls := compileForLayoutReuseTest(t, input, true)
 	baseline, _ := compileForLayoutReuseTest(t, input, false)
-	if calls != 4 {
-		t.Fatalf("got %d layouts for dot, moving polygon, moving image and stationary image, want 4", calls)
+	if calls != 5 {
+		t.Fatalf("got %d layouts for dot, square, tall polygons, moving image and stationary image, want 5", calls)
 	}
 	assertExactDiagramAndSVG(t, optimized, baseline)
 }
