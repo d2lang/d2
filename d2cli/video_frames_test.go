@@ -311,7 +311,7 @@ func TestVideoCompactsDrainedIconStream(t *testing.T) {
 	legendWire.Label = "Traffic"
 	stop.Connections[0].Animated = false
 	stop.Legend = &d2target.Legend{Connections: []d2target.Connection{legendWire}}
-	if videoMovingUntil(stop) < time.Hour {
+	if rasterMovingUntil(stop) < time.Hour {
 		t.Fatal("the legend's moving dashes should keep the hold animated")
 	}
 }

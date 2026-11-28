@@ -2,10 +2,12 @@ package d2cli
 
 import (
 	"bytes"
+	"image"
 	"image/gif"
 	"strings"
 	"testing"
 
+	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 )
@@ -193,5 +195,42 @@ func TestGIFAutoLoopSamplesTheEncodedDashClock(t *testing.T) {
 	// An inactive icon must not change the phase of the second sample.
 	if !bytes.Equal(render(wire), render(wire+"\n(a -> b)[0].icon.style.animated: 0/s")) {
 		t.Fatal("inactive icon changed the dash animation")
+	}
+}
+
+func TestGIFReusesDrainedIconHold(t *testing.T) {
+	root, stop := animatedConnectionRasterDiagram(), animatedConnectionRasterDiagram()
+	root.Steps = []*d2target.Diagram{stop}
+	for _, board := range []*d2target.Diagram{root, stop} {
+		board.Connections[0].Animated = false
+		board.Connections[0].Stroke = "#ff0000"
+	}
+	root.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{DurationMS: 707}
+	stop.Connections[0].IconAnimation = &d2target.ConnectionIconAnimation{Rate: new(0.)}
+	session, err := newGIFRenderSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paints, lastRun, lastCenter, previousCenter int
+	summary, err := renderGIFWithSession(t.Context(), "-", false, root, d2svg.RenderOpts{Pad: new(int64)}, 1000, gifLayerOptions{}, session, nil, false, nil,
+		func(_ int, frame image.Image, repeats int) error {
+			paints++
+			lastRun, previousCenter, lastCenter = repeats, lastCenter, redIconCenter(frame)
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The last icon lands 414ms into the stopped board. The 430ms
+	// sample can be held through the end, retaining all 17 GIF delays.
+	var cs, tailCS int
+	for i, delay := range summary.delays {
+		cs += delay
+		if i >= len(summary.delays)-lastRun {
+			tailCS += delay
+		}
+	}
+	if paints != 44 || lastRun != 17 || previousCenter < 0 || lastCenter >= 0 || len(summary.delays) != 60 || cs != 200 || tailCS != 57 {
+		t.Fatalf("paints=%d last run=%d red centers=%d,%d frames=%d total=%dcs tail=%dcs", paints, lastRun, previousCenter, lastCenter, len(summary.delays), cs, tailCS)
 	}
 }

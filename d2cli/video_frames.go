@@ -13,7 +13,6 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2animate"
 	"github.com/d2lang/d2/d2renderers/d2raster"
 	"github.com/d2lang/d2/d2renderers/d2scene"
-	"github.com/d2lang/d2/d2renderers/d2scenebuild"
 	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
@@ -78,7 +77,7 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	// repeats the tour and can follow the return portal into its next lap.
 	var boardIndex int
 	for i, f := range frames {
-		s := videoSegment{Frame: f, start: p.period, movingUntil: videoMovingUntil(f.Picture())}
+		s := videoSegment{Frame: f, start: p.period, movingUntil: rasterMovingUntil(f.Picture())}
 		if v := viewports[f.Diagram]; v != nil {
 			s.viewport = v
 			tl, br := f.Diagram.BoundingBox()
@@ -126,37 +125,6 @@ func planVideo(root *d2target.Diagram, intervalMS int, layers gifLayerOptions, d
 	// for it when a one-pass export would otherwise end on an incoming tween.
 	p.finishOnLast = (duration == 0 || duration == p.period) && time.Duration(p.frames-1)*time.Second/videoFPS < last.start
 	return p, nil
-}
-
-// Pulses, dashes and repeating departures run for the entire picture. A
-// stopped stream only changes until its last carried icon reaches the target.
-func videoMovingUntil(board *d2target.Diagram) time.Duration {
-	for range d2scenebuild.PaintAnimationPeriods(board) {
-		return math.MaxInt64
-	}
-	var endMS float64
-	for i, path := range board.ConnectionIconRoutes() {
-		c := &board.Connections[i]
-		if !c.HasVisibleIconStream() {
-			continue
-		}
-		s := c.IconSchedule
-		if s == nil {
-			if !math.IsInf(path.LaunchPeriod(c.IconAnimation), 1) {
-				return math.MaxInt64
-			}
-			continue
-		}
-		if !math.IsInf(s.Period, 1) && s.First < float64(s.DurationMS)/1000 {
-			return math.MaxInt64
-		}
-		for _, trip := range s.Carried {
-			endMS = max(endMS, float64(s.StartMS)+(1-trip.Progress)*trip.Transit*1000)
-		}
-	}
-	// Round up so the frame held through the remainder already shows the
-	// empty wire. The sampled clip is bounded even on a longer authored hold.
-	return time.Duration(min(math.Ceil(endMS), float64(math.MaxInt64/int64(time.Millisecond)))) * time.Millisecond
 }
 
 // Return a scene, its local animation time, and the number of identical

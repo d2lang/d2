@@ -704,6 +704,37 @@ func sameGIFAppearance(a, b *d2target.Diagram) bool {
 		reflect.DeepEqual(a.FontFamily, b.FontFamily) && reflect.DeepEqual(a.MonoFontFamily, b.MonoFontFamily)
 }
 
+// Pulses, dashes and repeating departures run for the entire picture. A
+// stopped stream only changes until its last carried icon reaches the target.
+func rasterMovingUntil(board *d2target.Diagram) time.Duration {
+	for range d2scenebuild.PaintAnimationPeriods(board) {
+		return math.MaxInt64
+	}
+	var endMS float64
+	for i, path := range board.ConnectionIconRoutes() {
+		c := &board.Connections[i]
+		if !c.HasVisibleIconStream() {
+			continue
+		}
+		s := c.IconSchedule
+		if s == nil {
+			if !math.IsInf(path.LaunchPeriod(c.IconAnimation), 1) {
+				return math.MaxInt64
+			}
+			continue
+		}
+		if !math.IsInf(s.Period, 1) && s.First < float64(s.DurationMS)/1000 {
+			return math.MaxInt64
+		}
+		for _, trip := range s.Carried {
+			endMS = max(endMS, float64(s.StartMS)+(1-trip.Progress)*trip.Transit*1000)
+		}
+	}
+	// Round up so the frame held through the remainder already shows the
+	// empty wire. The sampled clip is bounded even on a longer authored hold.
+	return time.Duration(min(math.Ceil(endMS), float64(math.MaxInt64/int64(time.Millisecond)))) * time.Millisecond
+}
+
 func renderGIFWithSession(
 	ctx context.Context,
 	inputPath string,
@@ -907,7 +938,7 @@ func renderGIFWithSession(
 		if hasZoom && cache.touch(boardIndex) {
 			return cache.docs[0], nil
 		}
-		segment := timeline[boardIndex]
+		segment := &timeline[boardIndex]
 		board := segment.Diagram
 		if segment.iconBoard != nil {
 			frame := segment.Frame
@@ -918,6 +949,11 @@ func renderGIFWithSession(
 				frame.ElapsedMS = 0
 			}
 			board = iconTimeline.ScenePicture(segment.iconBoard, frame)
+		}
+		// A stopped stream can still have icons that departed on an earlier board.
+		segment.movingUntil = math.MaxInt64
+		if segment.count > 1 && len(segment.zoom) == 0 {
+			segment.movingUntil = rasterMovingUntil(board)
 		}
 		frameOptions := gifFrameOptions(0, max(totalFrames+extraPaints, buildCount))
 		sceneOpts := sceneOptionsForFrame(frameOptions)
@@ -1011,14 +1047,19 @@ func renderGIFWithSession(
 		activeLeg := -1
 		expectedBounds := plannedBounds
 		elapsedMS := segment.ElapsedMS
-		// A static hold changes only the progress line. Rasterize and quantize
-		// it once, then keep its individual GIF delays.
-		repeats := 1
-		if segment.count > 1 && len(segment.zoom) == 0 && segment.iconBoard == nil && d2scenebuild.ShortestAnimationPeriod(board) == 0 {
-			repeats = segment.count
+		// Paint through the first static sample. Its remaining GIF delays can
+		// share that image; the progress overlay still advances on every tick.
+		paints := segment.count
+		if segment.movingUntil != math.MaxInt64 {
+			paints = 1
+			at := time.Duration(elapsedMS) * time.Millisecond
+			for paints < segment.count && at < segment.movingUntil {
+				at += time.Duration(summary.delays[renderedFrameCount+paints-1]) * 10 * time.Millisecond
+				paints++
+			}
 		}
 		err = renderGIFBoardFrames(
-			ctx, 0, segment.count/repeats, totalFrames,
+			ctx, 0, paints, totalFrames,
 			func(renderCtx context.Context, frameIndex int, _ time.Duration, frameOptions d2raster.FrameOptions, emit func(image.Image) error) error {
 				if extraPaints > 0 {
 					frameOptions = gifFrameOptions(frameOptions.Time, totalFrames+extraPaints)
@@ -1069,6 +1110,10 @@ func renderGIFWithSession(
 				}
 				if err := validateRenderSession("GIF", session); err != nil {
 					return err
+				}
+				repeats := 1
+				if frameIndex == paints-1 {
+					repeats += segment.count - paints
 				}
 				if err := consume(frameIndex, frame, repeats); err != nil {
 					return err

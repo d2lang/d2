@@ -24,10 +24,11 @@ type gifSegment struct {
 	d2animate.Frame
 	rasterPlacement
 	// Owning board for a stream that continues across tween samples.
-	iconBoard *d2target.Diagram
-	count     int
-	route     []d2animate.LayerLeg
-	zoom      []gifZoomSample // Trailing samples rendered on the full canvas.
+	iconBoard   *d2target.Diagram
+	count       int
+	movingUntil time.Duration
+	route       []d2animate.LayerLeg
+	zoom        []gifZoomSample // Trailing samples rendered on the full canvas.
 }
 
 type gifZoomSample struct {
