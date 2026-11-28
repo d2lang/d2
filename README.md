@@ -172,7 +172,8 @@ up to 64 icons in flight for a steady stream. On a wire that takes one second
 to cross, rates above `64/s` display as `64/s`.
 Set the rate to `0/s` in a later step to let the last dots arrive, or use
 `true` for one continuously looping icon. Supply an image with `icon` to send
-your own artwork. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
+your own artwork. Labels beside a connection leave room for the icon as it
+passes. [Checkout rollout](./docs/examples/connection-icons/checkout-rollout.d2) · [Transactional outbox](./docs/examples/connection-icons/transactional-outbox.d2) · [Replica maintenance](./docs/examples/connection-icons/replica-maintenance.d2)
 
 A single-board GIF with `icon.style.animated: 0.25/s` automatically loops
 every four seconds. An explicit loop must last at least the time between

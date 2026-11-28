@@ -1168,7 +1168,7 @@ func (c *Connection) HasStaticIcon() bool {
 
 func (c *Connection) IconSize() int {
 	if c.Icon == nil && (c.IconShape == ShapeCircle || c.IconAnimation != nil) {
-		return 10
+		return connectionCircleSize
 	}
 	return DEFAULT_ICON_SIZE
 }
@@ -1259,14 +1259,7 @@ func (c *Connection) GetLabelTopLeft() *geo.Point {
 	if p := c.MotionLabel; p != nil {
 		return geo.NewPoint(float64(p.X), float64(p.Y))
 	}
-	point, _ := label.FromString(c.LabelPosition).GetPointOnRoute(
-		c.Route,
-		c.RenderedStrokeWidth(),
-		c.LabelPercentage,
-		float64(c.LabelWidth),
-		float64(c.LabelHeight),
-	)
-	return point
+	return c.MovingIconFootprint().LabelTopLeft(c, label.FromString(c.LabelPosition), c.LabelPercentage, float64(c.LabelWidth), float64(c.LabelHeight), nil)
 }
 
 func (connection *Connection) GetArrowheadLabelPosition(isDst bool) *geo.Point {

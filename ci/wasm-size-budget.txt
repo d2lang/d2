@@ -13,5 +13,7 @@
 # the local Brotli measurement from 3,693,601 to 3,710,756 bytes.
 # Checking the selected loop during D2.js compilation and rendering raised
 # the raw measurement from 10,897,523 to 10,901,133 bytes.
-raw 10905000
+# Leave room for measuring moving icon clearance along curves and bends
+# in the renderer and in TALA's caption search.
+raw 10915000
 brotli 3720000

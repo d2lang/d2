@@ -283,6 +283,7 @@ func (state *graphCloneState) copyEdge(source *Edge) (*Edge, error) {
 	cloned.D2ID = cloneValue(source.D2ID)
 	cloned.ReversedForLayout = source.ReversedForLayout
 	cloned.KeepExplicit = source.KeepExplicit
+	cloned.MovingIcon = source.MovingIcon
 	cloned.SourceArrowhead = source.SourceArrowhead
 	cloned.TargetArrowhead = source.TargetArrowhead
 	cloned.SourceArrowheadLabel = copyLabelRecord(source.SourceArrowheadLabel)

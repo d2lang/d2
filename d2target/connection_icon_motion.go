@@ -1,6 +1,7 @@
 package d2target
 
 import (
+	"iter"
 	"math"
 	"slices"
 	"sort"
@@ -21,18 +22,13 @@ type IconMotionPath struct {
 }
 
 func (c *Connection) IconMotionPath(srcWidth, dstWidth float64) IconMotionPath {
-	var p IconMotionPath
 	if len(c.Route) < 2 {
-		return p
+		return IconMotionPath{}
 	}
 	src, dst := c.ArrowheadAdjustmentsForWidths(srcWidth, dstWidth)
-	for cmd := range c.PathCommands(src, dst) {
-		switch cmd.Kind {
-		case 'C', 'S':
-			p.flatten(p.Points[len(p.Points)-1], cmd.Control1, cmd.Control2, cmd.End, 0)
-		default:
-			p.appendPoint(cmd.End)
-		}
+	var p IconMotionPath
+	for point := range c.iconMotionPoints(src, dst) {
+		p.appendPoint(point)
 	}
 	if c.SrcArrow != NoArrowhead && c.DstArrow == NoArrowhead {
 		length := p.Length()
@@ -59,7 +55,27 @@ func (p *IconMotionPath) appendPoint(end geo.Point) {
 	p.Distances = append(p.Distances, length)
 }
 
-func (p *IconMotionPath) flatten(a, b, c, d geo.Point, depth int) {
+// iconMotionPoints walks the flattened centerline once in authored route order.
+func (c *Connection) iconMotionPoints(src, dst *geo.Point) iter.Seq[geo.Point] {
+	return func(yield func(geo.Point) bool) {
+		var previous geo.Point
+		for cmd := range c.PathCommands(src, dst) {
+			switch cmd.Kind {
+			case 'C', 'S':
+				if !flattenIconCubic(previous, cmd.Control1, cmd.Control2, cmd.End, 0, yield) {
+					return
+				}
+			default:
+				if !yield(cmd.End) {
+					return
+				}
+			}
+			previous = cmd.End
+		}
+	}
+}
+
+func flattenIconCubic(a, b, c, d geo.Point, depth int, yield func(geo.Point) bool) bool {
 	// Subdivide until the control polygon and chord agree to subpixel precision.
 	// Limit the perpendicular deviation too: a long, shallow bend can have
 	// almost the same length as its chord while missing it by several pixels.
@@ -69,15 +85,13 @@ func (p *IconMotionPath) flatten(a, b, c, d geo.Point, depth int) {
 		return math.Abs((q.X-a.X)*(d.Y-a.Y)-(q.Y-a.Y)*(d.X-a.X)) <= .2*chord
 	}
 	if depth == 8 || polygon-chord <= .04 && flat(b) && flat(c) {
-		p.appendPoint(d)
-		return
+		return yield(d)
 	}
 	mid := func(x, y geo.Point) geo.Point { return geo.Point{X: (x.X + y.X) / 2, Y: (x.Y + y.Y) / 2} }
 	ab, bc, cd := mid(a, b), mid(b, c), mid(c, d)
 	abc, bcd := mid(ab, bc), mid(bc, cd)
 	center := mid(abc, bcd)
-	p.flatten(a, ab, abc, center, depth+1)
-	p.flatten(center, bcd, cd, d, depth+1)
+	return flattenIconCubic(a, ab, abc, center, depth+1, yield) && flattenIconCubic(center, bcd, cd, d, depth+1, yield)
 }
 
 func (p IconMotionPath) Length() float64 {

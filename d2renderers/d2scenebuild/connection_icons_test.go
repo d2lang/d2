@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -97,6 +98,38 @@ func TestConnectionIconImageFollowsReverseArrow(t *testing.T) {
 		if red.R < 210 || red.R < red.B || blue.B < blue.R+30 {
 			t.Errorf("at %s, expected red then blue across the moving image, got %v and %v", sample.at, red, blue)
 		}
+	}
+}
+
+func TestOutsideCaptionLeavesMovingArtworkIntact(t *testing.T) {
+	diagram := validDiagram()
+	c := &diagram.Connections[0]
+	c.Icon = testRasterAssetURL(t)
+	c.IconAnimation = &d2target.ConnectionIconAnimation{}
+	c.IconPositions = []geo.Point{{X: 50, Y: 10}}
+	c.LabelPosition = "OUTSIDE_TOP_CENTER"
+	renderIcon := func() []color.NRGBA {
+		t.Helper()
+		doc, err := Build(context.Background(), diagram, Options{Assets: testAssetOptions(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, err := d2raster.Render(context.Background(), doc, shapeEffectFrameOptions())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pixels []color.NRGBA
+		for y := 10 - c.IconSize()/2; y < 10+c.IconSize()/2; y++ {
+			for x := 50 - c.IconSize()/2; x < 50+c.IconSize()/2; x++ {
+				pixels = append(pixels, img.NRGBAAt(x-int(doc.ViewBox.X), y-int(doc.ViewBox.Y)))
+			}
+		}
+		return pixels
+	}
+	uncaptioned := renderIcon()
+	c.Text = d2target.Text{Label: "Push bytes", LabelWidth: 72, LabelHeight: 18, FontSize: 14}
+	if !slices.Equal(uncaptioned, renderIcon()) {
+		t.Fatal("outside caption covers part of the moving image")
 	}
 }
 
