@@ -3,6 +3,8 @@ package d2target
 import (
 	"fmt"
 	"math"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/d2lang/d2/d2renderers/d2fonts"
@@ -528,8 +530,13 @@ func validateRenderOpacity(path string, opacity float64) error {
 // ValidateIconMotion checks retained artwork and the bounded particles used
 // by SVG, the native scene builder, and callers constructing targets directly.
 func (connection *Connection) ValidateIconMotion(path string) error {
-	if connection.IconShape != "" && (connection.IconShape != ShapeCircle || connection.Icon != nil) {
-		return invalidRenderField(path, "iconShape", connection.IconShape, "must be a circle with no image URL")
+	if connection.IconShape != "" {
+		if !slices.Contains(ConnectionIconShapes, connection.IconShape) {
+			return invalidRenderField(path, "iconShape", connection.IconShape, "must be one of "+strings.Join(ConnectionIconShapes, ", "))
+		}
+		if connection.Icon != nil {
+			return invalidRenderField(path, "iconShape", connection.IconShape, "cannot be combined with an image URL")
+		}
 	}
 	if connection.HasStaticIcon() && connection.Label == "" && !label.FromString(connection.IconPosition).IsEdgePosition() {
 		return invalidRenderField(path, "iconPosition", connection.IconPosition, "must identify a connection icon position")

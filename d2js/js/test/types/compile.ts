@@ -49,7 +49,7 @@ configured.then((response) => {
   const edge = response.diagram.connections[0];
   if (edge) {
     edge.codeFontColor satisfies boolean | undefined;
-    edge.iconShape satisfies "circle" | undefined;
+    edge.iconShape satisfies "circle" | "square" | "triangle" | "diamond" | undefined;
     edge.iconAnimation?.rate satisfies number | undefined;
     edge.iconAnimation?.durationMs satisfies number | undefined;
     edge.iconAnimation?.previousID satisfies string | undefined;
@@ -66,7 +66,9 @@ configured.then((response) => {
       iconShape: undefined,
       iconAnimation: {},
     };
-    d2.render({ ...response.diagram, connections: [circle] });
+    for (const iconShape of ["circle", "square", "triangle", "diamond"] as const) {
+      d2.render({ ...response.diagram, connections: [{ ...circle, iconShape }] });
+    }
     d2.render({ ...response.diagram, connections: [image] });
     d2.render({
       ...response.diagram,

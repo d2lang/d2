@@ -6,7 +6,6 @@ import (
 
 	"github.com/d2lang/d2/d2exporter"
 	"github.com/d2lang/d2/d2graph"
-	"github.com/d2lang/d2/d2target"
 	"github.com/d2lang/d2/lib/geo"
 	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/util-go/go2"
@@ -273,12 +272,16 @@ func routeBounds(e *d2graph.Edge) (left, top, right, bottom float64) {
 		left, top = min(left, p.X), min(top, p.Y)
 		right, bottom = max(right, p.X), max(bottom, p.Y)
 	}
-	if len(e.Route) < 2 || (e.Label.Value == "" && e.Icon == nil && e.SrcArrowhead == nil && e.DstArrowhead == nil) {
+	if len(e.Route) < 2 || (e.Label.Value == "" && !e.HasIcon() && e.SrcArrowhead == nil && e.DstArrowhead == nil) {
 		return
 	}
 	// Use the renderer's positions for all decorations. Arrowhead labels
 	// depend on the shape and size of the arrow as well as the route.
 	c := d2exporter.ToConnection(e, nil)
+	if c.IconAnimation != nil {
+		radius := float64(c.IconSize()) / 2
+		left, top, right, bottom = left-radius, top-radius, right+radius, bottom+radius
+	}
 	include := func(p *geo.Point, w, h int) {
 		if p != nil {
 			left, top = min(left, p.X), min(top, p.Y)
@@ -288,8 +291,8 @@ func routeBounds(e *d2graph.Edge) (left, top, right, bottom float64) {
 	if c.Label != "" && e.LabelPosition != nil {
 		include(c.GetLabelTopLeft(), c.LabelWidth, c.LabelHeight)
 	}
-	if c.Icon != nil {
-		include(c.GetIconPosition(), d2target.DEFAULT_ICON_SIZE, d2target.DEFAULT_ICON_SIZE)
+	if icon := c.GetIconPosition(); icon != nil {
+		include(icon, c.IconSize(), c.IconSize())
 	}
 	if c.SrcLabel != nil {
 		include(c.GetArrowheadLabelPosition(false), c.SrcLabel.LabelWidth, c.SrcLabel.LabelHeight)

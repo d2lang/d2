@@ -62,13 +62,18 @@ async function checkBoundary(page) {
     await seek(page, ms);
     const progress = await page.locator(progressSelector).evaluate((line) => {
       const viewport = line.ownerSVGElement;
+      const artwork = viewport.querySelector("svg.d2-svg");
+      const bounds = line.getBoundingClientRect();
+      const scale = viewport.getScreenCTM().a;
       return {
         visible: getComputedStyle(line).visibility,
-        width: line.getBoundingClientRect().width,
-        total: viewport.viewBox.baseVal.width * viewport.getScreenCTM().a,
+        width: bounds.width,
+        total: viewport.viewBox.baseVal.width * scale,
+        gap: (bounds.top - artwork.getBoundingClientRect().bottom) / scale,
       };
     });
     assert.equal(progress.visible, "visible", `progress hidden at ${ms}ms`);
+    assert.ok(Math.abs(progress.gap - 8) < 0.1, `artwork gap at ${ms}ms: ${progress.gap}px`);
     const expected = progress.total * ((ms % 2000) / 2000);
     assert.ok(
       Math.abs(progress.width - expected) <= 1,
@@ -246,6 +251,11 @@ async function checkLayerZoom(page) {
   assert.deepEqual(await visible(), [true, false], "the next loop starts on the overview");
 
   await links.first().click();
+  assert.equal(
+    await page.locator(progressSelector).evaluate((line) => getComputedStyle(line).animationPlayState),
+    "paused",
+    "opening a layer pauses the progress clock in the footer"
+  );
   const clickEntering = await scales(800);
   const clickCloser = await scales(950);
   assert.ok(clickCloser.every((scale, i) => scale > clickEntering[i]), "clicking zooms in");
@@ -284,11 +294,22 @@ async function checkLayerZoom(page) {
   assert.deepEqual(await visible(), [true, false], "reduced motion returns immediately");
 }
 
+async function footerColor(page) {
+  const point = await page.locator(progressSelector).evaluate((line) => {
+    const viewport = line.ownerSVGElement;
+    const point = new DOMPoint(2, line.y.baseVal.value - 4).matrixTransform(viewport.getScreenCTM());
+    return { x: Math.floor(point.x), y: Math.floor(point.y) };
+  });
+  const { data, width } = PNG.sync.read(await page.screenshot());
+  const pixel = 4 * (point.y * width + point.x);
+  return data.toString("hex", pixel, pixel + 3);
+}
+
 async function checkLayerSteps(page) {
   const links = page.locator("a");
-  async function active(ms) {
+  async function checkBoard(ms, label, color) {
     await seek(page, ms);
-    return links.evaluateAll((links) =>
+    const active = await links.evaluateAll((links) =>
       links
         .filter((link) => {
           const r = link.getBoundingClientRect();
@@ -297,35 +318,49 @@ async function checkLayerSteps(page) {
         })
         .map((link) => link.querySelector("text").textContent)
     );
+    assert.deepEqual(active, [label], `active board at ${ms}ms`);
+    assert.equal(await footerColor(page), color, `footer below ${label} at ${ms}ms`);
   }
 
-  for (const [ms, label] of [
-    [500, "Enter detail"],
-    [1500, "Return to overview"],
-    [2500, "Return from detail step"],
-    [3500, "Enter from overview step"],
-    [4500, "Enter detail"],
+  for (const [ms, label, color] of [
+    [500, "Enter detail", "f0cfb0"],
+    [1500, "Return to overview", "a0c0e0"],
+    [2500, "Return from detail step", "b0d0a0"],
+    [3500, "Enter from overview step", "f0cfb0"],
+    [4500, "Enter detail", "f0cfb0"],
   ]) {
-    assert.deepEqual(await active(ms), [label], `automatic board at ${ms}ms`);
+    await checkBoard(ms, label, color);
   }
   await seek(page, 3500);
-  await links.filter({ hasText: "Enter from overview step" }).click();
-  assert.deepEqual(await active(500), ["Return to overview"]);
-  assert.deepEqual(await active(1800), ["Return from detail step"]);
-  await links.filter({ hasText: "Return from detail step" }).click();
-  assert.deepEqual(await active(500), ["Enter detail"]);
-  assert.deepEqual(await active(1800), ["Enter from overview step"]);
+  await page.getByRole("link", { name: "Enter from overview step" }).click();
+  await seek(page, 150);
+  assert.equal(await footerColor(page), "f0cfb0", "the camera pans across the source board first");
+  await seek(page, 280);
+  assert.ok(!["f0cfb0", "a0c0e0"].includes(await footerColor(page)), "footer crossfades on entry");
+  await checkBoard(500, "Return to overview", "a0c0e0");
+  await checkBoard(1800, "Return from detail step", "b0d0a0");
+  await page.getByRole("link", { name: "Return from detail step" }).click();
+  await seek(page, 0);
+  assert.equal(await footerColor(page), "b0d0a0", "return starts with the selected step's color");
+  await checkBoard(500, "Enter detail", "f0cfb0");
+  await checkBoard(1800, "Enter from overview step", "f0cfb0");
 }
 
 async function checkLayerRoute(page) {
+  // Make the transparent shipping board visibly different from a white matte.
+  const setBackdrop = () => page.evaluate(() => {
+    document.documentElement.style.background = "#E3EBF2";
+  });
+  await setBackdrop();
   await page.mouse.move(1, 1);
   const frames = page.locator("g[id^='d2-frame-']");
   const pictures = [];
   async function picture(ms) {
     await seek(page, ms);
-    return (await boardScreenshot(page)).data;
+    return boardScreenshot(page);
   }
   for (const ms of [500, 2500, 4500, 6500]) pictures.push(await picture(ms));
+  assert.equal(await footerColor(page), "e3ebf2", "the shipping footer preserves transparency");
 
   async function accessibleBoard(board) {
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
@@ -338,12 +373,17 @@ async function checkLayerRoute(page) {
     }
   }
   async function atBoard(ms, board) {
-    const pixels = await picture(ms);
+    const actual = await picture(ms);
+    const expected = pictures[board];
     // Chromium can round an antialiased pixel by one level as the camera settles.
-    assert.ok(
-      pixels.every((value, i) => Math.abs(value - pictures[board][i]) <= 1),
-      `board ${board} at ${ms}ms`
-    );
+    const mismatch = actual.data.findIndex((value, i) => Math.abs(value - expected.data[i]) > 1);
+    if (mismatch !== -1) {
+      const pixel = Math.floor(mismatch / 4);
+      const x = pixel % actual.width;
+      const y = Math.floor(pixel / actual.width);
+      const rgba = (image) => image.data.toString("hex", pixel * 4, pixel * 4 + 4);
+      assert.fail(`board ${board} at ${ms}ms, pixel (${x}, ${y}): expected #${rgba(expected)}, got #${rgba(actual)}`);
+    }
   }
   async function scales(ms, from, to) {
     await seek(page, ms);
@@ -351,6 +391,14 @@ async function checkLayerRoute(page) {
       (frames, pair) => pair.map((i) => frames[i].querySelector("text").getScreenCTM().a),
       [from, to]
     );
+  }
+  async function settledCamera(board) {
+    const state = await frames.nth(board).locator(":scope > g > g").evaluate((camera) => {
+      const s = getComputedStyle(camera);
+      const animated = camera.getAnimations().some((a) => a.effect.getComputedTiming().progress !== null);
+      return [s.transform, s.opacity, s.visibility, animated];
+    });
+    assert.deepEqual(state, ["none", "1", "visible", false], `camera released board ${board}`);
   }
   async function checkLeg(start, duration, from, to, inward, portalLabel) {
     // The scale changes early on exit and late on entry. The other phase pans.
@@ -362,7 +410,7 @@ async function checkLayerRoute(page) {
     );
     const parent = frames.nth(inward ? from : to);
     const distance = await parent.locator("a").filter({ hasText: portalLabel }).evaluate((link) => {
-      const svg = document.documentElement;
+      const svg = link.closest("svg.d2-svg");
       const view = svg.viewBox.baseVal;
       const center = new DOMPoint(view.x + view.width / 2, view.y + view.height / 2);
       const screen = center.matrixTransform(svg.getScreenCTM());
@@ -405,6 +453,7 @@ async function checkLayerRoute(page) {
   await atBoard(450, 0);
   await checkLeg(450, 450, 0, 3, true, "Shipping");
   await atBoard(900, 3);
+  await settledCamera(3);
   await atBoard(8500, 3);
   await accessibleBoard(3);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -415,18 +464,23 @@ async function checkLayerRoute(page) {
   await page.getByRole("link", { name: "Back to overview" }).press("Enter");
   await atBoard(0, 3);
   await atBoard(900, 0);
+  await settledCamera(0);
   await accessibleBoard(0);
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(origin + "/layer-route.svg");
+  await setBackdrop();
   await atBoard(5400, 2);
   await atBoard(5999, 2);
   await atBoard(6000.1, 3);
   await seek(page, 2500);
   await page.getByRole("link", { name: "Go to shipping" }).press("Enter");
   await accessibleBoard(3);
+  assert.equal(await footerColor(page), "e3ebf2", "reduced motion immediately opens the transparent board");
+  await settledCamera(3);
   await page.getByRole("link", { name: "Back to overview" }).press("Enter");
   await accessibleBoard(0);
+  assert.equal(await footerColor(page), "efe4d5", "reduced motion restores the overview background");
   await page.goBack();
   await accessibleBoard(3);
   await page.goBack();

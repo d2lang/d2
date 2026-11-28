@@ -314,7 +314,7 @@ export interface Connection extends Text {
   animated: boolean;
   tooltip: string;
   icon?: IconURL | null;
-  iconShape?: "circle";
+  iconShape?: "circle" | "square" | "triangle" | "diamond";
   iconBorderRadius?: number;
   iconAnimation?: {
     /** Predecessor in the previous step when parallel connections are renumbered. */

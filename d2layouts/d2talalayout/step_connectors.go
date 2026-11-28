@@ -121,7 +121,7 @@ func plainStepConnections(g *d2graph.Graph) bool {
 	}
 	for _, e := range g.Edges {
 		if e.DstArrow == e.SrcArrow || e.DstArrowhead != nil || e.SrcArrowhead != nil || e.Label.Value != "" ||
-			e.Icon != nil || e.Link != nil || e.Tooltip != nil || e.ZIndex != 0 || len(e.Classes) > 0 ||
+			e.HasIcon() || e.Link != nil || e.Tooltip != nil || e.ZIndex != 0 || len(e.Classes) > 0 ||
 			e.Style != (d2graph.Style{StrokeWidth: e.Style.StrokeWidth}) ||
 			e.Style.StrokeWidth != nil && (e.Style.StrokeWidth.Value != "2" || e.Style.StrokeWidth.TweenOffset != 0) {
 			return false

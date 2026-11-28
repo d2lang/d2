@@ -100,7 +100,11 @@ func getCompletionItems(text string, line, column int, utf16Pos bool) ([]Complet
 		}
 		return items, nil
 	case "connection.icon.shape:":
-		return []CompletionItem{{Label: d2target.ShapeCircle, Kind: ShapeCompletion, Detail: "filled dot", InsertText: d2target.ShapeCircle}}, nil
+		items := make([]CompletionItem, len(d2target.ConnectionIconShapes))
+		for i, shape := range d2target.ConnectionIconShapes {
+			items[i] = CompletionItem{Label: shape, Kind: ShapeCompletion, InsertText: shape}
+		}
+		return items, nil
 	case "connection.icon.style.":
 		return []CompletionItem{
 			{Label: "animated", Kind: StyleCompletion, Detail: "loop or launch icons along the connection", InsertText: "animated: "},
