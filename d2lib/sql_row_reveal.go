@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 )
 
 // Add or remove trailing rows beneath a stationary table.
@@ -64,7 +65,7 @@ func (p *sqlRowReveal) apply(frame *d2target.Diagram, t float64) {
 		}
 		retained := len(change.short.Columns)
 		whole, local := math.Modf(progress * float64(len(change.full.Columns)-retained))
-		height := int(math.Round(change.full.SQLRowHeight() * (1 + float64(retained) + whole + boardStroke(local))))
+		height := int(math.Round(change.full.SQLRowHeight() * (1 + float64(retained) + whole + animation.EaseInOut(local))))
 		table := &frame.Shapes[i]
 		if height == change.short.Height && change.removing {
 			continue // The sample already contains the shorter destination table.

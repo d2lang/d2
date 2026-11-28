@@ -154,6 +154,12 @@ while existing rows and connections stay anchored. Appending a sequence message 
 extend the activation bar and draw the arrow from sender to recipient.
 [Animated TALA example](./docs/examples/tala-step-motion/dispatch.gif) · [D2 source](./docs/examples/tala-step-motion/dispatch.d2)
 
+Nodes moving between pinned positions and shapes changing width or height ease
+in and out. The same curve moves cells across a grid and expands or collapses
+nested grids. Numeric labels and steady streams along connections keep their
+own timing.
+[Read pool animation](./docs/examples/read-pool.gif) · [D2 source](./docs/examples/read-pool.d2)
+
 A positive `animate-interval` cycles through all exported boards, including
 linked layers. Link a shape with `gateway.link: layers.gateway` and set
 `animate-duration` to zoom through that shape when playback enters the layer

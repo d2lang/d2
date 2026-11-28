@@ -9,6 +9,7 @@ import (
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2sequence"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 	"github.com/d2lang/d2/lib/geo"
 )
 
@@ -183,7 +184,7 @@ func newSequenceMessage(e *d2target.Connection) *sequenceMessage {
 func (m *sequenceTrace) apply(frame *d2target.Diagram, t float64) {
 	growth := 1.
 	if m.prepare > 0 {
-		growth = boardStroke(gridPhase(t, 0, m.prepare))
+		growth = animation.EaseInOut(gridPhase(t, 0, m.prepare))
 	}
 	for i := range frame.Shapes {
 		s := &frame.Shapes[i]

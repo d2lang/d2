@@ -113,11 +113,13 @@ steps: {edit: {
 }
 
 func TestGridBandStages(t *testing.T) {
-	const duration = 640
+	const duration = 645
 	start, _ := gridBandOpen.window(duration)
-	shift, _, alpha := gridBandOpen.sample(start/2, duration)
-	if shift <= 0 || shift >= 1 || alpha != 0 {
-		t.Fatalf("expected opening gap, got travel=%v alpha=%v", shift, alpha)
+	// The slide settles at 480ms. At its quarter point only the neighboring
+	// cells have moved; the new band has not started its pop.
+	shift, _, alpha := gridBandOpen.sample(120, duration)
+	if math.Abs(shift-.129162) > 1e-6 || alpha != 0 {
+		t.Fatalf("expected eased opening gap, got travel=%v alpha=%v", shift, alpha)
 	}
 	shift, scale, alpha := gridBandOpen.sample(start+(duration-start)*3/4, duration)
 	if shift != 1 || scale <= 0 || scale >= 1 || alpha != 1 {

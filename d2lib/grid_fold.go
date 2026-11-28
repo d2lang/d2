@@ -81,7 +81,7 @@ func (m *gridMotion) planGridFolds(old, next map[string]*gridNode) {
 			}
 			fit := max(required(f.closed.Width, f.open.Width, s.Pos.X-f.open.Pos.X+s.Width),
 				required(f.closed.Height, f.open.Height, s.Pos.Y-f.open.Pos.Y+s.Height))
-			// From its midpoint onward smoothstep is at least its input.
+			// From its midpoint onward ease-in-out is at least its input.
 			// At this time the entire card fits, including its stroke.
 			visit(child, start+(end-start)*max(.5, fit))
 		}

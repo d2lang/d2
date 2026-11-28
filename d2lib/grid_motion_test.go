@@ -8,6 +8,7 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 	"github.com/d2lang/d2/lib/log"
 )
 
@@ -110,6 +111,24 @@ steps: {
 	}
 }
 
+func TestGridResizeAndConnectionFade(t *testing.T) {
+	board, graph := compileGridMotionTest(t, `grid-rows: 1
+a: {width: 100}
+b: {width: 100}
+steps: {expand: {a.width: 300; a -> b}}`)
+	next := board.Steps[0]
+	motion := newGridMotion(board, next, graph, graph.Steps[0])
+	frame := motion.sample(next, 250, 1000)
+	// At one quarter of the move, CSS ease-in-out covers 12.916% of the
+	// distance. The connection's independent smoothstep fade reaches 15.625%.
+	if w := shapeByID(t, frame, "a").Width; w != 126 {
+		t.Fatalf("expanding cell width at 250ms = %d, want 126", w)
+	}
+	if len(frame.Connections) != 1 || frame.Connections[0].Opacity != .15625 {
+		t.Fatalf("connection fade at 250ms = %+v, want opacity 0.15625", frame.Connections)
+	}
+}
+
 func TestGridIgnoresChangesOutsideGrid(t *testing.T) {
 	board, graph := compileGridMotionTest(t, `pool: {grid-columns: 2; a; b}
 one
@@ -144,7 +163,7 @@ steps: {promote: {
 			}
 			src := shapeByID(t, board, shape.ID).Pos
 			dst := shapeByID(t, next, shape.ID).Pos
-			travel := gridEase(fraction)
+			travel := animation.EaseInOut(fraction)
 			want := d2target.Point{X: gridLerpInt(src.X, dst.X, travel), Y: gridLerpInt(src.Y, dst.Y, travel)}
 			if shape.Pos != want {
 				t.Fatalf("at %.2f, %s is at %v; want %v on the direct path", fraction, shape.ID, shape.Pos, want)

@@ -172,7 +172,8 @@ For linked layers, a positive duration zooms through the enclosing shape on entr
 A move between sibling layers passes through their shared parent within the same duration.
 In a standalone SVG, following a board link pauses the automatic tour.
 Changes between steps can be authored directly or through variables.
-Direct numeric changes include opacity, stroke-width, stroke-dash, border-radius, font-size, width, and height.
+Direct numeric changes include opacity, stroke-width, stroke-dash, border-radius, font-size, left, top, width, and height.
+Pinned positions, shape dimensions, and grid moves use the CSS ease-in-out timing curve.
 Compatible gradients have the same kind, direction, and number of stops.
 Each stop interpolates its color and position.
 In grids, cells with the same ID move to their new positions.

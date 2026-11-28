@@ -1,6 +1,7 @@
 package d2ir_test
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 
@@ -142,5 +143,56 @@ steps: {pause: {}}
 	pause := tweenField(root, "steps", "pause").Map()
 	if len(pause.TweenFrames) != 0 || pause.TweenDurationMS != 0 {
 		t.Fatalf("unchanged step generated %d frames over %dms", len(pause.TweenFrames), pause.TweenDurationMS)
+	}
+}
+
+func TestGeometryEasesIndependentlyOfVariableValues(t *testing.T) {
+	root, err := compileTween(t, `
+vars: {d2-config: {animate-interval: 1s; animate-duration: 160ms}; n: 100; alias: ${n}}
+classes: {sized: {height: ${alias}}}
+group: {
+  width: 100
+  child: "Value ${n}" {left: ${alias}; top: 50; class: sized; style.font-size: ${n}}
+}
+source -> group.child: {target-arrowhead.width: ${alias}}
+steps: {move: {vars.n: 200; group.width: 200; group.child.top: -50}}
+`, d2ir.CompileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := tweenField(root, "steps", "move").Map()
+	frames := append(slices.Clone(step.TweenFrames), step)
+	if len(frames) != 5 {
+		t.Fatalf("got %d samples including endpoint, want 5", len(frames))
+	}
+	for i, want := range []struct{ size, top, value string }{
+		{"100", "50", "100"}, {"113", "37", "125"}, {"150", "0", "150"},
+		{"187", "-37", "175"}, {"200", "-50", "200"},
+	} {
+		frame := frames[i]
+		child := tweenField(frame, "group", "child").Map()
+		if got := tweenText(t, frame, "group", "width"); got != want.size {
+			t.Errorf("frame %d container width = %s, want %s", i, got, want.size)
+		}
+		if got := tweenText(t, child, "left"); got != want.size {
+			t.Errorf("frame %d variable left = %s, want %s", i, got, want.size)
+		}
+		if i < len(step.TweenFrames) {
+			if got := tweenText(t, child, "height"); got != want.size {
+				t.Errorf("frame %d class height = %s, want %s", i, got, want.size)
+			}
+		}
+		if got := tweenText(t, child, "top"); got != want.top {
+			t.Errorf("frame %d direct top = %s, want %s", i, got, want.top)
+		}
+		if got := tweenText(t, frame, "group", "child"); got != "Value "+want.value {
+			t.Errorf("frame %d label = %q, want Value %s", i, got, want.value)
+		}
+		if got := tweenText(t, frame.Edges[0].Map(), "target-arrowhead", "width"); got != want.value {
+			t.Errorf("frame %d arrowhead width = %s, want %s", i, got, want.value)
+		}
+		if got := tweenText(t, child, "style", "font-size"); got != want.value {
+			t.Errorf("frame %d font size = %s, want %s", i, got, want.value)
+		}
 	}
 }

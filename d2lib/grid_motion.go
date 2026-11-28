@@ -7,6 +7,7 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/animation"
 )
 
 // A grid is laid out at each authored endpoint. Plan the transition using full
@@ -285,21 +286,30 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 	result.TweenFrameEndsMS = nil
 	result.Shapes = make([]d2target.Shape, 0, len(base.Shapes)+len(m.removed))
 	fraction := float64(elapsedMS) / float64(durationMS)
-	travel := gridEase(fraction)
+	layoutPhase := fraction
 	if len(m.folds) != 0 {
-		travel = gridEase(gridPhase(fraction, m.foldStart, m.foldEnd))
+		layoutPhase = gridPhase(fraction, m.foldStart, m.foldEnd)
 	}
+	travel := animation.EaseInOut(layoutPhase)
 	elapsed := float64(elapsedMS)
 	enterStart, enterEnd, exitEnd := m.popWindows(durationMS)
 	// A connection alone can enter or leave during a shuffle. In that case
 	// its fade follows the step clock alongside the moving endpoints.
 	enterScale, exitScale := 1., 1.
-	enterOpacity, exitOpacity := travel, gridEase(1-fraction)
+	enterOpacity, exitOpacity := gridEase(layoutPhase), gridEase(1-fraction)
 	if m.hasEnter {
 		enterScale, enterOpacity = gridPop(gridPhase(elapsed, float64(enterStart), float64(enterEnd)))
 	}
 	if m.hasExit {
 		exitScale, exitOpacity = gridPop(1 - gridPhase(elapsed, 0, float64(exitEnd)))
+	}
+	// Every cell in an opening or closing band shares the same clock.
+	var bands [gridBandClose + 1]struct{ travel, scale, opacity float64 }
+	if len(m.bands) != 0 {
+		for band := gridBandOpen; band <= gridBandClose; band++ {
+			s := &bands[band]
+			s.travel, s.scale, s.opacity = band.sample(elapsedMS, durationMS)
+		}
 	}
 	// Edges involving a membership change follow that cell's visibility.
 	var visibility map[string]float64
@@ -313,11 +323,11 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 		} else {
 			position := travel
 			if band := m.bands[id]; band != gridBandNone {
-				_, scale, alpha = band.sample(elapsedMS, durationMS)
+				scale, alpha = bands[band].scale, bands[band].opacity
 			}
 			if parent := item.parent; parent != nil && parent.to != nil && m.folds[parent.to.ID] == nil {
 				if band := m.bands[parent.to.ID]; band != gridBandNone {
-					position, _, _ = band.sample(elapsedMS, durationMS)
+					position = bands[band].travel
 				}
 			}
 			if alpha > 0 {
@@ -344,7 +354,7 @@ func (m *gridMotion) sample(base *d2target.Diagram, elapsedMS, durationMS int) *
 			if fold := m.folds[shape.ID]; fold != nil {
 				fold.caption(&shape, travel)
 			} else if band := m.bands[shape.ID]; band != gridBandNone {
-				position, _, _ = band.sample(elapsedMS, durationMS)
+				position = bands[band].travel
 			}
 			shape.Pos = item.position(position)
 			shape.Width = gridLerpInt(item.from.Width, item.to.Width, position)

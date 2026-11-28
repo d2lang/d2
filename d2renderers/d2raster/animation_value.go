@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/d2lang/d2/d2renderers/d2scene"
+	"github.com/d2lang/d2/lib/animation"
 )
 
 // animationValueAt validates and resolves a track with interruptible keyframe
@@ -171,30 +172,10 @@ func applyAnimationEasing(easing d2scene.Easing, value float64) float64 {
 		}
 		return 0
 	case d2scene.EaseCubicBezier:
-		return rendererCubicBezierYForX(value, easing.X1, easing.Y1, easing.X2, easing.Y2)
+		return animation.CubicBezier(value, easing.X1, easing.Y1, easing.X2, easing.Y2)
 	default:
 		return value
 	}
-}
-
-func rendererCubicBezierYForX(x, x1, y1, x2, y2 float64) float64 {
-	low, high := 0.0, 1.0
-	parameter := x
-	for range 30 {
-		parameter = (low + high) / 2
-		estimate := rendererCubicScalar(0, x1, x2, 1, parameter)
-		if estimate < x {
-			low = parameter
-		} else {
-			high = parameter
-		}
-	}
-	return rendererCubicScalar(0, y1, y2, 1, parameter)
-}
-
-func rendererCubicScalar(p0, p1, p2, p3, value float64) float64 {
-	u := 1 - value
-	return u*u*u*p0 + 3*u*u*value*p1 + 3*u*value*value*p2 + value*value*value*p3
 }
 
 func interpolateRendererAnimationValue(left, right d2scene.AnimationValue, value float64) (d2scene.AnimationValue, error) {
