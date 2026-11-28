@@ -1250,3 +1250,66 @@ func appendD2Object(parent *d2graph.Object, id string) *d2graph.Object {
 	}
 	return child
 }
+
+func TestTranslateGraphKeepsPackageCodeLabelInBody(t *testing.T) {
+	t.Parallel()
+
+	g := d2graph.NewGraph()
+	codePkg := appendD2Object(g.Root, "code_pkg")
+	codePkg.Box = geo.NewBox(geo.NewPoint(0, 0), 200, 200)
+	codePkg.Shape = d2graph.Scalar{Value: d2target.ShapePackage}
+	codePkg.Label = d2graph.Scalar{Value: "hi"}
+	codePkg.Language = "go"
+	codePkg.LabelDimensions = d2target.TextDimensions{Width: 40, Height: 20}
+	codePos := label.InsideTopCenter.String()
+	codePkg.LabelPosition = &codePos
+
+	mdPkg := appendD2Object(g.Root, "md_pkg")
+	mdPkg.Box = geo.NewBox(geo.NewPoint(0, 0), 200, 200)
+	mdPkg.Shape = d2graph.Scalar{Value: d2target.ShapePackage}
+	mdPkg.Label = d2graph.Scalar{Value: "hi"}
+	mdPkg.Language = "markdown"
+	mdPkg.LabelDimensions = d2target.TextDimensions{Width: 40, Height: 20}
+	mdPos := label.InsideTopCenter.String()
+	mdPkg.LabelPosition = &mdPos
+
+	talaGraph := layoutgraph.NewGraph()
+	bindings, err := translateGraph(t.Context(), g, talaGraph, true)
+	if err != nil {
+		t.Fatalf("translateGraph() error = %v", err)
+	}
+
+	findNode := func(graph *layoutgraph.Graph, id layoutgraph.EntityID) *layoutgraph.Node {
+		for _, n := range graph.Nodes {
+			if n.ID == id {
+				return n
+			}
+		}
+		return nil
+	}
+
+	codeNode := findNode(talaGraph, bindings.objectIDs[codePkg])
+	if codeNode == nil || codeNode.Label == nil {
+		t.Fatalf("translated code package node missing label")
+	}
+	tl := codeNode.LabelTopLeft(label.InsideTopCenter, codeNode.Label.Width, codeNode.Label.Height)
+	if tl.X != 80 || tl.Y != 45 {
+		t.Fatalf("code package LabelTopLeft() = (%v, %v), want (80, 45) in main body", tl.X, tl.Y)
+	}
+
+	cloned, err := layoutgraph.Clone(t.Context(), talaGraph)
+	if err != nil {
+		t.Fatalf("layoutgraph.Clone() error = %v", err)
+	}
+	clonedCode := findNode(cloned, bindings.objectIDs[codePkg])
+	clonedTL := clonedCode.LabelTopLeft(label.InsideTopCenter, clonedCode.Label.Width, clonedCode.Label.Height)
+	if clonedTL.X != 80 || clonedTL.Y != 45 {
+		t.Fatalf("cloned code package LabelTopLeft() = (%v, %v), want (80, 45) in main body", clonedTL.X, clonedTL.Y)
+	}
+
+	mdNode := findNode(talaGraph, bindings.objectIDs[mdPkg])
+	mdTL := mdNode.LabelTopLeft(label.InsideTopCenter, mdNode.Label.Width, mdNode.Label.Height)
+	if mdTL.X != 30 || mdTL.Y != 5 {
+		t.Fatalf("markdown package LabelTopLeft() = (%v, %v), want (30, 5) in top tab", mdTL.X, mdTL.Y)
+	}
+}

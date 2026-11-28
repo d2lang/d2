@@ -410,8 +410,13 @@ func (obj *Object) GetLabelTopLeft() *geo.Point {
 	var box *geo.Box
 	if labelPosition.IsOutside() {
 		box = s.GetBox()
-	} else {
+	} else if obj.Language != "" && obj.Language != "latex" && obj.Language != "markdown" {
 		box = s.GetInnerBox()
+	} else {
+		box = shape.GetInsideLabelBox(s, labelPosition, label.PADDING,
+			float64(obj.LabelDimensions.Width),
+			float64(obj.LabelDimensions.Height),
+		)
 	}
 
 	labelTL := labelPosition.GetPointOnBox(box, label.PADDING,

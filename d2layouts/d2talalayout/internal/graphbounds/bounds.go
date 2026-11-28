@@ -144,7 +144,7 @@ func nodeBounds(
 	}
 	if node.Icon != nil && !node.IsImage() && node.Icon.Position.IsOutside() && allNodes != nil {
 		iconSize := node.OutsideIconReserve()
-		iconTopLeft := node.LabelTopLeft(node.Icon.Position, iconSize, iconSize)
+		iconTopLeft := node.IconTopLeft(node.Icon.Position, iconSize, iconSize)
 		outsidePadding := 2. * label.PADDING
 		minX = math.Min(minX, math.Floor(iconTopLeft.X-outsidePadding))
 		minY = math.Min(minY, math.Floor(iconTopLeft.Y-outsidePadding))

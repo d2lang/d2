@@ -163,9 +163,11 @@ func latexShapeLabelTopLeft(targetShape d2target.Shape) *geo.Point {
 		position = label.InsideMiddleCenter
 	}
 	geometry := targetGeometry(targetShape)
-	box := geometry.GetInnerBox()
+	var box *geo.Box
 	if position.IsOutside() {
 		box = geometry.GetBox()
+	} else {
+		box = shapeInsideLabelBox(geometry, targetShape, position)
 	}
 	return targetShape.LabelTopLeft(position, box)
 }

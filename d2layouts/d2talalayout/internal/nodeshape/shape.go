@@ -120,6 +120,11 @@ func New(typeName string, box *geo.Box) (*Shape, Kind, bool) {
 	return &Shape{Shape: shape.NewShape(typeName, box), kind: kind}, kind, true
 }
 
+// GetLabelBox delegates to the embedded D2 shape's inside label placement box.
+func (s *Shape) GetLabelBox(position label.Position, padding, width, height float64) *geo.Box {
+	return shape.GetInsideLabelBox(s.Shape, position, padding, width, height)
+}
+
 // LabelPositionPreferences returns the positions in a preference tier.
 func (s *Shape) LabelPositionPreferences(tier LabelTier) LabelSet {
 	if tier < Good || tier > Bad {

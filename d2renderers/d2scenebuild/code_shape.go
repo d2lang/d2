@@ -19,6 +19,7 @@ import (
 	"github.com/d2lang/d2/d2renderers/d2scene"
 	"github.com/d2lang/d2/d2renderers/internal/codestyle"
 	"github.com/d2lang/d2/d2target"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/textmeasure"
 )
 
@@ -74,8 +75,11 @@ func (b *builder) buildCodeShape(targetShape d2target.Shape, stroke *d2scene.Str
 		return nil, fmt.Errorf("scene: %s code snippet style has no background", object)
 	}
 
+	// Anchor the code frame and text at the shape's label box top-left so it
+	// matches SVG writeCode (e.g. staying in the body of a package shape).
+	labelBox := shapeLabelBox(targetShape, label.FromString(targetShape.LabelPosition))
 	box := d2scene.Box{
-		X: float64(targetShape.Pos.X), Y: float64(targetShape.Pos.Y),
+		X: labelBox.TopLeft.X, Y: labelBox.TopLeft.Y,
 		Width: float64(targetShape.Width), Height: float64(targetShape.Height),
 	}
 	// Code-shape backgrounds intentionally omit stroke dashes.

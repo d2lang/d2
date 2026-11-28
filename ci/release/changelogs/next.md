@@ -9,6 +9,7 @@
 
 - SVG exports use 28.4% fewer bytes across the 157 documentation diagrams, or 35.1% fewer with gzip. D2 embeds smaller bundled fonts and writes more compact stylesheets, code blocks, arrowhead references, textures, sketch paths, and LaTeX glyphs.
 - SVG appendices use precompressed WOFF2 fonts for ASCII footnotes and numbered markers while retaining their kerning, ligatures, and hinting.
+- `package` shapes place `top-left` and `top-center` labels inside the top tab when they fit. [#1739](https://github.com/d2lang/d2/issues/1739)
 
 #### Bugfixes ⛑️
 

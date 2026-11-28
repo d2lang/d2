@@ -28,6 +28,7 @@ type boardBirth struct {
 	rebound             float64
 	start, contact, end float64
 	labelBox            *d2target.MotionBox
+	labelPos            label.Position
 	labelAt             *geo.Point
 }
 
@@ -189,7 +190,8 @@ func buildBoardReveal(prev, next *d2target.Diagram, g *d2graph.Graph, departing 
 		}
 		if s.Label != "" && !integralBoardText(s) && s.Icon == nil && !pos.IsOutside() && !pos.IsBorder() && s.Width > 0 && s.Height > 0 {
 			birth.labelBox = &d2target.MotionBox{Point: s.Pos, Width: s.Width, Height: s.Height}
-			birth.labelAt = s.LabelTopLeft(pos, s.Geometry().GetInnerBox())
+			birth.labelPos = pos
+			birth.labelAt = s.LabelTopLeft(pos, s.InsideLabelBox(s.Geometry(), pos))
 		}
 		m.nodes[id] = birth
 		m.end = max(m.end, birth.end)
@@ -529,7 +531,7 @@ func (b boardBirth) sampleShape(final d2target.Shape, now float64) d2target.Shap
 				s.MotionLabelBox = b.labelBox
 				return s
 			}
-			room := s.Geometry().GetInnerBox()
+			room := s.InsideLabelBox(s.Geometry(), b.labelPos)
 			p := b.labelAt
 			pad := math.Max(label.PADDING, s.RenderedStrokeWidth()/2)
 			if p.X >= room.TopLeft.X+pad && p.Y >= room.TopLeft.Y+pad &&

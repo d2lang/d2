@@ -49,7 +49,7 @@ func measureLabels(g *layoutgraph.Graph, score *Metrics, guard *limits.WorkGuard
 				}
 			}
 			size := node.IconSize(node.Icon.Position)
-			appendLabel(geo.Box{TopLeft: node.LabelTopLeft(node.Icon.Position, size, size), Width: size, Height: size}, node, nil, inspectionItem{node.ID, nodeIcon})
+			appendLabel(geo.Box{TopLeft: node.IconTopLeft(node.Icon.Position, size, size), Width: size, Height: size}, node, nil, inspectionItem{node.ID, nodeIcon})
 		}
 	}
 	visibleEdges := make([]*layoutgraph.Edge, 0, len(g.Edges))

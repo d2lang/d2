@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/d2lang/d2/lib/geo"
+	"github.com/d2lang/d2/lib/label"
 	"github.com/d2lang/d2/lib/svg"
 )
 
@@ -21,6 +22,7 @@ var packageKind = shapeKind{
 	paddingX:        defaultPadding,
 	paddingY:        .8 * defaultPadding,
 	innerBox:        packageInnerBox,
+	labelBox:        packageLabelBox,
 	dimensionsToFit: packageDimensionsToFit,
 	path:            packagePath,
 	trace:           packageTrace,
@@ -38,6 +40,17 @@ func packageInnerBox(s *shape) *geo.Box {
 	tl.Y += topHeight
 	height -= topHeight
 	return geo.NewBox(tl, s.Box.Width, height)
+}
+
+func packageLabelBox(s *shape, position label.Position, padding, width, height float64) *geo.Box {
+	switch position {
+	case label.InsideTopLeft, label.InsideTopCenter:
+		topWidth, topHeight := getTopDimensions(s.Box)
+		if width+2*padding <= topWidth && height+2*padding <= topHeight {
+			return geo.NewBox(s.Box.TopLeft.Copy(), topWidth, topHeight)
+		}
+	}
+	return s.GetInnerBox()
 }
 
 func getTopDimensions(box *geo.Box) (width, height float64) {

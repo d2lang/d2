@@ -1648,7 +1648,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 		if labelPosition.IsOutside() || labelPosition.IsBorder() {
 			box = targetShape.OuterLabelBox(s.GetBox())
 		} else {
-			box = s.GetInnerBox()
+			box = targetShape.InsideLabelBox(s, labelPosition)
 		}
 		labelTL := targetShape.LabelTopLeft(labelPosition, box)
 		if labelPosition.IsBorder() {
@@ -1671,7 +1671,7 @@ func drawShape(writer *objectWriter, appendixWriter io.Writer, diagramHash, reso
 			if labelPosition.IsOutside() {
 				box = s.GetBox()
 			} else {
-				box = s.GetInnerBox()
+				box = targetShape.InsideLabelBox(s, labelPosition)
 			}
 			latexTL := targetShape.LabelTopLeft(labelPosition, box)
 			gEl, err := latexLabel(targetShape.Label, latexTL, targetShape.GetFontColor(), inlineTheme)

@@ -236,9 +236,10 @@ func translateGraph(ctx context.Context, g *d2graph.Graph, talaGraph *layoutgrap
 
 		if obj.HasLabel() {
 			n.Label = &layoutgraph.Label{
-				Text:   obj.Label.Value,
-				Width:  float64(obj.LabelDimensions.Width),
-				Height: float64(obj.LabelDimensions.Height),
+				Text:       obj.Label.Value,
+				Width:      float64(obj.LabelDimensions.Width),
+				Height:     float64(obj.LabelDimensions.Height),
+				KeepInBody: obj.Language != "" && obj.Language != "latex" && obj.Language != "markdown",
 			}
 			if obj.LabelPosition != nil {
 				n.Label.Position = label.FromString(*obj.LabelPosition)

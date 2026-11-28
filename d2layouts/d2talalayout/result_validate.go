@@ -309,7 +309,8 @@ func sameImmutableLabel(expected, actual *layoutgraph.Label) bool {
 	return expected.Text == actual.Text &&
 		expected.Position == actual.Position &&
 		expected.Width == actual.Width &&
-		expected.Height == actual.Height
+		expected.Height == actual.Height &&
+		expected.KeepInBody == actual.KeepInBody
 }
 
 // EquivalentStyles is intentionally a routing-specific comparison and omits

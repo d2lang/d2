@@ -535,7 +535,7 @@ func shortcutLabelBoxes(g *layoutgraph.Graph, guard *routeWorkGuard, includePain
 		}
 		if n.Icon != nil && !n.IsImage() {
 			size := n.IconSize(n.Icon.Position)
-			boxes = append(boxes, geo.Box{TopLeft: n.LabelTopLeft(n.Icon.Position, size, size), Width: size, Height: size})
+			boxes = append(boxes, geo.Box{TopLeft: n.IconTopLeft(n.Icon.Position, size, size), Width: size, Height: size})
 		}
 	}
 	for _, e := range g.Edges {
