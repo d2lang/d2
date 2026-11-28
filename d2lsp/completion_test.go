@@ -546,8 +546,8 @@ func TestGetValueCompletions(t *testing.T) {
 		},
 		{
 			property:   "stroke",
-			wantLabel:  "(color name or hex code)",
-			wantDetail: "e.g. blue, #ff0000",
+			wantLabel:  "(color name, hex code, or gradient)",
+			wantDetail: "e.g. blue, \"#ff0000\", \"linear-gradient(red, blue)\"",
 		},
 	}
 

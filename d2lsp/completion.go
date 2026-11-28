@@ -414,9 +414,9 @@ func getValueCompletions(property string) []CompletionItem {
 		}}
 	case "font-color", "stroke", "fill":
 		return []CompletionItem{{
-			Label:      "(color name or hex code)",
+			Label:      "(color name, hex code, or gradient)",
 			Kind:       KeywordCompletion,
-			Detail:     "e.g. blue, #ff0000",
+			Detail:     "e.g. blue, \"#ff0000\", \"linear-gradient(red, blue)\"",
 			InsertText: "",
 		}}
 	case "width", "height", "top", "left":
