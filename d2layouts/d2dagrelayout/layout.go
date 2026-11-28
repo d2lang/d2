@@ -661,7 +661,7 @@ func positionLabelsIcons(obj *d2graph.Object, positions *stringArena) {
 			obj.LabelPosition = positions.ptr(label.OutsideTopCenter.String())
 		} else if obj.HasOutsideBottomLabel() {
 			obj.LabelPosition = positions.ptr(label.OutsideBottomCenter.String())
-		} else if obj.Icon != nil {
+		} else if obj.Icon != nil && (obj.IconPosition == nil || !label.FromString(*obj.IconPosition).IsOutside()) {
 			obj.LabelPosition = positions.ptr(label.InsideTopCenter.String())
 		} else {
 			obj.LabelPosition = positions.ptr(label.InsideMiddleCenter.String())

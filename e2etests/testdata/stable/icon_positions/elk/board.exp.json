@@ -165,7 +165,7 @@
       "underline": false,
       "labelWidth": 111,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -223,7 +223,7 @@
       "underline": false,
       "labelWidth": 131,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -281,7 +281,7 @@
       "underline": false,
       "labelWidth": 120,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -339,7 +339,7 @@
       "underline": false,
       "labelWidth": 111,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -397,7 +397,7 @@
       "underline": false,
       "labelWidth": 131,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -455,7 +455,7 @@
       "underline": false,
       "labelWidth": 136,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -513,7 +513,7 @@
       "underline": false,
       "labelWidth": 120,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -571,7 +571,7 @@
       "underline": false,
       "labelWidth": 141,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -629,7 +629,7 @@
       "underline": false,
       "labelWidth": 146,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -687,7 +687,7 @@
       "underline": false,
       "labelWidth": 137,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -745,7 +745,7 @@
       "underline": false,
       "labelWidth": 157,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },
@@ -803,7 +803,7 @@
       "underline": false,
       "labelWidth": 147,
       "labelHeight": 21,
-      "labelPosition": "INSIDE_TOP_CENTER",
+      "labelPosition": "INSIDE_MIDDLE_CENTER",
       "zIndex": 0,
       "level": 2
     },

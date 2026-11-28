@@ -796,6 +796,23 @@ outer group: {
 }
 `,
 		},
+		{
+			// https://github.com/terrastruct/d2/issues/1495
+			name: "outside_icon_default_label_center",
+			script: `program: {
+  icon: https://icons.terrastruct.com/essentials%2F213-alarm.svg
+  icon.near: outside-top-center
+}
+side: {
+  icon: https://icons.terrastruct.com/essentials%2F213-alarm.svg
+  icon.near: outside-left-center
+}
+inside: {
+  icon: https://icons.terrastruct.com/essentials%2F213-alarm.svg
+}
+program -> side -> inside
+`,
+		},
 		loadFromFile(t, "unconnected"),
 		{
 			name: "straight_hierarchy_container_direction_right",
